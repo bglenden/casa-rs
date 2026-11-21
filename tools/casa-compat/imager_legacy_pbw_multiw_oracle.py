@@ -170,8 +170,20 @@ def compare_cold(root, dataset, model):
         (abandoned / 'pending-slot').write_text(f'0 {W_PLANES}')
         (native_cache / f'CF{W_PLANES - 1}_0').mkdir()
         (abandoned / f'CFWT{W_PLANES - 1}_0').mkdir()
+        preparing = native_cache / '.ep-cache-preparing'
+        preparing.mkdir()
+        (preparing / 'preparing-slot').touch()
+        (preparing / 'pending-slot.new').touch()
+        (preparing / f'CF{W_PLANES - 1}_0').mkdir()
+        old_journal = native_cache / '.ep-cache-old-journal'
+        old_journal.mkdir()
+        (old_journal / 'pending-slot').touch()
+        unrelated = native_cache / '.ep-cache-unrelated'
+        unrelated.mkdir()
+        (unrelated / 'marker').write_text('keep')
         ft(native, actual, model, native_cache, scratch=True, **options)
-        assert not abandoned.exists()
+        assert not any(path.exists() for path in (abandoned, preparing, old_journal))
+        assert (unrelated / 'marker').read_text() == 'keep'
         np.testing.assert_allclose(
             np.loadtxt(pinned_cache / 'aux.dat', skiprows=1),
             np.loadtxt(native_cache / 'aux.dat', skiprows=1), atol=5e-5,
@@ -215,7 +227,16 @@ def compare_cache_images(reference, actual):
 
     names = ['avgPB']
     names.extend(f'{prefix}{plane}_0' for plane in range(W_PLANES) for prefix in ('CF', 'CFWT'))
-    return {name: relative_rms(pixels(actual / name), pixels(reference / name)) for name in names}
+    errors = {}
+    for name in names:
+        expected, measured = pixels(reference / name), pixels(actual / name)
+        if name.startswith('CF'):
+            # Tap normalization can conceal a phase error common to an
+            # entire plane. Compare the centre directly before degridding.
+            centre = (expected.shape[0] // 2, expected.shape[1] // 2, 0, 0)
+            assert abs(measured[centre] / expected[centre] - 1.) < 1.e-5, name
+        errors[name] = relative_rms(measured, expected)
+    return errors
 
 
 if __name__ == '__main__':

@@ -29,6 +29,7 @@ pub struct LegacyEpConvolution {
 pub struct LegacyEpWPlanePlan {
     average_beam: Vec<f32>,
     screens: [Vec<Complex32>; 2],
+    sky_peaks: [usize; 2],
     first_imaging: Vec<Complex32>,
     support: Vec<usize>,
     fft: PlaneFft<f32>,
@@ -230,6 +231,7 @@ impl LegacyEpWPlanePlan {
             aperture_beam(aperture, SCREEN, sky_cell_rad[0], frequency_hz, angle_rad)?;
         let screens = [aperture.power(true)?, aperture.power(false)?];
         drop(aperture);
+        let sky_peaks = screens.each_ref().map(|screen| peak_index(screen));
         let mut fft = PlaneFft::new([SCREEN, SCREEN], false)?;
         let mut first_imaging = screens[0].clone();
         fft.transform(&mut first_imaging, false)?;
@@ -257,6 +259,7 @@ impl LegacyEpWPlanePlan {
         Ok(Self {
             average_beam,
             screens,
+            sky_peaks,
             first_imaging,
             support,
             fft,
@@ -301,6 +304,7 @@ impl LegacyEpWPlanePlan {
         let mut imaging = std::mem::take(&mut self.first_imaging);
         let mut weight = first_weights;
         for (plane, &support) in self.support.iter().enumerate() {
+            let mut normalization = peaks;
             if plane > 0 {
                 imaging.copy_from_slice(&self.screens[0]);
                 weight.copy_from_slice(&self.screens[1]);
@@ -308,12 +312,18 @@ impl LegacyEpWPlanePlan {
                     imaging[index] *= phase;
                     weight[index] *= phase;
                 }
+                // Dividing by the projected complex sky peak before FFT
+                // is equivalent to removing its phase from the result.
+                for (cell, grid) in [&imaging, &weight].into_iter().enumerate() {
+                    let peak = self.sky_peaks[cell];
+                    normalization[cell] *= grid[peak] / self.screens[cell][peak];
+                }
                 self.fft.transform(&mut imaging, false)?;
                 self.fft.transform(&mut weight, false)?;
             }
             let [mut imaging, mut weights] = [&imaging, &weight].map(|grid| crop(grid, radius));
             for value in &mut imaging {
-                *value /= peaks[0];
+                *value /= normalization[0];
             }
             let integral = sample_cropped(&imaging, 2 * radius + 1, support)?;
             if !integral.is_finite() || integral <= 0. {
@@ -323,7 +333,7 @@ impl LegacyEpWPlanePlan {
                 *value /= integral;
             }
             for value in &mut weights {
-                *value /= peaks[1] * integral * integral;
+                *value /= normalization[1] * integral * integral;
             }
             kernels.push([imaging, weights]);
         }
@@ -460,18 +470,11 @@ fn sampled_integral(kernel: &[Complex32], support: usize) -> f32 {
 }
 
 fn sample_cropped(kernel: &[Complex32], side: usize, support: usize) -> Result<f32, OperatorError> {
-    let mut peak = 0.;
-    let mut origin = 0;
-    for (index, sample) in kernel.iter().enumerate() {
-        let magnitude = sample.norm_sqr();
-        if magnitude > peak {
-            peak = magnitude;
-            // CASA uses the peak's X coordinate for both sampling axes.
-            origin = index % side;
-        }
-    }
+    // CASA uses the peak's X coordinate for both sampling axes.
+    let origin = peak_index(kernel) % side;
     let radius = support * SAMPLING;
-    if origin < radius || origin + radius > side {
+    debug_assert!(radius >= SAMPLING);
+    if origin < radius || origin + radius - SAMPLING >= side {
         return Err(invalid(
             "legacy EP convolution peak is outside its sampling area",
         ));
@@ -484,6 +487,19 @@ fn sample_cropped(kernel: &[Complex32], side: usize, support: usize) -> Result<f
         }
     }
     Ok(integral)
+}
+
+fn peak_index(samples: &[Complex32]) -> usize {
+    let mut peak = 0.;
+    let mut best = 0;
+    for (index, sample) in samples.iter().enumerate() {
+        let magnitude = sample.norm_sqr();
+        if magnitude > peak {
+            peak = magnitude;
+            best = index;
+        }
+    }
+    best
 }
 
 fn invalid(reason: &'static str) -> OperatorError {
@@ -499,6 +515,18 @@ mod tests {
     use ndarray::Axis;
 
     use super::*;
+
+    #[test]
+    fn strided_integral_uses_the_last_sample_for_its_edge_check() {
+        let side = 161;
+        let mut kernel = vec![Complex32::from(1.); side * side];
+        let interior = 110 * side + 110;
+        kernel[interior] = Complex32::from(2.);
+        assert_eq!(sample_cropped(&kernel, side, 3).unwrap(), 37.);
+        kernel[interior] = Complex32::from(1.);
+        kernel[121 * side + 121] = Complex32::from(2.);
+        assert!(sample_cropped(&kernel, side, 3).is_err());
+    }
 
     #[test]
     #[ignore = "requires the installed CASA VLA EP reference cache and VLA.surface"]

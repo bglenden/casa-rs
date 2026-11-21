@@ -18,7 +18,9 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 const AUX: &str = "aux.dat";
 const BEAM: &str = "avgPB";
 const STAGE_PREFIX: &str = ".ep-cache-";
+const PREPARING: &str = "preparing-slot";
 const JOURNAL: &str = "pending-slot";
+const JOURNAL_TEMP: &str = "pending-slot.new";
 
 pub(crate) struct EpCache {
     root: PathBuf,
@@ -252,6 +254,7 @@ impl EpCache {
             .prefix(STAGE_PREFIX)
             .tempdir_in(&self.root)
             .map_err(invalid)?;
+        std::fs::File::create(staged.path().join(PREPARING)).map_err(invalid)?;
         let mut kernel_coordinates = beam_coordinates.clone();
         let linear =
             LinearCoordinate::new(2, vec!["UU".into(), "VV".into()], vec!["lambda".into(); 2])
@@ -331,9 +334,20 @@ impl EpCache {
             let marker = stage.join(JOURNAL);
             let document = match std::fs::read_to_string(marker) {
                 Ok(document) => document,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if stage.join(PREPARING).is_file() {
+                        std::fs::remove_dir_all(stage).map_err(invalid)?;
+                    }
+                    continue;
+                }
                 Err(error) => return Err(invalid(error)),
             };
+            // An older writer could be interrupted while writing the marker.
+            // Promotions start only after a complete marker has been written.
+            if document.trim().is_empty() {
+                std::fs::remove_dir_all(stage).map_err(invalid)?;
+                continue;
+            }
             let mut fields = document.split_whitespace();
             let index: usize = parse(&mut fields)?;
             let planes = fields.next().map_or(Ok(1), str::parse).map_err(invalid)?;
@@ -378,7 +392,8 @@ impl EpCache {
                 )));
             }
         }
-        std::fs::write(staged.join(JOURNAL), format!("{index} {planes}")).map_err(invalid)?;
+        std::fs::write(staged.join(JOURNAL_TEMP), format!("{index} {planes}")).map_err(invalid)?;
+        std::fs::rename(staged.join(JOURNAL_TEMP), staged.join(JOURNAL)).map_err(invalid)?;
         let published = (|| -> std::io::Result<()> {
             for name in names {
                 std::fs::rename(staged.join(name), self.root.join(name))?;
@@ -449,25 +464,17 @@ fn save_image<T: ImagePixel>(
     shape: [usize; 4],
     sample: impl Fn(usize, usize) -> T,
 ) -> MsResult<()> {
-    let [nx, ny, pols, _] = shape;
-    let tile = [nx.min(64), ny.min(64), 1, 1];
-    let tile_bytes = (tile[0] * tile[1] * size_of::<T>()) as u64;
-    let tiles = (nx.div_ceil(tile[0]) * ny.div_ceil(tile[1]) * pols) as u64;
-    let plane_bytes = (nx as u64)
-        .saturating_mul(ny as u64)
-        .saturating_mul(size_of::<T>() as u64);
+    let (tile, memory) = image_write_layout::<T>(shape);
     let _memory = admit(
         host,
         &ResourcePolicy::Balanced,
         &Demand {
             phase: "legacy EP cache publication",
-            memory: plane_bytes
-                .saturating_mul(2)
-                .saturating_add(3 * tile_bytes)
-                .saturating_add(32 * tiles),
+            memory,
         },
     )
     .map_err(invalid)?;
+    let [nx, ny, pols, _] = shape;
     let mut image = PagedImage::create_with_tile_shape_and_cache(
         shape.to_vec(),
         tile.to_vec(),
@@ -483,6 +490,23 @@ fn save_image<T: ImagePixel>(
             .map_err(invalid)?;
     }
     image.save().map_err(invalid)
+}
+
+fn image_write_layout<T: ImagePixel>([nx, ny, pols, _]: [usize; 4]) -> ([usize; 4], u64) {
+    let tile = [nx.min(64), ny.min(64), 1, 1];
+    let tile_bytes = (tile[0] * tile[1] * size_of::<T>()) as u64;
+    let tiles = (nx.div_ceil(tile[0]) * ny.div_ceil(tile[1]) * pols) as u64;
+    let plane_bytes = (nx as u64)
+        .saturating_mul(ny as u64)
+        .saturating_mul(size_of::<T>() as u64);
+    // Include the image table and logtable schemas, coordinates and headers
+    // even when the image fits in one tile.
+    let bytes = plane_bytes
+        .saturating_mul(2)
+        .saturating_add(3 * tile_bytes)
+        .saturating_add(32 * tiles)
+        .saturating_add(256 << 10);
+    (tile, bytes)
 }
 
 fn decode_slots(document: &str) -> MsResult<Vec<Slot>> {
@@ -531,4 +555,63 @@ fn parse<T: std::str::FromStr>(fields: &mut SplitWhitespace<'_>) -> Result<T, Ms
 
 pub(super) fn invalid(error: impl std::fmt::Display) -> MsError {
     MsError::InvalidInput(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::imaging_memory_test::{cube_coordinates, isolated_test, peak_since, reset_peak};
+
+    #[test]
+    fn image_publication_includes_metadata_in_its_charge() {
+        if !isolated_test(
+            module_path!(),
+            "image_publication_includes_metadata_in_its_charge",
+        ) {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let host = HostResources::detect().unwrap();
+        let beam = [
+            StokesType::RR,
+            StokesType::RL,
+            StokesType::LR,
+            StokesType::LL,
+        ];
+        let coordinates = cube_coordinates(beam.to_vec());
+        let shape = [4, 4, 4, 1];
+        let baseline = reset_peak();
+        save_image(
+            &host,
+            root.path().join("beam"),
+            coordinates,
+            shape,
+            |_, _| 1_f32,
+        )
+        .unwrap();
+        let actual = peak_since(baseline);
+        let admitted = image_write_layout::<f32>(shape).1;
+        assert!(
+            actual <= admitted,
+            "small beam held {actual}, admitted {admitted}"
+        );
+
+        let coordinates = cube_coordinates(vec![StokesType::RR, StokesType::LL]);
+        let shape = [161, 161, 2, 1];
+        let baseline = reset_peak();
+        save_image(
+            &host,
+            root.path().join("kernel"),
+            coordinates,
+            shape,
+            |_, _| Complex32::from(1.),
+        )
+        .unwrap();
+        let actual = peak_since(baseline);
+        let admitted = image_write_layout::<Complex32>(shape).1;
+        assert!(
+            actual <= admitted,
+            "kernel held {actual}, admitted {admitted}"
+        );
+    }
 }
