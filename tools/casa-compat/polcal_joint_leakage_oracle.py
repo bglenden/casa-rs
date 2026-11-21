@@ -18,7 +18,7 @@ from polcal_leakage_solve_oracle import compare_apply, plant, put_observations
 from polcal_standard_leakage_oracle import solve
 
 
-def phase_without_last_cross_hand(root, vis, data, sky):
+def phase_without_last_cross_hand(root, vis, data, sky, *, poltype='Df+X'):
     # Reverse the same model and data pairs. Only the relative position of
     # the unpolarized channel changes, so the fitted phase should agree.
     model = sky.copy()
@@ -32,7 +32,7 @@ def phase_without_last_cross_hand(root, vis, data, sky):
                 ms.putcol('MODEL_DATA', model[:, indices, :].copy())
             path = root/f'zero-cross-hand-{label}.log'
             casa.casalog.setlogfile(str(path))
-            params = dict(vis=str(vis), field='0', poltype='Df+X', refant='A0')
+            params = dict(vis=str(vis), field='0', poltype=poltype, refant='A0')
             casa.polcal(caltable=str(root/f'casa-{label}.cal'), **params)
             native = subprocess.run(
                 [sys.executable, '-c',

@@ -7313,13 +7313,15 @@ test compares flags and valid coefficients and applies both products.
 CASA 6.7.6.14's joint leakage and angle modes fit a complex source multiplier
 across all usable measurements in an interval. `DJones::guessPar` uses it
 only if the final inspected model correlation has nonzero amplitude. A
-`Df+X` interval with polarized source information in seven channels reports
-a zero angle when an eighth channel has zero cross-hand model and comes last.
-Reversing the same data and model reports the fitted angle of about 10.88°.
+`Df+X` or `Dfgen+X` interval with polarized source information in seven
+channels reports a zero angle when an eighth channel has zero cross-hand
+model and comes last. Reversing the same data and model reports the fitted
+angle again.
 
 Casa-rs applies the phase from the constrained fit in both orders. An empty
 fit retains the identity angle correction.
 [Paired oracle](../tools/casa-compat/polcal_joint_leakage_oracle.py)
+· [Full Jones oracle](../tools/casa-compat/polcal_general_leakage_oracle.py)
 
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 

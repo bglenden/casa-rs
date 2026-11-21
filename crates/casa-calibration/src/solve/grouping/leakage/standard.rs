@@ -53,7 +53,7 @@ pub(super) fn solve_channel(
     let mut direction = vec![[Complex32::ZERO; 2]; gains.len()];
     let mut derivatives = Derivatives::new(gains.len());
     for _ in 0..=50 {
-        let loss = chi_squared(&usable, gains, algebra);
+        let loss = chi_squared(&usable, gains, &valid, algebra);
         if !loss.is_finite() {
             gains.clone_from(&last_gains);
             return Err(vec![[false; 2]; gains.len()]);
@@ -70,7 +70,7 @@ pub(super) fn solve_channel(
             stable_steps = stable_steps.saturating_sub(1);
         }
         if stable_steps > 5 {
-            derivatives.accumulate(&usable, gains, algebra);
+            derivatives.accumulate(&usable, gains, &valid, algebra);
             return Ok(estimate(
                 gains,
                 &valid,
@@ -82,7 +82,7 @@ pub(super) fn solve_channel(
         }
         if change <= 0.0 {
             last_loss = loss;
-            derivatives.accumulate(&usable, gains, algebra);
+            derivatives.accumulate(&usable, gains, &valid, algebra);
             for (antenna, deltas) in direction.iter_mut().enumerate() {
                 for (receptor, delta) in deltas.iter_mut().enumerate() {
                     let hessian = derivatives.hessian[antenna][receptor];
@@ -102,7 +102,7 @@ pub(super) fn solve_channel(
             return Err(valid);
         }
         let scale = match algebra {
-            LeakageAlgebra::Linearized => step_scale(&usable, gains, &direction, loss),
+            LeakageAlgebra::Linearized => step_scale(&usable, gains, &direction, &valid, loss),
             // CASA materializes full Jones matrices and refreshes them on
             // accepted parameter updates. Its trial steps see the same
             // matrices, keeping the nominal damped step for Dgen.
@@ -155,13 +155,14 @@ impl Derivatives {
         &mut self,
         samples: &[&StandardSample],
         gains: &[[Complex32; 2]],
+        valid: &[[bool; 2]],
         algebra: LeakageAlgebra,
     ) {
         self.gradient.fill([Complex64::ZERO; 2]);
         self.hessian.fill([0.0; 2]);
         for sample in samples {
             let [left, right] = sample.pair;
-            let (residual, partials) = sample.residual(gains, algebra);
+            let (residual, partials) = sample.residual(gains, valid, algebra);
             let [xx, _, _, yy] = sample.model;
             for (side, antenna) in [left, right].into_iter().enumerate() {
                 for receptor in 0..2 {
@@ -199,13 +200,29 @@ impl StandardSample {
     fn residual(
         &self,
         gains: &[[Complex32; 2]],
+        valid: &[[bool; 2]],
         algebra: LeakageAlgebra,
     ) -> ([Complex32; 4], [[Complex32; 4]; 2]) {
         let [left, right] = self.pair.map(|antenna| gains[antenna]);
         if matches!(algebra, LeakageAlgebra::General) {
-            let left_model = general::left(self.model, left);
-            let right_model = general::right(self.model, right);
-            let corrupted = general::right(left_model, right);
+            // CASA's differentiated coherencies use a zero matrix when
+            // either of its two parameters is invalid. The raw parameter
+            // values still carry forward to the next channel.
+            let [left_valid, right_valid] = self.pair.map(|antenna| valid[antenna] == [true; 2]);
+            let zero = [Complex32::ZERO; 4];
+            let left_model = if left_valid {
+                general::left(self.model, left)
+            } else {
+                zero
+            };
+            let (right_model, corrupted) = if right_valid {
+                (
+                    general::right(self.model, right),
+                    general::right(left_model, right),
+                )
+            } else {
+                (zero, zero)
+            };
             let residual = std::array::from_fn(|corr| corrupted[corr] - self.data[corr]);
             return (residual, [right_model, left_model]);
         }
@@ -227,12 +244,13 @@ impl StandardSample {
 fn chi_squared(
     samples: &[&StandardSample],
     gains: &[[Complex32; 2]],
+    valid: &[[bool; 2]],
     algebra: LeakageAlgebra,
 ) -> f64 {
     samples
         .iter()
         .map(|sample| {
-            let (residual, _) = sample.residual(gains, algebra);
+            let (residual, _) = sample.residual(gains, valid, algebra);
             residual
                 .into_iter()
                 .zip(sample.weights)
@@ -254,13 +272,14 @@ fn step_scale(
     samples: &[&StandardSample],
     gains: &[[Complex32; 2]],
     direction: &[[Complex32; 2]],
+    valid: &[[bool; 2]],
     loss: f64,
 ) -> f32 {
     let mut trial = gains.to_vec();
     let mut evaluate = |scale| {
         trial.copy_from_slice(gains);
         update(&mut trial, direction, scale);
-        chi_squared(samples, &trial, LeakageAlgebra::Linearized)
+        chi_squared(samples, &trial, valid, LeakageAlgebra::Linearized)
     };
     let mut step = 1.0;
     let mut mid = evaluate(step);
