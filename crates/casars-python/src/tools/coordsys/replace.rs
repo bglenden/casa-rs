@@ -35,11 +35,25 @@ fn replace_coordinate(
 ) -> PyResult<bool> {
     let inputs = numbered_coordinates(source)?;
     let input = found_index(input, inputs.len(), "input")?;
+    let source_field = &inputs[input].2;
+    let replacement = source_field.model(&source.record).map_err(raised)?;
+    let source_record = source
+        .record
+        .get(&source_field.field)
+        .expect("source coordinate record");
+    replace_at(target, output, replacement, source_record.clone())?;
+    Ok(true)
+}
+
+pub(super) fn replace_at(
+    target: &mut CoordinateState,
+    output: i32,
+    replacement: CoordinateModel,
+    source_record: Value,
+) -> PyResult<()> {
     let outputs = numbered_coordinates(target)?;
     let output = found_index(output, outputs.len(), "output")?;
-    let source_field = &inputs[input].2;
     let destination_field = &outputs[output].2;
-    let replacement = source_field.model(&source.record).map_err(raised)?;
     if n_axes(&replacement)
         != (
             destination_field.pixel_axes.len(),
@@ -64,12 +78,8 @@ fn replace_coordinate(
     coordinates.replace_coordinate(output, replacement);
 
     let mut record = target.record.clone();
-    let source_record = source
-        .record
-        .get(&source_field.field)
-        .expect("source coordinate record");
     record.remove(&destination_field.field);
-    record.upsert(format!("{prefix}{output}"), source_record.clone());
+    record.upsert(format!("{prefix}{output}"), source_record);
     let field = format!("worldreplace{output}");
     let mapped = coordinates.to_record();
     let Some(Value::Array(replacements)) = mapped.get(&field) else {
@@ -78,7 +88,7 @@ fn replace_coordinate(
     record.upsert(field, Value::Array(replacements.clone()));
     target.coordinates = coordinates;
     target.record = record;
-    Ok(true)
+    Ok(())
 }
 
 #[pymethods]
