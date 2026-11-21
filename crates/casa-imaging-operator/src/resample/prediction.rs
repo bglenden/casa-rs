@@ -663,7 +663,7 @@ impl SpectralResampler {
         // The run of samples the last placement serves: what they read, the
         // first one's phase, and its batch index.
         let mut run: Option<(Gathered, f64, u32)> = None;
-        let mut place = |plane: u32, frequency_hz: f64, slot: usize| {
+        let mut place = |plane: u32, frequency: (f64, Option<usize>), slot: usize| {
             if !prepared.contains(plane) {
                 return;
             }
@@ -673,7 +673,7 @@ impl SpectralResampler {
                 self.basis,
                 row,
                 plane,
-                frequency_hz,
+                frequency,
                 &mut placing,
             ) else {
                 return;
@@ -716,14 +716,14 @@ impl SpectralResampler {
                         }
                     };
                     if let Some(plane) = plane {
-                        place(plane, *frequency_hz, channel);
+                        place(plane, (*frequency_hz, Some(channel)), channel);
                     }
                 }
             }
             Some((axis, order)) => {
                 if let Some(channels) = self.interpolated_planes(axis, order, native) {
                     for channel in channels {
-                        place(channel, axis.centre_hz(channel), channel as usize);
+                        place(channel, (axis.centre_hz(channel), None), channel as usize);
                     }
                 }
             }
@@ -770,7 +770,7 @@ impl SpectralResampler {
                 self.basis,
                 row,
                 plane,
-                native[channel],
+                (native[channel], Some(channel)),
                 placing,
             )
         };

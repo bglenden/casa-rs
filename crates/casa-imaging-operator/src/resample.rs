@@ -669,14 +669,17 @@ fn locate_sample(
     basis: Basis,
     row: &NativeRow<'_>,
     plane: u32,
-    frequency_hz: f64,
+    (frequency_hz, prediction_channel): (f64, Option<usize>),
     placing: &mut RowPlacing,
 ) -> Option<(Placement, CellLocation)> {
     let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
     let w = row.uvw_m[2] * scale;
     let key = match placing.uniform {
         Some(key) => key,
-        None if cf.admits(w) => cf.key(&row.context, frequency_hz, w),
+        None if cf.admits(w) => match prediction_channel {
+            Some(channel) => cf.prediction_key(&row.context, frequency_hz, w, channel),
+            None => cf.key(&row.context, frequency_hz, w),
+        },
         None => return None,
     };
     if placing.key != Some(key) {
@@ -1151,7 +1154,7 @@ impl SpectralResampler {
                 self.basis,
                 row,
                 plane,
-                frequency_hz,
+                (frequency_hz, None),
                 &mut placing,
             ) else {
                 return;

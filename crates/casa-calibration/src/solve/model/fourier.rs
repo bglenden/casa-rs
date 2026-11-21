@@ -273,7 +273,12 @@ impl PreparedFourierModel {
                     true,
                 )
                 .map_err(model_error)?;
-                (Box::new(kernels), None, Some(memory))
+                let map = legacy_aw::record_frequency_map(terms[0]).map_err(model_error)?;
+                (
+                    Box::new(kernels.with_legacy_frequency_map(map)),
+                    None,
+                    Some(memory),
+                )
             } else if mosaic::is_mosaic(terms[0]) {
                 let (kernels, layout) = MosaicLayout::load(
                     terms[0],

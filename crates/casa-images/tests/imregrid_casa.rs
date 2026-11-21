@@ -83,6 +83,12 @@ fn regrid_products_match_casa() {
                     "{name}: {message}"
                 );
             }
+            if name == "removed_linear_unselected_length" {
+                assert!(
+                    message.contains("an axis not being regridded must keep its input length"),
+                    "{name}: {message}"
+                );
+            }
             if name == "complex_sfl_frame" {
                 assert!(
                     message.contains("SFL projection cannot be rotated"),
