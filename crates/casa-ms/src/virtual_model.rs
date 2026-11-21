@@ -275,7 +275,9 @@ pub fn virtual_model_target<'a>(
     virtual_model_target_for_field(ms, first)
 }
 
-fn virtual_model_target_for_field(ms: &MeasurementSet, first: i32) -> MsResult<&Path> {
+/// Physical table that owns a field's virtual recipe, including a clear with no new model.
+#[doc(hidden)]
+pub fn virtual_model_target_for_field(ms: &MeasurementSet, first: i32) -> MsResult<&Path> {
     let state = ModelState::read(ms)?;
     let table = if state.first_row_of_source(ms, first)?.is_some() {
         ms.subtable(SubtableId::Source)

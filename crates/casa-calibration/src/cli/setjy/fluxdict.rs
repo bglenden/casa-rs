@@ -24,6 +24,7 @@ type Record = BTreeMap<String, ParameterValue>;
 pub(super) fn run(
     task: &TaskInvocation<'_>,
     mut opened: OpenedMs,
+    parts: &mut [OpenedMs],
     selection: MsSelection,
     selected: &ResolvedMsSelection,
     scratch: bool,
@@ -94,7 +95,7 @@ pub(super) fn run(
                 .map_err(execution)?;
             scratch_ready = true;
         }
-        publish_models(&mut opened, &field_rows, prepared, &spws, scratch)?;
+        publish_models(&mut opened, parts, &field_rows, prepared, &spws, scratch)?;
         append_values(&mut combined, values);
     }
     opened.release().map_err(execution)?;
