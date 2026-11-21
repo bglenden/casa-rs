@@ -24,7 +24,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 0 | 1 | 0 |
-| flagdata | flagdata | yes | 76 | 76 | 0 | 22 | 0 | 0 |
+| flagdata | flagdata | yes | 76 | 76 | 0 | 20 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
@@ -361,7 +361,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `inpfile`, `reason`, `tbuff`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `tolerance`, `addantenna`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `savepars`
+- Accepted only at CASA's default until #978: `inpfile`, `reason`, `tbuff`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `savepars`
 - Accepted only at CASA's default until #1616: `ntime`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 76, in CASA's order: yes

@@ -4063,6 +4063,25 @@ The paired oracle computes both the selected sample flags and the
 original-axis row status, including a whole-scan control where CASA
 writes the same row flags.
 
+## Shadow flagging can drop the last digit of an antenna's Z coordinate
+
+In CASA 6.7.6.14, the parser for `flagdata(mode='shadow', addantenna=...)`
+can drop the last character before the closing bracket in a position
+line. An extra dish with an ITRF Z coordinate of `3554865` is read at
+`355486` metres when the line ends in `3554865]`. In the five-antenna
+fixture, the truncated value leaves all the affected baselines unflagged.
+The padded file and dictionary with the supplied coordinates agree on
+32 shadowed rows.
+
+casa-rs reads the complete coordinate and reproduces the mask verified
+by the padded file, dictionary, and independent Measures projection.
+[Shadow oracle](../tools/casa-compat/flagdata_shadow_oracle.py)
+
+The shadow oracle also reproduces CASA's widening of decorated correlation
+selections. `ABS_YY` and `ABS_UNKNOWN` change both stored planes in CASA.
+Native shadow flagging matches explicit `YY` for the first expression and
+leaves the flags unchanged when the expression names no stored product.
+
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 
 In CASA 6.7.6.14, run `flagdata(mode="clip", timeavg=True, timebin="40s",

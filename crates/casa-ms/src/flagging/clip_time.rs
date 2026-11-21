@@ -65,6 +65,10 @@ impl ClipTimedRow {
     pub(super) fn baseline_key(&self) -> ([i32; GROUP_COLUMNS.len()], usize) {
         (self.group, self.chunk)
     }
+
+    pub(super) fn shares_integration(&self, other: &Self) -> bool {
+        self.group[..5] == other.group[..5] && self.seconds == other.seconds
+    }
 }
 
 pub(super) fn time_bin_seconds(text: &str) -> Option<f64> {

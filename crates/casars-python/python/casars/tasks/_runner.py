@@ -364,6 +364,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 if completion.message == "Parameter ntime cannot be < = 0":
                     raise ValueError(completion.message) from error
                 raise RuntimeError(completion.message) from error
+            if completion.parameter == "addantenna":
+                if (completion.message or "").startswith("could not convert string to float:"):
+                    raise ValueError(completion.message) from error
+                raise Exception(completion.message) from error
             if completion.parameter in ("channelavg", "chanbin", "timeavg", "outfile"):
                 raise RuntimeError(completion.message) from error
             if completion.parameter == "outfile.not_found":
@@ -559,7 +563,7 @@ def _coerce_flagdata_options(
     cint = (int, np.int32, np.int64)
     errors = _flagging_choice_errors("flagdata", values)
     column_vector = _coerce_flagdata_column(values, argument_text, errors)
-    for parameter in ("lowerlimit", "upperlimit", "growtime", "growfreq"):
+    for parameter in ("tolerance", "lowerlimit", "upperlimit", "growtime", "growfreq"):
         if parameter in values:
             value = values[parameter]
             if value is None:
@@ -576,6 +580,16 @@ def _coerce_flagdata_options(
             errors["extendpols"] = ["must be of cVariant type"]
         elif isinstance(value, (np.ndarray, np.int32, np.int64, np.float32, np.float64)):
             argument_text["extendpols"] = str(value)
+    if "addantenna" in values:
+        value = values["addantenna"]
+        if value is None:
+            errors["addantenna"] = ["null value not allowed"] * 3
+        elif isinstance(value, str):
+            values["addantenna"] = str(value)
+        elif isinstance(value, dict):
+            argument_text["addantenna"] = repr(value)
+        else:
+            errors["addantenna"] = ["must be of cStr type", "must be of cDict type"]
     correlation_vector = None
     for parameter in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         if parameter not in values:

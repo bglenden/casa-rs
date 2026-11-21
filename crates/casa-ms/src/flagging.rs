@@ -54,6 +54,8 @@ mod command;
 mod correlation;
 mod elevation;
 mod extend;
+mod geometry;
+mod shadow;
 mod summary;
 
 use clip::{ClipOptions, apply_clip_array};
@@ -62,6 +64,7 @@ use clip_columns::ClipColumns;
 use clip_time::{TimeClip, time_bin_seconds};
 pub use command::append_flag_command;
 use correlation::{ClipProjection, CorrelationSelection};
+pub use shadow::{ShadowAntenna, ShadowOptions};
 mod version_backup;
 pub use clip_models::{FlagDataModelFactory, FlagDataModelPredictor};
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
@@ -127,6 +130,8 @@ pub enum FlagDataMode {
     Quack,
     /// Flag selected baselines outside the antenna elevation limits.
     Elevation,
+    /// Flag selected baselines involving a shadowed antenna.
+    Shadow,
     /// CASA TFCrop-family robust time/frequency outlier flagging.
     Tfcrop,
     /// CASA RFlag-family two-pass robust time/frequency flagging.
@@ -219,6 +224,8 @@ pub struct FlagDataRequest {
     pub quackincrement: bool,
     /// Inclusive lower and upper antenna elevations, in degrees.
     pub elevation_limits_deg: [f64; 2],
+    /// Dish shadowing parameters.
+    pub shadow: ShadowOptions,
     /// TFCrop time cutoff in robust sigma units.
     pub timecutoff: f64,
     /// TFCrop frequency cutoff in robust sigma units.
@@ -286,6 +293,7 @@ impl Default for FlagDataRequest {
             quackmode: QuackMode::Beg,
             quackincrement: false,
             elevation_limits_deg: [0.0, 90.0],
+            shadow: ShadowOptions::default(),
             timecutoff: 4.0,
             freqcutoff: 3.0,
             timedevscale: 5.0,
@@ -472,6 +480,7 @@ fn flagdata_with_persistence(
                 | FlagDataMode::Quack
                 | FlagDataMode::Elevation
                 | FlagDataMode::Extend
+                | FlagDataMode::Shadow
         );
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
@@ -549,6 +558,14 @@ fn flagdata_with_persistence(
             ms,
             &selected_rows,
             request.elevation_limits_deg,
+            channel_selections.as_ref(),
+            correlations.as_ref(),
+            &ms_path,
+        )?,
+        FlagDataMode::Shadow => shadow::apply(
+            ms,
+            &selected_rows,
+            &request.shadow,
             channel_selections.as_ref(),
             correlations.as_ref(),
             &ms_path,

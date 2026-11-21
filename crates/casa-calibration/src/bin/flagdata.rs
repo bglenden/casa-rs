@@ -24,6 +24,9 @@ use casa_task_runtime::{
 };
 use casa_types::quanta::Quantity;
 
+#[path = "flagdata/shadow.rs"]
+mod shadow;
+
 const STRING_SELECTORS: [&str; 9] = [
     "field",
     "spw",
@@ -74,6 +77,16 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     check_correlation_argument(task, &action)?;
     let save_parameters = task.flag("savepars")? && mode != "summary";
     let channel_bins = channel_bin_widths(task)?;
+    let shadow = (mode == "shadow")
+        .then(|| shadow::parameters(task))
+        .transpose()
+        .or_else(|error| {
+            backup_before_failed_apply(task, &action)?;
+            Err(error)
+        })?;
+    let shadow_command = shadow
+        .as_ref()
+        .and_then(|params| params.command_argument.as_deref());
     let calculate = match action.as_str() {
         "apply" => false,
         "calculate" => true,
@@ -87,7 +100,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                     ))
                     .at("vis")
                 })?;
-                save_flag_parameters(task, &path, &mode, &action, time_chunk)?;
+                save_flag_parameters(task, &path, &mode, &action, time_chunk, shadow_command)?;
             } else {
                 tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
             }
@@ -119,6 +132,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             Err(error)
         })?;
     request.time_chunk = time_chunk.filter(|seconds| *seconds > 0.0 && seconds.is_finite());
+    if let Some(parameters) = &shadow {
+        request.shadow = parameters.options.clone();
+    }
     request.display_column_is_scalar = display_option.is_empty() || column.is_some();
     if matches!(display_option.as_str(), "data" | "report" | "both") {
         tracing::warn!(display = %display_option, "running flagdata with its headless provider");
@@ -138,6 +154,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                 | FlagDataMode::Summary
                 | FlagDataMode::Elevation
                 | FlagDataMode::Extend
+                | FlagDataMode::Shadow
         )
     {
         return Err(not_yet("action", &action));
@@ -164,7 +181,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         error => TaskFailure::execution(error.to_string()),
     })?;
     if save_parameters && display_option.is_empty() {
-        save_flag_parameters(task, &path, &mode, &action, time_chunk)?;
+        save_flag_parameters(task, &path, &mode, &action, time_chunk, shadow_command)?;
     }
     if !calculate
         && request.mode != FlagDataMode::Summary
@@ -186,6 +203,7 @@ fn save_flag_parameters(
     mode: &str,
     action: &str,
     time_chunk: Option<f64>,
+    shadow_command: Option<&str>,
 ) -> Result<(), TaskFailure> {
     let mut arguments = Vec::new();
     for name in STRING_SELECTORS {
@@ -242,10 +260,15 @@ fn save_flag_parameters(
             "flagneartime",
             "flagnearfreq",
         ],
+        "shadow" => &["tolerance", "addantenna"],
         _ => return Err(not_yet("savepars", mode)),
     };
     for &field in fields {
-        if let Some(text) = task.argument_text(field) {
+        if field == "addantenna" {
+            if let Some(text) = shadow_command {
+                arguments.push(format!("addantenna={text}"));
+            }
+        } else if let Some(text) = task.argument_text(field) {
             arguments.push(format!("{field}={text}"));
         } else if field == "datacolumn" {
             let column = task.required_text(field)?.to_ascii_uppercase();
@@ -431,6 +454,9 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                 ("datacolumn", _) if float_display => "\"FLOAT_DATA\"".to_string(),
                 ("datacolumn", ParameterValue::Array(_)) => task
                     .argument_text("datacolumn")
+                    .map_or_else(|| python_repr(value), str::to_owned),
+                ("addantenna", ParameterValue::Table(_)) => task
+                    .argument_text("addantenna")
                     .map_or_else(|| python_repr(value), str::to_owned),
                 ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
                     "\"\"".to_string()
@@ -654,6 +680,7 @@ fn flagdata_request(
         quackmode,
         quackincrement,
         elevation_limits_deg: [task.number("lowerlimit")?, task.number("upperlimit")?],
+        shadow: Default::default(),
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         timedevscale: task.number("timedevscale")?,
@@ -835,6 +862,7 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
         "clip" => flag(FlagDataMode::Clip),
         "quack" => flag(FlagDataMode::Quack),
         "elevation" => flag(FlagDataMode::Elevation),
+        "shadow" => flag(FlagDataMode::Shadow),
         "tfcrop" => flag(FlagDataMode::Tfcrop),
         "rflag" => flag(FlagDataMode::Rflag),
         "extend" => flag(FlagDataMode::Extend),
@@ -1140,7 +1168,7 @@ mod tests {
 
     #[test]
     fn casa_values_not_implemented_yet_name_978() {
-        for (name, value) in [("--mode", "shadow"), ("--mode", "list")] {
+        for (name, value) in [("--mode", "antint"), ("--mode", "list")] {
             let error = request_for(&["--vis", "in.ms", name, value]).unwrap_err();
             assert!(error.message.contains("#978"), "{name} {value}: {error:?}");
             assert_eq!(error.parameter.as_deref(), Some(&name[2..]));

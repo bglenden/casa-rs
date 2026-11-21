@@ -838,7 +838,7 @@ def flagdata(
     quackmode: str | list[str] = ...,
     quackincrement: bool | list[bool] = ...,
     tolerance: float = ...,
-    addantenna: str = ...,
+    addantenna: str | dict[str, ParameterData] = ...,
     lowerlimit: ParameterData = ...,
     upperlimit: ParameterData = ...,
     ntime: str | float = ...,
