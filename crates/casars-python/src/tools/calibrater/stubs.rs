@@ -84,23 +84,6 @@ impl PyCalibrater {
         not_yet_implemented_in("calibrater", "parsecallibfile", 1528)
     }
 
-    #[pyo3(signature = (antennas, fields, spwids, plottype = None, tablename = None, polarization = None, multiplot = None, nx = None, ny = None, psfile = None), text_signature = "($self, antennas, fields, spwids, plottype='AMP', tablename='', polarization=1, multiplot=False, nx=1, ny=1, psfile='')")]
-    fn plotcal(
-        &self,
-        antennas: &Bound<'_, PyAny>,
-        fields: &Bound<'_, PyAny>,
-        spwids: &Bound<'_, PyAny>,
-        plottype: Option<&Bound<'_, PyAny>>,
-        tablename: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-        multiplot: Option<&Bound<'_, PyAny>>,
-        nx: Option<&Bound<'_, PyAny>>,
-        ny: Option<&Bound<'_, PyAny>>,
-        psfile: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "plotcal", 1526)
-    }
-
     #[pyo3(signature = (posangcor, tablein, tableout = None), text_signature = "($self, posangcor, tablein, tableout='')")]
     fn posangcal(
         &self,
