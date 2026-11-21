@@ -35,7 +35,7 @@ fn text_field<'a>(record: &'a RecordValue, name: &str) -> Option<&'a str> {
 }
 
 #[derive(Clone, Copy)]
-enum OutputFrame {
+pub(super) enum OutputFrame {
     Absolute,
     Relative,
 }
@@ -134,7 +134,7 @@ impl OutputFrame {
         }
     }
 
-    fn apply(
+    pub(super) fn apply(
         self,
         coordinates: &CoordinateSystem,
         values: &mut [f64],

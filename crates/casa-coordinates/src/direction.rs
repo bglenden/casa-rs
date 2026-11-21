@@ -19,6 +19,7 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::str::FromStr;
 
+mod mixed;
 mod reference_frame;
 
 use casa_types::measures::MeasFrame;
@@ -69,6 +70,8 @@ pub struct DirectionCoordinate {
     /// Celestial coordinates of the native pole [alpha_p, delta_p] in radians.
     /// Computed from crval, longpole, latpole, and theta_0.
     native_pole: [f64; 2],
+    /// Native angles to search when only one sky coordinate is supplied.
+    mix_ranges: [[f64; 2]; 2],
     /// The angle units the coordinate is stored and presented in, as
     /// casacore's `worldAxisUnits` (CASA's images use `'`, `deg` or `rad`);
     /// it computes in radians whatever they are.
@@ -249,6 +252,7 @@ impl DirectionCoordinate {
             longpole,
             latpole,
             native_pole,
+            mix_ranges: mixed::DEFAULT_RANGES,
             world_units: ["rad".into(), "rad".into()],
             world_names: None,
             removed_axis: None,
@@ -1005,6 +1009,27 @@ impl DirectionCoordinate {
         let to_degrees = 180.0 / PI;
         let latitude_degrees = lat * to_degrees;
         let euler_1 = 90.0 - delta_p * to_degrees;
+        if euler_1 == 0.0 || euler_1 == 180.0 {
+            // Coincident polar axes need only a longitude shift and an
+            // optional pole flip. At a pole this retains the longitude
+            // supplied for cylindrical projections.
+            let (phi, theta) = if euler_1 == 0.0 {
+                (lon + (self.longpole - PI - alpha_p) % (2.0 * PI), lat)
+            } else {
+                ((self.longpole + alpha_p) % (2.0 * PI) - lon, -lat)
+            };
+            let phi = phi % (2.0 * PI);
+            return (
+                if phi > PI {
+                    phi - 2.0 * PI
+                } else if phi < -PI {
+                    phi + 2.0 * PI
+                } else {
+                    phi
+                },
+                theta,
+            );
+        }
         let (euler_4, euler_3) = wcslib_sin_cos_degrees(euler_1);
         let (sin_lat, cos_lat) = wcslib_sin_cos_degrees(latitude_degrees);
         let dlng = (lon - alpha_p) * to_degrees;

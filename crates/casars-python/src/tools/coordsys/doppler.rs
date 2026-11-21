@@ -99,7 +99,7 @@ fn spectral_shift(values: &mut [f64], freq_unit: &str, velocity: &Quantity) -> P
     Ok(())
 }
 
-struct VelocityConversion {
+pub(super) struct VelocityConversion {
     rest_hz: f64,
     hz_per_unit: f64,
     velocity_scale: f64,
@@ -187,6 +187,40 @@ pub(in crate::tools) fn stored_velocity_settings(
 }
 
 impl VelocityConversion {
+    pub(super) fn for_spectral_axis(
+        spectral: &SpectralCoordinate,
+        unit: &Unit,
+        convention: DopplerRef,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            rest_hz: spectral.rest_frequency_hz().map_err(raised)?,
+            hz_per_unit: spectral.value_in_hz(1.0).map_err(raised)?,
+            velocity_scale: unit.val().factor / C_MPS,
+            convention,
+        })
+    }
+
+    pub(super) fn mixed_velocity(&self, frequency: f64) -> PyResult<f64> {
+        if self.rest_hz == 0.0 {
+            return Err(raised(
+                "Exception: Rest frequency is 0 so cannot convert to velocity.",
+            ));
+        }
+        let velocity = self.frequency_to_velocity(frequency)?;
+        if velocity.is_nan() {
+            return Err(raised("velocity is NaN"));
+        }
+        Ok(velocity)
+    }
+
+    pub(super) fn mixed_frequency(&self, velocity: f64) -> PyResult<f64> {
+        let frequency = self.velocity_to_frequency(velocity)?;
+        if frequency <= 0.0 {
+            return Err(raised("frequency <= 0"));
+        }
+        Ok(frequency)
+    }
+
     fn new(
         state: &CoordinateState,
         spectral: &SpectralCoordinate,
