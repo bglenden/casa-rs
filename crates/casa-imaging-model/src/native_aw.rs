@@ -2,7 +2,7 @@
 
 //! Immutable scientific inputs for native EVLA convolution-function generation.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use thiserror::Error;
 
@@ -160,7 +160,8 @@ pub struct NativeAwFrequencyGroup {
     /// Selected MeasurementSet spectral-window identifier (the lowest, for
     /// the one group without wideband cells).
     pub spectral_window: u32,
-    /// Selected physical channel frequencies, in native ascending/descending order.
+    /// Physical frequencies sampled for this group, in native channel order.
+    /// The legacy VLA cache samples only the selected range's endpoint.
     pub channel_frequencies_hz: Vec<f64>,
     /// Representative CF frequency in Hz resolved by the application planner.
     pub cf_frequency_hz: f64,
@@ -257,11 +258,10 @@ impl NativeAwRequestInput {
             values.iter().all(|v| v.is_finite()) && values.windows(2).all(|pair| pair[0] < pair[1])
         };
         let repeated_or_unordered = if legacy_vla {
-            frequencies.iter().enumerate().any(|(i, group)| {
-                frequencies[..i]
-                    .iter()
-                    .any(|previous| previous.cf_frequency_hz == group.cf_frequency_hz)
-            })
+            let mut endpoints = HashSet::with_capacity(frequencies.len());
+            frequencies
+                .iter()
+                .any(|group| !endpoints.insert(group.cf_frequency_hz.to_bits()))
         } else {
             frequencies
                 .windows(2)

@@ -348,12 +348,16 @@ def disjoint_ranges(root, dataset, model, selector, stops, *, reference=None):
         np.testing.assert_array_equal(actual[:, 4:, :], expected[:, 4:, :])
         errors[name] = relative_rms(actual[:, :4, :], expected[:, :4, :])
 
+    errors.update(disjoint_kernel_routing(root, dataset, model, native_cache, selector,
+                                          data(reopened, 'MODEL_DATA')))
+
     if stops == (0, 3):
         saved, saved_cache = root / 'saved.ms', root / 'saved-cache'
         make_input(dataset, saved, scratch=False)
         predict(saved, model, saved_cache, 'awproject', False, scratch=False, spw=selector, wbawp=True)
         entry = recipe(saved)
         assert entry['name'] == 'AWProjectWBFT'
+        assert tuple(entry['casars_legacy_aw_frequency_map'][:3]) == (0, 1, 1)
         assert compare_cells(Path(entry['diskimage']) / 'CASARS_LEGACY_AW_CACHE', casa_cache, count=8) < 1.e-3
         saved_cache.rename(root / 'unavailable-cache')
         before = corrected_or_data(saved)
@@ -364,7 +368,40 @@ def disjoint_ranges(root, dataset, model, selector, stops, *, reference=None):
         assert not np.any(replayed[:, 4:, :])
         errors['saved'] = relative_rms(replayed[:, :4, :], expected[:, :4, :])
     print(selector, 'independent cache and prediction NRMS', errors, flush=True)
-    assert max(errors.values()) < 1.e-3
+    assert all(np.isfinite(error) and error < 1.e-3 for error in errors.values()), errors
+    return errors
+
+
+def disjoint_kernel_routing(root, dataset, model, cache, selector, unchanged):
+    errors = {}
+    for index in (0, 1):
+        changed = root / f'changed-cf-{index}'
+        shutil.copytree(cache, changed)
+        cells = sorted(changed.glob(f'CFS_*_CF_{index}_0_*.im'))
+        assert len(cells) == 2
+        for path in cells:
+            tool = image()
+            assert tool.open(str(path))
+            pixels = tool.getchunk()
+            u = np.arange(pixels.shape[0], dtype=np.float32)
+            phase = np.exp(.6j * (u - u.mean())).reshape((-1, 1, 1, 1))
+            # A scalar amplitude would cancel in the normalized degrid.
+            assert tool.putchunk(pixels * phase) and tool.done()
+        predictions = []
+        for name, factory in ('casa', casa_imager), ('native', imager):
+            target = root / f'changed-cf-{index}-{name}.ms'
+            make_input(dataset, target, scratch=True)
+            predict(target, model, changed, 'awproject', False, factory=factory,
+                    spw=selector, wbawp=True)
+            predictions.append(data(target, 'MODEL_DATA'))
+        pinned, native = predictions
+        if index == 0:
+            np.testing.assert_array_equal(pinned, unchanged)
+        else:
+            assert relative_rms(pinned[:, 0, :], unchanged[:, 0, :]) > .01
+            np.testing.assert_array_equal(pinned[:, 1:, :], unchanged[:, 1:, :])
+        errors[f'changed_group_{index}'] = relative_rms(native[:, 0, :], pinned[:, 0, :])
+        np.testing.assert_array_equal(native[:, 1:, :], pinned[:, 1:, :])
     return errors
 
 

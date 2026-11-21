@@ -11,14 +11,12 @@ use casa_imaging_model::{
     PolarizationCoordinate,
 };
 use casa_imaging_operator::{
-    AwCatalog, AwIndexing, AwPaRotation, GridGeometry, GridPadding, ImageExtent, NativeCacheLock,
-    PolarizationRouting,
+    AwCatalog, AwIndexing, AwLegacyFrequencyMap, AwPaRotation, GridGeometry, GridPadding,
+    ImageExtent, NativeCacheLock, PolarizationRouting,
 };
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::{
-    ChannelSelection, ChannelSelectionSegment, MeasurementSet, MsResult, ResolvedMsSelection,
-};
+use casa_ms::{ChannelSelectionSegment, MeasurementSet, MsResult, ResolvedMsSelection};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::epoch::EpochRef;
 use casa_types::{ArrayValue, Correlation, RecordValue, ScalarValue, Value};
@@ -27,10 +25,10 @@ use crate::calibrater_lifecycle::legacy_ep::{legacy_vla_surface, model_geometry,
 use crate::paths::copy_editable_table_tree;
 
 use super::image::ImageModel;
-use super::invalid;
 use super::legacy_pbw::LegacyFourierImage;
 use super::moving_source::first_imager_row;
 use super::settings::{ImagerLegacyAwOptions, PredictionGeometry};
+use super::{channel_span, invalid};
 
 pub(crate) const CACHE: &str = "CASARS_LEGACY_AW_CACHE";
 pub(crate) const MACHINE: &str = "AWProjectWBFT";
@@ -40,6 +38,7 @@ const COLD_STAGE: &str = ".casars-legacy-aw-";
 const OWNED_STAGE: &str = "preparing";
 const CELL_JOURNAL: &str = "promoting";
 const CELL_OWNER: &str = ".casars-legacy-aw-owner";
+const FREQUENCY_MAP: &str = "casars_legacy_aw_frequency_map";
 
 pub(super) fn prepare_model(
     ms: &MeasurementSet,
@@ -122,6 +121,7 @@ pub(super) fn prepare_model(
             "legacy AW currently needs a VLA L-band model (#1520)",
         ));
     }
+    let frequency_map = selected_frequency_map(ms, selected, row.spectral_window_id)?;
     let _cache_lock = ready_cache(
         &options.cache_directory,
         spectral,
@@ -155,6 +155,7 @@ pub(super) fn prepare_model(
                     wideband: options.wideband,
                     conjugate_beams: options.conjugate_beams,
                 },
+                &host,
             )
         },
         &host,
@@ -242,9 +243,100 @@ pub(super) fn prepare_model(
                         .collect(),
                 )),
             );
+            if let Some(map) = frequency_map {
+                record.upsert(
+                    FREQUENCY_MAP,
+                    Value::Array(ArrayValue::from_f64_vec(vec![
+                        map.start_channel as f64,
+                        map.channel_stride as f64,
+                        map.mapped_channels as f64,
+                        map.start_hz,
+                        map.increment_hz,
+                    ])),
+                );
+            }
             Ok(())
         },
     )
+}
+
+fn selected_frequency_map(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    spw: i32,
+) -> MsResult<Option<AwLegacyFrequencyMap>> {
+    let Some(selection) = selected.channel_selections.get(&spw) else {
+        return Ok(None);
+    };
+    if selection.segments.len() < 2 {
+        return Ok(None);
+    }
+    check_range_count(selection.segments.len())?;
+    let last = selection.segments.last().expect("multiple selected ranges");
+    let spectral = ms.spectral_window()?;
+    let window = usize::try_from(spw).map_err(invalid)?;
+    let frequencies = spectral.chan_freq(window)?;
+    let widths = spectral.chan_width(window)?;
+    let frequency_at = |channel: i32| {
+        usize::try_from(channel)
+            .ok()
+            .and_then(|channel| frequencies.get(channel).copied())
+            .ok_or_else(|| invalid("the legacy A/W frequency map is outside its window"))
+    };
+    // CFBuffer::initMaps overwrites the SPW map for each supplied range.
+    // MSSelection::getChanFreqList supplies the mean width times the stride.
+    let start_hz = frequency_at(last.start)?;
+    let increment_hz = last.stride as f64 * widths.iter().sum::<f64>() / widths.len() as f64;
+    let mapped = ((frequency_at(last.end)? - start_hz) / increment_hz + 1.0).trunc();
+    if !start_hz.is_finite()
+        || start_hz <= 0.
+        || !increment_hz.is_finite()
+        || increment_hz == 0.
+        || !(1.0..=f64::from(i32::MAX)).contains(&mapped)
+    {
+        return Err(invalid("legacy A/W frequency range has invalid sampling"));
+    }
+    let (span, channel_stride) = channel_span(selection);
+    Ok(Some(AwLegacyFrequencyMap {
+        start_channel: span.start,
+        channel_stride,
+        mapped_channels: mapped as usize,
+        start_hz,
+        increment_hz,
+    }))
+}
+
+pub(crate) fn record_frequency_map(record: &RecordValue) -> MsResult<Option<AwLegacyFrequencyMap>> {
+    let Some(value) = record.get(FREQUENCY_MAP) else {
+        return Ok(None);
+    };
+    let malformed = || invalid("legacy AW recipe has an invalid frequency map");
+    let Value::Array(ArrayValue::Float64(values)) = value else {
+        return Err(malformed());
+    };
+    let Some(&[start, stride, count, start_hz, increment_hz]) = values.as_slice() else {
+        return Err(malformed());
+    };
+    if values.shape() != [5]
+        || [(start, 0.), (stride, 1.), (count, 1.)]
+            .into_iter()
+            .any(|(value, min)| {
+                !(min..=f64::from(i32::MAX)).contains(&value) || value.fract() != 0.
+            })
+        || !start_hz.is_finite()
+        || start_hz <= 0.
+        || !increment_hz.is_finite()
+        || increment_hz == 0.
+    {
+        return Err(malformed());
+    }
+    Ok(Some(AwLegacyFrequencyMap {
+        start_channel: start as usize,
+        channel_stride: stride as usize,
+        mapped_channels: count as usize,
+        start_hz,
+        increment_hz,
+    }))
 }
 
 fn cold_request(
@@ -254,7 +346,8 @@ fn cold_request(
     grid: &GridGeometry,
     (reference_frequency_hz, pa): (f64, f64),
     terms: NativeAwTerms,
-) -> MsResult<(NativeAwRequestInput, String)> {
+    host: &HostResources,
+) -> MsResult<(NativeAwRequestInput, String, Reservation)> {
     let window = ms.spectral_window()?;
     let band = window.name(spw as usize)?;
     let frequencies = window.chan_freq(spw as usize)?;
@@ -275,41 +368,22 @@ fn cold_request(
         .map_or(std::slice::from_ref(&entire), |selection| {
             selection.segments.as_slice()
         });
+    check_range_count(segments.len())?;
+    let memory = admit(
+        host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy A/W channel range planning",
+            // Each group retains one sample. Include the temporary endpoint index.
+            memory: (segments.len() as u64).saturating_mul(
+                (size_of::<NativeAwFrequencyGroup>() + size_of::<f64>() + 32) as u64,
+            ),
+        },
+    )
+    .map_err(invalid)?;
     let spectral_window = spw.try_into().map_err(invalid)?;
-    // Keep getChanFreqList's original range order in the cell names and in
-    // the conjugate-frequency tie break, including multiple ranges of one SPW.
-    let groups = segments
-        .iter()
-        .map(|segment| {
-            let selection = ChannelSelection {
-                segments: vec![segment.clone()],
-            };
-            let channel_frequencies_hz: Vec<_> = selection
-                .indices(frequencies.len())?
-                .into_iter()
-                .map(|index| frequencies[index])
-                .collect();
-            let stop = usize::try_from(segment.end).map_err(invalid)?;
-            let cf_frequency_hz = *frequencies
-                .get(stop)
-                .ok_or_else(|| invalid("the cold A/W channel range is outside its window"))?;
-            if std::iter::once(&cf_frequency_hz)
-                .chain(&channel_frequencies_hz)
-                .any(|frequency| !(1.0e9..=2.0e9).contains(frequency))
-            {
-                return Err(invalid("cold VLA A/W needs L-band visibility channels"));
-            }
-            Ok(NativeAwFrequencyGroup {
-                spectral_window,
-                channel_frequencies_hz,
-                cf_frequency_hz,
-            })
-        })
-        .collect::<MsResult<Vec<_>>>()?;
-    let maximum_cells = groups
-        .len()
-        .checked_mul(2)
-        .ok_or_else(|| invalid("too many legacy A/W channel ranges"))?;
+    let groups = legacy_frequency_groups(segments, &frequencies, spectral_window)?;
+    let maximum_cells = groups.len() * 2;
     let (fft_side, oversampling) = (2048, 20);
     let image = grid.image();
     let input = NativeAwRequestInput {
@@ -331,7 +405,64 @@ fn cold_request(
         terms,
         maximum_cells,
     };
-    Ok((input, band))
+    Ok((input, band, memory))
+}
+
+fn legacy_frequency_groups(
+    segments: &[ChannelSelectionSegment],
+    frequencies: &[f64],
+    spectral_window: u32,
+) -> MsResult<Vec<NativeAwFrequencyGroup>> {
+    check_range_count(segments.len())?;
+    let in_band = |frequency: &f64| (1.0e9..=2.0e9).contains(frequency);
+    let window_in_band = frequencies.iter().all(in_band);
+    // CASA samples each range at its stop for the cell names and the
+    // conjugate-frequency tie break. Keep that order and one sample per range.
+    segments
+        .iter()
+        .map(|segment| {
+            let start = usize::try_from(segment.start).map_err(invalid)?;
+            let stop = usize::try_from(segment.end).map_err(invalid)?;
+            let stride = segment.stride;
+            if stride == 0 || start.max(stop) >= frequencies.len() {
+                return Err(invalid(
+                    "the cold A/W channel range is outside its window or has zero stride",
+                ));
+            }
+            if !window_in_band {
+                let sampled_span = start.abs_diff(stop) / stride * stride;
+                let (first_sample, last_sample) = if start <= stop {
+                    (start, start + sampled_span)
+                } else {
+                    (start - sampled_span, start)
+                };
+                if !in_band(&frequencies[stop])
+                    || !frequencies[first_sample..=last_sample]
+                        .iter()
+                        .step_by(stride)
+                        .all(in_band)
+                {
+                    return Err(invalid("cold VLA A/W needs L-band visibility channels"));
+                }
+            }
+            let cf_frequency_hz = frequencies[stop];
+            Ok(NativeAwFrequencyGroup {
+                spectral_window,
+                channel_frequencies_hz: vec![cf_frequency_hz],
+                cf_frequency_hz,
+            })
+        })
+        .collect()
+}
+
+fn check_range_count(count: usize) -> MsResult<()> {
+    if (1..=usize::from(u16::MAX) + 1).contains(&count) {
+        Ok(())
+    } else {
+        Err(invalid(
+            "legacy A/W channel ranges exceed the cache index range",
+        ))
+    }
 }
 
 fn is_cell(name: &str) -> bool {
@@ -415,7 +546,7 @@ fn cell_owned_by(path: &Path, owner: &str) -> MsResult<bool> {
 fn ready_cache(
     root: &Path,
     spectral: &SpectralCoordinate,
-    request: impl FnOnce() -> MsResult<(NativeAwRequestInput, String)>,
+    request: impl FnOnce() -> MsResult<(NativeAwRequestInput, String, Reservation)>,
     host: &HostResources,
     desired_workers: i32,
 ) -> MsResult<NativeCacheLock> {
@@ -429,7 +560,7 @@ fn ready_cache(
         recover_stage(root, &stage)?;
     }
     if !has_cells(root)? {
-        let (input, band) = request()?;
+        let (input, band, _planning_memory) = request()?;
         let workers = if desired_workers > 1 { 2 } else { 1 };
         let _memory = admit(
             host,
@@ -637,4 +768,58 @@ pub(crate) fn open_catalog(
         memory.retain(charge.bytes(0, bound.bytes()));
     }
     Ok((terms, memory))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cold_frequency_groups_keep_only_ordered_endpoints() {
+        let channels = 8192;
+        let frequencies: Vec<_> = (0..channels)
+            .map(|index| 1.4e9 + f64::from(index))
+            .collect();
+        let ranges: Vec<_> = (0..channels)
+            .rev()
+            .map(|end| ChannelSelectionSegment {
+                start: 0,
+                end,
+                stride: 1,
+            })
+            .collect();
+        let groups = legacy_frequency_groups(&ranges, &frequencies, 7).unwrap();
+        assert_eq!(groups.len(), ranges.len());
+        for (group, &stop) in groups.iter().zip(frequencies.iter().rev()) {
+            assert_eq!(group.spectral_window, 7);
+            assert_eq!(group.cf_frequency_hz, stop);
+            assert_eq!(group.channel_frequencies_hz, [stop]);
+        }
+        assert_eq!(
+            legacy_frequency_groups(&ranges[..1], &frequencies, 7)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(check_range_count(usize::from(u16::MAX) + 1).is_ok());
+        assert!(check_range_count(usize::from(u16::MAX) + 2).is_err());
+    }
+
+    #[test]
+    fn cold_frequency_ranges_check_samples_and_the_raw_stop() {
+        let frequencies = [1.41e9, 2.1e9, 1.42e9, 1.43e9, 1.44e9];
+        let range = |start, end| {
+            [ChannelSelectionSegment {
+                start,
+                end,
+                stride: 2,
+            }]
+        };
+        assert_eq!(
+            legacy_frequency_groups(&range(4, 0), &frequencies, 0).unwrap()[0].cf_frequency_hz,
+            1.41e9
+        );
+        assert!(legacy_frequency_groups(&range(0, 1), &frequencies, 0).is_err());
+        assert!(legacy_frequency_groups(&range(3, 0), &frequencies, 0).is_err());
+    }
 }

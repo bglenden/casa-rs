@@ -299,6 +299,7 @@ pub struct AwCatalog {
     prediction_frequency_scale: f64,
     prediction_uses_native_frequency: bool,
     legacy_prediction_origin: bool,
+    legacy_frequency_map: Option<AwLegacyFrequencyMap>,
     pa_deg: Vec<f64>,
     frequencies_hz: Vec<f64>,
     w_values: Vec<f64>,
@@ -320,6 +321,36 @@ pub struct AwCatalog {
     /// Signalled whenever a group's load ends, loaded or not, for the
     /// fetchers waiting on it ([`Slot::Loading`]).
     load_ended: Condvar,
+}
+
+/// The last legacy A/W range's frequency map, indexed by the compact
+/// visibility buffer formed from the envelope of all selected ranges.
+#[derive(Clone, Copy, Debug)]
+pub struct AwLegacyFrequencyMap {
+    /// Start of the compact visibility buffer, as a physical channel index.
+    pub start_channel: usize,
+    /// Stride of the compact visibility buffer through physical channels.
+    pub channel_stride: usize,
+    /// Number of entries defined in the last range's frequency map.
+    pub mapped_channels: usize,
+    /// Frequency of map entry zero in Hz.
+    pub start_hz: f64,
+    /// Frequency difference between map entries in Hz.
+    pub increment_hz: f64,
+}
+
+impl AwLegacyFrequencyMap {
+    fn frequency(self, channel: usize) -> Option<f64> {
+        let offset = channel.checked_sub(self.start_channel)?;
+        let compact = offset.checked_div(self.channel_stride)?;
+        if compact < self.mapped_channels && offset.is_multiple_of(self.channel_stride) {
+            Some(self.start_hz + compact as f64 * self.increment_hz)
+        } else {
+            // CASA's out-of-range lookup is unchecked. For other samples,
+            // keep the nearest cell at the physical frequency.
+            None
+        }
+    }
 }
 
 impl std::fmt::Debug for AwCatalog {
@@ -549,6 +580,7 @@ impl AwCatalog {
             prediction_frequency_scale: 1.0,
             prediction_uses_native_frequency: false,
             legacy_prediction_origin: legacy,
+            legacy_frequency_map: None,
             pa_deg,
             frequencies_hz,
             w_values,
@@ -716,6 +748,13 @@ impl AwCatalog {
     #[must_use]
     pub fn with_native_prediction_frequency(mut self, native: bool) -> Self {
         self.prediction_uses_native_frequency = native;
+        self
+    }
+
+    /// Use a saved legacy visibility-buffer map to select prediction cells.
+    #[must_use]
+    pub fn with_legacy_frequency_map(mut self, mapping: Option<AwLegacyFrequencyMap>) -> Self {
+        self.legacy_frequency_map = mapping;
         self
     }
 
@@ -1044,14 +1083,20 @@ impl Drop for Loading<'_> {
     }
 }
 
-impl ConvolutionFunctionSet for AwCatalog {
+impl AwCatalog {
     /// `group` is the gridding cell (the conjugate-frequency cell under
     /// `conjbeams`, `DataToGrid` with `conjBeams`); `cube` the cell a
     /// prediction reads: the native frequency's (`GridToData`,
     /// `nearestFreqNdx(spw, chan)`) at the w-plane of the unrotated w
     /// ([`Self::prediction_w`]). Both use the row's rotation epoch
     /// (`AWProjectFT::setupVBStore` runs for gridding and prediction).
-    fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
+    fn lookup_key(
+        &self,
+        row: &RowContext,
+        freq_hz: f64,
+        w_lambda: f64,
+        prediction_hz: Option<f64>,
+    ) -> CfKey {
         let pa = self
             .row_pa_cell(row)
             .expect("AW row PA coverage was checked");
@@ -1065,13 +1110,36 @@ impl ConvolutionFunctionSet for AwCatalog {
         let prediction_w = self.w_cell(self.prediction_w(row, freq_hz, w_lambda));
         let native = self.group_index(
             pa,
-            nearest(&self.frequencies_hz, native_frequency_hz).0,
+            nearest(
+                &self.frequencies_hz,
+                prediction_hz.unwrap_or(native_frequency_hz),
+            )
+            .0,
             prediction_w,
         ) + rotation * self.groups.len();
         CfKey::new(
             u16::try_from(group).expect("AW group fits u16"),
             u16::try_from(native).expect("AW group fits u16"),
         )
+    }
+}
+
+impl ConvolutionFunctionSet for AwCatalog {
+    fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
+        self.lookup_key(row, freq_hz, w_lambda, None)
+    }
+
+    fn prediction_key(
+        &self,
+        row: &RowContext,
+        freq_hz: f64,
+        w_lambda: f64,
+        channel: usize,
+    ) -> CfKey {
+        let prediction_hz = self
+            .legacy_frequency_map
+            .and_then(|map| map.frequency(channel));
+        self.lookup_key(row, freq_hz, w_lambda, prediction_hz)
     }
 
     fn validate_row_context(&self, row: &RowContext) -> Result<(), OperatorError> {

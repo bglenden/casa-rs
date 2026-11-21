@@ -8155,6 +8155,21 @@ has no retained kernel images.
 [`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
+## Legacy A/W can read beyond its channel-to-kernel map
+
+With wideband legacy `awproject` or `mawproject` in CASA 6.7.6.14,
+`selectvis(spw='0:0;3')` spans four visibility channels. `CFBuffer::initMaps`
+overwrites each spectral window's map with the last range's entries. Here
+the last range defines one entry. `AWVisResampler::GridToData` indexes the
+map with the compact visibility channel number, leaving indices beyond
+the first entry without a defined kernel selection.
+
+Casa-rs follows the last range for indices within the map and looks up
+the cell nearest the physical channel frequency for later indices.
+Perturbing the two cache frequencies independently confirms that both
+engines use the last range's kernel at index zero in either range order.
+[`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py)
+
 ## `image.insert` aborts for a source that misses along one axis
 
 CASA 6.7.6.14 terminates with SIGABRT and `Slicer error:end<start` for a
