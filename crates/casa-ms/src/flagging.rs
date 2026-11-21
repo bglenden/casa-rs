@@ -81,6 +81,10 @@ const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
 const FLAG_VERSION_LIST: &str = "FLAG_VERSION_LIST";
 
+fn is_calibration_table(ms: &MeasurementSet) -> bool {
+    ms.main_table().info().table_type == "Calibration"
+}
+
 /// Input visibility column used by automatic flagging modes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -436,6 +440,10 @@ pub enum FlaggingError {
     #[error("{0}")]
     CalibrationSelection(String),
 
+    /// A mode cannot configure its agent for a calibration table.
+    #[error("Failed to parse parameters for mode {0}")]
+    UnsupportedCalibrationAgent(&'static str),
+
     /// A requested clipping column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode clip")]
     MissingClipColumn,
@@ -502,7 +510,7 @@ fn flagdata_with_persistence(
     persist: bool,
     model_factory: Option<FlagDataModelFactory>,
 ) -> Result<FlagDataReport, FlaggingError> {
-    if ms.main_table().info().table_type == "Calibration" {
+    if is_calibration_table(ms) {
         return calibration::run(ms, request, persist);
     }
     let ms_path = display_ms_path(ms);
@@ -1693,6 +1701,11 @@ fn set_selected_flags(
     flag: bool,
     row_policy: SelectedFlagRowPolicy,
 ) -> Result<ChangeSet, FlaggingError> {
+    let row_policy = if is_calibration_table(ms) {
+        SelectedFlagRowPolicy::Preserve
+    } else {
+        row_policy
+    };
     let loaded = load_samples(
         ms,
         selected_rows,
@@ -1811,6 +1824,7 @@ fn write_touched_flag_updates(
     changed: &mut ChangeSet,
 ) -> Result<(), FlaggingError> {
     let path = display_ms_path(ms);
+    let row_flags = !is_calibration_table(ms);
     let mut prepared = Vec::with_capacity(touched_rows.len());
     for row in touched_rows {
         let Some(flags) = updates.remove(&row) else {
@@ -1819,9 +1833,15 @@ fn write_touched_flag_updates(
         prepared.push((row, flags));
     }
     let flag_row_updates = {
-        let selected = prepared.iter().filter(|(row, _)| update_flag_row(*row));
+        let selected = prepared
+            .iter()
+            .filter(|(row, _)| row_flags && update_flag_row(*row));
         let rows = selected.clone().map(|(row, _)| *row).collect::<Vec<_>>();
-        let current_flag_rows = load_bool_cells(ms.main_table(), &rows, FLAG_ROW_COLUMN, &path)?;
+        let current_flag_rows = if row_flags {
+            load_bool_cells(ms.main_table(), &rows, FLAG_ROW_COLUMN, &path)?
+        } else {
+            Vec::new()
+        };
         selected
             .zip(current_flag_rows)
             .filter_map(|((row, flags), current)| {
@@ -1833,10 +1853,15 @@ fn write_touched_flag_updates(
     ms.main_table_mut()
         .reserve_array_cell_updates(FLAG_COLUMN, prepared.len());
     {
+        let columns: &[&str] = if row_flags {
+            &[FLAG_COLUMN, FLAG_ROW_COLUMN]
+        } else {
+            &[FLAG_COLUMN]
+        };
         let mut writer = ms
             .main_table_mut()
             .row_accessor_mut()
-            .prepare(&[FLAG_COLUMN, FLAG_ROW_COLUMN])
+            .prepare(columns)
             .map_err(|source| FlaggingError::MutateFlags {
                 path: path.clone(),
                 reason: format!("prepare flag updates: {source}"),
@@ -1844,9 +1869,7 @@ fn write_touched_flag_updates(
         let flag_slot = writer
             .column_index(FLAG_COLUMN)
             .expect("prepared FLAG slot");
-        let flag_row_slot = writer
-            .column_index(FLAG_ROW_COLUMN)
-            .expect("prepared FLAG_ROW slot");
+        let flag_row_slot = writer.column_index(FLAG_ROW_COLUMN);
         for (row, flags) in &prepared {
             writer
                 .seek(*row)
@@ -1859,6 +1882,7 @@ fn write_touched_flag_updates(
                 })?;
         }
         for (row, flag_row) in &flag_row_updates {
+            let flag_row_slot = flag_row_slot.expect("prepared FLAG_ROW slot");
             writer
                 .seek(*row)
                 .and_then(|()| {
@@ -1971,7 +1995,12 @@ fn load_samples(
     retain_channel_overlaps: bool,
 ) -> Result<LoadedSamples, FlaggingError> {
     let path = display_ms_path(ms);
-    let ddid_to_spw = data_description_spw_map(ms)?;
+    let calibration = is_calibration_table(ms);
+    let ddid_to_spw = if calibration {
+        BTreeMap::new()
+    } else {
+        data_description_spw_map(ms)?
+    };
     let table = ms.main_table();
     let data_cells = data_column
         .map(|column| {
@@ -1992,7 +2021,12 @@ fn load_samples(
             path: path.clone(),
             reason: format!("read selected FLAG rows: {source}"),
         })?;
-    let ddids = load_i32_cells(table, selected_rows, "DATA_DESC_ID", &path)?;
+    let row_window = if calibration {
+        "SPECTRAL_WINDOW_ID"
+    } else {
+        "DATA_DESC_ID"
+    };
+    let ddids = load_i32_cells(table, selected_rows, row_window, &path)?;
     let fields = load_i32_cells(table, selected_rows, "FIELD_ID", &path)?;
     let scans = load_i32_cells(table, selected_rows, "SCAN_NUMBER", &path)?;
     let ant1s = load_i32_cells(table, selected_rows, "ANTENNA1", &path)?;
@@ -2001,13 +2035,17 @@ fn load_samples(
     let mut flags_by_row = BTreeMap::new();
     for (row_slot, &row) in selected_rows.iter().enumerate() {
         let ddid = ddids[row_slot];
-        let spw = ddid_to_spw
-            .get(&ddid)
-            .copied()
-            .ok_or_else(|| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
-            })?;
+        let spw = if calibration {
+            ddid
+        } else {
+            ddid_to_spw
+                .get(&ddid)
+                .copied()
+                .ok_or_else(|| FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
+                })?
+        };
         let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
             Some(ArrayValue::Bool(values)) => values.clone(),
             Some(other) => {

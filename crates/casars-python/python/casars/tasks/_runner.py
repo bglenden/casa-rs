@@ -371,6 +371,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise KeyError("nreport") from error
             if completion.parameter == "calibration-selection":
                 raise RuntimeError(completion.message) from error
+            if completion.parameter == "calibration-agent":
+                raise ValueError(completion.message) from error
             if completion.parameter == "calibration-save-command":
                 raise Exception(completion.message) from error
             if completion.parameter == "datacolumn" and column_vector:
