@@ -89,6 +89,17 @@ fn stored_products_with_operator(mut text: String) -> Option<String> {
     Some(products.join(","))
 }
 
+fn stored_correlation_modes(ms: &MeasurementSet) -> Result<Vec<Vec<&'static str>>, MsError> {
+    let polarization = ms.polarization()?;
+    (0..polarization.row_count())
+        .map(|row| {
+            polarization
+                .corr_type(row)
+                .map(|codes| codes.into_iter().map(stokes_name).collect())
+        })
+        .collect()
+}
+
 impl CorrelationSelection {
     pub(super) fn read(
         ms: &MeasurementSet,
@@ -128,13 +139,19 @@ impl CorrelationSelection {
         if mode != FlagDataMode::Summary
             && (!matches!(
                 mode,
-                FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Clip
+                FlagDataMode::Manual
+                    | FlagDataMode::Quack
+                    | FlagDataMode::Clip
+                    | FlagDataMode::Elevation
             ) || (mode == FlagDataMode::Clip && has_operator && clip_operator.is_none()))
         {
             return Err(unsupported());
         }
-        let decorated_stored_products =
-            has_operator && matches!(mode, FlagDataMode::Manual | FlagDataMode::Quack);
+        let decorated_stored_products = has_operator
+            && matches!(
+                mode,
+                FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Elevation
+            );
         if decorated_stored_products {
             let Some(products) = stored_products_with_operator(text) else {
                 return Ok(None);
@@ -146,15 +163,7 @@ impl CorrelationSelection {
             path: display_ms_path(ms),
             reason: format!("resolve stored flagging correlations: {source}"),
         };
-        let polarization = ms.polarization().map_err(failed)?;
-        let modes = (0..polarization.row_count())
-            .map(|row| {
-                polarization
-                    .corr_type(row)
-                    .map(|codes| codes.into_iter().map(stokes_name).collect::<Vec<_>>())
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(failed)?;
+        let modes = stored_correlation_modes(ms).map_err(failed)?;
         // CASA finds names in the expression using the whole POLARIZATION
         // table, then requires each selected buffer to contain every match.
         let required: BTreeSet<_> = modes

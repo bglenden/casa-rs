@@ -52,6 +52,7 @@ mod clip_models;
 mod clip_time;
 mod command;
 mod correlation;
+mod elevation;
 mod extend;
 mod summary;
 
@@ -124,6 +125,8 @@ pub enum FlagDataMode {
     Clip,
     /// CASA quack-style scan-edge flagging.
     Quack,
+    /// Flag selected baselines outside the antenna elevation limits.
+    Elevation,
     /// CASA TFCrop-family robust time/frequency outlier flagging.
     Tfcrop,
     /// CASA RFlag-family two-pass robust time/frequency flagging.
@@ -212,6 +215,8 @@ pub struct FlagDataRequest {
     pub quackmode: QuackMode,
     /// Start the interval from the first or last time with unflagged data.
     pub quackincrement: bool,
+    /// Inclusive lower and upper antenna elevations, in degrees.
+    pub elevation_limits_deg: [f64; 2],
     /// TFCrop time cutoff in robust sigma units.
     pub timecutoff: f64,
     /// TFCrop frequency cutoff in robust sigma units.
@@ -269,6 +274,7 @@ impl Default for FlagDataRequest {
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
             quackincrement: false,
+            elevation_limits_deg: [0.0, 90.0],
             timecutoff: 4.0,
             freqcutoff: 3.0,
             timedevscale: 5.0,
@@ -446,7 +452,10 @@ fn flagdata_with_persistence(
         && request.casa_row_selection
         && matches!(
             request.mode,
-            FlagDataMode::Manual | FlagDataMode::Clip | FlagDataMode::Quack
+            FlagDataMode::Manual
+                | FlagDataMode::Clip
+                | FlagDataMode::Quack
+                | FlagDataMode::Elevation
         );
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
@@ -520,6 +529,14 @@ fn flagdata_with_persistence(
             correlations.as_ref(),
             request,
         )?,
+        FlagDataMode::Elevation => elevation::apply(
+            ms,
+            &selected_rows,
+            request.elevation_limits_deg,
+            channel_selections.as_ref(),
+            correlations.as_ref(),
+            &ms_path,
+        )?,
         FlagDataMode::Tfcrop => {
             apply_tfcrop_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
@@ -533,90 +550,7 @@ fn flagdata_with_persistence(
     };
 
     if persist && !changes.changed_row_indices.is_empty() {
-        let mut maximum_flag_bytes = 0usize;
-        for &row in &changes.changed_row_indices {
-            maximum_flag_bytes = maximum_flag_bytes.max(clone_flag_matrix(ms, row)?.len());
-        }
-        let mut columns = vec![MeasurementSetWriteColumnPlan {
-            name: FLAG_COLUMN.to_string(),
-            bytes_per_row: maximum_flag_bytes,
-            mode: MeasurementSetColumnWriteMode::Replace,
-            storage_manager: MeasurementSetColumnStorage::Persisted,
-            tile_shape: None,
-            create_source_column: None,
-        }];
-        if changes.changed_flag_row_rows > 0 {
-            columns.push(MeasurementSetWriteColumnPlan {
-                name: FLAG_ROW_COLUMN.to_string(),
-                bytes_per_row: 1,
-                mode: MeasurementSetColumnWriteMode::Replace,
-                storage_manager: MeasurementSetColumnStorage::Persisted,
-                tile_shape: None,
-                create_source_column: None,
-            });
-        }
-        let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(|error| {
-            FlaggingError::MutateFlags {
-                path: ms_path.clone(),
-                reason: format!("plan changed MAIN flag rows: {error}"),
-            }
-        })?;
-        let include_flag_row = changes.changed_flag_row_rows > 0;
-        let write_plan = MeasurementSetWritePlan::selected_row_mutation(
-            changes.changed_row_indices.clone(),
-            columns,
-            resources,
-        )
-        .map_err(|error| FlaggingError::MutateFlags {
-            path: ms_path.clone(),
-            reason: format!("plan changed MAIN flag rows: {error}"),
-        })?;
-        let batch_rows = write_plan.batch_rows();
-        let mut write_session = MeasurementSetWriteSession::start_selected_row_mutation(
-            ms, write_plan,
-        )
-        .map_err(|error| FlaggingError::MutateFlags {
-            path: ms_path.clone(),
-            reason: format!("start changed MAIN flag rows: {error}"),
-        })?;
-        for rows in changes.changed_row_indices.chunks(batch_rows) {
-            let flag_values = rows
-                .iter()
-                .map(|&row| clone_flag_matrix(ms, row).map(ArrayValue::Bool))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut batch_columns = vec![MeasurementSetMutationColumnBatch {
-                name: FLAG_COLUMN.to_string(),
-                values: MeasurementSetMutationColumnValues::Arrays(flag_values),
-            }];
-            if include_flag_row {
-                let values = load_bool_cells(ms.main_table(), rows, FLAG_ROW_COLUMN, &ms_path)?
-                    .into_iter()
-                    .map(ScalarValue::Bool)
-                    .collect();
-                batch_columns.push(MeasurementSetMutationColumnBatch {
-                    name: FLAG_ROW_COLUMN.to_string(),
-                    values: MeasurementSetMutationColumnValues::Scalars(values),
-                });
-            }
-            write_session
-                .write_mutation_batch(
-                    ms,
-                    MeasurementSetMutationBatch {
-                        row_indices: rows.to_vec(),
-                        columns: batch_columns,
-                    },
-                )
-                .map_err(|error| FlaggingError::MutateFlags {
-                    path: ms_path.clone(),
-                    reason: format!("write changed MAIN flag rows: {error}"),
-                })?;
-        }
-        write_session
-            .finish_mutation()
-            .map_err(|error| FlaggingError::MutateFlags {
-                path: ms_path.clone(),
-                reason: format!("save changed MAIN flag rows: {error}"),
-            })?;
+        persist_changed_flags(ms, &changes, &ms_path)?;
     }
     let thresholds = changes.thresholds;
     let report = report_after(
@@ -636,6 +570,96 @@ fn flagdata_with_persistence(
         "flagdata completed"
     );
     Ok(report)
+}
+
+fn persist_changed_flags(
+    ms: &mut MeasurementSet,
+    changes: &ChangeSet,
+    ms_path: &str,
+) -> Result<(), FlaggingError> {
+    let mut maximum_flag_bytes = 0usize;
+    for &row in &changes.changed_row_indices {
+        maximum_flag_bytes = maximum_flag_bytes.max(clone_flag_matrix(ms, row)?.len());
+    }
+    let mut columns = vec![MeasurementSetWriteColumnPlan {
+        name: FLAG_COLUMN.to_string(),
+        bytes_per_row: maximum_flag_bytes,
+        mode: MeasurementSetColumnWriteMode::Replace,
+        storage_manager: MeasurementSetColumnStorage::Persisted,
+        tile_shape: None,
+        create_source_column: None,
+    }];
+    if changes.changed_flag_row_rows > 0 {
+        columns.push(MeasurementSetWriteColumnPlan {
+            name: FLAG_ROW_COLUMN.to_string(),
+            bytes_per_row: 1,
+            mode: MeasurementSetColumnWriteMode::Replace,
+            storage_manager: MeasurementSetColumnStorage::Persisted,
+            tile_shape: None,
+            create_source_column: None,
+        });
+    }
+    let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(|error| {
+        FlaggingError::MutateFlags {
+            path: ms_path.to_owned(),
+            reason: format!("plan changed MAIN flag rows: {error}"),
+        }
+    })?;
+    let include_flag_row = changes.changed_flag_row_rows > 0;
+    let write_plan = MeasurementSetWritePlan::selected_row_mutation(
+        changes.changed_row_indices.clone(),
+        columns,
+        resources,
+    )
+    .map_err(|error| FlaggingError::MutateFlags {
+        path: ms_path.to_owned(),
+        reason: format!("plan changed MAIN flag rows: {error}"),
+    })?;
+    let batch_rows = write_plan.batch_rows();
+    let mut write_session = MeasurementSetWriteSession::start_selected_row_mutation(ms, write_plan)
+        .map_err(|error| FlaggingError::MutateFlags {
+            path: ms_path.to_owned(),
+            reason: format!("start changed MAIN flag rows: {error}"),
+        })?;
+    for rows in changes.changed_row_indices.chunks(batch_rows) {
+        let flag_values = rows
+            .iter()
+            .map(|&row| clone_flag_matrix(ms, row).map(ArrayValue::Bool))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut batch_columns = vec![MeasurementSetMutationColumnBatch {
+            name: FLAG_COLUMN.to_string(),
+            values: MeasurementSetMutationColumnValues::Arrays(flag_values),
+        }];
+        if include_flag_row {
+            let values = load_bool_cells(ms.main_table(), rows, FLAG_ROW_COLUMN, ms_path)?
+                .into_iter()
+                .map(ScalarValue::Bool)
+                .collect();
+            batch_columns.push(MeasurementSetMutationColumnBatch {
+                name: FLAG_ROW_COLUMN.to_string(),
+                values: MeasurementSetMutationColumnValues::Scalars(values),
+            });
+        }
+        write_session
+            .write_mutation_batch(
+                ms,
+                MeasurementSetMutationBatch {
+                    row_indices: rows.to_vec(),
+                    columns: batch_columns,
+                },
+            )
+            .map_err(|error| FlaggingError::MutateFlags {
+                path: ms_path.to_owned(),
+                reason: format!("write changed MAIN flag rows: {error}"),
+            })?;
+    }
+    write_session
+        .finish_mutation()
+        .map_err(|error| FlaggingError::MutateFlags {
+            path: ms_path.to_owned(),
+            reason: format!("save changed MAIN flag rows: {error}"),
+        })?;
+    Ok(())
 }
 
 /// Open an MS, run native `flagdata`, and save the changed MAIN table.
@@ -811,7 +835,7 @@ fn selected_rows(
     })
 }
 
-fn clip_read_plan(
+fn flag_read_plan(
     ms: &MeasurementSet,
     row_count: usize,
     primitive_bytes: usize,
@@ -877,7 +901,7 @@ fn clip_read_plan(
             maximum_elements.max(channel_count.checked_mul(correlation_count).ok_or_else(
                 || FlaggingError::MutateFlags {
                     path: path.clone(),
-                    reason: "clip row shape byte accounting overflowed".to_string(),
+                    reason: "flag row shape byte accounting overflowed".to_string(),
                 },
             )?);
     }
@@ -886,7 +910,7 @@ fn clip_read_plan(
         .and_then(|bytes| bytes.checked_add(usize::from(include_data_description) * 4))
         .ok_or_else(|| FlaggingError::MutateFlags {
             path: path.clone(),
-            reason: "clip row byte accounting overflowed".to_string(),
+            reason: "flag row byte accounting overflowed".to_string(),
         })?;
     let budget = MsSelectionIoBudget::from_system_memory(1, requested_bytes_per_row, None)
         .map_err(|source| FlaggingError::MutateFlags {
@@ -960,7 +984,7 @@ fn apply_clip_flags(
         || correlations.is_some()
         || columns.uses_weight_spectrum();
     let bytes_per_sample = columns.bytes_per_sample(ms.main_table(), &path)?;
-    let read_plan = clip_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
+    let read_plan = flag_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
     if let Some(Some(seconds)) = time_average {
         return TimeClip {
             seconds,

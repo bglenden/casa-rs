@@ -427,6 +427,43 @@ impl MsCalEngine {
         Ok(epoch.convert_to(EpochRef::UTC, &frame)?.value().as_mjd())
     }
 
+    /// The attached ephemeris phase direction in its original measure frame,
+    /// at the interpolation epoch used by CASA's FIELD columns.
+    pub(crate) fn ephemeris_phase_direction(
+        &self,
+        field_id: usize,
+        time_mjd_sec: f64,
+    ) -> MsResult<Option<MDirection>> {
+        let Some((ephemeris, offset)) = self.field_series(field_id)? else {
+            return Ok(None);
+        };
+        let origin = self
+            .field_reference_epochs
+            .get(field_id)
+            .and_then(Option::as_ref);
+        let reference = origin.map_or(self.time_reference, MEpoch::refer);
+        let epoch = if time_mjd_sec == 0.0 {
+            origin
+                .cloned()
+                .unwrap_or_else(|| MEpoch::from_mjd_seconds(time_mjd_sec, reference))
+        } else {
+            MEpoch::from_mjd_seconds(time_mjd_sec, reference)
+        };
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        let mjd = epoch.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
+        if ephemeris
+            .times_mjd()
+            .last()
+            .is_some_and(|&last| mjd >= last)
+        {
+            return Err(MsError::InvalidInput(format!(
+                "UTC MJD {mjd} is outside the ephemeris interpolation range"
+            )));
+        }
+        crate::ephemeris::reference_direction(ephemeris, mjd, offset).map(Some)
+    }
+
     fn sampled_ephemeris_direction_j2000(
         &self,
         time_mjd_sec: f64,
