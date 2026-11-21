@@ -155,6 +155,39 @@ def test_statistics_disk_reads_columns_across_multiple_robust_result_blocks():
         image.done()
 
 
+def test_statistics_disk_reads_both_writers_with_both_readers(casa, tmp_path):
+    x, y, _, z = np.ogrid[:13, :15, :1, :4]
+    pixels = (x + 2*y + 100*z).astype(np.float32)
+    valid = pixels % 4 != 1
+    manager = casa.regionmanager()
+    region = manager.box([2,3,0,1], [11,12,0,3])
+    manager.done()
+    expected = []
+    for channel in range(1,4):
+        block = pixels[2:12, 3:13, 0, channel]
+        mask = valid[2:12, 3:13, 0, channel]
+        expected.append((mask.sum(), block[mask].sum(dtype=np.float64), np.median(block[mask])))
+    expected = np.asarray(expected).T
+    for writer in (casa, tools):
+        source = writer.image()
+        name = str(tmp_path/f"{writer.__name__}-disk-stats.im")
+        try:
+            assert source.fromarray(name, pixels=pixels)
+            assert source.putregion(pixelmask=valid)
+            assert source.setbrightnessunit("K")
+        finally:
+            source.done()
+        for reader in (casa, tools):
+            image = reader.image()
+            try:
+                assert image.open(name)
+                result = image.statistics(disk=True, axes=[0,1], region=region, robust=True)
+                for row, field in zip(expected, ("npts", "sum", "median")):
+                    np.testing.assert_array_equal(result[field], row)
+            finally:
+                image.done()
+
+
 @pytest.mark.parametrize("bitpix,blank", [(16, -999), (-32, np.nan)])
 def test_statistics_on_attached_fits_matches_casa_and_excludes_blanks(casa, tmp_path, bitpix, blank):
     path = tmp_path / "masked.fits"
