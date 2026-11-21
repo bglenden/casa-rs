@@ -37,7 +37,7 @@ def fixture(root):
             flags[0, 0, 0] = flags[1, -1, 1] = True
             table.putcol("FLAG", flags)
             data = table.getcol(column)
-            data[:, :3, :] = np.array([0.0, 1.0, 2.0])[None, :, None]
+            data[:, :4, :] = np.array([0.0, 1.0, 2.0, -1.0])[None, :, None]
             table.putcol(column, data)
     return products
 
@@ -45,8 +45,8 @@ def fixture(root):
 def outcome(engine, path, **settings):
     try:
         return engine(str(path), **settings)
-    except (KeyError, RuntimeError, ValueError) as error:
-        return type(error).__name__, str(error)
+    except Exception as error:
+        return type(error).__name__, str(error).replace(str(path), "<table>")
 
 
 def flags(path):
@@ -62,6 +62,10 @@ def cases(column, first_time):
     yield "unflag", dict(mode="unflag", spw="0:0~7")
     yield "field", dict(mode="manual", field="PHASE")
     yield "scan", dict(mode="manual", scan="1", observation="0")
+    yield "scan-comparison", dict(mode="manual", scan=">1")
+    yield "scan-comma", dict(mode="manual", scan=",")
+    yield "scan-reversed", dict(mode="manual", scan="2~1")
+    yield "observation-comma", dict(mode="manual", observation=",")
     yield "time", dict(mode="manual", timerange=first_time)
     yield "preview", dict(mode="manual", action="calculate", antenna="A1")
     yield "summary", dict(mode="summary", name="user summary")
@@ -70,11 +74,25 @@ def cases(column, first_time):
     yield "summary-filter", dict(mode="summary", minabs=1, maxrel=0.1, spwcorr=True)
     yield "clip", dict(mode="clip", datacolumn=column, clipminmax=[0.1, 1.5], spw="0:0~2")
     yield "clip-calculate", dict(mode="clip", datacolumn=column, clipzeros=True, action="calculate")
+    yield "clip-vector", dict(mode="clip", datacolumn=column, clipoutside=[False], clipminmax=[0.1, 1.5])
+    yield "clip-decimal", dict(mode="clip", datacolumn=column, clipminmax=[0.0, 0.1])
+    yield "clip-solution", dict(mode="clip", datacolumn=column, correlation="Sol1", clipminmax=[0.1, 1.5])
+    yield "clip-real-solution", dict(mode="clip", datacolumn=column, correlation="REAL_SOL2", clipzeros=True)
+    yield "clip-signed-zero", dict(mode="clip", datacolumn=column, correlation="REAL_ALL", clipzeros=True)
+    yield "clip-postfix", dict(mode="clip", datacolumn=column, correlation="ABS_SOL1", clipminmax=[0.1, 1.5])
+    yield "clip-imaginary", dict(mode="clip", datacolumn=column, correlation="IMAG_ALL", clipminmax=[0.1, 1.5])
+    yield "clip-bare", dict(mode="clip", datacolumn=column, correlation="ABS", clipminmax=[0.1, 1.5])
+    yield "clip-unknown", dict(mode="clip", datacolumn=column, correlation="ARBITRARY", clipminmax=[0.1, 1.5])
+    yield "clip-parameter-error", dict(mode="clip", datacolumn="PARAMERR", clipminmax=[0.1, 1.5])
+    yield "clip-channelavg", dict(mode="clip", datacolumn=column, channelavg=True, chanbin=2, clipminmax=[0.1, 1.5])
+    yield "clip-timeavg", dict(mode="clip", datacolumn=column, timeavg=True, timebin="10s", clipminmax=[0.1, 1.5])
     yield "clip-missing", dict(mode="clip", datacolumn="DATA")
     yield "select-none", dict(mode="manual", antenna="missing")
     yield "invalid-array", dict(mode="manual", array="0")
     yield "correlation", dict(mode="manual", correlation="Sol1")
     yield "summary-correlation", dict(mode="summary", correlation="Sol1")
+    for action in ("apply", "calculate", "none"):
+        yield f"saved-{action}", dict(mode="manual", antenna="A1", savepars=True, action=action)
     yield "backup", dict(mode="manual", antenna="A2", flagbackup=True)
 
 
@@ -87,6 +105,11 @@ def exercise(root, reference, native, fixture_path, column):
                             for extension in ("casa", "native"))
         for path in (expected, actual):
             shutil.copytree(fixture_path, path)
+            if name == "clip-decimal":
+                with opened(path, True) as table:
+                    values = table.getcol(column)
+                    values[:] = 0.1
+                    table.putcol(column, values)
         initial = flags(actual)
         metadata = original_columns(actual)
         settings.setdefault("flagbackup", False)
@@ -106,6 +129,8 @@ def exercise(root, reference, native, fixture_path, column):
         count = int(np.count_nonzero(observed != initial))
         if name in ("manual", "channels", "field", "scan", "time", "clip", "backup"):
             assert count > 0, (name, column)
+        if name in ("scan-comma", "scan-reversed", "observation-comma", "clip-vector", "clip-decimal", "clip-bare", "clip-parameter-error"):
+            assert count == 0, (name, column)
         written += count
         total += 1
         print(f"{column} {name}: {count} changed cells", flush=True)

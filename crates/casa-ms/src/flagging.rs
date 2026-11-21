@@ -1058,6 +1058,7 @@ fn apply_clip_flags(
     }
     let options = ClipOptions {
         zeros: request.clipzeros,
+        signed_zeros: false,
         // CASA's clipping agent stores its bounds as single-precision values.
         bounds: request
             .clipminmax
@@ -3579,6 +3580,7 @@ fn _complex_norm64(value: Complex64) -> f64 {
 mod tests {
     const CLIP_ZEROS: ClipOptions<'static> = ClipOptions {
         zeros: true,
+        signed_zeros: false,
         bounds: None,
         outside: true,
         projections: None,

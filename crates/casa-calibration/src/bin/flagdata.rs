@@ -126,8 +126,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         );
     }
     let path = task.path("vis")?;
-    let calibration = std::fs::read_to_string(path.join("table.info"))
-        .is_ok_and(|info| casa_tables::TableInfo::parse(&info).table_type == "Calibration");
+    let calibration = is_calibration_table(&path);
     let mut request = flagdata_request(task, column.unwrap_or_default(), channel_bins, calibration)
         .or_else(|error| {
             let parameter = error.parameter.as_deref();
@@ -217,6 +216,17 @@ fn save_flag_parameters(
     time_chunk: Option<f64>,
     shadow_command: Option<&str>,
 ) -> Result<(), TaskFailure> {
+    let outfile = task.required_text("outfile")?;
+    if outfile.is_empty() && is_calibration_table(vis) {
+        if matches!(action, "" | "none") {
+            return Err(TaskFailure::execution(format!(
+                "Error opening FLAG_CMD table {}",
+                vis.join("FLAG_CMD").display(),
+            ))
+            .at("calibration-save-command"));
+        }
+        return Ok(());
+    }
     let mut arguments = Vec::new();
     for name in STRING_SELECTORS {
         if let Some(text) = task.argument_text(name) {
@@ -335,7 +345,6 @@ fn save_flag_parameters(
     );
 
     let reason = task.required_text("cmdreason")?;
-    let outfile = task.required_text("outfile")?;
     if outfile.is_empty() {
         return append_flag_command(vis, &arguments.join(" "), &reason, action == "apply")
             .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"));
@@ -382,6 +391,11 @@ fn save_flag_parameters(
         TaskFailure::execution(format!("Error writing flag commands to {outfile}: {error}"))
             .at(parameter)
     })
+}
+
+fn is_calibration_table(path: &Path) -> bool {
+    std::fs::read_to_string(path.join("table.info"))
+        .is_ok_and(|info| casa_tables::TableInfo::parse(&info).table_type == "Calibration")
 }
 
 fn push_command_argument(arguments: &mut Vec<String>, name: &str, value: &ParameterValue) {
