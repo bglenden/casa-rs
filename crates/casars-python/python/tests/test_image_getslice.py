@@ -156,7 +156,7 @@ def test_errors_and_detached_behavior(casa):
             tool.done()
 
 
-def test_fits_attachment_reads_only_the_selected_plane_with_its_mask(casa, tmp_path):
+def test_fits_attachment_preserves_the_selected_plane_mask(casa, tmp_path):
     path = str(tmp_path / "masked.fits")
     source = image(casa, lattice().astype(np.float32), masked=True)
     try:
