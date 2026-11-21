@@ -187,6 +187,81 @@ def test_native_writer_reader_pairs_preserve_mixed_geometry(casa, tmp_path):
                 image.done()
 
 
+@pytest.mark.parametrize("independent_world_order", [False, True])
+def test_mixed_conversion_on_reopened_signed_axis_maps(casa, tmp_path, independent_world_order):
+    seed = sky(casa)
+    source = casa.image()
+    selected = None
+    try:
+        assert source.fromshape(shape=SHAPE, csys=seed.torecord())
+        selected = source.coordsys(axes=[2, 0])
+        record = selected.torecord()
+    finally:
+        if selected is not None:
+            selected.done()
+        source.done()
+        seed.done()
+
+    shape = [SHAPE[2], SHAPE[0]]
+    # The missing declination pixel stays at its reference in the projection.
+    channel, longitude_pixel = np.array([1., 4., 6.]), np.array([3.5, 11., 7.])
+    world = np.column_stack([
+        sky_world(np.array([longitude, REF_PIXEL[1], channel_index]))
+        for longitude, channel_index in zip(longitude_pixel, channel)
+    ])
+    pixel = np.vstack([channel, longitude_pixel])
+    if independent_world_order:
+        record["worldmap0"] = np.array([1], dtype=np.int32)
+        record["worldmap1"] = np.array([0, -3], dtype=np.int32)
+        selected_world = world[[0, 2]]
+        supplied = np.vstack([longitude_pixel, world[2]])
+        units_in, units_out = ["pix", "Hz"], ["deg", "pix"]
+    else:
+        selected_world = world[[2, 0]]
+        supplied = np.vstack([world[2], longitude_pixel])
+        units_in, units_out = ["Hz", "pix"], ["pix", "deg"]
+    expected = np.vstack([channel, world[0]])
+    for writer in (casa, tools):
+        path = str(tmp_path / f"{writer.__name__}.im")
+        image = writer.image()
+        try:
+            assert image.fromshape(path, shape, record)
+        finally:
+            image.done()
+        for reader in (casa, tools):
+            image = reader.image()
+            coordinates = None
+            try:
+                assert image.open(path)
+                coordinates = image.coordsys()
+                assert coordinates.naxes() == coordinates.naxes(True) == 2
+                np.testing.assert_array_equal(coordinates.torecord()["pixelmap1"], [1, -3])
+                options = dict(unitsin=units_in, unitsout=units_out, shape=shape)
+                if independent_world_order:
+                    for transform, values in (
+                        (coordinates.convert, supplied[:, 1]),
+                        (coordinates.convertmany, supplied),
+                    ):
+                        with pytest.raises(RuntimeError, match="duplicate pixel/world axes"):
+                            transform(values, **options)
+                else:
+                    np.testing.assert_allclose(
+                        coordinates.convert(supplied[:, 1], **options), expected[:, 1], atol=2e-7, rtol=0,
+                    )
+                    np.testing.assert_allclose(
+                        coordinates.convertmany(supplied, **options), expected, atol=2e-7, rtol=0,
+                    )
+                assert image.isopen()
+                np.testing.assert_array_equal(image.shape(), shape)
+                np.testing.assert_allclose(
+                    coordinates.toworldmany(pixel)["numeric"], selected_world, atol=2e-7, rtol=0,
+                )
+            finally:
+                if coordinates is not None:
+                    coordinates.done()
+                image.done()
+
+
 def test_shape_interval_can_cross_a_celestial_pole(casa):
     for api in (tools, casa):
         cs = api.coordsys().newcoordsys(direction=True)
