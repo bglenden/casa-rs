@@ -90,6 +90,24 @@ def test_first_interval_can_change_direction(casa):
         np.testing.assert_allclose(cs.torecord()["tabular0"]["worldvalues"], [2.4, 2.0, 3.0])
 
 
+@pytest.mark.parametrize(
+    ("pixels", "worlds", "expected"),
+    [([0, 2, 5], [10, 7, 30], 26.0), ([2, 0, 5], [1, 2, 3], -7.4)],
+)
+def test_reference_edits_keep_the_original_interpolation_intervals(casa, pixels, worlds, expected):
+    tables = []
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(tabular=True)
+        assert cs.settabular(pixels, worlds)
+        assert cs.setlineartransform("tabular", [[2.0]])
+        assert cs.setreferencevalue([15.0])
+        assert cs.setreferencepixel([1.0])
+        assert cs.setincrement([-4.0])
+        np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [expected])
+        tables.append(cs.torecord()["tabular0"])
+    _assert_value(tables[0], tables[1])
+
+
 def test_replace_samples_on_a_hidden_pixel_axis(casa):
     for api in (tools, casa):
         original = api.coordsys().newcoordsys(linear=1, tabular=True)

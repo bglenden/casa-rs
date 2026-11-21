@@ -135,7 +135,8 @@ pub(super) fn normalize_restored_matrix(
             .iter()
             .any(|field| table.get(field) != normalized.get(field));
         Ok(changed.then_some(edited))
-    } else if matches!(model, CoordinateModel::Tabular(table) if table.pixel_values().len() == 1) {
+    } else if matches!(model, CoordinateModel::Tabular(table) if table.pixel_values().len() == 1 || table.has_reversed_pixel_interval())
+    {
         let edited = edit_record(original, model)?;
         Ok((&edited != original).then_some(edited))
     } else {
@@ -160,7 +161,9 @@ fn update_stored_coordinate(
 // from serialized samples resets the matrix and reference parameters.
 fn live_tabular_factor(model: &CoordinateModel) -> Option<f64> {
     let factor = match model {
-        CoordinateModel::Tabular(table) if table.pixel_values().len() == 1 => {
+        CoordinateModel::Tabular(table)
+            if table.pixel_values().len() == 1 || table.has_reversed_pixel_interval() =>
+        {
             return Some(table.linear_transform());
         }
         CoordinateModel::Tabular(tabular) => tabular.linear_transform(),

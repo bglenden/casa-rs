@@ -57,13 +57,14 @@ pub(crate) fn validate_transform_samples(
     if !transform.is_finite() || transform == 0.0 || values.len() < 2 {
         return Err(invalid());
     }
-    let increasing = (values[values.len() - 1] > values[0]) == (transform > 0.0);
     let mut previous = scaled_world(values[0], reference, transform);
-    for &value in &values[1..] {
-        let next = scaled_world(value, reference, transform);
+    for pair in values.windows(2) {
+        let next = scaled_world(pair[1], reference, transform);
+        let increasing = (pair[1] > pair[0]) == (transform > 0.0);
         if !previous.is_finite()
             || !next.is_finite()
             || next == previous
+            || pair[1] == pair[0]
             || (next > previous) != increasing
         {
             return Err(invalid());
@@ -153,11 +154,16 @@ pub(crate) fn edit_table(
     let last = values[values.len() - 1];
     let span = pixel_values[pixel_values.len() - 1] - pixel_values[0];
     let increment = (last - first) / span;
-    let sign = (last - first).signum();
+    let reversed = (last > first) != (world_values[world_values.len() - 1] > world_values[0]);
     if !increment.is_normal()
         || values
             .windows(2)
-            .any(|pair| (pair[1] - pair[0]) * sign <= 0.0)
+            .zip(world_values.windows(2))
+            .any(|(pair, old)| {
+                pair[1] == pair[0]
+                    || old[1] == old[0]
+                    || ((pair[1] > pair[0]) != (old[1] > old[0])) != reversed
+            })
     {
         return Err(CoordinateError::InvalidRecord(
             "tabular edit produces an invalid increment (#977)".into(),
@@ -309,6 +315,13 @@ impl TabularCoordinate {
         &self.world_values
     }
 
+    /// Whether the first pair of pixels runs opposite to the table's endpoints.
+    pub fn has_reversed_pixel_interval(&self) -> bool {
+        self.pixel_values.len() > 2
+            && (self.pixel_values[1] > self.pixel_values[0])
+                != (self.pixel_values.last().unwrap() > &self.pixel_values[0])
+    }
+
     /// The multiplier applied to offsets from the reference world value.
     pub fn linear_transform(&self) -> f64 {
         self.linear_transform
@@ -327,6 +340,11 @@ impl TabularCoordinate {
             ));
         }
         self.linear_transform = transform;
+        if self.pixel_values.len() == 1 && !self.constant_world().is_finite() {
+            return Err(CoordinateError::InvalidRecord(
+                "linear transform would produce invalid tabular samples".into(),
+            ));
+        }
         Ok(self)
     }
 
@@ -363,6 +381,11 @@ impl TabularCoordinate {
         if self.linear.is_some() {
             self.linear = Some((crval, cdelt, crpix));
         } else {
+            if self.has_reversed_pixel_interval() {
+                // The stored first sample was evaluated in a later interval.
+                // Recover the initial endpoint of the live interpolation.
+                self.world_values[0] = crval + cdelt * (self.pixel_values[0] - crpix);
+            }
             self.sample_reference = Some([crval, cdelt, crpix]);
         }
         Ok(self)
@@ -658,10 +681,7 @@ impl TabularCoordinate {
         );
         let world_values = if self.world_values.len() == 1 {
             vec![self.constant_world()]
-        } else if self.pixel_values.len() > 2
-            && (self.pixel_values[1] > self.pixel_values[0])
-                != (self.pixel_values.last().unwrap() > &self.pixel_values[0])
-        {
+        } else if self.has_reversed_pixel_interval() {
             // Casacore saves evaluated samples, including when the first
             // supplied pixel falls in a later interval of the table.
             self.pixel_values
