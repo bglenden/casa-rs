@@ -18,6 +18,8 @@ mod decimate;
 mod decompose;
 mod deviation;
 mod findsources;
+mod getprofile;
+pub use getprofile::{ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile};
 mod fitcomponents;
 pub use fitcomponents::{
     ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,

@@ -31,7 +31,7 @@ pub(super) fn reduce<T: CollapsePixel>(
 pub(super) fn reduce_large<T: CollapsePixel>(
     function: CollapseFunction,
     mut visit: impl FnMut(&mut dyn FnMut(T) -> Result<(), ImageError>) -> Result<(), ImageError>,
-) -> Result<Option<T>, ImageError> {
+) -> Result<(Option<T>, usize), ImageError> {
     let mut count = 0;
     let mut samples = Vec::new();
     visit(&mut |sample| {
@@ -42,7 +42,7 @@ pub(super) fn reduce_large<T: CollapsePixel>(
         Ok(())
     })?;
     if count <= MAX_TILE_SAMPLES {
-        return Ok(reduce(function, samples));
+        return Ok((reduce(function, samples), count));
     }
     drop(samples);
     let mut samples = PagedSamples::<T>::new(count)?;
@@ -61,10 +61,13 @@ pub(super) fn reduce_large<T: CollapsePixel>(
     }
     let center = median(&mut samples, count)?.expect("nonempty median");
     let Some(scale) = function.deviation_scale() else {
-        return Ok(Some(center));
+        return Ok((Some(center), count));
     };
     samples.map(|value| deviation(value, center))?;
-    Ok(median(&mut samples, count)?.map(|mad| T::narrow(mad.wide() * scale)))
+    Ok((
+        median(&mut samples, count)?.map(|mad| T::narrow(mad.wide() * scale)),
+        count,
+    ))
 }
 
 fn deviation<T: CollapsePixel>(sample: T, center: T) -> T {

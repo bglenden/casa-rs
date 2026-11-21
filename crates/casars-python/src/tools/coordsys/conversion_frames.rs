@@ -149,24 +149,7 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<Option<LogL
     else {
         return Err(spectral_error("Invalid DirectionCoordinate"));
     };
-    let pixel = direction
-        .reference_pixel()
-        .try_into()
-        .map_err(|_| spectral_error("Invalid direction reference pixel"))?;
-    let [longitude, latitude] = direction.pixel_to_world(pixel).map_err(raised)?;
-    let direction =
-        MDirection::from_angles(longitude, latitude, direction.conversion_direction_ref());
-    let info = state.coordinates.obs_info();
-    let measures = casa_ms::open_measures_runtime().map_err(raised)?;
-    let position =
-        MPosition::casa_observatory(&info.telescope, measures.as_ref()).ok_or_else(|| {
-            spectral_error("Cannot find observatory; cannot set Spectral conversion layer")
-        })?;
-    let epoch = info
-        .date
-        .as_ref()
-        .filter(|epoch| epoch.value().as_mjd() > 0.0)
-        .ok_or_else(|| spectral_error("Epoch not valid; cannot set Spectral conversion layer"))?;
+    let context = spectral_observation_frame(&state.coordinates, &direction)?;
     if matches!(native, FrequencyRef::Undefined) || matches!(frame, FrequencyRef::Undefined) {
         return Err(raised(
             "Transformations to/from frame \"Undefined\" are not possible.",
@@ -179,11 +162,6 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<Option<LogL
             "Unable to convert between the input and output SpectralCoordinates. Conversion involving the REST frame requires a source radial velocity.",
         )));
     }
-    let context = MeasFrame::new()
-        .with_direction(direction)
-        .with_position(position)
-        .with_epoch(epoch.clone())
-        .with_measures(measures);
     let changed = CoordinateModel::from(model.clone().with_conversion(frame, context));
     let record = changed.to_record();
     let conversion = record
@@ -197,6 +175,66 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<Option<LogL
         conversion.clone(),
     )?;
     Ok(None)
+}
+
+fn spectral_observation_frame(
+    coordinates: &casa_coordinates::CoordinateSystem,
+    direction: &casa_coordinates::DirectionCoordinate,
+) -> PyResult<MeasFrame> {
+    let pixel = direction
+        .reference_pixel()
+        .try_into()
+        .map_err(|_| spectral_error("Invalid direction reference pixel"))?;
+    let [longitude, latitude] = direction.pixel_to_world(pixel).map_err(raised)?;
+    let direction =
+        MDirection::from_angles(longitude, latitude, direction.conversion_direction_ref());
+    let info = coordinates.obs_info();
+    let measures = casa_ms::open_measures_runtime().map_err(raised)?;
+    let position =
+        MPosition::casa_observatory(&info.telescope, measures.as_ref()).ok_or_else(|| {
+            spectral_error("Cannot find observatory; cannot set Spectral conversion layer")
+        })?;
+    let epoch = info
+        .date
+        .as_ref()
+        .filter(|epoch| epoch.value().as_mjd() > 0.0)
+        .ok_or_else(|| spectral_error("Epoch not valid; cannot set Spectral conversion layer"))?;
+    Ok(MeasFrame::new()
+        .with_direction(direction)
+        .with_position(position)
+        .with_epoch(epoch.clone())
+        .with_measures(measures))
+}
+
+/// Prepare the same observing context used by the coordinate tool's conversion layer.
+pub(in crate::tools) fn profile_frequency_frame(
+    coordinates: &casa_coordinates::CoordinateSystem,
+    name: &str,
+) -> PyResult<Option<(FrequencyRef, MeasFrame)>> {
+    let Some(owner) = coordinates.find_coordinate(CoordinateType::Spectral) else {
+        return Ok(None);
+    };
+    let CoordinateModel::Spectral(model) = coordinates.coordinate(owner) else {
+        unreachable!("spectral model matched by type");
+    };
+    let frame = FREQUENCY_CODES
+        .resolve(name)
+        .and_then(|canonical| canonical.parse::<FrequencyRef>().ok())
+        .ok_or_else(|| spectral_error(format!("invalid frequency system {name}")))?;
+    let native = declared_frequency_ref(model);
+    if model.conversion_frequency_ref().unwrap_or(native) == frame {
+        return Ok(None);
+    }
+    let Some(owner) = coordinates.find_coordinate(CoordinateType::Direction) else {
+        return Err(spectral_error(
+            "No DirectionCoordinate; cannot set Spectral conversion layer",
+        ));
+    };
+    let CoordinateModel::Direction(direction) = coordinates.coordinate(owner) else {
+        unreachable!("direction model matched by type");
+    };
+    let context = spectral_observation_frame(coordinates, direction)?;
+    Ok(Some((frame, context)))
 }
 
 #[pymethods]

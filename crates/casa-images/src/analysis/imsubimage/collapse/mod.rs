@@ -60,6 +60,18 @@ pub struct ImageCollapse<'a> {
     beam_pixels: f64,
 }
 
+pub(super) struct CollapsedProfile<T> {
+    pub(super) values: Vec<T>,
+    pub(super) mask: Vec<bool>,
+    pub(super) counts: Vec<usize>,
+}
+
+struct ReducedTile<T> {
+    values: ArrayD<T>,
+    mask: ArrayD<bool>,
+    counts: Vec<usize>,
+}
+
 fn invalid(reason: impl Into<String>) -> ImageError {
     ImageError::CasaSelection(reason.into())
 }
@@ -162,6 +174,56 @@ impl<'a> ImageCollapse<'a> {
     ) -> Result<(), ImageError> {
         self.section.copy_metadata(source, output)?;
         output.set_units_string(self.units.clone())?;
+        let mut has_mask = false;
+        self.visit_tiles(source, |position, results| {
+            output.put_slice(&results.values, position)?;
+            if results.mask.iter().any(|&present| !present) {
+                if !has_mask {
+                    output.create_filled_mask("mask0", true)?;
+                    output.set_default_mask("mask0")?;
+                    has_mask = true;
+                }
+                output.put_mask_slice("mask0", &results.mask, position)?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(super) fn collect_profile<T: CollapsePixel>(
+        &self,
+        source: &dyn ImageInterface<T>,
+        axis: usize,
+    ) -> Result<CollapsedProfile<T>, ImageError> {
+        let length = self.section.shape[axis];
+        let mut result = CollapsedProfile {
+            values: vec![T::default(); length],
+            mask: vec![false; length],
+            counts: vec![0; length],
+        };
+        self.visit_tiles(source, |position, tile| {
+            let start = position[axis];
+            let end = start + tile.counts.len();
+            for (slot, &value) in result.values[start..end].iter_mut().zip(&tile.values) {
+                *slot = value;
+            }
+            for (slot, &value) in result.mask[start..end].iter_mut().zip(&tile.mask) {
+                *slot = value;
+            }
+            result.counts[start..end].copy_from_slice(&tile.counts);
+            Ok(())
+        })?;
+        Ok(result)
+    }
+
+    pub(super) fn profile_unit(&self) -> &str {
+        &self.units
+    }
+
+    fn visit_tiles<T: CollapsePixel>(
+        &self,
+        source: &dyn ImageInterface<T>,
+        mut visit: impl FnMut(&[usize], ReducedTile<T>) -> Result<(), ImageError>,
+    ) -> Result<(), ImageError> {
         let selection = &self.section.selection;
         let reader = PixelSections {
             image: source,
@@ -199,24 +261,14 @@ impl<'a> ImageCollapse<'a> {
             4096
         };
         let cursor = bounded_cursor(&self.section.shape, stride, outer_budget);
-        let mut has_mask = false;
         let mut has_data = false;
         for tile in
             TraversalCursorIter::new(self.section.shape.clone(), cursor, TraversalSpec::tiles())
         {
             let tile = tile?;
-            let (values, valid, present) =
-                self.reduce_tile(&groups, &tile.position, &tile.shape, group_size)?;
-            has_data |= present;
-            output.put_slice(&values, &tile.position)?;
-            if valid.iter().any(|&present| !present) {
-                if !has_mask {
-                    output.create_filled_mask("mask0", true)?;
-                    output.set_default_mask("mask0")?;
-                    has_mask = true;
-                }
-                output.put_mask_slice("mask0", &valid, &tile.position)?;
-            }
+            let values = self.reduce_tile(&groups, &tile.position, &tile.shape, group_size)?;
+            has_data |= values.counts.iter().any(|&count| count != 0);
+            visit(&tile.position, values)?;
         }
         if !has_data {
             return Err(invalid("All selected pixels are masked"));
@@ -230,20 +282,19 @@ impl<'a> ImageCollapse<'a> {
         start: &[usize],
         shape: &[usize],
         group_size: usize,
-    ) -> Result<(ArrayD<T>, ArrayD<bool>, bool), ImageError> {
+    ) -> Result<ReducedTile<T>, ImageError> {
         let size = shape.iter().product();
         let function = self.options.function;
-        let (values, validity, has_data) = if function.uses_median() {
+        let (values, validity, counts) = if function.uses_median() {
             if group_size > MAX_TILE_SAMPLES {
                 debug_assert_eq!(size, 1);
-                let value = reduce_large(function, |visit| {
+                let (value, count) = reduce_large(function, |visit| {
                     groups.for_each(start, shape, |_, _, value| visit(value))
-                });
-                let value = value?;
+                })?;
                 (
                     vec![value.unwrap_or_default()],
                     vec![value.is_some()],
-                    value.is_some(),
+                    vec![count],
                 )
             } else {
                 let mut by_group = vec![vec![None; group_size]; size];
@@ -251,16 +302,19 @@ impl<'a> ImageCollapse<'a> {
                     by_group[index][position] = Some(sample);
                     Ok(())
                 })?;
-                let values: Vec<_> = by_group
+                let (values, counts): (Vec<_>, Vec<_>) = by_group
                     .into_iter()
-                    .map(|group| reduce(function, group.into_iter().flatten().collect()))
-                    .collect();
-                let validity: Vec<_> = values.iter().map(Option::is_some).collect();
-                let has_data = validity.iter().any(|&valid| valid);
+                    .map(|group| {
+                        let samples: Vec<_> = group.into_iter().flatten().collect();
+                        let count = samples.len();
+                        (reduce(function, samples), count)
+                    })
+                    .unzip();
+                let validity = values.iter().map(Option::is_some).collect();
                 (
                     values.into_iter().map(Option::unwrap_or_default).collect(),
                     validity,
-                    has_data,
+                    counts,
                 )
             }
         } else {
@@ -269,7 +323,7 @@ impl<'a> ImageCollapse<'a> {
                 cells[index].add(function, sample, position);
                 Ok(())
             })?;
-            let has_data = cells.iter().any(|cell| cell.count != 0);
+            let counts = cells.iter().map(|cell| cell.count).collect();
             let (values, validity) = cells
                 .iter()
                 .enumerate()
@@ -284,13 +338,15 @@ impl<'a> ImageCollapse<'a> {
                 .collect::<Result<Vec<_>, ImageError>>()?
                 .into_iter()
                 .unzip();
-            (values, validity, has_data)
+            (values, validity, counts)
         };
-        Ok((
-            ArrayD::from_shape_vec(IxDyn(shape), values).expect("one result per output cell"),
-            ArrayD::from_shape_vec(IxDyn(shape), validity).expect("one validity per output cell"),
-            has_data,
-        ))
+        Ok(ReducedTile {
+            values: ArrayD::from_shape_vec(IxDyn(shape), values)
+                .expect("one result per output cell"),
+            mask: ArrayD::from_shape_vec(IxDyn(shape), validity)
+                .expect("one validity per output cell"),
+            counts,
+        })
     }
 
     fn flux_scale(
