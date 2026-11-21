@@ -117,3 +117,34 @@ def test_tabular_coordinate_section_survives_native_readback(casa, tmp_path):
                 np.testing.assert_allclose(coords.toworld([1.0])["numeric"], [18.0])
             finally:
                 image.done()
+
+
+def test_sampled_spectral_section_keeps_conversion_across_native_readback(casa, tmp_path):
+    source = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    frequencies = np.array([1.e9, 1.01e9, 1.03e9, 1.08e9])
+    assert source.setspectral(refcode="LSRK", frequencies={"value": frequencies, "unit": "Hz"})
+    assert source.setconversiontype(spectral="BARY")
+    native = source.torecord()
+    scale = source.toworld([0.0, 0.0, 0.0])["numeric"][2] / frequencies[0]
+    for writer in (tools, casa):
+        coords = writer.coordsys()
+        assert coords.fromrecord(native)
+        record = coords.subimage([0.0, 0.0, 1.5], [2, 2, 4])
+        assert record["spectral1"]["system"] == "LSRK"
+        assert record["spectral1"]["conversion"]["system"] == "BARY"
+        np.testing.assert_allclose(record["spectral1"]["tabular"]["worldvalues"], np.array([1020., 1055., 1105., 1155.]) * 1.e6)
+        path = str(tmp_path / f"{writer.__name__}.im")
+        image = writer.image()
+        assert image.fromshape(path, [2, 2, 4], record)
+        image.done()
+        for reader in (tools, casa):
+            image = reader.image()
+            assert image.open(path)
+            try:
+                coords = image.coordsys()
+                assert coords.getconversiontype("spectral", True) == "BARY"
+                world = coords.toworld([0.0, 0.0, 0.5])["numeric"]
+                np.testing.assert_allclose(world, [0.0, 0.0, 1037.5e6 * scale], rtol=1.e-11)
+                np.testing.assert_allclose(coords.topixel(world)["numeric"], [0.0, 0.0, 0.5], atol=1.e-8)
+            finally:
+                image.done()
