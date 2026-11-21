@@ -368,13 +368,29 @@ impl<'a> PreparedMask<'a> {
         stretch: bool,
         destination: Option<&Path>,
     ) -> Result<Option<Self>, ImageError> {
+        Self::new_for_outputs(
+            mask_expr,
+            target_shape,
+            target_coordinates,
+            stretch,
+            destination,
+        )
+    }
+
+    pub(super) fn new_for_outputs<'b>(
+        mask_expr: Option<&str>,
+        target_shape: &'a [usize],
+        target_coordinates: &CoordinateSystem,
+        stretch: bool,
+        destinations: impl IntoIterator<Item = &'b Path>,
+    ) -> Result<Option<Self>, ImageError> {
         let Some(raw) = mask_expr.map(str::trim).filter(|s| !s.is_empty()) else {
             return Ok(None);
         };
         let expr = mask_expression(raw);
         let names = referenced_images(&expr).map_err(mask_parse_error)?;
         let operands = resolve_named_operands(names)?;
-        if let Some(destination) = destination {
+        for destination in destinations {
             for operand in &operands {
                 super::ensure_outfile_does_not_alias_input(destination, &operand.path)?;
             }

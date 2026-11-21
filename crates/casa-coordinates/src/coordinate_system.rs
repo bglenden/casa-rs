@@ -13,6 +13,7 @@
 //! order of their axes.
 
 mod edit;
+mod fourier;
 mod mapped;
 mod record_axes;
 

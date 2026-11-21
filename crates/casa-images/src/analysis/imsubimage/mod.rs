@@ -17,6 +17,7 @@ mod crop;
 mod decimate;
 mod decompose;
 mod deviation;
+mod fourier;
 pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};
 pub use deviation::{DeviationOptions, ImageDeviation};
 mod insert;
@@ -40,6 +41,7 @@ pub use replace_masked::{
 pub use bounding_box::ImageRegionBounds;
 pub use crop::{ImageCrop, ImageCropOptions};
 pub use decimate::{DecimationMethod, DecimationPixel, ImageDecimation, ImageDecimationOptions};
+pub use fourier::{FourierOptions, FourierPixel, ImageFourier};
 pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
 pub use pad::{ImagePad, ImagePadOptions};
@@ -464,7 +466,8 @@ impl SubimagePlan {
         Ok(())
     }
 
-    fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
+    /// Indices of the original beam planes retained on a selected source axis.
+    pub fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
         let Some(axis) = axis.filter(|_| planes > 1) else {
             return vec![0];
         };
