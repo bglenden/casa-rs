@@ -299,9 +299,11 @@ pub(super) struct ConvolutionGroups<'a, T: ConvolutionPixel> {
     pub(super) workspace: KernelWorkspaces<'a, T>,
 }
 
+type PlaneKernel<'a, T> = dyn Fn(&[usize]) -> Result<KernelPlan<'static, T>, ImageError> + 'a;
+
 pub(super) enum KernelWorkspaces<'a, T: ConvolutionPixel> {
     Shared(&'a KernelPlan<'a, T>),
-    PerPlane(&'a dyn Fn(&[usize]) -> Result<KernelPlan<'static, T>, ImageError>),
+    PerPlane(&'a PlaneKernel<'a, T>),
 }
 
 pub(super) struct KernelPlan<'a, T: ConvolutionPixel> {

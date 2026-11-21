@@ -79,8 +79,10 @@ fn inverse(matrix: [[f64; 2]; 2]) -> Option<[[f64; 2]; 2]> {
     (det.is_finite() && det != 0.).then(|| [[d / det, -b / det], [-c / det, a / det]])
 }
 
+type ProfileLinearization<'a> = dyn Fn(&[f64; 4], f64) -> ([f64; 4], f64) + 'a;
+
 fn fit_profile(points: &[([f64; 4], f64)]) -> Option<[f64; 4]> {
-    let normal = |terms: &dyn Fn(&[f64; 4], f64) -> ([f64; 4], f64)| {
+    let normal = |terms: &ProfileLinearization<'_>| {
         let mut matrix = [[0.; 4]; 4];
         let mut rhs = [0.; 4];
         for (row, value) in points {
