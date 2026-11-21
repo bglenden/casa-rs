@@ -6,7 +6,7 @@ use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, Value};
 use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
 
-use super::record_axes::{check_numbering, read_models};
+use super::record_axes::{check_numbering, live_coordinate, read_models};
 use super::{CoordinateSystem, RecordCoordinate, coordinate_record_entries, record_basename};
 use crate::coordinate::CoordinateModel;
 use crate::direction::convert_value_to_unit;
@@ -686,6 +686,13 @@ impl CoordinateSystem {
     /// # Errors
     /// A model, axis permutation, replacement vector or observation record is invalid.
     pub fn from_mapped_record(record: &RecordValue) -> Result<Self, CoordinateError> {
+        Self::restore_mapped_record(record, false)
+    }
+
+    pub(super) fn restore_mapped_record(
+        record: &RecordValue,
+        live: bool,
+    ) -> Result<Self, CoordinateError> {
         let obs_info = match record.get("obsinfo") {
             Some(Value::Record(obs)) => ObsInfo::from_record(obs)?,
             _ => ObsInfo::from_record(record)?,
@@ -699,11 +706,14 @@ impl CoordinateSystem {
         let mut world_start = 0;
         let mut placements = Vec::with_capacity(models.len());
         let mut coordinates = Vec::with_capacity(models.len());
-        for (expected, (record_index, _, model)) in models.into_iter().enumerate() {
+        for (expected, (record_index, field, mut model)) in models.into_iter().enumerate() {
             if record_index != expected {
                 return Err(CoordinateError::InvalidRecord(
                     "coordinate records must be numbered from zero without gaps".into(),
                 ));
+            }
+            if live {
+                model = live_coordinate(record, &field, model)?;
             }
             let pixel_rank = model.n_pixel_axes();
             let world_rank = model.n_world_axes();

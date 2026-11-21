@@ -42,7 +42,12 @@ impl CoordinateSystem {
     /// # Errors
     /// The record or one of its live sampled references is invalid.
     pub fn from_live_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
-        Self::restore_record(rec, true)
+        match Self::restore_record(rec, true) {
+            Err(CoordinateError::UnsupportedAxisLayout(_)) => {
+                Self::restore_mapped_record(rec, true)
+            }
+            result => result,
+        }
     }
 
     pub(super) fn restore_record(rec: &RecordValue, live: bool) -> Result<Self, CoordinateError> {
@@ -52,14 +57,8 @@ impl CoordinateSystem {
         };
         let mut coordinates = Vec::new();
         for (placement, mut coordinate) in read_coordinates(rec)? {
-            if live && let Some(Value::Record(stored)) = rec.get(&placement.field) {
-                coordinate = match coordinate {
-                    CoordinateModel::Spectral(spectral) if !spectral.has_linear_mapping() => {
-                        spectral.with_live_reference(stored)?.into()
-                    }
-                    CoordinateModel::Tabular(table) => table.with_live_reference(stored)?.into(),
-                    other => other,
-                };
+            if live {
+                coordinate = live_coordinate(rec, &placement.field, coordinate)?;
             }
             coordinates.push(coordinate);
         }
@@ -69,6 +68,23 @@ impl CoordinateSystem {
             maps: None,
         })
     }
+}
+
+pub(super) fn live_coordinate(
+    rec: &RecordValue,
+    field: &str,
+    coordinate: CoordinateModel,
+) -> Result<CoordinateModel, CoordinateError> {
+    let Some(Value::Record(stored)) = rec.get(field) else {
+        return Ok(coordinate);
+    };
+    Ok(match coordinate {
+        CoordinateModel::Spectral(spectral) if !spectral.has_linear_mapping() => {
+            spectral.with_live_reference(stored)?.into()
+        }
+        CoordinateModel::Tabular(table) => table.with_live_reference(stored)?.into(),
+        other => other,
+    })
 }
 
 /// `rec`'s coordinates with where they come from, in the order of their

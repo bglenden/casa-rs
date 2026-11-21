@@ -178,10 +178,14 @@ pub fn try_to_fits_header(
 
 // The emitters build WCS in pixel order. FITS stores CRPIX by pixel column;
 // CTYPE, CRVAL, CDELT, CUNIT, PV and the rows of PC are world ordered.
-fn permute_fits_world_rows(header: &FitsHeader, pixel_to_world: &[usize]) -> FitsHeader {
+fn permute_fits_world_rows(header: &FitsHeader, output_row: &[usize]) -> FitsHeader {
     let mut result = FitsHeader::new();
     for keyword in header.iter() {
-        if keyword.name.starts_with("PC") {
+        if keyword.name.strip_prefix("PC").is_some_and(|suffix| {
+            suffix.split_once('_').is_some_and(|(row, col)| {
+                row.parse::<usize>().is_ok() && col.parse::<usize>().is_ok()
+            })
+        }) {
             continue;
         }
         let mut name = keyword.name.clone();
@@ -190,8 +194,10 @@ fn permute_fits_world_rows(header: &FitsHeader, pixel_to_world: &[usize]) -> Fit
                 let (axis, parameter) = suffix
                     .split_once('_')
                     .map_or((suffix, None), |(axis, parameter)| (axis, Some(parameter)));
-                if let Ok(axis) = axis.parse::<usize>() {
-                    name = format!("{prefix}{}", pixel_to_world[axis - 1]);
+                if let Ok(axis) = axis.parse::<usize>()
+                    && let Some(&axis) = axis.checked_sub(1).and_then(|i| output_row.get(i))
+                {
+                    name = format!("{prefix}{axis}");
                     if let Some(parameter) = parameter {
                         name.push('_');
                         name.push_str(parameter);
@@ -202,8 +208,8 @@ fn permute_fits_world_rows(header: &FitsHeader, pixel_to_world: &[usize]) -> Fit
         }
         result.set(name, keyword.value.clone());
     }
-    for (old_row, &world) in pixel_to_world.iter().enumerate() {
-        for pixel in 1..=pixel_to_world.len() {
+    for (old_row, &world) in output_row.iter().enumerate() {
+        for pixel in 1..=output_row.len() {
             let value = header
                 .get_float(&format!("PC{}_{pixel}", old_row + 1))
                 .unwrap_or(f64::from(old_row + 1 == pixel));
@@ -213,6 +219,76 @@ fn permute_fits_world_rows(header: &FitsHeader, pixel_to_world: &[usize]) -> Fit
         }
     }
     result
+}
+
+/// Align FITS PC world rows with pixel columns for parsing the local models.
+/// The accompanying vector gives the original world axis of each aligned
+/// row. Headers whose original diagonal already pairs the axes need no edit.
+pub fn align_fits_pc_rows(header: &FitsHeader, rank: usize) -> Option<(FitsHeader, Vec<usize>)> {
+    if header
+        .get_int("NAXIS")
+        .is_some_and(|axes| axes != rank as i64)
+    {
+        return None;
+    }
+    let pc = |row, pixel| {
+        header
+            .get_float(&format!("PC{}_{pixel}", row + 1))
+            .unwrap_or(f64::from(row + 1 == pixel))
+    };
+    if (0..rank).all(|i| pc(i, i + 1) != 0.0)
+        || header.iter().any(|keyword| {
+            keyword
+                .name
+                .strip_prefix("CD")
+                .is_some_and(|suffix| suffix.contains('_'))
+        })
+    {
+        return None;
+    }
+    let choices: Vec<Vec<_>> = (0..rank)
+        .map(|row| {
+            let mut columns: Vec<_> = (0..rank)
+                .filter(|&column| pc(row, column + 1) != 0.0)
+                .collect();
+            columns.sort_by_key(|&column| column != row);
+            columns
+        })
+        .collect();
+    let mut rows: Vec<_> = (0..rank).collect();
+    rows.sort_by_key(|&row| choices[row].len());
+    let mut world_axes = vec![None; rank];
+    for row in rows {
+        if !assign_fits_pixel_column(row, &choices, &mut world_axes, &mut vec![false; rank]) {
+            return None;
+        }
+    }
+    let world_axes: Vec<_> = world_axes.into_iter().collect::<Option<_>>()?;
+    let mut aligned_row = vec![0; rank];
+    for (pixel, &world) in world_axes.iter().enumerate() {
+        aligned_row[world] = pixel + 1;
+    }
+    Some((permute_fits_world_rows(header, &aligned_row), world_axes))
+}
+
+fn assign_fits_pixel_column(
+    row: usize,
+    choices: &[Vec<usize>],
+    world_axes: &mut [Option<usize>],
+    seen: &mut [bool],
+) -> bool {
+    for &column in &choices[row] {
+        if std::mem::replace(&mut seen[column], true) {
+            continue;
+        }
+        if world_axes[column]
+            .is_none_or(|other| assign_fits_pixel_column(other, choices, world_axes, seen))
+        {
+            world_axes[column] = Some(row);
+            return true;
+        }
+    }
+    false
 }
 
 /// Emits FITS keywords for a [`DirectionCoordinate`].
@@ -506,6 +582,17 @@ pub fn from_fits_header(
     header: &FitsHeader,
     shape: &[usize],
 ) -> Result<CoordinateSystem, CoordinateError> {
+    if let Some((aligned, world_axes)) = align_fits_pc_rows(header, shape.len()) {
+        let (mut coordinates, model_pixels) = from_fits_header_with_axis_order(&aligned, shape)?;
+        let mut pixel_order = vec![0; model_pixels.len()];
+        let mut world_order = vec![0; model_pixels.len()];
+        for (local, pixel_axis) in model_pixels.into_iter().enumerate() {
+            pixel_order[pixel_axis] = local;
+            world_order[world_axes[pixel_axis]] = local;
+        }
+        coordinates.transpose_axes(&world_order, &pixel_order)?;
+        return Ok(coordinates);
+    }
     from_fits_header_with_axis_order(header, shape).map(|(coordinates, _)| coordinates)
 }
 

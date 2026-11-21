@@ -157,6 +157,17 @@ fn direction(coordinates: &CoordinateSystem, index: usize) -> &DirectionCoordina
 /// names, units, the spectral frame and rest frequency or the Stokes list,
 /// and the world value at each of the `shape` pixels of their axes.
 fn same_axes(a: &CoordinateModel, b: &CoordinateModel, shape: &[usize]) -> bool {
+    same_axis_grid(a, b, shape, |pixel| {
+        a.to_world(pixel).ok().zip(b.to_world(pixel).ok())
+    })
+}
+
+fn same_axis_grid(
+    a: &CoordinateModel,
+    b: &CoordinateModel,
+    shape: &[usize],
+    mut worlds: impl FnMut(&[f64]) -> Option<(Vec<f64>, Vec<f64>)>,
+) -> bool {
     let close = |x: f64, y: f64| (x - y).abs() <= 1e-12 * x.abs().max(y.abs());
     let identity = match (a, b) {
         (CoordinateModel::Spectral(a), CoordinateModel::Spectral(b)) => {
@@ -183,10 +194,7 @@ fn same_axes(a: &CoordinateModel, b: &CoordinateModel, shape: &[usize]) -> bool 
                 p as f64
             })
             .collect();
-        match (a.to_world(&pixel), b.to_world(&pixel)) {
-            (Ok(x), Ok(y)) => x.iter().zip(&y).all(|(p, q)| close(*p, *q)),
-            _ => false,
-        }
+        worlds(&pixel).is_some_and(|(x, y)| x.iter().zip(&y).all(|(p, q)| close(*p, *q)))
     })
 }
 
@@ -252,20 +260,40 @@ fn plan_axes<'a>(
                 "non-direction pixel axes occupy different positions".into(),
             ));
         }
-        let axes: Vec<_> = axes.into_iter().flatten().collect();
-        if axes.is_empty() {
+        let visible: Vec<_> = axes.iter().copied().flatten().collect();
+        if visible.is_empty() {
             continue;
         }
-        let in_shape: Vec<_> = axes.iter().map(|&axis| input_shape[axis]).collect();
-        let out_shape: Vec<_> = axes.iter().map(|&axis| template.shape[axis]).collect();
+        let in_shape: Vec<_> = visible.iter().map(|&axis| input_shape[axis]).collect();
+        let out_shape: Vec<_> = visible.iter().map(|&axis| template.shape[axis]).collect();
+        let equivalent = || {
+            if visible.len() == axes.len() {
+                return same_axes(ours, theirs, &in_shape);
+            }
+            let mut input_pixel = input.local_reference_pixel(k);
+            let mut target_pixel = template.coordinates.local_reference_pixel(k);
+            let local = axes
+                .iter()
+                .enumerate()
+                .filter_map(|(local, axis)| axis.map(|_| local));
+            same_axis_grid(ours, theirs, &in_shape, |pixel| {
+                for (local, &value) in local.clone().zip(pixel) {
+                    input_pixel[local] = value;
+                    target_pixel[local] = value;
+                }
+                ours.to_world(&input_pixel)
+                    .ok()
+                    .zip(theirs.to_world(&target_pixel).ok())
+            })
+        };
         let degenerate = in_shape.iter().chain(&out_shape).all(|n| *n == 1);
         if degenerate && ours.coordinate_type() == theirs.coordinate_type() {
             // Not regridded: the output keeps the input's coordinate.
-            if !same_axes(ours, theirs, &in_shape) {
+            if !equivalent() {
                 coordinates.replace_coordinate(k, ours.clone());
                 template_coordinates = false;
             }
-        } else if in_shape != out_shape || !same_axes(ours, theirs, &in_shape) {
+        } else if in_shape != out_shape || !equivalent() {
             if !along_frequency {
                 return Err(refuse(format!(
                     "the {} axes differ between the input and the template; casa-rs regrids the \
@@ -274,8 +302,12 @@ fn plan_axes<'a>(
                 )));
             }
             spectral = Some(
-                spectral::SpectralPlan::new((ours, in_shape[0]), (theirs, out_shape[0]), axes[0])
-                    .map_err(refuse)?,
+                spectral::SpectralPlan::new(
+                    (ours, in_shape[0]),
+                    (theirs, out_shape[0]),
+                    visible[0],
+                )
+                .map_err(refuse)?,
             );
         }
     }
@@ -1116,6 +1148,40 @@ mod tests {
                 assert_eq!(value, expected);
             }
         }
+    }
+
+    #[test]
+    fn identity_regrid_uses_replacements_for_hidden_local_pixels() {
+        use casa_coordinates::{LinearCoordinate, Projection};
+        use casa_types::measures::direction::DirectionRef;
+
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, 0.3],
+            [-1e-4, 1e-4],
+            [0.0, 0.0],
+        ));
+        coordinates.add_coordinate(
+            LinearCoordinate::new(2, vec![], vec![])
+                .with_pc_matrix(ndarray::array![[1.0, 1.0], [1.0, 2.0]]),
+        );
+        coordinates.remove_pixel_axis(3, 2.0).unwrap();
+        let shape = [5, 4, 4];
+        let mut source = crate::TempImage::new(
+            shape.to_vec(),
+            coordinates,
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
+        let data =
+            ArrayD::from_shape_fn(IxDyn(&shape), |at| (at[0] + 7 * at[1] + 37 * at[2]) as f32);
+        source.put_slice(&data, &[0; 3]).unwrap();
+        let target = RegridTemplate::of(&source);
+        let result = regrid(&source, &target, RegridMethod::Linear).unwrap();
+        assert_eq!(result.data, data);
+        assert!(result.mask.iter().all(|&valid| valid));
     }
 
     #[test]

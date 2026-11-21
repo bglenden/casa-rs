@@ -3,6 +3,7 @@
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate, StokesCoordinate,
 };
+use casa_images::analysis::reduce_subimage_coordinate_record;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
@@ -117,52 +118,50 @@ impl Selection {
         image_shape: &[usize],
         method: &str,
     ) -> PyResult<RecordValue> {
-        let mut axes = 0;
-        for number in 0..original.n_coordinates() {
+        for axis in 0..self.shape.len() {
+            let (number, within_coord) = original
+                .pixel_axis_owner(axis)
+                .ok_or_else(|| raised("Image section pixel axis has no coordinate"))?;
             let coord = original.coordinate(number);
             let kind = coord.coordinate_type();
-            let pixels = coord.reference_pixel();
-            for (within_coord, &reference) in pixels.iter().enumerate() {
-                let axis = axes + within_coord;
-                let shift = self.start[axis];
-                let step = self.stride[axis];
-                if let CoordinateModel::Stokes(stokes) = coord {
-                    if shift != 0 || step != 1 || self.shape[axis] != stokes.stokes().len() {
-                        self.set_stokes(&mut record, stokes, axis)?;
-                    }
-                } else if shift != 0 || step != 1 || self.shape[axis] != image_shape[axis] {
-                    if kind == CoordinateType::Spectral
-                        && self.crop_tabular_spectral(&mut record, axis)?
-                    {
-                        continue;
-                    }
-                    if kind == CoordinateType::Tabular {
-                        return Err(stub(method).unwrap_err());
-                    }
-                    if shift == 0 && step == 1 {
-                        continue;
-                    }
-                    let cdelt = coord.increment()[within_coord];
-                    // ImageInterface::subImage scales each coordinate's
-                    // increment and leaves its linear transform in place.
-                    let (_, stored_increment) =
-                        CoordinateSystem::set_increment_in_record(&mut record, axis, cdelt)
-                            .map_err(raised)?;
-                    CoordinateSystem::set_increment_in_record(
-                        &mut record,
-                        axis,
-                        stored_increment * step as f64,
-                    )
-                    .map_err(raised)?;
-                    CoordinateSystem::set_reference_pixel_in_record(
-                        &mut record,
-                        axis,
-                        (reference - shift as f64) / step as f64,
-                    )
-                    .map_err(raised)?;
+            let shift = self.start[axis];
+            let step = self.stride[axis];
+            if let CoordinateModel::Stokes(stokes) = coord {
+                if shift != 0 || step != 1 || self.shape[axis] != stokes.stokes().len() {
+                    self.set_stokes(&mut record, stokes, axis)?;
                 }
+            } else if shift != 0 || step != 1 || self.shape[axis] != image_shape[axis] {
+                if kind == CoordinateType::Spectral
+                    && self.crop_tabular_spectral(&mut record, axis)?
+                {
+                    continue;
+                }
+                if kind == CoordinateType::Tabular {
+                    return Err(stub(method).unwrap_err());
+                }
+                if shift == 0 && step == 1 {
+                    continue;
+                }
+                let cdelt = coord.increment()[within_coord];
+                // ImageInterface::subImage scales each coordinate's
+                // increment and leaves its linear transform in place.
+                let (_, stored_increment) =
+                    CoordinateSystem::set_increment_in_record(&mut record, axis, cdelt)
+                        .map_err(raised)?;
+                CoordinateSystem::set_increment_in_record(
+                    &mut record,
+                    axis,
+                    stored_increment * step as f64,
+                )
+                .map_err(raised)?;
+                let reference = coord.reference_pixel()[within_coord];
+                CoordinateSystem::set_reference_pixel_in_record(
+                    &mut record,
+                    axis,
+                    (reference - shift as f64) / step as f64,
+                )
+                .map_err(raised)?;
             }
-            axes += coord.n_pixel_axes();
         }
         if self.retained.len() == self.shape.len() {
             return Ok(record);
@@ -190,82 +189,42 @@ impl Selection {
     }
 
     fn project_coordinates(&self, record: &RecordValue) -> PyResult<RecordValue> {
-        let model = CoordinateSystem::from_record(record).map_err(raised)?;
+        let mut projected =
+            reduce_subimage_coordinate_record(record, self.shape.len(), &self.retained)
+                .map_err(raised)?;
+        let model = CoordinateSystem::from_record(&projected).map_err(raised)?;
         let world_at_origin = model
-            .to_world(&vec![0.0; self.shape.len()])
+            .to_world(&vec![0.0; self.retained.len()])
             .map_err(raised)?;
-        let units = (0..model.n_coordinates())
-            .flat_map(|index| model.coordinate(index).axis_units())
-            .collect::<Vec<_>>();
-        let mut coordinates = CoordinateSystem::record_coordinates(record).map_err(raised)?;
-        coordinates.sort_by_key(|coordinate| {
-            let split = coordinate
+        let units = model.world_axis_units();
+        for coordinate in model.coordinates_in_record(&projected).map_err(raised)? {
+            let suffix = coordinate
                 .field
-                .trim_end_matches(|ch: char| ch.is_ascii_digit())
-                .len();
-            coordinate.field[split..].parse::<usize>().unwrap_or(0)
-        });
-        let mut projected = record.clone();
-        let auxiliary = ["pixelmap", "worldmap", "pixelreplace", "worldreplace"];
-        for coordinate in &coordinates {
-            let split = coordinate
-                .field
-                .trim_end_matches(|ch: char| ch.is_ascii_digit())
-                .len();
-            let suffix = &coordinate.field[split..];
-            projected.remove(&coordinate.field);
-            for key in auxiliary {
-                projected.remove(&format!("{key}{suffix}"));
-            }
-        }
-        let mut index = 0;
-        for coordinate in coordinates {
-            let retained = coordinate
-                .pixel_axes
-                .iter()
-                .flatten()
-                .filter_map(|axis| self.retained.iter().position(|kept| kept == axis))
-                .map(|axis| axis as i32)
-                .collect::<Vec<_>>();
-            if retained.is_empty() {
-                continue;
-            }
-            if retained.len() != coordinate.pixel_axes.len() {
-                return Err(raised(
-                    "This subimage removes part of a coordinate (casa-rs issue #1002)",
-                ));
-            }
-            let kind = coordinate
-                .field
-                .trim_end_matches(|ch: char| ch.is_ascii_digit());
-            let definition = record
+                .trim_start_matches(|ch: char| !ch.is_ascii_digit());
+            let pixel_field = format!("pixelreplace{suffix}");
+            let world_field = format!("worldreplace{suffix}");
+            let mut pixel = numbers(&projected, &pixel_field)
+                .unwrap_or_else(|| vec![0.0; coordinate.pixel_axes.len()]);
+            let mut world = numbers(&projected, &world_field)
+                .unwrap_or_else(|| vec![0.0; coordinate.world_axes.len()]);
+            pixel.resize(coordinate.pixel_axes.len(), 0.0);
+            world.resize(coordinate.world_axes.len(), 0.0);
+            let definition = projected
                 .get(&coordinate.field)
                 .expect("coordinate record entry exists");
-            projected.upsert(format!("{kind}{index}"), definition.clone());
-            for key in ["pixelmap", "worldmap"] {
-                projected.upsert(
-                    format!("{key}{index}"),
-                    Value::Array(ArrayValue::from_i32_vec(retained.clone())),
-                );
+            for (local, axis) in coordinate.pixel_axes.into_iter().enumerate() {
+                if axis.is_some() {
+                    pixel[local] = 0.0;
+                }
             }
-            projected.upsert(
-                format!("pixelreplace{index}"),
-                Value::Array(ArrayValue::from_f64_vec(vec![0.0; retained.len()])),
-            );
-            let world = coordinate
-                .pixel_axes
-                .iter()
-                .flatten()
-                .enumerate()
-                .map(|(local, &axis)| {
-                    world_value(world_at_origin[axis], &units[axis], definition, local)
-                })
-                .collect::<PyResult<Vec<_>>>()?;
-            projected.upsert(
-                format!("worldreplace{index}"),
-                Value::Array(ArrayValue::from_f64_vec(world)),
-            );
-            index += 1;
+            for (local, axis) in coordinate.world_axes.into_iter().enumerate() {
+                if let Some(axis) = axis {
+                    world[local] =
+                        world_value(world_at_origin[axis], &units[axis], definition, local)?;
+                }
+            }
+            projected.upsert(pixel_field, ArrayValue::from_f64_vec(pixel).into());
+            projected.upsert(world_field, ArrayValue::from_f64_vec(world).into());
         }
         Ok(projected)
     }

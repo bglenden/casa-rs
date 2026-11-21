@@ -51,12 +51,7 @@ pub(super) fn reduce_coordinates_and_beams(
         (shifted, shifted_legacy)
     } else {
         let record = shifted_legacy.unwrap_or_else(|| shifted.to_record());
-        let reduced =
-            drop_axes_from_legacy_record(&record, ndim, spec.kept_axes).ok_or_else(|| {
-                ImageError::InvalidMetadata(
-                    "could not reduce the subimage axis maps (#1002)".into(),
-                )
-            })?;
+        let reduced = reduce_subimage_coordinate_record(&record, ndim, spec.kept_axes)?;
         (CoordinateSystem::from_record(&reduced)?, Some(reduced))
     };
 
@@ -70,6 +65,21 @@ pub(super) fn reduce_coordinates_and_beams(
     )?;
 
     Ok((out_coords, out_legacy, image_info))
+}
+
+/// Reduce a native subimage coordinate record to the retained pixel axes,
+/// preserving independent world order and any mapped local replacements.
+///
+/// # Errors
+/// The source coordinate record cannot be sliced on the selected axes.
+pub fn reduce_subimage_coordinate_record(
+    record: &RecordValue,
+    ndim: usize,
+    kept_axes: &[usize],
+) -> Result<RecordValue, ImageError> {
+    drop_axes_from_legacy_record(record, ndim, kept_axes).ok_or_else(|| {
+        ImageError::InvalidMetadata("could not reduce the subimage axis maps (#1002)".into())
+    })
 }
 
 fn find_system_axis(coords: &CoordinateSystem, kind: CoordinateType) -> Option<usize> {
