@@ -4742,25 +4742,20 @@
     },
     {
       "id": "parameter.merge",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "merge",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "and",
-          "or",
-          "replace"
-        ]
+        "kind": "string"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "casa_field"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Merge policy for save and restore operations.",
-        "details": null,
+        "details": "The exact strings 'and' and 'or' merge masks. Other strings use replacement.",
         "examples": [
           "replace"
         ]
@@ -9396,6 +9391,18 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Highest elevation, in degrees, that elevation mode keeps.", "details": null, "examples": ["90.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.datacolumn",
+      "semantic_revision": 1,
+      "casa_name": "datacolumn",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Visibility data column selected by the clip, tfcrop and rflag agents.", "details": "Other routine agents disregard the value. The CASA argument also admits string vectors, which raise an error when an agent or a display needs a scalar column name.", "examples": ["'DATA'", "'CORRECTED'", "'MODEL'"]},
       "persistence_class": "profile"
     },
     {

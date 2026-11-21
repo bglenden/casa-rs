@@ -60,28 +60,21 @@ def check_merges(task, vis):
     sidecar = Path(f"{vis}.flagversions")
     catalog = sidecar / "FLAG_VERSION_LIST"
     initial_catalog = catalog.read_bytes()
-    for merge in ("replace", "or", "and", "", "OR", "unrecognized"):
+    for merge in ("replace", "or", "and", "", "OR", "unrecognized", "$literal"):
         working = set_flags(vis, 1, shared_row=4)
-        if task is tasks.flagmanager and merge not in ("replace", "or", "and"):
-            try:
-                task(vis=str(vis), mode="restore", versionname="first", merge=merge)
-            except ValueError:
-                pass
-            else:
-                raise AssertionError(f"restore accepted an unknown merge choice {merge!r}")
-            expected = working
+        assert task(vis=str(vis), mode="restore", versionname="first", merge=merge) is None
+        if merge == "or":
+            expected = tuple(np.logical_or(a, b) for a, b in zip(saved, working, strict=True))
+        elif merge == "and":
+            expected = tuple(np.logical_and(a, b) for a, b in zip(saved, working, strict=True))
         else:
-            assert task(vis=str(vis), mode="restore", versionname="first", merge=merge) is None
-            if merge == "or":
-                expected = tuple(np.logical_or(a, b) for a, b in zip(saved, working, strict=True))
-            elif merge == "and":
-                expected = tuple(np.logical_and(a, b) for a, b in zip(saved, working, strict=True))
-            else:
-                expected = saved
+            expected = saved
         assert_flags(vis, expected)
         assert_flags(sidecar / "flags.first", saved)
         assert catalog.read_bytes() == initial_catalog
         assert versions(task, vis) == {0: {"name": "first", "comment": "retained"}}
+    assert task(vis=str(vis), mode="save", versionname="copy", merge="unrecognized") is None
+    assert_flags(sidecar / "flags.copy", saved)
 
 
 def main():
@@ -90,7 +83,7 @@ def main():
         for task, prefix in ((casatasks.flagmanager, "reference"), (tasks.flagmanager, "native")):
             check_catalog(task, prefix)
             check_merges(task, Path(f"{prefix}-merge.ms"))
-    print("Seven flag-version catalog cases and six restore choices checked against CASA 6.7.6.14")
+    print("Seven flag-version catalog cases, seven restore choices and fallback save checked against CASA 6.7.6.14")
 
 
 if __name__ == "__main__":

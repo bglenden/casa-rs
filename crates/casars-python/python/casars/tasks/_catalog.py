@@ -938,7 +938,7 @@ def flagdata(
     observation: str | int = '',
     feed: str | list[str] = '',
     clipminmax: float | list[float] | tuple[float, ...] = [],
-    datacolumn: str = 'DATA',
+    datacolumn: ParameterData = 'DATA',
     clipoutside: bool | list[bool] = True,
     channelavg: bool | list[bool] = False,
     chanbin: int | list[int] = 1,
@@ -1018,7 +1018,7 @@ def flagmanager(
     versionname: str = '',
     oldname: str = '',
     comment: str = '',
-    merge: Literal['and', 'or', 'replace'] = 'replace',
+    merge: str = 'replace',
 ) -> Any:
     """Manage MeasurementSet flag-version snapshots.
 

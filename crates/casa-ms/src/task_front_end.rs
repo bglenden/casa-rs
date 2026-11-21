@@ -27,18 +27,14 @@ pub fn ms_task_success(
     Ok(TaskSuccess::new(value, result)?.with_text(text + "\n"))
 }
 
-/// Read `name`, a flag-version merge: `replace`, `or` or `and`, any case.
+/// Read CASA's flag-version merge. Only exact `and` and `or` merge masks.
 pub fn task_flag_merge(task: &TaskInvocation<'_>, name: &str) -> Result<FlagMerge, TaskFailure> {
     let text = task.required_text(name)?;
-    match text.to_ascii_lowercase().as_str() {
-        "replace" => Ok(FlagMerge::Replace),
-        "or" => Ok(FlagMerge::Or),
-        "and" => Ok(FlagMerge::And),
-        _ => Err(TaskFailure::validation(format!(
-            "parameter {name:?} must be replace, or or and, found {text:?}"
-        ))
-        .at(name)),
-    }
+    Ok(match text.as_str() {
+        "or" => FlagMerge::Or,
+        "and" => FlagMerge::And,
+        _ => FlagMerge::Replace,
+    })
 }
 
 /// Read `name`, a CASA selection string; empty when unset.

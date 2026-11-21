@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 828
+- Concepts: 829
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -1070,7 +1070,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
 | <code>feed</code> | <code>ms.selection.feed@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA feed IDs and feed pair selection.<br><em>Surface:</em> Selects the requested feed IDs or pairs. CASA 6.7.6.14 flagdata silently ignores this selector. |
 | <code>clipminmax</code> | <code>flagdata.clipminmax@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Clip | Two values define the closed clipping range. Other lengths leave the range unset. |
-| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"DATA"</code>; optional | Data | Visibility data column used by the surface.<br><em>Surface:</em> Used as the visibility data column for automatic flagging modes. |
+| <code>datacolumn</code> | <code>flagdata.datacolumn@r1</code> | <code>variant</code> | <code>"DATA"</code>; optional | Data | Visibility data column selected by the clip, tfcrop and rflag agents.<br><em>Surface:</em> A string vector is recorded in HISTORY when the active agent ignores this argument. |
 | <code>clipoutside</code> | <code>flagdata.clipoutside@r1</code> | <code>variant</code> | <code>true</code>; optional | Clip | Flag samples outside the closed clip range when true, or inside it when false. |
 | <code>channelavg</code> | <code>flagdata.channelavg@r2</code> | <code>variant</code> | <code>false</code>; optional | Clip | Average selected channels before clipping. |
 | <code>chanbin</code> | <code>parameter.chanbin@r3</code> | <code>variant</code> | <code>1</code>; optional | Clip | Channel averaging width for clipping. |
@@ -1146,7 +1146,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>versionname</code> | <code>parameter.versionname@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Target flag-version name. |
 | <code>oldname</code> | <code>parameter.oldname@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Existing flag-version name for rename. |
 | <code>comment</code> | <code>parameter.comment@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Comment stored with saved or renamed versions. |
-| <code>merge</code> | <code>parameter.merge@r1</code> | <code>choice (3 values)</code> | <code>"replace"</code>; optional | Operation | Merge policy for save and restore operations. |
+| <code>merge</code> | <code>parameter.merge@r2</code> | <code>string</code> | <code>"replace"</code>; optional | Operation | Merge policy for save and restore operations. |
 
 <a id="surface-impbcor"></a>
 

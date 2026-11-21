@@ -56,6 +56,7 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     let vector_selector = selector_argument(task)?;
+    let column = flagdata_column_argument(task)?;
     let time_chunk = time_chunk_argument(task).or_else(|error| {
         if error.kind == TaskFailureKind::Execution {
             backup_before_failed_apply(task, &action)?;
@@ -64,6 +65,16 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     })?;
     check_correlation_argument(task, &action)?;
     let mode = task.required_text("mode")?;
+    let display_option = task.required_text("display")?;
+    if column.is_none()
+        && (matches!(mode.as_str(), "clip" | "tfcrop" | "rflag")
+            || (!display_option.is_empty() && matches!(action.as_str(), "apply" | "calculate")))
+    {
+        backup_before_failed_apply(task, &action)?;
+        return Err(
+            TaskFailure::execution("'list' object has no attribute 'upper'").at("datacolumn"),
+        );
+    }
     let save_parameters = task.flag("savepars")? && mode != "summary";
     let channel_bins = channel_bin_widths(task)?;
     let calculate = match action.as_str() {
@@ -99,18 +110,18 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             TaskFailure::execution(format!("argument _{selector} must be a string")).at(selector),
         );
     }
-    let mut request = flagdata_request(task, channel_bins).or_else(|error| {
-        let parameter = error.parameter.as_deref();
-        if matches!(parameter, Some("datacolumn" | "field" | "spw"))
-            || (matches!(parameter, Some("channelavg" | "timeavg"))
-                && error.kind == TaskFailureKind::Execution)
-        {
-            backup_before_failed_apply(task, &action)?;
-        }
-        Err(error)
-    })?;
+    let mut request =
+        flagdata_request(task, column.unwrap_or_default(), channel_bins).or_else(|error| {
+            let parameter = error.parameter.as_deref();
+            if matches!(parameter, Some("datacolumn" | "field" | "spw"))
+                || (matches!(parameter, Some("channelavg" | "timeavg"))
+                    && error.kind == TaskFailureKind::Execution)
+            {
+                backup_before_failed_apply(task, &action)?;
+            }
+            Err(error)
+        })?;
     request.time_chunk = time_chunk;
-    let display_option = task.required_text("display")?;
     if matches!(display_option.as_str(), "data" | "report" | "both") {
         tracing::warn!(display = %display_option, "running flagdata with its headless provider");
     }
@@ -390,6 +401,9 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                 ("flagbackup", _) => "False".to_string(),
                 ("savepars", _) if !display.is_empty() => "False".to_string(),
                 ("datacolumn", _) if float_display => "\"FLOAT_DATA\"".to_string(),
+                ("datacolumn", ParameterValue::Array(_)) => task
+                    .argument_text("datacolumn")
+                    .map_or_else(|| python_repr(value), str::to_owned),
                 ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
                     "\"\"".to_string()
                 }
@@ -517,10 +531,30 @@ fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result
     Ok(())
 }
 
+fn flagdata_column_argument<'a>(
+    task: &'a TaskInvocation<'_>,
+) -> Result<Option<&'a str>, TaskFailure> {
+    match task.value("datacolumn") {
+        Some(ParameterValue::String(column)) => Ok(Some(column)),
+        Some(ParameterValue::Array(items))
+            if items
+                .iter()
+                .all(|item| matches!(item, ParameterValue::String(_))) =>
+        {
+            Ok(None)
+        }
+        _ => Err(
+            TaskFailure::validation("datacolumn must be a string or string vector")
+                .at("datacolumn"),
+        ),
+    }
+}
+
 /// The resolved run as a [`FlagDataRequest`]; the parameters the surface
 /// does not carry keep their defaults.
 fn flagdata_request(
     task: &TaskInvocation<'_>,
+    column: &str,
     channel_bins: Vec<u32>,
 ) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
@@ -558,7 +592,7 @@ fn flagdata_request(
         mode,
         action,
         autocorr: task.flag("autocorr")?,
-        data_column: data_column(&task.required_text("datacolumn")?, mode)?,
+        data_column: data_column(column, mode)?,
         flagbackup: task.flag("flagbackup")?,
         summary_options: FlagSummaryOptions {
             spwchan: task.flag("spwchan")?,
@@ -770,6 +804,12 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
 
 /// The visibility or weight source for the active flagging agent.
 fn data_column(text: &str, mode: FlagDataMode) -> Result<FlagDataColumn, TaskFailure> {
+    if !matches!(
+        mode,
+        FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
+    ) {
+        return Ok(FlagDataColumn::Data);
+    }
     match text.to_ascii_uppercase().as_str() {
         "DATA" => Ok(FlagDataColumn::Data),
         "CORRECTED" | "CORRECTED_DATA" => Ok(FlagDataColumn::CorrectedData),
@@ -908,7 +948,11 @@ mod tests {
     /// The request a `flagdata` command line resolves to.
     fn request_for(args: &[&str]) -> Result<FlagDataRequest, TaskFailure> {
         read(args, |task| {
-            flagdata_request(task, channel_bin_widths(task)?)
+            flagdata_request(
+                task,
+                flagdata_column_argument(task)?.unwrap_or_default(),
+                channel_bin_widths(task)?,
+            )
         })
     }
 
@@ -1031,15 +1075,15 @@ mod tests {
 
     #[test]
     fn casa_values_not_implemented_yet_name_978() {
-        for (name, value) in [
-            ("--mode", "shadow"),
-            ("--mode", "list"),
-            ("--datacolumn", "MODEL"),
-        ] {
+        for (name, value) in [("--mode", "shadow"), ("--mode", "list")] {
             let error = request_for(&["--vis", "in.ms", name, value]).unwrap_err();
             assert!(error.message.contains("#978"), "{name} {value}: {error:?}");
             assert_eq!(error.parameter.as_deref(), Some(&name[2..]));
         }
+        let error = request_for(&["--vis", "in.ms", "--mode", "rflag", "--datacolumn", "MODEL"])
+            .unwrap_err();
+        assert!(error.message.contains("#978"));
+        assert_eq!(error.parameter.as_deref(), Some("datacolumn"));
         let error = read(
             &["--vis", "in.ms", "--mode", "rflag", "--action", "calculate"],
             |task| run(task).map(|_| ()),

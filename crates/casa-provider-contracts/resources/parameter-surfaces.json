@@ -24264,7 +24264,7 @@
         {
           "name": "datacolumn",
           "concept": {
-            "id": "parameter.datacolumn",
+            "id": "flagdata.datacolumn",
             "semantic_revision": 1
           },
           "order": 18,
@@ -24283,7 +24283,7 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": "Used as the visibility data column for automatic flagging modes.",
+          "surface_note": "A string vector is recorded in HISTORY when the active agent ignores this argument.",
           "projections": {
             "cli": {
               "positional": null,
@@ -24308,7 +24308,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata accepts scalar and vector strings, with agent-specific handling."}
         },
         {
           "name": "action",
@@ -25135,7 +25135,7 @@
           "name": "merge",
           "concept": {
             "id": "parameter.merge",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 5,
           "default": {

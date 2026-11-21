@@ -35,6 +35,7 @@ from ..parameters import (
     SurfaceParameters,
     TaskParameters,
     _native,
+    contract_bundle,
 )
 from ._completion import completion_projection
 
@@ -325,11 +326,11 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     if name == "flagdata":
-        argument_text = None
-        if arguments["savepars"] is True:
+        argument_text: dict[str, str] = {}
+        correlation_vector, column_vector = _coerce_flagdata_options(values, argument_text)
+        if values["savepars"]:
             _validate_required_path(values, "vis", arguments["vis"])
-            argument_text = _flagdata_saved_argument_text(arguments)
-        correlation_vector = _coerce_flagdata_options(values)
+            argument_text.update(_flagdata_saved_argument_text(arguments))
         try:
             if argument_text:
                 workspace = Path.cwd()
@@ -352,6 +353,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
                 if completion.message == "no flagdata summary report for the selected correlations":
                     raise KeyError("nreport") from error
+            if completion.parameter == "datacolumn" and column_vector:
+                raise AttributeError(f"'{column_vector}' object has no attribute 'upper'") from error
             if completion.message == f"argument _{completion.parameter} must be a string":
                 raise TypeError(completion.message) from error
             if completion.parameter == "ntime":
@@ -363,6 +366,16 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if completion.parameter == "outfile.not_found":
                 raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), arguments["outfile"]) from error
             raise
+    if name == "flagmanager":
+        errors = _flagging_choice_errors(name, values)
+        for parameter in ("versionname", "oldname", "comment", "merge"):
+            value = values[parameter]
+            if value is None:
+                errors[parameter] = ["null value not allowed"]
+            elif not isinstance(value, str):
+                errors[parameter] = ["must be of cStr type"]
+        if errors:
+            raise AssertionError(str(dict(sorted(errors.items()))))
     return run(name, **values).value
 
 
@@ -495,12 +508,38 @@ def _flagdata_saved_argument_text(arguments: Mapping[str, Any]) -> dict[str, str
     return text
 
 
-def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
+@functools.cache
+def _flagging_choices(surface: str) -> dict[str, frozenset[str]]:
+    concepts = contract_bundle(surface)["catalog"]["concepts"]
+    return {
+        concept["casa_name"]: frozenset(concept["value_domain"]["values"])
+        for concept in concepts
+        if concept["casa_name"] in ("mode", "action") and concept["value_domain"]["kind"] == "choice"
+    }
+
+
+def _flagging_choice_errors(surface: str, values: dict[str, Any]) -> dict[str, list[str]]:
+    errors = {}
+    for parameter, choices in _flagging_choices(surface).items():
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["unallowed value None", "null value not allowed"]
+        elif not isinstance(value, str):
+            errors[parameter] = ["must be of cStr type"]
+        elif value not in choices:
+            errors[parameter] = [f"unallowed value {value}"]
+    return errors
+
+
+def _coerce_flagdata_options(
+    values: dict[str, Any], argument_text: dict[str, str],
+) -> tuple[str | None, str | None]:
     import numpy as np
 
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
     cint = (int, np.int32, np.int64)
-    errors: dict[str, list[str]] = {}
+    errors = _flagging_choice_errors("flagdata", values)
+    column_vector = _coerce_flagdata_column(values, argument_text, errors)
     correlation_vector = None
     for parameter in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         if parameter not in values:
@@ -578,6 +617,11 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
         ("fieldcnt", bool, "cBool"),
         ("name", str, "cStr"),
         ("display", str, "cStr"),
+        ("cmdreason", str, "cStr"),
+        ("outfile", str, "cStr"),
+        ("flagbackup", bool, "cBool"),
+        ("savepars", bool, "cBool"),
+        ("overwrite", bool, "cBool"),
         ("timebin", str, "cStr"),
         ("minrel", cfloat, "cFloat"),
         ("maxrel", cfloat, "cFloat"),
@@ -594,7 +638,10 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
         elif expected is bool and isinstance(value, np.bool_):
             # CASA admits these scalars and uses the switch defaults.
             # Preserve autocorr=True to avoid flagging cross-correlations.
-            values[parameter] = bool(value) if parameter in ("autocorr", "writeflags") else False
+            values[parameter] = (
+                bool(value) if parameter in ("autocorr", "writeflags", "flagbackup", "savepars", "overwrite")
+                else False
+            )
         elif not isinstance(value, expected):
             errors[parameter] = [f"must be of {casa_type} type"]
         elif casa_type == "cFloat":
@@ -615,7 +662,29 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
             errors["clipminmax"] = [str(error)]
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
-    return correlation_vector
+    return correlation_vector, column_vector
+
+
+def _coerce_flagdata_column(values, argument_text, errors) -> str | None:
+    import numpy as np
+
+    column = values["datacolumn"]
+    if isinstance(column, str):
+        values["datacolumn"] = str(column)
+    elif column is None:
+        errors["datacolumn"] = ["null value not allowed"] * 3
+    elif _flagdata_string_vector(column):
+        if isinstance(column, np.ndarray) and column.ndim == 0:
+            values["datacolumn"] = [str(column.item())]
+            argument_text["datacolumn"] = str(column)
+            return "numpy.ndarray"
+        items = list(column)
+        values["datacolumn"] = [str(item) for item in items]
+        argument_text["datacolumn"] = repr(items)
+        return "list"
+    else:
+        errors["datacolumn"] = ["must be of cStr type", "must be of cStrVec type"]
+    return None
 
 
 def _flagdata_string_vector(value: Any) -> bool:

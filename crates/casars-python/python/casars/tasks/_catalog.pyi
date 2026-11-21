@@ -827,7 +827,7 @@ def flagdata(
     observation: str | int = ...,
     feed: str | list[str] = ...,
     clipminmax: float | list[float] | tuple[float, ...] = ...,
-    datacolumn: str = ...,
+    datacolumn: ParameterData = ...,
     clipoutside: bool | list[bool] = ...,
     channelavg: bool | list[bool] = ...,
     chanbin: int | list[int] = ...,
@@ -894,7 +894,7 @@ def flagmanager(
     versionname: str = ...,
     oldname: str = ...,
     comment: str = ...,
-    merge: Literal['and', 'or', 'replace'] = ...,
+    merge: str = ...,
 ) -> Any:
     ...
 
