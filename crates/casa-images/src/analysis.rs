@@ -76,6 +76,9 @@ pub use transpose::copy_transposed_image;
 mod world_header;
 
 mod immoments;
+pub use immoments::{
+    ImageMomentOptions, ImageMomentProducts, make_image_moments, moment_output_names,
+};
 mod impbcor;
 mod impv;
 mod imstat_log;

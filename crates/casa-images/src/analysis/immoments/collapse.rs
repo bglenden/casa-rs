@@ -5,6 +5,8 @@ use casa_types::ArrayD;
 use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::axis::ProfileCoordinates;
+use super::window::{Method, Selection};
+use crate::analysis::imsubimage::fitprofile::selection::Lane;
 use crate::{ImageError, ImmomentsRequest};
 
 #[derive(Clone, Copy)]
@@ -15,6 +17,30 @@ pub(in crate::analysis) enum PixelClip {
 }
 
 impl PixelClip {
+    pub(super) fn from_tool(include: &[f64], exclude: &[f64]) -> Result<Self, ImageError> {
+        fn range(values: &[f64]) -> Result<Option<[f64; 2]>, ImageError> {
+            let range = match values {
+                [] | [-1.] => return Ok(None),
+                [value] => [-value.abs(), value.abs()],
+                [a, b] => [a.min(*b), a.max(*b)],
+                _ => {
+                    return Err(ImageError::CasaSelection(
+                        "A pixel range accepts at most two values".into(),
+                    ));
+                }
+            };
+            Ok(Some(range.map(|value| f64::from(value as f32))))
+        }
+        match (range(include)?, range(exclude)?) {
+            (None, None) => Ok(Self::All),
+            (Some(range), None) => Ok(Self::Include(range)),
+            (None, Some(range)) => Ok(Self::Exclude(range)),
+            _ => Err(ImageError::CasaSelection(
+                "Only one of includepix or excludepix may be specified, not both".into(),
+            )),
+        }
+    }
+
     pub(super) fn from_request(request: &ImmomentsRequest) -> Result<Self, ImageError> {
         match (request.includepix, request.excludepix) {
             (None, None) => Ok(Self::All),
@@ -115,6 +141,81 @@ where
 struct Sample {
     value: f64,
     position: f64,
+}
+
+pub(super) struct MomentSamples {
+    pub(super) method: Method,
+    pub(super) clip: PixelClip,
+    pub(super) peak_snr: f32,
+    pub(super) noise: f32,
+    pub(super) scale: f64,
+    samples: Vec<Sample>,
+    sum: f64,
+}
+
+impl MomentSamples {
+    pub(super) fn new(
+        method: Method,
+        clip: PixelClip,
+        peak_snr: f32,
+        noise: f32,
+        scale: f64,
+    ) -> Self {
+        Self {
+            method,
+            clip,
+            peak_snr,
+            noise,
+            scale,
+            samples: Vec::new(),
+            sum: 0.,
+        }
+    }
+
+    pub(super) fn extract(&mut self, original: &Lane, smoothed: Option<&Lane>, positions: &[f64]) {
+        self.samples.clear();
+        let guide = smoothed.unwrap_or(original);
+        let selected = Selection::new(
+            self.method,
+            &guide.values,
+            &guide.valid,
+            self.peak_snr,
+            self.noise,
+        );
+        for (index, ((&value, &valid), &position)) in original
+            .values
+            .iter()
+            .zip(&original.valid)
+            .zip(positions)
+            .enumerate()
+        {
+            if !valid {
+                continue;
+            }
+            let value = match &selected {
+                Selection::All if self.clip.keeps(f64::from(guide.values[index])) => value,
+                Selection::Window(window) if window.contains(&index) => value,
+                Selection::Model([amplitude, center, width, level]) => {
+                    let z = (index as f64 - center) / width;
+                    (level + amplitude * (-4. * std::f64::consts::LN_2 * z * z).exp()) as f32
+                }
+                _ => continue,
+            };
+            self.samples.push(Sample {
+                value: value.into(),
+                position,
+            });
+        }
+        self.sum = self.samples.iter().map(|sample| sample.value).sum();
+    }
+
+    pub(super) fn measure(&self, moment: i32) -> Option<f32> {
+        if self.samples.is_empty() {
+            None
+        } else {
+            calculate(&self.samples, self.sum, self.scale, moment).map(|value| value as f32)
+        }
+    }
 }
 
 fn calculate(samples: &[Sample], sum: f64, scale: f64, moment: i32) -> Option<f64> {
