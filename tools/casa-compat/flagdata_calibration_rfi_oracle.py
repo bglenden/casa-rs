@@ -163,13 +163,20 @@ def main():
                 print(f'{column} {name}: {delta} changed cells', flush=True)
                 comparisons += 1
                 edits += delta
-            for invalid in ({'winsize': 0}, {'winsize': -1},
-                            {'timedev': 0.4, 'timedevscale': 0.0},
-                            {'freqdev': 1.0, 'freqdevscale': -1.0}):
+            invalid_controls = (
+                ({'winsize': 0}, 'winsize', 'winsize must be positive'),
+                ({'winsize': -1}, 'winsize', 'winsize must be positive'),
+                ({'timedev': 0.4, 'timedevscale': 0.0}, 'timedevscale',
+                 'timedevscale must be positive when its threshold is positive'),
+                ({'freqdev': 1.0, 'freqdevscale': -1.0}, 'freqdevscale',
+                 'freqdevscale must be positive when its threshold is positive'),
+            )
+            for invalid, parameter, message in invalid_controls:
                 prior, metadata = flags(timed), original_columns(timed)
                 result = outcome(native, timed, mode='rflag', datacolumn=column,
                                  flagbackup=False, **invalid)
-                assert isinstance(result, tuple) and result[0] == 'ValueError', result
+                assert result == ('TaskParameterError',
+                                  f"flagdata refused its parameters (parameter '{parameter}'): {message}"), result
                 assert_flags(timed, prior)
                 preserved(timed, metadata)
                 safe_refusals += 1
