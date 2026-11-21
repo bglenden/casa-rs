@@ -29,7 +29,7 @@ pub(super) fn deblend(
 ) -> Vec<Vec<usize>> {
     let mut labels = vec![UNASSIGNED; island.len()];
     let mut seeds: Vec<Seed> = Vec::new();
-    let mut order = Vec::new();
+    let mut order: Vec<usize> = Vec::new();
     let local = |point: usize| {
         island
             .binary_search(&point)

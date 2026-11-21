@@ -16,7 +16,7 @@ pub(super) struct FitOptions {
 }
 
 pub(super) fn estimate(pixels: &Pixels, points: &[usize]) -> Parameters {
-    let mut parameters = [0.; 9];
+    let mut parameters: Parameters = [0.; 9];
     let rank = pixels.rank();
     let mut total = 0.;
     let mut first = [0.; 3];
@@ -104,7 +104,7 @@ pub(super) fn peak_estimates(pixels: &Pixels, group: &[usize]) -> Vec<Parameters
                     1.
                 }
             });
-            let mut parameters = [0.; 9];
+            let mut parameters: Parameters = [0.; 9];
             parameters[0] = f64::from(value);
             for axis in 0..rank {
                 parameters[axis + 1] = center[axis] as f64;
