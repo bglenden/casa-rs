@@ -93,11 +93,6 @@ pub(super) fn world_axes_for_plane(
     Ok([first, second])
 }
 
-/// The axes of a `rank`-axis image other than its plane's, in order.
-pub(super) fn other_axes(rank: usize, plane: [usize; 2]) -> Vec<usize> {
-    (0..rank).filter(|axis| !plane.contains(axis)).collect()
-}
-
 /// `coordinates` for a subimage starting at pixel `start`.
 pub(super) fn subimage_coordinates(
     coordinates: &CoordinateSystem,

@@ -9647,10 +9647,10 @@
     },
     {
       "id": "flagdata.winsize",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "winsize",
-      "value_domain": {"kind": "integer"},
-      "normalization": {"kind": "identity"},
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "numeric_variant"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",

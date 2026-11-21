@@ -27,8 +27,8 @@ use super::imsubimage::{
     coords::{drop_axes_from_legacy_record, subset_beam_set},
     region::SubimageSelection,
 };
-use super::planes::unravel_index;
 use super::{combined_selection_mask, ensure_outfile_does_not_alias_input};
+use crate::plane::PlaneIndex;
 use crate::regrid::{Plane, RegridMethod};
 use crate::{ImageError, ImagePixel, ImpvRequest, PagedImage, PvImageSummary};
 
@@ -186,10 +186,7 @@ where
 {
     let [x, y] = plane;
     let plane_shape = [input.shape()[x], input.shape()[y]];
-    let input_axes: Vec<_> = (0..input.ndim())
-        .filter(|axis| !plane.contains(axis))
-        .collect();
-    let plane_keys: Vec<_> = input_axes.iter().map(|&axis| input.shape()[axis]).collect();
+    let planes = PlaneIndex::new(input.shape(), plane);
     let offsets = (0..strip.shape[0])
         .map(|i| {
             (0..strip.shape[1])
@@ -203,37 +200,27 @@ where
     let offset_axis = x - usize::from(y < x);
     let mut result = ArrayD::zeros(IxDyn(&out_shape).f());
     let mut valid = ArrayD::from_elem(IxDyn(&out_shape).f(), false);
-    let mut pixels = Vec::with_capacity(plane_shape[0] * plane_shape[1]);
-    let mut good = Vec::with_capacity(pixels.capacity());
-    let mut index = vec![0; input.ndim()];
+    let mut pixels = vec![0.0; plane_shape[0] * plane_shape[1]];
+    let mut good = mask.map(|_| vec![false; pixels.len()]);
     let method = if strip.rotated() {
         RegridMethod::Cubic
     } else {
         RegridMethod::Nearest
     };
-    for i in 0..plane_keys.iter().product() {
-        for (axis, pixel) in input_axes.iter().zip(unravel_index(i, &plane_keys)) {
-            index[*axis] = pixel;
-        }
-        pixels.clear();
-        good.clear();
-        for j in 0..plane_shape[1] {
-            index[y] = j;
-            for k in 0..plane_shape[0] {
-                index[x] = k;
-                pixels.push(input[IxDyn(&index)].into());
-                if let Some(mask) = mask {
-                    good.push(mask[IxDyn(&index)]);
-                }
-            }
+    for i in 0..planes.count() {
+        planes.read(i, input, &mut pixels, |value| (*value).into());
+        if let (Some(mask), Some(good)) = (mask, &mut good) {
+            planes.read(i, mask, good, |value| *value);
         }
         let plane = Plane {
             data: &pixels,
-            mask: mask.map(|_| good.as_slice()),
+            mask: good.as_deref(),
             shape: plane_shape,
         };
-        let mut output_index = index.clone();
-        output_index.remove(y);
+        let mut output_index: Vec<_> = (0..input.ndim())
+            .filter(|&axis| axis != y)
+            .map(|axis| planes.pixel(i, axis))
+            .collect();
         for (i, section) in offsets.iter().enumerate() {
             let (sum, n) = section
                 .iter()

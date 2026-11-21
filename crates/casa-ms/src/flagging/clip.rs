@@ -18,7 +18,7 @@ pub(super) struct ClipOptions<'a> {
 }
 
 impl ClipMetric {
-    fn apply32(self, value: Complex32) -> f32 {
+    pub(super) fn apply32(self, value: Complex32) -> f32 {
         match self {
             Self::Amplitude => value.norm(),
             Self::Real => value.re,

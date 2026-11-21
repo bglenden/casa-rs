@@ -8093,6 +8093,23 @@ bandpass and FPARAM Tsys tables for `spw='0:1~5^2'`. The channel stride
 selects channels 1, 3, and 5. Casa-rs flags those channels and preserves
 channels 2 and 4. The calibration flagdata oracle checks both outcomes.
 
+## Calibration RFlag can extend flags outside the selected channels
+
+In CASA 6.7.6.14, `flagdata(mode='rflag', spw='0:3~7')` with automatic
+extension can flag channel 0 in both CPARAM bandpass and FPARAM Tsys
+tables. The corresponding selected channels agree with casa-rs, which
+preserves every flag outside the requested slice.
+
+On a calibration table with a single antenna and ten integrations,
+`winsize=0` and `winsize=-1` abort the CASA process with an
+out-of-range vector access. Casa-rs rejects nonpositive window lengths
+before running the agent.
+
+Using a positive explicit time or frequency threshold with a zero or
+negative scale can also crash CASA while applying flags. Casa-rs rejects
+these combinations before writing flags. Calculate mode ignores the
+scale factors and reports the unscaled calculated thresholds.
+
 ## Calibration flagdata summary can crash on a wildcard field
 
 CASA 6.7.6.14 `flagdata(mode='summary')` can segfault on a delay table
@@ -9088,3 +9105,21 @@ inside the lattice collapse. It checks each axis in isolation and
 passes a duplicated axis to the tile iterator. Casa-rs raises a Python
 error for duplicate axes and keeps the image attached and its pixels
 intact.
+
+### `image.maxfit` can select the wrong channel or crash on an all-masked image
+
+On a direction cube with peaks of +6 in one channel and +2 and −12 in
+another, CASA 6.7.6.14 returns the weaker positive source with
+`negfind=False` and the +6 source with `negfind=True`. The
+plane-selection branch applies the opposite sign policy to the one
+documented, and the subsequent source search can miss a negative peak.
+Casa-rs ranks positive peaks by value by default and ranks both signs
+by magnitude with `negfind=True`, retaining the fitted peak's sign.
+It ranks fit-eligible peaks by their sampled pixel values. A broad
+source with a larger fitted height cannot replace a sharper source
+whose sampled peak is stronger. The fit can resolve an extremum
+between two equally bright adjacent pixels.
+
+On an entirely masked Float direction image, default `image.maxfit`
+can dereference an absent maximum and terminate the CASA Python
+process. Casa-rs raises a Python error and preserves the image.

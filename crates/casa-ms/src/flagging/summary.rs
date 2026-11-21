@@ -305,6 +305,7 @@ pub(super) fn report(
         backup_version: None,
         timedev: None,
         freqdev: None,
+        rflag_report: None,
         summary: Some(summary),
     };
     tracing::info!(
