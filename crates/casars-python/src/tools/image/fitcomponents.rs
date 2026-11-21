@@ -11,6 +11,7 @@ use casa_images::{
         ensure_outfile_does_not_alias_input, fit_image_components,
     },
 };
+use casa_lattices::TiledShape;
 use casa_types::RecordValue;
 use casa_types::quanta::Quantity;
 use pyo3::prelude::*;
@@ -243,10 +244,19 @@ impl FitRequest<'_> {
         .map_err(raised)?;
         let [model, residual] = staged.map(|path| {
             path.map(|path| {
-                PagedImage::<f32>::create(image.shape().to_vec(), image.coordinates().clone(), path)
+                let shape = image.shape().to_vec();
+                let tiled =
+                    TiledShape::new(shape.clone(), std::mem::size_of::<f32>()).map_err(raised)?;
+                PagedImage::<f32>::create_with_tile_shape_and_cache(
+                    shape,
+                    tiled.tile_shape().to_vec(),
+                    image.coordinates().clone(),
+                    path,
+                    16 * 1024 * 1024,
+                )
+                .map_err(raised)
             })
             .transpose()
-            .map_err(raised)
         });
         let mut model = model?;
         let mut residual = residual?;

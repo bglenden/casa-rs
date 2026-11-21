@@ -507,8 +507,13 @@ fn noise_value(
     let Some(input) = input else { return Ok(None) };
     match input {
         ComponentFitQuantity::Numeric(value) => Ok(Some(value * numeric_scale)),
-        ComponentFitQuantity::Quantity(quantity) if quantity.value() <= 0. && unit != "rad" => {
+        ComponentFitQuantity::Quantity(quantity) if unit != "rad" && quantity.value() <= 0. => {
             Ok(None)
+        }
+        ComponentFitQuantity::Quantity(quantity)
+            if unit != "rad" && quantity.unit().name().is_empty() =>
+        {
+            Ok(Some(quantity.value()))
         }
         ComponentFitQuantity::Quantity(quantity) => {
             let local = [("pixel", UnitVal::NODIM), ("beam", UnitVal::NODIM)];

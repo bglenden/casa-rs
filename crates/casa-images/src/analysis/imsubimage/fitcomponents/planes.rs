@@ -39,6 +39,16 @@ impl FitSelection {
         let sky_axes = direction_plane_axes(image)?;
         let region =
             SubimageSelection::resolve_section(image, pixel_box, region, channels, stokes)?;
+        if stokes.is_some_and(|value| !value.trim().is_empty())
+            && region
+                .selected_stokes
+                .as_ref()
+                .is_some_and(|planes| planes.len() > 1)
+        {
+            return Err(ImageError::CasaSelection(
+                "Only a single Stokes plane is supported".into(),
+            ));
+        }
         let sky_stride =
             sky_axes.map(|axis| region.stride.as_ref().map_or(1, |stride| stride[axis]));
         let sky_shape = std::array::from_fn(|i| region.shape[sky_axes[i]].div_ceil(sky_stride[i]));

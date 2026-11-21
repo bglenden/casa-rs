@@ -49,7 +49,7 @@ def _compare_fitted(actual, expected):
 
 
 @pytest.mark.parametrize("typecode", ["f", "d"])
-def test_fitcomponents_gaussian_offset_and_uncertainty(casa, typecode):
+def test_fitcomponents_gaussian_offset_and_uncertainty(casa, tmp_path, typecode):
     pixels = _gaussians(offset=.6)
     results = []
     for api in (casa, tools):
@@ -59,7 +59,12 @@ def test_fitcomponents_gaussian_offset_and_uncertainty(casa, typecode):
         if typecode == "f":
             assert attached.setbrightnessunit("Jy/pixel")
         try:
-            fit = attached.fitcomponents(dooff=True, offset=.4, rms="100mJy/pixel", noisefwhm=0.5)
+            estimates = tmp_path / f"{api.__name__}-refitted.txt"
+            fit = attached.fitcomponents(dooff=True, offset=.4, rms="100mJy/pixel",
+                                         noisefwhm=0.5, newestimates=str(estimates))
+            x, y = map(float, estimates.read_text().split(",")[1:3])
+            expected = [14.9998, 17.0002] if api is casa else [14.2, 17.7]
+            np.testing.assert_allclose([x, y], expected, rtol=0., atol=.002)
             np.testing.assert_array_equal(fit["converged"], [True])
             assert fit["results"]["nelements"] == 1
             assert "deconvolved" not in fit
@@ -202,5 +207,86 @@ def test_fitcomponents_rejects_bad_selection_and_estimates(casa, tmp_path):
             with pytest.raises(RuntimeError, match="(?i)estimate|bad format"):
                 source.fitcomponents(estimates=str(bad))
             np.testing.assert_array_equal(source.getchunk(), source_data)
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("stokes, index", [("Q", 1), ("U", 2)])
+def test_fitcomponents_channel_and_polarization_with_dimensionless_rms(casa, tmp_path, stokes, index):
+    base = _gaussians().astype(np.float32)
+    polarization = np.arange(1., 4.)[:, None]
+    channels = np.arange(1., 3.)[None, :]
+    pixels = (base[..., None, None] * polarization * channels).astype(np.float32)
+    results = []
+    for api in (casa, tools):
+        image = api.image()
+        assert image.fromarray(pixels=pixels)
+        try:
+            summary = tmp_path / f"{api.__name__}-spectral.txt"
+            fit = image.fitcomponents(chans=1, stokes=stokes, rms="0.1", noisefwhm="120arcsec",
+                                      summary=str(summary))
+            np.testing.assert_array_equal(fit["converged"], [True])
+            c = _component(fit)
+            table = summary.read_text().splitlines()
+            assert table[0].split()[-1] == "GHz"
+            record_frequency = c["spectrum"]["frequency"]["m0"]["value"]
+            assert float(table[-1].split()[-1]) == pytest.approx(
+                record_frequency * (1e9 if api is casa else 1.))
+            flux = c["flux"]["value"]
+            assert flux[index] == pytest.approx((index + 1) * 2. * 7. * np.pi * np.sqrt(6. * 2.5), rel=.001)
+            assert np.count_nonzero(flux) == 1
+            with pytest.raises(RuntimeError, match="Stokes|Flux integral"):
+                image.fitcomponents(chans="1", stokes="IQ")
+            results.append(c)
+        finally:
+            image.done()
+    _compare_fitted(results[1], results[0])
+
+
+def test_fitcomponents_excludes_masked_samples_from_residual_uncertainty(casa, tmp_path):
+    pixels = _gaussians().astype(np.float32)
+    pixels[18, 19] = 100.
+    valid = np.ones(pixels.shape, dtype=bool)
+    valid[18, 19] = False
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=pixels)
+        assert source.setbrightnessunit("Jy/pixel")
+        assert source.putregion(pixelmask=valid)
+        try:
+            fit = source.fitcomponents()
+            output = str(tmp_path / f"{api.__name__}-masked.im")
+            with_residual = source.fitcomponents(residual=output)
+            plain_error = _component(fit)["peak"]["error"]
+            written_error = _component(with_residual)["peak"]["error"]
+            assert written_error < 1e-6
+            if api is casa:
+                assert plain_error > 1.
+            else:
+                assert plain_error == pytest.approx(written_error, abs=1e-9)
+        finally:
+            source.done()
+
+
+def test_fitcomponents_labels_galactic_fit_directions(casa):
+    values = _gaussians().astype(np.float32)
+    fixture = casa.image()
+    assert fixture.fromarray(pixels=values)
+    cs = fixture.coordsys()
+    assert cs.setconversiontype(direction="GALACTIC")
+    record = cs.torecord()
+    cs.done()
+    fixture.done()
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, csys=record)
+        try:
+            component = _component(source.fitcomponents())
+            direction = component["shape"]["direction"]
+            assert direction["refer"] == ("J2000" if api is casa else "GALACTIC")
+            np.testing.assert_allclose(
+                [direction["m0"]["value"], direction["m1"]["value"]],
+                [1.68199966643, -1.0503952928], rtol=0., atol=7e-8,
+            )
         finally:
             source.done()
