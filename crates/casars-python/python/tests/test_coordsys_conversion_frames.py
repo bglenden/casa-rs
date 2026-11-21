@@ -25,14 +25,23 @@ def galactic_coordinates(api, name):
 
 def test_direction_conversion_matches_independent_galactic_rotation():
     cs = galactic_coordinates(tools, b"gal")
-    # The first column of casacore MeasData::J2000toGAL, which uses the
-    # FK5-derived Galactic pole rather than the modern ICRS matrix.
-    x, y, z = -0.0548777621, 0.4941083214, -0.8676666398
+    # MeasData::J2000toGAL uses the FK5-derived Galactic pole.
+    matrix = np.array([
+        [-0.0548777621, -0.8734369591, -0.4838350026],
+        [0.4941083214, -0.4448308610, 0.7469822433],
+        [-0.8676666398, -0.1980741871, 0.4559837919],
+    ])
+    direction = matrix[:, 0] / np.linalg.norm(matrix[:, 0])
+    x, y, z = direction
     expected = [np.arctan2(y, x), np.arctan2(z, np.hypot(x, y))]
     reference = cs.referencepixel()["numeric"]
     actual = cs.toworld(reference)["numeric"]
     np.testing.assert_allclose(actual, expected, atol=2.e-10, rtol=0.0)
-    np.testing.assert_allclose(cs.topixel(actual)["numeric"], reference, atol=1.e-8)
+    # The rounded matrix is orthogonal only to its published precision.
+    # At RA=Dec=0, SIN projection uses the last two direction cosines.
+    back = matrix.T @ direction
+    expected_pixel = reference + (back / np.linalg.norm(back))[1:] / cs.increment()["numeric"]
+    np.testing.assert_allclose(cs.topixel(actual)["numeric"], expected_pixel, atol=2.e-11)
     np.testing.assert_allclose(cs.referencevalue()["numeric"], [0.0, 0.0])
 
 
@@ -50,7 +59,7 @@ def test_direct_and_context_dependent_direction_frames(casa):
         np.testing.assert_allclose(cs.toworld([0., 0.])["numeric"], [0., 0.], atol=1.e-12)
 
 
-def test_spectral_conversion_uses_observation_context_and_survives_native_io(casa, tmp_path):
+def test_spectral_conversion_uses_observation_context_and_survives_native_io(casa, tmp_path, caplog):
     base = casa.coordsys().newcoordsys(direction=True, spectral=True)
     assert base.setunits(["rad", "rad", "Hz"])
     assert base.settelescope("EVLA")
@@ -88,6 +97,8 @@ def test_spectral_conversion_uses_observation_context_and_survives_native_io(cas
                 image.done()
         assert cs.setconversiontype(spectral="REST")
         assert cs.getconversiontype("spectral") == "BARY"
+        if writer is tools:
+            assert "requires a source radial velocity" in caplog.text
         assert cs.setconversiontype(spectral="LSRK")
         np.testing.assert_allclose(cs.toworld(pixel)["numeric"][axis], native, atol=1.e-6)
 

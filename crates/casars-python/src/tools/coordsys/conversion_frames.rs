@@ -10,6 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use crate::convert::holder::{DIRECTION_CODES, FREQUENCY_CODES};
+use crate::tools::{LogLine, emit};
 
 use super::frame_metadata::coordinate;
 use super::{CoordinateState, PyCoordsys};
@@ -86,11 +87,11 @@ fn spectral_error(message: impl std::fmt::Display) -> PyErr {
     ))
 }
 
-fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<()> {
+fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<Option<LogLine>> {
     let Some((CoordinateModel::Spectral(model), placement)) =
         coordinate(state, CoordinateType::Spectral)?
     else {
-        return Ok(());
+        return Ok(None);
     };
     let Some((_, direction_placement)) = coordinate(state, CoordinateType::Direction)? else {
         return Err(spectral_error(
@@ -107,7 +108,7 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<()> {
         model.frequency_ref()
     };
     if model.conversion_frequency_ref().unwrap_or(native) == frame {
-        return Ok(());
+        return Ok(None);
     }
 
     let CoordinateModel::Direction(direction) =
@@ -141,7 +142,9 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<()> {
     // CASA accepts this request without changing the conversion when no
     // source radial velocity can be supplied by the coordinate tool.
     if matches!(native, FrequencyRef::REST) || matches!(frame, FrequencyRef::REST) {
-        return Ok(());
+        return Ok(Some(LogLine::warning(
+            "Unable to convert between the input and output SpectralCoordinates. Conversion involving the REST frame requires a source radial velocity.",
+        )));
     }
     let context = MeasFrame::new()
         .with_direction(direction)
@@ -159,7 +162,8 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<()> {
         changed,
         "conversion",
         conversion.clone(),
-    )
+    )?;
+    Ok(None)
 }
 
 #[pymethods]
@@ -180,17 +184,23 @@ impl PyCoordsys {
         if direction.is_empty() && spectral.is_empty() {
             return Ok(true);
         }
-        py.detach(|| {
+        let warning = py.detach(|| {
             let mut state = self.state();
             let mut updated = state.clone();
             if !direction.is_empty() {
                 set_direction(&mut updated, &direction)?;
             }
-            if !spectral.is_empty() {
-                set_spectral(&mut updated, &spectral)?;
-            }
+            let warning = if spectral.is_empty() {
+                None
+            } else {
+                set_spectral(&mut updated, &spectral)?
+            };
             *state = updated;
-            Ok(true)
-        })
+            Ok::<_, PyErr>(warning)
+        })?;
+        if let Some(warning) = warning {
+            emit(py, "casars.tools.coordsys", &[warning])?;
+        }
+        Ok(true)
     }
 }
