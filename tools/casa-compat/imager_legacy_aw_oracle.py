@@ -20,7 +20,8 @@ from imager_legacy_pbw_oracle import (
 
 
 def predict(dataset, model, cache, machine, correction, *, scratch=True, limit=.05,
-            accepts=True, factory=imager, spw='0:0', wprojplanes=1, empty_model=None, **terms):
+            accepts=True, factory=imager, spw='0:0', wprojplanes=1, empty_model=None,
+            applypointingoffsets=False, **terms):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
     assert tool.selectvis(field=0, spw=spw)
@@ -28,7 +29,7 @@ def predict(dataset, model, cache, machine, correction, *, scratch=True, limit=.
                       phasecenter=0, stokes='IQUV', outframe='TOPO')
     assert tool.defineimage(**definition)
     assert tool.setoptions(ftmachine=machine, wprojplanes=wprojplanes, numthreads=1,
-                           cfcachedirname=str(cache), applypointingoffsets=False,
+                           cfcachedirname=str(cache), applypointingoffsets=applypointingoffsets,
                            dopbgriddingcorrections=correction, pblimit=limit, **terms)
     if empty_model is not None:
         assert tool.ft(str(empty_model)) and tool.defineimage(**definition)
@@ -213,6 +214,42 @@ def compare_cold_evla(root, dataset, model):
         results['mixed-warm'] = error
         print('Mixed EVLA and VLA observations reused CASA cells', error, flush=True)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+
+
+def compare_pointing_flag(root, dataset, model, reference):
+    cache = root / 'cache'
+    shutil.copytree(reference / 'cache', cache)
+    kernels = cache_contents(cache)
+    absent = root / 'absent.EP'
+    errors = {}
+    for machine in ('awproject', 'mawproject'):
+        outputs = {}
+        for name, factory in (('casa', casa_imager), ('native', imager)):
+            for enabled in (False, True):
+                target = root / f'{machine}-{name}-{enabled}.ms'
+                make_input(dataset, target, scratch=True)
+                predict(target, model, cache, machine, False, factory=factory, wbawp=True,
+                        applypointingoffsets=enabled, epjtablename=str(absent))
+                outputs[name, enabled] = data(target, 'MODEL_DATA')
+            np.testing.assert_array_equal(outputs[name, False], outputs[name, True])
+        expected = outputs['casa', True]
+        assert np.max(np.abs(expected[:, 0, :])) > 1.
+        np.testing.assert_array_equal(outputs['native', True][:, 1:, :], expected[:, 1:, :])
+        errors[machine] = relative_rms(outputs['native', True][:, 0, :], expected[:, 0, :])
+        saved = root / f'{machine}-saved.ms'
+        make_input(dataset, saved, scratch=False)
+        predict(saved, model, cache, machine, False, scratch=False, wbawp=True,
+                applypointingoffsets=True, epjtablename=str(absent))
+        prior = corrected_or_data(saved)
+        tool = ms()
+        assert tool.open(str(saved), nomodify=False)
+        assert tool.msselect({'field': '0'}) and tool.uvsub() and tool.done()
+        actual = prior - data(saved, 'CORRECTED_DATA')
+        assert not np.any(actual[:, 1:, :])
+        errors[f'{machine}-saved'] = relative_rms(actual[:, 0, :], expected[:, 0, :])
+    assert cache_contents(cache) == kernels and not absent.exists()
+    print('legacy A/W pointing flag NRMS', errors, flush=True)
+    assert all(np.isfinite(error) and error < 1.e-6 for error in errors.values()), errors
 
 
 def compare_cold_multi_w(root, dataset, model, *, reference=None):
@@ -704,8 +741,12 @@ def main():
     parser.add_argument('--cold-evla', action='store_true')
     parser.add_argument('--cold-correction', action='store_true')
     parser.add_argument('--cold-multi-w', action='store_true')
+    parser.add_argument('--pointing-reference', type=Path)
     args = parser.parse_args()
     args.work.mkdir(parents=True)
+    if args.pointing_reference is not None:
+        compare_pointing_flag(args.work, args.dataset, args.model, args.pointing_reference)
+        return
     if args.cold:
         compare_cold(args.work, args.dataset, args.model)
         return

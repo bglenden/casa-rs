@@ -21,7 +21,7 @@ pub(super) fn coordinate_type(name: &str) -> CoordinateType {
     }
 }
 
-fn coordinate_index(placement: &RecordCoordinate) -> usize {
+pub(super) fn coordinate_index(placement: &RecordCoordinate) -> usize {
     placement
         .field
         .trim_start_matches(|character: char| !character.is_ascii_digit())
