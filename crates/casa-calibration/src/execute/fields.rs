@@ -203,7 +203,10 @@ pub(super) fn lookup(
     if let Some(grid) = plan.registered_grid(&query, allow_raw_real) {
         return Ok(Some(pinned(grid)));
     }
-    let solution = if matches!(table.time_parameter_family, Some(TimeParameterFamily::Fringe)) {
+    let solution = if matches!(
+        table.time_parameter_family,
+        Some(TimeParameterFamily::Fringe)
+    ) {
         plan.fringe_solution(&table.path, query, calibration_frequency_hz)?
     } else {
         plan.solution(&table.path, query)?

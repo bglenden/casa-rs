@@ -9587,3 +9587,11 @@ both receptors marked valid. Applying the table leaves its baselines
 unflagged even though a correction is missing. Casa-rs flags the affected
 correlations when the apply mode writes flags and retains the valid antenna's
 correction. The TEC oracle exercises this difference using a CASA-written table.
+
+## An empty EOP result can delete an existing calibration table
+
+With an existing `Fringe Jones` destination, CASA 6.7.6.14 starts by creating a
+fresh destination. If an input EOP file contains no updates or cannot be read,
+CASA removes the destination during cleanup. Casa-rs stages a replacement only
+when it has finished generating a nonempty product. The existing table survives
+both a missing file and a file with no matching updates.

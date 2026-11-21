@@ -160,6 +160,27 @@ def check_rate(work, vis, engines, calibration):
         np.testing.assert_allclose(corrected[0, 0, row], want, atol=4e-6)
 
 
+def check_publication(work, vis, engines, calibration):
+    empty = work/'empty.c04'
+    empty.write_text('# no rows\n')
+    for label, api in engines.items():
+        for case, source in (('empty', empty), ('missing', work/'missing.c04')):
+            product = work/f'{label}-{case}-protected.cal'
+            with opened(calibration) as cal:
+                cal.copy(str(product), deep=True, valuecopy=True).close()
+            before = columns(product)
+            try:
+                assert api.gencal(str(vis), str(product), 'eop', str(source)) is None
+            except FileNotFoundError as error:
+                assert case == 'missing' and str(source) in str(error)
+            else:
+                assert case == 'empty'
+            if label == 'native':
+                compare_mapping(columns(product), before, False)
+            else:
+                assert not product.exists()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -174,6 +195,7 @@ def main():
     products = generate(root, vis, engines, inputs(root, day))
     apply_and_solve(root, vis, engines, products['c04'])
     check_rate(root, vis, engines, products['c04']['casa'])
+    check_publication(root, vis, engines, products['c04']['casa'])
 
 
 if __name__ == '__main__':

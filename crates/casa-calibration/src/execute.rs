@@ -2215,7 +2215,17 @@ fn apply_row_all_channels(
             key.observation_id = row.observation_id;
             key.scan_number = row.scan_number;
             key.data_spw_id = row.data_spw_id;
-            let calculate = || fields::lookup(loaded_table, field_id, cal_spw_id, antenna, row, data_spw, cal_spw_reference_frequency_hz(cal_spw));
+            let calculate = || {
+                fields::lookup(
+                    loaded_table,
+                    field_id,
+                    cal_spw_id,
+                    antenna,
+                    row,
+                    data_spw,
+                    cal_spw_reference_frequency_hz(cal_spw),
+                )
+            };
             if let Some(cache) = cache {
                 cache.calibration_lookup(
                     key,

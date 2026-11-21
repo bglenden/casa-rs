@@ -169,14 +169,16 @@ fn parse_file(text: &str, start: f64, end: f64) -> Option<Vec<Eop>> {
     };
     let mut result = Vec::new();
     for line in lines {
-        if line.starts_with('#') || (usno.is_none() && line.starts_with(char::is_whitespace)) {
+        if line.starts_with('#')
+            || (usno.is_none() && (line.is_empty() || line.starts_with(char::is_whitespace)))
+        {
             continue;
         }
         let read = |range: std::ops::Range<usize>| line.get(range)?.trim().parse::<f64>().ok();
         let mjd = if usno.is_some() {
             read(0..9)? - JD_AT_MJD_ZERO
         } else {
-            read(12..19)?
+            f64::from(line.get(12..19)?.trim().parse::<i32>().ok()?)
         };
         if !(start..=end).contains(&mjd) {
             continue;
@@ -360,10 +362,7 @@ fn build_rows(
                                 .get(window as usize)
                                 .ok_or_else(|| invalid("unknown spectral window"))?;
                             rows.push(row(
-                                antenna,
-                                field,
-                                window,
-                                observation,
+                                (antenna, field, window, observation),
                                 time,
                                 *hz,
                                 delay,
@@ -418,12 +417,8 @@ fn delay_for(rot: &Matrix, pos: &[f64; 3], ray: &[f64; 3]) -> f64 {
         / 299_792_458.
 }
 
-#[allow(clippy::too_many_arguments)]
 fn row(
-    antenna: i32,
-    field: i32,
-    window: i32,
-    observation: i32,
+    (antenna, field, window, observation): (i32, i32, i32, i32),
     time: f64,
     hz: f64,
     delay: f64,

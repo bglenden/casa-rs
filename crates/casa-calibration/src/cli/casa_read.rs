@@ -350,8 +350,10 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
     };
     let antenna = task.text("antenna")?.unwrap_or_default();
     let infile = if caltype.is_gain_curve()
-        || matches!(caltype, GencalType::Antpos | GencalType::Tecim | GencalType::Eop)
-    {
+        || matches!(
+            caltype,
+            GencalType::Antpos | GencalType::Tecim | GencalType::Eop
+        ) {
         task.text("infile")?
             .filter(|path| !path.is_empty() && !(caltype == GencalType::Antpos && path == "None"))
             .map(PathBuf::from)

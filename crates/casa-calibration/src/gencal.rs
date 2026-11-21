@@ -904,7 +904,10 @@ pub(crate) fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, GencalError> {
-    if matches!(request.caltype, GencalType::Antpos | GencalType::Tecim | GencalType::Eop) {
+    if matches!(
+        request.caltype,
+        GencalType::Antpos | GencalType::Tecim | GencalType::Eop
+    ) {
         return Ok(infile.into_iter().map(Path::to_path_buf).collect());
     }
     if request.caltype == GencalType::Tsys {
@@ -1003,6 +1006,10 @@ fn write_prior_caltable(
             Value::Scalar(ScalarValue::Float64(tecim::height_km(&request.parameter))),
         );
     }
+    if request.caltype == GencalType::Eop {
+        // task_gencal appends directly in observation, scan and antenna order.
+        writer.preserve_row_order();
+    }
 
     for row in rows {
         let shape = IxDyn(row.parameters.shape());
@@ -1058,7 +1065,9 @@ fn write_prior_caltable(
                     record.upsert(column, value.clone());
                 }
             }
-            if request.caltype == GencalType::Eop && let Some(weight) = prior.get(COL_WEIGHT) {
+            if request.caltype == GencalType::Eop
+                && let Some(weight) = prior.get(COL_WEIGHT)
+            {
                 record.upsert(COL_WEIGHT, weight.clone());
             }
         }
@@ -1189,13 +1198,17 @@ fn write_spectral_axis(
                 )));
             }
             let value = if center_channel && column == "CHAN_FREQ" {
-                *values.iter().nth(values.len() / 2).expect("nonempty channel axis")
+                *values
+                    .iter()
+                    .nth(values.len() / 2)
+                    .expect("nonempty channel axis")
             } else {
-                values.iter().sum::<f64>() / if column == "CHAN_FREQ" {
-                    values.len() as f64
-                } else {
-                    1.
-                }
+                values.iter().sum::<f64>()
+                    / if column == "CHAN_FREQ" {
+                        values.len() as f64
+                    } else {
+                        1.
+                    }
             };
             if column == "CHAN_WIDTH" {
                 table
