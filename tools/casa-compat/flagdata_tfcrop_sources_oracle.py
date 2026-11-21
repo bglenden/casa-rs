@@ -16,6 +16,7 @@ from casars import tasks
 from flagdata_preview_oracle import auxiliary_content
 from flagdata_routine_controls_oracle import flags
 from flagdata_tfcrop_fit_oracle import make_fixture
+from imager_prediction_options_oracle import write_model
 
 
 def put_samples(main, column, data):
@@ -56,6 +57,11 @@ def seed_sources():
             put_samples(main, "FLOAT_DATA", real)
             if variant == "float-only":
                 main.removecols("DATA")
+    copytree("float.ms", "signed.ms")
+    with table("signed.ms", readonly=False, ack=False) as main:
+        signed = np.full(model.shape, -1., dtype=np.float32)
+        signed[narrow, 14, 1] = 1.
+        main.putcol("FLOAT_DATA", signed)
     return empty, narrow, broad
 
 
@@ -86,6 +92,8 @@ def check_sources(libraries):
         ("float", "data", ((14, 1),)),
         ("float", "float_data", ((14, 1),)),
         ("float-only", "float_data", ((14, 1),)),
+        ("signed", "float_data", ((14, 1),)),
+        ("signed", "data", ()),
     )
     for index, (variant, column, coordinates) in enumerate(cases):
         expected = empty.copy()
@@ -145,12 +153,53 @@ def check_sources(libraries):
     return len(cases), len(refusals)
 
 
+def check_virtual_residuals(libraries):
+    empty, narrow, _ = make_fixture("model-source.ms")
+    with table("model-source.ms/FIELD", ack=False) as fields:
+        direction = fields.getcell("PHASE_DIR", 0).ravel()
+    write_model(Path("point.im"), direction, 100e9, 2, cell=5)
+    for name, use_scratch in (("virtual", False), ("scratch", True)):
+        path = f"model-{name}.ms"
+        copytree("model-source.ms", path)
+        casatasks.ft(vis=path, field="0", model="point.im", usescratch=use_scratch)
+    with table("model-scratch.ms", ack=False) as materialized:
+        model = materialized.getcol("MODEL_DATA")
+    with table("model-virtual.ms", ack=False) as virtual:
+        assert not np.array_equal(virtual.getcol("MODEL_DATA"), model)
+    cases = (("residual_data", 16, 0, 30.), ("residual", 12, 1, 30.),
+             ("residual_data", 16, 0, 0.0001), ("residual", 12, 1, 0.0001))
+    for index, (column, channel, plane, amplitude) in enumerate(cases):
+        observed = model + 1.
+        corrected = model + 1.
+        source_samples = observed if column == "residual_data" else corrected
+        source_samples[narrow, channel, plane] += amplitude
+        expected = empty.copy()
+        expected[narrow, channel, plane] = True
+        for source in ("scratch", "virtual"):
+            for name, task in libraries:
+                path = f"{column}-{index}-{source}-{name}.ms"
+                copytree(f"model-{source}.ms", path)
+                with table(path, readonly=False, ack=False) as main:
+                    put_samples(main, "DATA", observed)
+                    put_samples(main, "CORRECTED_DATA", corrected)
+                original = science_state(path)
+                assert task(vis=path, mode="tfcrop", field="0", antenna="0&1", datacolumn=column,
+                            flagdimension="freq", extendflags=False, flagbackup=False) == {}
+                actual, rows = flags(path)
+                np.testing.assert_array_equal(actual, expected, err_msg=f"{source} {name} {column} {amplitude}")
+                assert not rows.any()
+                check_science_state(path, original)
+    return len(cases)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     libraries = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
     with TemporaryDirectory(prefix="flagdata-tfcrop-sources-") as root, chdir(root):
         products, refusals = check_sources(libraries)
-    print(f"{products} TFCrop visibility-source products and {refusals} source refusals verified")
+        virtual = check_virtual_residuals(libraries)
+    print(f"{products} TFCrop stored-source products, {virtual} virtual residual products and "
+          f"{refusals} source refusals verified")
 
 
 if __name__ == "__main__":

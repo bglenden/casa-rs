@@ -1418,6 +1418,10 @@ fn apply_tfcrop_flags(
         group_samples(&samples).into_values().collect()
     };
     if let Some(options) = &options {
+        let arithmetic = TfcropArithmetic {
+            casa_arithmetic: request.casa_row_selection,
+            model_roundoff: &loaded.model_roundoff,
+        };
         for group in &groups {
             for by_corr in samples_by_corr(group) {
                 for &direction in options.passes.directions() {
@@ -1430,7 +1434,7 @@ fn apply_tfcrop_flags(
                         direction,
                         cutoff,
                         options,
-                        request.casa_row_selection,
+                        arithmetic,
                         &mut modified,
                         candidates,
                     );
@@ -2083,6 +2087,7 @@ fn load_samples(
     let ant2s = load_i32_cells(table, selected_rows, "ANTENNA2", &path)?;
     let mut samples = Vec::new();
     let mut flags_by_row = BTreeMap::new();
+    let mut model_roundoff = Vec::new();
     for (row_slot, (&row, flags)) in selected_rows.iter().zip(flag_cells).enumerate() {
         let ddid = ddids[row_slot];
         let spw = ddid_to_spw
@@ -2121,6 +2126,7 @@ fn load_samples(
             ant1: ant1s[row_slot],
             ant2: ant2s[row_slot],
         };
+        let first_sample = samples.len();
         match data {
             Some((column, value)) => push_row_samples(
                 value.as_ref(),
@@ -2139,11 +2145,22 @@ fn load_samples(
                 &mut samples,
             ),
         }
+        if let Some((_, cells)) = &visibility
+            && let Some(roundoff) = cells.fourier_residual_roundoff(row_slot, &flags, row, &path)?
+        {
+            model_roundoff.resize(first_sample, 0.0);
+            model_roundoff.extend(
+                samples[first_sample..]
+                    .iter()
+                    .map(|sample| roundoff[[sample.corr, sample.chan]]),
+            );
+        }
         flags_by_row.insert(row, flags);
     }
     Ok(LoadedSamples {
         samples,
         flags_by_row,
+        model_roundoff,
     })
 }
 
@@ -2496,15 +2513,25 @@ impl Default for TfcropOptions {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct TfcropArithmetic<'a> {
+    casa_arithmetic: bool,
+    model_roundoff: &'a [f32],
+}
+
 fn tfcrop_fit_base_and_flag(
     samples: &[Sample],
     direction: TfcropDirection,
     cutoff: f64,
     options: &TfcropOptions,
-    casa_arithmetic: bool,
+    arithmetic: TfcropArithmetic<'_>,
     modified: &mut [bool],
     direction_flags: &mut [bool],
 ) {
+    let TfcropArithmetic {
+        casa_arithmetic,
+        model_roundoff,
+    } = arithmetic;
     if samples.is_empty() {
         return;
     }
@@ -2525,6 +2552,7 @@ fn tfcrop_fit_base_and_flag(
 
     let mut avg_dat = vec![0.0f32; axis0.len()];
     let mut avg_flag = vec![false; axis0.len()];
+    let mut avg_roundoff = (!model_roundoff.is_empty()).then(|| vec![0.0; axis0.len()]);
     let mut all_zeros = true;
     for (i0, key0) in axis0.iter().enumerate() {
         let mut sum = 0.0f32;
@@ -2535,11 +2563,17 @@ fn tfcrop_fit_base_and_flag(
                 && !sample_is_modified(sample, modified)
             {
                 sum += tfcrop_value(sample);
+                if let Some(roundoff) = &mut avg_roundoff {
+                    roundoff[i0] += model_roundoff.get(sample.index).copied().unwrap_or(0.0);
+                }
                 count += 1;
             }
         }
         if count > 0 {
             avg_dat[i0] = sum / count as f32;
+            if let Some(roundoff) = &mut avg_roundoff {
+                roundoff[i0] /= count as f32;
+            }
             all_zeros = false;
         } else {
             avg_flag[i0] = true;
@@ -2566,15 +2600,30 @@ fn tfcrop_fit_base_and_flag(
         ),
     };
 
+    let mut normalized_roundoff = avg_roundoff.as_ref().map(|_| vec![0.0; axis0.len()]);
     for key1 in &axis1 {
         let mut normalized = vec![0.0f32; axis0.len()];
         let mut flags = vec![false; axis0.len()];
+        if let Some(roundoff) = &mut normalized_roundoff {
+            roundoff.fill(0.0);
+        }
         for (i0, key0) in axis0.iter().enumerate() {
             let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
             if let Some(sample) = by_row_chan.get(&(row, chan)) {
                 flags[i0] = sample_is_modified(sample, modified);
                 if !flags[i0] && (casa_arithmetic || avg_fit[i0].abs() > f32::EPSILON) {
-                    normalized[i0] = tfcrop_value(sample) / avg_fit[i0];
+                    let fit = avg_fit[i0];
+                    normalized[i0] = tfcrop_value(sample) / fit;
+                    if let (Some(roundoff), Some(mean)) = (&mut normalized_roundoff, &avg_roundoff)
+                    {
+                        // The fitted baseline also uses residuals made with the
+                        // reconstructed model. Compare above both uncertainties.
+                        let measured = model_roundoff.get(sample.index).copied().unwrap_or(0.0);
+                        let uncertainty = (measured + mean[i0]) / fit.abs();
+                        if uncertainty.is_finite() {
+                            roundoff[i0] = uncertainty;
+                        }
+                    }
                 }
             } else {
                 flags[i0] = true;
@@ -2589,7 +2638,13 @@ fn tfcrop_fit_base_and_flag(
                 break;
             }
             for i0 in 0..axis0.len() {
-                if !flags[i0] && (normalized[i0] - 1.0).abs() > cutoff as f32 * sd {
+                let deviation = (normalized[i0] - 1.0).abs();
+                if !flags[i0]
+                    && deviation > cutoff as f32 * sd
+                    && normalized_roundoff
+                        .as_ref()
+                        .is_none_or(|bounds| bounds[i0] == 0.0 || deviation > bounds[i0])
+                {
                     flags[i0] = true;
                 }
             }
@@ -2599,7 +2654,13 @@ fn tfcrop_fit_base_and_flag(
             previous_sd = sd;
         }
 
-        tfcrop_window_flags(&normalized, &mut flags, options, cutoff as f32 * sd);
+        tfcrop_window_flags(
+            &normalized,
+            normalized_roundoff.as_deref(),
+            &mut flags,
+            options,
+            cutoff as f32 * sd,
+        );
 
         for (i0, key0) in axis0.iter().enumerate() {
             if !flags[i0] {
@@ -2618,6 +2679,7 @@ fn tfcrop_fit_base_and_flag(
 
 fn tfcrop_window_flags(
     normalized: &[f32],
+    roundoff: Option<&[f32]>,
     flags: &mut [bool],
     options: &TfcropOptions,
     threshold: f32,
@@ -2629,20 +2691,23 @@ fn tfcrop_window_flags(
     }
     let width = half_width.saturating_mul(2).saturating_add(1);
     for (start, samples) in normalized.windows(width).enumerate() {
+        let deviations = || {
+            samples.iter().enumerate().map(|(offset, value)| {
+                let deviation = (*value - 1.0).abs();
+                roundoff.map_or(deviation, |bounds| {
+                    let bound = bounds[start + offset];
+                    if deviation <= bound {
+                        0.0
+                    } else {
+                        deviation - bound
+                    }
+                })
+            })
+        };
         let exceeds_mean = matches!(stats, TfcropWindowStats::Sum | TfcropWindowStats::Both)
-            && samples
-                .iter()
-                .map(|value| (*value - 1.0).abs())
-                .sum::<f32>()
-                / width as f32
-                > threshold;
+            && deviations().sum::<f32>() / width as f32 > threshold;
         let exceeds_rms = matches!(stats, TfcropWindowStats::Std | TfcropWindowStats::Both)
-            && (samples
-                .iter()
-                .map(|value| (*value - 1.0) * (*value - 1.0))
-                .sum::<f32>()
-                / width as f32)
-                .sqrt()
+            && (deviations().map(|value| value * value).sum::<f32>() / width as f32).sqrt()
                 > threshold;
         flags[start + half_width] |= exceeds_mean || exceeds_rms;
     }
@@ -3861,6 +3926,7 @@ struct Sample {
 struct LoadedSamples {
     samples: Vec<Sample>,
     flags_by_row: BTreeMap<usize, ArrayD<bool>>,
+    model_roundoff: Vec<f32>,
 }
 
 #[derive(Default)]
@@ -4347,7 +4413,7 @@ mod tests {
             TfcropDirection::Freq,
             1.0,
             &TfcropOptions::default(),
-            false,
+            TfcropArithmetic::default(),
             &mut modified,
             &mut direction_flags,
         );
@@ -4364,7 +4430,7 @@ mod tests {
             TfcropDirection::Time,
             1.0,
             &TfcropOptions::default(),
-            false,
+            TfcropArithmetic::default(),
             &mut modified,
             &mut direction_flags,
         );
