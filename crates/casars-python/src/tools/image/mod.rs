@@ -64,6 +64,7 @@ mod records;
 mod region_read;
 mod regrid;
 mod replace_masked;
+mod sepconvolve;
 mod serialization;
 mod slice;
 mod smoothing;

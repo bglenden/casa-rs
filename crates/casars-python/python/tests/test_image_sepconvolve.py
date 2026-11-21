@@ -1,0 +1,244 @@
+"""Pinned CASA parity and native writer–reader coverage for image.sepconvolve."""
+
+import numpy as np
+import pytest
+
+from casars import tools
+
+
+@pytest.fixture(scope="module")
+def casa():
+    api = pytest.importorskip("casatools")
+    assert api.version_string().replace("-", ".") == "6.7.6.14"
+    return api
+
+
+def _impulse(shape):
+    data = np.zeros(shape, dtype=np.float32)
+    data[tuple(np.array(shape)//2)] = 1.
+    return data
+
+
+def _gaussian(coordinates, first, length, width, scale=-1.):
+    sigma = width/np.sqrt(8*np.log(2))
+    n = max(length, 2*(int(5*sigma + .5) + 1))
+    peak = 1/(np.sqrt(2*np.pi)*sigma) if scale < 0 else scale
+    return peak*np.exp(-.5*((coordinates-first-(n % 2)/2)/sigma)**2)
+
+
+@pytest.mark.parametrize("width", [[2], np.array([2.]), ["2 pix"], "2arcmin", ["2pix 3pix"]])
+@pytest.mark.parametrize("gain", [-1., 0., 2.])
+def test_sepconvolve_gaussian_admitted_widths_and_normalization(casa, width, gain):
+    data = _impulse((13, 15))
+    reference = _gaussian(np.arange(13), 6, 13, 2, gain)
+    expected = np.zeros_like(data)
+    expected[:, 7] = reference
+    for api in (casa, tools):
+        source = api.image()
+        output = None
+        try:
+            assert source.fromarray(pixels=data)
+            output = source.sepconvolve(widths=width, scale=gain)
+            result = output.getchunk()
+            assert result.dtype == source.getchunk().dtype
+            np.testing.assert_allclose(result, expected, atol=3e-7)
+            np.testing.assert_array_equal(output.getchunk(getmask=True), np.ones_like(data, dtype=bool))
+        finally:
+            if output is not None:
+                output.done()
+            source.done()
+
+
+@pytest.mark.parametrize("length", [13, 14, 513])
+@pytest.mark.parametrize("scale", [-1., 1.3])
+def test_sepconvolve_hanning_uses_the_full_profile(casa, length, scale):
+    data = _impulse((length, 6))
+    middle = (length-1)//2
+    radius = (length+1)//2
+    phase = (radius-np.abs(np.arange(length)-middle))*2*np.pi/(length+1)
+    expected = (1-np.cos(phase))/(length+1) if scale < 0 else .5*scale*(1-np.cos(phase))
+    for api in (casa, tools):
+        source = api.image()
+        result = None
+        try:
+            assert source.fromarray(pixels=data)
+            result = source.sepconvolve(types=["Hanning"], widths=[3], scale=scale)
+            # CASA leaves the trailing even-length kernel coefficient uninitialized.
+            # All assigned coefficients, and the native zero padding, are checked.
+            limit = length if length % 2 or api is tools else length-1
+            np.testing.assert_allclose(result.getchunk()[:limit, 3], expected[:limit], atol=4e-7)
+            np.testing.assert_array_equal(result.getchunk(getmask=True)[:, 3], np.ones(length, dtype=bool))
+        finally:
+            if result is not None:
+                result.done()
+            source.done()
+
+
+@pytest.mark.parametrize("widths", [[2, 4], ["2 arcmin", "4 arcmin"], "2pix,4pix"])
+def test_sepconvolve_combines_kernels_in_axis_order(casa, widths):
+    data = _impulse((13, 15))
+    expected = np.zeros_like(data)
+    expected[4:8, :] = .25*_gaussian(np.arange(15), 7, 15, 2)
+    for api in (casa, tools):
+        source = api.image()
+        result = None
+        try:
+            assert source.fromarray(pixels=data)
+            result = source.sepconvolve(widths=widths, types=["Gauss", "b"], axes=[1, 0])
+            np.testing.assert_allclose(result.getchunk(), expected, atol=3e-7)
+        finally:
+            if result is not None:
+                result.done()
+            source.done()
+
+
+def test_sepconvolve_honors_a_single_explicit_axis():
+    data = _impulse((13, 15))
+    expected = np.zeros_like(data)
+    expected[6, 5:9] = .25
+    source = tools.image()
+    result = None
+    try:
+        assert source.fromarray(pixels=data)
+        result = source.sepconvolve(widths=[4], types=["boxcar"], axes=[1])
+        np.testing.assert_array_equal(result.getchunk(), expected)
+    finally:
+        if result is not None:
+            result.done()
+        source.done()
+
+
+def test_sepconvolve_region_raw_mask_values_and_native_interoperability(casa, tmp_path):
+    data = np.full((13, 15, 1, 5), 2., dtype=np.float32)
+    original_valid = np.ones(data.shape, dtype=bool)
+    original_valid[7, 8, 0, 2] = False
+    manager = casa.regionmanager()
+    region = manager.box([2, 3, 0, 1], [11, 13, 0, 3])
+    manager.done()
+    cropped = data[2:12, 3:14, :, 1:4]
+    valid = original_valid[2:12, 3:14, :, 1:4]
+    selected = np.where(valid, cropped, 0.)
+    expected = np.zeros_like(selected)
+    for ox in (-1, 0, 1):
+        for oy in (-1, 0, 1):
+            x = slice(max(0, ox), min(10, 10+ox))
+            y = slice(max(0, oy), min(11, 11+oy))
+            sx = slice(max(0, -ox), min(10, 10-ox))
+            sy = slice(max(0, -oy), min(11, 11-oy))
+            expected[x, y] += selected[sx, sy]/9.
+    for writer in (casa, tools):
+        source = writer.image()
+        product_path = str(tmp_path/f"{writer.__name__}.im")
+        result = None
+        try:
+            assert source.fromarray(pixels=data)
+            assert source.putregion(pixelmask=original_valid)
+            assert source.setbrightnessunit("K")
+            assert source.setmiscinfo({"observer": "SEP fixture"})
+            assert source.sethistory(origin="fixture", history=["original sepconvolve input"])
+            for channel in range(5):
+                assert source.setrestoringbeam(major=f"{channel+2}arcmin", minor="1arcmin",
+                                               pa="4deg", channel=channel, polarization=0)
+            result = source.sepconvolve(product_path, widths=[3, 3], types=["b", "b"], region=region)
+            assert result.ispersistent()
+            np.testing.assert_array_equal(source.getchunk(), data)
+        finally:
+            if result is not None:
+                result.done()
+            source.done()
+        for reader in (casa, tools):
+            saved = reader.image()
+            coords = None
+            try:
+                assert saved.open(product_path)
+                assert saved.brightnessunit() == "K"
+                assert saved.miscinfo()["observer"] == "SEP fixture"
+                history = saved.history()
+                assert any("original sepconvolve input" in line for line in history)
+                assert any("ia.sepconvolve" in line for line in history)
+                coords = saved.coordsys()
+                np.testing.assert_array_equal(coords.referencepixel()["numeric"], [4., 4., 0., 1.])
+                np.testing.assert_array_equal(saved.getchunk(getmask=True), valid)
+                np.testing.assert_allclose(saved.getchunk(), expected, atol=4e-7)
+                for channel in range(3):
+                    beam = saved.restoringbeam(channel=channel, polarization=0)
+                    assert beam["major"] == {"value": pytest.approx(channel+3.), "unit": "arcmin"}
+            finally:
+                if coords is not None:
+                    coords.done()
+                saved.done()
+
+
+def test_sepconvolve_invalid_calls_preserve_named_output(casa, tmp_path):
+    data = _impulse((13, 15))
+    for api in (casa, tools):
+        source, prior = api.image(), api.image()
+        name = str(tmp_path/f"{api.__name__}-prior.im")
+        try:
+            assert source.fromarray(pixels=data)
+            assert prior.fromarray(name, pixels=data+4.)
+            prior.done()
+            for width in (None, [], 2., {"value": 2., "unit": "pix"}):
+                detached = source.sepconvolve(name, widths=width, overwrite=True)
+                assert not detached.isopen()
+                detached.done()
+            for options in (
+                {"widths": [2, 3], "axes": [0, 0]},
+                {"widths": [2, 3], "types": ["gauss"]},
+                {"widths": [2], "types": ["triangle"]},
+                {"widths": ["2m"]},
+                {"widths": "2 pix"},
+                {"widths": [2, "3 pix"]},
+            ):
+                with pytest.raises(RuntimeError):
+                    source.sepconvolve(name, overwrite=True, **options)
+            assert prior.open(name)
+            np.testing.assert_array_equal(prior.getchunk(), data+4.)
+        finally:
+            prior.done()
+            source.done()
+
+
+@pytest.mark.parametrize("kind", ["c", "d", "cd"])
+def test_sepconvolve_rejects_other_pixel_types(casa, kind):
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromshape(shape=[13, 15], type=kind)
+            with pytest.raises(RuntimeError):
+                source.sepconvolve(widths=[2])
+            assert source.isopen()
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("width", [0., -2.])
+def test_sepconvolve_rejects_undefined_gaussian_kernels(width):
+    source = tools.image()
+    try:
+        assert source.fromarray(pixels=_impulse((13, 15)))
+        with pytest.raises(RuntimeError, match="positive"):
+            source.sepconvolve(widths=[width])
+        assert source.isopen()
+    finally:
+        source.done()
+
+
+@pytest.mark.parametrize("sample", [np.nan, np.inf])
+def test_sepconvolve_nonfinite_samples_poison_only_their_profile(casa, sample):
+    data = np.ones((13, 5), dtype=np.float32)
+    data[5, 2] = sample
+    for api in (casa, tools):
+        source = api.image()
+        result = None
+        try:
+            assert source.fromarray(pixels=data)
+            result = source.sepconvolve(widths=[2])
+            pixels = result.getchunk()
+            assert np.isnan(pixels[:, 2]).all()
+            assert np.isfinite(pixels[:, [0, 1, 3, 4]]).all()
+            assert result.getchunk(getmask=True).all()
+        finally:
+            if result is not None:
+                result.done()
+            source.done()
