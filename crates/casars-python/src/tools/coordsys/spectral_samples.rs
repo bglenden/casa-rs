@@ -2,7 +2,6 @@
 
 use casa_coordinates::{Coordinate, CoordinateModel, SpectralCoordinate, SpectralNativeType};
 use casa_types::measures::doppler::DopplerRef;
-use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use pyo3::exceptions::PyRuntimeError;
@@ -14,13 +13,13 @@ use crate::convert::{Variant, quantity};
 use crate::tools::table::casa_record;
 use crate::tools::{LogLine, emit};
 
-use super::conversion_frames::FrameName;
+use super::conversion_frames::{FrameName, declared_frequency_ref, relabel_spectral_record};
 use super::doppler::sampled_frequencies_from_velocities;
 use super::inspect::numbered_coordinates;
 use super::replace::replace_at;
 use super::rest_frequency::{quantity_tokens, quantity_vector};
 use super::transform_single::bool_vector;
-use super::{CoordinateState, PyCoordsys, default_spectral_conversion};
+use super::{CoordinateState, PyCoordsys};
 
 fn raised(error: impl ToString) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
@@ -91,26 +90,6 @@ fn capture_samples(
         samples
     };
     Ok((!values.is_empty()).then_some(Samples { values, unit }))
-}
-
-fn declared_frame(model: &SpectralCoordinate) -> FrequencyRef {
-    if model.has_undefined_frame() {
-        FrequencyRef::Undefined
-    } else {
-        model.frequency_ref()
-    }
-}
-
-fn native_conversion_record(record: &mut RecordValue, frame: FrequencyRef) {
-    let mut conversion = match record.remove("conversion") {
-        Some(Value::Record(record)) => record,
-        _ => default_spectral_conversion(),
-    };
-    conversion.upsert(
-        "system",
-        Value::Scalar(ScalarValue::String(frame.as_str().into())),
-    );
-    record.upsert("conversion", Value::Record(conversion));
 }
 
 fn update_rest_frequency(
@@ -185,7 +164,7 @@ fn sampled_coordinate(
         }
         _ => return Ok(None),
     };
-    let native_frame = declared_frame(original);
+    let native_frame = declared_frequency_ref(original);
     let model = SpectralCoordinate::from_channel_frequencies(native_frame, samples, rest)
         .map_err(raised)?
         .with_name(original.axis_names().remove(0))
@@ -193,7 +172,7 @@ fn sampled_coordinate(
         .with_native_type(native_type);
     let model = CoordinateModel::from(model);
     let mut record = model.to_record();
-    native_conversion_record(&mut record, native_frame);
+    relabel_spectral_record(&mut record, native_frame);
     Ok(Some((model, record)))
 }
 
@@ -235,7 +214,7 @@ fn apply_edit(
             }
         })
         .ok_or_else(|| raised("No coordinate of type Spectral in this CoordinateSystem"))?;
-    let old_frame = declared_frame(original);
+    let old_frame = declared_frequency_ref(original);
     let frame = if edit.frame.is_empty() {
         old_frame
     } else {
@@ -269,12 +248,7 @@ fn apply_edit(
         }
     }
     if old_frame != frame {
-        let name = Value::Scalar(ScalarValue::String(frame.as_str().into()));
-        record.upsert("system", name.clone());
-        if record.get("frequency_ref").is_some() {
-            record.upsert("frequency_ref", name);
-        }
-        native_conversion_record(&mut record, frame);
+        relabel_spectral_record(&mut record, frame);
     }
     replace_at(state, index as i32, model, Value::Record(record))?;
     Ok(true)

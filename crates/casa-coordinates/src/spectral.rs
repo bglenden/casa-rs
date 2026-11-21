@@ -298,6 +298,30 @@ impl SpectralCoordinate {
         self.apply_table_edit(edit, true).map(|_| ())
     }
 
+    /// Change the frequency reference value and translate any sampled grid
+    /// by the same amount. Increments and native channel offsets are retained.
+    ///
+    /// # Errors
+    /// Returns an error if the frequency or resulting sampled grid is invalid.
+    pub fn with_reference_frequency_hz(mut self, frequency: f64) -> Result<Self, CoordinateError> {
+        let value = self.value_from_hz(frequency)?;
+        let edit = TabularEdit::ReferenceValue(value);
+        validate_live_edit(edit)?;
+        match &mut self.mapping {
+            SpectralMapping::Linear { crval, .. } => *crval = value,
+            SpectralMapping::Tabular {
+                crval,
+                world_values,
+                ..
+            } if world_values.len() == 1 => {
+                *crval = value;
+                world_values[0] = value;
+            }
+            SpectralMapping::Tabular { .. } => self.apply_table_edit(edit, true).map(|_| ())?,
+        }
+        Ok(self)
+    }
+
     fn apply_table_edit(&mut self, edit: TabularEdit, live: bool) -> Result<f64, CoordinateError> {
         let SpectralMapping::Tabular {
             pixel_values,

@@ -8426,6 +8426,18 @@ CASA also reads byte-swapped NumPy origin arrays as native-endian bytes.
 For example, `np.array(1.5, dtype=">f8")` applies a zero-pixel shift on a
 little-endian host. casa-rs reads the declared byte order.
 
+## A display frame can shift an adjusted native coordinate reference twice
+
+CASA 6.7.6.14's `coordsys.setreferencecode` can pass the displayed
+reference position into the conversion as if it were still in the native
+frame. For a J2000 reference of `[24°, 32°]`, adjusting to ECLIPTIC
+gives about `[0.597567, 0.356488]` radians. With a Galactic display layer
+active, it instead gives about `[2.582935, -0.784427]` radians. An active
+BARY display layer also changes the result of an LSRK-to-GEO adjustment
+of the same spectral reference pixel. casa-rs uses the native direction
+and native reference-pixel frequency, then resets the display layer on
+the coordinate whose native code changed.
+
 ## A rejected combined conversion-frame request changes the direction frame
 
 CASA 6.7.6.14 applies the direction conversion in `coordsys.setconversiontype`

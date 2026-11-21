@@ -73,17 +73,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value, r#type = None, adjust = None), text_signature = "($self, value, type='direction', adjust=True)")]
-    fn setreferencecode(
-        &self,
-        value: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        adjust: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setreferencecode")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (doppler = None, list = None), text_signature = "($self, doppler='RADIO', list=True)")]
     fn summary(
         &self,
