@@ -30,24 +30,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (axis = None, function = None, region = None, mask = None, unit = None, stretch = None, spectype = None, restfreq = None, frame = None, logfile = None), text_signature = "($self, axis=-1, function='mean', region={}, mask='', unit='', stretch=False, spectype='default', restfreq='', frame='', logfile='')")]
-    fn getprofile(
-        &self,
-        axis: Option<&Bound<'_, PyAny>>,
-        function: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        unit: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        spectype: Option<&Bound<'_, PyAny>>,
-        restfreq: Option<&Bound<'_, PyAny>>,
-        frame: Option<&Bound<'_, PyAny>>,
-        logfile: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getprofile")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None, point = None, width = None, negfind = None, list = None), text_signature = "($self, region={}, point=True, width=5, negfind=False, list=True)")]
     fn maxfit(
         &self,
