@@ -6,7 +6,7 @@ use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::{
     SubimageRegion,
-    region::{SubimageSelection, saved::lc_slicer_section},
+    region::{SubimageSelection, saved::lattice_pixel_section},
 };
 
 /// Pixel section enclosing a selected region in the source image.
@@ -31,10 +31,11 @@ impl ImageRegionSection {
         region: Option<SubimageRegion<'_>>,
         include_membership: bool,
     ) -> Result<Self, ImageError> {
-        // A pixel slicer also works when the image retains only one axis
+        // Pixel-only regions also work when the image retains only one axis
         // of a direction coordinate and has no complete direction plane.
         if let Some(SubimageRegion::Record(record)) = region
-            && let Some(section) = lc_slicer_section(record, image.coordinates(), image.shape())?
+            && let Some(section) =
+                lattice_pixel_section(record, image.coordinates(), image.shape())?
         {
             return Ok(Self {
                 start: section.start,

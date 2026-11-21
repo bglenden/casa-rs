@@ -121,15 +121,28 @@ def test_getregion_accepts_a_world_box_for_every_pixel_type(casa, selected_regio
             image.done()
 
 
-def test_pixel_slicer_on_an_image_with_one_direction_axis(casa):
+@pytest.mark.parametrize("kind", ["LCSlicer", "LCBox"])
+def test_pixel_region_on_an_image_with_one_direction_axis(casa, kind):
     x, frequency = np.ogrid[:9, :5]
     pixels = (x + 10 * frequency).astype(np.float32)
-    manager = casa.regionmanager()
-    try:
-        section = manager.box([1, 1], [7, 4], [2, 2])
-    finally:
-        manager.done()
-    selected = pixels[1:8:2, 1:5:2]
+    if kind == "LCSlicer":
+        manager = casa.regionmanager()
+        try:
+            section = manager.box([1, 1], [7, 4], [2, 2])
+        finally:
+            manager.done()
+        selected = pixels[1:8:2, 1:5:2]
+    else:
+        section = {
+            "name": "LCBox",
+            "isRegion": 1,
+            "comment": "",
+            "oneRel": True,
+            "blc": np.array([2, 2], dtype=np.float32),
+            "trc": np.array([8, 5], dtype=np.float32),
+            "shape": np.array(pixels.shape, dtype=np.int32),
+        }
+        selected = pixels[1:8, 1:5]
     for api in (casa, tools):
         image = api.image()
         view = None
@@ -142,4 +155,30 @@ def test_pixel_slicer_on_an_image_with_one_direction_axis(casa):
         finally:
             if view is not None:
                 view.done()
+            image.done()
+
+
+def test_lattice_box_must_match_the_image_shape(casa):
+    pixels = np.arange(20, dtype=np.float32).reshape(4, 5)
+    box = {
+        "name": "LCBox",
+        "isRegion": 1,
+        "comment": "",
+        "oneRel": True,
+        "blc": np.array([2, 2], dtype=np.float32),
+        "trc": np.array([3, 4], dtype=np.float32),
+        "shape": np.array([11, 12], dtype=np.int32),
+    }
+    selected = pixels[1:3, 1:4]
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.fromarray(pixels=pixels)
+            for read in (image.getregion, image.statistics):
+                with pytest.raises(RuntimeError, match="mismatches lattice shape in region"):
+                    read(region=box)
+            matched = dict(box, shape=np.array(pixels.shape, dtype=np.int32))
+            np.testing.assert_array_equal(image.getregion(region=matched), selected)
+            assert image.statistics(region=matched)["sum"].item() == selected.sum()
+        finally:
             image.done()
