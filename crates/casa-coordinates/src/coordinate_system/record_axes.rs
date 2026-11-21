@@ -446,8 +446,9 @@ mod tests {
         assert_eq!(placed, expected);
     }
 
-    fn refusal(rec: &RecordValue) -> String {
-        match CoordinateSystem::from_record(rec) {
+    fn compact_layout_refusal(rec: &RecordValue) -> String {
+        CoordinateSystem::from_record(rec).expect("standard restore uses the signed maps");
+        match CoordinateSystem::restore_record(rec, false) {
             Err(CoordinateError::UnsupportedAxisLayout(message)) => message,
             other => panic!("expected an unsupported axis layout, got {other:?}"),
         }
@@ -542,9 +543,9 @@ mod tests {
     }
 
     #[test]
-    fn axes_swapped_within_a_coordinate_are_refused() {
+    fn axes_swapped_within_a_coordinate_requires_signed_maps() {
         // `imtrans order='1023'`.
-        let message = refusal(&record_with_maps([&[1, 0], &[2], &[3]]));
+        let message = compact_layout_refusal(&record_with_maps([&[1, 0], &[2], &[3]]));
         assert!(
             message.contains("direction0 owns pixel axes [1, 0]")
                 && message.contains("Declination, Right Ascension")
@@ -554,9 +555,9 @@ mod tests {
     }
 
     #[test]
-    fn a_coordinate_interleaved_with_another_is_refused() {
+    fn a_coordinate_interleaved_with_another_requires_signed_maps() {
         // `imtrans order='0213'`.
-        let message = refusal(&record_with_maps([&[0, 2], &[1], &[3]]));
+        let message = compact_layout_refusal(&record_with_maps([&[0, 2], &[1], &[3]]));
         assert!(
             message.contains("direction0 owns pixel axes [0, 2], which are not adjacent"),
             "{message}"
@@ -673,9 +674,9 @@ mod tests {
     }
 
     #[test]
-    fn a_removed_axis_the_others_depend_on_is_refused() {
+    fn a_removed_axis_the_others_depend_on_requires_signed_maps() {
         let coupled = ndarray::array![[1.0, 0.5], [0.0, 1.0]];
-        let message = refusal(&position_velocity_record(coupled));
+        let message = compact_layout_refusal(&position_velocity_record(coupled));
         assert!(
             message.contains("linear0 has removed axes")
                 && message.contains("whose other axes do not depend on it"),
@@ -684,14 +685,14 @@ mod tests {
     }
 
     #[test]
-    fn world_axes_ordered_unlike_pixel_axes_are_refused() {
+    fn world_axes_ordered_unlike_pixel_axes_requires_signed_maps() {
         let mut rec = record_with_maps([&[1, 2], &[0], &[3]]);
         rec.upsert(
             "worldmap0",
             Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
         );
         rec.upsert("worldmap1", Value::Array(ArrayValue::from_i32_vec(vec![2])));
-        let message = refusal(&rec);
+        let message = compact_layout_refusal(&rec);
         assert!(
             message.contains("pixel axes in the order stokes1, direction0, spectral2")
                 && message.contains("world axes in the order direction0, stokes1, spectral2"),
