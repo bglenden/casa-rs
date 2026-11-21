@@ -3585,12 +3585,12 @@
     },
     {
       "id": "parameter.freqdev",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "freqdev",
       "value_domain": {
         "kind": "optional",
         "value": {
-          "kind": "float"
+          "kind": "variant"
         },
         "states": [
           "",
@@ -3598,14 +3598,14 @@
         ]
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "numeric_variant"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Explicit RFlag spectral threshold.",
-        "details": "Scaled by freqdevscale, as CASA scales it. '' and 'none' are absence, and so is CASA's [], which reads as '': RFlag computes the threshold.",
+        "details": "Give a scalar, field/SPW/threshold rows or a CASA threshold filename. RFlag scales applied cutoffs by freqdevscale. An empty value lets RFlag compute the cutoff.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -7267,12 +7267,12 @@
     },
     {
       "id": "parameter.timedev",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "timedev",
       "value_domain": {
         "kind": "optional",
         "value": {
-          "kind": "float"
+          "kind": "variant"
         },
         "states": [
           "",
@@ -7280,14 +7280,14 @@
         ]
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "numeric_variant"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Explicit RFlag time threshold.",
-        "details": "Scaled by timedevscale, as CASA scales it. '' and 'none' are absence, and so is CASA's [], which reads as '': RFlag computes the threshold.",
+        "details": "Give a scalar, field/SPW/threshold rows or a CASA threshold filename. RFlag scales applied cutoffs by timedevscale. An empty value lets RFlag compute the cutoff.",
         "examples": []
       },
       "persistence_class": "profile"

@@ -377,6 +377,12 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise ValueError(completion.message) from error
             if completion.parameter == "calibration-save-command":
                 raise Exception(completion.message) from error
+            if completion.parameter == "rflag-threshold-file":
+                raise UnboundLocalError(completion.message) from error
+            if completion.parameter == "rflag-threshold-path.not-found":
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), completion.message) from error
+            if completion.parameter == "rflag-threshold-path.is-directory":
+                raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), completion.message) from error
             if completion.parameter == "datacolumn" and column_vector:
                 raise AttributeError(f"'{column_vector}' object has no attribute 'upper'") from error
             if (completion.parameter in ("maxnpieces", "halfwin")
@@ -608,6 +614,14 @@ def _coerce_flagdata_options(
             errors["extendpols"] = ["must be of cVariant type"]
         elif isinstance(value, (np.ndarray, np.int32, np.int64, np.float32, np.float64)):
             argument_text["extendpols"] = str(value)
+    for parameter in ("timedev", "freqdev"):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["null value not allowed"]
+        elif not isinstance(value, (str, list, dict, np.ndarray, *cfloat)):
+            errors[parameter] = ["must be of cVariant type"]
     for parameter, default in (("maxnpieces", 7), ("halfwin", 1), ("winsize", 3)):
         if parameter not in values:
             continue
