@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::path::Path;
+
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::IxDyn;
@@ -32,6 +34,8 @@ pub struct ImagePadOptions<'a> {
     pub mask: Option<&'a str>,
     /// Stretch compatible singleton dimensions of the expression.
     pub stretch: bool,
+    /// Final destination, if persistent, to protect named mask inputs.
+    pub destination: Option<&'a Path>,
 }
 
 /// The resolved input section, padded shape, and shifted coordinates.
@@ -146,11 +150,12 @@ impl<'a> ImagePad<'a> {
         let reader = PixelSections {
             image,
             selection,
-            mask: PreparedMask::new(
+            mask: PreparedMask::new_for_output(
                 self.options.mask,
                 image.shape(),
                 image.coordinates(),
                 self.options.stretch,
+                self.options.destination,
             )?,
         };
         self.section.copy_metadata(image, output)?;

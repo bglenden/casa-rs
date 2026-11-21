@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::path::Path;
+
 use casa_coordinates::CoordinateType;
 use casa_types::{ArrayD, RecordValue};
 use ndarray::IxDyn;
@@ -7,7 +9,7 @@ use ndarray::IxDyn;
 use crate::{ImageError, ImageInterface, MutableImageInterface};
 
 use super::super::axes::StridedSection;
-use super::super::impbcor::{Correction, beam::BeamLayout, normalize_box};
+use super::super::impbcor::{Correction, beam::BeamLayout, normalize_box, normalize_stokes};
 use super::super::lel_mask::PreparedMask;
 use super::read_window::PixelSections;
 use super::region::SubimageSelection;
@@ -17,7 +19,12 @@ use super::{SubimagePlan, SubimageRegion};
 #[derive(Clone, Copy)]
 pub enum ImagePbcorBeam<'a> {
     /// A full-size or direction-plane-shaped floating-point array.
-    Array(&'a ArrayD<f32>),
+    Array {
+        /// Stored samples with one element on each repeated axis.
+        pixels: &'a ArrayD<f32>,
+        /// Logical beam shape before broadcasting.
+        shape: &'a [usize],
+    },
     /// A coordinate-compatible image, including its validity mask.
     Image(&'a dyn ImageInterface<f32>),
 }
@@ -40,6 +47,8 @@ pub struct ImagePbcorOptions<'a> {
     pub mask: Option<&'a str>,
     /// Stretch compatible singleton dimensions of the expression.
     pub stretch: bool,
+    /// Final destination, if persistent, to protect named mask inputs.
+    pub destination: Option<&'a Path>,
 }
 
 /// Resolved primary-beam correction geometry and source views.
@@ -66,13 +75,28 @@ impl<'a> ImagePbcor<'a> {
     ) -> Result<Self, ImageError> {
         let correction = Correction::parse(options.mode)?;
         let layout = match beam {
-            ImagePbcorBeam::Array(values) => BeamLayout::for_array(image, values.shape())?,
+            ImagePbcorBeam::Array { pixels, shape } => {
+                if pixels.ndim() != shape.len()
+                    || pixels
+                        .shape()
+                        .iter()
+                        .zip(shape)
+                        .any(|(&have, &want)| have != 1 && have != want)
+                {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: shape.to_vec(),
+                        got: pixels.shape().to_vec(),
+                    });
+                }
+                BeamLayout::for_array(image, shape)?
+            }
             ImagePbcorBeam::Image(beam) => BeamLayout::for_image(image, beam)?,
         };
         let spatial = options
             .box_selection
             .map(|text| normalize_box(image, text))
             .transpose()?;
+        let stokes = normalize_stokes(image, options.stokes);
         let selected = SubimageSelection::resolve_section(
             image,
             spatial.as_deref(),
@@ -81,10 +105,7 @@ impl<'a> ImagePbcor<'a> {
                 !text.trim().eq_ignore_ascii_case("all")
                     && image.find_axis(CoordinateType::Spectral).is_some()
             }),
-            options.stokes.filter(|text| {
-                !text.trim().eq_ignore_ascii_case("all")
-                    && image.find_axis(CoordinateType::Stokes).is_some()
-            }),
+            stokes.as_deref(),
         )?;
         if selected.has_multiple_regions {
             return Err(ImageError::CasaSelection(
@@ -126,11 +147,12 @@ impl<'a> ImagePbcor<'a> {
         let reader = PixelSections {
             image: source,
             selection,
-            mask: PreparedMask::new(
+            mask: PreparedMask::new_for_output(
                 self.options.mask,
                 source.shape(),
                 source.coordinates(),
                 self.options.stretch,
+                self.options.destination,
             )?,
         };
         self.section.copy_metadata(source, output)?;
@@ -153,7 +175,9 @@ impl<'a> ImagePbcor<'a> {
             let (mut values, valid) = reader.read(section.start, section.shape, section.stride)?;
             let mut valid = valid.unwrap_or_else(|| ArrayD::from_elem(IxDyn(&tile.shape), true));
             let (beam, mask) = match self.beam {
-                ImagePbcorBeam::Array(values) => (self.layout.read_array(values, &section), None),
+                ImagePbcorBeam::Array { pixels, .. } => {
+                    (self.layout.read_array(pixels, &section), None)
+                }
                 ImagePbcorBeam::Image(image) => self.layout.read_image(image, &section)?,
             };
             self.correction.apply_to_window(

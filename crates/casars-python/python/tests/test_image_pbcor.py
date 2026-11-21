@@ -152,3 +152,128 @@ def test_pbcor_with_numpy_floating_arrays_and_pixel_box():
     finally:
         result.done()
         source.done()
+
+
+def test_equal_shape_named_beam_uses_stored_pixel_order(casa, tmp_path):
+    data = np.arange(1, 25, dtype=np.float32).reshape(2, 2, 2, 3)
+    expected = data * data.transpose(2, 0, 1, 3)
+    for api in (tools, casa):
+        source = api.image()
+        assert source.fromarray(pixels=data)
+        beam = api.image()
+        assert beam.fromarray(pixels=data)
+        beam_path = str(tmp_path / f"mapped-beam-{api.__name__}.im")
+        mapped = beam.transpose(beam_path, order=2013)
+        mapped.done()
+        beam.done()
+        try:
+            corrected = source.pbcor(beam_path, mode="multiply")
+            try:
+                np.testing.assert_array_equal(corrected.getchunk(), expected)
+                assert list(corrected.coordsys().coordinatetype()) == ["Direction", "Stokes", "Spectral"]
+            finally:
+                corrected.done()
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("selector", ["[I;Q]", "I;Q", "[I,Q]", "I,Q"])
+def test_stokes_selector_forms_match_casa(casa, selector):
+    data = np.arange(24, dtype=np.float32).reshape(2, 2, 2, 3)
+    for api in (tools, casa):
+        source = api.image()
+        assert source.fromarray(pixels=data)
+        result = source.pbcor(np.ones((2, 2)), region=None, stokes=selector)
+        try:
+            np.testing.assert_array_equal(result.getchunk(), data)
+            assert list(result.coordsys().stokes()) == ["I", "Q"]
+        finally:
+            result.done()
+            source.done()
+
+
+def test_unequal_strides_keep_rotated_directions(casa):
+    cs = casa.coordsys().newcoordsys(direction=True)
+    assert cs.setreferencepixel([0., 0.])
+    assert cs.setlineartransform("direction", [[0., -1.], [1., 0.]])
+    data = np.arange(20, dtype=np.float32).reshape(4, 5)
+    source = tools.image()
+    assert source.fromarray(pixels=data, csys=cs.torecord())
+    region = casa.regionmanager().box([0, 0], [3, 4], [2, 1])
+    product = source.pbcor(np.ones(data.shape), region=region)
+    padded = source.pad(region=region, padmask=True)
+    section = source.subimage(region=region)
+    try:
+        np.testing.assert_array_equal(product.getchunk(), data[::2, :])
+        # The selected pixel is two arcminutes from the reference latitude
+        # to first order, even though it is one pixel from the new origin.
+        expected = cs.toworld([2, 0])["numeric"]
+        assert expected[1] == pytest.approx(-2., rel=1e-6)
+        for image, pixel in ((product, [1, 0]), (section, [1, 0]), (padded, [2, 1])):
+            coords = image.coordsys()
+            try:
+                np.testing.assert_allclose(coords.toworld(pixel)["numeric"], expected, atol=1e-11)
+                np.testing.assert_allclose(
+                    coords.lineartransform("direction"), [[0., -.5], [2., 0.]],
+                )
+            finally:
+                coords.done()
+    finally:
+        section.done()
+        padded.done()
+        product.done()
+        source.done()
+        cs.done()
+
+
+@pytest.mark.parametrize("method", ["pbcor", "pad"])
+def test_named_mask_operand_survives_attempted_overwrite(casa, tmp_path, method):
+    data = np.full((4, 5), 3., dtype=np.float32)
+    for api in (tools, casa):
+        original = api.image()
+        assert original.fromarray(pixels=data)
+        mask = tmp_path / f"mask-{api.__name__}.im"
+        writer = api.image()
+        assert writer.fromarray(str(mask), np.ones_like(data))
+        assert writer.sethistory("fixture", ["distinct mask history"])
+        writer.done()
+        before = {
+            child.relative_to(mask): child.read_bytes()
+            for child in mask.rglob("*")
+            if child.is_file() and child.name != "table.lock"
+        }
+        arguments = {"mask": f'"{mask}" > 0'}
+        if method == "pbcor":
+            arguments.update(pbimage=np.ones_like(data), mode="multiply")
+        try:
+            with pytest.raises(RuntimeError):
+                getattr(original, method)(outfile=str(mask), overwrite=True, **arguments)
+            assert before
+            assert all((mask / name).read_bytes() == contents for name, contents in before.items())
+            replacement = str(tmp_path / f"replacement-{api.__name__}.im")
+            assert writer.fromarray(replacement, np.zeros_like(data))
+            writer.done()
+            product = getattr(original, method)(outfile=replacement, overwrite=True, **arguments)
+            try:
+                interior = product.getchunk()
+                if method == "pad":
+                    interior = interior[1:-1, 1:-1]
+                np.testing.assert_array_equal(interior, data)
+            finally:
+                product.done()
+        finally:
+            original.done()
+
+
+def test_broadcast_values_on_selected_logical_axes():
+    data = np.arange(1., 31., dtype=np.float32).reshape(5, 6)
+    weights = np.arange(1., 6., dtype=np.float32)[:, None]
+    beam = np.broadcast_to(weights[::-1], data.shape)
+    source = tools.image()
+    assert source.fromarray(pixels=data)
+    result = source.pbcor(beam, region=None, box="1,2,3,4", mode="m")
+    try:
+        np.testing.assert_array_equal(result.getchunk(), (data * weights[::-1])[1:4, 2:5])
+    finally:
+        result.done()
+        source.done()

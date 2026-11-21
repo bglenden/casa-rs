@@ -13,7 +13,7 @@ use casa_images::{
 use casa_types::{ArrayD, RecordValue};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PySlice, PyString, PyTuple};
 
 use super::PyImageTool;
 use super::attachment::AttachedImage;
@@ -21,12 +21,16 @@ use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
-use super::pixels::Pixels;
+use super::pixels::{Pixels, snapshot_array};
 use super::subimage::{RegionArgument, require_bool};
 
 enum BeamArgument {
     File(String),
-    Pixels { data: ArrayD<f32>, history: String },
+    Pixels {
+        data: ArrayD<f32>,
+        shape: Vec<usize>,
+        history: String,
+    },
     Unsupported(&'static str),
 }
 
@@ -65,18 +69,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for BeamArgument {
         if let Ok(array) = raw.cast::<PyUntypedArray>() {
             let dtype = array.dtype();
             return match (dtype.kind(), dtype.itemsize()) {
-                (b'f', 4 | 8) if array.ndim() != 0 => {
-                    let values = Pixels::capture(py, Some(raw), false)?;
-                    let history = if array.len() > 100 {
-                        "\"(...)\"".into()
-                    } else {
-                        values.history()
-                    };
-                    Ok(Self::Pixels {
-                        data: values.f32(),
-                        history,
-                    })
-                }
+                (b'f', 4 | 8) if array.ndim() != 0 => capture_float_beam(py, array),
                 (b'f', 4 | 8) => Ok(Self::Unsupported("double")),
                 (b'i' | b'u', _) => Ok(Self::Unsupported("intvec")),
                 (b'c', _) => Ok(Self::Unsupported("complexvec")),
@@ -95,6 +88,35 @@ impl<'a, 'py> FromPyObject<'a, 'py> for BeamArgument {
         };
         Ok(Self::Unsupported(kind))
     }
+}
+
+fn capture_float_beam(py: Python<'_>, array: &Bound<'_, PyUntypedArray>) -> PyResult<BeamArgument> {
+    let shape = array.shape().to_vec();
+    let history = if array.len() > 100 {
+        "\"(...)\"".into()
+    } else {
+        Pixels::capture(py, Some(array.as_any()), false)?.history()
+    };
+    // A broadcast view can describe an entire beam plane from one stored
+    // value. Snapshot only the addressable data on the repeated axes.
+    let compact = if array.strides().contains(&0) {
+        let slices = shape.iter().zip(array.strides()).map(|(&length, &stride)| {
+            PySlice::new(py, 0, if stride == 0 { 1 } else { length as isize }, 1)
+        });
+        Some(
+            array
+                .get_item(PyTuple::new(py, slices)?)?
+                .cast_into::<PyUntypedArray>()?,
+        )
+    } else {
+        None
+    };
+    let data = snapshot_array(py, compact.as_ref().unwrap_or(array))?;
+    Ok(BeamArgument::Pixels {
+        data,
+        shape,
+        history,
+    })
 }
 
 struct Request<'a> {
@@ -216,13 +238,16 @@ impl Request<'_> {
                     )
                 })
             } else {
-                let BeamArgument::Pixels { data, .. } = self.beam else {
+                let BeamArgument::Pixels { data, shape, .. } = self.beam else {
                     unreachable!("resolved beam")
                 };
                 self.correct(
                     pixels,
                     coordinates,
-                    ImagePbcorBeam::Array(data),
+                    ImagePbcorBeam::Array {
+                        pixels: data,
+                        shape,
+                    },
                     &info,
                     path,
                 )
@@ -250,6 +275,7 @@ impl Request<'_> {
             stokes: text_option(self.stokes),
             mask: text_option(self.mask),
             stretch: self.stretch,
+            destination: text_option(self.outfile).map(Path::new),
         };
         let mut correction =
             ImagePbcor::new(image, coordinates, beam, options, info.record()).map_err(raised)?;

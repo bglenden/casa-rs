@@ -382,8 +382,7 @@ pub fn write_quality_labels(
     Ok(())
 }
 
-/// Adjust casacore reference pixels and increments for a section. The
-/// increments scale by the pixel steps, leaving the PC matrix unchanged.
+/// Adjust the reference pixels and scale the columns of the coordinate transform.
 fn section_pixels(record: &mut RecordValue, shifts: &[f64], steps: &[f64]) {
     let step = |axis| steps.get(axis).copied().unwrap_or(1.0);
     let position = |axis, value| (value - shifts.get(axis).copied().unwrap_or(0.0)) / step(axis);
@@ -401,6 +400,22 @@ fn section_pixels(record: &mut RecordValue, shifts: &[f64], steps: &[f64]) {
                 map_numeric_values(array, |axis, value| value * step(axis))
             }
             Some(Value::Scalar(ScalarValue::Float64(cdelt))) => *cdelt *= step(0),
+            _ => {}
+        }
+        // CDELT scales rows. Adjust PC as well when unequal pixel steps
+        // would otherwise change the world positions of coupled axes.
+        let shape = [steps.len(), steps.len()];
+        match record.get_mut("pc") {
+            Some(Value::Array(ArrayValue::Float64(matrix))) if matrix.shape() == shape => {
+                for (index, coefficient) in matrix.indexed_iter_mut() {
+                    *coefficient *= steps[index[1]] / steps[index[0]];
+                }
+            }
+            Some(Value::Array(ArrayValue::Float32(matrix))) if matrix.shape() == shape => {
+                for (index, coefficient) in matrix.indexed_iter_mut() {
+                    *coefficient *= (steps[index[1]] / steps[index[0]]) as f32;
+                }
+            }
             _ => {}
         }
     }

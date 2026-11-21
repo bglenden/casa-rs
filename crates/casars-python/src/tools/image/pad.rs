@@ -125,6 +125,7 @@ impl PyImageTool {
                         stokes: (!stokes.is_empty()).then_some(stokes),
                         mask: (!mask.is_empty()).then_some(mask),
                         stretch,
+                        destination: (!outfile.is_empty()).then(|| Path::new(outfile)),
                     };
                     let coordinates = input.coordinate_record();
                     let beams = attachment.beam_view().clone();

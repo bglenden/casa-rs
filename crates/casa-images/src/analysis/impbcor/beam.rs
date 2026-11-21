@@ -111,7 +111,9 @@ impl BeamLayout {
         let same_shape = target.shape() == beam.shape();
         let target_direction = direction(target.coordinates())?;
         let beam_direction = direction(beam.coordinates())?;
-        let plane = if same_shape && beam_axes == target_axes {
+        // CASA compares the local direction coordinates and then applies an
+        // equal-shaped beam in stored pixel order.
+        let plane = if same_shape {
             None
         } else if plane_shape(beam.shape(), beam_axes)
             .into_iter()
@@ -177,11 +179,17 @@ impl BeamLayout {
         beam_shape: &[usize],
     ) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
         let Some((source, target)) = self.plane else {
-            return (
-                section.start.to_vec(),
-                section.shape.to_vec(),
-                section.stride.to_vec(),
-            );
+            let mut start = section.start.to_vec();
+            let mut shape = section.shape.to_vec();
+            let mut stride = section.stride.to_vec();
+            for (axis, &length) in beam_shape.iter().enumerate() {
+                if length == 1 {
+                    start[axis] = 0;
+                    shape[axis] = 1;
+                    stride[axis] = 1;
+                }
+            }
+            return (start, shape, stride);
         };
         let mut start = vec![0; beam_shape.len()];
         let mut shape = vec![1; beam_shape.len()];

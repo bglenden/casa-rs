@@ -358,12 +358,28 @@ impl<'a> PreparedMask<'a> {
         target_coordinates: &CoordinateSystem,
         stretch: bool,
     ) -> Result<Option<Self>, ImageError> {
+        Self::new_for_output(mask_expr, target_shape, target_coordinates, stretch, None)
+    }
+
+    pub(super) fn new_for_output(
+        mask_expr: Option<&str>,
+        target_shape: &'a [usize],
+        target_coordinates: &CoordinateSystem,
+        stretch: bool,
+        destination: Option<&Path>,
+    ) -> Result<Option<Self>, ImageError> {
         let Some(raw) = mask_expr.map(str::trim).filter(|s| !s.is_empty()) else {
             return Ok(None);
         };
         let expr = mask_expression(raw);
         let names = referenced_images(&expr).map_err(mask_parse_error)?;
-        let opened = open_operands(&resolve_named_operands(names)?, false)?;
+        let operands = resolve_named_operands(names)?;
+        if let Some(destination) = destination {
+            for operand in &operands {
+                super::ensure_outfile_does_not_alias_input(destination, &operand.path)?;
+            }
+        }
+        let opened = open_operands(&operands, false)?;
         let (real, complex) = operand_resolvers(&opened);
         let expression =
             parse_subimage_mask_expr(&expr, &real, &complex).map_err(mask_parse_error)?;

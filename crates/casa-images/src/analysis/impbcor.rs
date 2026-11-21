@@ -112,15 +112,7 @@ where
     let chans = request.chans.as_deref().map(str::trim).filter(|text| {
         !text.eq_ignore_ascii_case("ALL") && image.find_axis(CoordinateType::Spectral).is_some()
     });
-    let stokes = request
-        .stokes
-        .as_deref()
-        .map(str::trim)
-        .map(|text| text.trim_start_matches('[').trim_end_matches(']').trim())
-        .filter(|text| {
-            !text.eq_ignore_ascii_case("ALL") && image.find_axis(CoordinateType::Stokes).is_some()
-        })
-        .map(|text| text.replace(';', ","));
+    let stokes = normalize_stokes(image, request.stokes.as_deref());
     let box_pixels = request
         .box_selection
         .as_deref()
@@ -201,6 +193,18 @@ where
         units: image.units().to_owned(),
         valid_pixels,
     })
+}
+
+pub(super) fn normalize_stokes<T: ImagePixel>(
+    image: &dyn crate::ImageInterface<T>,
+    text: Option<&str>,
+) -> Option<String> {
+    text.map(str::trim)
+        .map(|text| text.trim_start_matches('[').trim_end_matches(']').trim())
+        .filter(|text| {
+            !text.eq_ignore_ascii_case("ALL") && image.find_axis(CoordinateType::Stokes).is_some()
+        })
+        .map(|text| text.replace(';', ","))
 }
 
 pub(super) fn normalize_box<T: ImagePixel>(

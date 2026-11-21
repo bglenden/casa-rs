@@ -8558,3 +8558,14 @@ If an image has pixel axes `[Stokes, Frequency]` and world axes
 `[Frequency, Stokes]`, CASA 6.7.6.14 reflects Stokes pixels for the named
 order `["-Frequency", "Stokes"]`. casa-rs resolves the names through the
 world-to-pixel mapping, so this order reflects the frequency planes.
+
+## Unequal image-section strides can shift coupled sky coordinates
+
+On a SIN direction plane with reference pixel `[0, 0]` and PC matrix
+`[[0, -1], [1, 0]]`, CASA 6.7.6.14 applies a stride of `[2, 1]` by doubling
+the first world increment. It reports about one arcminute of declination change
+between output pixels `[0, 0]` and `[1, 0]`. The selected input pixels
+`[0, 0]` and `[2, 0]` are about two arcminutes apart. This affects the
+section geometry used by `image.subimage`, `image.pad`, and `image.pbcor`.
+casa-rs scales the PC matrix with the increments so that each selected
+pixel retains its sky position.
