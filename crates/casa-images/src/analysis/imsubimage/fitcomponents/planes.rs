@@ -17,6 +17,8 @@ pub(super) struct FitSelection {
     pub(super) channels: Vec<usize>,
     pub(super) stokes_pixel: usize,
     pub(super) stokes: StokesType,
+    pub(super) ancillary: Vec<(usize, usize)>,
+    pub(super) can_fit_plane: bool,
 }
 
 impl FitSelection {
@@ -91,6 +93,19 @@ impl FitSelection {
                 _ => None,
             })
             .unwrap_or(StokesType::I);
+        let mut can_fit_plane = sky_shape.iter().all(|&axis| axis >= 2);
+        let ancillary = (0..image.ndim())
+            .filter(|axis| {
+                !sky_axes.contains(axis)
+                    && Some(*axis) != region.stokes_axis
+                    && Some(*axis) != region.channel_axis
+            })
+            .map(|axis| {
+                let step = region.stride.as_ref().map_or(1, |stride| stride[axis]);
+                can_fit_plane &= region.shape[axis].div_ceil(step) == 1;
+                (axis, region.start[axis])
+            })
+            .collect();
         Ok(Self {
             region,
             sky_axes,
@@ -99,6 +114,8 @@ impl FitSelection {
             channels,
             stokes_pixel,
             stokes,
+            ancillary,
+            can_fit_plane,
         })
     }
 

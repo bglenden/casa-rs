@@ -227,8 +227,19 @@ def test_fitcomponents_channel_and_polarization_with_dimensionless_rms(casa, tmp
         assert image.fromarray(pixels=pixels)
         try:
             summary = tmp_path / f"{api.__name__}-spectral.txt"
+            model = str(tmp_path / f"{api.__name__}-{stokes}-model.im")
             fit = image.fitcomponents(chans=1, stokes=stokes, rms="0.1", noisefwhm="120arcsec",
-                                      summary=str(summary))
+                                      summary=str(summary), model=model)
+            product = api.image()
+            assert product.open(model)
+            try:
+                maxima = product.getchunk()[:, :, :, 1].max(axis=(0, 1))
+                assert np.count_nonzero(maxima) == 1
+                selected = 0 if api is casa else index
+                assert maxima[selected] == pytest.approx(
+                    pixels[:, :, index, 1].max(), abs=2e-5)
+            finally:
+                product.done()
             np.testing.assert_array_equal(fit["converged"], [True])
             c = _component(fit)
             table = summary.read_text().splitlines()
@@ -292,5 +303,142 @@ def test_fitcomponents_labels_galactic_fit_directions(casa):
                 [direction["m0"]["value"], direction["m1"]["value"]],
                 [1.68199966643, -1.0503952928], rtol=0., atol=7e-8,
             )
+        finally:
+            source.done()
+
+
+def test_fitcomponents_uses_the_beam_visible_to_its_attachment(casa, tmp_path):
+    pixels = _gaussians().astype(np.float32)
+    expected = 7. * 60.**2 * 4. * np.log(2.) * np.sqrt(6. * 2.5) / (70. * 60.)
+    for api in (casa, tools):
+        path = str(tmp_path / f"{api.__name__}-beam-view.im")
+        model = str(tmp_path / f"{api.__name__}-beam-model.im")
+        first = api.image()
+        second = api.image()
+        output = api.image()
+        assert first.fromarray(path, pixels)
+        assert first.setbrightnessunit("Jy/beam")
+        assert first.setrestoringbeam(major="70arcsec", minor="60arcsec", pa="0deg")
+        assert second.open(path)
+        try:
+            assert second.setrestoringbeam(major="100arcsec", minor="80arcsec", pa="0deg")
+            assert first.restoringbeam()["major"]["value"] == pytest.approx(70.)
+            record = _component(first.fitcomponents(rms=.1, model=model))
+            assert record["beam"]["beamarcsec"]["major"]["value"] == pytest.approx(70.)
+            assert record["beam"]["beamarcsec"]["minor"]["value"] == pytest.approx(60.)
+            assert record["flux"]["value"][0] == pytest.approx(expected, rel=.001)
+            assert output.open(model)
+            assert output.restoringbeam()["major"]["value"] == pytest.approx(70.)
+        finally:
+            output.done()
+            second.done()
+            first.done()
+
+
+def test_fitcomponents_rejects_nested_artifact_paths_before_publication(tmp_path):
+    source_path = tmp_path / "sky.im"
+    model = tmp_path / "model.im"
+    image = tools.image()
+    pixels = _gaussians().astype(np.float32)
+    assert image.fromarray(str(source_path), pixels)
+    try:
+        with pytest.raises(RuntimeError, match="overlap"):
+            image.fitcomponents(model=str(model), summary=str(model / "table.dat"))
+        assert not model.exists()
+        with pytest.raises(RuntimeError, match="overlap"):
+            image.fitcomponents(summary=str(source_path / "table.dat"))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+        reopened = tools.image()
+        assert reopened.open(str(source_path))
+        try:
+            np.testing.assert_array_equal(reopened.getchunk(), pixels)
+        finally:
+            reopened.done()
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+        with pytest.raises(RuntimeError, match="overlap"):
+            image.fitcomponents(model=str(model), logfile=str(alias / "model.im" / "fit.log"))
+        assert not model.exists()
+    finally:
+        image.done()
+
+
+def test_fitcomponents_requires_a_plane_on_ancillary_axes(casa, tmp_path):
+    base = _gaussians().astype(np.float32)
+    values = np.stack([base, 4. * base], axis=-1)[:, :, None, None, :]
+    regions = casa.regionmanager()
+    region = regions.box([0, 0, 0, 0, 1], [30, 33, 0, 0, 1])
+    regions.done()
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        try:
+            for selected in (False, True):
+                path = str(tmp_path / f"{api.__name__}-{selected}.im")
+                options = {"region": region} if selected else {}
+                result = source.fitcomponents(model=path, **options)
+                np.testing.assert_array_equal(result["converged"], [selected])
+                assert result["results"]["nelements"] == int(selected)
+                model = api.image()
+                assert model.open(path)
+                try:
+                    pixels = model.getchunk()
+                    if selected:
+                        axis = 0 if api is casa else 1
+                        np.testing.assert_allclose(pixels[..., axis], values[..., 1], atol=2e-5)
+                        np.testing.assert_array_equal(pixels[..., 1-axis], 0.)
+                    else:
+                        np.testing.assert_array_equal(pixels, 0.)
+                finally:
+                    model.done()
+        finally:
+            source.done()
+
+
+def test_fitcomponents_default_beam_sets_the_noise_correlation(casa):
+    values = _gaussians().astype(np.float32)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        assert source.setbrightnessunit("Jy/beam")
+        assert source.setrestoringbeam(major="30arcsec", minor="24arcsec", pa="0deg")
+        try:
+            default = _component(source.fitcomponents(rms=.1))
+            explicit = _component(source.fitcomponents(rms=.1, noisefwhm=.5))
+            assert default["peak"]["error"] == pytest.approx(.03744868, rel=.001)
+            assert explicit["peak"]["error"] == pytest.approx(.05733663, rel=.001)
+        finally:
+            source.done()
+
+
+def test_fitcomponents_sum_uses_the_reported_angular_ellipse(casa):
+    x, y = np.ogrid[:31, :34]
+    dx, dy = x - 14.2, y - 17.7
+    values = (7. * np.exp(-((.8*dx+.6*dy)**2/14. + (-.6*dx+.8*dy)**2/2.5))).astype(np.float32)
+    fixture = casa.image()
+    assert fixture.fromarray(pixels=values)
+    coords = fixture.coordsys()
+    increments = coords.increment()["numeric"].copy()
+    increments[0] *= 3.
+    assert coords.setincrement(value=increments)
+    record = coords.torecord()
+    coords.done()
+    fixture.done()
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, csys=record)
+        assert source.setbrightnessunit("Jy/pixel")
+        try:
+            component = _component(source.fitcomponents(rms=.1))
+            shape = component["shape"]
+            angle = np.deg2rad(shape["positionangle"]["value"])
+            major = shape["majoraxis"]["value"] / (2. * 180.)
+            minor = shape["minoraxis"]["value"] / (2. * 60.)
+            dx, dy = x - component["pixelcoords"][0], y - component["pixelcoords"][1]
+            u = (-dx*np.sin(angle) + dy*np.cos(angle)) / major
+            v = (dx*np.cos(angle) + dy*np.sin(angle)) / minor
+            expected = np.sum(values[u*u+v*v <= 1.], dtype=float)
+            assert component["sum"]["value"] == pytest.approx(expected, abs=1e-6)
+            assert expected == pytest.approx(78.6244931, rel=.001)
         finally:
             source.done()

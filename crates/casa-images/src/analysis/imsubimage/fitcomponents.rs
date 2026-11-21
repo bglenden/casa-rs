@@ -20,7 +20,7 @@ use casa_types::quanta::{Quantity, Unit, UnitVal};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::analysis::lel_mask::PreparedMask;
-use crate::{ImageError, ImageInterface, ImagePixel};
+use crate::{ImageBeamSet, ImageError, ImageInterface, ImagePixel};
 
 use self::estimates::Estimates;
 use self::model::{FitComponent, FitGeometry};
@@ -84,6 +84,8 @@ pub struct FitComponentsOptions<'a> {
     pub estimates: Option<&'a Path>,
     /// Initial constant level and whether to hold it fixed.
     pub zero_level: Option<(f64, bool)>,
+    /// Restoring beams visible to the caller, if different from storage metadata.
+    pub beams: Option<&'a ImageBeamSet>,
     /// Override the residual RMS in the uncertainty calculation.
     pub rms: Option<ComponentFitQuantity<'a>>,
     /// Collect per-plane statistics for the optional text report.
@@ -254,6 +256,7 @@ pub fn fit_image_components<T: ComponentFitPixel>(
     )?;
     let range = IntensityRange::new(options.include_pixels, options.exclude_pixels)?;
     let image_info = image.image_info()?;
+    let beams = options.beams.unwrap_or(&image_info.beam_set);
     let sky_coordinate = image
         .coordinates()
         .find_coordinate(CoordinateType::Direction)
@@ -315,22 +318,25 @@ pub fn fit_image_components<T: ComponentFitPixel>(
     let mut progress = FitProgress::default();
     let mut zero_level = options.zero_level;
     for &channel in &selection.channels {
+        if !selection.can_fit_plane {
+            progress.planes.push(ModelPlane {
+                channel,
+                model: None,
+                statistics: None,
+            });
+            continue;
+        }
         let data = selection.read(&reader, channel, T::fitting_value)?;
-        let mut fit = if data.shape.iter().all(|&axis| axis >= 2) {
-            fit_sky(
-                data.selected_samples(&range),
-                data.shape,
-                seeds
-                    .as_ref()
-                    .map(|(params, fixed)| (params.as_slice(), fixed.as_slice())),
-                zero_level,
-            )
-        } else {
-            None
-        };
+        let mut fit = fit_sky(
+            data.selected_samples(&range),
+            data.shape,
+            seeds
+                .as_ref()
+                .map(|(params, fixed)| (params.as_slice(), fixed.as_slice())),
+            zero_level,
+        );
         if let Some(model) = &fit {
-            let beam = (!image_info.beam_set.is_empty())
-                .then(|| *image_info.beam_set.beam(channel, selection.stokes_pixel));
+            let beam = (!beams.is_empty()).then(|| *beams.beam(channel, selection.stokes_pixel));
             let frequency = spectral
                 .map(|spectral| {
                     spectral
@@ -350,9 +356,10 @@ pub fn fit_image_components<T: ComponentFitPixel>(
                 channel,
                 frequency,
             };
-            let correlation = noise_width
-                .or_else(|| beam.map(|beam| (beam.major * beam.minor).sqrt()))
-                .filter(|width| *width >= pixel_width);
+            let correlation = match noise_width {
+                Some(width) => (width >= pixel_width).then_some(width),
+                None => beam.map(|beam| (beam.major * beam.minor).sqrt()),
+            };
             let noise = Noise {
                 rms: rms
                     .unwrap_or_else(|| data.selected_rms(|position| fit_value(model, position))),
@@ -394,7 +401,7 @@ pub fn fit_image_components<T: ComponentFitPixel>(
         direction.conversion_direction_ref().as_str(),
         brightness,
         spectral.is_some(),
-        !image_info.beam_set.is_empty(),
+        !beams.is_empty(),
         input_estimates.map_or_else(String::new, |estimates| estimates.text),
     ))
 }

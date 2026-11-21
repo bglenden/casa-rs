@@ -8902,3 +8902,11 @@ Requesting that output gives about `3.4e-9 Jy/pixel` for the same fit. CASA
 uses all entries in its anonymous residual image for the first RMS and
 honors the source mask for the second. Casa-rs computes fit uncertainties
 from valid pixels whether or not a residual image is written.
+
+When fitting Stokes Q or U in a multi-Stokes cube, CASA 6.7.6.14 reports the
+selected polarization's fitted flux but writes its model and residual pixels
+to the first polarization plane. A rank-five image with an ancillary axis
+selected at pixel 1 shows the same mismatch. The output write position is
+initialized to zero and only the spectral position is updated. Casa-rs
+writes the fitted result to the selected polarization and ancillary position.
+The input grid and validity mask remain present in both requested images.

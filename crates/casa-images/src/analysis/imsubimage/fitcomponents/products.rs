@@ -114,6 +114,13 @@ impl ImageComponentFit {
         {
             return None;
         }
+        if selection
+            .ancillary
+            .iter()
+            .any(|&(axis, index)| pixel[axis] != index)
+        {
+            return None;
+        }
         let channel = selection.region.channel_axis.map_or(0, |axis| pixel[axis]);
         let index = self
             .planes

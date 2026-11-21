@@ -16,6 +16,7 @@ use crate::{GaussianBeam, ImageError};
 
 use super::super::decompose::Parameters;
 use super::super::findsources::components::{PixelEllipse, SkyPlane, gaussian_area};
+use super::super::region::SpatialShape;
 use super::deconvolution::deconvolve;
 use super::planes::{FitPlane, FitSelection};
 use super::record::Measurement;
@@ -99,7 +100,14 @@ impl FitGeometry<'_> {
                 [lat, lon]
             },
             peak: [peak, level.peak],
-            sum: plane.ellipse_sum(pixels, [major, ratio, pa]),
+            sum: plane.ellipse_sum(&SpatialShape::Ellipse {
+                cx: x,
+                cy: y,
+                semi_major: angular[0] / (2. * increments[0].abs() * stride[0]),
+                semi_minor: angular[1] / (2. * increments[1].abs() * stride[1]),
+                cos_pa: angular[2].cos(),
+                sin_pa: angular[2].sin(),
+            }),
             brightness: self.sky.brightness.to_owned(),
             beam: self.sky.beam,
             beam_in_pixels: self.sky.beam.map_or(0., |beam| beam.area() / pixel_area),

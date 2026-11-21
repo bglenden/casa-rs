@@ -2,6 +2,7 @@
 
 use crate::ImageError;
 
+use super::super::region::{SpatialShape, shape_contains};
 use super::planes::FitPlane;
 
 #[derive(Default)]
@@ -126,16 +127,10 @@ impl FitPlane {
         }
     }
 
-    pub(super) fn ellipse_sum(&self, center: [f64; 2], [major, ratio, pa]: [f64; 3]) -> f64 {
-        let (sin, cos) = pa.sin_cos();
+    pub(super) fn ellipse_sum(&self, aperture: &SpatialShape) -> f64 {
         self.selected_samples(&IntensityRange::Any)
-            .filter_map(|([x, y], value)| {
-                let x = x - center[0];
-                let y = y - center[1];
-                let long = (-sin * x + cos * y) / major;
-                let short = (cos * x + sin * y) / (major * ratio);
-                (long * long + short * short <= 0.25).then_some(f64::from(value))
-            })
+            .filter(|&([x, y], _)| shape_contains(aperture, x as usize, y as usize))
+            .map(|(_, pixel)| f64::from(pixel))
             .sum()
     }
 }

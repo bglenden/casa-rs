@@ -658,6 +658,52 @@ pub fn ensure_outfile_does_not_alias_input(
     Ok(())
 }
 
+/// Reject overlapping table, image or text paths before an operation creates
+/// any of them. Existing symlinks are resolved along each path.
+///
+/// # Errors
+/// Paths overlap, or their existing components cannot be inspected.
+pub fn ensure_artifacts_do_not_overlap(first: &Path, second: &Path) -> Result<(), ImageError> {
+    let a = resolve_artifact_path(first)?;
+    let b = resolve_artifact_path(second)?;
+    if a.starts_with(&b) || b.starts_with(&a) {
+        return Err(ImageError::CasaSelection(format!(
+            "Output path '{}' overlaps '{}'",
+            first.display(),
+            second.display()
+        )));
+    }
+    Ok(())
+}
+
+fn resolve_artifact_path(path: &Path) -> Result<std::path::PathBuf, ImageError> {
+    use std::path::Component;
+
+    let inspect_error = |error| {
+        ImageError::CasaSelection(format!(
+            "Could not resolve path '{}': {error}",
+            path.display()
+        ))
+    };
+    let absolute = std::path::absolute(path).map_err(inspect_error)?;
+    let mut resolved = std::path::PathBuf::new();
+    for part in absolute.components() {
+        if part == Component::ParentDir {
+            resolved.pop();
+        } else {
+            resolved.push(part);
+        }
+        if matches!(part, Component::Normal(_)) {
+            match resolved.canonicalize() {
+                Ok(canonical) => resolved = canonical,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(inspect_error(error)),
+            }
+        }
+    }
+    Ok(resolved)
+}
+
 fn run_fits_input(request: &ImsubimageRequest) -> Result<ImageSubimageSummary, ImageError> {
     let history = image_history_entries(&request.imagename)?;
     let fits = read_fits_image(&request.imagename)?;

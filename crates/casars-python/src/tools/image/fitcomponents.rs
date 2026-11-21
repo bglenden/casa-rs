@@ -8,7 +8,7 @@ use casa_images::{
     ImageInterface, MutableImageInterface, PagedImage,
     analysis::{
         ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
-        ensure_outfile_does_not_alias_input, fit_image_components,
+        ensure_artifacts_do_not_overlap, fit_image_components,
     },
 };
 use casa_lattices::TiledShape;
@@ -173,7 +173,7 @@ impl FitRequest<'_> {
         .collect::<Vec<_>>();
         for (index, path) in paths.iter().enumerate() {
             for peer in &paths[..index] {
-                ensure_outfile_does_not_alias_input(path, peer).map_err(raised)?;
+                ensure_artifacts_do_not_overlap(path, peer).map_err(raised)?;
             }
         }
         let fit = publish_image_set([self.model, self.residual], true, |staged| {
@@ -184,7 +184,7 @@ impl FitRequest<'_> {
                         .into_iter()
                         .chain(attachment.operand_paths().iter().map(|path| path.as_path()))
                     {
-                        ensure_outfile_does_not_alias_input(target, input).map_err(raised)?;
+                        ensure_artifacts_do_not_overlap(target, input).map_err(raised)?;
                     }
                 }
                 match source {
@@ -223,6 +223,8 @@ impl FitRequest<'_> {
         staged: [Option<&Path>; 2],
         history: bool,
     ) -> PyResult<ImageComponentFit> {
+        let beam_view = attachment.beam_view();
+        let beams = beam_view.beam_set().map_err(raised)?;
         let fit = fit_image_components(
             image,
             FitComponentsOptions {
@@ -237,6 +239,7 @@ impl FitRequest<'_> {
                 exclude_pixels: &self.exclude,
                 estimates: nonempty(self.estimates).map(Path::new),
                 zero_level: self.dooff.then_some((self.offset, self.fixoffset)),
+                beams: Some(&beams),
                 rms: self.rms.as_ref().map(MeasureArgument::value),
                 report_log: !self.logfile.is_empty(),
                 noise_fwhm: self.noise.as_ref().map(MeasureArgument::value),
@@ -274,7 +277,7 @@ impl FitRequest<'_> {
         if model.is_some() || residual.is_some() {
             let coordinate_record = source.coordinate_record();
             let mut image_info = image.image_info().map_err(raised)?.to_record();
-            attachment.beam_view().apply_to(&mut image_info);
+            beam_view.apply_to(&mut image_info);
             let source_history = source.history_entries()?;
             let call = history.then(|| self.history_call());
             for mut output in [model, residual].into_iter().flatten() {
