@@ -201,6 +201,8 @@ pub struct FlagDataRequest {
     pub clip_channel_bins: Option<Vec<u32>>,
     /// Duration string used to average integrations on each baseline before clipping.
     pub clip_time_bin: Option<String>,
+    /// Positive visibility-iterator chunk interval, in seconds.
+    pub time_chunk: Option<f64>,
     /// Quack interval in seconds.
     pub quackinterval: f64,
     /// Quack scan edge.
@@ -259,6 +261,7 @@ impl Default for FlagDataRequest {
             clipoutside: Some(true),
             clip_channel_bins: None,
             clip_time_bin: None,
+            time_chunk: None,
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
             quackincrement: false,
@@ -945,6 +948,7 @@ fn apply_clip_flags(
     if let Some(Some(seconds)) = time_average {
         return TimeClip {
             seconds,
+            chunk_seconds: request.time_chunk,
             column: request.data_column,
             widths,
             channels: channel_selections,

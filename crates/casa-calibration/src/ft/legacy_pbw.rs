@@ -43,17 +43,6 @@ pub(super) fn prepare_model(
             "this legacy pbwproject configuration is pending #1520",
         ));
     }
-    if options.mosaic
-        && let Some(first) = selected.selected_rows.first()
-        && selected
-            .selected_rows
-            .iter()
-            .any(|row| row.field_id != first.field_id)
-    {
-        return Err(invalid(
-            "legacy pbmosaic prediction with several fields is pending #1520",
-        ));
-    }
     let (shape, increment, coordinates) = model_geometry(model)?;
     let [side, _, _, _] = shape;
     let host = HostResources::detect().map_err(invalid)?;

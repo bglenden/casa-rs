@@ -37,6 +37,7 @@ const GROUP_COLUMNS: [&str; 7] = [
 pub(super) struct ClipTimedRow {
     pub(super) row: usize,
     group: [i32; GROUP_COLUMNS.len()],
+    chunk: usize,
     seconds: f64,
 }
 
@@ -86,6 +87,7 @@ pub(super) fn read_clip_times(
                     timed.push(ClipTimedRow {
                         row,
                         group: [0; GROUP_COLUMNS.len()],
+                        chunk: 0,
                         seconds,
                     });
                 }
@@ -114,7 +116,9 @@ pub(super) fn clip_time_groups(
     std::iter::from_fn(move || {
         let first = rows.first()?;
         let count = 1 + rows[1..].partition_point(|row| {
-            row.group == first.group && row.seconds - first.seconds <= limit
+            row.group == first.group
+                && row.chunk == first.chunk
+                && row.seconds - first.seconds <= limit
         });
         let (group, remaining) = rows.split_at(count);
         rows = remaining;
@@ -122,8 +126,34 @@ pub(super) fn clip_time_groups(
     })
 }
 
+fn mark_time_chunks(rows: &mut [ClipTimedRow], interval: f64) {
+    let compare_group =
+        |left: &ClipTimedRow, right: &ClipTimedRow| left.group[..5].cmp(&right.group[..5]);
+    rows.sort_unstable_by(|left, right| {
+        compare_group(left, right).then_with(|| left.seconds.total_cmp(&right.seconds))
+    });
+    let mut chunk = 0;
+    while let Some(first) = rows.get(chunk) {
+        // The input iterator starts each chunk at its actual first timestamp,
+        // with MSInterval's centisecond offset to avoid boundary rounding.
+        let offset = first.seconds - 0.01;
+        let initial_interval = ((first.seconds - offset) / interval).floor();
+        let count = 1 + rows[chunk + 1..].partition_point(|row| {
+            compare_group(row, first).is_eq()
+                && (row.seconds == first.seconds
+                    || (interval >= 2.0 * f64::MIN_POSITIVE
+                        && ((row.seconds - offset) / interval).floor() == initial_interval))
+        });
+        for row in &mut rows[chunk..chunk + count] {
+            row.chunk = chunk;
+        }
+        chunk += count;
+    }
+}
+
 pub(super) struct TimeClip<'a> {
     pub(super) seconds: f64,
+    pub(super) chunk_seconds: Option<f64>,
     pub(super) column: FlagDataColumn,
     pub(super) widths: Option<&'a [u32]>,
     pub(super) channels: Option<&'a BTreeMap<i32, ChannelSelection>>,
@@ -158,9 +188,16 @@ impl TimeClip<'_> {
             }
             columns.prepare_spectrum_fallbacks(ms.main_table(), &first, self.path)?;
         }
+        if let Some(seconds) = self
+            .chunk_seconds
+            .filter(|seconds| *seconds > 0.0 && seconds.is_finite())
+        {
+            mark_time_chunks(&mut timed, seconds);
+        }
         timed.sort_unstable_by(|left, right| {
             left.group
                 .cmp(&right.group)
+                .then_with(|| left.chunk.cmp(&right.chunk))
                 .then_with(|| left.seconds.total_cmp(&right.seconds))
                 .then_with(|| left.row.cmp(&right.row))
         });

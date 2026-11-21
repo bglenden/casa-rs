@@ -9400,14 +9400,14 @@
     },
     {
       "id": "flagdata.ntime",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "ntime",
-      "value_domain": {"kind": "string"},
-      "normalization": {"kind": "identity"},
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Time chunk the automatic modes analyse: 'scan' or a time.", "details": null, "examples": ["'scan'"]},
+      "documentation": {"summary": "Visibility iterator time chunk: 'scan', a duration string, or seconds.", "details": "The time-averaged clip agent processes each iterator chunk independently.", "examples": ["'scan'", "'20s'", "20.0"]},
       "persistence_class": "profile"
     },
     {
@@ -9748,10 +9748,10 @@
     },
     {
       "id": "flagdata.display",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "display",
       "value_domain": {"kind": "string"},
-      "normalization": {"kind": "identity"},
+      "normalization": {"kind": "casa_field"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "presentation",
