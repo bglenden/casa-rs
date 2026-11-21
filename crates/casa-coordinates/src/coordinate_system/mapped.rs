@@ -30,6 +30,13 @@ impl AxisMap {
     ) -> Result<Self, CoordinateError> {
         let map_key = format!("{kind}map{record_index}");
         let replace_key = format!("{kind}replace{record_index}");
+        for key in [&map_key, &replace_key] {
+            if matches!(record.get(key), Some(Value::Array(array)) if array.shape().len() != 1) {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "{key} must be a vector"
+                )));
+            }
+        }
         let indices = get_required_vec_i32(record, &map_key)?;
         if indices.len() != count {
             return Err(CoordinateError::InvalidRecord(format!(
@@ -437,7 +444,7 @@ fn check_removal(axis: usize, naxes: usize, replacement: f64) -> Result<(), Coor
 
 impl CoordinateSystem {
     pub(super) fn nonconsecutive_maps(&self) -> Option<&AxisMaps> {
-        self.maps.as_ref().filter(|maps| !maps.concatenated)
+        self.maps.as_deref().filter(|maps| !maps.concatenated)
     }
 
     fn ensure_axis_maps(&mut self) -> Result<&mut AxisMaps, CoordinateError> {
@@ -454,10 +461,10 @@ impl CoordinateSystem {
                 for coordinate in &self.coordinates {
                     maps.append(coordinate);
                 }
-                self.maps = Some(maps);
+                self.maps = Some(Box::new(maps));
             }
         }
-        Ok(self.maps.as_mut().expect("axis maps initialized"))
+        Ok(self.maps.as_deref_mut().expect("axis maps initialized"))
     }
 
     /// Reads a casacore record in coordinate creation order, retaining
@@ -515,7 +522,7 @@ impl CoordinateSystem {
         Ok(Self {
             coordinates,
             obs_info,
-            maps: Some(maps),
+            maps: Some(Box::new(maps)),
         })
     }
 
@@ -939,6 +946,11 @@ mod tests {
         record.remove("worldreplace0");
         let explicit = CoordinateSystem::from_mapped_record(&record).unwrap();
         assert!(explicit.nonconsecutive_maps().is_none());
+        record.upsert(
+            "pixelmap0",
+            Value::Array(ArrayValue::Int32(array![[0, 1]].into_dyn())),
+        );
+        assert!(CoordinateSystem::from_mapped_record(&record).is_err());
         record.remove("pixelmap0");
         record.remove("worldmap0");
         let mapless = CoordinateSystem::from_mapped_record(&record).unwrap();

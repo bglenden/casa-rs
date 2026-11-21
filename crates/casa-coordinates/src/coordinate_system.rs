@@ -40,7 +40,7 @@ use crate::tabular::TabularCoordinate;
 pub struct CoordinateSystem {
     coordinates: Vec<CoordinateModel>,
     obs_info: ObsInfo,
-    maps: Option<mapped::AxisMaps>,
+    maps: Option<Box<mapped::AxisMaps>>,
 }
 
 impl CoordinateSystem {
