@@ -71,12 +71,6 @@ fn replace_masked<T: ImagePixel>(
             "You must specify an expression".into(),
         ));
     }
-    if matches!(options.region, Some(SubimageRegion::Record(record)) if record.get("regions").is_some())
-    {
-        return Err(ImageError::CasaSelection(
-            "Only a single n-dimensional rectangular region is supported".into(),
-        ));
-    }
     let selection = SubimageSelection::resolve(image, None, options.region, None, None)?;
     let stride = vec![1; image.ndim()];
     let mut valid = image.get_mask_slice(&selection.start, &selection.shape, &stride)?;

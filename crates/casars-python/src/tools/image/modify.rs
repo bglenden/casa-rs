@@ -81,6 +81,7 @@ impl PyImageTool {
                 check_native_write(path, state.history)
                     .map_err(|_| raised("Failed AlwaysAssert to.isWritable()"))?;
             }
+            Region::reject_compound_record(region.as_ref())?;
             attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             let ImageHandle::Float(storage) = &mut *image else {
                 unreachable!("float image checked");

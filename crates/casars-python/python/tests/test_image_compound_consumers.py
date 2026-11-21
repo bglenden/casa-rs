@@ -131,24 +131,30 @@ def test_compound_edits_match_membership_or_bounds(casa, tmp_path, compound, met
 
 
 @pytest.mark.parametrize("method", ["modify", "replacemaskedpixels"])
-def test_compound_rejections_preserve_pixels_and_mask(casa, compound, method):
+def test_compound_rejections_preserve_pixels_mask_and_locks(casa, tmp_path, compound, method):
     data, region, _, _, _, direction = compound
     for api in (casa, tools):
         image = api.image()
         components = None
+        path = str(tmp_path / f"{api.__name__}-image.im")
         try:
-            assert image.fromarray(pixels=data)
+            assert image.fromarray(path, data)
             if method == "modify":
                 assert image.setbrightnessunit("Jy/pixel")
                 components = casa.componentlist()
                 assert components.addcomponent(dir=direction, flux=1.0)
-                with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
-                    image.modify(components.torecord(), region=region, subtract=False, list=False)
             else:
                 assert image.calcmask("F", "invalid")
-                with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
+            assert image.done()
+            assert image.open(path)
+            np.testing.assert_array_equal(image.haslock(), [True, False])
+            with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
+                if method == "modify":
+                    image.modify(components.torecord(), region=region, subtract=False, list=False)
+                else:
                     image.replacemaskedpixels(pixels="-7", region=region)
-                np.testing.assert_array_equal(image.getchunk(getmask=True), False)
+            np.testing.assert_array_equal(image.haslock(), [True, False])
+            np.testing.assert_array_equal(image.getchunk(getmask=True), method == "modify")
             np.testing.assert_array_equal(image.getchunk(), data)
         finally:
             if components is not None:

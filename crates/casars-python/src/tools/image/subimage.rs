@@ -41,6 +41,15 @@ impl Region {
         Ok(region)
     }
 
+    pub(super) fn reject_compound_record(region: Option<&Self>) -> PyResult<()> {
+        if matches!(region, Some(Self::Record(record)) if record.get("regions").is_some()) {
+            return Err(raised(
+                "Exception: Only a single n-dimensional rectangular region is supported.",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn capture(
         py: Python<'_>,
         value: Option<&Bound<'_, PyAny>>,
