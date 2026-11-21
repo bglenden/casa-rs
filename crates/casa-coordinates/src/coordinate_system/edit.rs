@@ -3,8 +3,37 @@
 
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
-use super::CoordinateSystem;
+use super::{CoordinateSystem, RecordCoordinate};
 use crate::{Coordinate, CoordinateError, CoordinateType, ProjectionType};
+
+fn read_edit_layout(record: &RecordValue) -> Result<CoordinateSystem, CoordinateError> {
+    match CoordinateSystem::from_record(record) {
+        Err(CoordinateError::UnsupportedAxisLayout(_)) => {
+            CoordinateSystem::from_mapped_record(record)
+        }
+        result => result,
+    }
+}
+
+fn recorded_axis(
+    coordinates: &[RecordCoordinate],
+    axis: usize,
+    pixel: bool,
+    naxes: usize,
+) -> Result<(&RecordCoordinate, usize), CoordinateError> {
+    coordinates
+        .iter()
+        .find_map(|coordinate| {
+            let axes = if pixel {
+                &coordinate.pixel_axes
+            } else {
+                &coordinate.world_axes
+            };
+            let local = axes.iter().position(|&placed| placed == Some(axis))?;
+            Some((coordinate, local))
+        })
+        .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })
+}
 
 /// Casacore's Projection constructor resizes a short vector without copying
 /// its original contents. Vectors already long enough retain all entries.
@@ -368,8 +397,9 @@ impl CoordinateSystem {
             DirectionRef, MDirection, casa_direction_frame_name,
         };
         use std::str::FromStr;
-        let system = Self::from_record(record)?;
-        if Self::record_coordinates(record)?
+        let system = read_edit_layout(record)?;
+        if system
+            .coordinates_in_record(record)?
             .iter()
             .filter(|coordinate| coordinate.field.starts_with("direction"))
             .count()
@@ -427,7 +457,7 @@ impl CoordinateSystem {
                 Value::Scalar(ScalarValue::String(conversion.as_str().into())),
             );
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, Some(old.as_str().to_string())))
     }
@@ -445,7 +475,8 @@ impl CoordinateSystem {
         pixel_axis: usize,
         names: &[String],
     ) -> Result<(Self, Vec<String>), CoordinateError> {
-        let coordinates = Self::record_coordinates(record)?;
+        let system = read_edit_layout(record)?;
+        let coordinates = system.coordinates_in_record(record)?;
         if coordinates
             .iter()
             .filter(|coordinate| coordinate.field.starts_with("stokes"))
@@ -506,7 +537,7 @@ impl CoordinateSystem {
             &coordinate.field,
             Value::Record(crate::StokesCoordinate::new(types).to_record()),
         );
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, old_names))
     }
@@ -525,8 +556,9 @@ impl CoordinateSystem {
         record: &mut RecordValue,
         projection: &str,
     ) -> Result<(Self, Option<String>), CoordinateError> {
-        let system = Self::from_record(record)?;
-        if Self::record_coordinates(record)?
+        let system = read_edit_layout(record)?;
+        if system
+            .coordinates_in_record(record)?
             .iter()
             .filter(|coordinate| coordinate.field.starts_with("direction"))
             .count()
@@ -569,7 +601,7 @@ impl CoordinateSystem {
             Value::Array(ArrayValue::from_f64_vec(parameters)),
         );
         refresh_direction_pole(direction)?;
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, Some(old)))
     }
@@ -589,7 +621,7 @@ impl CoordinateSystem {
     ) -> Result<(Self, Option<String>), CoordinateError> {
         use casa_types::measures::frequency::CasaFrequencyFrame;
         use std::str::FromStr;
-        let system = Self::from_record(record)?;
+        let system = read_edit_layout(record)?;
         let (field, spectral) = Self::first_spectral_in_record(record)?
             .ok_or_else(|| CoordinateError::InvalidRecord("no spectral coordinate".into()))?;
         let old = if spectral.has_undefined_frame() {
@@ -634,7 +666,7 @@ impl CoordinateSystem {
                 Value::Scalar(ScalarValue::String(canonical.into())),
             );
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, Some(old)))
     }
@@ -652,35 +684,51 @@ impl CoordinateSystem {
         pixel_axis: usize,
         unit: &str,
     ) -> Result<(Self, String), CoordinateError> {
+        Self::set_axis_unit(record, pixel_axis, unit, true)
+    }
+
+    /// Update the unit addressed by a public world axis while retaining the
+    /// coordinate's original native record and maps.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, unit, or coordinate record.
+    pub fn set_world_axis_unit_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        unit: &str,
+    ) -> Result<(Self, String), CoordinateError> {
+        Self::set_axis_unit(record, world_axis, unit, false)
+    }
+
+    fn set_axis_unit(
+        record: &mut RecordValue,
+        axis: usize,
+        unit: &str,
+        pixel: bool,
+    ) -> Result<(Self, String), CoordinateError> {
         use casa_types::quanta::casacore::casacore_unit;
-        let system = Self::from_record(record)?;
-        let old = (0..system.n_coordinates())
-            .flat_map(|index| {
-                let coordinate = system.coordinate(index);
-                match coordinate {
-                    crate::CoordinateModel::Direction(direction) => direction.visible_world_units(),
-                    _ => coordinate.axis_units(),
-                }
-            })
-            .nth(pixel_axis)
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes: system.n_pixel_axes(),
-            })?;
-        let coordinates = Self::record_coordinates(record)?;
-        let (coordinate, local_axis) = coordinates
-            .iter()
-            .find_map(|coordinate| {
-                coordinate
-                    .pixel_axes
-                    .iter()
-                    .position(|axis| *axis == Some(pixel_axis))
-                    .map(|axis| (coordinate, axis))
-            })
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes: system.n_pixel_axes(),
-            })?;
+        let system = read_edit_layout(record)?;
+        let naxes = if pixel {
+            system.n_pixel_axes()
+        } else {
+            system.n_world_axes()
+        };
+        let world = if pixel {
+            system.pixel_axis_to_world_axis(axis)
+        } else {
+            Some(axis)
+        };
+        let (index, local) = world
+            .and_then(|world| system.world_axis_owner(world))
+            .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })?;
+        let model = system.coordinate(index);
+        let old = match model {
+            crate::CoordinateModel::Direction(direction) => direction.visible_world_units(),
+            _ => model.axis_units(),
+        }[local]
+            .clone();
+        let coordinates = system.coordinates_in_record(record)?;
+        let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
         if coordinate.field.starts_with("stokes") {
             return Ok((system, old));
         }
@@ -783,7 +831,7 @@ impl CoordinateSystem {
             })?;
             *axis_unit = unit.into();
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         for index in 0..system.n_coordinates() {
             if let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
                 && direction.increment().iter().any(|value| !value.is_normal())
@@ -835,7 +883,7 @@ impl CoordinateSystem {
                 .expect("selected frequency exists") = value;
         }
         spectral.upsert("restfreq", Value::Scalar(ScalarValue::Float64(value)));
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, old))
     }
@@ -852,28 +900,46 @@ impl CoordinateSystem {
         pixel_axis: usize,
         name: &str,
     ) -> Result<(Self, String), CoordinateError> {
-        let system = Self::from_record(record)?;
-        let old = (0..system.n_coordinates())
-            .flat_map(|index| system.coordinate(index).axis_names())
-            .nth(pixel_axis)
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes: system.n_pixel_axes(),
-            })?;
-        let coordinates = Self::record_coordinates(record)?;
-        let (coordinate, local_axis) = coordinates
-            .iter()
-            .find_map(|coordinate| {
-                coordinate
-                    .pixel_axes
-                    .iter()
-                    .position(|axis| *axis == Some(pixel_axis))
-                    .map(|axis| (coordinate, axis))
-            })
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes: system.n_pixel_axes(),
-            })?;
+        Self::set_axis_name(record, pixel_axis, name, true)
+    }
+
+    /// Update the name addressed by a public world axis while retaining the
+    /// coordinate's original native record and maps.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, name, or coordinate record.
+    pub fn set_world_axis_name_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        name: &str,
+    ) -> Result<(Self, String), CoordinateError> {
+        Self::set_axis_name(record, world_axis, name, false)
+    }
+
+    fn set_axis_name(
+        record: &mut RecordValue,
+        axis: usize,
+        name: &str,
+        pixel: bool,
+    ) -> Result<(Self, String), CoordinateError> {
+        let system = read_edit_layout(record)?;
+        let naxes = if pixel {
+            system.n_pixel_axes()
+        } else {
+            system.n_world_axes()
+        };
+        let world = if pixel {
+            system.pixel_axis_to_world_axis(axis)
+        } else {
+            Some(axis)
+        };
+        let (index, local) = world
+            .and_then(|world| system.world_axis_owner(world))
+            .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })?;
+        let model = system.coordinate(index);
+        let old = model.axis_names()[local].clone();
+        let coordinates = system.coordinates_in_record(record)?;
+        let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
         let mut updated = record.clone();
         let Some(Value::Record(target)) = updated.get_mut(&coordinate.field) else {
             return Err(CoordinateError::InvalidRecord(
@@ -906,7 +972,7 @@ impl CoordinateSystem {
             })?;
             *axis_name = name.into();
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, old))
     }
@@ -941,7 +1007,7 @@ impl CoordinateSystem {
         pixel_axis: usize,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
-        Self::set_axis_scalar_in_record(record, pixel_axis, "crpix", value)
+        Self::set_axis_scalar_in_record(record, pixel_axis, "crpix", value, true)
     }
 
     /// Update an axis increment in its stored world unit, preserving axis maps.
@@ -956,7 +1022,7 @@ impl CoordinateSystem {
         pixel_axis: usize,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
-        Self::set_axis_scalar_in_record(record, pixel_axis, "cdelt", value)
+        Self::set_axis_scalar_in_record(record, pixel_axis, "cdelt", value, true)
     }
 
     /// Update an axis reference value in its stored world unit, preserving
@@ -971,39 +1037,53 @@ impl CoordinateSystem {
         pixel_axis: usize,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
-        Self::set_axis_scalar_in_record(record, pixel_axis, "crval", value)
+        Self::set_axis_scalar_in_record(record, pixel_axis, "crval", value, true)
+    }
+
+    /// Update a public world axis's reference value in its declared unit.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, value, or coordinate record.
+    pub fn set_world_reference_value_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        value: f64,
+    ) -> Result<(Self, f64), CoordinateError> {
+        Self::set_axis_scalar_in_record(record, world_axis, "crval", value, false)
+    }
+
+    /// Update a public world axis's increment in its declared unit.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, value, or coordinate record.
+    pub fn set_world_increment_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        value: f64,
+    ) -> Result<(Self, f64), CoordinateError> {
+        Self::set_axis_scalar_in_record(record, world_axis, "cdelt", value, false)
     }
 
     fn set_axis_scalar_in_record(
         record: &mut RecordValue,
-        pixel_axis: usize,
+        axis: usize,
         field: &str,
         value: f64,
+        pixel: bool,
     ) -> Result<(Self, f64), CoordinateError> {
         if !value.is_finite() {
             return Err(CoordinateError::InvalidRecord(
                 "coordinate value must be finite".into(),
             ));
         }
-        let coordinates = Self::record_coordinates(record)?;
-        let naxes = coordinates
-            .iter()
-            .flat_map(|coordinate| coordinate.pixel_axes.iter().flatten())
-            .max()
-            .map_or(0, |axis| axis + 1);
-        let (coordinate, local_axis) = coordinates
-            .iter()
-            .find_map(|coordinate| {
-                coordinate
-                    .pixel_axes
-                    .iter()
-                    .position(|axis| *axis == Some(pixel_axis))
-                    .map(|axis| (coordinate, axis))
-            })
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes,
-            })?;
+        let system = read_edit_layout(record)?;
+        let coordinates = system.coordinates_in_record(record)?;
+        let naxes = if pixel {
+            system.n_pixel_axes()
+        } else {
+            system.n_world_axes()
+        };
+        let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
         let direction_fields: Vec<String> = coordinates
             .iter()
             .filter(|entry| entry.field.starts_with("direction"))
@@ -1037,22 +1117,19 @@ impl CoordinateSystem {
             }
         }
         if coordinate.field.starts_with("stokes") {
-            let system = Self::from_record(record)?;
-            let old = (0..system.n_coordinates())
-                .flat_map(|index| {
-                    let coordinate = system.coordinate(index);
-                    match field {
-                        "crpix" => coordinate.reference_pixel(),
-                        "cdelt" => coordinate.increment(),
-                        _ => coordinate.reference_value(),
-                    }
-                })
-                .nth(pixel_axis)
-                .ok_or(CoordinateError::AxisOutOfRange {
-                    index: pixel_axis,
-                    naxes,
-                })?;
-            return Ok((system, old));
+            let owner = if pixel {
+                system.pixel_axis_owner(axis)
+            } else {
+                system.world_axis_owner(axis)
+            };
+            let (index, local) = owner.expect("validated public coordinate axis");
+            let coordinate = system.coordinate(index);
+            let values = match field {
+                "crpix" => coordinate.reference_pixel(),
+                "cdelt" => coordinate.increment(),
+                _ => coordinate.reference_value(),
+            };
+            return Ok((system, values[local]));
         }
         if field == "cdelt" && value == 0.0 {
             return Err(CoordinateError::InvalidRecord(
@@ -1070,7 +1147,7 @@ impl CoordinateSystem {
             if field == "crval" {
                 rebuild_directions(&mut updated, &direction_fields)?;
             }
-            let system = Self::from_record(&updated)?;
+            let system = read_edit_layout(&updated)?;
             *record = updated;
             return Ok((system, old));
         }
@@ -1083,7 +1160,7 @@ impl CoordinateSystem {
             if field == "crval" {
                 rebuild_directions(&mut updated, &direction_fields)?;
             }
-            let system = Self::from_record(&updated)?;
+            let system = read_edit_layout(&updated)?;
             *record = updated;
             return Ok((system, old));
         }
@@ -1135,7 +1212,7 @@ impl CoordinateSystem {
         if field == "crval" {
             rebuild_directions(&mut updated, &direction_fields)?;
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         for index in 0..system.n_coordinates() {
             // WCSLIB accepts latitudes up to 1e-10 degrees beyond a pole.
             let pole_limit =

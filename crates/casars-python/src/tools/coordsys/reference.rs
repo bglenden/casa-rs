@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::CoordinateSystem;
 use casa_coordinates::tabular::TabularEdit;
+use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use super::{PyCoordsys, inspect::coordinate_type};
+use super::{
+    PyCoordsys,
+    inspect::{axis_values, coordinate_type},
+};
 use crate::convert::{DoubleList, value::CasaValue};
 
-fn axes(coordinates: &CoordinateSystem, kind: &str) -> Option<std::ops::Range<usize>> {
+fn axes(coordinates: &CoordinateSystem, kind: &str) -> Option<Vec<usize>> {
     if kind.is_empty() {
-        return Some(0..coordinates.n_pixel_axes());
+        return Some((0..coordinates.n_pixel_axes()).collect());
     }
-    let kind = coordinate_type(kind);
-    let mut first = 0;
-    for index in 0..coordinates.n_coordinates() {
-        let coordinate = coordinates.coordinate(index);
-        let end = first + coordinate.n_pixel_axes();
-        if coordinate.coordinate_type() == kind {
-            return Some(first..end);
-        }
-        first = end;
-    }
-    None
+    let index = coordinates.find_coordinate(coordinate_type(kind))?;
+    Some(
+        coordinates
+            .coordinate_pixel_axes(index)?
+            .into_iter()
+            .flatten()
+            .collect(),
+    )
 }
 
 #[pymethods]
@@ -34,11 +34,8 @@ impl PyCoordsys {
             let Some(range) = axes(&state.coordinates, r#type) else {
                 return CasaValue::empty_record();
             };
-            let pixels = (0..state.coordinates.n_coordinates())
-                .flat_map(|index| state.coordinates.coordinate(index).reference_pixel())
-                .skip(range.start)
-                .take(range.len())
-                .collect();
+            let all = axis_values(&state.coordinates, false, CoordinateModel::reference_pixel);
+            let pixels = range.into_iter().map(|axis| all[axis]).collect();
             CasaValue::record([
                 ("numeric", CasaValue::floats(pixels)),
                 ("pw_type", CasaValue::Text("pixel".into())),
@@ -59,7 +56,7 @@ impl PyCoordsys {
                 ))
             })?;
             let mut record = state.editable_record()?;
-            for (axis, value) in range.zip(value.0) {
+            for (axis, value) in range.into_iter().zip(value.0) {
                 state.edit_record_axis(&mut record, axis, TabularEdit::ReferencePixel(value))?;
             }
             state.apply_edited_record(record)?;

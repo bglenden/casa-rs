@@ -222,7 +222,10 @@ impl CoordinateState {
         if matrices.peek().is_none() {
             return Ok(record);
         }
-        let placements = CoordinateSystem::record_coordinates(&record).map_err(raised)?;
+        let placements = self
+            .coordinates
+            .coordinates_in_record(&record)
+            .map_err(raised)?;
         for (index, _) in matrices {
             let original = self.coordinates.coordinate(index);
             let unscaled = change_tabular_matrix(original, 1.0)?;
@@ -232,7 +235,10 @@ impl CoordinateState {
     }
 
     pub(super) fn apply_edited_record(&mut self, record: RecordValue) -> PyResult<()> {
-        let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
+        let coordinates = self
+            .coordinates
+            .restore_record_with_layout(&record)
+            .map_err(raised)?;
         self.apply_edited_coordinates(record, coordinates)
     }
 
@@ -243,11 +249,20 @@ impl CoordinateState {
         edit: TabularEdit,
     ) -> PyResult<()> {
         if self.tabular_matrices().next().is_some() {
-            let placements = CoordinateSystem::record_coordinates(record).map_err(raised)?;
-            if let Some((index, placement)) = placements
-                .iter()
-                .enumerate()
-                .find(|(_, placement)| placement.pixel_axes.contains(&Some(axis)))
+            let placements = self
+                .coordinates
+                .coordinates_in_record(record)
+                .map_err(raised)?;
+            let pixel = matches!(edit, TabularEdit::ReferencePixel(_));
+            if let Some((index, placement)) =
+                placements.iter().enumerate().find(|(_, placement)| {
+                    let axes = if pixel {
+                        &placement.pixel_axes
+                    } else {
+                        &placement.world_axes
+                    };
+                    axes.contains(&Some(axis))
+                })
                 && live_tabular_matrix(self.coordinates.coordinate(index)).is_some()
             {
                 let native = recorded_coordinate(record, &placement.field)?;
@@ -274,10 +289,10 @@ impl CoordinateState {
                 CoordinateSystem::set_reference_pixel_in_record(record, axis, value)
             }
             TabularEdit::ReferenceValue(value) => {
-                CoordinateSystem::set_reference_value_in_record(record, axis, value)
+                CoordinateSystem::set_world_reference_value_in_record(record, axis, value)
             }
             TabularEdit::Increment(value) => {
-                CoordinateSystem::set_increment_in_record(record, axis, value)
+                CoordinateSystem::set_world_increment_in_record(record, axis, value)
             }
         }
         .map(|_| ())
@@ -291,7 +306,7 @@ impl CoordinateState {
     ) -> PyResult<()> {
         let mut matrices = self.tabular_matrices().peekable();
         if matrices.peek().is_some() {
-            let placements = CoordinateSystem::record_coordinates(&record).map_err(raised)?;
+            let placements = coordinates.coordinates_in_record(&record).map_err(raised)?;
             for (index, factor) in &mut matrices {
                 let field = &placements[index].field;
                 let native = recorded_coordinate(&record, field)?;
@@ -314,12 +329,16 @@ fn apply_matrix(
     matrix: Array2<f64>,
 ) -> PyResult<bool> {
     let (model, placement) = coordinate(state, kind)?.ok_or_else(|| missing(kind))?;
-    let placements = CoordinateSystem::record_coordinates(&state.record).map_err(raised)?;
+    let placements = state
+        .coordinates
+        .coordinates_in_record(&state.record)
+        .map_err(raised)?;
     let index = placements
         .iter()
         .position(|entry| entry.field == placement.field)
         .ok_or_else(|| raised("Missing coordinate placement"))?;
-    let sliced = placement.pixel_axes.contains(&None);
+    let sliced = placement.pixel_axes.len() != model.n_pixel_axes()
+        || placement.world_axes.len() != model.n_world_axes();
     let full = if sliced {
         placement.model(&state.record).map_err(raised)?
     } else {
@@ -370,7 +389,9 @@ fn apply_matrix(
     let mut record = state.record.clone();
     update_stored_coordinate(&mut record, &placement.field, &changed)?;
     let changed = if sliced {
-        CoordinateSystem::from_record(&record)
+        state
+            .coordinates
+            .restore_record_with_layout(&record)
             .map_err(raised)?
             .coordinate(index)
             .clone()

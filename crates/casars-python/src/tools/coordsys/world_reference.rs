@@ -4,7 +4,7 @@ use casa_coordinates::display::{
     format_latitude_dms_with_precision, format_longitude_hours_with_precision,
     format_stream_value_with_precision,
 };
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
+use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
 use casa_types::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;
 
-use super::inspect::{coordinate_type, numbered_coordinates};
+use super::inspect::{axis_values, coordinate_type, numbered_coordinates};
 use super::{CoordinateState, PyCoordsys};
 
 pub(in crate::tools) mod spectral_text;
@@ -211,6 +211,7 @@ struct Values<'a> {
     units: Vec<String>,
     converted: bool,
     visible_axes: Vec<usize>,
+    world_order: Vec<usize>,
     full_measure: Option<(Vec<f64>, Vec<String>)>,
 }
 
@@ -219,6 +220,7 @@ impl<'a> Values<'a> {
         coordinate: &'a CoordinateModel,
         record: Option<&'a RecordValue>,
         absolute: bool,
+        axis_map: &[Option<usize>],
     ) -> Self {
         let native = if absolute {
             coordinate.reference_value()
@@ -235,7 +237,17 @@ impl<'a> Values<'a> {
             }
             _ => (native.clone(), coordinate.axis_units()),
         };
-        let visible_axes = (0..native.len()).collect();
+        let visible_axes: Vec<_> = axis_map
+            .iter()
+            .enumerate()
+            .filter_map(|(local, axis)| axis.map(|_| local))
+            .collect();
+        let native = visible_axes.iter().map(|&axis| native[axis]).collect();
+        let declared = visible_axes.iter().map(|&axis| declared[axis]).collect();
+        let units = visible_axes
+            .iter()
+            .map(|&axis| units[axis].clone())
+            .collect();
         Self {
             coordinate,
             record,
@@ -244,6 +256,7 @@ impl<'a> Values<'a> {
             units,
             converted: false,
             visible_axes,
+            world_order: axis_map.iter().copied().flatten().collect(),
             full_measure: None,
         }
     }
@@ -253,12 +266,21 @@ impl<'a> Values<'a> {
         record: Option<&'a RecordValue>,
         native: &[f64],
         visible_axes: Vec<usize>,
+        world_order: Vec<usize>,
         full_coordinate: Option<CoordinateModel>,
         converted: bool,
     ) -> PyResult<Self> {
         let units = match coordinate {
             CoordinateModel::Direction(direction) => direction.visible_world_units(),
             _ => coordinate.axis_units(),
+        };
+        let units = if units.len() == visible_axes.len() {
+            units
+        } else {
+            visible_axes
+                .iter()
+                .map(|&axis| units[axis].clone())
+                .collect()
         };
         let declared = if matches!(coordinate, CoordinateModel::Direction(_)) {
             use casa_types::quanta::{Quantity, Unit};
@@ -289,15 +311,9 @@ impl<'a> Values<'a> {
             units,
             converted,
             visible_axes,
+            world_order,
             full_measure,
         })
-    }
-
-    fn quantities(&self) -> impl Iterator<Item = (f64, &str)> {
-        self.declared
-            .iter()
-            .copied()
-            .zip(self.units.iter().map(String::as_str))
     }
 
     fn text(&self, axis: usize, absolute: bool, scientific_style: bool) -> PyResult<String> {
@@ -307,7 +323,11 @@ impl<'a> Values<'a> {
             CoordinateModel::Stokes(_) => stokes(value),
             CoordinateModel::Direction(direction) => direction_text(
                 direction.direction_ref(),
-                self.visible_axes[axis],
+                if direction.longitude_axis().is_none() {
+                    1
+                } else {
+                    self.visible_axes[axis]
+                },
                 self.native[axis],
                 absolute,
                 scientific_style,
@@ -443,7 +463,9 @@ fn world_reference(
     };
     let selected = if kind.is_empty() {
         let placements = if format.contains('s') {
-            CoordinateSystem::record_coordinates(&state.record)
+            state
+                .coordinates
+                .coordinates_in_record(&state.record)
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         } else {
             Vec::new()
@@ -454,6 +476,10 @@ fn world_reference(
                 (
                     coordinate,
                     placements.get(index).and_then(|entry| raw(&entry.field)),
+                    state
+                        .coordinates
+                        .coordinate_world_axes(index)
+                        .expect("existing coordinate"),
                 )
             })
             .collect::<Vec<_>>()
@@ -470,17 +496,32 @@ fn world_reference(
             }
             return Ok(CasaValue::empty_record());
         };
-        vec![(coordinate, raw(&entry.field))]
+        let axes = if entry.world_axes.len() == coordinate.n_world_axes() {
+            let mut next = 0;
+            entry
+                .world_axes
+                .iter()
+                .map(|axis| {
+                    axis.map(|_| {
+                        let local = next;
+                        next += 1;
+                        local
+                    })
+                })
+                .collect()
+        } else {
+            (0..coordinate.n_world_axes()).map(Some).collect()
+        };
+        vec![(coordinate, raw(&entry.field), axes)]
     };
     let values = selected
         .into_iter()
-        .map(|(coordinate, record)| Values::new(coordinate, record, absolute))
+        .map(|(coordinate, record, axes)| Values::new(coordinate, record, absolute, &axes))
         .collect::<Vec<_>>();
-    let styles = complete().flat_map(|coordinate| {
-        let scientific = scientific_coordinate(coordinate);
-        std::iter::repeat_n(scientific, coordinate.n_world_axes())
+    let styles = axis_values(&state.coordinates, true, |coordinate| {
+        vec![scientific_coordinate(coordinate); coordinate.n_world_axes()]
     });
-    format_world_record(&values, styles, &format, absolute, true, true)
+    format_world_record(&values, styles.into_iter(), &format, absolute, true, true)
 }
 
 fn scientific_coordinate(coordinate: &CoordinateModel) -> bool {
@@ -548,12 +589,13 @@ fn format_world_at(
 ) -> PyResult<CasaValue> {
     let format = format.to_ascii_lowercase();
     let placements = if format.contains('s') || format.contains('m') {
-        CoordinateSystem::record_coordinates(&state.record)
+        state
+            .coordinates
+            .coordinates_in_record(&state.record)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
     } else {
         Vec::new()
     };
-    let mut offset = 0;
     let mut values = Vec::with_capacity(state.coordinates.n_coordinates());
     for index in 0..state.coordinates.n_coordinates() {
         let coordinate = state.coordinates.coordinate(index);
@@ -562,12 +604,22 @@ fn format_world_at(
             Some(Value::Record(record)) => Some(record),
             _ => None,
         });
-        let end = offset + coordinate.n_world_axes();
+        let axis_map = state
+            .coordinates
+            .coordinate_world_axes(index)
+            .expect("existing coordinate");
+        let world_order: Vec<_> = axis_map.iter().copied().flatten().collect();
         let visible_axes = placement.map_or_else(
-            || (0..end - offset).collect(),
+            || {
+                axis_map
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(local, axis)| axis.map(|_| local))
+                    .collect()
+            },
             |placement| {
                 placement
-                    .pixel_axes
+                    .world_axes
                     .iter()
                     .enumerate()
                     .filter_map(|(local, axis)| axis.map(|_| local))
@@ -575,26 +627,27 @@ fn format_world_at(
             },
         );
         let full_coordinate = placement
-            .filter(|placement| format.contains('m') && placement.pixel_axes.contains(&None))
+            .filter(|placement| format.contains('m') && placement.world_axes.contains(&None))
             .map(|placement| placement.model(&state.record))
             .transpose()
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let native: Vec<_> = world_order.iter().map(|&axis| world[axis]).collect();
         values.push(Values::at_world(
             coordinate,
             record,
-            &world[offset..end],
+            &native,
             visible_axes,
+            world_order,
             full_coordinate,
             converted,
         )?);
-        offset = end;
     }
-    let styles = values.iter().flat_map(|axis| {
-        std::iter::repeat_n(scientific_coordinate(axis.coordinate), axis.native.len())
+    let styles = axis_values(&state.coordinates, true, |coordinate| {
+        vec![scientific_coordinate(coordinate); coordinate.n_world_axes()]
     });
     format_world_record(
         &values,
-        styles,
+        styles.into_iter(),
         &format,
         absolute,
         velocities,
@@ -610,6 +663,11 @@ fn format_world_record(
     velocities: bool,
     coordinate_tags: bool,
 ) -> PyResult<CasaValue> {
+    let mut ordered: Vec<_> = values
+        .iter()
+        .flat_map(|value| (0..value.native.len()).map(move |local| (value, local)))
+        .collect();
+    ordered.sort_unstable_by_key(|(value, local)| value.world_order[*local]);
     let mut record = Vec::new();
     if coordinate_tags {
         record.extend([
@@ -621,9 +679,9 @@ fn format_world_record(
         record.push((
             "numeric",
             CasaValue::floats(
-                values
+                ordered
                     .iter()
-                    .flat_map(|axes| axes.declared.iter().copied())
+                    .map(|(axes, local)| axes.declared[*local])
                     .collect(),
             ),
         ));
@@ -631,21 +689,23 @@ fn format_world_record(
     if format.contains('q') {
         record.push((
             "quantity",
-            numbered_quantities(values.iter().flat_map(Values::quantities)),
+            numbered_quantities(
+                ordered
+                    .iter()
+                    .map(|(value, local)| (value.declared[*local], value.units[*local].as_str())),
+            ),
         ));
     }
     if format.contains('s') {
         let mut strings = Vec::new();
-        for value in values {
-            for axis in 0..value.native.len() {
-                strings.push(value.text(axis, absolute, styles.next().unwrap_or(true))?);
-            }
+        for &(value, local) in &ordered {
+            strings.push(value.text(local, absolute, styles.next().unwrap_or(true))?);
         }
         record.push(("string", CasaValue::Texts(strings)));
     }
     if format.contains('m') {
         let mut measures = std::collections::BTreeMap::new();
-        for value in values {
+        for value in values.iter().filter(|value| !value.native.is_empty()) {
             match value.measure(absolute, velocities) {
                 Ok((key, measure)) => {
                     measures.insert(key, measure);
