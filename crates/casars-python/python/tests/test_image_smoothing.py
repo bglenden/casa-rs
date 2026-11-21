@@ -229,14 +229,17 @@ def test_circle_selection_keeps_smoothing_validity(casa, method, shape, count):
     np.testing.assert_allclose(cases[0][0], cases[1][0])
     np.testing.assert_array_equal(cases[0][1], cases[1][1])
 
-@pytest.mark.parametrize("method,decimation,offset,stride,expected,world,refpix,increment", [
-    ("boxcar", False, 0, 1, [.5, 1.5, 2.5, 3.5, 4.5], [10.7, 11.7, 17.7, 21.7, 71.7], 0., 15.4),
-    ("boxcar", True, 0, 1, [.5, 2.5, 4.5], [10.7, 12.7, 24.7], 0., 30.8),
-    ("boxcar", True, 1, 2, [2.], [33.8], -.5, 30.8),
-    ("hanning", True, 0, 1, [1., 3.], [18.4, 20.4], -.5, 30.8),
-    ("hanning", True, 1, 1, [2., 4.], [33.8, 35.8], -1., 30.8),
+@pytest.mark.parametrize("persistent", [False, True])
+@pytest.mark.parametrize("method,decimation,offset,stride,expected,world,refpix,refval,increment", [
+    ("boxcar", False, 0, 1, [.5, 1.5, 2.5, 3.5, 4.5], [10.7, 11.7, 17.7, 21.7, 71.7], 0., 10.7, 15.4),
+    ("boxcar", True, 0, 1, [.5, 2.5, 4.5], [10.7, 12.7, 24.7], 0., 10.7, 30.8),
+    ("boxcar", True, 1, 2, [2.], [33.8], -.5, 18.4, 30.8),
+    ("hanning", True, 0, 1, [1., 3.], [18.4, 20.4], -.5, 3., 30.8),
+    ("hanning", True, 1, 1, [2., 4.], [33.8, 35.8], -1., 3., 30.8),
 ])
-def test_smoothing_tabular_lookup_grid(casa, method, decimation, offset, stride, expected, world, refpix, increment):
+def test_smoothing_tabular_lookup_grid(
+    casa, tmp_path, persistent, method, decimation, offset, stride, expected, world, refpix, refval, increment,
+):
     manager = casa.regionmanager()
     selection = manager.box([offset], [5], [stride])
     manager.done()
@@ -247,11 +250,13 @@ def test_smoothing_tabular_lookup_grid(casa, method, decimation, offset, stride,
         image = api.image()
         assert image.fromarray(pixels=np.arange(6, dtype=np.float32), csys=coordinate.torecord())
         coordinate.done()
-        output = getattr(image, method)(axis=0, drop=decimation, region=selection)
+        path = str(tmp_path / f"tabular-{api.__name__}.im") if persistent else ""
+        output = getattr(image, method)(axis=0, drop=decimation, region=selection, outfile=path)
         coords = output.coordsys()
         try:
             np.testing.assert_array_equal(output.getchunk(), expected)
             np.testing.assert_allclose(coords.referencepixel()["numeric"], [refpix], atol=1e-12)
+            np.testing.assert_allclose(coords.referencevalue()["numeric"], [refval], atol=1e-12)
             np.testing.assert_allclose(coords.increment()["numeric"], [increment], atol=1e-12)
             np.testing.assert_allclose(
                 [coords.toworld([p])["numeric"][0] for p in range(len(expected))],
@@ -261,6 +266,30 @@ def test_smoothing_tabular_lookup_grid(casa, method, decimation, offset, stride,
             coords.done()
             output.done()
             image.done()
+
+        if persistent:
+            for reader in (tools, casa):
+                reader_table = reader.table()
+                assert reader_table.open(path)
+                try:
+                    native = reader_table.getkeyword("coords")["tabular0"]
+                    np.testing.assert_allclose(native["crpix"], [refpix], atol=1e-12)
+                    np.testing.assert_allclose(native["crval"], [refval], atol=1e-12)
+                finally:
+                    reader_table.done()
+                reopened = reader.image()
+                assert reopened.open(path)
+                restored = reopened.coordsys()
+                try:
+                    np.testing.assert_allclose(restored.referencepixel()["numeric"], [0.], atol=1e-12)
+                    np.testing.assert_allclose(restored.referencevalue()["numeric"], [world[0]], atol=1e-12)
+                    np.testing.assert_allclose(
+                        [restored.toworld([p])["numeric"][0] for p in range(len(expected))],
+                        world, rtol=0., atol=1e-10,
+                    )
+                finally:
+                    restored.done()
+                    reopened.done()
 
 
 @pytest.mark.parametrize("method,labels,expected", [

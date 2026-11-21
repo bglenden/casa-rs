@@ -15,6 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyString;
 
 use super::PyImageTool;
+use super::attachment::AttachedImage;
 use super::beam_view::BeamView;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
@@ -230,7 +231,8 @@ impl PyImageTool {
                 .image
                 .as_ref()
                 .ok_or_else(|| raised("Unable to create image"))?;
-            publish_image(request.outfile, request.overwrite, |path| {
+            let mut live_coordinates = None;
+            let mut output = publish_image(request.outfile, request.overwrite, |path| {
                 let mut image = attached.lock();
                 image.check_single_precision(request.name())?;
                 if !request.outfile.is_empty() {
@@ -249,8 +251,13 @@ impl PyImageTool {
                 let released = attached.release_requested_lock(&mut image);
                 let staged = staged?;
                 released?;
+                live_coordinates = AttachedImage::capture_live_coordinates(&staged)?;
                 Ok(staged)
-            })
+            })?;
+            if let Some((record, system)) = live_coordinates {
+                output.keep_live_coordinates(record, system);
+            }
+            Ok::<_, PyErr>(output)
         })?;
         Py::new(py, Self::attached(output))
     }
