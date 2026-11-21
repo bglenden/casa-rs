@@ -7355,6 +7355,11 @@ CASA, which can produce a numerical Q/U estimate even though the source
 model has three unknowns. Casa-rs reports the same singular-fit error when
 those two segments leave the source model underdetermined.
 
+If only one usable segment survives in a gaincal solution channel, CASA can
+write an arbitrary unflagged phase and use it in both channel ambiguity
+tracking and the source fit. Casa-rs flags that channel and estimates the
+source polarization and phase continuity from the constrained channels.
+
 With broad angle coverage and a real polarized input, the shallow or steep
 line fit can also receive an exactly constant imaginary or real component.
 CASA's `Xfparang+QU` returns a phase 90 degrees away from the planted one

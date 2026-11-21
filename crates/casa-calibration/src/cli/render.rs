@@ -33,6 +33,7 @@ fn render_json(result: &CalibrationTaskResult) -> Result<String, String> {
         CalibrationTaskResult::PlanApply(report) => serde_json::to_string_pretty(report),
         CalibrationTaskResult::Stats(report) => serde_json::to_string_pretty(report),
         CalibrationTaskResult::SolveGain(report) => serde_json::to_string_pretty(report),
+        CalibrationTaskResult::SolveCrossHandGain(report) => serde_json::to_string_pretty(report),
         CalibrationTaskResult::SolveBandpass(report) => serde_json::to_string_pretty(report),
         CalibrationTaskResult::FluxScale(report) => serde_json::to_string_pretty(report),
         CalibrationTaskResult::Gencal(report) => serde_json::to_string_pretty(report),
@@ -67,6 +68,11 @@ fn render_text(result: &CalibrationTaskResult) -> String {
         CalibrationTaskResult::PlanApply(report) => render_apply_plan_text(report),
         CalibrationTaskResult::Stats(report) => render_stats_text(report),
         CalibrationTaskResult::SolveGain(report) => render_gain_solve_report_text(report),
+        CalibrationTaskResult::SolveCrossHandGain(report) => format!(
+            "Cross-hand gain solutions: {} rows in {}\n",
+            report.solution_row_count,
+            report.output_table.display()
+        ),
         CalibrationTaskResult::SolveBandpass(report) => render_bandpass_solve_report_text(report),
         CalibrationTaskResult::FluxScale(report) => render_fluxscale_report_text(report),
         CalibrationTaskResult::Gencal(report) => render_gencal_report_text(report),

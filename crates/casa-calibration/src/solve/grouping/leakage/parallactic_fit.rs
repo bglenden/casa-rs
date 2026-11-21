@@ -71,6 +71,10 @@ pub(super) fn solve(
             previous = Complex64::ONE;
             continue;
         }
+        if !align_model && rows.clone().nth(1).is_none() {
+            phases.push(None);
+            continue;
+        }
         let mut phase = if circular {
             let slope = fit_complex(rows.clone().map(|row| {
                 (
@@ -191,8 +195,11 @@ fn fit_linear(segments: &[Segment], phases: &[Option<Complex64>]) -> Result<Comp
         let (weight, corrected) = segment.channels.iter().zip(phases).fold(
             (0.0, 0.0),
             |(weight, corrected), (row, phase)| {
-                let phase = phase.unwrap_or(Complex64::ONE);
-                (weight + row.weight, corrected + (row.corrected / phase).re)
+                if let Some(phase) = phase {
+                    (weight + row.weight, corrected + (row.corrected / *phase).re)
+                } else {
+                    (weight, corrected)
+                }
             },
         );
         if weight <= 0.0 {

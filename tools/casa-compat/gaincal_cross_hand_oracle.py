@@ -3,13 +3,19 @@
 """Compare the public XY+QU and XYf+QU gaincal modes with CASA 6.7.6.14."""
 
 import argparse
+import json
+import os
 from pathlib import Path
+import subprocess
 
 import casatasks as casa
+from casatools import table as table_tool
 import numpy as np
 
+from applycal_oracle import copy_ms
 from calibration_leakage_apply_oracle import compare_application
 from calibration_smoothcal_oracle import opened
+from gaincal_delay_oracle import duplicate_rows
 from polcal_cross_hand_oracle import plant_cross_hand
 from polcal_leakage_solve_oracle import compare_apply, plant, put_observations
 from polcal_standard_leakage_oracle import compare
@@ -22,7 +28,6 @@ def compare_record(want, got):
             compare_record(value, got[key])
         elif key == 'solve_tables':
             assert got[key].shape == value.shape == (1,)
-            assert all(Path(paths[0]).exists() for paths in (value, got[key]))
         else:
             assert got[key].dtype.kind == value.dtype.kind
             np.testing.assert_array_equal(got[key], value, err_msg=key)
@@ -74,6 +79,89 @@ def rejected_intervals(root, vis, api, linear):
                 assert label == 'casa' and output.exists()
 
 
+def compare_unusable_windows(root, source, api):
+    root.mkdir()
+    vis = root/'two-windows.ms'
+    copy_ms(source, vis)
+    tool = table_tool()
+    assert duplicate_rows(tool, vis/'SPECTRAL_WINDOW') == 1
+    assert duplicate_rows(tool, vis/'DATA_DESCRIPTION') == 1
+    with opened(vis/'DATA_DESCRIPTION', True) as description:
+        description.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    with opened(vis, True) as table:
+        windows = table.getcol('FIELD_ID')
+        table.putcol('DATA_DESC_ID', windows)
+        flags = np.zeros_like(table.getcol('FLAG'))
+        flags[:, :, windows == 1] = True
+        table.putcol('FLAG', flags)
+
+    def run(name, selection, writes_table):
+        results = {}
+        for label, task in (('casa', casa.gaincal), ('native', api.gaincal)):
+            output = root/f'{label}-{name}.cal'
+            results[label] = task(str(vis), str(output), spw=selection, gaintype='XYf+QU',
+                                  preavg=300., smodel=[1.6, 0., 0., 0.])
+            assert results[label]['solve_tables'][0] == str(output)
+            assert output.exists() == writes_table
+            if writes_table:
+                with opened(output) as table:
+                    assert table.nrows() == 5
+                    np.testing.assert_array_equal(table.getcol('SPECTRAL_WINDOW_ID'), 0)
+        compare_record(results['casa'], results['native'])
+
+    run('selected-good', '0', True)
+    run('both', '0,1', True)
+    run('fully-flagged', '1', False)
+    with opened(vis, True) as table:
+        table.putcol('FLAG', np.zeros_like(flags))
+        for name, value in [('SIGMA', np.inf), ('WEIGHT', 0.)]:
+            values = table.getcol(name)
+            values[:, windows == 1] = value
+            table.putcol(name, values)
+    run('zero-weight', '1', False)
+
+
+def compare_single_segment(root, vis, api, reference):
+    with opened(vis, True) as table:
+        times = table.getcol('TIME')
+        flags = table.getcol('FLAG')
+        flags[:, 3] = times != times.min()
+        table.putcol('FLAG', flags)
+    for label, task in (('casa', casa.gaincal), ('native', api.gaincal)):
+        output = root/f'{label}-single-segment.cal'
+        task(str(vis), str(output), field='0', gaintype='XYf+QU', preavg=300.,
+             smodel=[1.6, 0., 0., 0.])
+        with opened(output) as table:
+            flags = table.getcol('FLAG')
+            if label == 'casa':
+                assert not flags[:, 3].any()
+            else:
+                assert flags[:, 3].all()
+                phases = table.getcol('CPARAM')
+                np.testing.assert_array_equal(phases[:, 3], 1.)
+                indices = [0, 1, 2, 4, 5, 6, 7]
+                np.testing.assert_allclose(phases[:, indices], reference[:, indices],
+                                           atol=3e-5, rtol=0.)
+
+
+def compare_cli_report(root, vis):
+    raw = root/'cli.cal'
+    report = root/'cli-report.json'
+    arguments = [os.environ['CASARS_CALIBRATE_BIN'], 'gaincal', '--vis', str(vis), '--field', '0',
+                 '--gaintype', 'XYf+QU', '--preavg', '300', '--smodel', '1.6,0,0,0',
+                 '--format', 'json', '--no-save-last']
+    argv = [*arguments, '--caltable', str(raw), '-o', str(report)]
+    subprocess.run(argv, check=True, capture_output=True, text=True)
+    stored = json.loads(report.read_text())
+    assert stored['gain_type'] == 'XYf+QU' and stored['solution_row_count'] == 5
+    assert stored['output_table'] == str(raw) and raw.exists()
+    blocked = root/'cli-blocked.cal'
+    for path in (report, blocked):
+        rejected = subprocess.run([*arguments, '--caltable', str(blocked), '-o', str(path)],
+                                  capture_output=True, text=True)
+        assert rejected.returncode and not blocked.exists()
+
+
 def compare_basis(root, basis, api):
     root.mkdir()
     vis, leakage, gains, _, sky = plant(root, basis)
@@ -106,12 +194,16 @@ def compare_basis(root, basis, api):
         solve(root/'amplitude-mode', vis, api, 'XYf+QU', calmode='a', solnorm=True)
         solve(root/'phase-mode', vis, api, 'XYf+QU', calmode='p')
         solve(root/'one-baseline', vis, api, 'XYf+QU', antenna='A0&A1')
+        compare_unusable_windows(root/'unusable-windows', vis, api)
+        compare_cli_report(root, vis)
     with opened(vis, True) as table:
         flags = table.getcol('FLAG')
         flags[1, 3, ::6] = True
         table.putcol('FLAG', flags)
     solve(root/'dependent-flags', vis, api, 'XYf+QU', corrdepflags=True)
     rejected_intervals(root, vis, api, basis.startswith('XX'))
+    if basis.startswith('XX'):
+        compare_single_segment(root, vis, api, values)
 
 
 def main():
