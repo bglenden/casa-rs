@@ -18,6 +18,7 @@ use crate::{ImageError, ImpvRequest, PvAmount, PvPosition};
 pub(super) fn endpoints(
     request: &ImpvRequest,
     coordinate: &DirectionCoordinate,
+    allow_pixel_shorthand: bool,
 ) -> Result<[[f64; 2]; 2], ImageError> {
     let missing = |message: &str| ImageError::CasaSelection(message.into());
     match request
@@ -34,7 +35,10 @@ pub(super) fn endpoints(
             if std::mem::discriminant(start) != std::mem::discriminant(end) {
                 return Err(missing("start and end must use the same representation"));
             }
-            Ok([to_pixel(start, coordinate)?, to_pixel(end, coordinate)?])
+            Ok([
+                to_pixel(start, coordinate, allow_pixel_shorthand)?,
+                to_pixel(end, coordinate, allow_pixel_shorthand)?,
+            ])
         }
         Some(b'l') => {
             let (Some(center), Some(length), Some(pa)) =
@@ -42,7 +46,13 @@ pub(super) fn endpoints(
             else {
                 return Err(missing("length mode requires center, length and pa"));
             };
-            let center = match parse_position(center)? {
+            let center = parse_position(center, allow_pixel_shorthand)?;
+            let length = match length {
+                PvAmount::Whole(n) => pixel_length(*n as f64, &center, coordinate)?,
+                PvAmount::Fractional(n) => pixel_length(*n, &center, coordinate)?,
+                value => radians(value)?,
+            };
+            let center = match center {
                 Position::Pixel(pixel) => {
                     let [lon, lat] = coordinate.pixel_to_world(pixel)?;
                     MDirection::from_angles(lon, lat, coordinate.conversion_direction_ref())
@@ -50,14 +60,6 @@ pub(super) fn endpoints(
                 Position::Sky(center) => center,
             };
             let (lon, lat) = center.as_angles();
-            let length = match length {
-                PvAmount::Whole(n) => *n as f64 * coordinate.increment()[0].abs(),
-                PvAmount::Fractional(n) => *n * coordinate.increment()[0].abs(),
-                value => radians(value)?,
-            };
-            if !length.is_finite() || length <= 0.0 {
-                return Err(missing("Length must be positive"));
-            }
             let pa = radians(pa)?;
             let shift = |angle: f64| {
                 let (s, c) = (length / 2.0).sin_cos();
@@ -75,6 +77,17 @@ pub(super) fn endpoints(
         }
         _ => Err(missing("Unsupported value for mode")),
     }
+}
+
+fn pixel_length(
+    length: f64,
+    center: &Position,
+    coordinate: &DirectionCoordinate,
+) -> Result<f64, ImageError> {
+    if !length.is_finite() || (length <= 0.0 && matches!(center, Position::Pixel(_))) {
+        return Err(ImageError::CasaSelection("Length must be positive".into()));
+    }
+    Ok(length * coordinate.increment()[0].abs())
 }
 
 pub(super) fn width(
@@ -133,8 +146,9 @@ fn radians(value: &PvAmount) -> Result<f64, ImageError> {
 fn to_pixel(
     position: &PvPosition,
     coordinate: &DirectionCoordinate,
+    allow_pixel_shorthand: bool,
 ) -> Result<[f64; 2], ImageError> {
-    match parse_position(position)? {
+    match parse_position(position, allow_pixel_shorthand)? {
         Position::Pixel(pixel) => Ok(pixel),
         Position::Sky(direction) => sky_to_pixel(&direction, coordinate),
     }
@@ -145,7 +159,10 @@ enum Position {
     Sky(MDirection),
 }
 
-fn parse_position(position: &PvPosition) -> Result<Position, ImageError> {
+fn parse_position(
+    position: &PvPosition,
+    allow_pixel_shorthand: bool,
+) -> Result<Position, ImageError> {
     let invalid =
         || ImageError::CasaSelection("expected two pixel coordinates or a sky direction".into());
     let (frame, [longitude, latitude]) = match position {
@@ -160,7 +177,8 @@ fn parse_position(position: &PvPosition) -> Result<Position, ImageError> {
             match fields.as_slice() {
                 [first, second] => {
                     // Keep the native CLI's original comma-separated pixel shorthand.
-                    if text.contains(',')
+                    if allow_pixel_shorthand
+                        && text.contains(',')
                         && let (Ok(x), Ok(y)) = (first.parse(), second.parse())
                     {
                         return Ok(Position::Pixel([x, y]));

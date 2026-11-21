@@ -9161,3 +9161,33 @@ allocating or publishing an output.
 On an entirely masked Float direction image, default `image.maxfit`
 can dereference an absent maximum and terminate the CASA Python
 process. Casa-rs raises a Python error and preserves the image.
+
+### `image.pv` can reject a strip with reversed endpoints
+
+In a `[24, 26, 2, 5]` Float cube with the default sky coordinate,
+CASA 6.7.6.14 accepts `start=[4, 7], end=[16, 7]`. Interchanging the
+endpoints enters the 180-degree rotation path and raises a no-overlap
+error even though the strip lies entirely inside the image. Casa-rs
+samples the strip in the specified order, yielding the same values
+in reverse along the offset axis.
+
+With the same input axes transposed to `[Spectral, Dec, RA, Stokes]`,
+CASA raises a coordinate assertion at output creation. Casa-rs writes a
+readable result with axes `[Spectral, Offset, Stokes]` and the same
+sampled values projected into that order.
+
+When the native world-axis map is permuted independently of the pixel
+axes, CASA removes the world axis with the same *index* as the collapsed
+pixel axis. Some permutations reorder the output, omit an unrelated
+coordinate such as Stokes, or fail an assertion. Casa-rs removes the
+world axis associated with the collapsed sky axis and retains the order
+of the other world axes.
+
+In a diagonal strip centered exactly on a half pixel, CASA rounds the
+two transverse endpoints separately. On a default `[60, 52, 1, 3]`
+cube, `[8, 9]` to `[45, 40]` includes both equidistant rows with
+`width=1`. Changing the second image axis to length 54 changes the
+selection to one row. Other half-pixel centers can construct an
+inverted region and fail. Casa-rs includes both equidistant boundary
+rows, making the cut independent of low-order rounding and image
+extent outside the strip.
