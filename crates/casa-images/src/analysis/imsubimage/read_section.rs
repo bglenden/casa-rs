@@ -89,3 +89,34 @@ impl ImageRegionSection {
         Ok(mask)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ndarray::IxDyn;
+
+    use super::{ImageRegionSection, SubimageRegion};
+    use crate::{TempImage, TempStoragePolicy};
+    use casa_coordinates::{CoordinateSystem, LinearCoordinate};
+
+    #[test]
+    fn membership_windows_use_source_offsets_on_both_spatial_axes() {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(LinearCoordinate::new(2, Vec::new(), Vec::new()));
+        let image =
+            TempImage::<f32>::new(vec![18, 20], coordinates, TempStoragePolicy::Memory).unwrap();
+        let region = SubimageRegion::Text("poly[[4pix,5pix],[10pix,5pix],[4pix,12pix]]");
+        let selection = ImageRegionSection::resolve(&image, Some(region), false).unwrap();
+        assert_eq!(selection.start, [4, 5]);
+        assert_eq!(selection.count, [7, 8]);
+        for (start, count) in [([0, 2], [3, 4]), ([3, 2], [4, 4])] {
+            let expected = ndarray::ArrayD::from_shape_fn(IxDyn(&count), |index| {
+                7 * (start[0] + index[0]) + 6 * (start[1] + index[1]) <= 42
+            });
+            assert_eq!(
+                selection.mask_window(&start, &count).unwrap(),
+                Some(expected)
+            );
+        }
+        assert!(selection.mask_window(&[4, 4], &[4, 4]).is_err());
+    }
+}

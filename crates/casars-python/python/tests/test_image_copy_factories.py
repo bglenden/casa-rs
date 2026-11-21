@@ -500,3 +500,47 @@ def test_copy_preserves_region_values_masks_and_native_geometry(tmp_path, oracle
                 if coords is not None:
                     coords.done()
                 product.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("field, replacement, message", [
+    ("fracblc", None, "field fracblc is unknown"),
+    ("fractrc", np.array([0.0, 0.0]), "incorrect data type used for field fractrc"),
+    ("fracinc", np.array([False]), "inc and fracInc have unequal lengths"),
+])
+def test_copy_rejects_malformed_slicer_before_replacing_images(
+    tmp_path, oracle, method, field, replacement, message,
+):
+    source = str(tmp_path / "source.im")
+    manager = oracle.regionmanager()
+    region = manager.box([0.2, 0.25], [0.6, 0.7], frac=True)
+    manager.done()
+    if replacement is None:
+        del region[field]
+    else:
+        region[field] = replacement
+
+    source_tool = oracle.image()
+    assert source_tool.fromshape(source, [21, 23])
+    source_tool.done()
+
+    for backend in (oracle, tools):
+        target = str(tmp_path / f"{backend.__name__}-target.im")
+        active = backend.image()
+        reader = backend.image()
+        previous = np.array([[1.0, 3.0], [7.0, 8.0]], dtype=np.float32)
+        attached = np.array([[0.25, 0.5], [1.0, 2.0]], dtype=np.float32)
+        try:
+            assert reader.fromarray(target, previous)
+            assert reader.done()
+            assert active.fromarray(pixels=attached)
+            with pytest.raises(RuntimeError, match=message):
+                getattr(active, method)(
+                    infile=source, outfile=target, region=region, overwrite=True,
+                )
+            np.testing.assert_array_equal(active.getchunk(), attached)
+            assert reader.open(target)
+            np.testing.assert_array_equal(reader.getchunk(), previous)
+        finally:
+            reader.done()
+            active.done()
