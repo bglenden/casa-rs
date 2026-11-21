@@ -18,8 +18,8 @@ pub(super) fn controls(
     if !calibration || !matches!(mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag) {
         return Ok((true, None));
     }
-    let channel_average = automatic_average_switch(task, "channelavg")?;
-    let time_average = automatic_average_switch(task, "timeavg")?;
+    let channel_average = average_switch(task, "channelavg")?;
+    let time_average = average_switch(task, "timeavg")?;
     let vector = if channel_average.is_none() {
         Some("channelavg")
     } else {
@@ -37,7 +37,7 @@ pub(super) fn controls(
     Ok((true, vector))
 }
 
-fn automatic_average_switch(
+pub(super) fn average_switch(
     task: &TaskInvocation<'_>,
     name: &'static str,
 ) -> Result<Option<bool>, TaskFailure> {
@@ -80,7 +80,7 @@ pub(super) fn table_kind(
     let calibration = is_calibration_table(&task.path("vis")?);
     if calibration {
         for name in ["channelavg", "timeavg"] {
-            automatic_average_switch(task, name)?;
+            average_switch(task, name)?;
         }
     } else {
         validate_ms_automatic_controls(task, mode == "rflag")?;
@@ -92,6 +92,9 @@ fn validate_ms_automatic_controls(
     task: &TaskInvocation<'_>,
     rflag: bool,
 ) -> Result<(), TaskFailure> {
+    if !rflag {
+        return Ok(());
+    }
     let bundle = task.session().bundle();
     for (name, issue) in [
         ("channelavg", 978),
@@ -101,9 +104,6 @@ fn validate_ms_automatic_controls(
         ("ntime", 1616),
         ("combinescans", 1616),
     ] {
-        if !rflag && matches!(name, "channelavg" | "chanbin" | "ntime" | "combinescans") {
-            continue;
-        }
         let binding = bundle
             .surface
             .bindings()

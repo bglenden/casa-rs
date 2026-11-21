@@ -1164,7 +1164,7 @@ impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
     }
 }
 
-fn validate_slice_request(
+pub(crate) fn validate_slice_request(
     lattice_shape: &[usize],
     start: &[usize],
     shape: &[usize],
@@ -1328,6 +1328,10 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// Returns the shape that the canonical expression will produce.
     pub fn shape(&self) -> &[usize] {
         &self.meta.shape
+    }
+
+    pub(crate) fn expression_coordinates(&self) -> Option<&CoordinateSystem> {
+        (self.meta.coords.n_pixel_axes() == self.meta.shape.len()).then_some(&self.meta.coords)
     }
 
     /// Creates a lazy expression rooted at a source image.
@@ -2670,6 +2674,13 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
     /// Returns the shape that the canonical mask expression will produce.
     pub fn shape(&self) -> &[usize] {
         &self.shape
+    }
+
+    pub(crate) fn expression_coordinates(&self) -> Option<&CoordinateSystem> {
+        self.metadata
+            .as_ref()
+            .filter(|meta| meta.coords.n_pixel_axes() == self.shape.len())
+            .map(|meta| &meta.coords)
     }
 
     /// Combines two same-shaped masks with a logical operator.
