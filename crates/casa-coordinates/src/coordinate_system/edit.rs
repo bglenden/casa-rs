@@ -45,6 +45,7 @@ fn apply_casa_projection_defaults(kind: ProjectionType, parameters: &mut Vec<f64
 /// direction's projection or reference value.
 fn refresh_direction_pole(record: &mut RecordValue) -> Result<(), CoordinateError> {
     let direction = crate::DirectionCoordinate::from_record(record)?;
+    validate_direction_increments(&direction)?;
     let pole = direction.native_pole()[1];
     direction.validate_native_pole()?;
     let casa_style = record.get("units").is_some()
@@ -58,6 +59,21 @@ fn refresh_direction_pole(record: &mut RecordValue) -> Result<(), CoordinateErro
             pole
         })),
     );
+    Ok(())
+}
+
+fn validate_direction_increments(
+    direction: &crate::DirectionCoordinate,
+) -> Result<(), CoordinateError> {
+    if direction
+        .increment()
+        .iter()
+        .any(|value| !value.is_finite() || *value == 0.0)
+    {
+        return Err(CoordinateError::InvalidRecord(
+            "direction increments must be finite and nonzero".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -417,6 +433,27 @@ impl CoordinateSystem {
         pixel_axis: usize,
         names: &[String],
     ) -> Result<(Self, Vec<String>), CoordinateError> {
+        Self::set_stokes_types(record, pixel_axis, names, true)
+    }
+
+    /// Replace the Stokes labels on a public world axis, preserving its maps.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, count, Stokes name, or record.
+    pub fn set_world_stokes_types_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        names: &[String],
+    ) -> Result<(Self, Vec<String>), CoordinateError> {
+        Self::set_stokes_types(record, world_axis, names, false)
+    }
+
+    fn set_stokes_types(
+        record: &mut RecordValue,
+        axis: usize,
+        names: &[String],
+        pixel: bool,
+    ) -> Result<(Self, Vec<String>), CoordinateError> {
         let system = Self::from_record(record)?;
         let coordinates = system.coordinates_in_record(record)?;
         if coordinates
@@ -431,8 +468,24 @@ impl CoordinateSystem {
         }
         let coordinate = coordinates
             .iter()
-            .find(|coordinate| coordinate.pixel_axes.contains(&Some(pixel_axis)))
-            .ok_or_else(|| CoordinateError::InvalidRecord("invalid pixel axis".into()))?;
+            .find(|coordinate| {
+                let axes = if pixel {
+                    &coordinate.pixel_axes
+                } else {
+                    &coordinate.world_axes
+                };
+                axes.contains(&Some(axis))
+            })
+            .ok_or_else(|| {
+                CoordinateError::InvalidRecord(
+                    if pixel {
+                        "invalid pixel axis"
+                    } else {
+                        "invalid world axis"
+                    }
+                    .into(),
+                )
+            })?;
         if !coordinate.field.starts_with("stokes") {
             return Err(CoordinateError::InvalidRecord(
                 "axis is not a polarization coordinate".into(),
@@ -1026,33 +1079,6 @@ impl CoordinateSystem {
             .filter(|entry| entry.field.starts_with("direction"))
             .map(|entry| entry.field.clone())
             .collect();
-        if field == "crval" {
-            for field in &direction_fields {
-                let Some(Value::Record(stored)) = record.get(field) else {
-                    continue;
-                };
-                let direction = crate::DirectionCoordinate::from_record(stored)?;
-                if !["CAR", "SFL", "MER", "AIT"].contains(&direction.projection().name()) {
-                    continue;
-                }
-                let conversion =
-                    crate::record_utils::get_optional_string(stored, "conversionSystem");
-                if conversion.is_some_and(|frame| {
-                    !frame.eq_ignore_ascii_case(direction.direction_ref().as_str())
-                }) || direction
-                    .projection()
-                    .parameters()
-                    .iter()
-                    .any(|value| *value != 0.0)
-                    || direction
-                        .increment()
-                        .iter()
-                        .any(|value| value.abs() < 1e-12)
-                {
-                    return Err(CoordinateError::InvalidRecord("reference-value edits for this direction coordinate are not implemented (#977)".into()));
-                }
-            }
-        }
         let owner = if pixel {
             system.pixel_axis_owner(axis)
         } else {
@@ -1167,14 +1193,8 @@ impl CoordinateSystem {
             }
             if field == "cdelt"
                 && let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
-                && direction
-                    .increment()
-                    .iter()
-                    .any(|value| !value.is_finite() || *value == 0.0)
             {
-                return Err(CoordinateError::InvalidRecord(
-                    "direction increments must be finite and nonzero".into(),
-                ));
+                validate_direction_increments(direction)?;
             }
         }
         *record = updated;
