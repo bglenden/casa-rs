@@ -196,12 +196,18 @@ def safe_refusals(root, source, column, native):
         assert result[0] == 'RuntimeError', result
         assert_flags(path, before)
     settings = dict(mode='antint', antint_ref_antenna='A1')
+    for task in (casa.flagdata, native):
+        assert outcome(task, path, flagbackup=False, **settings) == (
+            'ValueError', 'Failed to parse parameters for mode antint',
+        )
+    command = f"mode='antint' antint_ref_antenna='A1' datacolumn='{column}'"
     code = ("from casatasks import flagdata; import sys; "
-            "flagdata(sys.argv[1], mode='antint', antint_ref_antenna='A1', flagbackup=False)")
-    original = subprocess.run([sys.executable, '-c', code, str(path)], capture_output=True, timeout=30)
+            "flagdata(sys.argv[1], mode='list', inpfile=[sys.argv[2]], flagbackup=False)")
+    original = subprocess.run([sys.executable, '-c', code, str(path), command],
+                              capture_output=True, timeout=30)
     assert original.returncode == -signal.SIGABRT.value, original.stderr.decode()
-    for options in (settings, dict(mode='list', inpfile=[COMMANDS[0], "mode='antint' antint_ref_antenna='A1'"])):
-        result = outcome(native, path, flagbackup=False, **options)
+    for commands in ([command], [COMMANDS[0], command]):
+        result = outcome(native, path, flagbackup=False, mode='list', inpfile=commands)
         assert result == ('ValueError', 'antint requires a MeasurementSet with visibility rows'), result
         assert_flags(path, before)
     preserved(path, metadata)

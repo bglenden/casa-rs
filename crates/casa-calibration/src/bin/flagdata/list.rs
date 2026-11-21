@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_ms::flagging::FlagDataMode;
 use casa_ms::flagging::flagdata_calibration_program;
 use casa_ms::{
     FlagDataReport, FlagDataRequest, flagdata_empty_record, flagdata_named_summary_record,
@@ -16,8 +17,8 @@ use casa_task_runtime::{
 
 use super::{
     backup_before_failed_apply, channel_bin_widths, command, command_values::Assignments,
-    flagdata_column_argument, is_calibration_table, not_yet, prepare_flagdata_request, rflag,
-    time_chunk_argument,
+    data_column, flagdata_column_argument, is_calibration_table, not_yet, prepare_flagdata_request,
+    rflag, time_chunk_argument,
 };
 
 #[path = "list_input.rs"]
@@ -209,6 +210,9 @@ fn prepare(
     };
     if mode == "quack" && request.quackmode == casa_ms::flagging::QuackMode::Disabled {
         return Ok(None);
+    }
+    if mode == "antint" {
+        request.data_column = data_column(column, FlagDataMode::Clip, true).unwrap_or_default();
     }
     request.summary_options.minrel = parent.number("minrel")?;
     request.summary_options.maxrel = parent.number("maxrel")?;

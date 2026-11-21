@@ -98,7 +98,10 @@ fn stage(
             return Err(FlaggingError::UnsupportedCalibrationAgent("elevation"));
         }
         FlagDataMode::Shadow => return Err(FlaggingError::UnsupportedCalibrationAgent("shadow")),
-        FlagDataMode::Antint => return Err(FlaggingError::CalibrationAntint),
+        FlagDataMode::Antint if has_calibration_column(table, request.data_column) => {
+            return Err(FlaggingError::CalibrationAntint);
+        }
+        FlagDataMode::Antint => return Err(FlaggingError::UnsupportedCalibrationAgent("antint")),
         _ => {}
     }
     if !matches!(request.mode, FlagDataMode::Manual | FlagDataMode::Clip) {
@@ -165,13 +168,7 @@ fn grouped_flags(
     let path = display_ms_path(table);
     let channels = selected.channels.as_ref();
     let changes = if matches!(request.mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag) {
-        let valid = matches!(
-            request.data_column,
-            FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
-        ) && table
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column(request.data_column.name()));
+        let valid = has_calibration_column(table, request.data_column);
         if valid && let Some(parameter) = request.automatic_average_vector {
             return Err(FlaggingError::InvalidAutomaticAverageVector(parameter));
         }
@@ -307,20 +304,23 @@ struct CalibrationClip {
     projections: Option<Vec<ClipProjection>>,
 }
 
+fn has_calibration_column(table: &MeasurementSet, column: FlagDataColumn) -> bool {
+    matches!(
+        column,
+        FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
+    ) && table
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column(column.name()))
+}
+
 impl CalibrationClip {
     fn prepare(
         table: &MeasurementSet,
         request: &FlagDataRequest,
         first_row: Option<usize>,
     ) -> Result<Option<Self>, FlaggingError> {
-        if !matches!(
-            request.data_column,
-            FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
-        ) || !table
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column(request.data_column.name()))
-        {
+        if !has_calibration_column(table, request.data_column) {
             return Err(FlaggingError::MissingClipColumn);
         }
         let (Some(outside), Some(first_row)) = (request.clipoutside, first_row) else {
