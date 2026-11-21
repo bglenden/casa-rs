@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 862
-- Surfaces: 48 (48 task, 0 session)
-- Surface bindings: 1135
+- Concepts: 884
+- Surfaces: 49 (49 task, 0 session)
+- Surface bindings: 1159
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -64,6 +64,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Plot Bandpass](#surface-plotbandpass)<br><code>plotbandpass</code> | task | 1 | <code>calibration</code> | 49 | Plot calibration spectra and channel derivatives. |
 | [Get VLA Calibrator Model](#surface-getcalmodvla)<br><code>getcalmodvla</code> | task | 1 | <code>calibration</code> | 8 | Retrieve a calibrator brightness model from the VLA service. |
 | [Predict Calibrator Component](#surface-predictcomp)<br><code>predictcomp</code> | task | 1 | <code>simulation</code> | 15 | Write a flux calibrator component list and optionally plot its visibility amplitudes. |
+| [Water-vapour Radiometer Calibration](#surface-wvrgcal)<br><code>wvrgcal</code> | task | 1 | <code>calibration</code> | 24 | Use ALMA radiometer measurements to calibrate atmospheric phase. |
 
 <a id="surface-msexplore"></a>
 
@@ -1823,5 +1824,42 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>include0bl</code> | <code>predictcomp.include0bl@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Start the projected-baseline axis at zero. |
 | <code>blunit</code> | <code>predictcomp.blunit@r1</code> | <code>choice (2 values)</code> | <code>""</code>; optional | Plot | Display projected lengths in metres by default, or in kilolambda at the first frequency. |
 | <code>showbl0flux</code> | <code>predictcomp.showbl0flux@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Include the zero-baseline flux in the legend. |
+
+<a id="surface-wvrgcal"></a>
+
+## Water-vapour Radiometer Calibration (<code>wvrgcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Use ALMA radiometer measurements to calibrate atmospheric phase.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>caltable</code> | <code>calibration.caltable@r2</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Calibration table the task writes. |
+| <code>toffset</code> | <code>wvr.toffset@r1</code> | <code>float</code> | <code>0.0</code>; optional | Solve | Shift radiometer timestamps by this many seconds. |
+| <code>segsource</code> | <code>wvr.segsource@r1</code> | <code>bool</code> | <code>true</code>; optional | Solve | Fit atmospheric coefficients separately for each contiguous source group. |
+| <code>sourceflag</code> | <code>wvr.sourceflag@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Solve | Exclude these source names from the path solutions. |
+| <code>tie</code> | <code>wvr.tie@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Solve | Comma-separated groups of source names or IDs that share a fit. |
+| <code>nsol</code> | <code>wvr.nsol@r1</code> | <code>integer</code> | <code>1</code>; optional | Solve | Number of fits for unsegmented data. |
+| <code>disperse</code> | <code>wvr.disperse@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Apply the frequency-dependent wet-path dispersion correction. |
+| <code>wvrflag</code> | <code>wvr.wvrflag@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Solve | Replace radiometer data for the specified antenna names or IDs. |
+| <code>statfield</code> | <code>wvr.statfield@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Limit reported statistics to this field name or ID. |
+| <code>statsource</code> | <code>wvr.statsource@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Limit reported statistics to this source name. |
+| <code>smooth</code> | <code>wvr.smooth@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Mean smoothing interval for the output calibration table, such as 10s. |
+| <code>scale</code> | <code>wvr.scale@r1</code> | <code>float</code> | <code>1.0</code>; optional | Solve | Multiply the wet path by this factor before converting it to phase. |
+| <code>spw</code> | <code>ms.selection.spw@r7</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | Solve | Write corrections for these spectral-window IDs. An empty list selects all. |
+| <code>wvrspw</code> | <code>wvr.wvrspw@r1</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | Solve | Read radiometer data from these four-channel spectral windows. |
+| <code>reversespw</code> | <code>wvr.reversespw@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Reverse the phase sign on selected spectral windows. |
+| <code>cont</code> | <code>wvr.cont@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Fit the atmospheric continuum opacity in one fixed-interval solution. |
+| <code>maxdistm</code> | <code>wvr.maxdistm@r1</code> | <code>float</code> | <code>500.0</code>; optional | Solve | Maximum distance in meters from an antenna to a replacement radiometer. |
+| <code>minnumants</code> | <code>wvr.minnumants@r1</code> | <code>integer</code> | <code>2</code>; optional | Solve | Minimum number of eligible neighboring radiometers for replacement. |
+| <code>mingoodfrac</code> | <code>wvr.mingoodfrac@r1</code> | <code>float</code> | <code>0.8</code>; optional | Solve | Minimum good fraction required to use an antenna’s measured temperatures. |
+| <code>usefieldtab</code> | <code>wvr.usefieldtab@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Use the FIELD direction in place of recorded POINTING elevations. |
+| <code>refant</code> | <code>wvr.refant@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Solve | Preferred reference antenna names or IDs in order. |
+| <code>offsetstable</code> | <code>wvr.offsetstable@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Solve | Subtract temperatures from this matching radiometer offsets table. |
+| <code>rseed</code> | <code>wvr.rseed@r1</code> | <code>integer</code> | <code>0</code>; optional | Solve | Seed the atmospheric fit. Zero selects CASA’s default seed. |
 
 _End of generated reference._

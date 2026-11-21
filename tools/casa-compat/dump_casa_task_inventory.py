@@ -95,6 +95,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("uvsub", "casatasks"),
     ("ft", "casatasks"),
     ("uvmodelfit", "casatasks"),
+    ("wvrgcal", "casatasks"),
 )
 
 PROBE_TIMEOUT_SECONDS = 120

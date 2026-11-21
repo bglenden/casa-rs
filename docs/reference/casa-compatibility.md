@@ -61,6 +61,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
 | uvmodelfit | uvmodelfit | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | uvsub | uvsub | yes | 2 | 2 | 0 | 0 | 0 | 0 |
+| wvrgcal | wvrgcal | yes | 24 | 24 | 0 | 0 | 0 | 0 |
 
 ## Tasks
 
@@ -3975,6 +3976,21 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
+### wvrgcal
+
+- CASA source: `casatasks/wvrgcal.py`, 24 parameters
+- Implementation: `casatasks/private/task_wvrgcal.py`, `wvrgcal` (line 8): 4 return statements, 15 raise statements
+  - returns at line 417: `taskrval`
+  - returns at line 421: `taskrval`
+  - returns at line 425: `taskrval`
+  - returns at line 428: `taskrval`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 24, in CASA's order: yes
+- Defaults that differ: none
+
 ## Tools
 
 Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (`crates/casars-python/python/tests/data/casa_<class>_signatures.json`), which the Python tests hold the classes to. A reviewed class has a file under `resources/casa-compat/semantics/tools/` giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (`simulator`, `componentlist`, `measures`, `quanta` and `simutil`) are reviewed in #1053, and `image`, `coordsys`, `table`, `msmetadata` and `ms` in #1025.
@@ -3994,6 +4010,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 23 | 6 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 54 | 1 | 2 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
+| wvr | `casars.tools` | 1 | no | | | | | | |
 
 ### agentflagger
 

@@ -26,5 +26,6 @@
   "split": "vis",
   "statwt": "vis",
   "uvmodelfit": "vis",
-  "uvsub": "vis"
+  "uvsub": "vis",
+  "wvrgcal": "vis"
 }

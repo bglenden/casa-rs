@@ -826,5 +826,30 @@
   },
   "uvsub": {
     "reverse": "cBool"
+  },
+  "wvrgcal": {
+    "caltable": "cPath",
+    "toffset": "cFloat",
+    "segsource": "cBool",
+    "sourceflag": "cStrVec",
+    "tie": "cStrVec",
+    "nsol": "cInt",
+    "disperse": "cBool",
+    "wvrflag": "cStrVec",
+    "statfield": "cStr",
+    "statsource": "cStr",
+    "smooth": "cStr",
+    "scale": "cFloat",
+    "spw": "cIntVec",
+    "wvrspw": "cIntVec",
+    "reversespw": "cStr",
+    "cont": "cBool",
+    "maxdistm": "cFloat",
+    "minnumants": "cInt",
+    "mingoodfrac": "cFloat",
+    "usefieldtab": "cBool",
+    "refant": "cStrVec",
+    "offsetstable": "cStr",
+    "rseed": "cInt"
   }
 }
