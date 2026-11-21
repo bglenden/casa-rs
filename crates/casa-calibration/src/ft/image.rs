@@ -652,32 +652,6 @@ impl ImageTransform {
                 "the model image's Stokes axis does not match its planes",
             ));
         }
-        if npol > 1
-            && options
-                .voltage_pattern
-                .as_ref()
-                .is_some_and(|beam| beam.has_squint())
-        {
-            let polarization = ms.polarization()?;
-            let layouts: BTreeSet<_> = selected
-                .selected_rows
-                .iter()
-                .map(|row| row.polarization_id)
-                .collect();
-            for layout in layouts {
-                let codes = polarization.corr_type(usize::try_from(layout).map_err(invalid)?)?;
-                if codes.iter().any(|&code| {
-                    !matches!(
-                        Correlation::from_casacore_code(code),
-                        Some(Correlation::RR | Correlation::RL | Correlation::LR | Correlation::LL)
-                    )
-                }) {
-                    return Err(invalid(
-                        "legacy voltage-pattern squint for noncircular correlations is pending #1520",
-                    ));
-                }
-            }
-        }
         let correlations = first_correlations(ms, selected)?
             .into_iter()
             .map(|code| {
@@ -693,7 +667,8 @@ impl ImageTransform {
                     .ok_or_else(|| invalid("unsupported polarization plane in model image"))
             })
             .collect::<MsResult<Vec<_>>>()?;
-        let routing = PolarizationRouting::compile(&correlations, &requested).map_err(invalid)?;
+        let routing =
+            PolarizationRouting::from_saved_planes(&correlations, &requested).map_err(invalid)?;
         let increment = [direction.increment()[0], direction.increment()[1]];
         // GridFT phases on the world direction of the integer image
         // midpoint, which need not be the WCS reference pixel.
@@ -825,20 +800,15 @@ impl ImageTransform {
                 Ok::<_, casa_ms::MsError>((beam, direction, separations))
             })
             .transpose()?;
-        let squint = beam.as_ref().is_some_and(|(beam, _, _)| beam.has_squint());
-        if squint {
-            let index = coordinate_index(image.coordinates(), CoordinateType::Stokes)?;
-            let CoordinateModel::Stokes(stokes) = image.coordinates().coordinate(index) else {
-                unreachable!("Stokes coordinate");
-            };
-            use StokesType::{I, Q, U, V};
-            if !matches!(stokes.stokes(), [I] | [I, Q, U, V]) {
-                return Err(invalid(
-                    "legacy voltage-pattern squint for these Stokes axes is pending #1520",
-                ));
-            }
-        }
-        let grid_pols = self.operator.polarization().grid_pols();
+        let grid = self.operator.polarization().grid();
+        let squint = beam.as_ref().is_some_and(|(beam, _, _)| beam.has_squint())
+            && grid.iter().any(|plane| {
+                matches!(
+                    plane,
+                    GridPolarization::Correlation(Correlation::RR | Correlation::LL)
+                )
+            });
+        let grid_pols = grid.len();
         let settings = self.options.settings;
         let plane_bytes = gx.saturating_mul(gy).saturating_mul(8);
         let cache_bytes = usize::try_from(settings.cache_size)
@@ -864,15 +834,39 @@ impl ImageTransform {
             cache_bytes,
         )
         .map_err(invalid)?;
-        let work_bytes = model_plane_memory([nx, ny], npol, [gx, gy], grid_pols);
+        let taper_bytes = if squint {
+            nx.saturating_mul(ny)
+                .saturating_mul(grid_pols)
+                .saturating_mul(size_of::<f32>()) as u64
+        } else {
+            0
+        };
+        let work_bytes =
+            model_plane_memory([nx, ny], npol, [gx, gy], grid_pols).saturating_add(taper_bytes);
         let (workers, reservation) =
             model_workers(self.options.native_threads, channels, work_bytes);
-        let (_reservation, team) = match WorkerTeam::new(workers) {
+        let (worker_memory, team) = match WorkerTeam::new(workers) {
             Ok(team) => (reservation, team),
             Err(_) => {
                 drop(reservation);
                 (None, WorkerTeam::new(1).map_err(invalid)?)
             }
+        };
+        let _serial_taper_memory = if squint && worker_memory.is_none() {
+            let host = HostResources::detect().map_err(invalid)?;
+            Some(
+                admit(
+                    &host,
+                    &ResourcePolicy::Balanced,
+                    &Demand {
+                        phase: "legacy squinted image tapers",
+                        memory: taper_bytes,
+                    },
+                )
+                .map_err(invalid)?,
+            )
+        } else {
+            None
         };
         tracing::debug!(
             requested = self.options.native_threads,
@@ -889,29 +883,38 @@ impl ImageTransform {
                     .map_err(invalid)
             },
             |plane, values| {
-                let images = if let Some((beam, direction, separation)) = &beam {
-                    beam.model_plane(
-                        direction,
-                        separation.as_ref(),
-                        values,
-                        self.frequencies[plane],
-                    )?
-                } else {
+                let plain_images = || {
                     (0..npol)
                         .map(|pol| Array2::from_shape_fn((ny, nx), |(y, x)| values[[x, y, pol, 0]]))
                         .collect()
                 };
+                let frequency = self.frequencies[plane];
+                let (images, factors) = match &beam {
+                    Some((beam, direction, _)) if squint => {
+                        // CASA converts to correlation planes before applying
+                        // PBMath to the displaced RR and LL receptors.
+                        let tapers =
+                            beam.squinted_model_tapers(direction, [nx, ny], frequency, grid)?;
+                        (plain_images(), Some(tapers))
+                    }
+                    Some((beam, direction, separation)) => (
+                        beam.model_plane(direction, separation.as_ref(), values, frequency)?,
+                        None,
+                    ),
+                    None => (plain_images(), None),
+                };
+                let prescale = factors
+                    .as_deref()
+                    .map_or(ModelPrescale::Unit, ModelPrescale::GridPlanes);
                 let model = ModelImages {
                     first_plane: plane as u32,
                     planes: vec![ModelPlane { images }],
                 };
                 match &mosaic {
-                    Some(correction) => self.operator.prepare_model_with_correction(
-                        &model,
-                        ModelPrescale::Unit,
-                        correction,
-                    ),
-                    None => self.operator.prepare_model(&model, ModelPrescale::Unit),
+                    Some(correction) => self
+                        .operator
+                        .prepare_model_with_correction(&model, prescale, correction),
+                    None => self.operator.prepare_model(&model, prescale),
                 }
                 .map_err(invalid)
             },

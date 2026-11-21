@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use casa_components::{ComponentList, Flux, Polarisation, SkyComponent, SpectralKind, stokes_in};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
 use casa_images::PagedImage;
+use casa_imaging_operator::GridPolarization;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
@@ -21,7 +22,7 @@ use casa_types::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
 };
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_types::{Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
 use num_complex::Complex64;
 
@@ -922,12 +923,7 @@ impl PreparedVoltagePattern {
         };
         let projected = if radial.is_none() {
             let centre = self.centre_in_image_frame(direction)?;
-            let shifted = if npol == 4 {
-                self.shifted_pixels(direction, &centre, frequency)?
-            } else {
-                None
-            };
-            Some((pixel_centre(direction, &centre)?, shifted))
+            Some(pixel_centre(direction, &centre)?)
         } else {
             None
         };
@@ -940,24 +936,38 @@ impl PreparedVoltagePattern {
         Ok((0..npol)
             .map(|pol| {
                 Array2::from_shape_fn((ny, nx), |(y, x)| {
-                    if let Some((centre, shifted)) = projected {
-                        if let Some([right, left]) = shifted
-                            && matches!(pol, 0 | 3)
-                        {
-                            let i = values[[x, y, 0, 0]];
-                            let v = values[[x, y, 3, 0]];
-                            let right = (i + v) * projected_power(x, y, right);
-                            let left = (i - v) * projected_power(x, y, left);
-                            // Apply the displaced parallel-hand beams in correlation space.
-                            return if pol == 0 {
-                                0.5 * (right + left)
-                            } else {
-                                0.5 * (right - left)
-                            };
-                        }
+                    if let Some(centre) = projected {
                         return values[[x, y, pol, 0]] * projected_power(x, y, centre);
                     }
                     values[[x, y, pol, 0]] * power(radial.expect("radial plane")[[y, x]])
+                })
+            })
+            .collect())
+    }
+
+    pub(super) fn squinted_model_tapers(
+        &self,
+        direction: &DirectionCoordinate,
+        [nx, ny]: [usize; 2],
+        frequency: f64,
+        polarizations: &[GridPolarization],
+    ) -> MsResult<Vec<Array2<f32>>> {
+        let centre = self.centre_in_image_frame(direction)?;
+        let shifted = self.shifted_pixels(direction, &centre, frequency)?;
+        let centre = pixel_centre(direction, &centre)?;
+        let [right, left] = shifted.unwrap_or([centre; 2]);
+        let pattern = self.pattern().at_frequency(frequency);
+        let increment_deg = direction.increment().map(f64::to_degrees);
+        Ok(polarizations
+            .iter()
+            .map(|polarization| {
+                let centre = match polarization {
+                    GridPolarization::Correlation(Correlation::RR) => right,
+                    GridPolarization::Correlation(Correlation::LL) => left,
+                    _ => centre,
+                };
+                Array2::from_shape_fn((ny, nx), |(y, x)| {
+                    pattern.power(projected_radius(x, y, centre, increment_deg, frequency))
                 })
             })
             .collect())
