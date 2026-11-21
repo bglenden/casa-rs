@@ -127,6 +127,7 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
         prediction_frequency_scale: 1.0,
         prediction_uses_native_frequency: false,
         legacy_prediction_origin: false,
+        legacy_frequency_map: None,
         indexing: AwIndexing {
             conjugate_beams: false,
             image_reference_hz: 1.0e9,
@@ -155,6 +156,22 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
         }),
         bound: CacheBound::new(0),
         load_ended: Condvar::new(),
+    }
+}
+
+#[test]
+fn legacy_frequency_map_keys_only_its_defined_compact_channels() {
+    let map = AwLegacyFrequencyMap {
+        start_channel: 2,
+        channel_stride: 3,
+        mapped_channels: 2,
+        start_hz: 1.4e9,
+        increment_hz: -1.0e6,
+    };
+    assert_eq!(map.frequency(2), Some(1.4e9));
+    assert_eq!(map.frequency(5), Some(1.399e9));
+    for channel in [0, 3, 8, 9] {
+        assert_eq!(map.frequency(channel), None);
     }
 }
 
