@@ -14,8 +14,8 @@ use casa_imaging_model::{EvlaAwCellRequest, NativeAwRequestInput};
 use super::cell_image::{CellMisc, write_cell};
 use super::native_cache::cell_suffix;
 use super::{
-    AwCatalogError, EvlaApertureModel, EvlaAwWorkspace, IMAGING_PREFIX, MUELLER_ELEMENTS,
-    WEIGHT_PREFIX, conjugate_frequency, nearest,
+    AwCatalog, AwCatalogError, EvlaApertureModel, EvlaAwWorkspace, IMAGING_PREFIX,
+    MUELLER_ELEMENTS, WEIGHT_PREFIX, cache_error, conjugate_frequency, nearest,
 };
 
 #[derive(Clone, Copy)]
@@ -23,6 +23,51 @@ pub(super) struct GenerationOptions<'a> {
     pub only_missing: bool,
     pub legacy_coordinates: Option<(&'a str, &'a SpectralCoordinate)>,
     pub legacy_vla_feed: bool,
+    pub pa_index_offset: usize,
+}
+
+impl AwCatalog {
+    /// Form CASA-compatible legacy L-band cells in an empty staging directory.
+    /// Assign the first new PA the supplied index so the caller can promote
+    /// the staged cells alongside an existing cache.
+    ///
+    /// # Errors
+    /// The request, PA index range, generation, or cell write is invalid.
+    pub fn generate_legacy_l_band_at(
+        root: &Path,
+        input: &NativeAwRequestInput,
+        band: &str,
+        spectral: &SpectralCoordinate,
+        legacy_vla_feed: bool,
+        workers: usize,
+        pa_index_offset: usize,
+    ) -> Result<(), AwCatalogError> {
+        input
+            .validate_legacy_vla()
+            .map_err(|error| cache_error(root, format!("invalid legacy A/W request: {error}")))?;
+        if pa_index_offset
+            .checked_add(input.pa_values.len())
+            .is_none_or(|end| end > usize::from(u16::MAX) + 1)
+        {
+            return Err(cache_error(
+                root,
+                "legacy A/W PA indices exceed the cache index range",
+            ));
+        }
+        let units = units(root, input, false, workers);
+        generate(
+            root,
+            input,
+            &units,
+            GenerationOptions {
+                only_missing: false,
+                legacy_coordinates: Some((band, spectral)),
+                legacy_vla_feed,
+                pa_index_offset,
+            },
+            workers,
+        )
+    }
 }
 
 /// One worker's share: the cells of one (parallactic angle, frequency,
@@ -192,6 +237,7 @@ fn generate_unit(
         only_missing,
         legacy_coordinates,
         legacy_vla_feed,
+        pa_index_offset,
     }: GenerationOptions<'_>,
     workspace: &mut Option<EvlaAwWorkspace>,
 ) -> Result<(), AwCatalogError> {
@@ -271,7 +317,7 @@ fn generate_unit(
             telescope: if legacy_vla_feed { "VLA" } else { "EVLA" },
             legacy_coordinates,
         };
-        let suffix = cell_suffix(unit.pa, unit.frequency, iw, unit.mueller);
+        let suffix = cell_suffix(unit.pa + pa_index_offset, unit.frequency, iw, unit.mueller);
         write_cell(
             &root.join(format!("{IMAGING_PREFIX}{suffix}")),
             &pair.imaging,
