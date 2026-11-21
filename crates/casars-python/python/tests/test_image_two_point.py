@@ -245,9 +245,9 @@ def test_two_point_uses_mapped_axes_and_keeps_other_axes(casa, tmp_path, order, 
             source.done()
 
 
-@pytest.mark.parametrize("masked", [True, False])
-def test_two_point_handles_singleton_sky_axis_and_an_empty_pair_set(casa, tmp_path, masked):
-    data = _ramp((1,7))
+@pytest.mark.parametrize("shape,masked", [((1,7), False), ((3,7), True)])
+def test_two_point_handles_singleton_sky_axis_and_an_empty_pair_set(casa, tmp_path, shape, masked):
+    data = _ramp(shape)
     expected = _expected_ramp(data.shape, 1)
     for api in (casa, tools):
         source, output = api.image(), api.image()
@@ -266,6 +266,23 @@ def test_two_point_handles_singleton_sky_axis_and_an_empty_pair_set(casa, tmp_pa
         finally:
             output.done()
             source.done()
+
+
+def test_two_point_does_not_create_pairs_on_a_masked_singleton_axis(tmp_path):
+    data = _ramp((1,7))
+    source, output = tools.image(), tools.image()
+    path = str(tmp_path/"all-masked.im")
+    try:
+        assert source.fromarray(pixels=data)
+        assert source.putregion(pixelmask=np.zeros(data.shape, dtype=bool))
+        assert not source.getchunk(getmask=True).any()
+        assert source.twopointcorrelation(path)
+        assert output.open(path)
+        np.testing.assert_array_equal(output.shape(), [1,13])
+        assert not output.getchunk(getmask=True).any()
+    finally:
+        output.done()
+        source.done()
 
 
 def test_two_point_fourier_estimate_preserves_small_differences_on_a_large_offset(tmp_path):

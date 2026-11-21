@@ -9331,3 +9331,8 @@ correlation loop only checks the combined mask when the selected image
 has a physical pixel mask. Adding an all-true pixel mask makes CASA
 honor the selection. The same behavior occurs for a polygon region.
 Casa-rs applies the combined validity to both endpoints of every pair.
+
+For a direction image of shape `[1, 7]` with an all-false pixel mask,
+repeated CASA 6.7.6.14 calls can also report valid samples near the zero
+lag. Casa-rs reports every lag as masked because the input contains no
+valid pairs.
