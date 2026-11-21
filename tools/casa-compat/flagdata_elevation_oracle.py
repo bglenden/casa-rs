@@ -143,12 +143,8 @@ def check_commands(task_pairs):
 
 
 def main():
-    import sys
-
     assert casatasks.version() == [6, 7, 6, 14]
-    tasks_to_check = [("casa", casatasks.flagdata)]
-    if "--reference-only" not in sys.argv:
-        tasks_to_check.append(("native", tasks.flagdata))
+    tasks_to_check = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
     with TemporaryDirectory(prefix="flagdata-elevation-") as directory, chdir(directory):
         make_fixture("source.ms")
         count = check_masks(tasks_to_check)
