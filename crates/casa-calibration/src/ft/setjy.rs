@@ -13,6 +13,7 @@ use super::invalid;
 
 pub(crate) mod image;
 pub(crate) mod solar2010;
+pub(crate) mod solar2012;
 pub(crate) mod standards;
 
 pub(crate) struct ManualFlux {

@@ -301,7 +301,7 @@ fn legacy_sample_center(
     ))
 }
 
-fn scalar(column: &casa_tables::TableColumn<'_>, row: usize) -> Result<f64, MsError> {
+pub(super) fn scalar(column: &casa_tables::TableColumn<'_>, row: usize) -> Result<f64, MsError> {
     match column.scalar_cell(row)? {
         ScalarValue::Float64(value) => Ok(*value),
         _ => Err(invalid("expected a double-precision ephemeris column")),

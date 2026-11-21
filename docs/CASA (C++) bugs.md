@@ -8668,3 +8668,20 @@ across direct accumulation, FFT blocks, and tile sizes. A kernel with no
 active axes still applies the scalar coefficient with IEEE arithmetic.
 Masked samples contribute zero and the output retains the selected input
 validity.
+
+## Solar System setjy drops a scan or time restriction
+
+CASA 6.7.6.14 uses the requested scan to choose the epoch for
+`setjy(standard="Butler-JPL-Horizons 2012")` but omits the scan when writing
+`MODEL_DATA`. Even when one scan has been selected, the task replaces
+existing models in other scans of that field and spectral window. With a
+time range, it writes the correct rows but calculates the spectrum at the
+first timestamp outside the requested range because it passes `timerange`
+where the CASA tool expects `time`.
+
+casa-rs uses the scan and time selection both for the model epoch and for
+writing. A pinned comparison checks the selected scan against CASA and
+verifies that unselected model cells retain their previous values. A
+second comparison physically selects the requested time range in the CASA
+reference MeasurementSet and checks both the returned flux and complex model
+visibilities.
