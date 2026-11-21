@@ -1051,7 +1051,7 @@ impl ImagerPrediction {
                     keep_zero,
                     scratch,
                 )?);
-            } else if let Some((legacy_aw, _)) = legacy_aw {
+            } else if let Some(legacy_aw) = legacy_aw {
                 images.extend(super::legacy_aw::prepare_model(
                     ms, selected, image, &geometry, legacy_aw, keep_zero, scratch,
                 )?);
