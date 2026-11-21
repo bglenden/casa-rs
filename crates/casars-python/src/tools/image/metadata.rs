@@ -9,8 +9,8 @@ use crate::convert::IntList;
 use crate::tools::coordsys::PyCoordsys;
 use crate::tools::table::casa_record;
 
+use super::PyImageTool;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
-use super::{PyImageTool, stub};
 
 #[pymethods]
 impl PyImageTool {
@@ -57,40 +57,46 @@ impl PyImageTool {
             };
             let image = attachment.lock();
             let axes = axes.as_ref().map_or(&[][..], |arg| arg.0.as_slice());
-            let all_axes = axes.is_empty()
-                || axes == [-1]
-                || axes.iter().copied().eq(0..image.shape().len() as i64);
-            if all_axes {
+            if axes.is_empty() || axes == [-1] {
                 return attachment.coordsys(&image);
             }
-            let (coordinates, _) = attachment.coordinate_view(&image);
+            let (coordinates, record) = attachment.coordinate_view(&image);
+            let placements = coordinates.coordinates_in_record(&record).map_err(raised)?;
             let mut result = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
-            let mut selected = Vec::new();
-            for index in 0..coordinates.n_coordinates() {
-                let pixel = coordinates
-                    .coordinate_pixel_axes(index)
-                    .expect("existing coordinate");
-                if pixel
-                    == coordinates
-                        .coordinate_world_axes(index)
-                        .expect("existing coordinate")
-                    && pixel
-                        .iter()
-                        .all(|axis| axis.is_some_and(|axis| axes.contains(&(axis as i64))))
-                {
-                    result.add_coordinate(coordinates.coordinate(index).clone());
-                    selected.extend(pixel.into_iter().flatten().map(|axis| axis as i64));
+            let mut offsets = vec![None; placements.len()];
+            let mut keep = Vec::new();
+            for &requested in axes {
+                let axis = usize::try_from(requested)
+                    .ok()
+                    .filter(|&axis| axis < coordinates.n_pixel_axes())
+                    .ok_or_else(|| raised(format!(
+                        "Specified zero-based pixel axis {requested} is not a valid pixel axis"
+                    )))?;
+                let (index, _) = coordinates.pixel_axis_owner(axis).ok_or_else(|| {
+                    raised(format!("Zero-based pixel axis {requested} has been removed"))
+                })?;
+                let placement = &placements[index];
+                let world = coordinates.pixel_axis_to_world_axis(axis)
+                    .and_then(|world| placement.world_axes.iter().position(|axis| *axis == Some(world)))
+                    .ok_or_else(|| raised(format!(
+                        "World axis corresponding to zero-based pixel axis {requested} has been removed"
+                    )))?;
+                let base = match offsets[index] {
+                    Some(base) => base,
+                    None => {
+                        let base = result.n_world_axes();
+                        result.add_coordinate(placement.model(&record).map_err(raised)?);
+                        offsets[index] = Some(base);
+                        base
+                    }
+                };
+                keep.push(base + world);
+            }
+            for (axis, replacement) in result.reference_value().into_iter().enumerate().rev() {
+                if !keep.contains(&axis) {
+                    result.remove_world_axis(axis, replacement).map_err(raised)?;
                 }
             }
-            if selected.len() != axes.len() {
-                return Err(stub("coordsys").unwrap_err());
-            }
-            let order: Option<Vec<_>> = axes
-                .iter()
-                .map(|axis| selected.iter().position(|candidate| candidate == axis))
-                .collect();
-            let order = order.ok_or_else(|| stub("coordsys").unwrap_err())?;
-            result.transpose_axes(&order, &order).map_err(raised)?;
             PyCoordsys::from_image_coordinates(&result, result.to_record())
         })?;
         Ok(Py::new(py, tool)?.into_any())
