@@ -7,15 +7,17 @@ use super::channel_samples::ChannelSamples;
 use super::cross_hand::{CrossHandFit, Measurement};
 use super::fit::LeakageFit;
 use super::joint::{SourceFit, SourceFitMode};
+use super::parallactic::{BaselineSegment, ParallacticAverages};
 use super::standard::{LeakageAlgebra, StandardSample, solve_channel};
 use super::{
     CoherencyMean, GainSolveError, LeakageEstimate, LeakageSolution, LeakageSolveKind,
-    LeakageSolveRequest,
+    LeakageSolveRequest, ParallacticAngleState,
 };
 
 pub(super) enum IntervalFits {
     LeastSquares(Vec<LeakageFit>),
     CrossHand(Vec<CrossHandFit>, Measurement),
+    Parallactic(ParallacticAverages),
     Iterative {
         algebra: LeakageAlgebra,
         samples: ChannelSamples,
@@ -24,7 +26,7 @@ pub(super) enum IntervalFits {
 }
 
 type ChannelEstimates = Vec<LeakageEstimate>;
-type IntervalEstimates = (i32, Vec<ChannelEstimates>);
+type IntervalEstimates = (i32, Vec<ChannelEstimates>, Option<Complex32>);
 
 impl IntervalFits {
     pub(super) fn new(
@@ -33,7 +35,9 @@ impl IntervalFits {
         kind: LeakageSolveKind,
         circular: bool,
     ) -> Self {
-        if kind.cross_hand() {
+        if kind.parallactic() {
+            Self::Parallactic(ParallacticAverages::new(channels, circular))
+        } else if kind.cross_hand() {
             let measurement = match (kind, circular) {
                 (LeakageSolveKind::PosAng, true) => Measurement::CircularAngle,
                 (LeakageSolveKind::PosAng, false) => Measurement::LinearAngle,
@@ -59,10 +63,14 @@ impl IntervalFits {
         pair: [i32; 2],
         bins: &mut [CoherencyMean],
         antennas: usize,
+        segment: BaselineSegment,
     ) -> Result<(), GainSolveError> {
         let pair = pair.map(|antenna| antenna as usize);
         if pair.iter().any(|&antenna| antenna >= antennas) {
             return Ok(());
+        }
+        if let Self::Parallactic(average) = self {
+            return average.add(pair.map(|antenna| antenna as i32), segment, bins);
         }
         let require_all = matches!(self, Self::LeastSquares(_));
         for (channel, mean) in bins.iter_mut().enumerate() {
@@ -74,6 +82,7 @@ impl IntervalFits {
                     Self::CrossHand(fits, measurement) => {
                         fits[channel].add(*measurement, data, model, weights)
                     }
+                    Self::Parallactic(_) => unreachable!("time-segment accumulation"),
                     Self::Iterative {
                         algebra,
                         samples,
@@ -110,11 +119,29 @@ impl IntervalFits {
         previous: Option<&LeakageSolution>,
         request: &LeakageSolveRequest,
         location: (i32, i32),
+        angles: Option<&ParallacticAngleState>,
     ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
             Self::LeastSquares(fits) => Ok(least_squares(fits, antennas, references, previous)),
             Self::CrossHand(fits, measurement) => {
                 Ok(cross_hand(fits, measurement, antennas, location))
+            }
+            Self::Parallactic(average) => {
+                let angles = angles.expect("parallactic angle geometry");
+                let (phases, source) = average.finish(angles)?;
+                SourceFitMode::Polarization.report(source, location);
+                let values = phases
+                    .into_iter()
+                    .map(|phase| {
+                        let estimate = LeakageEstimate {
+                            gain: [phase.unwrap_or(Complex32::ONE), Complex32::ZERO],
+                            valid: [phase.is_some(), false],
+                            ..LeakageEstimate::default()
+                        };
+                        vec![estimate; antennas]
+                    })
+                    .collect();
+                Ok(Some((-1, values, Some(source))))
             }
             Self::Iterative {
                 algebra,
@@ -134,7 +161,7 @@ impl IntervalFits {
                     })
                     .transpose()?;
                 Ok(iterative(samples, antennas, request, multiplier, algebra)?
-                    .map(|values| (-1, values)))
+                    .map(|values| (-1, values, None)))
             }
         }
     }
@@ -188,7 +215,7 @@ fn cross_hand(
             "Mean cross-hand phase solution"
         );
     }
-    Some((-1, values))
+    Some((-1, values, None))
 }
 
 fn least_squares(
@@ -223,7 +250,7 @@ fn least_squares(
                 .collect()
         })
         .collect();
-    nonempty.then_some((reference, values))
+    nonempty.then_some((reference, values, None))
 }
 
 fn iterative(

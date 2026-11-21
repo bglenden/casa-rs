@@ -313,6 +313,12 @@ pub enum GainSolveError {
     /// The cross-hand data cannot constrain both terms of the source fit.
     #[error("Source polarization solution is singular; try solving for D-terms only.")]
     SingularSourcePolarization,
+    #[error("accumulated data entirely flagged")]
+    NoUnflaggedParallacticData,
+    #[error(
+        "the cross-hand phase and Q/U solve requires at least {required} unflagged time segments"
+    )]
+    InsufficientParallacticCoverage { required: usize },
 
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]

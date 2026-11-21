@@ -54,6 +54,28 @@ pub(super) fn write(
             written += 1;
         }
     }
+    if request.kind.parallactic() {
+        let windows = ms
+            .spectral_window()
+            .map_err(|error| error.to_string())?
+            .row_count();
+        let mut qu = ArrayD::zeros(IxDyn(&[2, windows]).f());
+        for solution in solutions {
+            if let Some(source) = solution.polarization {
+                let spw = solution.spectral_window as usize;
+                qu[[0, spw]] = source.re;
+                qu[[1, spw]] = source.im;
+            }
+        }
+        let record = RecordValue::new(vec![RecordField::new(
+            "QU",
+            Value::Array(ArrayValue::Float32(qu)),
+        )]);
+        writer
+            .table_mut()
+            .keywords_mut()
+            .upsert("QU", Value::Record(record));
+    }
     writer
         .copy_subtables(&[
             (SubtableId::Antenna, "ANTENNA"),

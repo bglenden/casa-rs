@@ -7338,6 +7338,31 @@ channel's data and weights. Changing the flag on channel 0 leaves the
 solutions in the other channels unchanged in this fixture.
 [Paired oracle](../tools/casa-compat/polcal_position_angle_oracle.py)
 
+## Linear polarization fitting can report a solution without angle coverage
+
+In CASA 6.7.6.14, a linear-feed `Xfparang+QU` solve with equatorial antenna
+mounts and a constant source model can pass the count of time segments even
+though every segment has the same feed parallactic angle. In this case the
+least-squares fit can report zero Q and U and write unflagged channel phases
+that depend on rounding in the cross-hand averages. The same constant-angle
+case in the circular basis already raises a singular-fit error.
+
+Casa-rs detects the rank deficiency of the linear source fit and raises a
+catchable error before writing an unconstrained calibration table.
+
+With broad angle coverage and a real polarized input, the shallow or steep
+line fit can also receive an exactly constant imaginary or real component.
+CASA's `Xfparang+QU` returns a phase 90 degrees away from the planted one
+and near-zero Q and U for horizontal and vertical tracks in the paired
+fixture. Casa-rs recovers the phase from the component with nonzero
+variance.
+
+In the circular basis, a single channel with both cross hands set to zero
+can produce an unflagged NaN phase in CASA. The same NaN propagates into the
+spectral window's fitted and returned Q and U. Casa-rs flags the
+unconstrained channel and estimates Q and U from the remaining channels.
+[Paired oracle](../tools/casa-compat/polcal_parallactic_oracle.py)
+
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
 In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet

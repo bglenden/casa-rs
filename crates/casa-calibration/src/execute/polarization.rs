@@ -3,6 +3,13 @@
 
 use super::*;
 
+pub(super) fn is_cross_hand_phase(subtype: &str) -> bool {
+    matches!(
+        subtype,
+        "X Jones" | "Xf Jones" | "Xparang Jones" | "Xfparang Jones"
+    )
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Leakage {
     Linearized,
