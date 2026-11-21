@@ -2,11 +2,11 @@
 
 //! The discrete data and error planes of a casacore Quality axis.
 
-use casa_types::{ArrayValue, RecordValue, Value};
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use crate::record_utils::get_optional_vec_string;
-use crate::{Coordinate, CoordinateError, CoordinateType};
+use crate::{Coordinate, CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType};
 
 /// A casacore quality-plane label and its numeric world-coordinate code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,11 +76,13 @@ impl QualityCoordinate {
     /// The name or label list is missing, or the label list is empty or
     /// includes duplicate quality types.
     pub fn from_record(record: &RecordValue) -> Result<Self, CoordinateError> {
-        let mut names = get_optional_vec_string(record, "axes")
-            .filter(|names| names.len() == 1)
-            .ok_or_else(|| {
-                CoordinateError::InvalidRecord("Quality axis requires one name".into())
-            })?;
+        let names = get_optional_vec_string(record, "axes")
+            .ok_or_else(|| CoordinateError::InvalidRecord("Missing Quality axis name".into()))?;
+        let name = match names.as_slice() {
+            [name] => name.clone(),
+            // casacore retains the default name if the name vector has the wrong length.
+            _ => "Quality".into(),
+        };
         let labels = get_optional_vec_string(record, "quality")
             .filter(|labels| !labels.is_empty())
             .ok_or_else(|| {
@@ -96,10 +98,7 @@ impl QualityCoordinate {
             }
             values.push(value);
         }
-        Ok(Self {
-            values,
-            name: names.pop().expect("one axis name"),
-        })
+        Ok(Self { values, name })
     }
 
     pub(crate) fn to_record(&self) -> RecordValue {
@@ -220,5 +219,34 @@ impl Coordinate for QualityCoordinate {
 
     fn axis_units(&self) -> Vec<String> {
         vec![String::new()]
+    }
+}
+
+impl CoordinateSystem {
+    /// Write canonical Quality subrecords while retaining each coordinate's maps.
+    ///
+    /// # Errors
+    /// The record's coordinate placement does not match this system.
+    pub fn normalize_quality_records(
+        &self,
+        record: &mut RecordValue,
+    ) -> Result<(), CoordinateError> {
+        if self.find_coordinate(CoordinateType::Quality).is_none() {
+            return Ok(());
+        }
+        for (index, entry) in self.coordinates_in_record(record)?.into_iter().enumerate() {
+            let CoordinateModel::Quality(quality) = self.coordinate(index) else {
+                continue;
+            };
+            let mut canonical = quality.to_record();
+            if entry.field.starts_with("coordinate") {
+                canonical.upsert(
+                    "coordinate_type",
+                    Value::Scalar(ScalarValue::String("Quality".into())),
+                );
+            }
+            record.upsert(entry.field, Value::Record(canonical));
+        }
+        Ok(())
     }
 }

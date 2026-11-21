@@ -31,6 +31,14 @@ def restored(api, record):
     return cs
 
 
+def linear_quality_record(api):
+    seed = api.coordsys().newcoordsys(linear=1, tabular=True)
+    record = seed.torecord()
+    record.pop("tabular1")
+    record["quality1"] = {"axes": ["Quality"], "quality": ["DATA", "ERROR"]}
+    return record
+
+
 @pytest.mark.parametrize(
     "labels, canonical, codes",
     [
@@ -110,8 +118,9 @@ def test_quality_errors_metadata_and_selected_subimage(casa):
 
 
 def test_native_writer_reader_pairs_keep_labels_and_values(casa, tmp_path):
-    pinned = restored(casa, quality_record(("ERROR", "DATA")))
-    record = pinned.torecord()
+    record = quality_record(("Error", "data"))
+    pinned = restored(casa, record)
+    canonical = pinned.torecord()["quality0"]
     expected_report, = pinned.summary(list=False)
     data = np.array([19., -7.], dtype=np.float32)
     for writer in (tools, casa):
@@ -129,6 +138,7 @@ def test_native_writer_reader_pairs_keep_labels_and_values(casa, tmp_path):
                 try:
                     report, = coords.summary(list=False)
                     assert report == expected_report
+                    _assert_value(coords.torecord()["quality0"], canonical)
                     assert coords.toworld([0])["numeric"].tolist() == [2.]
                     assert coords.toworld([1], "s")["string"].tolist() == ["DATA"]
                 finally:
@@ -162,11 +172,9 @@ def test_fits_export_refuses_to_discard_quality_planes(tmp_path):
 
 
 @pytest.mark.parametrize("method", ["subimage", "fromimage", "newimagefromimage"])
-def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path, method):
-    seed = casa.coordsys().newcoordsys(linear=1, tabular=True)
-    record = seed.torecord()
-    record.pop("tabular1")
-    record["quality1"] = {"axes": ["Quality"], "quality": ["DATA", "ERROR"]}
+@pytest.mark.parametrize("dropdeg", [False, True])
+def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path, method, dropdeg):
+    record = linear_quality_record(casa)
     data = np.arange(6, dtype=np.float32).reshape(3, 2)
     source = str(tmp_path / "source.im")
     writer = casa.image()
@@ -180,18 +188,25 @@ def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path, me
         destination = str(tmp_path / f"section-{api.__name__}.im")
         if method == "subimage":
             assert parent.open(source)
-            child = parent.subimage(destination, region=region, list=False)
+            child = parent.subimage(destination, region=region, list=False, dropdeg=dropdeg)
         elif method == "fromimage":
-            assert parent.fromimage(infile=source, outfile=destination, region=region)
+            assert parent.fromimage(infile=source, outfile=destination, region=region, dropdeg=dropdeg)
             child = parent
         else:
-            child = parent.newimagefromimage(infile=source, outfile=destination, region=region)
+            child = parent.newimagefromimage(
+                infile=source, outfile=destination, region=region, dropdeg=dropdeg,
+            )
         try:
-            np.testing.assert_array_equal(child.getchunk(), data[:, 1:])
+            np.testing.assert_array_equal(child.getchunk(), data[:, 1] if dropdeg else data[:, 1:])
             coords = child.coordsys()
             try:
-                assert coords.torecord()["quality1"]["quality"].tolist() == ["ERROR"]
-                assert coords.toworld([0, 0])["numeric"].tolist() == [0., 2.]
+                if dropdeg:
+                    assert list(coords.coordinatetype()) == ["Linear"]
+                    assert "quality1" not in coords.torecord()
+                    assert coords.toworld([0])["numeric"].tolist() == [0.]
+                else:
+                    assert coords.torecord()["quality1"]["quality"].tolist() == ["ERROR"]
+                    assert coords.toworld([0, 0])["numeric"].tolist() == [0., 2.]
             finally:
                 coords.done()
         finally:
@@ -201,10 +216,7 @@ def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path, me
 
 
 def test_reflection_preserves_quality_labels_with_the_pixels(casa, tmp_path):
-    seed = casa.coordsys().newcoordsys(linear=1, tabular=True)
-    record = seed.torecord()
-    record.pop("tabular1")
-    record["quality1"] = {"axes": ["Quality"], "quality": ["DATA", "ERROR"]}
+    record = linear_quality_record(casa)
     data = np.arange(6, dtype=np.float32).reshape(3, 2)
     source = tools.image()
     assert source.fromarray(pixels=data, csys=record)
@@ -228,3 +240,47 @@ def test_reflection_preserves_quality_labels_with_the_pixels(casa, tmp_path):
                 coords.done()
         finally:
             reader.done()
+
+
+@pytest.mark.parametrize("names", [[], ["A", "B"]])
+def test_invalid_name_count_retains_the_quality_axis_name(casa, names):
+    record = quality_record()
+    record["quality0"]["axes"] = np.array(names, dtype=np.str_)
+    for api in (tools, casa):
+        coords = restored(api, record)
+        assert list(coords.names()) == ["Quality"]
+        assert coords.toworld([1])["numeric"].tolist() == [2.]
+
+
+@pytest.mark.parametrize("hidden", [False, True])
+def test_quality_world_corners_follow_independent_maps(casa, tmp_path, hidden):
+    record = linear_quality_record(casa)
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    if hidden:
+        record["pixelmap1"] = record["worldmap1"] = np.array([-2], dtype=np.int32)
+        record["pixelreplace1"] = np.array([1.])
+        record["worldreplace1"] = np.array([2.])
+        pixels = pixels[:, 1]
+        expected_corners = ("0km", "2km")
+    else:
+        record["pixelmap0"] = np.array([1], dtype=np.int32)
+        record["pixelmap1"] = np.array([0], dtype=np.int32)
+        pixels = pixels.T
+        expected_corners = ("0km, DATA", "2km, ERROR")
+    results = []
+    for api in (tools, casa):
+        image = api.image()
+        assert image.fromarray(pixels=pixels, csys=record)
+        try:
+            bounds = image.boundingbox()
+            assert (bounds["blcf"], bounds["trcf"]) == expected_corners
+            results.append(bounds)
+            if hidden and api is tools:
+                output = tmp_path / "hidden-quality.fits"
+                with pytest.raises(RuntimeError, match="FITS export cannot represent a native Quality"):
+                    image.tofits(str(output))
+                assert not output.exists()
+                np.testing.assert_array_equal(image.getchunk(), pixels)
+        finally:
+            image.done()
+    _assert_value(*results)

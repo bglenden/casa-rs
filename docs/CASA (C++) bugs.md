@@ -8513,9 +8513,11 @@ with the pixels and retains their association after reopening the image.
 
 Exporting a Float native image with a two-plane Quality coordinate
 (`DATA` and `ERROR`) with `image.tofits` terminates pinned CASA 6.7.6.14
-with a floating-point exception. casa-rs raises a Python error and preserves
-the image. Its single-HDU FITS writer cannot represent both Quality planes
-with their data and error semantics.
+with a floating-point exception. With the Quality axis removed from the
+public layout and the `ERROR` plane fixed in the record, export terminates
+with a segmentation fault. casa-rs raises a Python error and preserves the
+image in both cases. Its single-HDU FITS writer cannot represent the data
+and error semantics of a native Quality coordinate.
 
 ## An empty nested list crashes `coordsys.convertmany`
 
