@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "task": "uvmodelfit",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "87daaf296408d74c2589b50d28d6407f0b128523",
+  "parameters": {
+    "vis": {
+      "scope": "Existing single or partitioned input. Missing scratch columns are initialized before fitting.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "field": {
+      "scope": "Fit one selected field and report unusable or multiple fields.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "spw": {
+      "scope": "Select spectral windows and channels including multiple and strided ranges.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "selectdata": {
+      "scope": "Enable additional row selectors or ignore them as in CASA's task wrapper.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "timerange": {
+      "scope": "Time expression applied when additional row selection is enabled.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "uvrange": {
+      "scope": "Baseline-length expression or supported vector form.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "antenna": {
+      "scope": "Antenna and baseline expression for fit samples.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "scan": {
+      "scope": "Scan expression for fit samples.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "msselect": {
+      "scope": "Additional TaQL row condition when row selection is enabled.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "niter": {
+      "scope": "Iteration count, including zero and negative controls and wrapper scalar conversions.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "comptype": {
+      "scope": "Point, Gaussian, or disk shape.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "sourcepar": {
+      "scope": "Initial coordinates, flux, and shape parameters with supported scalars and iterables.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "varypar": {
+      "scope": "Fit or hold individual parameters using a Boolean vector or accepted iterable.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    },
+    "outfile": {
+      "scope": "Optional CASA-interoperable component-list table.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "fitting",
+      "title": "Visibility-domain component fitting",
+      "status": "Implemented",
+      "scope": "Point, Gaussian and disk fits, selected samples, scratch initialization and CASA component-list readback.",
+      "gap": "The listed paired task cases match CASA.",
+      "evidence": [
+        "fitting",
+        "arguments"
+      ]
+    }
+  ],
+  "decisions": [],
+  "evidence": {
+    "fitting": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Point, Gaussian and disk fits, selected samples, scratch initialization and CASA component-list readback.",
+      "result": "30 paired case groups passed across this oracle.",
+      "casa_version": "6.7.6.14",
+      "revision": "9ab00af35fcee2d932757a367eed2adf255c1f33",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_uvmodelfit_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/model-task-arguments-20261120.json",
+      "links": [
+        "tools/casa-compat/calibration_uvmodelfit_oracle.py",
+        "https://github.com/bglenden/casa-rs/pull/1806"
+      ]
+    },
+    "arguments": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state.",
+      "result": "23 paired case groups passed across this oracle.",
+      "casa_version": "6.7.6.14",
+      "revision": "9ab00af35fcee2d932757a367eed2adf255c1f33",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/model-task-arguments-20261120.json",
+      "links": [
+        "tools/casa-compat/calibration_model_arguments_oracle.py",
+        "https://github.com/bglenden/casa-rs/pull/1806"
+      ]
+    },
+    "performance": {
+      "kind": "Matched release performance",
+      "state": "planned",
+      "scope": "Throughput, I/O and compute phases, worker counts, and peak memory.",
+      "result": "Scheduled during calibration performance qualification.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/979"
+      ]
+    }
+  }
+}

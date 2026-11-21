@@ -302,6 +302,68 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 5, in CASA's order: yes
 - Defaults that differ: none
 
+#### clearcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `87daaf296408d74c2589b50d28d6407f0b128523`. Status counts: Default only: 0, Implemented: 5, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing single or partitioned MeasurementSet with complex or floating observed data. [scratch](#clearcal-behavior-scratch)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [scratch](#clearcal-evidence-scratch), [arguments](#clearcal-evidence-arguments) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Field names and IDs for reset, including empty and bracketed selectors. [scratch](#clearcal-behavior-scratch)<br>Catalog domain: `string` | [scratch](#clearcal-evidence-scratch), [arguments](#clearcal-evidence-arguments) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral-window and channel selections including strides, separate ranges, and invalid IDs. [scratch](#clearcal-behavior-scratch)<br>Catalog domain: `string` | [scratch](#clearcal-evidence-scratch), [arguments](#clearcal-evidence-arguments) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Intent patterns and empty selectors, with unmatched intent handled at selection. [scratch](#clearcal-behavior-scratch)<br>Catalog domain: `string` | [scratch](#clearcal-evidence-scratch), [arguments](#clearcal-evidence-arguments) |
+| `addmodel` | `False` | `False`; `addmodel` → `addmodel` | Implemented | Optional MODEL_DATA initialization with CASA's single and partitioned Boolean handling. [scratch](#clearcal-behavior-scratch)<br>Catalog domain: `bool` | [scratch](#clearcal-evidence-scratch), [arguments](#clearcal-evidence-arguments) |
+
+#### clearcal interacting modes and task behavior
+
+<a id="clearcal-behavior-scratch"></a>
+##### Scratch initialization and reset
+
+**Implemented** — Single and partitioned MeasurementSets, scratch and virtual state, and concurrent cleanup.
+
+The listed paired task cases match CASA.
+
+Evidence: [scratch](#clearcal-evidence-scratch), [arguments](#clearcal-evidence-arguments).
+
+#### clearcal deviations and unfinished work
+
+#### clearcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="clearcal-evidence-scratch"></a>
+##### scratch
+
+**Same-input Python task and casacore interchange — passed.** 38 paired case groups passed across this oracle. Single and partitioned MeasurementSets, scratch and virtual state, and concurrent cleanup.
+
+- [tools/casa-compat/calibration_scratch_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_scratch_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_scratch_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="clearcal-evidence-arguments"></a>
+##### arguments
+
+**Same-input Python task and casacore interchange — passed.** 23 paired case groups passed across this oracle. Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state.
+
+- [tools/casa-compat/calibration_model_arguments_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_model_arguments_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="clearcal-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled during calibration performance qualification. Throughput, I/O and compute phases, worker counts, and peak memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
+
 ### concat
 
 - CASA source: `casatasks/concat.py`, 9 parameters
@@ -325,6 +387,67 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 4, in CASA's order: yes
 - Defaults that differ: none
+
+#### delmod parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `87daaf296408d74c2589b50d28d6407f0b128523`. Status counts: Default only: 0, Implemented: 4, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing single or partitioned MeasurementSet, including compressed or shared scratch columns. [scratch](#delmod-behavior-scratch)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [scratch](#delmod-evidence-scratch), [arguments](#delmod-evidence-arguments) |
+| `otf` | `True` | `True`; `otf` → `otf` | Implemented | Remove SOURCE-backed virtual models, with independent scratch and virtual controls. [scratch](#delmod-behavior-scratch)<br>Catalog domain: `bool` | [scratch](#delmod-evidence-scratch), [arguments](#delmod-evidence-arguments) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Virtual-model fields, including empty, bracketed, numeric and invalid selections. [scratch](#delmod-behavior-scratch)<br>Catalog domain: `string` | [scratch](#delmod-evidence-scratch), [arguments](#delmod-evidence-arguments) |
+| `scr` | `False` | `False`; `scr` → `scr` | Implemented | Remove scratch MODEL_DATA, including scratch-only calls with an irrelevant field selector. [scratch](#delmod-behavior-scratch)<br>Catalog domain: `bool` | [scratch](#delmod-evidence-scratch), [arguments](#delmod-evidence-arguments) |
+
+#### delmod interacting modes and task behavior
+
+<a id="delmod-behavior-scratch"></a>
+##### Scratch and virtual model removal
+
+**Implemented** — Single and partitioned MeasurementSets, scratch and virtual state, and concurrent cleanup.
+
+The listed paired task cases match CASA.
+
+Evidence: [scratch](#delmod-evidence-scratch), [arguments](#delmod-evidence-arguments).
+
+#### delmod deviations and unfinished work
+
+#### delmod evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="delmod-evidence-scratch"></a>
+##### scratch
+
+**Same-input Python task and casacore interchange — passed.** 38 paired case groups passed across this oracle. Single and partitioned MeasurementSets, scratch and virtual state, and concurrent cleanup.
+
+- [tools/casa-compat/calibration_scratch_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_scratch_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_scratch_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="delmod-evidence-arguments"></a>
+##### arguments
+
+**Same-input Python task and casacore interchange — passed.** 23 paired case groups passed across this oracle. Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state.
+
+- [tools/casa-compat/calibration_model_arguments_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_model_arguments_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="delmod-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled during calibration performance qualification. Throughput, I/O and compute phases, worker counts, and peak memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
 ### exportfits
 
@@ -525,6 +648,78 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 15, in CASA's order: yes
 - Defaults that differ: none
+
+#### ft parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `87daaf296408d74c2589b50d28d6407f0b128523`. Status counts: Default only: 0, Implemented: 15, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing single or partitioned MeasurementSet. [prediction](#ft-behavior-prediction)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Field selection for component, image, and virtual recipe publication. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral-window and channel selections including strided and disjoint ranges. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Observe only visibility rows within the time selection. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `uvrange` | `''` | `''`; `uvrange` → `uvrange` | Implemented | Select visibility rows by projected baseline length. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Select visibility rows by antenna and baseline expression. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Select scans, including handling an empty match without editing the model. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `observation` | `''` | `''`; `observation` → `observation` | Implemented | Select observations for prediction. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Select rows by intent pattern. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `model` | `''` | `''`; `model` → `model` | Implemented | Read CASA image input and Taylor image lists. FITS participates in reference-frequency lookup and follows the pinned prediction behavior. [prediction](#ft-behavior-prediction)<br>Catalog domain: `variant` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `nterms` | `1` | `1`; `nterms` → `nterms` | Implemented | Select one or more image Taylor terms with the task's wrapper validation. [prediction](#ft-behavior-prediction)<br>Catalog domain: `integer` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `reffreq` | `''` | `''`; `reffreq` → `reffreq` | Implemented | Explicit quantity or automatic Taylor reference from the first model image. [prediction](#ft-behavior-prediction)<br>Catalog domain: `string` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `complist` | `''` | `''`; `complist` → `complist` | Implemented | Read component lists including off-axis resolved and polarized components. [prediction](#ft-behavior-prediction)<br>Catalog domain: `path` (product) | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `incremental` | `False` | `False`; `incremental` → `incremental` | Implemented | Select addition or replacement for scratch and virtual publication. [prediction](#ft-behavior-prediction)<br>Catalog domain: `bool` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+| `usescratch` | `False` | `False`; `usescratch` → `usescratch` | Implemented | Write scratch MODEL_DATA or save a virtual model in the MeasurementSet. [prediction](#ft-behavior-prediction)<br>Catalog domain: `bool` | [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments) |
+
+#### ft interacting modes and task behavior
+
+<a id="ft-behavior-prediction"></a>
+##### Component and image visibility prediction
+
+**Implemented** — Components, CASA images, FITS, Taylor terms, selections, Multi-MS, and subtraction and solve interchange.
+
+The listed paired task cases match CASA.
+
+Evidence: [prediction](#ft-evidence-prediction), [arguments](#ft-evidence-arguments).
+
+#### ft deviations and unfinished work
+
+#### ft evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="ft-evidence-prediction"></a>
+##### prediction
+
+**Same-input Python task and casacore interchange — passed.** 55 paired case groups passed across this oracle. Components, CASA images, FITS, Taylor terms, selections, Multi-MS, and subtraction and solve interchange.
+
+- [tools/casa-compat/calibration_ft_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_ft_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_ft_oracle.py --work <empty-directory> --native-bin <calibrate> --images --mms --chain`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="ft-evidence-arguments"></a>
+##### arguments
+
+**Same-input Python task and casacore interchange — passed.** 23 paired case groups passed across this oracle. Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state.
+
+- [tools/casa-compat/calibration_model_arguments_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_model_arguments_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="ft-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled during calibration performance qualification. Throughput, I/O and compute phases, worker counts, and peak memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
 ### gaincal
 
@@ -3484,6 +3679,77 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 14, in CASA's order: yes
 - Defaults that differ: none
 
+#### uvmodelfit parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `87daaf296408d74c2589b50d28d6407f0b128523`. Status counts: Default only: 0, Implemented: 14, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing single or partitioned input. Missing scratch columns are initialized before fitting. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Fit one selected field and report unusable or multiple fields. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `string` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Select spectral windows and channels including multiple and strided ranges. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `string` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `selectdata` | `True` | `True`; `selectdata` → `selectdata` | Implemented | Enable additional row selectors or ignore them as in CASA's task wrapper. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `bool` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Time expression applied when additional row selection is enabled. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `string` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `uvrange` | `''` | `''`; `uvrange` → `uvrange` | Implemented | Baseline-length expression or supported vector form. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `variant` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Antenna and baseline expression for fit samples. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `string` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Scan expression for fit samples. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `string` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `msselect` | `''` | `''`; `msselect` → `msselect` | Implemented | Additional TaQL row condition when row selection is enabled. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `string` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `niter` | `5` | `5`; `niter` → `niter` | Implemented | Iteration count, including zero and negative controls and wrapper scalar conversions. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `integer` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `comptype` | `'P'` | `'P'`; `comptype` → `comptype` | Implemented | Point, Gaussian, or disk shape. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `P`, `G`, `D` | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `sourcepar` | `[1.0, 0.0, 0.0]` | `[1.0, 0.0, 0.0]`; `sourcepar` → `sourcepar` | Implemented | Initial coordinates, flux, and shape parameters with supported scalars and iterables. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `varypar` | `[]` | `[]`; `varypar` → `varypar` | Implemented | Fit or hold individual parameters using a Boolean vector or accepted iterable. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: list[`bool`], length 0..many; scalar allowed | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | Optional CASA-interoperable component-list table. [fitting](#uvmodelfit-behavior-fitting)<br>Catalog domain: `path` (table) | [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments) |
+
+#### uvmodelfit interacting modes and task behavior
+
+<a id="uvmodelfit-behavior-fitting"></a>
+##### Visibility-domain component fitting
+
+**Implemented** — Point, Gaussian and disk fits, selected samples, scratch initialization and CASA component-list readback.
+
+The listed paired task cases match CASA.
+
+Evidence: [fitting](#uvmodelfit-evidence-fitting), [arguments](#uvmodelfit-evidence-arguments).
+
+#### uvmodelfit deviations and unfinished work
+
+#### uvmodelfit evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="uvmodelfit-evidence-fitting"></a>
+##### fitting
+
+**Same-input Python task and casacore interchange — passed.** 30 paired case groups passed across this oracle. Point, Gaussian and disk fits, selected samples, scratch initialization and CASA component-list readback.
+
+- [tools/casa-compat/calibration_uvmodelfit_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_uvmodelfit_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_uvmodelfit_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="uvmodelfit-evidence-arguments"></a>
+##### arguments
+
+**Same-input Python task and casacore interchange — passed.** 23 paired case groups passed across this oracle. Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state.
+
+- [tools/casa-compat/calibration_model_arguments_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_model_arguments_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="uvmodelfit-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled during calibration performance qualification. Throughput, I/O and compute phases, worker counts, and peak memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
+
 ### uvsub
 
 - CASA source: `casatasks/uvsub.py`, 2 parameters
@@ -3495,6 +3761,65 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 2, in CASA's order: yes
 - Defaults that differ: none
+
+#### uvsub parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `87daaf296408d74c2589b50d28d6407f0b128523`. Status counts: Default only: 0, Implemented: 2, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing MeasurementSet or partitioned input with observed, corrected, scratch or virtual data. [subtraction](#uvsub-behavior-subtraction)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [subtraction](#uvsub-evidence-subtraction), [arguments](#uvsub-evidence-arguments) |
+| `reverse` | `False` | `False`; `reverse` → `reverse` | Implemented | Add the model instead of subtracting it, with the same inputs and untouched flags and weights. [subtraction](#uvsub-behavior-subtraction)<br>Catalog domain: `bool` | [subtraction](#uvsub-evidence-subtraction), [arguments](#uvsub-evidence-arguments) |
+
+#### uvsub interacting modes and task behavior
+
+<a id="uvsub-behavior-subtraction"></a>
+##### Apply or reverse the visibility model
+
+**Implemented** — Scratch and saved models, observed and corrected data, reverse subtraction, and retained write locks.
+
+The listed paired task cases match CASA.
+
+Evidence: [subtraction](#uvsub-evidence-subtraction), [arguments](#uvsub-evidence-arguments).
+
+#### uvsub deviations and unfinished work
+
+#### uvsub evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="uvsub-evidence-subtraction"></a>
+##### subtraction
+
+**Same-input Python task and casacore interchange — passed.** 16 paired case groups passed across this oracle. Scratch and saved models, observed and corrected data, reverse subtraction, and retained write locks.
+
+- [tools/casa-compat/calibration_uvsub_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_uvsub_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_uvsub_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="uvsub-evidence-arguments"></a>
+##### arguments
+
+**Same-input Python task and casacore interchange — passed.** 23 paired case groups passed across this oracle. Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state.
+
+- [tools/casa-compat/calibration_model_arguments_oracle.py](https://github.com/bglenden/casa-rs/blob/87daaf296408d74c2589b50d28d6407f0b128523/tools/casa-compat/calibration_model_arguments_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/1806](https://github.com/bglenden/casa-rs/pull/1806)
+- Revision: `9ab00af35fcee2d932757a367eed2adf255c1f33`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/model-task-arguments-20261120.json`.
+
+<a id="uvsub-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled during calibration performance qualification. Throughput, I/O and compute phases, worker counts, and peak memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
 ## Tools
 

@@ -20,7 +20,7 @@ fn raised(message: impl ToString) -> PyErr {
     PyRuntimeError::new_err(message.to_string())
 }
 
-fn values(value: &Bound<'_, PyAny>, method: &str) -> PyResult<Vec<f64>> {
+pub(super) fn values(value: &Bound<'_, PyAny>, method: &str) -> PyResult<Vec<f64>> {
     if value.is_none() {
         return Ok(Vec::new());
     }
