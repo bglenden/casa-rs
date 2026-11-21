@@ -2,7 +2,7 @@
 
 mod contours;
 mod gaussian;
-pub(super) use gaussian::{WindowFit, fit_window};
+pub(super) use gaussian::{Parameters, SkyFit, WindowFit, evaluate_sky, fit_sky, fit_window};
 mod points;
 mod runs;
 

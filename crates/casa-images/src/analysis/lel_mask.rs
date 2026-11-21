@@ -393,6 +393,7 @@ impl<'a> PreparedMask<'a> {
         for destination in destinations {
             for operand in &operands {
                 super::ensure_outfile_does_not_alias_input(destination, &operand.path)?;
+                super::ensure_artifacts_do_not_overlap(destination, &operand.path)?;
             }
         }
         let opened = open_operands(&operands, false)?;

@@ -368,7 +368,7 @@ const METHODS: &[Method] = &[
             param("summary", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fitprofile",

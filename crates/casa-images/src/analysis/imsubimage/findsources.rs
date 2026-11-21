@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-mod components;
+pub(super) mod components;
 mod peaks;
 
 use casa_components::ComponentList;

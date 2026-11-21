@@ -35,6 +35,10 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
+pub use imsubimage::{
+    ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
+    fit_image_components,
+};
 pub use imsubimage::{ContinuumSummary, ImageContinuum};
 pub use imsubimage::{ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution};
 pub use imsubimage::{
@@ -43,8 +47,9 @@ pub use imsubimage::{
     ImagePbcorOptions, ImagePixelSelection, ImageRebin, ImageRebinOptions, ImageRegionBounds,
     ImageSmoothing, MaskReplacementOptions, MaskReplacementOutcome, SmoothingKernel,
     SmoothingOptions, SmoothingPixel, SubimageOptions, SubimagePlan, SubimageRegion,
-    ensure_outfile_does_not_alias_input, put_image_region, reduce_subimage_coordinate_record,
-    replace_masked_complex_pixels, replace_masked_real_pixels, validate_put_region_shapes,
+    ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input, put_image_region,
+    reduce_subimage_coordinate_record, replace_masked_complex_pixels, replace_masked_real_pixels,
+    validate_put_region_shapes,
 };
 pub use imsubimage::{DecompositionOptions, ImageDecomposition, decompose_image};
 pub use imsubimage::{DeviationOptions, ImageDeviation};

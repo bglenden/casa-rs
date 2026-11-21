@@ -19,7 +19,7 @@ use crate::convert::IntList;
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
 use super::beams::subset_beam_record;
-use super::create::publish_new_images;
+use super::create::publish_image_set;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
@@ -80,7 +80,7 @@ impl Request<'_> {
         if destinations.is_empty() {
             return Err(raised("No output image names have been specified"));
         }
-        publish_new_images(self.outfiles, |staged| {
+        publish_image_set(self.outfiles, false, |staged| {
             read_locked(attachment, |source| {
                 for target in &destinations {
                     for input in source

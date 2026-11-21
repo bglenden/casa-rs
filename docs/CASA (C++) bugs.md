@@ -8883,3 +8883,39 @@ centered at J2000 zero. CASA tags these values as J2000, so a component list
 using that record interprets a different sky position. Casa-rs tags the
 angles with the frame used to compute them. Gaussian directions and their
 position angles are computed in that same frame.
+
+### `image.fitcomponents` writes fitted estimates in the wrong pixel grid
+
+In CASA 6.7.6.14, fitting a Gaussian centered at pixel `[14.2, 17.7]` in a
+31 × 34 image with the default sky coordinates reports the correct
+`pixelcoords` in the fit record. The same call writes `14.9998, 17.0002`
+in the `newestimates` file. `ImageFitterResults::writeNewEstimatesFile`
+inserts the component direction in radians into a coordinate system whose
+world values use the visible direction units. Casa-rs writes the fitted
+center in the original input pixel grid, which is what the estimates-file
+reader expects.
+
+The detailed fit record also inherits the direction-label mismatch described
+for `findsources`. With a J2000 sky coordinate and a Galactic conversion
+frame, CASA returns the fitted direction near `(1.68200, -1.05040)` radians
+tagged J2000. Casa-rs labels the fitted direction with its conversion frame.
+
+The optional summary labels the frequency column `GHz` but writes raw world
+values. The default spectral axis reports channel 1 as `1.415e+09` under that
+heading, while the component's frequency record correctly reports
+`1.415 GHz`. Casa-rs converts the summary column to GHz.
+
+A masked value of 100 next to a 7 Jy/pixel Gaussian gives a reported peak
+uncertainty of 1.7604 Jy/pixel without a `residual` output in CASA 6.7.6.14.
+Requesting that output gives about `3.4e-9 Jy/pixel` for the same fit. CASA
+uses all entries in its anonymous residual image for the first RMS and
+honors the source mask for the second. Casa-rs computes fit uncertainties
+from valid pixels whether or not a residual image is written.
+
+When fitting Stokes Q or U in a multi-Stokes cube, CASA 6.7.6.14 reports the
+selected polarization's fitted flux but writes its model and residual pixels
+to the first polarization plane. A rank-five image with an ancillary axis
+selected at pixel 1 shows the same mismatch. The output write position is
+initialized to zero and only the spectral position is updated. Casa-rs
+writes the fitted result to the selected polarization and ancillary position.
+The input grid and validity mask remain present in both requested images.

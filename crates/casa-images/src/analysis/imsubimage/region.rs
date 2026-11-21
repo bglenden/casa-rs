@@ -1304,7 +1304,7 @@ fn shape_candidate_bounds(
     }
 }
 
-fn shape_contains(shape: &SpatialShape, x: usize, y: usize) -> bool {
+pub(super) fn shape_contains(shape: &SpatialShape, x: usize, y: usize) -> bool {
     let xf = x as f64;
     let yf = y as f64;
     match shape {
