@@ -253,9 +253,12 @@ fn plan_axes<'a>(
             ));
         }
         let axes: Vec<_> = axes.into_iter().flatten().collect();
+        if axes.is_empty() {
+            continue;
+        }
         let in_shape: Vec<_> = axes.iter().map(|&axis| input_shape[axis]).collect();
         let out_shape: Vec<_> = axes.iter().map(|&axis| template.shape[axis]).collect();
-        let degenerate = in_shape.iter().chain(out_shape).all(|n| *n == 1);
+        let degenerate = in_shape.iter().chain(&out_shape).all(|n| *n == 1);
         if degenerate && ours.coordinate_type() == theirs.coordinate_type() {
             // Not regridded: the output keeps the input's coordinate.
             if !same_axes(ours, theirs, &in_shape) {

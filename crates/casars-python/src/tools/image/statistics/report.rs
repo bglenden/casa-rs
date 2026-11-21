@@ -208,26 +208,27 @@ impl StatisticsReport<'_> {
         }
         if let Some(index) = self.coordinates.find_coordinate(CoordinateType::Spectral)
             && let CoordinateModel::Spectral(spectral) = self.coordinates.coordinate(index)
+            && let [Some(axis)] = self
+                .coordinates
+                .coordinate_pixel_axes(index)
+                .expect("existing coordinate")
+                .as_slice()
+            && self.chunk.size[*axis] > 1
         {
-            let axis: usize = (0..index)
-                .map(|index| self.coordinates.coordinate(index).n_pixel_axes())
-                .sum();
-            if self.chunk.size[axis] > 1 {
-                unit.push('.');
-                if spectral.rest_frequency() > 0.0 {
-                    unit.push_str(
-                        self.spectral_velocity
-                            .map_or("km/s", |velocity| velocity.unit.name()),
-                    );
-                } else {
-                    unit.push_str(&self.coordinates.coordinate(index).axis_units()[0]);
-                }
-                return summary_number(
-                    "         -- flux [flux]:                            ",
-                    flux,
-                    Some(&unit),
+            unit.push('.');
+            if spectral.rest_frequency() > 0.0 {
+                unit.push_str(
+                    self.spectral_velocity
+                        .map_or("km/s", |velocity| velocity.unit.name()),
                 );
+            } else {
+                unit.push_str(&self.coordinates.coordinate(index).axis_units()[0]);
             }
+            return summary_number(
+                "         -- flux [flux]:                            ",
+                flux,
+                Some(&unit),
+            );
         }
         let integrated = Unit::new(&unit).is_ok_and(|actual| {
             ["Jy.km/s", "Jy.Hz", "K.arcsec2.km/s", "K.arcsec2.Hz"]
@@ -295,28 +296,29 @@ impl StatisticsReport<'_> {
     }
 
     fn axis_columns(&self) -> Vec<AxisColumn<'_>> {
-        let mut axis = 0;
         let mut columns = Vec::new();
-        for index in 0..self.coordinates.n_coordinates() {
-            let model = self.coordinates.coordinate(index);
-            for label in model.axis_names() {
-                if !self.collapsed_axes.is_empty()
-                    && !self.collapsed_axes.contains(&axis)
-                    && self.chunk.size[axis] > 1
-                {
-                    let label = label.to_ascii_uppercase();
-                    let velocity = self.spectral_velocity.filter(|_| {
-                        label == "FREQUENCY" && matches!(model, CoordinateModel::Spectral(_))
-                    });
-                    columns.push(AxisColumn {
-                        axis,
-                        model,
-                        label,
-                        velocity,
-                    });
-                }
-                axis += 1;
+        for axis in 0..self.coordinates.n_pixel_axes() {
+            if self.collapsed_axes.is_empty()
+                || self.collapsed_axes.contains(&axis)
+                || self.chunk.size[axis] <= 1
+            {
+                continue;
             }
+            let (index, local) = self
+                .coordinates
+                .pixel_axis_owner(axis)
+                .expect("dense pixel axes");
+            let model = self.coordinates.coordinate(index);
+            let label = model.axis_names().remove(local).to_ascii_uppercase();
+            let velocity = self
+                .spectral_velocity
+                .filter(|_| label == "FREQUENCY" && matches!(model, CoordinateModel::Spectral(_)));
+            columns.push(AxisColumn {
+                axis,
+                model,
+                label,
+                velocity,
+            });
         }
         columns.sort_by_key(|column| match column.label.as_str() {
             "RIGHT ASCENSION" => (0, 0),
@@ -360,9 +362,7 @@ impl StatisticsReport<'_> {
         }
         line(header, true);
 
-        let mut reference = (0..self.coordinates.n_coordinates())
-            .flat_map(|index| self.coordinates.coordinate(index).reference_pixel())
-            .collect::<Vec<_>>();
+        let mut reference = self.coordinates.reference_pixel();
         for &axis in self.collapsed_axes {
             reference[axis] = self.chunk.start[axis] as f64;
         }
@@ -480,7 +480,10 @@ impl AxisColumn<'_> {
         let Ok(world) = coordinates.to_world(pixel) else {
             return "?".into();
         };
-        let value = world[self.axis];
+        let Some(axis) = coordinates.pixel_axis_to_world_axis(self.axis) else {
+            return "?".into();
+        };
+        let value = world[axis];
         match self.model {
             CoordinateModel::Direction(_) => match self.label.as_str() {
                 "RIGHT ASCENSION" => format_longitude_hours_with_precision(value, 5),

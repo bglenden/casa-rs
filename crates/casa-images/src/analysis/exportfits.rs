@@ -227,13 +227,21 @@ fn export_fits_typed<T: ExportFitsPixel>(
         let coordinates = image.coordinates();
         let output_axis = |axis| plan.old_to_new.get(axis - 1).copied().flatten();
         header_items.extend(tool_header::projection_parameters(coordinates, output_axis));
-        let mut original_axis = 1;
         for index in 0..coordinates.n_coordinates() {
             let coordinate = coordinates.coordinate(index);
             if let CoordinateModel::Stokes(stokes) = coordinate
-                && let Some(axis) = output_axis(original_axis)
+                && let [Some(world)] = coordinates
+                    .coordinate_world_axes(index)
+                    .expect("existing coordinate")
+                    .as_slice()
+                && let [Some(pixel)] = coordinates
+                    .coordinate_pixel_axes(index)
+                    .expect("existing coordinate")
+                    .as_slice()
+                && let Some(axis) = output_axis(world + 1)
+                && let Some(pixel) = output_axis(pixel + 1)
             {
-                for (key, value) in tool_header::stokes_axis_keywords(stokes, axis)? {
+                for (key, value) in tool_header::stokes_axis_keywords(stokes, axis, pixel)? {
                     if let Some((_, existing)) =
                         header_items.iter_mut().find(|(name, _)| *name == key)
                     {
@@ -243,7 +251,6 @@ fn export_fits_typed<T: ExportFitsPixel>(
                     }
                 }
             }
-            original_axis += coordinate.n_pixel_axes();
         }
         tool_header::image_export_cards(image, &info, &header_items)?
     } else {
@@ -451,13 +458,9 @@ impl ExportAxisPlan {
         tool_order: bool,
     ) -> Result<Self, ImageError> {
         let ndim = image_shape.len();
-        let mut orig_types = Vec::with_capacity(ndim);
-        for ci in 0..coordinates.n_coordinates() {
-            let coord = coordinates.coordinate(ci);
-            for _ in 0..coord.n_pixel_axes() {
-                orig_types.push(coord.coordinate_type());
-            }
-        }
+        let orig_types: Vec<_> = (0..coordinates.n_pixel_axes())
+            .map(|axis| coordinates.pixel_axis_type(axis).expect("dense pixel axes"))
+            .collect();
         if orig_types.len() != ndim {
             return Err(ImageError::InvalidMetadata(format!(
                 "coordinate system has {} axes for image shape {image_shape:?}",
@@ -511,7 +514,6 @@ impl ExportAxisPlan {
         let mut old_to_new = vec![None; ndim];
         let mut output_shape = Vec::with_capacity(kept.len());
         let mut kept_types = Vec::with_capacity(kept.len());
-        let mut output_spectral_axis = None;
 
         for (new_idx, &orig_axis) in kept.iter().enumerate() {
             let new_1 = new_idx + 1;
@@ -519,11 +521,28 @@ impl ExportAxisPlan {
             output_shape.push(image_shape[orig_axis]);
             let ct = orig_types[orig_axis];
             kept_types.push(ct);
-            if ct == CoordinateType::Spectral && output_spectral_axis.is_none() {
-                output_spectral_axis = Some(new_1);
-            }
         }
 
+        if kept.iter().any(|&pixel| {
+            coordinates
+                .pixel_axis_to_world_axis(pixel)
+                .is_some_and(|world| old_to_new.get(world).is_none_or(Option::is_none))
+        }) {
+            return Err(ImageError::InvalidMetadata(
+                "FITS axes cannot be dropped across distinct pixel and world placements".into(),
+            ));
+        }
+        let output_spectral_axis = coordinates
+            .find_coordinate(CoordinateType::Spectral)
+            .and_then(|coordinate| {
+                coordinates
+                    .coordinate_world_axes(coordinate)
+                    .expect("existing coordinate")
+                    .into_iter()
+                    .flatten()
+                    .next()
+            })
+            .and_then(|axis| old_to_new.get(axis).copied().flatten());
         Ok(Self {
             kept_orig_axes: kept,
             output_shape,

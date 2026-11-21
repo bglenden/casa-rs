@@ -264,23 +264,22 @@ pub(crate) fn spectral_frequencies_hz(
     coords: &CoordinateSystem,
     image_shape: &[usize],
 ) -> Result<(usize, Vec<f64>), ImageError> {
-    let mut pixel_offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        if let CoordinateModel::Spectral(spectral) = coord {
-            if pixel_offset >= image_shape.len() {
-                return Err(ImageError::InvalidMetadata(
-                    "spectral coordinate pixel axis exceeds image dimensions".into(),
-                ));
-            }
-            let n_chan = image_shape[pixel_offset];
-            let mut freqs = Vec::with_capacity(n_chan);
-            for ch in 0..n_chan {
-                freqs.push(spectral.world_frequency_hz(ch as f64)?);
-            }
-            return Ok((pixel_offset, freqs));
-        }
-        pixel_offset += coord.n_pixel_axes();
+    if let Some(index) = coords.find_coordinate(casa_coordinates::CoordinateType::Spectral)
+        && let CoordinateModel::Spectral(spectral) = coords.coordinate(index)
+        && let [Some(axis)] = coords
+            .coordinate_pixel_axes(index)
+            .expect("existing coordinate")
+            .as_slice()
+    {
+        let &n_chan = image_shape.get(*axis).ok_or_else(|| {
+            ImageError::InvalidMetadata(
+                "spectral coordinate pixel axis exceeds image dimensions".into(),
+            )
+        })?;
+        let freqs = (0..n_chan)
+            .map(|ch| spectral.world_frequency_hz(ch as f64))
+            .collect::<Result<_, _>>()?;
+        return Ok((*axis, freqs));
     }
     Err(ImageError::InvalidMetadata(
         "spectralindex requires images with a spectral coordinate".into(),

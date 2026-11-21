@@ -495,6 +495,41 @@ impl CoordinateSystem {
         self.reference_axes(false)
     }
 
+    /// A coordinate's local reference pixels. Removed axes use their
+    /// stored pixel replacements.
+    pub fn local_reference_pixel(&self, index: usize) -> Vec<f64> {
+        let mut values = self.coordinate(index).reference_pixel();
+        if let Some(maps) = self.nonconsecutive_maps() {
+            let pixel = &maps.placements[index].pixel;
+            for ((value, &axis), &replacement) in values
+                .iter_mut()
+                .zip(&pixel.indices)
+                .zip(&pixel.replacements)
+            {
+                if axis < 0 {
+                    *value = replacement;
+                }
+            }
+        }
+        values
+    }
+
+    /// Units of the values returned by `to_world`, in public world-axis order.
+    pub fn world_axis_units(&self) -> Vec<String> {
+        let mut units = vec![String::new(); self.n_world_axes()];
+        for (index, model) in self.coordinates.iter().enumerate() {
+            let world = self
+                .coordinate_world_axes(index)
+                .expect("existing coordinate");
+            for (axis, unit) in world.into_iter().zip(model.axis_units()) {
+                if let Some(axis) = axis {
+                    units[axis] = unit;
+                }
+            }
+        }
+        units
+    }
+
     fn reference_axes(&self, pixel: bool) -> Vec<f64> {
         let local = if pixel {
             CoordinateModel::reference_pixel
@@ -556,7 +591,7 @@ impl CoordinateSystem {
         if self.maps.is_some() {
             Self::from_mapped_record(record)
         } else {
-            Self::from_record(record)
+            Self::restore_record(record, false)
         }
     }
 
@@ -564,6 +599,15 @@ impl CoordinateSystem {
     pub fn pixel_axis_to_world_axis(&self, axis: usize) -> Option<usize> {
         let (index, local) = self.pixel_axis_owner(axis)?;
         self.coordinate_world_axes(index)?
+            .get(local)
+            .copied()
+            .flatten()
+    }
+
+    /// The public pixel axis corresponding to a public world axis.
+    pub fn world_axis_to_pixel_axis(&self, axis: usize) -> Option<usize> {
+        let (index, local) = self.world_axis_owner(axis)?;
+        self.coordinate_pixel_axes(index)?
             .get(local)
             .copied()
             .flatten()

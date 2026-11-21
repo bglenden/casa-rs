@@ -57,10 +57,7 @@ pub(super) fn reduce_coordinates_and_beams(
                     "could not reduce the subimage axis maps (#1002)".into(),
                 )
             })?;
-        (
-            input_coords.restore_record_with_layout(&reduced)?,
-            Some(reduced),
-        )
+        (CoordinateSystem::from_record(&reduced)?, Some(reduced))
     };
 
     image_info.beam_set = subset_beam_section(
@@ -165,8 +162,8 @@ pub(in crate::analysis) fn drop_axes_from_legacy_record(
         let pixelmap = read_i32_array(record.get(&format!("pixelmap{old_idx}"))?)?;
         let worldmap = read_i32_array(record.get(&format!("worldmap{old_idx}"))?)?;
         for (j, &pax) in pixelmap.iter().enumerate() {
-            if pax >= 0
-                && axis_remap.get(pax as usize).copied().flatten().is_some()
+            let retained = pax < 0 || axis_remap.get(pax as usize).copied().flatten().is_some();
+            if retained
                 && let Some(&wax) = worldmap.get(j)
                 && wax >= 0
             {
@@ -216,16 +213,21 @@ pub(in crate::analysis) fn drop_axes_from_legacy_record(
         for j in 0..entry.pixelmap.len() {
             let old_p = entry.pixelmap[j];
             let old_w = entry.worldmap.get(j).copied().unwrap_or(old_p);
-            if old_p < 0 {
-                new_pmap.push(old_p);
-                new_wmap.push(old_w);
-            } else if let Some(new_p) = axis_remap.get(old_p as usize).copied().flatten() {
-                new_pmap.push(new_p as i32);
-                new_wmap.push(world_remap.get(&old_w).copied().unwrap_or(new_p as i32));
+            let kept_pixel = usize::try_from(old_p)
+                .ok()
+                .and_then(|pixel| axis_remap.get(pixel).copied().flatten());
+            new_pmap.push(match (old_p < 0, kept_pixel) {
+                (true, _) => old_p,
+                (_, Some(pixel)) => pixel as i32,
+                _ => -(old_p + 1),
+            });
+            new_wmap.push(if old_w < 0 {
+                old_w
+            } else if old_p < 0 || kept_pixel.is_some() {
+                *world_remap.get(&old_w)?
             } else {
-                new_pmap.push(-(old_p + 1));
-                new_wmap.push(-(old_w + 1));
-            }
+                -(old_w + 1)
+            });
         }
         out_fields.push(RecordField::new(
             format!("{}{new_idx}", entry.prefix),
@@ -255,7 +257,14 @@ pub(in crate::analysis) fn drop_axes_from_legacy_record(
                 // Rebuilding the surviving direction coordinate uses its
                 // reference values for newly removed axes (dropRemovedAxes).
                 for (axis, &old) in map.iter().enumerate() {
-                    if old >= 0 && axis_remap[old as usize].is_none() {
+                    let retained = if kind == "pixel" {
+                        usize::try_from(old)
+                            .ok()
+                            .is_some_and(|pixel| axis_remap.get(pixel).copied().flatten().is_some())
+                    } else {
+                        world_remap.contains_key(&old)
+                    };
+                    if old >= 0 && !retained {
                         values[axis] = reference[axis];
                     }
                 }

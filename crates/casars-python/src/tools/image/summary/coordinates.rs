@@ -38,18 +38,12 @@ fn placements(record: &RecordValue) -> PyResult<Vec<Placement>> {
                 .trim_start_matches(char::is_alphabetic)
                 .parse::<usize>()
                 .map_err(raised)?;
-            let world = match record.get(&format!("worldmap{index}")) {
-                Some(Value::Array(ArrayValue::Int32(map))) => {
-                    map.iter().map(|&axis| usize::try_from(axis).ok()).collect()
-                }
-                _ => coordinate.pixel_axes.clone(),
-            };
             Ok(Placement {
                 index,
                 model: coordinate.model(record).map_err(raised)?,
                 field: coordinate.field,
                 pixels: coordinate.pixel_axes,
-                world,
+                world: coordinate.world_axes,
             })
         })
         .collect()

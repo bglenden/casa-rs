@@ -151,7 +151,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 "cannot regrid a coordinate with a removed pixel axis",
             ));
         }
-        let coordinate = match (ours, theirs) {
+        let coordinate = match (*ours, *theirs) {
             (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
                 if n_axes == 2 =>
             {
@@ -196,8 +196,8 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) => {
                 apply_linear_axes(
                     &mut result,
-                    first,
-                    lengths,
+                    &axes,
+                    &lengths,
                     &selected,
                     (ours, theirs),
                     &options,
@@ -620,7 +620,7 @@ fn linear_axis_unit_factor(input: &str, target: &str, axis: usize) -> Result<f64
 
 fn apply_linear_axes<T: RegridPixel>(
     result: &mut Regridded<T>,
-    first: usize,
+    pixel_axes: &[usize],
     lengths: &[usize],
     selected: &[bool],
     (input, target): (&LinearCoordinate, &LinearCoordinate),
@@ -631,7 +631,7 @@ fn apply_linear_axes<T: RegridPixel>(
         options
             .axes
             .iter()
-            .position(|&i| i == (first + axis) as i64)
+            .position(|&i| i == pixel_axes[axis] as i64)
             .unwrap_or(axis)
     });
     let input_units = input.axis_units();
@@ -640,7 +640,7 @@ fn apply_linear_axes<T: RegridPixel>(
     let mut target_pixel = target.reference_pixel();
     let same_grid = same_linear_grid(input, target);
     for local in axes {
-        let axis = first + local;
+        let axis = pixel_axes[local];
         let length = lengths[local];
         let old_length = result.data.shape()[axis];
         // casacore aligns the selected axis's units and retains earlier conversions.
@@ -681,8 +681,8 @@ fn apply_linear_plane<T: RegridPixel>(
     let input_units = input.axis_units();
     let target_units = target.axis_units();
     let factors = [
-        linear_axis_unit_factor(&input_units[0], &target_units[0], axis)?,
-        linear_axis_unit_factor(&input_units[1], &target_units[1], axis + 1)?,
+        linear_axis_unit_factor(&input_units[0], &target_units[0], axes[0])?,
+        linear_axis_unit_factor(&input_units[1], &target_units[1], axes[1])?,
     ];
     let grid = if options.replicate {
         replicated_grid(axes.map(|axis| result.data.shape()[axis]), shape)

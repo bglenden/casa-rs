@@ -38,7 +38,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use super::header::{FitsHeader, FitsValue};
 use super::obs_date::{fits_date, obs_epoch};
 use crate::CoordinateSystem;
-use crate::coordinate::{CoordinateModel, CoordinateType};
+use crate::coordinate::CoordinateModel;
 use crate::direction::DirectionCoordinate;
 use crate::error::CoordinateError;
 use crate::linear::LinearCoordinate;
@@ -105,34 +105,46 @@ pub fn try_to_fits_header(
         h.set(format!("NAXIS{}", i + 1), FitsValue::Integer(len as i64));
     }
 
-    let mut axis = 1usize; // 1-based FITS axis counter
-
-    for ci in 0..cs.n_coordinates() {
-        let coord = cs.coordinate(ci);
-        let ct = coord.coordinate_type();
-        match ct {
-            CoordinateType::Direction => {
-                if coord.n_pixel_axes() != 2 {
-                    return Err(CoordinateError::UnsupportedAxisLayout(
-                        "FITS export requires both celestial pixel axes".into(),
-                    ));
-                }
-                emit_direction(coord, &mut h, axis);
-                axis += 2;
+    for index in 0..cs.n_coordinates() {
+        let model = cs.coordinate(index);
+        let pixel = cs
+            .coordinate_pixel_axes(index)
+            .expect("existing coordinate");
+        if pixel
+            .iter()
+            .zip(
+                cs.coordinate_world_axes(index)
+                    .expect("existing coordinate"),
+            )
+            .any(|(pixel, world)| pixel.is_some() != world.is_some())
+        {
+            return Err(CoordinateError::UnsupportedAxisLayout(
+                "FITS export requires a world axis for each visible pixel axis".into(),
+            ));
+        }
+        let axes: Vec<_> = pixel.iter().flatten().map(|axis| axis + 1).collect();
+        match (model, axes.as_slice()) {
+            (CoordinateModel::Direction(_), [a1, a2]) => emit_direction(model, &mut h, [*a1, *a2]),
+            (CoordinateModel::Direction(_), _) => {
+                return Err(CoordinateError::UnsupportedAxisLayout(
+                    "FITS export requires both celestial pixel axes".into(),
+                ));
             }
-            CoordinateType::Spectral => {
-                emit_spectral(coord, &mut h, axis)?;
-                axis += 1;
+            (CoordinateModel::Spectral(_), [axis]) => emit_spectral(model, &mut h, *axis)?,
+            (CoordinateModel::Stokes(_), [axis]) => emit_stokes(model, &mut h, *axis),
+            (_, []) => continue,
+            (CoordinateModel::Linear(linear), _) if axes.len() != pixel.len() => {
+                let kept: Vec<_> = pixel
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(local, axis)| axis.map(|_| local))
+                    .collect();
+                let reduced = linear.kept_axes(&kept).ok_or_else(|| CoordinateError::UnsupportedAxisLayout(
+                    "FITS export cannot represent a coupled linear coordinate with a removed axis".into(),
+                ))?;
+                emit_linear(&CoordinateModel::Linear(reduced), &mut h, &axes);
             }
-            CoordinateType::Stokes => {
-                emit_stokes(coord, &mut h, axis);
-                axis += 1;
-            }
-            CoordinateType::Linear | CoordinateType::Tabular => {
-                let n = coord.n_pixel_axes();
-                emit_linear(coord, &mut h, axis);
-                axis += n;
-            }
+            _ => emit_linear(model, &mut h, &axes),
         }
     }
 
@@ -150,11 +162,61 @@ pub fn try_to_fits_header(
         h.set("TIMESYS", FitsValue::String(timesys));
     }
 
-    Ok(h)
+    let pixel_to_world = (0..naxis)
+        .map(|pixel| cs.pixel_axis_to_world_axis(pixel).map(|axis| axis + 1))
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            CoordinateError::UnsupportedAxisLayout(
+                "FITS export requires a world axis for each visible pixel axis".into(),
+            )
+        })?;
+    if pixel_to_world.iter().copied().eq(1..=naxis) {
+        return Ok(h);
+    }
+    Ok(permute_fits_world_rows(&h, &pixel_to_world))
+}
+
+// The emitters build WCS in pixel order. FITS stores CRPIX by pixel column;
+// CTYPE, CRVAL, CDELT, CUNIT, PV and the rows of PC are world ordered.
+fn permute_fits_world_rows(header: &FitsHeader, pixel_to_world: &[usize]) -> FitsHeader {
+    let mut result = FitsHeader::new();
+    for keyword in header.iter() {
+        if keyword.name.starts_with("PC") {
+            continue;
+        }
+        let mut name = keyword.name.clone();
+        for prefix in ["CTYPE", "CRVAL", "CDELT", "CUNIT", "PV"] {
+            if let Some(suffix) = keyword.name.strip_prefix(prefix) {
+                let (axis, parameter) = suffix
+                    .split_once('_')
+                    .map_or((suffix, None), |(axis, parameter)| (axis, Some(parameter)));
+                if let Ok(axis) = axis.parse::<usize>() {
+                    name = format!("{prefix}{}", pixel_to_world[axis - 1]);
+                    if let Some(parameter) = parameter {
+                        name.push('_');
+                        name.push_str(parameter);
+                    }
+                }
+                break;
+            }
+        }
+        result.set(name, keyword.value.clone());
+    }
+    for (old_row, &world) in pixel_to_world.iter().enumerate() {
+        for pixel in 1..=pixel_to_world.len() {
+            let value = header
+                .get_float(&format!("PC{}_{pixel}", old_row + 1))
+                .unwrap_or(f64::from(old_row + 1 == pixel));
+            if value != f64::from(world == pixel) {
+                result.set(format!("PC{world}_{pixel}"), FitsValue::Float(value));
+            }
+        }
+    }
+    result
 }
 
 /// Emits FITS keywords for a [`DirectionCoordinate`].
-fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
+fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, [a1, a2]: [usize; 2]) {
     let CoordinateModel::Direction(direction) = coord else {
         return;
     };
@@ -178,8 +240,7 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let ctype_lon = format!("{lon_prefix}-{proj_name}");
     let ctype_lat = format!("{lat_prefix}-{proj_name}");
 
-    let a1 = axis;
-    let a2 = axis + 1;
+    let axes = [a1, a2];
 
     h.set(format!("CTYPE{a1}"), FitsValue::String(ctype_lon));
     h.set(format!("CTYPE{a2}"), FitsValue::String(ctype_lat));
@@ -233,8 +294,8 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
         for (i, j, id_val) in identity {
             let val = pc_flat[flat_idx(i, j)];
             if (val - id_val).abs() > 1e-15 {
-                let fi = a1 + i;
-                let fj = a1 + j;
+                let fi = axes[i];
+                let fj = axes[j];
                 h.set(format!("PC{fi}_{fj}"), FitsValue::Float(val));
             }
         }
@@ -372,7 +433,7 @@ pub fn fits_stokes_axis(stokes: &[StokesType]) -> Option<(f64, f64)> {
 }
 
 /// Emits FITS keywords for a [`LinearCoordinate`] (or tabular treated as linear).
-fn emit_linear(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
+fn emit_linear(coord: &CoordinateModel, h: &mut FitsHeader, axes: &[usize]) {
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
@@ -380,8 +441,7 @@ fn emit_linear(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let units = coord.axis_units();
     let n = coord.n_pixel_axes();
 
-    for i in 0..n {
-        let a = axis + i;
+    for (i, &a) in axes.iter().enumerate() {
         h.set(
             format!("CTYPE{a}"),
             FitsValue::String(
@@ -409,8 +469,8 @@ fn emit_linear(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
                     let val = pc_flat[i * n + j];
                     let id_val = if i == j { 1.0 } else { 0.0 };
                     if (val - id_val).abs() > 1e-15 {
-                        let fi = axis + i;
-                        let fj = axis + j;
+                        let fi = axes[i];
+                        let fj = axes[j];
                         h.set(format!("PC{fi}_{fj}"), FitsValue::Float(val));
                     }
                 }

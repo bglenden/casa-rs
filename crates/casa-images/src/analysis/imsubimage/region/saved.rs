@@ -259,9 +259,7 @@ fn decode_lc_slicer(
         rec.get("oneRel"),
         Some(Value::Scalar(ScalarValue::Bool(true)))
     );
-    let refpix = (0..coords.n_coordinates())
-        .flat_map(|i| coords.coordinate(i).reference_pixel())
-        .collect::<Vec<_>>();
+    let refpix = coords.reference_pixel();
     let [lower, upper, step] = [numeric("blc")?, numeric("trc")?, numeric("inc")?];
     let ndim = lower.len().max(upper.len()).max(step.len());
     if ndim > full_shape.len() {
@@ -550,7 +548,7 @@ fn decode_wc_ellipsoid(
         let mut projected = relative::project_points(
             coords,
             shape,
-            plane,
+            super::world_axes_for_plane(coords, plane)?,
             mapped,
             [first.unit().name(), second.unit().name()],
             [[first.value(), second.value()]],
@@ -569,11 +567,10 @@ fn decode_wc_ellipsoid(
         };
         [pixel(first, x), pixel(second, y)]
     } else {
-        let mut world = (0..coords.n_coordinates())
-            .flat_map(|i| coords.coordinate(i).reference_value())
-            .collect::<Vec<_>>();
-        world[x] = in_radians(first)?;
-        world[y] = in_radians(second)?;
+        let mut world = coords.reference_value();
+        let [wx, wy] = super::world_axes_for_plane(coords, plane)?;
+        world[wx] = in_radians(first)?;
+        world[wy] = in_radians(second)?;
         let pixel = coords.to_pixel(&world)?;
         [pixel[x], pixel[y]]
     };
@@ -694,23 +691,20 @@ fn wc_box_corner(
     origin: usize,
     low: bool,
 ) -> Result<Vec<usize>, ImageError> {
-    let reference = (0..coords.n_coordinates())
-        .flat_map(|i| coords.coordinate(i).reference_value())
-        .collect::<Vec<_>>();
+    let reference = coords.reference_value();
     let mut world = reference.clone();
-    let reference_pixels = (0..coords.n_coordinates())
-        .flat_map(|i| coords.coordinate(i).reference_pixel())
-        .collect::<Vec<_>>();
-    let units = (0..coords.n_coordinates())
-        .flat_map(|i| coords.coordinate(i).axis_units())
-        .collect::<Vec<_>>();
+    let reference_pixels = coords.reference_pixel();
+    let units = coords.world_axis_units();
     let mut has_world_bounds = false;
     for (&axis, quantity) in axes.iter().zip(quantities) {
         if !matches!(quantity.unit().name(), "pix" | "frac" | "default") {
             has_world_bounds = true;
-            let unit = Unit::new(&units[axis])
+            let world_axis = coords.pixel_axis_to_world_axis(axis).ok_or_else(|| {
+                ImageError::InvalidMetadata(format!("WCBox pixel axis {axis} lacks a world axis"))
+            })?;
+            let unit = Unit::new(&units[world_axis])
                 .map_err(|err| ImageError::InvalidMetadata(err.to_string()))?;
-            world[axis] = quantity
+            world[world_axis] = quantity
                 .get_value_in(&unit)
                 .map_err(|err| ImageError::InvalidMetadata(err.to_string()))?;
         }
@@ -781,29 +775,35 @@ fn make_region_world_absolute(
         if !modes.contains(&mode) {
             continue;
         }
-        let mut start = 0;
         for i in 0..coords.n_coordinates() {
             let coord = coords.coordinate(i);
-            let axes = start..start + coord.n_world_axes();
-            start = axes.end;
-            if !axes.clone().any(|axis| modes.get(axis) == Some(&mode)) {
+            let axes = coords
+                .coordinate_world_axes(i)
+                .expect("existing coordinate");
+            if !axes
+                .iter()
+                .flatten()
+                .any(|&axis| modes.get(axis) == Some(&mode))
+            {
                 continue;
             }
             let direction = if matches!(coord, CoordinateModel::Direction(_)) {
-                let [lon, lat] = offsets[axes.clone()] else {
+                let [Some(lon), Some(lat)] = axes.as_slice() else {
                     return Err(ImageError::InvalidMetadata(
                         "relative WCBox requires both direction axes in the image".into(),
                     ));
                 };
                 Some(offset_direction(
-                    [anchor[axes.start], anchor[axes.start + 1]],
-                    [lon, lat],
+                    [anchor[*lon], anchor[*lat]],
+                    [offsets[*lon], offsets[*lat]],
                 ))
             } else {
                 None
             };
-            for (local_axis, axis) in axes.enumerate() {
-                if modes.get(axis) == Some(&mode) {
+            for (local_axis, axis) in axes.into_iter().enumerate() {
+                if let Some(axis) = axis
+                    && modes.get(axis) == Some(&mode)
+                {
                     world[axis] = match direction {
                         Some(values) => values[local_axis],
                         // makeWorldAbsolute is a no-op for Stokes at the reference.
