@@ -115,14 +115,16 @@ fn feather_typed(
             )?;
             &plane_filter
         };
-        let high_plane = planes
-            .view(plane, &high_data)
-            .mapv(|value| Complex32::new(value, 0.0));
-        let low_plane = planes
-            .view(plane, &low_data)
-            .mapv(|value| Complex32::new(value, 0.0));
-        let high_fft = centered_fft2(&high_plane);
-        let low_fft = centered_fft2(&low_plane);
+        let high_fft = centered_fft2(
+            &planes
+                .view(plane, &high_data)
+                .mapv(|value| Complex32::new(value, 0.0)),
+        );
+        let low_fft = centered_fft2(
+            &planes
+                .view(plane, &low_data)
+                .mapv(|value| Complex32::new(value, 0.0)),
+        );
         let mut combined = Array2::<Complex32>::zeros((nx, ny));
         for x in 0..nx {
             for y in 0..ny {
