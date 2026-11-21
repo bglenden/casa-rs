@@ -75,7 +75,9 @@ mod weight_spectra;
 mod writer;
 
 pub use flagdata_model::flagdata_model;
-pub use ft::predictcomp::{PredictedComponent, predict_calibrator_component};
+pub use ft::predictcomp::{
+    PredictedComponent, predict_calibrator_component, predict_solar_component_2012,
+};
 pub use ft::settings::{
     ImagerGridder, ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerSingleDish,
     ImagerSingleDishKernel, ImagerSingleDishSetup, ImagerTransformOptions,

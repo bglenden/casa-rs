@@ -40295,6 +40295,644 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "predictcomp",
+      "contract_version": 1,
+      "display_name": "Predict Calibrator Component",
+      "category": "Calibration",
+      "summary": "Write a flux calibrator component list and optionally plot its visibility amplitudes.",
+      "provider_family": "simulation",
+      "casa_task": "predictcomp",
+      "execution": {
+        "invocation_name": "predictcomp",
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "predictcomp-run-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "prediction-products",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "decoded_artifacts"
+              },
+              "cardinality": "many",
+              "optional": true,
+              "probe_supported": false
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "objname",
+          "concept": {
+            "id": "predictcomp.objname",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--objname"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "objname"
+            },
+            "python": {
+              "name": "objname"
+            },
+            "presentation": {
+              "label": "objname",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "standard",
+          "concept": {
+            "id": "setjy.standard",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "Butler-JPL-Horizons 2010"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [
+            {
+              "kind": "allowed_values",
+              "values": [
+                  "Perley-Taylor 95",
+                  "Butler-JPL-Horizons 2010",
+                  "Perley-Butler 2010",
+                  "Perley-Taylor 99",
+                  "Perley-Butler 2013",
+                  "Perley 90",
+                  "Butler-JPL-Horizons 2012",
+                  "Perley-Butler 2017",
+                  "Baars"
+              ]
+            }
+          ],
+          "projections": {
+            "cli": {
+              "flags": [
+                "--standard"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "standard"
+            },
+            "python": {
+              "name": "standard"
+            },
+            "presentation": {
+              "label": "standard",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "epoch",
+          "concept": {
+            "id": "predictcomp.epoch",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--epoch"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "epoch"
+            },
+            "python": {
+              "name": "epoch"
+            },
+            "presentation": {
+              "label": "epoch",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "minfreq",
+          "concept": {
+            "id": "predictcomp.minfreq",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minfreq"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "minfreq"
+            },
+            "python": {
+              "name": "minfreq"
+            },
+            "presentation": {
+              "label": "minfreq",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "maxfreq",
+          "concept": {
+            "id": "predictcomp.maxfreq",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--maxfreq"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "maxfreq"
+            },
+            "python": {
+              "name": "maxfreq"
+            },
+            "presentation": {
+              "label": "maxfreq",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "nfreqs",
+          "concept": {
+            "id": "predictcomp.nfreqs",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--nfreqs"
+              ],
+              "metavar": "COUNT"
+            },
+            "provider": {
+              "field": "nfreqs"
+            },
+            "python": {
+              "name": "nfreqs"
+            },
+            "presentation": {
+              "label": "nfreqs",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "prefix",
+          "concept": {
+            "id": "predictcomp.prefix",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--prefix"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "prefix"
+            },
+            "python": {
+              "name": "prefix"
+            },
+            "presentation": {
+              "label": "prefix",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "antennalist",
+          "concept": {
+            "id": "parameter.antennalist",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antennalist"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "antennalist"
+            },
+            "python": {
+              "name": "antennalist"
+            },
+            "presentation": {
+              "label": "antennalist",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showplot",
+          "concept": {
+            "id": "predictcomp.showplot",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showplot"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "showplot"
+            },
+            "python": {
+              "name": "showplot"
+            },
+            "presentation": {
+              "label": "showplot",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "savefig",
+          "concept": {
+            "id": "predictcomp.savefig",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--savefig"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "savefig"
+            },
+            "python": {
+              "name": "savefig"
+            },
+            "presentation": {
+              "label": "savefig",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "symb",
+          "concept": {
+            "id": "predictcomp.symb",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "."
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--symb"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "symb"
+            },
+            "python": {
+              "name": "symb"
+            },
+            "presentation": {
+              "label": "symb",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "include0amp",
+          "concept": {
+            "id": "predictcomp.include0amp",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--include0amp"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "include0amp"
+            },
+            "python": {
+              "name": "include0amp"
+            },
+            "presentation": {
+              "label": "include0amp",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "include0bl",
+          "concept": {
+            "id": "predictcomp.include0bl",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--include0bl"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "include0bl"
+            },
+            "python": {
+              "name": "include0bl"
+            },
+            "presentation": {
+              "label": "include0bl",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "blunit",
+          "concept": {
+            "id": "predictcomp.blunit",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--blunit"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "blunit"
+            },
+            "python": {
+              "name": "blunit"
+            },
+            "presentation": {
+              "label": "blunit",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showbl0flux",
+          "concept": {
+            "id": "predictcomp.showbl0flux",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showbl0flux"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "showbl0flux"
+            },
+            "python": {
+              "name": "showbl0flux"
+            },
+            "presentation": {
+              "label": "showbl0flux",
+              "group": "Plot"
+            }
+          }
+        }
+      ]
     }
   ]
 }
