@@ -285,7 +285,7 @@ fn projection_edits_use_the_existing_celestial_transform() {
 }
 
 #[test]
-fn unsupported_projection_transitions_leave_the_image_unchanged() {
+fn invalid_zpn_polynomial_leaves_the_image_unchanged() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
     let workspace = tempfile::tempdir().unwrap();
     {
@@ -296,16 +296,15 @@ fn unsupported_projection_transitions_leave_the_image_unchanged() {
             .unwrap()
             .history()
             .unwrap();
-        let (output, reply) = json_run(
+        let (_, reply) = json_run(
             workspace.path(),
             "imhead",
             json!({"imagename": path, "mode": "put", "hdkey": "projection", "hdvalue": target}),
         );
         assert!(
-            matches!(reply, Some(TaskReply::Failed { .. })),
+            matches!(&reply, Some(TaskReply::Failed { message, .. }) if message.contains("Invalid ZPN polynomial coefficients")),
             "{target}: {reply:?}"
         );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("#977"));
         let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
         assert_eq!(image.history().unwrap(), before);
         drop(image);

@@ -108,7 +108,12 @@ pub fn imhead_list_log(header: &ImageHeaderSummary) -> Vec<String> {
         ("units", "cunit"),
     ] {
         lines.push(format!("{title} --"));
-        for (index, axis) in header.axes.iter().enumerate() {
+        let axes = if prefix == "crpix" {
+            &header.axes
+        } else {
+            &header.world_axes
+        };
+        for (index, axis) in axes.iter().enumerate() {
             let value = match prefix {
                 "ctype" => axis.name.clone(),
                 "crpix" => format!("{:.1}", axis.reference_pixel),

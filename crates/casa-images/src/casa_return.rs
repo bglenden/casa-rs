@@ -270,14 +270,10 @@ pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
             ("maxpos".to_string(), CasaValue::string(&extrema.max_world)),
         ]);
     }
-    for (index, axis) in summary.axes.iter().enumerate() {
+    for (index, axis) in summary.world_axes.iter().enumerate() {
         let number = index + 1;
         entries.extend([
             (format!("cdelt{number}"), CasaValue::float(axis.increment)),
-            (
-                format!("crpix{number}"),
-                CasaValue::float(axis.reference_pixel),
-            ),
             (
                 format!("crval{number}"),
                 CasaValue::float(axis.reference_value),
@@ -291,6 +287,12 @@ pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
                 CasaValue::string(axis.unit.clone()),
             ),
         ]);
+    }
+    for (index, axis) in summary.axes.iter().enumerate() {
+        entries.push((
+            format!("crpix{}", index + 1),
+            CasaValue::float(axis.reference_pixel),
+        ));
     }
     if let Some(beam) = &summary.restoring_beam {
         entries.extend([
@@ -443,6 +445,10 @@ mod tests {
             unit: unit.into(),
             stokes: Vec::new(),
         };
+        let axes = vec![
+            axis(0, "Right Ascension", "rad"),
+            axis(1, "Declination", "rad"),
+        ];
         ImageHeaderSummary {
             imagename: "ramp.im".into(),
             pixel_type: "Float32".into(),
@@ -485,10 +491,8 @@ mod tests {
             has_multiple_beams: false,
             per_plane_beams: None,
             extrema: None,
-            axes: vec![
-                axis(0, "Right Ascension", "rad"),
-                axis(1, "Declination", "rad"),
-            ],
+            world_axes: axes.clone(),
+            axes,
         }
     }
 
