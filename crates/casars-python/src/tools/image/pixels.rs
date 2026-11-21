@@ -10,7 +10,6 @@ use numpy::{
 use pyo3::prelude::*;
 
 use super::PyImageTool;
-use super::copy_region::Selection;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use crate::convert::{IntList, Variant, value::CasaValue};
 
@@ -157,16 +156,6 @@ pub(super) struct Chunk {
     pub(super) start: Vec<usize>,
     pub(super) size: Vec<usize>,
     pub(super) stride: Vec<usize>,
-}
-
-impl From<Selection> for Chunk {
-    fn from(selection: Selection) -> Self {
-        Self {
-            start: selection.start,
-            size: selection.shape,
-            stride: selection.stride,
-        }
-    }
 }
 
 impl Chunk {

@@ -23,6 +23,7 @@ use super::PyImageTool;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::pixels::{Chunk, and_mask, collapse_axes};
 use super::region_read::{read_region_argument, read_region_section};
+use super::subimage::Region;
 
 mod flux;
 mod report;
@@ -473,7 +474,7 @@ impl PyImageTool {
                     return Err(raised(format!("Invalid cursor axes: {axes:?}.")));
                 }
                 let axes = collapse_axes(&axes, shape.len())?;
-                let (chunk, membership) = read_region_section(&image, region.as_ref(), true)?;
+                let (chunk, membership) = read_region_section(&image, region.as_ref().map(Region::as_region), true)?;
                 let expression = if mask.is_empty() {
                     None
                 } else {

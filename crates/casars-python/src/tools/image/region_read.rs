@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::{ImageRegionSection, evaluate_image_tool_mask_section};
+use casa_images::analysis::{ImageRegionSection, SubimageRegion, evaluate_image_tool_mask_section};
 use casa_types::{ArrayD, RecordValue};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
@@ -72,10 +72,9 @@ pub(super) fn read_region_argument(
 
 pub(super) fn read_region_section(
     image: &ImageHandle,
-    region: Option<&Region>,
+    region: Option<SubimageRegion<'_>>,
     include_membership: bool,
 ) -> PyResult<(Chunk, Option<ArrayD<bool>>)> {
-    let region = region.map(Region::as_region);
     let section = if let ImageHandle::Float(storage) = image {
         storage
             .with_float_view(|image| ImageRegionSection::resolve(image, region, include_membership))
@@ -143,8 +142,9 @@ impl PyImageTool {
                     axes.as_ref().map_or(&[], |arg| arg.0.as_slice()),
                     shape.len(),
                 )?;
+                let region = region.as_ref().map(Region::as_region);
                 let (chunk, membership) =
-                    read_region_section(image, region.as_ref(), getmask || !axes.is_empty())?;
+                    read_region_section(image, region, getmask || !axes.is_empty())?;
                 let expression = if mask.is_empty() {
                     None
                 } else {
