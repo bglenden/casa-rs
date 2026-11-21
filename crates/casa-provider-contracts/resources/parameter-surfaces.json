@@ -39925,6 +39925,376 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "getcalmodvla",
+      "contract_version": 1,
+      "display_name": "Get VLA Calibrator Model",
+      "category": "Calibration",
+      "summary": "Retrieve a calibrator brightness model from the VLA service.",
+      "provider_family": "calibration",
+      "casa_task": "getcalmodvla",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "getcalmodvla"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": false
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "vla_calibrator.outfile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "Output Component List",
+              "group": "Output"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "This path names a component-list table."
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "Overwrite",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "source",
+          "concept": {
+            "id": "vla_calibrator.source",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--source"
+              ],
+              "metavar": "NAME"
+            },
+            "provider": {
+              "field": "source"
+            },
+            "python": {
+              "name": "source"
+            },
+            "presentation": {
+              "label": "Calibrator Name",
+              "group": "VLA Service"
+            }
+          }
+        },
+        {
+          "name": "direction",
+          "concept": {
+            "id": "vla_calibrator.direction",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--direction"
+              ],
+              "metavar": "DIRECTION"
+            },
+            "provider": {
+              "field": "direction"
+            },
+            "python": {
+              "name": "direction"
+            },
+            "presentation": {
+              "label": "Calibrator Direction",
+              "group": "VLA Service"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "The VLA service accepts a source lookup direction as an alternative to source name."
+          }
+        },
+        {
+          "name": "band",
+          "concept": {
+            "id": "vla_calibrator.band",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--band"
+              ],
+              "metavar": "BAND"
+            },
+            "provider": {
+              "field": "band"
+            },
+            "python": {
+              "name": "band"
+            },
+            "presentation": {
+              "label": "VLA Receiver Band",
+              "group": "VLA Service"
+            }
+          }
+        },
+        {
+          "name": "obsdate",
+          "concept": {
+            "id": "vla_calibrator.obsdate",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--obsdate"
+              ],
+              "metavar": "DATE"
+            },
+            "provider": {
+              "field": "obsdate"
+            },
+            "python": {
+              "name": "obsdate",
+              "type_hint": "int | float | str"
+            },
+            "presentation": {
+              "label": "Observation Date",
+              "group": "VLA Service"
+            }
+          }
+        },
+        {
+          "name": "refdate",
+          "concept": {
+            "id": "vla_calibrator.refdate",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refdate"
+              ],
+              "metavar": "DATE"
+            },
+            "provider": {
+              "field": "refdate"
+            },
+            "python": {
+              "name": "refdate",
+              "type_hint": "int | float | str"
+            },
+            "presentation": {
+              "label": "Reference Date",
+              "group": "VLA Service"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "This date is the upper bound for versions of the VLA model database, not a simulated observation date."
+          }
+        },
+        {
+          "name": "hosts",
+          "concept": {
+            "id": "vla_calibrator.hosts",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": "http://obs.vla.nrao.edu/calmodvla"
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--hosts"
+              ],
+              "metavar": "URLS"
+            },
+            "provider": {
+              "field": "hosts"
+            },
+            "python": {
+              "name": "hosts"
+            },
+            "presentation": {
+              "label": "Service URLs",
+              "group": "VLA Service"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "URLs for the VLA calibrator-model service."
+          }
+        }
+      ]
     }
   ]
 }

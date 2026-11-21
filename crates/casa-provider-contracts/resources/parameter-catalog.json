@@ -2,6 +2,145 @@
   "schema_version": 1,
   "concepts": [
     {
+      "id": "vla_calibrator.outfile",
+      "semantic_revision": 1,
+      "casa_name": "outfile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Write the retrieved source model as a CASA component-list table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.source",
+      "semantic_revision": 1,
+      "casa_name": "source",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Calibrator name. Specify either the name or the direction.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.direction",
+      "semantic_revision": 1,
+      "casa_name": "direction",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Direction in FRAME LONGITUDE LATITUDE form.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.band",
+      "semantic_revision": 1,
+      "casa_name": "band",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Case-insensitive VLA receiver band P, L, S, C, X, U, K, A or Q.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.obsdate",
+      "semantic_revision": 1,
+      "casa_name": "obsdate",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Observation date as numeric MJD or a YYYY-MM-DD calendar date.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.refdate",
+      "semantic_revision": 1,
+      "casa_name": "refdate",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Optional reference date as numeric MJD or a YYYY-MM-DD calendar date.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.hosts",
+      "semantic_revision": 1,
+      "casa_name": "hosts",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "service_reference"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "VLA calibrator-service URLs in the order they will be queried.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "positions.output.outfile",
       "semantic_revision": 1,
       "casa_name": "outfile",
