@@ -7,6 +7,7 @@ pub(super) mod axis;
 pub(super) mod figure;
 mod header;
 mod iteration;
+mod legacy;
 mod samples;
 mod selection;
 mod table_data;
@@ -79,7 +80,6 @@ pub(super) fn run(
     let native = Table::open(TableOptions::new(path)).map_err(|e| {
         TaskFailure::execution(format!("open calibration table {}: {e}", path.display()))
     })?;
-    let table = CalibrationTable::read(native, path).map_err(TaskFailure::execution)?;
     let use_selection = task.flag("selectdata")?;
     let expression = |name| {
         if use_selection {
@@ -100,6 +100,25 @@ pub(super) fn run(
     if polarization.is_empty() {
         polarization = expression("polarization")?;
     }
+    let expressions = Expressions {
+        antenna: &antenna,
+        field: &field,
+        spw: &spw,
+        scan: &scan,
+        timerange: &timerange,
+        observation: &observation,
+        taql: &taql,
+    };
+    let averaging = averaging::options(task)?;
+    let (native, spline) = legacy::materialize(
+        native,
+        path,
+        &expressions,
+        averaging::active(&averaging),
+        &polarization,
+    )
+    .map_err(TaskFailure::execution)?;
+    let table = CalibrationTable::read(native, path).map_err(TaskFailure::execution)?;
     if table.position_parameters()
         && !matches!(
             antenna_position.as_str(),
@@ -115,17 +134,20 @@ pub(super) fn run(
     } else {
         &polarization
     };
-    let expressions = Expressions {
-        antenna: &antenna,
-        field: &field,
-        spw: &spw,
-        scan: &scan,
-        timerange: &timerange,
-        observation: &observation,
-        taql: &taql,
+    let spline_selection = Expressions {
+        timerange: "",
+        taql: "",
+        ..expressions
     };
-    let selection = Selection::resolve(&table, &expressions).map_err(TaskFailure::validation)?;
-    let averaging = averaging::options(task)?;
+    let selection = Selection::resolve(
+        &table,
+        if spline.is_some() {
+            &spline_selection
+        } else {
+            &expressions
+        },
+    )
+    .map_err(TaskFailure::validation)?;
     let [default_x, default_y] = default_axes(&table.subtype);
     let x = task
         .text("xaxis")?
@@ -134,6 +156,10 @@ pub(super) fn run(
         .map_err(TaskFailure::validation)?;
     let ys = axes(task.value("yaxis"), task.value("ydatacolumn"), default_y)
         .map_err(TaskFailure::validation)?;
+    if spline.is_some() {
+        legacy::check_spline_axes(std::iter::once(x).chain(ys.iter().copied()))
+            .map_err(TaskFailure::validation)?;
+    }
     let series = ys
         .into_iter()
         .map(|y| {
@@ -142,6 +168,7 @@ pub(super) fn run(
                 y,
                 polarization: receptor_selection,
                 averaging: &averaging,
+                spline,
             };
             let points =
                 samples::points(&table, &selection, &request).map_err(TaskFailure::validation)?;
@@ -295,7 +322,8 @@ pub(super) fn axis_names(value: Option<&ParameterValue>) -> Result<Vec<&str>, St
 fn default_axes(subtype: &str) -> [Axis; 2] {
     use Axis::*;
     match subtype {
-        "B Jones" | "BPOLY" => [Channel, Amplitude],
+        "B Jones" => [Channel, Amplitude],
+        "BPOLY" => [Frequency, Amplitude],
         "K Jones" => [Antenna1, Amplitude],
         subtype if subtype.starts_with("KAntPos") => [Antenna1, Amplitude],
         subtype if subtype.contains("TSYS") => [Channel, Amplitude],
@@ -378,7 +406,7 @@ fn write_export(
                 series.y,
                 header.verbose,
                 points.peek().is_some(),
-                table.position_parameters(),
+                table,
             )?;
             for point in points {
                 text::point(

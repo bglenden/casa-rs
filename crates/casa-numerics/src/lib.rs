@@ -7,6 +7,7 @@
 mod annular_aperture;
 pub mod cell_noise;
 mod elliptical_gaussian;
+mod legacy_polynomial;
 mod primary_beam;
 mod simulated_bandpass;
 mod vla_beams;
@@ -16,6 +17,7 @@ pub use elliptical_gaussian::{
     EllipticalGaussian, EllipticalGaussianError, common_enclosing_gaussian, deconvolving_gaussian,
     gaussian_covariance, normalize_position_angle,
 };
+pub use legacy_polynomial::{legacy_bpoly_chebyshev_value, legacy_cubic_spline};
 pub use primary_beam::{BeamPattern, DefaultRadial, FrequencyPattern, PrimaryBeam};
 pub use simulated_bandpass::SimulatedBandpass;
 pub use vla_beams::{EvlaBand, EvlaPowerPattern, VlaBand};

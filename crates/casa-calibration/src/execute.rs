@@ -4963,32 +4963,7 @@ fn infer_bpoly_receptor_count(
     })
 }
 
-pub(crate) fn legacy_bpoly_chebyshev_value(
-    coefficients: &[f64],
-    x_start: f64,
-    x_end: f64,
-    x: f64,
-) -> f64 {
-    if coefficients.is_empty() {
-        return 0.0;
-    }
-    if coefficients.len() == 1 || (x_end - x_start).abs() <= f64::EPSILON {
-        return 0.5_f64 * coefficients[0];
-    }
-
-    let xcap = ((x - x_start) - (x_end - x)) / (x_end - x_start);
-    let mut sum = 0.5_f64 * coefficients[0];
-    let mut t_prev = 1.0_f64;
-    let mut t_curr = xcap;
-    sum += coefficients[1] * t_curr;
-    for coefficient in coefficients.iter().copied().skip(2) {
-        let t_next = 2.0_f64 * xcap * t_curr - t_prev;
-        sum += coefficient * t_next;
-        t_prev = t_curr;
-        t_curr = t_next;
-    }
-    sum
-}
+pub(crate) use casa_numerics::legacy_bpoly_chebyshev_value;
 
 fn cal_spw_reference_frequency_hz(cal_spw: &crate::plan::SpectralWindowPlan) -> f64 {
     cal_spw
