@@ -75,11 +75,12 @@ impl DirectionCoordinate {
         if fixed_pixels.iter().any(Option::is_some) {
             let fixed = [0, 1].map(|axis| fixed_pixels[axis].unwrap_or(self.crpix[axis]));
             let fixed_world = self.pixel_to_world(fixed)?;
-            for axis in 0..2 {
-                if fixed_pixels[axis].is_some() {
+            for (axis, fixed_pixel) in fixed_pixels.into_iter().enumerate() {
+                if fixed_pixel.is_some() {
                     let width = 10.0 * self.cdelt[axis].abs();
                     self.mix_ranges[axis] = if axis == 0 {
-                        let width = width / world[1].cos();
+                        let reference_latitude = self.pixel_to_world(self.crpix)?[1];
+                        let width = width / reference_latitude.cos();
                         [
                             signed_longitude(fixed_world[0] - width),
                             signed_longitude(fixed_world[0] + width),
@@ -131,10 +132,9 @@ impl DirectionCoordinate {
         };
         let mut evaluate = |angle: f64| {
             world[fixed_pixel_axis] = angle;
-            if !world[0].is_finite()
-                || !world[1].is_finite()
-                || world[1].abs() > FRAC_PI_2 + ANGLE_TOLERANCE
-            {
+            // An image-centred interval can cross a celestial pole. The
+            // rotation folds trial latitudes across it before projection.
+            if !world[0].is_finite() || !world[1].is_finite() {
                 return Err(invalid_world());
             }
             let (phi, theta) = self.celestial_to_native(world[0], world[1]);

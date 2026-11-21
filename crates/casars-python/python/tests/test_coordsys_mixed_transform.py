@@ -75,6 +75,7 @@ def test_numpy_batch_orientation_and_units():
     )
     np.testing.assert_allclose(recovered, points, atol=1e-11)
     assert cs.convertmany(np.empty((2, 0))).shape == (2, 0)
+    assert cs.convertmany([[], []]).shape == (2, 0)
 
 
 def test_affine_mixed_flags_and_unit_forms(casa):
@@ -126,6 +127,9 @@ def test_mixed_sky_axes_and_shape_lifetime(casa):
         assert restored.fromrecord(cs.torecord())
         with pytest.raises(RuntimeError, match="Invalid world coordinate"):
             restored.convert(mixed[:, 0], **options)
+        with pytest.raises(RuntimeError, match="Failed AlwaysAssert"):
+            restored.convertmany(world[:, 0], shape=SHAPE)
+        np.testing.assert_allclose(restored.convert(mixed[:, 0], **options), POINT, rtol=0, atol=1e-8)
 
 
 def test_mixed_reference_offsets_with_doppler(casa):
@@ -181,6 +185,38 @@ def test_native_writer_reader_pairs_preserve_mixed_geometry(casa, tmp_path):
                 )
             finally:
                 image.done()
+
+
+def test_shape_interval_can_cross_a_celestial_pole(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(direction=True)
+        assert cs.setunits(["deg", "deg"])
+        assert cs.setreferencevalue([25.0, 85.0])
+        assert cs.setreferencepixel([10.0, 10.0])
+        assert cs.setincrement([-1.0, 1.0])
+        # The centre latitude is 85 degrees and the shape-based interval
+        # extends 15 degrees on both sides. Its solution is the reference pixel.
+        actual = cs.convert(
+            [25.0, 10.0], unitsin=["deg", "pix"], unitsout=["pix", "pix"], shape=[20, 20],
+        )
+        np.testing.assert_allclose(actual, [10.0, 10.0], atol=1e-9, rtol=0)
+
+
+@pytest.mark.parametrize("latitude", [-90.0, 90.0])
+def test_unrotated_plate_carree_preserves_longitude_at_the_pole(casa, latitude):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(direction=True)
+        assert cs.setdirection(
+            proj="CAR", refpix=[0.0, 0.0],
+            refval=["0deg", "0deg"], incr=["1deg", "1deg"],
+        )
+        assert cs.setunits(["deg", "deg"])
+        absolute = [30.0, latitude]
+        # With one degree per pixel and coincident poles, CAR is the
+        # identity in longitude and latitude, including at both endpoints.
+        actual = cs.convert(absolute, unitsin=["deg", "pix"], unitsout=["pix", "pix"])
+        np.testing.assert_allclose(actual, absolute, atol=1e-9, rtol=0)
+        np.testing.assert_allclose(cs.topixel(absolute)["numeric"], absolute, atol=1e-9, rtol=0)
 
 
 def test_errors_and_stokes_units(casa):

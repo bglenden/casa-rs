@@ -12,11 +12,11 @@ use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 use crate::convert::holder::{DOPPLER_CODES, doppler_ref};
 use crate::convert::{StringList, Variant, value::CasaValue};
 
+use super::PyCoordsys;
 use super::conversion_frames::FrameName;
 use super::doppler::{VelocityConversion, values as double_values};
 use super::inspect::{axis_values, units as coordinate_units};
 use super::transform_relative::OutputFrame;
-use super::{CoordinateState, PyCoordsys};
 
 fn raised(error: impl ToString) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
@@ -245,18 +245,11 @@ struct MixedTransform {
 
 impl MixedTransform {
     fn new(
-        state: &mut CoordinateState,
+        coordinates: &CoordinateSystem,
         count: usize,
-        shape: Vec<i64>,
         input: MixFormat,
         output: MixFormat,
     ) -> PyResult<Self> {
-        let coordinates = &mut state.coordinates;
-        if shape != [-1] && shape.len() == coordinates.n_pixel_axes() {
-            // Casacore retains the previous ranges when the selected image
-            // centre cannot be projected.
-            let _ = coordinates.set_direction_mix_shape(&shape);
-        }
         if coordinates.n_pixel_axes() != coordinates.n_world_axes() {
             return Err(raised("Number of pixel and world axes differs"));
         }
@@ -384,9 +377,18 @@ impl MixedTransform {
     }
 }
 
-fn matrix_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
-    let bad = || raised("Failed AlwaysAssert coordIn.shape().nelements()==2");
-    let value = value.ok_or_else(bad)?;
+fn install_range_from_shape(coordinates: &mut CoordinateSystem, shape: &[i64]) {
+    if shape != [-1] && shape.len() == coordinates.n_pixel_axes() {
+        // Casacore retains the previous ranges when the selected image
+        // centre cannot be projected.
+        let _ = coordinates.set_direction_mix_shape(shape);
+    }
+}
+
+fn matrix_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Array2<f64>>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
     let (shape, values) = match value.extract::<Variant>()? {
         Variant::Array { shape, values } => (shape, values),
         Variant::ComplexArray { shape, values } => {
@@ -396,10 +398,12 @@ fn matrix_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
             let py = value.py();
             let options = PyDict::new(py);
             options.set_item("dtype", "object")?;
-            let array = py
+            let Ok(array) = py
                 .import("numpy")?
                 .call_method("asarray", (value,), Some(&options))
-                .map_err(|_| bad())?;
+            else {
+                return Ok(None);
+            };
             (
                 array.cast::<PyUntypedArray>()?.shape().to_vec(),
                 double_values(&array, "convertmany")?,
@@ -407,20 +411,26 @@ fn matrix_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
         }
         _ if value.is_instance_of::<PyUntypedArray>() => {
             let array = value.cast::<PyUntypedArray>()?;
+            let kind = array.dtype().kind();
+            if !matches!(kind, b'b' | b'i' | b'u' | b'f' | b'S' | b'U') {
+                return Ok(None);
+            }
             let mut values = double_values(value, "convertmany")?;
-            if array.dtype().kind() == b'U' {
+            if kind == b'U' {
                 // CASA's Unicode-array typemap reads the first string and
                 // leaves the remaining entries in the double vector at zero.
                 values.get_mut(1..).unwrap_or_default().fill(0.0);
             }
             (array.shape().to_vec(), values)
         }
-        _ => return Err(bad()),
+        _ => return Ok(None),
     };
     let [rows, columns] = shape.as_slice() else {
-        return Err(bad());
+        return Ok(None);
     };
-    Array2::from_shape_vec((*rows, *columns).f(), values).map_err(raised)
+    Array2::from_shape_vec((*rows, *columns).f(), values)
+        .map(Some)
+        .map_err(raised)
 }
 
 #[pymethods]
@@ -455,7 +465,8 @@ impl PyCoordsys {
         let shape = shape.values("convert")?;
         let result = py.detach(|| {
             let mut state = self.state();
-            let transform = MixedTransform::new(&mut state, values.len(), shape, input, output)?;
+            install_range_from_shape(&mut state.coordinates, &shape);
+            let transform = MixedTransform::new(&state.coordinates, values.len(), input, output)?;
             transform.apply(&state.coordinates, &values)
         })?;
         CasaValue::floats(result).into_python(py)
@@ -491,7 +502,10 @@ impl PyCoordsys {
         let shape = shape.values("convertmany")?;
         let result = py.detach(|| {
             let mut state = self.state();
-            let transform = MixedTransform::new(&mut state, values.nrows(), shape, input, output)?;
+            install_range_from_shape(&mut state.coordinates, &shape);
+            let values = values
+                .ok_or_else(|| raised("Failed AlwaysAssert coordIn.shape().nelements()==2"))?;
+            let transform = MixedTransform::new(&state.coordinates, values.nrows(), input, output)?;
             let mut result = Array2::<f64>::zeros(values.dim().f());
             for (at, mut converted) in values.columns().into_iter().zip(result.columns_mut()) {
                 let at = at.as_slice().expect("contiguous coordinate column");
