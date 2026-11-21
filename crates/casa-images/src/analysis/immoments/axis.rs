@@ -3,6 +3,10 @@
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_provider_contracts::ParameterValue;
+use casa_types::measures::{
+    MeasFrame,
+    doppler::{DopplerRef, MDoppler},
+};
 use casa_types::quanta::Unit;
 
 use super::super::SPEED_OF_LIGHT_KM_S;
@@ -80,10 +84,19 @@ pub(super) struct MomentAxis<'a> {
     local: usize,
     angle_scale: f64,
     rest: Option<f64>,
+    doppler: DopplerRef,
 }
 
 impl<'a> MomentAxis<'a> {
     pub(super) fn new(system: &'a CoordinateSystem, index: usize) -> Result<Self, ImageError> {
+        Self::with_doppler(system, index, DopplerRef::RADIO)
+    }
+
+    pub(super) fn with_doppler(
+        system: &'a CoordinateSystem,
+        index: usize,
+        doppler: DopplerRef,
+    ) -> Result<Self, ImageError> {
         let (model, local) = system
             .pixel_axis_owner(index)
             .ok_or_else(|| ImageError::CasaSelection("No coordinate for moment axis".into()))?;
@@ -120,6 +133,7 @@ impl<'a> MomentAxis<'a> {
             local,
             angle_scale,
             rest,
+            doppler,
         })
     }
 
@@ -136,9 +150,39 @@ impl<'a> MomentAxis<'a> {
     fn position(&self, pixel: &[f64]) -> Result<f64, ImageError> {
         let world = self.coordinate.to_world(pixel)?[self.local];
         Ok(match self.rest {
-            Some(rest) => SPEED_OF_LIGHT_KM_S * (1.0 - world / rest),
+            Some(rest) if self.doppler == DopplerRef::RADIO => {
+                SPEED_OF_LIGHT_KM_S * (1.0 - world / rest)
+            }
+            Some(rest) => {
+                let doppler = MDoppler::new(world / rest, DopplerRef::RATIO)
+                    .convert_to(self.doppler, &MeasFrame::new())
+                    .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+                SPEED_OF_LIGHT_KM_S * doppler.value()
+            }
             None => world * self.angle_scale,
         })
+    }
+
+    pub(super) fn profile_is_separable(&self) -> bool {
+        self.pixel_axes
+            .iter()
+            .flatten()
+            .all(|&axis| axis == self.index)
+    }
+
+    pub(super) fn profile_pixel(&self, image_pixel: &[usize]) -> Vec<f64> {
+        let mut local = self.reference_pixel.clone();
+        for (pixel, &axis) in local.iter_mut().zip(&self.pixel_axes) {
+            if let Some(axis) = axis {
+                *pixel = image_pixel[axis] as f64;
+            }
+        }
+        local
+    }
+
+    pub(super) fn sample_world(&self, local: &mut [f64], pixel: f64) -> Result<f64, ImageError> {
+        local[self.local] = pixel;
+        self.position(local)
     }
 
     pub(super) fn profiles(&self, shape: &[usize]) -> Result<ProfileCoordinates, ImageError> {
