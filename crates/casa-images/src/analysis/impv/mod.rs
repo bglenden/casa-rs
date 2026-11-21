@@ -53,7 +53,14 @@ where
     let direction = direction(image.coordinates())?;
     let width = position::width(&request.width, direction)?;
     let endpoints = position::endpoints(request, direction, true)?;
-    let strip = geometry::Strip::new(direction, endpoints, plane.map(|i| image.shape()[i]), width)?;
+    // Keep the task's original independently rounded transverse limits.
+    let strip = geometry::Strip::new(
+        direction,
+        endpoints,
+        plane.map(|i| image.shape()[i]),
+        width,
+        false,
+    )?;
     let selection = selection(image, request, plane)?;
     let mut mask =
         combined_selection_mask(image, &selection, request.mask.as_deref(), request.stretch)?;
@@ -465,7 +472,8 @@ mod tests {
             [-1e-5, 1e-5],
             [0.0, 0.0],
         );
-        let strip = geometry::Strip::new(&direction, [[2.0, 3.0], [7.0, 3.0]], [10, 8], 1).unwrap();
+        let strip =
+            geometry::Strip::new(&direction, [[2.0, 3.0], [7.0, 3.0]], [10, 8], 1, false).unwrap();
         let pixels = ArrayD::from_shape_fn(IxDyn(&[8, 10, 2]), |index| {
             (50 * index[0] + index[1] + 500 * index[2]) as f32
         });
