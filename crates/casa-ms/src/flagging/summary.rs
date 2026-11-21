@@ -172,6 +172,7 @@ struct Lookup<'a> {
     ddid_to_spw: BTreeMap<i32, i32>,
     ddid_correlations: BTreeMap<i32, Vec<String>>,
     correlation_selection: Option<&'a CorrelationSelection>,
+    calibration: bool,
 }
 
 impl<'a> Lookup<'a> {
@@ -193,6 +194,17 @@ impl<'a> Lookup<'a> {
             .map(|row| fields.name(row))
             .collect::<Result<_, _>>()
             .map_err(|error| failed("FIELD names", error))?;
+        let calibration = ms.main_table().info().table_type == "Calibration";
+        if calibration {
+            return Ok(Self {
+                antenna,
+                field,
+                ddid_to_spw: BTreeMap::new(),
+                ddid_correlations: BTreeMap::new(),
+                correlation_selection,
+                calibration,
+            });
+        }
         let polarization = ms
             .polarization()
             .map_err(|error| failed("POLARIZATION", error))?;
@@ -218,10 +230,14 @@ impl<'a> Lookup<'a> {
             ddid_to_spw: data_description_spw_map(ms)?,
             ddid_correlations,
             correlation_selection,
+            calibration,
         })
     }
 
     fn field_name(&self, ms: &MeasurementSet, row: usize, id: i32) -> Result<&str, FlaggingError> {
+        if self.calibration && id == -1 {
+            return Ok("-1");
+        }
         self.field
             .get(usize::try_from(id).unwrap_or(usize::MAX))
             .map(String::as_str)
@@ -241,18 +257,26 @@ struct BlockIds {
 }
 
 impl BlockIds {
-    fn read(ms: &MeasurementSet, rows: &[usize]) -> Result<Self, FlaggingError> {
+    fn read(ms: &MeasurementSet, rows: &[usize], calibration: bool) -> Result<Self, FlaggingError> {
         let table = ms.main_table();
         let path = display_ms_path(ms);
         let column = |name: &str| load_i32_cells(table, rows, name, &path);
         Ok(Self {
             antenna1: column("ANTENNA1")?,
             antenna2: column("ANTENNA2")?,
-            array: column("ARRAY_ID")?,
+            array: if calibration {
+                vec![-1; rows.len()]
+            } else {
+                column("ARRAY_ID")?
+            },
             field: column("FIELD_ID")?,
             observation: column("OBSERVATION_ID")?,
             scan: column("SCAN_NUMBER")?,
-            ddid: column("DATA_DESC_ID")?,
+            ddid: column(if calibration {
+                "SPECTRAL_WINDOW_ID"
+            } else {
+                "DATA_DESC_ID"
+            })?,
         })
     }
 }
@@ -306,7 +330,7 @@ fn summarize(
     let mut summary = FlagSummaryBreakdown::with_options(options);
     let mut fields = options.fieldcnt.then(BTreeMap::new);
     for block in rows.chunks(BLOCK_ROWS) {
-        let ids = BlockIds::read(ms, block)?;
+        let ids = BlockIds::read(ms, block, lookup.calibration)?;
         for (slot, &row) in block.iter().enumerate() {
             if correlations.is_some_and(|selection| selection.planes(ids.ddid[slot]).is_empty()) {
                 continue;
@@ -361,12 +385,16 @@ fn add_row(
     let shape = flags.shape();
     let (correlations, channels) = (shape[0], shape.get(1).copied().unwrap_or(1));
     let ddid = ids.ddid[slot];
-    let spw = lookup.ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
-        invalid(
-            ms,
-            format!("row {row}: DATA_DESC_ID {ddid} has no spectral window"),
-        )
-    })?;
+    let spw = if lookup.calibration {
+        ddid
+    } else {
+        lookup.ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
+            invalid(
+                ms,
+                format!("row {row}: DATA_DESC_ID {ddid} has no spectral window"),
+            )
+        })?
+    };
     let selected = match channel_selections.and_then(|selections| selections.get(&spw)) {
         Some(selection) => selection
             .indices(channels)
@@ -391,12 +419,17 @@ fn add_row(
             flagged,
             total: selected.len() as u64,
         };
-        let name = names
-            .and_then(|names| names.get(correlation))
-            .map_or("??", String::as_str);
+        let name = if lookup.calibration {
+            format!("Sol{}", correlation + 1)
+        } else {
+            names
+                .and_then(|names| names.get(correlation))
+                .cloned()
+                .unwrap_or_else(|| "??".to_string())
+        };
         summary
             .correlation
-            .entry(name.to_string())
+            .entry(name.clone())
             .or_default()
             .add(counts);
         if let Some(spw_correlation) = &mut summary.spw_correlation {
@@ -430,7 +463,10 @@ fn add_row(
             .map(String::as_str)
             .ok_or_else(|| invalid(ms, format!("row {row}: no antenna {id}")))
     };
-    let (antenna1, antenna2) = (ids.antenna1[slot], ids.antenna2[slot]);
+    let (antenna1, mut antenna2) = (ids.antenna1[slot], ids.antenna2[slot]);
+    if lookup.calibration && antenna2 < 0 {
+        antenna2 = antenna1;
+    }
     let add = |axis: &mut BTreeMap<String, FlagCounts>, key: String| {
         axis.entry(key).or_default().add(row_counts);
     };
