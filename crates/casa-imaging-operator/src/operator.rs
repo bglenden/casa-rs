@@ -105,6 +105,15 @@ pub enum ModelPrescale<'a> {
     Unit,
     /// One `[y][x]` factor per model plane, shared by every term and polarization.
     Planes(&'a [Array2<f32>]),
+    /// One `[y][x]` factor per model plane and grid polarization, in plane-major
+    /// order. Apply after converting the requested Stokes or receptor planes.
+    GridPlanes(&'a [Array2<f32>]),
+}
+
+#[derive(Clone, Copy)]
+enum ModelPlanePrescale<'a> {
+    Shared(Option<&'a Array2<f32>>),
+    ByGridPol(&'a [Array2<f32>]),
 }
 
 /// Unnormalised image-domain results of one accumulator, in requested
@@ -387,11 +396,22 @@ impl MeasurementOperator {
                 reason: "one prescale image per model plane",
             });
         }
+        let grid_pols = self.polarization.grid_pols();
+        if let ModelPrescale::GridPlanes(factors) = prescale
+            && model.planes.len().checked_mul(grid_pols) != Some(factors.len())
+        {
+            return Err(OperatorError::ModelShape {
+                reason: "one prescale image per model plane and grid polarization",
+            });
+        }
         let mut grids = self.empty_model_grids(PlaneRange::new(model.first_plane, planes))?;
         for (index, (plane, target)) in model.planes.iter().zip(grids.planes_mut()).enumerate() {
             let factor = match prescale {
-                ModelPrescale::Unit => None,
-                ModelPrescale::Planes(factors) => Some(&factors[index]),
+                ModelPrescale::Unit => ModelPlanePrescale::Shared(None),
+                ModelPrescale::Planes(factors) => ModelPlanePrescale::Shared(Some(&factors[index])),
+                ModelPrescale::GridPlanes(factors) => {
+                    ModelPlanePrescale::ByGridPol(&factors[index * grid_pols..][..grid_pols])
+                }
             };
             self.fill_model_plane_corrected(plane, factor, target, correction)?;
         }
@@ -455,13 +475,18 @@ impl MeasurementOperator {
         prescale: Option<&Array2<f32>>,
         grids: ModelPlaneGrids<'_>,
     ) -> Result<(), OperatorError> {
-        self.fill_model_plane_corrected(plane, prescale, grids, self.cf.image_correction())
+        self.fill_model_plane_corrected(
+            plane,
+            ModelPlanePrescale::Shared(prescale),
+            grids,
+            self.cf.image_correction(),
+        )
     }
 
     fn fill_model_plane_corrected(
         &self,
         plane: &ModelPlane,
-        prescale: Option<&Array2<f32>>,
+        prescale: ModelPlanePrescale<'_>,
         grids: ModelPlaneGrids<'_>,
         correction: &ImageCorrection,
     ) -> Result<(), OperatorError> {
@@ -479,7 +504,15 @@ impl MeasurementOperator {
                 reason: "image shape must be [ny, nx] of the image extent",
             });
         }
-        if prescale.is_some_and(|factor| factor.shape() != expected) {
+        let shape_matches = match prescale {
+            ModelPlanePrescale::Shared(factor) => {
+                factor.is_none_or(|factor| factor.shape() == expected)
+            }
+            ModelPlanePrescale::ByGridPol(factors) => {
+                factors.iter().all(|factor| factor.shape() == expected)
+            }
+        };
+        if !shape_matches {
             return Err(OperatorError::ModelShape {
                 reason: "prescale image shape must be [ny, nx] of the image extent",
             });
@@ -508,7 +541,7 @@ impl MeasurementOperator {
         &self,
         layout: &AccumulatorLayout,
         plane: &ModelPlane,
-        factor: Option<&Array2<f32>>,
+        prescale: ModelPlanePrescale<'_>,
         cells: &mut [Complex<T>],
         correction: &ImageCorrection,
     ) -> Result<(), OperatorError> {
@@ -519,6 +552,10 @@ impl MeasurementOperator {
         let mut fft = PlaneFft::<T>::new([nx, ny], self.measured_fft())?;
         for term in 0..layout.terms() {
             for gpol in 0..layout.pols() {
+                let factor = match prescale {
+                    ModelPlanePrescale::Shared(factor) => factor,
+                    ModelPlanePrescale::ByGridPol(factors) => Some(&factors[gpol]),
+                };
                 let offset = layout.block_offset(0, gpol, term);
                 let grid = &mut cells[offset..offset + layout.block_cells()];
                 grid.fill(Complex::default());

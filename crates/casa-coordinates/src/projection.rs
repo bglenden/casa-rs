@@ -46,6 +46,7 @@ use std::fmt;
 use crate::error::CoordinateError;
 
 mod azp;
+mod bonne;
 mod conic;
 mod cube;
 mod cylindrical;
@@ -327,7 +328,7 @@ impl Projection {
             ProjectionType::PAR => project_par(phi, theta),
             ProjectionType::MOL => project_mol(phi, theta),
             ProjectionType::PCO => project_pco(phi, theta),
-            ProjectionType::BON => project_bon(phi, theta, self.bonne_latitude()?),
+            ProjectionType::BON => bonne::project(phi, theta, bonne::latitude(&self.parameters)?),
             ProjectionType::TSC | ProjectionType::CSC | ProjectionType::QSC => {
                 cube::project(self.projection_type, phi, theta)
             }
@@ -362,7 +363,7 @@ impl Projection {
             ProjectionType::PAR => deproject_par(x, y),
             ProjectionType::MOL => deproject_mol(x, y),
             ProjectionType::PCO => deproject_pco(x, y),
-            ProjectionType::BON => deproject_bon(x, y, self.bonne_latitude()?),
+            ProjectionType::BON => bonne::deproject(x, y, bonne::latitude(&self.parameters)?),
             ProjectionType::TSC | ProjectionType::CSC | ProjectionType::QSC => {
                 cube::deproject(self.projection_type, x, y)
             }
@@ -393,19 +394,8 @@ impl Projection {
             | ProjectionType::COE
             | ProjectionType::COO) => conic::Conic::new(kind, &self.parameters).map(|_| ()),
             ProjectionType::HPX => healpix::Healpix::new(&self.parameters).map(|_| ()),
-            ProjectionType::BON => self.bonne_latitude().map(|_| ()),
+            ProjectionType::BON => bonne::latitude(&self.parameters).map(|_| ()),
             _ => Ok(()),
-        }
-    }
-
-    fn bonne_latitude(&self) -> Result<f64, CoordinateError> {
-        let angle = self.parameters.first().copied().unwrap_or(f64::NAN);
-        if angle.is_finite() {
-            Ok(angle.to_radians())
-        } else {
-            Err(CoordinateError::ConversionFailed(
-                "BON requires a finite conformal latitude".into(),
-            ))
         }
     }
 
@@ -719,43 +709,6 @@ fn deproject_arc(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
 
 fn project_car(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
     Ok((phi, theta))
-}
-
-// The Bonne projection uses the sinusoidal projection in the zero-latitude
-// limit. The radius of each latitude arc is cot(theta1) + theta1 - theta.
-fn project_bon(phi: f64, theta: f64, theta1: f64) -> Result<(f64, f64), CoordinateError> {
-    if theta1 == 0.0 {
-        return project_sfl(phi, theta);
-    }
-    let radius0 = 1.0 / theta1.tan() + theta1;
-    let radius = radius0 - theta;
-    if radius == 0.0 {
-        return Ok((0.0, radius0));
-    }
-    let (sine, cosine) = (phi * theta.cos() / radius).sin_cos();
-    Ok((radius * sine, radius0 - radius * cosine))
-}
-
-fn deproject_bon(x: f64, y: f64, theta1: f64) -> Result<(f64, f64), CoordinateError> {
-    if theta1 == 0.0 {
-        return deproject_sfl(x, y);
-    }
-    let radius0 = 1.0 / theta1.tan() + theta1;
-    let dy = radius0 - y;
-    let radius = x.hypot(dy).copysign(theta1);
-    let theta = radius0 - radius;
-    let phi = if theta.abs() == FRAC_PI_2 || radius == 0.0 {
-        0.0
-    } else {
-        (x / radius).atan2(dy / radius) * radius / theta.cos()
-    };
-    if phi.abs() <= PI + 2.e - 13 && theta.abs() <= FRAC_PI_2 + 2.e - 13 {
-        Ok((phi.clamp(-PI, PI), theta.clamp(-FRAC_PI_2, FRAC_PI_2)))
-    } else {
-        Err(CoordinateError::ConversionFailed(
-            "Pixel is outside the BON projection".into(),
-        ))
-    }
 }
 
 fn deproject_car(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {

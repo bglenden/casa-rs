@@ -15,7 +15,11 @@ fn model_planes_use_distinct_workers_within_their_charge() {
     ) {
         return;
     }
+    check_model_plane_workers(false);
+    check_model_plane_workers(true);
+}
 
+fn check_model_plane_workers(squinted: bool) {
     let channels = 11;
     let shape = [16, 16];
     let geometry = GridGeometry::new(
@@ -27,9 +31,13 @@ fn model_planes_use_distinct_workers_within_their_charge() {
         GridPadding::None,
     )
     .unwrap();
-    let correlations = [9, 12].map(|code| Correlation::from_casacore_code(code).unwrap());
-    let routing =
-        PolarizationRouting::compile(&correlations, &[PolarizationCoordinate::StokesI]).unwrap();
+    let (correlations, stokes) = if squinted {
+        ([5, 8], PolarizationCoordinate::StokesV)
+    } else {
+        ([9, 12], PolarizationCoordinate::StokesI)
+    };
+    let correlations = correlations.map(|code| Correlation::from_casacore_code(code).unwrap());
+    let routing = PolarizationRouting::compile(&correlations, &[stokes]).unwrap();
     let kernel = Spheroidal::new(&geometry, &routing);
     let grid_shape = geometry.grid_shape();
     let grid_polarizations = routing.grid_pols();
@@ -42,7 +50,10 @@ fn model_planes_use_distinct_workers_within_their_charge() {
         Box::new(kernel),
         GridPrecision::F64,
     );
-    let plane_bytes = model_plane_memory(shape, 1, grid_shape, grid_polarizations);
+    let mut plane_bytes = model_plane_memory(shape, 1, grid_shape, grid_polarizations);
+    if squinted {
+        plane_bytes += model_taper_bytes(shape, grid_polarizations);
+    }
     let workers = 2;
     let charge = model_worker_memory(workers, plane_bytes);
     let seen = Mutex::new(Vec::new());
@@ -78,9 +89,15 @@ fn model_planes_use_distinct_workers_within_their_charge() {
                     images: vec![image],
                 }],
             };
-            operator
-                .prepare_model(&model, ModelPrescale::Unit)
-                .map_err(invalid)
+            let factors = squinted.then(|| {
+                (0..grid_polarizations)
+                    .map(|pol| Array2::from_elem((shape[1], shape[0]), 1. - 0.1 * pol as f32))
+                    .collect::<Vec<_>>()
+            });
+            let prescale = factors
+                .as_deref()
+                .map_or(ModelPrescale::Unit, ModelPrescale::GridPlanes);
+            operator.prepare_model(&model, prescale).map_err(invalid)
         },
         |index, grid| {
             assert_eq!(index, written);
