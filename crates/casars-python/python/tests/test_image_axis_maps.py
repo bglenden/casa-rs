@@ -104,7 +104,8 @@ def test_image_operations_use_the_mapped_frequency_pixel(tmp_path, operation):
         assert product.done() and image.done()
 
 
-def test_mapped_fits_round_trip_keeps_stokes_and_frequency_pixel_axes(tmp_path):
+@pytest.mark.parametrize("writer", ["casa-rs", "CASA"])
+def test_mapped_fits_round_trip_keeps_stokes_and_frequency_pixel_axes(tmp_path, writer):
     casa = pytest.importorskip("casatools")
     assert casa.version_string().replace("-", ".") == "6.7.6.14"
     cs = casa.coordsys().newcoordsys(stokes="I,Q", spectral=True)
@@ -114,13 +115,13 @@ def test_mapped_fits_round_trip_keeps_stokes_and_frequency_pixel_axes(tmp_path):
     record = cs.torecord()
     record["worldmap0"] = [1]
     record["worldmap1"] = [0]
-    source = tools.image()
+    source = (casa if writer == "CASA" else tools).image()
     data = np.array([[1, 2], [3, 4]], dtype=np.float32)
     assert source.fromarray(pixels=data, csys=record)
     fits = str(tmp_path / "mapped.fits")
     assert source.tofits(fits, stokeslast=False)
     restored = tools.image()
-    assert restored.fromfits(fitsfile=fits)
+    assert restored.fromfits(infile=fits)
     np.testing.assert_array_equal(restored.getchunk(), data)
     np.testing.assert_array_equal(restored.coordsys().axesmap(), [1, 0])
     for pixel, world in (
