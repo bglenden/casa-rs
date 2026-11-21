@@ -278,6 +278,9 @@ pub struct FlagDataRequest {
     /// RFlag minimum acceptable spectral standard deviation before flagging
     /// the full row spectrum.
     pub spectralmin: f64,
+    /// Maximum number of time samples in an RFlag variance window.
+    /// A rejected agent record disables RFlag and leaves extension available.
+    pub rflag_window: Option<usize>,
     /// Optional RFlag time threshold, before [`Self::timedevscale`]. `None`
     /// computes one from the data.
     pub timedev: Option<f64>,
@@ -338,6 +341,7 @@ impl Default for FlagDataRequest {
             freqdevscale: 5.0,
             spectralmax: 1.0e6,
             spectralmin: 0.0,
+            rflag_window: Some(3),
             timedev: None,
             freqdev: None,
             extendflags: true,
@@ -350,6 +354,15 @@ impl Default for FlagDataRequest {
             growfreq: 0.0,
         }
     }
+}
+
+/// RFlag thresholds represented by field ID, spectral-window ID and value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RFlagThresholdReport {
+    /// Time deviation thresholds.
+    pub timedev: Vec<[f64; 3]>,
+    /// Frequency deviation thresholds.
+    pub freqdev: Vec<[f64; 3]>,
 }
 
 /// Report returned by native `flagdata`.
@@ -373,6 +386,9 @@ pub struct FlagDataReport {
     pub timedev: Option<f64>,
     /// RFlag spectral threshold actually used.
     pub freqdev: Option<f64>,
+    /// Field/window thresholds for a calibration RFlag calculation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rflag_report: Option<RFlagThresholdReport>,
     /// CASA's summary of the selection's flags, in summary mode (#931).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<FlagSummaryBreakdown>,
@@ -635,9 +651,13 @@ fn flagdata_with_persistence(
         FlagDataMode::Tfcrop => {
             apply_tfcrop_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
-        FlagDataMode::Rflag => {
-            apply_rflag_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
-        }
+        FlagDataMode::Rflag => apply_rflag_flags(
+            ms,
+            &selected_rows,
+            channel_selections.as_ref(),
+            request,
+            false,
+        )?,
         FlagDataMode::Extend => extend::apply(
             ms,
             &selected_rows,
@@ -829,6 +849,7 @@ fn report_after(
         backup_version,
         timedev: thresholds.map(|pair| pair.0),
         freqdev: thresholds.map(|pair| pair.1),
+        rflag_report: changes.rflag_report,
         summary: None,
     })
 }
@@ -1376,41 +1397,36 @@ fn apply_tfcrop_flags(
         None,
         false,
     )?;
-    let samples = loaded.samples;
+    let mut samples = loaded.samples;
+    let projection = is_calibration_table(ms)
+        .then(|| calibration::automatic_projection(request, &samples))
+        .transpose()?;
+    if let Some(projection) = &projection {
+        for sample in &mut samples {
+            sample.amp = projection.scalar(sample);
+        }
+    }
     let loaded_ms = started.elapsed().as_millis();
     let mut modified = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
     let mut time_flags = vec![false; samples.len()];
-    let groups = if request.casa_row_selection {
-        let timed = clip_time::ordered_baseline_chunks(
-            ms,
-            selected_rows,
-            request.time_chunk,
-            request.combinescans,
-            &display_ms_path(ms),
-        )?;
-        let runs: HashMap<_, _> = sample_row_runs(&samples)
+    let groups: Vec<_> = if request.casa_row_selection || projection.is_some() {
+        ordered_autoflag_groups(ms, selected_rows, &samples, request)?
             .into_iter()
-            .map(|row| (row[0].row, row))
-            .collect();
-        timed
-            .chunk_by(|left, right| left.baseline_key() == right.baseline_key())
-            .map(|baseline| {
-                baseline
-                    .iter()
-                    .filter_map(|row| runs.get(&row.row).copied())
-                    .flatten()
-                    .copied()
-                    .collect::<Vec<_>>()
-            })
-            .filter(|group| !group.is_empty())
-            .collect::<Vec<_>>()
+            .map(|(_, samples)| samples)
+            .collect()
     } else {
         group_samples(&samples).into_values().collect()
     };
     if let Some(options) = &options {
         for group in &groups {
             for by_corr in samples_by_corr(group) {
+                if !projection
+                    .as_ref()
+                    .is_none_or(|p| p.includes(by_corr[0].corr))
+                {
+                    continue;
+                }
                 for &direction in options.passes.directions() {
                     let (cutoff, candidates) = match direction {
                         TfcropDirection::Freq => (request.freqcutoff, &mut freq_flags),
@@ -1524,11 +1540,46 @@ fn extend_tfcrop_selected_channels(
     }
 }
 
+type AutoflagChunk = ([i32; 5], usize);
+
+fn ordered_autoflag_groups(
+    ms: &MeasurementSet,
+    selected_rows: &[usize],
+    samples: &[Sample],
+    request: &FlagDataRequest,
+) -> Result<Vec<(AutoflagChunk, Vec<Sample>)>, FlaggingError> {
+    let timed = clip_time::ordered_baseline_chunks(
+        ms,
+        selected_rows,
+        request.time_chunk,
+        request.combinescans,
+        &display_ms_path(ms),
+    )?;
+    let runs: HashMap<_, _> = sample_row_runs(samples)
+        .into_iter()
+        .map(|row| (row[0].row, row))
+        .collect();
+    Ok(timed
+        .chunk_by(|left, right| left.baseline_key() == right.baseline_key())
+        .map(|baseline| {
+            let samples = baseline
+                .iter()
+                .filter_map(|row| runs.get(&row.row).copied())
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>();
+            (baseline[0].chunk_key(), samples)
+        })
+        .filter(|(_, group)| !group.is_empty())
+        .collect())
+}
+
 fn apply_rflag_flags(
     ms: &mut MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
+    calculate: bool,
 ) -> Result<ChangeSet, FlaggingError> {
     let started = Instant::now();
     let loaded = load_samples(
@@ -1540,24 +1591,73 @@ fn apply_rflag_flags(
         false,
     )?;
     let samples = loaded.samples;
+    let projection = is_calibration_table(ms)
+        .then(|| calibration::automatic_projection(request, &samples))
+        .transpose()?;
+    // RFlag uses the selected stored complex products rather than the scalar
+    // metric used by TFCrop and clip.
     let loaded_ms = started.elapsed().as_millis();
-    let groups = group_samples(&samples);
-    let thresholds = rflag_threshold_maps_for_groups(&groups, request);
-    let threshold_ms = started.elapsed().as_millis();
+    let groups = if projection.is_some() {
+        ordered_autoflag_groups(ms, selected_rows, &samples, request)?
+    } else {
+        group_samples(&samples)
+            .into_values()
+            .map(|samples| (AutoflagChunk::default(), samples))
+            .collect()
+    };
+    if calculate {
+        let thresholds = rflag_threshold_maps_for_groups(
+            groups.iter().map(|(_, samples)| samples.as_slice()),
+            request,
+            projection.as_ref(),
+        );
+        return Ok(ChangeSet {
+            rflag_report: Some(thresholds.public_report(request)),
+            ..ChangeSet::default()
+        });
+    }
+
+    let mut thresholds = RFlagThresholds::default();
+    let mut threshold_ms = 0;
     let mut time_flags = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
-    for group in groups.values() {
-        rflag_group_flags(
-            group,
-            &thresholds,
+    // RFlag applies each calibration buffer's own fitted thresholds. The
+    // calculate report instead accumulates all buffers for each field/SPW.
+    for chunk in groups.chunk_by(|(left, _), (right, _)| left == right) {
+        let threshold_started = Instant::now();
+        let chunk_thresholds = rflag_threshold_maps_for_groups(
+            chunk.iter().map(|(_, samples)| samples.as_slice()),
             request,
-            &mut time_flags,
-            &mut freq_flags,
-        );
+            projection.as_ref(),
+        )
+        .scaled(request, projection.is_some());
+        threshold_ms += threshold_started.elapsed().as_millis();
+        for (_, group) in chunk {
+            rflag_group_flags(
+                group,
+                &chunk_thresholds,
+                request,
+                projection.as_ref(),
+                &mut time_flags,
+                &mut freq_flags,
+            );
+        }
+        thresholds.timedev.extend(chunk_thresholds.timedev);
+        thresholds.freqdev.extend(chunk_thresholds.freqdev);
     }
     let mut modified = union_masks(&time_flags, &freq_flags);
     if request.extendflags {
-        extend_autoflag_grouped(groups.values().map(Vec::as_slice), &samples, &mut modified);
+        if projection.is_some() && channel_selections.is_some() {
+            for (_, group) in &groups {
+                extend_tfcrop_selected_channels(group, &loaded.flags_by_row, &mut modified);
+            }
+        } else {
+            extend_autoflag_grouped(
+                groups.iter().map(|(_, samples)| samples.as_slice()),
+                &samples,
+                &mut modified,
+            );
+        }
     }
     let union_candidates = count_mask(&modified);
     let planned_ms = started.elapsed().as_millis();
@@ -1576,8 +1676,8 @@ fn apply_rflag_flags(
             "union_by_spw_corr": flag_mask_counts_by_spw_corr(&modified, &samples),
             "timing_ms": {
                 "load": loaded_ms,
-                "threshold": threshold_ms.saturating_sub(loaded_ms),
-                "plan": planned_ms.saturating_sub(threshold_ms),
+                "threshold": threshold_ms,
+                "plan": planned_ms.saturating_sub(loaded_ms + threshold_ms),
             },
         })
     });
@@ -2376,15 +2476,19 @@ fn summarize_flags(
     })
 }
 
-fn rflag_threshold_maps_for_groups(
-    groups: &BTreeMap<GroupKey, Vec<Sample>>,
+fn rflag_threshold_maps_for_groups<'a>(
+    groups: impl IntoIterator<Item = &'a [Sample]>,
     request: &FlagDataRequest,
+    projection: Option<&calibration::CalibrationProjection>,
 ) -> RFlagThresholds {
+    let Some(window_size) = request.rflag_window else {
+        return RFlagThresholds::default();
+    };
     let mut histograms = RFlagHistograms::default();
-    for group in groups.values() {
-        rflag_accumulate_group_histograms(group, &mut histograms);
+    for group in groups {
+        rflag_accumulate_group_histograms(group, &mut histograms, window_size, projection);
     }
-    histograms.into_thresholds(request)
+    histograms.into_thresholds(request, projection.is_some())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2906,19 +3010,24 @@ struct RFlagHistograms {
 }
 
 impl RFlagHistograms {
-    /// Each window's thresholds: the request's, or the one its histogram
-    /// gives, times the request's scale either way, as CASA's RFlag agent
-    /// scales a given threshold and a computed one alike.
-    fn into_thresholds(self, request: &FlagDataRequest) -> RFlagThresholds {
+    /// Unscaled thresholds for the public calculate report and flagging.
+    /// CASA applies the scale factors only when testing for flags.
+    fn into_thresholds(self, request: &FlagDataRequest, calibration: bool) -> RFlagThresholds {
         let mut timedev = BTreeMap::new();
         let mut freqdev = BTreeMap::new();
         for (key, histogram) in self.time {
-            let threshold = request.timedev.unwrap_or_else(|| histogram.threshold());
-            timedev.insert(key, threshold * request.timedevscale);
+            let threshold = request
+                .timedev
+                .filter(|&value| !calibration || value > 0.0)
+                .unwrap_or_else(|| histogram.threshold());
+            timedev.insert(key, threshold);
         }
         for (key, histogram) in self.freq {
-            let threshold = request.freqdev.unwrap_or_else(|| histogram.threshold());
-            freqdev.insert(key, threshold * request.freqdevscale);
+            let threshold = request
+                .freqdev
+                .filter(|&value| !calibration || value > 0.0)
+                .unwrap_or_else(|| histogram.threshold());
+            freqdev.insert(key, threshold);
         }
         RFlagThresholds { timedev, freqdev }
     }
@@ -2931,6 +3040,40 @@ struct RFlagThresholds {
 }
 
 impl RFlagThresholds {
+    fn scaled(mut self, request: &FlagDataRequest, calibration: bool) -> Self {
+        // The calibration agent skips a fitted zero cutoff during flagging.
+        let applied = |threshold: f64, scale: f64| {
+            if calibration && threshold == 0.0 && scale > 0.0 {
+                -1.0
+            } else {
+                threshold * scale
+            }
+        };
+        for value in self.timedev.values_mut() {
+            *value = applied(*value, request.timedevscale);
+        }
+        for value in self.freqdev.values_mut() {
+            *value = applied(*value, request.freqdevscale);
+        }
+        self
+    }
+
+    fn public_report(&self, request: &FlagDataRequest) -> RFlagThresholdReport {
+        let rows = |values: &BTreeMap<FieldSpwKey, f64>, supplied: Option<f64>| {
+            if supplied.is_some_and(|value| value > 0.0) {
+                return Vec::new();
+            }
+            values
+                .iter()
+                .map(|(&(field, spw), &value)| [f64::from(field), f64::from(spw), value])
+                .collect()
+        };
+        RFlagThresholdReport {
+            timedev: rows(&self.timedev, request.timedev),
+            freqdev: rows(&self.freqdev, request.freqdev),
+        }
+    }
+
     fn representative_pair(&self) -> (f64, f64) {
         (
             representative_threshold(&self.timedev),
@@ -2980,24 +3123,49 @@ fn representative_threshold(thresholds: &BTreeMap<FieldSpwKey, f64>) -> f64 {
     median(thresholds.values().copied().collect())
 }
 
-fn rflag_accumulate_group_histograms(group: &[Sample], histograms: &mut RFlagHistograms) {
+fn rflag_accumulate_group_histograms(
+    group: &[Sample],
+    histograms: &mut RFlagHistograms,
+    window_size: usize,
+    projection: Option<&calibration::CalibrationProjection>,
+) {
     let Some(first) = group.first() else {
         return;
     };
+    let rows_by_corr = samples_by_corr(group);
+    let mut active_planes = rows_by_corr
+        .iter()
+        .filter(|plane| projection.is_none_or(|projection| projection.includes(plane[0].corr)))
+        .peekable();
+    if active_planes.peek().is_none() {
+        return;
+    }
     let key = (first.field, first.spw);
-    let nchan = group.iter().map(|sample| sample.chan).max().unwrap_or(0) + 1;
+    // CASA histograms have one bin per selected channel.
+    let channels = projection.map(|_| {
+        let mut channels = unique_sample_chans(group);
+        channels.sort_unstable();
+        channels
+    });
+    let nchan = channels.as_ref().map_or_else(
+        || group.iter().map(|sample| sample.chan).max().unwrap_or(0) + 1,
+        Vec::len,
+    );
+    let index = |channel| {
+        channels.as_ref().map_or(channel, |channels| {
+            channels.binary_search(&channel).expect("loaded channel")
+        })
+    };
     let time_hist = histograms
         .time
         .entry(key)
         .or_insert_with(|| ChannelHistogram::new(nchan));
-    let rows_by_corr = samples_by_corr(group);
-    for by_corr in &rows_by_corr {
+    for by_corr in active_planes.clone() {
         for by_chan in samples_by_chan_dense(by_corr) {
-            for (start, stop) in rflag_time_windows(by_chan.len()) {
+            for (start, stop) in rflag_time_windows(by_chan.len(), window_size) {
                 let window = &by_chan[start..=stop];
-                let value = rflag_time_std_total(window);
-                if let Some(sample) = by_chan.first() {
-                    time_hist.add(sample.chan, value);
+                if let Some(value) = rflag_time_std_total(window, projection.is_some()) {
+                    time_hist.add(index(by_chan[0].chan), value);
                 }
             }
         }
@@ -3006,18 +3174,18 @@ fn rflag_accumulate_group_histograms(group: &[Sample], histograms: &mut RFlagHis
         .freq
         .entry(key)
         .or_insert_with(|| ChannelHistogram::new(nchan));
-    for by_corr in rows_by_corr {
-        for by_row in sample_row_runs(&by_corr) {
-            let stats = rflag_spectral_stats(by_row);
+    for by_corr in active_planes {
+        for by_row in sample_row_runs(by_corr) {
+            let stats = rflag_spectral_stats(by_row, projection.is_some());
             for sample in by_row {
                 if sample.flag {
                     continue;
                 }
                 if stats.sum_weight_real > 0.0 {
-                    freq_hist.add(sample.chan, (sample.real - stats.average_real).abs());
+                    freq_hist.add(index(sample.chan), (sample.real - stats.average_real).abs());
                 }
                 if stats.sum_weight_imag > 0.0 {
-                    freq_hist.add(sample.chan, (sample.imag - stats.average_imag).abs());
+                    freq_hist.add(index(sample.chan), (sample.imag - stats.average_imag).abs());
                 }
             }
         }
@@ -3028,9 +3196,13 @@ fn rflag_group_flags(
     group: &[Sample],
     thresholds: &RFlagThresholds,
     request: &FlagDataRequest,
+    projection: Option<&calibration::CalibrationProjection>,
     time_flags: &mut [bool],
     freq_flags: &mut [bool],
 ) {
+    let Some(window_size) = request.rflag_window else {
+        return;
+    };
     let Some(first) = group.first() else {
         return;
     };
@@ -3046,19 +3218,29 @@ fn rflag_group_flags(
         .copied()
         .unwrap_or(f64::INFINITY);
     for by_corr in samples_by_corr(group) {
-        for by_chan in samples_by_chan_dense(&by_corr) {
-            for (start, stop) in rflag_time_windows(by_chan.len()) {
-                if rflag_time_std_total(&by_chan[start..=stop]) > timedev {
-                    for sample in &by_chan[start..=stop] {
-                        if !sample.flag {
-                            time_flags[sample.index] = true;
+        if !projection.is_none_or(|projection| projection.includes(by_corr[0].corr)) {
+            continue;
+        }
+        if timedev >= 0.0 || projection.is_none() {
+            for by_chan in samples_by_chan_dense(&by_corr) {
+                for (start, stop) in rflag_time_windows(by_chan.len(), window_size) {
+                    if rflag_time_std_total(&by_chan[start..=stop], projection.is_some())
+                        .is_some_and(|deviation| deviation > timedev)
+                    {
+                        for sample in &by_chan[start..=stop] {
+                            if !sample.flag {
+                                time_flags[sample.index] = true;
+                            }
                         }
                     }
                 }
             }
         }
+        if freqdev < 0.0 && projection.is_some() {
+            continue;
+        }
         for by_row in sample_row_runs(&by_corr) {
-            let stats = rflag_spectral_stats(by_row);
+            let stats = rflag_spectral_stats(by_row, projection.is_some());
             let flag_all = stats.std_real > request.spectralmax
                 || stats.std_imag > request.spectralmax
                 || stats.std_real < request.spectralmin
@@ -3078,8 +3260,8 @@ fn rflag_group_flags(
     }
 }
 
-fn rflag_time_windows(len: usize) -> impl Iterator<Item = (usize, usize)> {
-    let effective = len.min(3);
+fn rflag_time_windows(len: usize, window_size: usize) -> impl Iterator<Item = (usize, usize)> {
+    let effective = len.min(window_size);
     let delta = effective.saturating_sub(1) / 2;
     (0..len).filter_map(move |center| {
         if delta == 0 {
@@ -3092,7 +3274,15 @@ fn rflag_time_windows(len: usize) -> impl Iterator<Item = (usize, usize)> {
     })
 }
 
-fn rflag_time_std_total(samples: &[Sample]) -> f64 {
+fn rflag_time_std_total(samples: &[Sample], calibration: bool) -> Option<f64> {
+    // CASA multiplies the Float mapper values before summing in Double.
+    let square = |value: f64| {
+        if calibration {
+            f64::from(value as f32 * value as f32)
+        } else {
+            value * value
+        }
+    };
     let mut count = 0usize;
     let mut sum_real = 0.0;
     let mut sum_imag = 0.0;
@@ -3105,18 +3295,18 @@ fn rflag_time_std_total(samples: &[Sample]) -> f64 {
         count += 1;
         sum_real += sample.real;
         sum_imag += sample.imag;
-        sumsq_real += sample.real * sample.real;
-        sumsq_imag += sample.imag * sample.imag;
+        sumsq_real += square(sample.real);
+        sumsq_imag += square(sample.imag);
     }
     if count == 0 {
-        return 0.0;
+        return (!calibration).then_some(0.0);
     }
     let sum_weight = count as f64;
     let avg_real = sum_real / sum_weight;
     let avg_imag = sum_imag / sum_weight;
     let var_real = sumsq_real / sum_weight - avg_real * avg_real;
     let var_imag = sumsq_imag / sum_weight - avg_imag * avg_imag;
-    (var_real.max(0.0) + var_imag.max(0.0)).sqrt()
+    Some((var_real.max(0.0) + var_imag.max(0.0)).sqrt())
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -3129,7 +3319,7 @@ struct RFlagSpectralStats {
     sum_weight_imag: f64,
 }
 
-fn rflag_spectral_stats(samples: &[Sample]) -> RFlagSpectralStats {
+fn rflag_spectral_stats(samples: &[Sample], calibration: bool) -> RFlagSpectralStats {
     let mut real_values = Vec::with_capacity(samples.len());
     let mut imag_values = Vec::with_capacity(samples.len());
     for sample in samples {
@@ -3144,11 +3334,15 @@ fn rflag_spectral_stats(samples: &[Sample]) -> RFlagSpectralStats {
     }
     let average_real = median_in_place(&mut real_values);
     let average_imag = median_in_place(&mut imag_values);
+    let residual = |value: f64, reference: f64| {
+        let delta = value - reference;
+        if calibration { delta } else { delta.abs() }
+    };
     for value in &mut real_values {
-        *value = (*value - average_real).abs();
+        *value = residual(*value, average_real);
     }
     for value in &mut imag_values {
-        *value = (*value - average_imag).abs();
+        *value = residual(*value, average_imag);
     }
     let std_real = 1.4826 * median_in_place(&mut real_values);
     let std_imag = 1.4826 * median_in_place(&mut imag_values);
@@ -3844,6 +4038,7 @@ struct ChangeSet {
     changed_row_indices: Vec<usize>,
     summary: Option<FlagSummary>,
     thresholds: Option<(f64, f64)>,
+    rflag_report: Option<RFlagThresholdReport>,
     changed_flag_row_rows: usize,
 }
 
@@ -4095,17 +4290,22 @@ mod tests {
             spectralmin: 0.0,
             ..FlagDataRequest::default()
         };
-        let thresholds = rflag_threshold_maps_for_groups(&groups, &request);
+        let thresholds =
+            rflag_threshold_maps_for_groups(groups.values().map(Vec::as_slice), &request, None)
+                .scaled(&request, false);
         assert_eq!(thresholds.representative_pair(), (1.0, 2.0));
         // CASA scales a given threshold as it scales a computed one.
+        let scaled_request = FlagDataRequest {
+            timedevscale: 5.0,
+            freqdevscale: 3.0,
+            ..request.clone()
+        };
         let scaled = rflag_threshold_maps_for_groups(
-            &groups,
-            &FlagDataRequest {
-                timedevscale: 5.0,
-                freqdevscale: 3.0,
-                ..request.clone()
-            },
-        );
+            groups.values().map(Vec::as_slice),
+            &scaled_request,
+            None,
+        )
+        .scaled(&scaled_request, false);
         assert_eq!(scaled.representative_pair(), (5.0, 6.0));
         assert_eq!(
             format_threshold_map(&thresholds.timedev).get("field0_spw0"),
@@ -4119,6 +4319,7 @@ mod tests {
                 group,
                 &thresholds,
                 &request,
+                None,
                 &mut time_flags,
                 &mut freq_flags,
             );
@@ -4128,16 +4329,19 @@ mod tests {
         assert!(!freq_flags[6]);
 
         assert_eq!(
-            rflag_time_windows(0).collect::<Vec<_>>(),
+            rflag_time_windows(0, 3).collect::<Vec<_>>(),
             Vec::<(usize, usize)>::new()
         );
-        assert_eq!(rflag_time_windows(1).collect::<Vec<_>>(), vec![(0, 0)]);
+        assert_eq!(rflag_time_windows(1, 3).collect::<Vec<_>>(), vec![(0, 0)]);
         assert_eq!(
-            rflag_time_windows(4).collect::<Vec<_>>(),
+            rflag_time_windows(4, 3).collect::<Vec<_>>(),
             vec![(0, 2), (1, 3)]
         );
-        assert_eq!(rflag_time_std_total(&samples[6..8]), 0.0);
-        assert_eq!(rflag_spectral_stats(&samples[6..8]).sum_weight_real, 0.0);
+        assert_eq!(rflag_time_std_total(&samples[6..8], false), Some(0.0));
+        assert_eq!(
+            rflag_spectral_stats(&samples[6..8], false).sum_weight_real,
+            0.0
+        );
 
         let mut histogram = ChannelHistogram::new(2);
         histogram.add(0, 1.0);
@@ -4293,7 +4497,7 @@ mod tests {
             ],
         )]);
         let thresholds = rflag_threshold_maps_for_groups(
-            &groups,
+            groups.values().map(Vec::as_slice),
             &FlagDataRequest {
                 timedev: None,
                 freqdev: None,
@@ -4301,6 +4505,7 @@ mod tests {
                 freqdevscale: 3.0,
                 ..FlagDataRequest::default()
             },
+            None,
         );
         assert!(thresholds.representative_pair().0.is_finite());
         assert!(thresholds.representative_pair().1.is_finite());

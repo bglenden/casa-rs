@@ -879,7 +879,7 @@ def flagdata(
     usewindowstats: str = ...,
     halfwin: int = ...,
     extendflags: bool = ...,
-    winsize: int = ...,
+    winsize: ParameterData = ...,
     timedev: float | Literal['', 'none'] = ...,
     freqdev: float | Literal['', 'none'] = ...,
     timedevscale: float = ...,

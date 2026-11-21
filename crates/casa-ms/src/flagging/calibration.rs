@@ -33,7 +33,7 @@ pub(super) fn run(
         );
     }
     match request.mode {
-        FlagDataMode::Quack | FlagDataMode::Extend => {
+        FlagDataMode::Quack | FlagDataMode::Extend | FlagDataMode::Tfcrop | FlagDataMode::Rflag => {
             return grouped_flags(table, request, selected, persist, backup_version);
         }
         FlagDataMode::Elevation => {
@@ -67,6 +67,7 @@ pub(super) fn run(
         backup_version,
         timedev: None,
         freqdev: None,
+        rflag_report: None,
         summary: None,
     };
     for &row in &selected.rows {
@@ -110,7 +111,25 @@ fn grouped_flags(
 ) -> Result<FlagDataReport, FlaggingError> {
     let path = display_ms_path(table);
     let channels = selected.channels.as_ref();
-    let changes = if request
+    let changes = if matches!(request.mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag) {
+        let valid = matches!(
+            request.data_column,
+            FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
+        ) && table
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column(request.data_column.name()));
+        match (request.mode, valid) {
+            (FlagDataMode::Tfcrop, true) => {
+                apply_tfcrop_flags(table, &selected.rows, channels, request)?
+            }
+            (FlagDataMode::Rflag, true) => {
+                apply_rflag_flags(table, &selected.rows, channels, request, !persist)?
+            }
+            (FlagDataMode::Tfcrop, false) => return Err(FlaggingError::MissingTfcropColumn),
+            _ => return Err(FlaggingError::UnsupportedCalibrationAgent("rflag")),
+        }
+    } else if request
         .correlation
         .as_deref()
         .is_some_and(|value| !value.is_empty())
@@ -135,6 +154,9 @@ fn grouped_flags(
     report.changed_rows = changes.changed_rows;
     report.changed_samples = changes.changed_samples;
     report.backup_version = backup_version;
+    report.timedev = changes.thresholds.map(|values| values.0);
+    report.freqdev = changes.thresholds.map(|values| values.1);
+    report.rflag_report = changes.rflag_report;
     report.summary = None;
     Ok(report)
 }
@@ -260,8 +282,7 @@ impl CalibrationClip {
             .unwrap_or_default()
             .trim()
             .to_ascii_uppercase();
-        let Some((metric, projections)) =
-            clip_projection(&expression, planes, request.data_column.is_real())?
+        let Some(projection) = projection(&expression, planes, request.data_column.is_real())?
         else {
             return Ok(None);
         };
@@ -272,15 +293,63 @@ impl CalibrationClip {
             bounds: request
                 .clipminmax
                 .map(|bounds| bounds.map(|value| f64::from(value as f32))),
-            metric,
-            projections,
+            metric: projection.metric,
+            projections: projection
+                .planes
+                .map(|planes| planes.into_iter().map(ClipProjection::Stored).collect()),
         }))
     }
 }
 
-type CalibrationProjection = (correlation::ClipMetric, Option<Vec<ClipProjection>>);
+pub(super) struct CalibrationProjection {
+    metric: correlation::ClipMetric,
+    planes: Option<Vec<usize>>,
+}
 
-fn clip_projection(
+impl CalibrationProjection {
+    pub(super) fn includes(&self, plane: usize) -> bool {
+        self.planes
+            .as_ref()
+            .is_none_or(|planes| planes.contains(&plane))
+    }
+
+    pub(super) fn scalar(&self, sample: &Sample) -> f64 {
+        f64::from(
+            self.metric
+                .apply32(Complex32::new(sample.real as f32, sample.imag as f32)),
+        )
+    }
+}
+
+pub(super) fn automatic_projection(
+    request: &FlagDataRequest,
+    samples: &[Sample],
+) -> Result<CalibrationProjection, FlaggingError> {
+    let expression = request
+        .correlation
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_uppercase();
+    let planes = samples
+        .iter()
+        .map(|sample| sample.corr + 1)
+        .max()
+        .unwrap_or_default();
+    let real = request.data_column.is_real();
+    let no_planes = CalibrationProjection {
+        metric: correlation::ClipMetric::Amplitude,
+        planes: Some(Vec::new()),
+    };
+    // CASA's RFlag mapper requires a prefix when ALL is supplied explicitly
+    // for a complex calibration column.
+    if request.mode == FlagDataMode::Rflag && !real && expression == "ALL" {
+        return Ok(no_planes);
+    }
+    Ok(projection(&expression, planes, real)?.unwrap_or(no_planes))
+}
+
+fn projection(
     expression: &str,
     planes: usize,
     real: bool,
@@ -322,7 +391,10 @@ fn clip_projection(
         return Ok(None);
     }
     if matches!(products, "" | "ALL") {
-        return Ok(Some((metric, None)));
+        return Ok(Some(CalibrationProjection {
+            metric,
+            planes: None,
+        }));
     }
     let mut selected = std::collections::BTreeSet::new();
     for product in products.split(',').map(str::trim) {
@@ -339,10 +411,10 @@ fn clip_projection(
             return Ok(None);
         }
     }
-    Ok(Some((
+    Ok(Some(CalibrationProjection {
         metric,
-        Some(selected.into_iter().map(ClipProjection::Stored).collect()),
-    )))
+        planes: Some(selected.into_iter().collect()),
+    }))
 }
 
 struct SelectedFlagRows {

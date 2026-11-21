@@ -80,6 +80,11 @@ impl ClipTimedRow {
         (self.group, self.chunk)
     }
 
+    pub(super) fn chunk_key(&self) -> ([i32; 5], usize) {
+        let [observation, array, scan, field, window, _, _] = self.group;
+        ([observation, array, scan, field, window], self.chunk)
+    }
+
     pub(super) fn shares_integration(&self, other: &Self) -> bool {
         self.group[..5] == other.group[..5] && self.seconds == other.seconds
     }

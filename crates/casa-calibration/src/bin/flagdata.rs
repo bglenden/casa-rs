@@ -17,7 +17,8 @@ use casa_ms::{
     flagdata_task_schema_bundle, ms_task_success, save_next_casa_flag_backup, task_selection_text,
 };
 use casa_provider_contracts::{
-    DefaultSpec, NumpyScalarType, ParameterValue, TaskFailureKind, python_repr,
+    CasaFloat, CasaValue, DefaultSpec, FloatDtype, NumpyScalarType, ParameterValue,
+    TaskFailureKind, python_repr,
 };
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
@@ -150,6 +151,19 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             Err(error)
         })?;
     request.time_chunk = time_chunk.filter(|seconds| *seconds > 0.0 && seconds.is_finite());
+    if calibration && !calculate && request.mode == FlagDataMode::Rflag {
+        for (name, threshold, scale) in [
+            ("timedevscale", request.timedev, request.timedevscale),
+            ("freqdevscale", request.freqdev, request.freqdevscale),
+        ] {
+            if threshold.is_some_and(|value| value > 0.0) && scale <= 0.0 {
+                return Err(TaskFailure::validation(format!(
+                    "{name} must be positive when its threshold is positive"
+                ))
+                .at(name));
+            }
+        }
+    }
     if let Some(parameters) = &shadow {
         request.shadow = parameters.options.clone();
     }
@@ -163,6 +177,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     // The CASA task derives persistence from action, including when the
     // caller supplied its hidden writeflags argument explicitly.
     if calculate
+        && !(calibration && request.mode == FlagDataMode::Rflag)
         && !matches!(
             request.mode,
             FlagDataMode::Manual
@@ -216,11 +231,41 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     {
         tracing::error!(%error, "updating flagdata HISTORY");
     }
-    let value = match &report.summary {
-        Some(summary) => flagdata_named_summary_record(summary, &task.required_text("name")?),
-        None => flagdata_empty_record(),
+    let value = if let Some(summary) = &report.summary {
+        flagdata_named_summary_record(summary, &task.required_text("name")?)
+    } else if calculate && let Some(report) = &report.rflag_report {
+        rflag_result(&report.timedev, &report.freqdev)
+    } else {
+        flagdata_empty_record()
     };
     ms_task_success(value, &Some(report))
+}
+
+fn rflag_result(time: &[[f64; 3]], frequency: &[[f64; 3]]) -> CasaValue {
+    if time.is_empty() && frequency.is_empty() {
+        return CasaValue::dict([
+            ("type", CasaValue::string("list")),
+            ("nreport", CasaValue::Int { value: 0 }),
+        ]);
+    }
+    let array = |rows: &[[f64; 3]]| CasaValue::FloatArray {
+        dtype: FloatDtype::Float64,
+        shape: vec![rows.len(), 3],
+        data: (0..3)
+            .flat_map(|column| rows.iter().map(move |row| CasaFloat(row[column])))
+            .collect(),
+    };
+    let report = CasaValue::dict([
+        ("type", CasaValue::string("rflag")),
+        ("name", CasaValue::string("Rflag")),
+        ("timedev", array(time)),
+        ("freqdev", array(frequency)),
+    ]);
+    CasaValue::dict([
+        ("type", CasaValue::string("list")),
+        ("nreport", CasaValue::Int { value: 1 }),
+        ("report0", report),
+    ])
 }
 
 fn save_flag_parameters(
@@ -762,6 +807,25 @@ fn flagdata_request(
         freqdevscale: task.number("freqdevscale")?,
         spectralmax: task.number("spectralmax")?,
         spectralmin: task.number("spectralmin")?,
+        rflag_window: if mode == FlagDataMode::Rflag {
+            let width = match task.value("winsize") {
+                // The task's agent record uses its default for NumPy integers.
+                Some(ParameterValue::NumpyScalar { .. }) => Some(3),
+                _ => tfcrop::integer_setting(task, "winsize")?,
+            };
+            width
+                .map(|width| {
+                    usize::try_from(width)
+                        .ok()
+                        .filter(|&value| value > 0)
+                        .ok_or_else(|| {
+                            TaskFailure::validation("winsize must be positive").at("winsize")
+                        })
+                })
+                .transpose()?
+        } else {
+            Some(3)
+        },
         timedev: task.optional_number("timedev")?,
         freqdev: task.optional_number("freqdev")?,
         extendflags: task.flag("extendflags")?,
