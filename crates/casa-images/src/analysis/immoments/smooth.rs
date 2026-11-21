@@ -4,7 +4,7 @@ use std::f64::consts::{LN_2, PI};
 
 use casa_coordinates::CoordinateType;
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayD, ArrayValue, Value};
+use casa_types::{ArrayD, ArrayValue, Value, quanta::Quantity};
 use ndarray::{IxDyn, ShapeBuilder, Zip};
 
 use crate::analysis::axes::{StridedSection, direction_plane_axes};
@@ -16,7 +16,7 @@ use crate::analysis::{
     GaussianConvolutionOptions, HistogramOptions, ImageGaussianConvolution, image_histogram,
 };
 use crate::image_expr::bounded_read_cursor;
-use crate::{BeamComponent, ImageError, ImageInterface, TempImage};
+use crate::{ImageError, ImageInterface, TempImage};
 
 use super::tool::{ImageMomentOptions, invalid, temp_image};
 
@@ -140,12 +140,8 @@ pub(super) fn prepare(
     {
         let selected = materialize(image, &plan, options, mask, false)?;
         let common = plan.image_info.beam_set.common_beam()?;
-        let widths = [
-            BeamComponent::Major,
-            BeamComponent::Minor,
-            BeamComponent::PositionAngle,
-        ]
-        .map(|component| common.component(component).clone());
+        let widths = [common.major, common.minor, common.position_angle]
+            .map(|value| Quantity::new(value, "rad").expect("built-in angular unit"));
         let convolution = ImageGaussianConvolution::new(
             &selected,
             selected.coordinates().to_record(),
