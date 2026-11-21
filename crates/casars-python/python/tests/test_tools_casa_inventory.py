@@ -27,11 +27,17 @@ from _casa_tools import (
 
 #: Each tool, and the issue its refused methods name.
 ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030,
-          "calibrater": 1528}
+          "calibrater": 1528, "agentflagger": 1527}
 
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
+IMPLEMENTED["agentflagger"] = {
+    "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",
+    "parsemanualparameters", "parseclipparameters", "parsequackparameters", "parseelevationparameters",
+    "parsetfcropparameters", "parseantintparameters", "parseextendparameters", "parsesummaryparameters",
+    "getflagversionlist", "saveflagversion", "restoreflagversion", "deleteflagversion",
+}
 IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit", "initweights",
@@ -63,7 +69,7 @@ IMPLEMENTED["image"] = {
     "boxcar", "collapse", "continuumsub", "convolve", "convolve2d", "decompose", "deviation", "fft", "findsources", "fitcomponents", "fitprofile", "hanning", "histograms",
     "maxfit",
     "moments",
-    "pad", "pbcor", "transpose",
+    "pad", "pbcor", "pv", "regrid", "rotate", "transpose",
     "getprofile", "getslice",
     "crop",
     "decimate",

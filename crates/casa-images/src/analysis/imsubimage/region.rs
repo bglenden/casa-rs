@@ -149,7 +149,7 @@ impl SubimageSelection {
         Ok((selection, stride))
     }
 
-    pub(super) fn packed_shape(&self) -> Vec<usize> {
+    pub(in crate::analysis) fn packed_shape(&self) -> Vec<usize> {
         match &self.stride {
             Some(stride) => self
                 .shape

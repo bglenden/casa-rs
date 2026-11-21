@@ -77,7 +77,9 @@ pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{
     save_next_casa_flag_backup, save_next_flag_backup, save_next_partition_flag_backup,
 };
-pub use version_storage::{restore_flag_version, save_disk_flag_version, save_flag_version};
+pub use version_storage::{
+    restore_flag_version, save_agent_disk_flag_version, save_disk_flag_version, save_flag_version,
+};
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
@@ -119,7 +121,8 @@ pub enum FlagDataColumn {
 }
 
 impl FlagDataColumn {
-    fn name(self) -> &'static str {
+    /// The physical column name used by the flagging data source.
+    pub fn name(self) -> &'static str {
         match self {
             Self::Data => VisibilityDataColumn::Data.name(),
             Self::CorrectedData => VisibilityDataColumn::CorrectedData.name(),
@@ -284,6 +287,9 @@ pub struct FlagDataRequest {
     /// Maximum number of time samples in an RFlag variance window.
     /// A rejected agent record disables RFlag and leaves extension available.
     pub rflag_window: Option<usize>,
+    /// Direct calibration agents can calculate RFlag thresholds in a run
+    /// that writes other agents' flags, or apply thresholds in a dry run.
+    pub rflag_calculate: Option<bool>,
     /// Boolean-vector switch to reject after selecting rows and validating the column.
     pub automatic_average_vector: Option<&'static str>,
     /// Optional RFlag time threshold, before [`Self::timedevscale`]. `None`
@@ -351,6 +357,7 @@ impl Default for FlagDataRequest {
             spectralmax: 1.0e6,
             spectralmin: 0.0,
             rflag_window: Some(3),
+            rflag_calculate: None,
             automatic_average_vector: None,
             timedev: None,
             freqdev: None,
@@ -467,10 +474,16 @@ pub enum FlaggingError {
     /// A calibration-table row or channel selector was refused.
     #[error("{0}")]
     CalibrationSelection(String),
+    /// A calibration program mixes incompatible agent configurations.
+    #[error("{0}")]
+    CalibrationAgentConfiguration(String),
 
     /// A mode cannot configure its agent for a calibration table.
     #[error("Failed to parse parameters for mode {0}")]
     UnsupportedCalibrationAgent(&'static str),
+    /// The upstream antenna integration agent aborts on calibration tables.
+    #[error("antint requires a MeasurementSet with visibility rows")]
+    CalibrationAntint,
 
     /// A requested clipping column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode clip")]
@@ -844,6 +857,103 @@ pub fn flagdata_path_with_model(
             source,
         })?;
     flagdata_with_persistence(&mut ms, request, persist, model_factory)
+}
+
+/// Execute a sequence of calibration flagging agents on one table view.
+/// Earlier commands are visible to subsequent agents and summaries. A
+/// calculate-only run discards its staged flags, and an apply run saves the
+/// combined changed rows after all commands have completed. An entry is
+/// absent when CASA cannot configure that agent and continues the program.
+/// With multiple commands, selection is local to each agent and a time
+/// range gates the calibration buffers at their first integration.
+pub fn flagdata_calibration_program(
+    table: MeasurementSet,
+    requests: &[FlagDataRequest],
+    write_flags: bool,
+    local_selection: bool,
+) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
+    run_calibration_flag_program(
+        table,
+        requests,
+        calibration::ProgramOptions {
+            write_flags,
+            sequential: true,
+            local_selection,
+            selected_rows: None,
+        },
+    )
+}
+
+/// Resolve global calibration-tool selection to stored rows. Channel
+/// ranges in the global selection constrain spectral-window membership.
+/// An agent selects its own channels when it executes on those rows.
+pub fn flagdata_calibration_agent_rows(
+    table: &MeasurementSet,
+    selection: &MsSelection,
+) -> Result<Vec<usize>, FlaggingError> {
+    ensure_calibration_program(table)?;
+    calibration::selected_rows(table, selection)
+}
+
+/// Run initialized calibration agents against the tool's global row view.
+/// Combined runs stage unflag agents before other agents. Returned report
+/// slots keep the configuration order for both execution modes.
+pub fn flagdata_calibration_agents(
+    table: MeasurementSet,
+    requests: &[FlagDataRequest],
+    selected_rows: &[usize],
+    write_flags: bool,
+    sequential: bool,
+) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
+    run_calibration_flag_program(
+        table,
+        requests,
+        calibration::ProgramOptions {
+            write_flags,
+            sequential,
+            local_selection: true,
+            selected_rows: Some(selected_rows),
+        },
+    )
+}
+
+fn run_calibration_flag_program(
+    mut table: MeasurementSet,
+    requests: &[FlagDataRequest],
+    options: calibration::ProgramOptions<'_>,
+) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
+    ensure_calibration_program(&table)?;
+    calibration::run_program(&mut table, requests, options)
+}
+
+fn ensure_calibration_program(table: &MeasurementSet) -> Result<(), FlaggingError> {
+    if !is_calibration_table(table) {
+        return Err(FlaggingError::MutateFlags {
+            path: display_ms_path(table),
+            reason: "calibration flag commands require a calibration table".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// CASA rejects mixing an averaged automatic agent with most other modes.
+/// Each config carries its mode, channel-average switch and time-average switch.
+pub fn validate_calibration_flag_averaging<'a>(
+    configs: impl Iterator<Item = (&'a str, bool, bool)> + Clone,
+) -> Result<(), FlaggingError> {
+    let mut configs = configs.enumerate();
+    if let Some((index, (mode, channelavg, timeavg))) = configs.clone().find(|(_, config)| {
+        matches!(config.0, "clip" | "tfcrop" | "rflag") && (config.1 || config.2)
+    }) && let Some((_, (other, _, _))) = configs.find(|(other_index, (other, _, _))| {
+        *other_index != index && !matches!(*other, "extend" | "display" | "antint")
+    }) {
+        return Err(FlaggingError::CalibrationAgentConfiguration(format!(
+            "Cannot use {mode} mode with timeavg=True or channelavg=True and additional modes other than extend, display, and antint. timeavg={}, channelavg={}, and the following mode has been set up: {other}. Refusing to accept this configuration.",
+            u8::from(timeavg),
+            u8::from(channelavg),
+        )));
+    }
+    Ok(())
 }
 
 fn report_after(
@@ -1391,7 +1501,7 @@ fn apply_quack_flags(
         &quack_rows,
         channel_selections,
         correlations,
-        true,
+        request.action.value(),
         row_policy,
     )
 }
@@ -1576,6 +1686,7 @@ fn apply_tfcrop_flags(
         &loaded.averaged_channels,
         ms,
         !request.casa_row_selection,
+        request.action.value(),
     )?;
     let applied_ms = started.elapsed().as_millis();
     trace_flagdata(|| {
@@ -1981,10 +2092,20 @@ fn apply_rflag_flags(
             },
         })
     });
-    let mut changes =
-        apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms, true)?;
+    let mut changes = apply_flag_mask_with_preloaded(
+        &samples,
+        &modified,
+        loaded.flags_by_row,
+        ms,
+        true,
+        request.action.value(),
+    )?;
     let applied_ms = started.elapsed().as_millis();
-    changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
+    changes.summary = Some(summary_after_flag_mask(
+        &samples,
+        changes.changed_samples,
+        request.action.value(),
+    ));
     changes.thresholds = if projection.is_some() {
         calibration_cutoffs.first().copied().filter(|cutoff| {
             calibration_cutoffs
@@ -2184,8 +2305,9 @@ fn apply_flag_mask_with_preloaded(
     mut updates: BTreeMap<usize, ArrayD<bool>>,
     ms: &mut MeasurementSet,
     update_flag_rows: bool,
+    flag_value: bool,
 ) -> Result<ChangeSet, FlaggingError> {
-    let (touched_rows, changed_samples) = stage_flag_mask(samples, mask, &mut updates);
+    let (touched_rows, changed_samples) = stage_flag_mask(samples, mask, &mut updates, flag_value);
     let mut changed = ChangeSet {
         changed_samples,
         ..ChangeSet::default()
@@ -2207,11 +2329,16 @@ fn apply_tfcrop_mask(
     averaged_channels: &BTreeMap<usize, AveragedChannels>,
     ms: &mut MeasurementSet,
     update_flag_rows: bool,
+    flag_value: bool,
 ) -> Result<ChangeSet, FlaggingError> {
     if averaged_channels.is_empty() {
         let mut changes =
-            apply_flag_mask_with_preloaded(samples, mask, flags, ms, update_flag_rows)?;
-        changes.summary = Some(summary_after_flag_only(samples, changes.changed_samples));
+            apply_flag_mask_with_preloaded(samples, mask, flags, ms, update_flag_rows, flag_value)?;
+        changes.summary = Some(summary_after_flag_mask(
+            samples,
+            changes.changed_samples,
+            flag_value,
+        ));
         return Ok(changes);
     }
 
@@ -2231,8 +2358,12 @@ fn apply_tfcrop_mask(
         .zip(mask)
         .filter(|(_, flag)| **flag)
         .flat_map(|(sample, _)| channels(sample));
-    let (touched, changed_samples) = stage_flag_coordinates(coordinates, &mut flags);
-    summary.flagged_samples += changed_samples;
+    let (touched, changed_samples) = stage_flag_coordinates(coordinates, &mut flags, flag_value);
+    if flag_value {
+        summary.flagged_samples += changed_samples;
+    } else {
+        summary.flagged_samples = summary.flagged_samples.saturating_sub(changed_samples);
+    }
     let mut changed = ChangeSet {
         changed_samples,
         summary: Some(summary),
@@ -2260,18 +2391,20 @@ fn stage_flag_mask(
     samples: &[Sample],
     mask: &[bool],
     updates: &mut BTreeMap<usize, ArrayD<bool>>,
+    flag_value: bool,
 ) -> (std::collections::BTreeSet<usize>, usize) {
     let coordinates = samples
         .iter()
         .zip(mask)
         .filter(|(_, flag)| **flag)
         .map(|(sample, _)| (sample.row, sample.corr, sample.chan));
-    stage_flag_coordinates(coordinates, updates)
+    stage_flag_coordinates(coordinates, updates, flag_value)
 }
 
 fn stage_flag_coordinates(
     coordinates: impl Iterator<Item = (usize, usize, usize)>,
     updates: &mut BTreeMap<usize, ArrayD<bool>>,
+    flag_value: bool,
 ) -> (std::collections::BTreeSet<usize>, usize) {
     let mut changed_samples = 0;
     let mut touched_rows = std::collections::BTreeSet::<usize>::new();
@@ -2280,9 +2413,9 @@ fn stage_flag_coordinates(
             continue;
         };
         if let Some(value) = flags.get_mut(IxDyn(&[corr, chan]))
-            && !*value
+            && *value != flag_value
         {
-            *value = true;
+            *value = flag_value;
             changed_samples += 1;
             touched_rows.insert(row);
         }
@@ -3907,9 +4040,18 @@ fn format_threshold_map(thresholds: &BTreeMap<FieldSpwKey, f64>) -> BTreeMap<Str
         .collect()
 }
 
-fn summary_after_flag_only(samples: &[Sample], changed_samples: usize) -> FlagSummary {
+fn summary_after_flag_mask(
+    samples: &[Sample],
+    changed_samples: usize,
+    flag_value: bool,
+) -> FlagSummary {
+    let flagged = samples.iter().filter(|sample| sample.flag).count();
     FlagSummary {
-        flagged_samples: samples.iter().filter(|sample| sample.flag).count() + changed_samples,
+        flagged_samples: if flag_value {
+            flagged + changed_samples
+        } else {
+            flagged.saturating_sub(changed_samples)
+        },
         total_samples: samples.len(),
     }
 }
@@ -4953,7 +5095,10 @@ mod tests {
             union_masks(&[true, false], &[false, true]),
             vec![true, true]
         );
-        assert_eq!(summary_after_flag_only(&samples, 2).flagged_samples, 3);
+        assert_eq!(
+            summary_after_flag_mask(&samples, 2, true).flagged_samples,
+            3
+        );
         assert_eq!(
             flag_mask_counts_by_spw_corr(&modified, &samples).get("spw0_corr0"),
             Some(&6)

@@ -100,7 +100,7 @@ pub(in crate::analysis) fn subset_beam_set(
     subset_beam_section(beam_set, input_coords, ndim, start, shape, None)
 }
 
-fn subset_beam_section(
+pub(in crate::analysis) fn subset_beam_section(
     beam_set: &ImageBeamSet,
     input_coords: &CoordinateSystem,
     ndim: usize,
@@ -111,6 +111,19 @@ fn subset_beam_section(
     if !beam_set.is_multi() {
         return Ok(beam_set.clone());
     }
+    let [channels, stokes] =
+        beam_section_indices(beam_set, input_coords, ndim, start, shape, stride);
+    beam_set.subset(&channels, &stokes)
+}
+
+pub(in crate::analysis) fn beam_section_indices(
+    beam_set: &ImageBeamSet,
+    input_coords: &CoordinateSystem,
+    ndim: usize,
+    start: &[usize],
+    shape: &[usize],
+    stride: Option<&[usize]>,
+) -> [Vec<usize>; 2] {
     let indices = |kind, length: usize| match find_system_axis(input_coords, kind) {
         Some(axis) if axis < ndim && length > 1 => {
             let step = stride.map_or(1, |stride| stride[axis]);
@@ -120,9 +133,10 @@ fn subset_beam_section(
         }
         _ => vec![0],
     };
-    let chans = indices(CoordinateType::Spectral, beam_set.n_channels());
-    let stokes = indices(CoordinateType::Stokes, beam_set.n_stokes());
-    beam_set.subset(&chans, &stokes)
+    [
+        indices(CoordinateType::Spectral, beam_set.n_channels()),
+        indices(CoordinateType::Stokes, beam_set.n_stokes()),
+    ]
 }
 
 fn strip_index_suffix(field: &str) -> (&str, Option<usize>) {

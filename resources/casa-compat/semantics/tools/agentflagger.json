@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "tool": "agentflagger",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "1ab256e49c7c7aa43ba9719dc2f58b46fdf25558",
+  "methods": {
+    "deleteflagversion": {
+      "status": "Implemented",
+      "scope": "Deletes named calibration snapshots in caller order. Empty lists and missing names are no-ops. The main table stays intact.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "done": {
+      "status": "Implemented",
+      "scope": "Releases the calibration attachment and clears queued and initialized agents. Repeated calls succeed.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "getflagversionlist": {
+      "status": "Implemented",
+      "scope": "Returns the original table header, main entry and ordered raw calibration version names and comments. The print switch controls logging.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "init": {
+      "status": "Implemented",
+      "scope": "Initializes compatible queued agents once a calibration table has a global selection. Retains initialized agents and leaves incompatible configurations out of execution.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "open": {
+      "status": "Implemented",
+      "scope": "Attaches current-format CPARAM and FPARAM calibration tables and resets global selection and agent state. MeasurementSet attachment is tracked in #978.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parseagentparameters": {
+      "status": "Implemented",
+      "scope": "Accepts native calibration agent records, including manual, unflag, clip, quack, summary, extend, TFCrop and RFlag plus CASA parser and initialization refusals.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parseantintparameters": {
+      "status": "Implemented",
+      "scope": "Queues the specialized antenna-integration configuration. A raw configuration with a physical calibration column raises safely during execution where CASA aborts.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parseclipparameters": {
+      "status": "Implemented",
+      "scope": "Queues clipping of physical calibration values with row, channel and solution-plane selection, range and zero handling, averaging compatibility and flag or unflag action.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parseelevationparameters": {
+      "status": "Implemented",
+      "scope": "Accepts the specialized elevation configuration and matches CASA\u2019s deferred refusal on calibration tables.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parseextendparameters": {
+      "status": "Implemented",
+      "scope": "Queues calibration flag extension across time, channel and solution planes, with configured neighbor rules, growth percentages and flag or unflag action.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parsemanualparameters": {
+      "status": "Implemented",
+      "scope": "Queues flag or unflag for selected calibration rows and channels, with autocorrelation and time controls.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parsequackparameters": {
+      "status": "Implemented",
+      "scope": "Queues flagging or unflagging at scan boundaries with the CASA interval, edge and increment options.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parsesummaryparameters": {
+      "status": "Implemented",
+      "scope": "Queues staged flag statistics for calibration rows, windows and channels with the requested breakdowns and report name.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "parsetfcropparameters": {
+      "status": "Implemented",
+      "scope": "Queues time and frequency fits against stored calibration values, with the native fit and window controls, averaging validation and action. An explicitly empty correlation selects the first solution plane.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "printflagselection": {
+      "status": "Implemented",
+      "scope": "Logs the active calibration selection and returns the tool\u2019s Boolean result.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "restoreflagversion": {
+      "status": "Implemented",
+      "scope": "Restores requested versions in order with replace, OR and AND semantics. Earlier successful restores persist when a later name is missing.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "run": {
+      "status": "Implemented",
+      "scope": "Consumes initialized agents with sequential or combined ordering. Dry runs keep staged results in reports. Each RFlag agent separately controls threshold calculation.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "saveflagversion": {
+      "status": "Implemented",
+      "scope": "Snapshots the original calibration flags through the casacore read lock. Supports raw names, comments, merge modes and the empty-name flags. version.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    },
+    "selectdata": {
+      "status": "Implemented",
+      "scope": "Replaces global calibration row selection. A nonempty config record takes precedence over keyword selectors. Agents can choose their own channel selection.",
+      "evidence": [
+        "signature",
+        "calibration-casa"
+      ]
+    }
+  },
+  "behaviors": [],
+  "decisions": [],
+  "evidence": {
+    "signature": {
+      "kind": "Signature inventory",
+      "state": "recorded",
+      "scope": "All 19 installed CASA methods, parameter order and effective defaults per method.",
+      "links": [
+        "crates/casars-python/python/tests/data/casa_agentflagger_signatures.json",
+        "crates/casars-python/python/tests/test_tools_casa_inventory.py"
+      ]
+    },
+    "calibration-casa": {
+      "kind": "Same-input behavior and file interchange",
+      "state": "passed",
+      "scope": "Current complex and real calibration tables, selection, lifecycle, flag masks, reports, mixed averaging, raw version operations and safe refusal controls.",
+      "links": [
+        "tools/casa-compat/agentflagger_calibration_oracle.py",
+        "docs/CASA (C++) bugs.md"
+      ],
+      "casa_version": "6.7.6.14",
+      "revision": "1ab256e49c7c7aa43ba9719dc2f58b46fdf25558",
+      "command": "casa-python tools/casa-compat/agentflagger_calibration_oracle.py --work <new-dir>",
+      "receipt": "resources/casa-compat/evidence/agentflagger-calibration-20261121.json"
+    }
+  }
+}

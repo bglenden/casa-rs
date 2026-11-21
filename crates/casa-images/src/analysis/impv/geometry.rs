@@ -21,6 +21,7 @@ impl Strip {
         [start, end]: [[f64; 2]; 2],
         image_shape: [usize; 2],
         width: usize,
+        include_half_pixel_ties: bool,
     ) -> Result<Self, ImageError> {
         if start == end {
             return Err(ImageError::CasaSelection(
@@ -66,8 +67,14 @@ impl Strip {
             last = rotated.world_to_pixel(source.pixel_to_world(end)?)?;
             rotation = Some(rotated);
         }
-        let lower = [first[0].round() as i64, (first[1] - half).round() as i64];
-        let upper = [last[0].round() as i64, (last[1] + half).round() as i64];
+        let (lower_y, upper_y) = transverse_rows(
+            first[1],
+            last[1],
+            half,
+            rotation.is_some() && include_half_pixel_ties,
+        );
+        let lower = [first[0].round() as i64, lower_y];
+        let upper = [last[0].round() as i64, upper_y];
         if lower[0] > upper[0] || lower[1] > upper[1] {
             return Err(ImageError::CasaSelection(
                 "PV rotation produced an empty strip".into(),
@@ -87,6 +94,16 @@ impl Strip {
 
     pub(super) fn rotated(&self) -> bool {
         self.rotation.is_some()
+    }
+
+    pub(super) fn input_offsets(&self) -> Result<Vec<Vec<[f64; 2]>>, ImageError> {
+        (0..self.shape[0])
+            .map(|step| {
+                (0..self.shape[1])
+                    .map(|across| self.input_pixel(step, across))
+                    .collect()
+            })
+            .collect()
     }
 
     pub(super) fn input_pixel(&self, x: usize, y: usize) -> Result<[f64; 2], ImageError> {
@@ -129,6 +146,26 @@ impl Strip {
         let haversine = ((lat1 - lat0) / 2.0).sin().powi(2)
             + lat0.cos() * lat1.cos() * ((lon1 - lon0) / 2.0).sin().powi(2);
         Ok(2.0 * haversine.clamp(0.0, 1.0).sqrt().asin() / count)
+    }
+}
+
+fn transverse_rows(first: f64, last: f64, half_width: f64, include_ties: bool) -> (i64, i64) {
+    // Both endpoints of a rotated strip should occupy the same row. At a
+    // half-pixel center, both neighboring rows are equally close. Include
+    // both ties at the transverse boundaries independent of WCS roundoff.
+    let midpoint = (first + last) / 2.0;
+    let tie = midpoint.floor() + 0.5;
+    const WCS_ROUNDOFF: f64 = 1e-7;
+    if include_ties && (first - tie).abs() < WCS_ROUNDOFF && (last - tie).abs() < WCS_ROUNDOFF {
+        (
+            (tie - half_width).floor() as i64,
+            (tie + half_width).ceil() as i64,
+        )
+    } else {
+        (
+            (first - half_width).round() as i64,
+            (last + half_width).round() as i64,
+        )
     }
 }
 

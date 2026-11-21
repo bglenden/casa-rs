@@ -30,6 +30,12 @@ use casa_types::quanta::Quantity;
 mod automatic;
 #[path = "flagdata/command.rs"]
 mod command;
+#[path = "flagdata/command_values.rs"]
+mod command_values;
+#[path = "flagdata/list.rs"]
+mod list;
+#[path = "flagdata/python_literal.rs"]
+mod python_literal;
 #[path = "flagdata/rflag.rs"]
 mod rflag;
 #[path = "flagdata/shadow.rs"]
@@ -69,6 +75,9 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     let mode = task.required_text("mode")?;
+    if mode == "list" {
+        return list::run(task, &action);
+    }
     let automatic_calibration = automatic::table_kind(task, &mode)?;
     tfcrop::integer_setting(task, "winsize")?;
     if mode == "antint" {
@@ -207,7 +216,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         FlaggingError::CalibrationSelection(_) => {
             TaskFailure::execution(error.to_string()).at("calibration-selection")
         }
-        FlaggingError::UnsupportedCalibrationAgent(_) => {
+        FlaggingError::UnsupportedCalibrationAgent(_) | FlaggingError::CalibrationAntint => {
             TaskFailure::execution(error.to_string()).at("calibration-agent")
         }
         FlaggingError::MissingClipColumn | FlaggingError::MissingTfcropColumn => {
@@ -888,6 +897,7 @@ fn flagdata_request(
         } else {
             Some(casa_ms::flagging::TfcropOptions::default())
         },
+        rflag_calculate: None,
         timedevscale: task.number("timedevscale")?,
         freqdevscale: task.number("freqdevscale")?,
         spectralmax: task.number("spectralmax")?,
