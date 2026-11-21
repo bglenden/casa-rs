@@ -190,7 +190,8 @@ pub(super) fn leakage_request(
 ) -> Result<crate::solve::grouping::leakage::LeakageSolveRequest, TaskFailure> {
     use crate::solve::grouping::leakage::{LeakageSolveKind, LeakageSolveRequest};
 
-    let poltype = task.required_text("poltype")?;
+    let gain = task.surface() == "gaincal";
+    let poltype = task.required_text(if gain { "gaintype" } else { "poltype" })?;
     let kind = match poltype.as_str() {
         "D" => LeakageSolveKind::D,
         "Df" => LeakageSolveKind::Df,
@@ -209,6 +210,8 @@ pub(super) fn leakage_request(
         "PosAng" => LeakageSolveKind::PosAng,
         "Xparang+QU" => LeakageSolveKind::Xparang,
         "Xfparang+QU" => LeakageSolveKind::Xfparang,
+        "XY+QU" if gain => LeakageSolveKind::XY,
+        "XYf+QU" if gain => LeakageSolveKind::XYf,
         "X" => {
             return Err(TaskFailure::execution(
                 "Can't do selfGatherAndSolve for X Mueller",
@@ -233,6 +236,13 @@ pub(super) fn leakage_request(
         model_source,
         stokes,
         priors: chain(task, Chain::Solve)?,
+        parang: !gain || task.flag("parang")?,
+        correlation_dependent_flags: gain && task.flag("corrdepflags")?,
+        solve_mode: if gain {
+            calmode(task)?
+        } else {
+            GainSolveMode::AmplitudePhase
+        },
         interval: parse_time_solint(time)?,
         frequency_interval: parse_frequency_solint(frequency)?,
         combine: combine(task)?,

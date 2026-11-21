@@ -73,7 +73,10 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    if task.surface() == "polcal" {
+    if task.surface() == "polcal"
+        || (task.surface() == "gaincal"
+            && matches!(task.required_text("gaintype")?.as_str(), "XY+QU" | "XYf+QU"))
+    {
         return polcal::run(task);
     }
     if task.surface() == "polfromgain" {
@@ -217,7 +220,15 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         history::record_applycal(task, &request.measurement_set);
     }
     let value = casa_value(task.surface(), &applied, &result);
-    let rendered = render::render(report.format, &result).map_err(TaskFailure::execution)?;
+    report_success(&report, &result, value)
+}
+
+fn report_success(
+    report: &read::Report,
+    result: &CalibrationTaskResult,
+    value: CasaValue,
+) -> Result<TaskSuccess, TaskFailure> {
+    let rendered = render::render(report.format, result).map_err(TaskFailure::execution)?;
     let text = match report.output.as_deref() {
         Some(path) => {
             std::fs::write(path, rendered).map_err(|error| {
@@ -228,7 +239,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         None => rendered,
     };
     crate::timing::report_process_memory();
-    Ok(TaskSuccess::new(value, &result)?.with_text(text))
+    Ok(TaskSuccess::new(value, result)?.with_text(text))
 }
 
 fn position_input_failure(error: crate::AntposInputError) -> TaskFailure {
@@ -258,7 +269,14 @@ fn refuse_report_in_product(
     request: &CalibrationTaskRequest,
     task: &TaskInvocation<'_>,
 ) -> Result<(), TaskFailure> {
-    let mut products = scientific_paths(request)?;
+    refuse_report_in_products(path, scientific_paths(request)?, task)
+}
+
+fn refuse_report_in_products(
+    path: &Path,
+    mut products: Vec<std::path::PathBuf>,
+    task: &TaskInvocation<'_>,
+) -> Result<(), TaskFailure> {
     if task.surface() == "fluxscale"
         && let Some(vis) = task.text("vis")?
     {

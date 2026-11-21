@@ -74,7 +74,8 @@ pub(super) fn viscal_order(subtype: &str) -> u8 {
         "K Jones" | "Kcross Jones" | "K WVR" | "Fringe Jones" => 5,
         "J Jones" | "Jf Jones" => 7,
         "D Jones" | "Df Jones" | "Dgen Jones" | "Dfgen Jones" | "DLLS Jones" | "DfLLS Jones" => 8,
-        "X Jones" | "Xf Jones" | "Xparang Jones" | "Xfparang Jones" | "X Mueller" => 9,
+        "X Jones" | "Xf Jones" | "Xparang Jones" | "Xfparang Jones" | "X Mueller"
+        | "GlinXph Jones" | "GlinXphf Jones" => 9,
         "PosAng Jones" => 10,
         "P Jones" => 11,
         "EGainCurve" | "EPowerCurve" => 12,

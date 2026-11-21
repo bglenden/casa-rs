@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, HashMap};
 use crate::execute::ParallacticAngleState;
 
 use super::channel_samples::{ChannelSamples, ScratchSample};
-use super::parallactic_fit::{Segment, SegmentChannel, solve};
-use super::{CoherencyMean, Complex32, GainSolveError, prior_error};
+use super::parallactic_fit::{Segment, SegmentChannel, solve, solve_sample};
+use super::{CoherencyMean, Complex32, GainSolveError, GainSolveMode, prior_error};
 
 #[derive(Clone, Copy)]
 pub(super) struct BaselineSegment {
@@ -33,14 +33,23 @@ struct SegmentRows {
 
 pub(super) struct ParallacticAverages {
     circular: bool,
+    gain_phase: bool,
+    mode: GainSolveMode,
     segments: BTreeMap<(u64, i32, i32), SegmentRows>,
     rows: ChannelSamples<PhaseSample>,
 }
 
 impl ParallacticAverages {
-    pub(super) fn new(channels: usize, circular: bool) -> Self {
+    pub(super) fn new(
+        channels: usize,
+        circular: bool,
+        gain_phase: bool,
+        mode: GainSolveMode,
+    ) -> Self {
         Self {
             circular,
+            gain_phase,
+            mode,
             segments: BTreeMap::new(),
             rows: ChannelSamples::new(channels),
         }
@@ -72,12 +81,14 @@ impl ParallacticAverages {
             if let Some((data, model, weights)) = mean.finish(false)
                 && (weights[1] > 0.0 || weights[2] > 0.0)
             {
+                let [(xy, wx), (yx, wy)] =
+                    [1, 2].map(|corr| solve_sample(self.mode, data[corr], weights[corr]));
                 let sample = PhaseSample {
                     segment: segment.id as u32,
                     antennas,
-                    data: [data[1], data[2]],
+                    data: [xy, yx],
                     model: [model[1], model[2]],
-                    weights: [weights[1], weights[2]],
+                    weights: [wx, wy],
                 };
                 self.rows
                     .push(channel, sample)
@@ -111,10 +122,12 @@ impl ParallacticAverages {
         let mut samples = Vec::new();
         for segment in std::iter::once(first).chain(usable) {
             positions[segment.id] = Some(samples.len());
-            for row in segment.flags {
-                if let Some(accepted) = accepted.get_mut(&row.antennas) {
-                    for (keep, unflagged) in accepted.iter_mut().zip(row.unflagged) {
-                        *keep &= unflagged;
+            if !self.gain_phase {
+                for row in segment.flags {
+                    if let Some(accepted) = accepted.get_mut(&row.antennas) {
+                        for (keep, unflagged) in accepted.iter_mut().zip(row.unflagged) {
+                            *keep &= unflagged;
+                        }
                     }
                 }
             }
@@ -137,8 +150,15 @@ impl ParallacticAverages {
                 channels: vec![SegmentChannel::default(); channels],
             });
         }
-        let required = if self.circular { 2 } else { 3 };
+        let required = if self.circular || self.gain_phase {
+            2
+        } else {
+            3
+        };
         if samples.len() < required {
+            if self.gain_phase {
+                return Err(GainSolveError::InsufficientGainPhaseSegments);
+            }
             return Err(GainSolveError::InsufficientParallacticCoverage { required });
         }
         for channel in 0..channels {
@@ -147,9 +167,10 @@ impl ParallacticAverages {
             self.rows
                 .drain(channel, |row| {
                     if let Some(segment) = positions[row.segment as usize]
-                        && accepted
-                            .get(&row.antennas)
-                            .is_some_and(|words| words[word] & bit != 0)
+                        && (self.gain_phase
+                            || accepted
+                                .get(&row.antennas)
+                                .is_some_and(|words| words[word] & bit != 0))
                     {
                         samples[segment].channels[channel].observe(
                             row.data,
@@ -160,7 +181,7 @@ impl ParallacticAverages {
                 })
                 .map_err(GainSolveError::PolarizationScratch)?;
         }
-        solve(&samples, channels, self.circular, true)
+        solve(&samples, channels, self.circular, !self.gain_phase)
             .map_err(|_| GainSolveError::SingularSourcePolarization)
     }
 }
