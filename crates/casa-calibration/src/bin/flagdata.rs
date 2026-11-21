@@ -81,7 +81,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         .then(|| shadow::parameters(task))
         .transpose()
         .or_else(|error| {
-            backup_before_failed_apply(task, &action)?;
+            if error.kind == TaskFailureKind::Execution {
+                backup_before_failed_apply(task, &action)?;
+            }
             Err(error)
         })?;
     let shadow_command = shadow

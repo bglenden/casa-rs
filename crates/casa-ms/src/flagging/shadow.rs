@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::mem::size_of;
 use std::sync::Arc;
 
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -9,9 +10,9 @@ use casa_types::{ArrayValue, ScalarValue};
 
 use crate::derived::engine::MsCalEngine;
 use crate::selection::syntax::ChannelSelection;
-use crate::{MeasurementSet, MsResult, open_measures_runtime};
+use crate::{MeasurementSet, MsReadPlan, MsResult, MsSelectionIoBudget, open_measures_runtime};
 
-use super::clip_time::{ClipTimedRow, read_clip_times, sort_iterator_rows};
+use super::clip_time::{ClipTimedRow, integration_blocks, read_clip_times, sort_iterator_rows};
 use super::geometry::{apply_geometric_flags, phase_center};
 use super::{ChangeSet, CorrelationSelection, FlaggingError};
 
@@ -94,6 +95,15 @@ fn shadowed_rows(
         .collect();
     let mut ordered = read_clip_times(ms, selected, path)?;
     sort_iterator_rows(&mut ordered);
+    let bytes_per_row = size_of::<Baseline>()
+        + size_of::<usize>()
+        + size_of::<Option<ScalarValue>>()
+        + size_of::<Option<ArrayValue>>()
+        + size_of::<[f64; 3]>();
+    let budget = MsSelectionIoBudget::from_system_memory(2, bytes_per_row, None)
+        .map_err(|error| fail(error.to_string()))?;
+    let plan = MsReadPlan::new(ordered.len(), budget).map_err(|error| fail(error.to_string()))?;
+    let batch_rows = plan.rows_per_block.max(1);
     let mut affected = Vec::new();
     let mut engine = None;
     let mut measures = None;
@@ -102,46 +112,55 @@ fn shadowed_rows(
     let mut center = None;
     let mut time = None;
     let mut shadowed = vec![false; antennas.len()];
-    for integration in ordered.chunk_by(ClipTimedRow::shares_integration) {
-        let next_field = usize::try_from(integration[0].field())
-            .map_err(|_| fail(format!("negative FIELD_ID at row {}", integration[0].row)))?;
-        if field != Some(next_field) {
-            field = Some(next_field);
-            field_start = integration[0].time();
-            center = None;
+    for block in integration_blocks(&ordered, batch_rows) {
+        // Physical I/O is bounded even when one logical integration is large.
+        let mut baselines = Vec::with_capacity(block.len());
+        for rows in block.chunks(batch_rows) {
+            baselines.extend(read_baselines(ms, rows, antenna_count, fail)?);
         }
-        let baselines = read_baselines(ms, integration, antenna_count, fail)?;
-        for (index, baseline) in baselines.iter().enumerate() {
-            if time != Some(baseline.centroid) {
-                time = Some(baseline.centroid);
-                let rows = baselines[index..]
-                    .iter()
-                    .take_while(|candidate| candidate.centroid <= baseline.centroid);
-                shadowed = shadowed_antennas(&antennas, rows, options.tolerance_m, || {
-                    if engine.is_none() {
-                        engine = Some(MsCalEngine::new(ms)?.with_field_ephemerides(ms)?);
-                        measures = Some(open_measures_runtime()?);
-                    }
-                    if center.is_none() {
-                        center = Some(phase_center(
-                            ms,
-                            engine.as_ref().expect("shadow measures are initialized"),
-                            next_field,
-                            field_start,
-                        )?);
-                    }
-                    let direction = center.as_ref().expect("the field has a phase center");
-                    project_positions(
-                        &antennas,
-                        direction,
-                        baseline.centroid,
-                        Arc::clone(measures.as_ref().expect("shadow measures are initialized")),
-                    )
-                })
-                .map_err(|error| fail(error.to_string()))?;
+        let mut unread = baselines.as_slice();
+        for integration in block.chunk_by(ClipTimedRow::shares_integration) {
+            let next_field = usize::try_from(integration[0].field())
+                .map_err(|_| fail(format!("negative FIELD_ID at row {}", integration[0].row)))?;
+            if field != Some(next_field) {
+                field = Some(next_field);
+                field_start = integration[0].time();
+                center = None;
             }
-            if shadowed[baseline.first] || shadowed[baseline.second] {
-                affected.push(integration[index].row);
+            let (baselines, remaining) = unread.split_at(integration.len());
+            unread = remaining;
+            for (index, baseline) in baselines.iter().enumerate() {
+                if time != Some(baseline.centroid) {
+                    time = Some(baseline.centroid);
+                    let rows = baselines[index..]
+                        .iter()
+                        .take_while(|candidate| candidate.centroid <= baseline.centroid);
+                    shadowed = shadowed_antennas(&antennas, rows, options.tolerance_m, || {
+                        if engine.is_none() {
+                            engine = Some(MsCalEngine::new(ms)?.with_field_ephemerides(ms)?);
+                            measures = Some(open_measures_runtime()?);
+                        }
+                        if center.is_none() {
+                            center = Some(phase_center(
+                                ms,
+                                engine.as_ref().expect("shadow measures are initialized"),
+                                next_field,
+                                field_start,
+                            )?);
+                        }
+                        let direction = center.as_ref().expect("the field has a phase center");
+                        project_positions(
+                            &antennas,
+                            direction,
+                            baseline.centroid,
+                            Arc::clone(measures.as_ref().expect("shadow measures are initialized")),
+                        )
+                    })
+                    .map_err(|error| fail(error.to_string()))?;
+                }
+                if shadowed[baseline.first] || shadowed[baseline.second] {
+                    affected.push(integration[index].row);
+                }
             }
         }
     }
@@ -163,7 +182,7 @@ fn read_baselines(
         .map_err(|error| fail(error.to_string()))?;
     let uvws = table
         .column_accessor("UVW")
-        .and_then(|column| column.array_cells_owned(&indices))
+        .and_then(|column| column.array_cells_owned_uncached(&indices))
         .map_err(|error| fail(error.to_string()))?;
     rows.iter()
         .zip(times)

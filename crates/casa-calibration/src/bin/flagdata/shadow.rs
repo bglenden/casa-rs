@@ -13,6 +13,10 @@ pub(super) struct ShadowParameters {
 }
 
 pub(super) fn parameters(task: &TaskInvocation<'_>) -> Result<ShadowParameters, TaskFailure> {
+    let tolerance_m = task
+        .value("tolerance")
+        .and_then(number)
+        .map_or_else(|| task.number("tolerance"), Ok)?;
     let (config, command_argument) = match task.value("addantenna") {
         Some(ParameterValue::String(path)) if !path.is_empty() => {
             let config = read_list(path)?;
@@ -25,13 +29,17 @@ pub(super) fn parameters(task: &TaskInvocation<'_>) -> Result<ShadowParameters, 
                     .map_or_else(|| python_repr(value), str::to_owned),
             ),
         ),
-        _ => (ParameterValue::Table(BTreeMap::new()), None),
+        Some(ParameterValue::String(_) | ParameterValue::Table(_)) | None => {
+            (ParameterValue::Table(BTreeMap::new()), None)
+        }
+        _ => {
+            return Err(
+                TaskFailure::validation("addantenna must be a string or dictionary")
+                    .at("addantenna"),
+            );
+        }
     };
     let additional = additional_antennas(&config);
-    let tolerance_m = task
-        .value("tolerance")
-        .and_then(number)
-        .map_or_else(|| task.number("tolerance"), Ok)?;
     Ok(ShadowParameters {
         options: ShadowOptions {
             tolerance_m,
@@ -142,9 +150,14 @@ fn read_list(path: &str) -> Result<AntennaList, TaskFailure> {
             let key = key.trim_end();
             let raw = raw.trim();
             let value = match key {
-                "name" => {
-                    ParameterValue::String(raw.split_whitespace().next().unwrap_or("").to_owned())
-                }
+                "name" => ParameterValue::String(
+                    raw.split_whitespace()
+                        .next()
+                        .ok_or_else(|| {
+                            TaskFailure::execution("list index out of range").at("addantenna")
+                        })?
+                        .to_owned(),
+                ),
                 "diameter" => ParameterValue::Float(parse_float(raw)?),
                 "position" => {
                     let coordinates = raw

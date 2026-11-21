@@ -367,6 +367,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if completion.parameter == "addantenna":
                 if (completion.message or "").startswith("could not convert string to float:"):
                     raise ValueError(completion.message) from error
+                if completion.message == "list index out of range":
+                    raise IndexError(completion.message) from error
                 raise Exception(completion.message) from error
             if completion.parameter in ("channelavg", "chanbin", "timeavg", "outfile"):
                 raise RuntimeError(completion.message) from error

@@ -4,6 +4,7 @@
 
 from contextlib import chdir
 from json import loads
+from itertools import groupby
 from pathlib import Path
 from shutil import copytree
 from tempfile import TemporaryDirectory
@@ -166,8 +167,10 @@ def check_inputs(libraries):
          "{'addantenna': ['null value not allowed', 'null value not allowed', 'null value not allowed']}", False),
         ("addantenna", "missing.txt", Exception, "File missing.txt not found - please verify the name", True),
         ("addantenna", "wrong-number.txt", ValueError, "could not convert string to float: 'oops'", True),
+        ("addantenna", "empty-name.txt", IndexError, "list index out of range", True),
     )
     Path("wrong-number.txt").write_text("name=ea99\ndiameter=oops\nposition=[1.0, 2.0, 3.0 ]\n")
+    Path("empty-name.txt").write_text("name=\ndiameter=25.0\nposition=[1.0, 2.0, 3.0 ]\n")
     for index, (key, value, error_type, message, creates_backup) in enumerate(failures):
         for name, task in libraries:
             path = f"input-{index}-{name}.ms"
@@ -188,6 +191,60 @@ def check_inputs(libraries):
                     for cell, readback in zip(original, after, strict=True):
                         np.testing.assert_array_equal(readback, cell)
     return len(failures)
+
+
+def check_provider_refusals():
+    path = "raw-invalid.ms"
+    copytree("source.ms", path)
+    original, auxiliaries = snapshot(path), auxiliary_content(path)
+    for parameter, value in (("addantenna", 3), ("tolerance", "2")):
+        try:
+            tasks.run("flagdata", vis=path, mode="shadow", **{parameter: value})
+        except tasks.TaskParameterError as error:
+            assert error.completion.parameter == parameter
+        else:
+            raise AssertionError((parameter, value))
+        assert_preserved(path, original, auxiliaries)
+
+
+def check_shuffled_rows(libraries):
+    copytree("source.ms", "before-shuffle.ms")
+    with table("before-shuffle.ms/ANTENNA", ack=False, readonly=False) as antennas:
+        origin = antennas.getcell("POSITION", 0)
+        antennas.putcol("POSITION", origin + np.arange(5)[:, None] * np.array([[10000., 0., 0.]]))
+    with table("before-shuffle.ms", ack=False, readonly=False) as main:
+        first, second = main.getcol("ANTENNA1"), main.getcol("ANTENNA2")
+        times = main.getcol("TIME")
+        main.putcol("TIME_CENTROID", times + 0.2 * ((first + second) % 3))
+        with main.selectrows(np.random.default_rng(42).permutation(len(times))) as shuffled:
+            with shuffled.copy("shuffled.ms", deep=True, valuecopy=True):
+                pass
+    with table("shuffled.ms", ack=False) as main:
+        time, centroid = main.getcol("TIME"), main.getcol("TIME_CENTROID")
+        first, second, uvw = main.getcol("ANTENNA1"), main.getcol("ANTENNA2"), main.getcol("UVW")
+    affected = np.zeros(len(time), dtype=bool)
+    for _, integration in groupby(np.argsort(time, kind="stable"), key=time.__getitem__):
+        rows = list(integration)
+        previous, shadowed = None, set()
+        for slot, row in enumerate(rows):
+            if centroid[row] != previous:
+                previous = centroid[row]
+                shadowed = set()
+                for current in rows[slot:]:
+                    if centroid[current] > previous:
+                        break
+                    u, v, w = uvw[current]
+                    if np.hypot(u, v) < 25.:
+                        shadowed.add(first[current] if w < 0. else second[current])
+            affected[row] = first[row] in shadowed or second[row] in shadowed
+    assert affected.sum() == 11
+    for name, task in libraries:
+        path = f"shuffled-{name}.ms"
+        copytree("shuffled.ms", path)
+        assert task(vis=path, mode="shadow", flagbackup=False) == {}
+        samples, row_flags = flags(path)
+        np.testing.assert_array_equal(samples, np.broadcast_to(affected[:, None, None], samples.shape))
+        np.testing.assert_array_equal(row_flags, affected)
 
 
 def check_commands(libraries):
@@ -223,9 +280,11 @@ def main():
         stored = check_shadow(libraries)
         projected = check_projected_pairs(libraries)
         failures = check_inputs(libraries)
+        check_provider_refusals()
+        check_shuffled_rows(libraries)
         check_commands(libraries)
-    print(f"{stored} stored-UVW products, {projected} projected products, {failures} input failures "
-          "and saved shadow commands verified")
+    print(f"{stored} stored-UVW products, {projected} projected products, {failures} public refusals, "
+          "two provider refusals, shuffled integration rows and saved shadow commands verified")
 
 
 if __name__ == "__main__":
