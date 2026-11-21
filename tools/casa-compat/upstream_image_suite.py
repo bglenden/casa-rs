@@ -3,6 +3,7 @@
 """Run the imported CASA image task suites with CASA or casa-rs."""
 
 import argparse
+from contextlib import redirect_stderr
 from functools import wraps
 import os
 from pathlib import Path
@@ -32,25 +33,30 @@ def pytest_configure():
     if casatasks.version_string() != CASA_VERSION:
         raise RuntimeError(f"the upstream image suite requires CASA {CASA_VERSION}")
     ctsys.setpath([os.environ["CASARS_UPSTREAM_IMAGE_DATA"], *ctsys.getpath()])
+    if not casatasks.casalog.setlogfile(str(Path.cwd() / "casapy.log")):
+        raise RuntimeError("could not open the upstream image suite log")
 
     if os.environ["CASARS_UPSTREAM_IMAGE_IMPLEMENTATION"] == "casa-rs":
         from casars import tasks
         from casars.tasks import _runner
         task = os.environ["CASARS_UPSTREAM_IMAGE_TASK"]
         _runner._task_executable(task)
-        setattr(casatasks, task, _native_task(getattr(tasks, task)))
+        setattr(casatasks, task, _native_task(getattr(tasks, task), casatasks.casalog))
 
 
-def _native_task(task):
+def _native_task(task, casalog):
     @wraps(task)
     def run(*args, **kwargs):
         try:
             _flush_fixture_writes()
+            # Upstream log assertions read the file chosen by casalog.
+            log = Path(casalog.logfile()).open("a", encoding="utf-8")
         except Exception as error:
             # Upstream expected-failure assertions may catch this exception.
             _fixture_errors.append(str(error))
             raise
-        return task(*args, **kwargs)
+        with log, redirect_stderr(log):
+            return task(*args, **kwargs)
     return run
 
 
