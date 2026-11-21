@@ -11,6 +11,7 @@
   "ft": "vis",
   "gaincal": "vis",
   "gencal": "vis",
+  "getjyperkalma": "vis",
   "imhead": "imagename",
   "immoments": "imagename",
   "impbcor": "imagename",

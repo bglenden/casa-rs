@@ -246,6 +246,17 @@
     "band": "cStr",
     "hosts": "cStrVec"
   },
+  "getjyperkalma": {
+    "caltable": "cStr",
+    "infile": "cStr",
+    "endpoint": "cStr",
+    "timeout": "cInt",
+    "retry": "cInt",
+    "retry_wait_time": "cInt",
+    "spw": "cStr",
+    "pol": "cStr",
+    "backup_hosts": "cStrVec"
+  },
   "imhead": {
     "mode": "cStr",
     "hdkey": "cStr",

@@ -277,6 +277,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             raise
     if name == "gencal":
         return _call_gencal(values)
+    if name == "getjyperkalma":
+        return _call_jyperk(name, values)
     if name == "getantposalma":
         return _call_getantposalma(values)
     if name == "initweights":
@@ -1374,6 +1376,8 @@ def _call_gencal(values: dict[str, Any]) -> Any:
         if vector is None or not all(isinstance(item, numbers) for item in vector):
             raise TypeError("{'parameter': ['must be of cFloatVec type']}")
         values["parameter"] = [float(item) for item in vector]
+    if values.get("caltype") == "jyperk":
+        return _call_jyperk("gencal", values)
     try:
         return run("gencal", **values).value
     except TaskExecutionError as error:
@@ -1403,6 +1407,22 @@ def _call_gencal(values: dict[str, Any]) -> Any:
                 reason = message
             raise HTTPError(url, status, reason, None, None) from error
         raise
+
+
+def _call_jyperk(name: str, values: dict[str, Any]) -> Any:
+    try:
+        return run(name, **values).value
+    except TaskParameterError as error:
+        if error.completion.parameter in ("infile", "caltable", "endpoint"):
+            raise ValueError(error.completion.message) from error
+        raise
+    except TaskExecutionError as error:
+        error_type = {
+            "jyperk.os": OSError,
+            "jyperk.no_factors": Exception,
+            "jyperk.vis": FileNotFoundError,
+        }.get(error.completion.parameter, RuntimeError)
+        raise error_type(error.completion.message) from error
 
 
 def _call_getantposalma(values: dict[str, Any]) -> Any:

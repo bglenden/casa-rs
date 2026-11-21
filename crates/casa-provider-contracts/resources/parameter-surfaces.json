@@ -19320,7 +19320,6 @@
           },
           "unimplemented": {"issue": 979, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tecim"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eop"}}
           ]}}
         },
@@ -19336,8 +19335,7 @@
             "provider": {"field": "endpoint"},
             "python": {"name": "endpoint"},
             "presentation": {"label": "Endpoint", "group": "Gencal", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}}
+          }
         },
         {
           "name": "timeout",
@@ -19351,8 +19349,7 @@
             "provider": {"field": "timeout"},
             "python": {"name": "timeout"},
             "presentation": {"label": "Timeout", "group": "Gencal", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}}
+          }
         },
         {
           "name": "retry",
@@ -19366,8 +19363,7 @@
             "provider": {"field": "retry"},
             "python": {"name": "retry"},
             "presentation": {"label": "Retries", "group": "Gencal", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}}
+          }
         },
         {
           "name": "retry_wait_time",
@@ -19381,8 +19377,7 @@
             "provider": {"field": "retry_wait_time"},
             "python": {"name": "retry_wait_time"},
             "presentation": {"label": "Retry Wait", "group": "Gencal", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}}
+          }
         },
         {
           "name": "ant_pos_time_limit",
@@ -19456,7 +19451,8 @@
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swpow"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swp/rq"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swpwts"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "rq"}}
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "rq"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}
           ]}}}
         },
         {
@@ -19543,6 +19539,587 @@
             "provider": {"field": "gaincurve_table", "adapter": "omit_none"},
             "python": {"name": "gaincurve_table", "keyword_only": true},
             "presentation": {"label": "Gaincurve Table", "group": "Gencal", "advanced": true}
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "getjyperkalma",
+      "contract_version": 1,
+      "display_name": "Get ALMA Jy/K Calibration",
+      "category": "Calibration",
+      "summary": "Generate an ALMA Jy/K gain table from the service or a factor file.",
+      "provider_family": "calibration",
+      "casa_task": "getjyperkalma",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "getjyperkalma"
+        ],
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "caltable",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "caltable"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset",
+          "surface_note": "Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ],
+              "metavar": "MS"
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet Path",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable",
+                "--out"
+              ],
+              "metavar": "TABLE"
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Calibration Table",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "infile",
+          "concept": {
+            "id": "specifycal.infile",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infile"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "infile"
+            },
+            "python": {
+              "name": "infile"
+            },
+            "presentation": {
+              "label": "Input File",
+              "group": "Gencal",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "endpoint",
+          "concept": {
+            "id": "specifycal.endpoint",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "asdm"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--endpoint"
+              ],
+              "metavar": "ENDPOINT"
+            },
+            "provider": {
+              "field": "endpoint"
+            },
+            "python": {
+              "name": "endpoint"
+            },
+            "presentation": {
+              "label": "Endpoint",
+              "group": "Gencal",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "timeout",
+          "concept": {
+            "id": "specifycal.timeout",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 180
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timeout"
+              ],
+              "metavar": "SECONDS"
+            },
+            "provider": {
+              "field": "timeout"
+            },
+            "python": {
+              "name": "timeout"
+            },
+            "presentation": {
+              "label": "Timeout",
+              "group": "Gencal",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "retry",
+          "concept": {
+            "id": "specifycal.retry",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 3
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--retry"
+              ],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "retry"
+            },
+            "python": {
+              "name": "retry"
+            },
+            "presentation": {
+              "label": "Retries",
+              "group": "Gencal",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "retry_wait_time",
+          "concept": {
+            "id": "specifycal.retry_wait_time",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 5
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--retry_wait_time"
+              ],
+              "metavar": "SECONDS"
+            },
+            "provider": {
+              "field": "retry_wait_time"
+            },
+            "python": {
+              "name": "retry_wait_time"
+            },
+            "presentation": {
+              "label": "Retry Wait",
+              "group": "Gencal",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "spectral_window_selection",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "SPW IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "pol",
+          "concept": {
+            "id": "specifycal.pol",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pol"
+              ],
+              "metavar": "POL"
+            },
+            "provider": {
+              "field": "pol"
+            },
+            "python": {
+              "name": "pol"
+            },
+            "presentation": {
+              "label": "Polarization",
+              "group": "Gencal",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "backup_hosts",
+          "concept": {
+            "id": "jyperk.backup_hosts",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--backup_hosts",
+                "--backup-hosts"
+              ],
+              "metavar": "URLS"
+            },
+            "provider": {
+              "field": "backup_hosts",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "backup_hosts"
+            },
+            "presentation": {
+              "label": "Backup Jy/K Service URLs",
+              "group": "Gencal",
+              "advanced": true
+            }
+          },
+          "order": 9
+        },
+        {
+          "name": "output",
+          "concept": {
+            "id": "calibration.report.output",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "output",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "output",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Path",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Overwrite Output",
+              "group": "Output",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "format",
+          "concept": {
+            "id": "parameter.format",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "text"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--format"
+              ],
+              "metavar": "FORMAT"
+            },
+            "provider": {
+              "field": "format",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "format",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Format",
+              "group": "Output",
+              "advanced": true
+            }
           }
         }
       ]

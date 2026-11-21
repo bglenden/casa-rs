@@ -9534,3 +9534,13 @@ table that an image or table tool has open. Casa-rs applies its existing
 containing-table ownership checks before changing a link. The call returns
 a busy-table error and preserves both paths, since a link under a table
 can participate in its live subtable layout.
+
+## Invalid Jy/K factors can publish unflagged nonfinite gains
+
+The pinned CASA 6.7.6.14 `gencal(caltype='jyperk')` and `getjyperkalma`
+convert factors to antenna gains with `1/sqrt(factor)`. A zero factor writes
+an unflagged infinite gain. A negative factor writes an unflagged NaN.
+Casa-rs rejects a factor that cannot yield a finite positive single-precision
+gain before publishing the table. If the caller supplied a calibration table
+to update, the original table remains intact. The Jy/K oracle tests the two
+invalid factors and checks the existing table after the rejection.

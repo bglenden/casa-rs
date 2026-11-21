@@ -29,9 +29,10 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | gaincal | gaincal | yes | 38 | 38 | 0 | 3 | 4 | 0 |
-| gencal | gencal | yes | 14 | 14 | 0 | 6 | 4 | 0 |
+| gencal | gencal | yes | 14 | 14 | 0 | 2 | 4 | 0 |
 | getantposalma | getantposalma | yes | 10 | 10 | 0 | 0 | 0 | 0 |
 | getcalmodvla | getcalmodvla | yes | 8 | 8 | 0 | 0 | 0 | 0 |
+| getjyperkalma | getjyperkalma | yes | 10 | 10 | 0 | 0 | 3 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 0 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 0 | 1 | 0 |
@@ -828,7 +829,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `infile`, `endpoint`, `timeout`, `retry`, `retry_wait_time`, `pol`
+- Accepted only at CASA's default until #979: `infile`, `pol`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `gaincurve_table`
 - Shared parameters: 14, in CASA's order: yes
 - Defaults that differ: none
@@ -837,7 +838,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `5d663965543f72f387b4fac83f630b8dd18c8c87`. Status counts: Default only: 6, Implemented: 7, Not implemented: 0, Partial: 1, Unassessed: 0.
+Audit baseline: `5d663965543f72f387b4fac83f630b8dd18c8c87`. Status counts: Default only: 2, Implemented: 7, Not implemented: 0, Partial: 1, Unassessed: 4.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -846,15 +847,15 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Input MeasurementSet geometry, metadata and table sources, including SYSPOWER and CALDEVICE. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power) |
 | `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | CASA-readable output, cumulative corrections, and validation before replacing an existing table. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: `path` (calibration_table) | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power) |
 | `caltype` | `''` | `''`; `caltype` → `caltype` | Partial | Eleven routine and five switched-power prior types. TEC, EOP and Jy/K remain in CAL-24 (#1535). [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: ``, `amp`, `antpos`, `antposvla`, `eff`, `eop`, `evlagain`, `gc`, `gceff`, `jyperk`, `mbd`, `opac`, `ph`, `rq`, `sbd`, `swp/rq`, `swpow`, `swpwts`, `tecim`, `tsys` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power) |
-| `infile` | `''` | `''`; `infile` → `infile` | Default only | Explicit VLA gain curves and ALMA position JSON. The contract tracks the advanced source-file modes in #1535. [positions](#gencal-behavior-positions)<br>Catalog domain: `string`; Non-default refused when (caltype='tecim' or caltype='jyperk' or caltype='eop') (#979) | [vla-priors](#gencal-evidence-vla-priors), [manual-positions](#gencal-evidence-manual-positions), [alma-service](#gencal-evidence-alma-service) |
-| `endpoint` | `'asdm'` | `'asdm'`; `endpoint` → `endpoint` | Default only | Inactive for routine types. Its Jy/K endpoint behavior belongs to CAL-24 (#1535). <br>Catalog domain: `string`; Non-default refused when caltype='jyperk' (#979) | [alma-service](#gencal-evidence-alma-service) |
-| `timeout` | `180` | `180`; `timeout` → `timeout` | Default only | Inactive for routine types. Jy/K service timeout belongs to CAL-24 (#1535). <br>Catalog domain: `integer`; Non-default refused when caltype='jyperk' (#979) | [alma-service](#gencal-evidence-alma-service) |
-| `retry` | `3` | `3`; `retry` → `retry` | Default only | Inactive for routine types. Jy/K service retries belong to CAL-24 (#1535). <br>Catalog domain: `integer`; Non-default refused when caltype='jyperk' (#979) | [alma-service](#gencal-evidence-alma-service) |
-| `retry_wait_time` | `5` | `5`; `retry_wait_time` → `retry_wait_time` | Default only | Inactive for routine types. Jy/K retry delays belong to CAL-24 (#1535). <br>Catalog domain: `integer`; Non-default refused when caltype='jyperk' (#979) | [alma-service](#gencal-evidence-alma-service) |
+| `infile` | `''` | `''`; `infile` → `infile` | Default only | Explicit VLA gain curves and ALMA position JSON. The contract tracks the advanced source-file modes in #1535. [positions](#gencal-behavior-positions)<br>Catalog domain: `string`; Non-default refused when (caltype='tecim' or caltype='eop') (#979) | [vla-priors](#gencal-evidence-vla-priors), [manual-positions](#gencal-evidence-manual-positions), [alma-service](#gencal-evidence-alma-service) |
+| `endpoint` | `'asdm'` | `'asdm'`; `endpoint` → `endpoint` | Unassessed | Inactive for routine types. Its Jy/K endpoint behavior belongs to CAL-24 (#1535). <br>Catalog domain: `string` | [alma-service](#gencal-evidence-alma-service) |
+| `timeout` | `180` | `180`; `timeout` → `timeout` | Unassessed | Inactive for routine types. Jy/K service timeout belongs to CAL-24 (#1535). <br>Catalog domain: `integer` | [alma-service](#gencal-evidence-alma-service) |
+| `retry` | `3` | `3`; `retry` → `retry` | Unassessed | Inactive for routine types. Jy/K service retries belong to CAL-24 (#1535). <br>Catalog domain: `integer` | [alma-service](#gencal-evidence-alma-service) |
+| `retry_wait_time` | `5` | `5`; `retry_wait_time` → `retry_wait_time` | Unassessed | Inactive for routine types. Jy/K retry delays belong to CAL-24 (#1535). <br>Catalog domain: `integer` | [alma-service](#gencal-evidence-alma-service) |
 | `ant_pos_time_limit` | `0` | `0`; `ant_pos_time_limit` → `ant_pos_time_limit` | Implemented | Automatic VLA correction lookup, with a strict archive-day cutoff and the whole-second posting boundary. [positions](#gencal-behavior-positions)<br>Catalog domain: `integer` | [vla-archive](#gencal-evidence-vla-archive) |
 | `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral-window selection and output axes. Switched-power modes validate the selector and derive their grid from SYSPOWER. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power) |
 | `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Ordered IDs and expressions, all-antenna defaults, and applicable automatic lookup. Switched-power modes validate the selector and keep the full antenna grid. [positions](#gencal-behavior-positions) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power) |
-| `pol` | `''` | `''`; `pol` → `pol` | Default only | Ordered receptor behavior for the applicable routine types. Both receptors are generated in the five switched-power modes. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: `string`; Non-default refused when not ((caltype='amp' or caltype='ph' or caltype='sbd' or caltype='mbd' or caltype='gc' or caltype='gceff' or caltype='eff' or caltype='tsys' or caltype='opac' or caltype='antpos' or caltype='antposvla' or caltype='evlagain' or caltype='swpow' or caltype='swp/rq' or caltype='swpwts' or caltype='rq')) (#979) | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [switched-power](#gencal-evidence-switched-power) |
+| `pol` | `''` | `''`; `pol` → `pol` | Default only | Ordered receptor behavior for the applicable routine types. Both receptors are generated in the five switched-power modes. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: `string`; Non-default refused when not ((caltype='amp' or caltype='ph' or caltype='sbd' or caltype='mbd' or caltype='gc' or caltype='gceff' or caltype='eff' or caltype='tsys' or caltype='opac' or caltype='antpos' or caltype='antposvla' or caltype='evlagain' or caltype='swpow' or caltype='swp/rq' or caltype='swpwts' or caltype='rq' or caltype='jyperk')) (#979) | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [switched-power](#gencal-evidence-switched-power) |
 | `parameter` | `[]` | `[]`; `parameter` → `parameter` | Implemented | Scalar or vector corrections, CASA cycling and family-specific units. The five switched-power modes derive values from the MS subtables. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [switched-power](#gencal-evidence-switched-power) |
 | `uniform` | `True` | `True`; `uniform` → `uniform` | Implemented | Both antenna-grid policies for scalar and spectral SYSCAL. Switched-power modes consistently use the full antenna grid. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power)<br>Catalog domain: `bool` | [tsys](#gencal-evidence-tsys), [switched-power](#gencal-evidence-switched-power) |
 
@@ -1089,6 +1090,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 8, in CASA's order: yes
+- Defaults that differ: none
+
+### getjyperkalma
+
+- CASA source: `casatasks/getjyperkalma.py`, 10 parameters
+- Implementation: `casatasks/private/task_getjyperkalma.py`, `getjyperkalma` (line 11): 0 return statements, 4 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
+- Shared parameters: 10, in CASA's order: yes
 - Defaults that differ: none
 
 ### imhead
