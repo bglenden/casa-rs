@@ -9,6 +9,7 @@ mod selection;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::expr_parser::referenced_images;
 use crate::image::add_image_history;
 use crate::{ImageError, ImageMathSummary, ImagePixelType, ImmathRequest};
 
@@ -34,6 +35,20 @@ pub(super) fn run(request: &ImmathRequest) -> Result<ImageMathSummary, ImageErro
     let inputs = resolve_inputs(request, &mode, &varnames)?;
     let all_filenames = inputs.all_paths();
     ensure_outfile_does_not_alias_inputs(&outfile, &all_filenames)?;
+    if let Some(mask) = request
+        .mask
+        .as_deref()
+        .filter(|mask| !mask.trim().is_empty())
+    {
+        let mask = selection::quote_var_aliases(mask, &varnames);
+        let mask_paths = referenced_images(&mask)
+            .map_err(|error| ImageError::CasaSelection(format!("Invalid image mask: {error}")))?
+            .into_iter()
+            .map(PathBuf::from)
+            .filter(|path| path.exists())
+            .collect::<Vec<_>>();
+        ensure_outfile_does_not_alias_inputs(&outfile, &mask_paths)?;
+    }
 
     let summary = match mode.as_str() {
         "evalexpr" => {
@@ -172,8 +187,10 @@ fn resolve_inputs(
     let imagename_paths = request.imagename.clone();
     let mut extra_quoted = Vec::new();
     if mode == "evalexpr" {
-        let quoted = super::quoted_expression_names(&request.expr);
-        for name in quoted {
+        let expression = selection::quote_var_aliases(&request.expr, varnames);
+        for name in referenced_images(&expression).map_err(|error| {
+            ImageError::InvalidMetadata(format!("Invalid image expression: {error}"))
+        })? {
             let is_varname = varnames.iter().any(|v| v == &name);
             let is_imagename = imagename_paths
                 .iter()
@@ -213,13 +230,25 @@ fn write_history(
         .iter()
         .map(|p| p.display().to_string())
         .collect::<Vec<_>>();
-    let lines = vec![format!(
-        "Ran immath(imagename={:?}, mode={:?}, outfile={:?}, expr={:?}, prec={:?})",
-        inputs,
-        mode,
-        outfile.display().to_string(),
-        request.expr,
-        request.prec
-    )];
+    let lines = [
+        concat!("version: casa-rs ", env!("CARGO_PKG_VERSION")).into(),
+        format!(
+            "immath(imagename={inputs:?}, mode={mode:?}, outfile={:?}, expr={:?}, varnames={:?}, sigma={:?}, polithresh={:?}, mask={:?}, region={:?}, box={:?}, chans={:?}, stokes={:?}, stretch={}, imagemd={:?}, prec={:?}, overwrite={})",
+            outfile.display().to_string(),
+            request.expr,
+            request.varnames,
+            request.sigma,
+            request.polithresh,
+            request.mask,
+            request.region,
+            request.box_pixels,
+            request.chans,
+            request.stokes,
+            request.stretch,
+            request.imagemd,
+            request.prec,
+            request.overwrite,
+        ),
+    ];
     add_image_history(outfile, "immath", &lines)
 }

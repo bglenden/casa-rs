@@ -94,7 +94,7 @@ impl From<SpatialShape> for QualifiedShape {
 pub(in crate::analysis) struct SubimageSelection {
     pub(in crate::analysis) start: Vec<usize>,
     pub(in crate::analysis) shape: Vec<usize>,
-    pub(super) stride: Option<Vec<usize>>,
+    pub(in crate::analysis) stride: Option<Vec<usize>>,
     pub(in crate::analysis) plane: [usize; 2],
     /// Precomputed spatial mask (shape `[shape[plane[0]], shape[plane[1]]]`) if
     /// the selection is non-rectangular or a union of multiple shapes.
@@ -165,7 +165,7 @@ impl SubimageSelection {
         Ok(selection)
     }
 
-    pub(super) fn resolve_section<T: ImagePixel>(
+    pub(in crate::analysis) fn resolve_section<T: ImagePixel>(
         image: &dyn ImageInterface<T>,
         box_arg: Option<&str>,
         region_arg: Option<SubimageRegion<'_>>,

@@ -9,7 +9,8 @@ use casa_coordinates::{
 };
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr};
 use casa_images::{
-    AnyPagedImage, ImageInterface, ImagePixelType, ImmathRequest, PagedImage, export_fits, immath,
+    AnyPagedImage, GaussianBeam, ImageBeamSet, ImageInfo, ImageInterface, ImagePixelType,
+    ImmathRequest, PagedImage, export_fits, immath,
 };
 use casa_lattices::ExecutionPolicy;
 use casa_types::measures::direction::DirectionRef;
@@ -72,6 +73,109 @@ fn stage_inputs() -> TempDir {
         }
     }
     tmp
+}
+
+#[test]
+fn external_mask_is_protected_and_the_invocation_retains_selection_parameters() {
+    let workspace = stage_inputs();
+    let image = workspace.path().join("map2d.im");
+    let mask = workspace.path().join("external-mask.im");
+    copy_dir_recursive(&image, &mask);
+    let before = PagedImage::<f32>::open(&mask).unwrap().get().unwrap();
+    let mut request = ImmathRequest {
+        imagename: vec![image],
+        outfile: mask.clone(),
+        mask: Some(format!("\"{}\" > 0", mask.display())),
+        box_pixels: Some("0,0,1,1".into()),
+        overwrite: true,
+        ..ImmathRequest::default()
+    };
+    assert!(
+        immath(&request)
+            .unwrap_err()
+            .to_string()
+            .contains("matches input image")
+    );
+    assert_eq!(
+        PagedImage::<f32>::open(&mask).unwrap().get().unwrap(),
+        before
+    );
+    request.outfile = workspace.path().join("result.im");
+    immath(&request).unwrap();
+    let history = PagedImage::<f32>::open(&request.outfile)
+        .unwrap()
+        .history()
+        .unwrap();
+    assert!(history[history.len() - 2].contains("version"));
+    assert!(history.last().unwrap().contains("external-mask.im"));
+    assert!(history.last().unwrap().contains("0,0,1,1"));
+}
+
+#[test]
+fn a_strided_saved_region_drives_pixel_sampling_and_world_coordinates() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imsubimage");
+    let image = workspace.path().join("cube.im");
+    copy_dir_recursive(&data.join("cube.im"), &image);
+    let outfile = workspace.path().join("result.im");
+    immath(&ImmathRequest {
+        imagename: vec![image.clone()],
+        outfile: outfile.clone(),
+        region: Some(data.join("stride.rgn").display().to_string()),
+        ..ImmathRequest::default()
+    })
+    .unwrap();
+    let input = PagedImage::<f32>::open(image).unwrap();
+    let result = PagedImage::<f32>::open(outfile).unwrap();
+    assert_eq!(result.shape(), [3, 3, 4, 2]);
+    assert_eq!(
+        result.get_at(&[2, 2, 3, 1]).unwrap(),
+        input.get_at(&[4, 5, 3, 2]).unwrap()
+    );
+    let native = result.coordinates().to_world(&[2., 2., 3., 1.]).unwrap();
+    let expected = input.coordinates().to_world(&[4., 5., 3., 2.]).unwrap();
+    for (value, expected) in native.into_iter().zip(expected) {
+        assert!((value - expected).abs() <= 1e-12 * expected.abs().max(1.));
+    }
+}
+
+#[test]
+fn beam_diagnostics_distinguish_close_values_and_an_absent_beam() {
+    let workspace = stage_inputs();
+    let first = workspace.path().join("map2d.im");
+    let second = workspace.path().join("other.im");
+    copy_dir_recursive(&first, &second);
+    for (image, major) in [
+        (&first, 1.234_567_890_123_45_f64),
+        (&second, 1.234_567_890_123_451_f64),
+    ] {
+        let mut image = PagedImage::<f32>::open(image).unwrap();
+        let beam = GaussianBeam::new((major / 60.).to_radians(), 0.01_f64.to_radians(), 0.);
+        image
+            .set_image_info(&ImageInfo {
+                beam_set: ImageBeamSet::new(beam),
+                ..ImageInfo::default()
+            })
+            .unwrap();
+        image.save().unwrap();
+    }
+    let mut request = ImmathRequest {
+        imagename: vec![first, second.clone()],
+        expr: "IM0 + IM1".into(),
+        outfile: workspace.path().join("first.im"),
+        ..ImmathRequest::default()
+    };
+    let result = immath(&request).unwrap();
+    assert_eq!(result.beam_warnings.len(), 3);
+    assert_ne!(
+        result.beam_warnings[1].split_once("major="),
+        result.beam_warnings[2].split_once("major=")
+    );
+    let mut unbeamed = PagedImage::<f32>::open(&second).unwrap();
+    unbeamed.set_image_info(&ImageInfo::default()).unwrap();
+    unbeamed.save().unwrap();
+    request.outfile = workspace.path().join("second.im");
+    assert_eq!(immath(&request).unwrap().beam_warnings.len(), 1);
 }
 
 fn rewrite_paths(text: &str, root: &Path) -> String {
