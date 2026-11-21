@@ -13,6 +13,8 @@ use time::{Date, Month};
 use crate::ft::invalid;
 use crate::interpolation::{self, Curve};
 
+mod sources;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CatalogScale {
     PerleyButler2017,
@@ -36,16 +38,15 @@ impl CatalogScale {
 
 pub(crate) struct FluxCatalog {
     scale: CatalogScale,
-    sources: Vec<Calibrator>,
+    cone_table: Option<PathBuf>,
     coefficients: Table,
     epochs: Vec<f64>,
 }
 
-struct Calibrator {
-    name: String,
-    aliases: Vec<String>,
-    ra: f64,
-    dec: f64,
+pub(crate) enum CatalogMatch<'a> {
+    Spectrum(CalibratorSpectrum<'a>),
+    UnknownSource,
+    MissingCoefficients(&'static str),
 }
 
 pub(crate) struct CalibratorSpectrum<'a> {
@@ -63,39 +64,18 @@ impl FluxCatalog {
             .into_iter()
             .map(|candidate| candidate.path.join("nrao/VLA/standards"))
             .collect();
-        let sources = open_table("fluxcalibrator.data", &roots)?;
-        let coefficients = open_table(scale.table(), &roots)?;
+        let cone_table = find_table("fluxcalibrator.data", &roots);
+        let path = find_table(scale.table(), &roots).ok_or_else(|| {
+            invalid(format!(
+                "VLA flux standard table {} was not found",
+                scale.table()
+            ))
+        })?;
+        let coefficients = Table::open(TableOptions::new(path))?;
         let epochs = read_epochs(&coefficients)?;
-        let name = sources.column_accessor("Name")?;
-        let aliases = sources.column_accessor("AltNames")?;
-        let ra = sources.column_accessor("RA_J2000")?;
-        let dec = sources.column_accessor("Dec_J2000")?;
-        let sources = (0..sources.row_count())
-            .map(|row| {
-                let ScalarValue::String(name) = name.scalar_cell(row)? else {
-                    return Err(invalid("flux calibrator Name must be a string"));
-                };
-                let ArrayValue::String(aliases) = aliases.array_cell(row)? else {
-                    return Err(invalid("flux calibrator AltNames must be a string array"));
-                };
-                let (ScalarValue::Float64(ra), ScalarValue::Float64(dec)) =
-                    (ra.scalar_cell(row)?, dec.scalar_cell(row)?)
-                else {
-                    return Err(invalid(
-                        "flux calibrator direction must be in double-precision radians",
-                    ));
-                };
-                Ok(Calibrator {
-                    name: name.clone(),
-                    aliases: aliases.iter().map(|s| s.to_ascii_uppercase()).collect(),
-                    ra: *ra,
-                    dec: *dec,
-                })
-            })
-            .collect::<MsResult<_>>()?;
         Ok(Self {
             scale,
-            sources,
+            cone_table,
             coefficients,
             epochs,
         })
@@ -107,25 +87,14 @@ impl FluxCatalog {
         direction: &MDirection,
         time_mjd: f64,
         interpolation: Curve,
-    ) -> MsResult<Option<CalibratorSpectrum<'_>>> {
-        let field = field.to_ascii_uppercase();
-        let source = self
-            .sources
-            .iter()
-            .find(|source| {
-                source
-                    .aliases
-                    .iter()
-                    .any(|alias| !alias.is_empty() && field.contains(alias))
-            })
-            .or_else(|| self.sources.iter().find(|source| source.is_near(direction)));
-        let Some(source) = source else {
-            return Ok(None);
+    ) -> MsResult<CatalogMatch<'_>> {
+        let Some(name) = sources::identify(field, direction, self.cone_table.as_deref())? else {
+            return Ok(CatalogMatch::UnknownSource);
         };
-        let name = if source.name == "0133-3629" {
+        let name = if name == "0133-3629" {
             "J0133-3629"
         } else {
-            &source.name
+            name
         };
         let column_name = format!("{name}_coeffs");
         if self
@@ -134,7 +103,7 @@ impl FluxCatalog {
             .and_then(|schema| schema.column(&column_name))
             .is_none()
         {
-            return Ok(None);
+            return Ok(CatalogMatch::MissingCoefficients(name));
         }
         let column = self.coefficients.column_accessor(&column_name)?;
         let variable =
@@ -155,24 +124,13 @@ impl FluxCatalog {
                 ))),
             })
             .collect::<MsResult<_>>()?;
-        Ok(Some(CalibratorSpectrum {
+        Ok(CatalogMatch::Spectrum(CalibratorSpectrum {
             scale: self.scale,
             coefficients,
             epochs: &self.epochs[..count],
             time_mjd,
             interpolation,
         }))
-    }
-}
-
-impl Calibrator {
-    fn is_near(&self, direction: &MDirection) -> bool {
-        let lat = direction.latitude_rad();
-        let haversine = ((self.dec - lat) * 0.5).sin().powi(2)
-            + self.dec.cos()
-                * lat.cos()
-                * ((self.ra - direction.longitude_rad()) * 0.5).sin().powi(2);
-        haversine <= (0.5_f64.to_radians() / 3600.).sin().powi(2)
     }
 }
 
@@ -237,13 +195,10 @@ impl CalibratorSpectrum<'_> {
     }
 }
 
-fn open_table(name: &str, roots: &[PathBuf]) -> MsResult<Table> {
-    let local = PathBuf::from(name);
-    let path = std::iter::once(local)
+fn find_table(name: &str, roots: &[PathBuf]) -> Option<PathBuf> {
+    std::iter::once(PathBuf::from(name))
         .chain(roots.iter().map(|root| root.join(name)))
         .find(|path| Path::is_dir(path))
-        .ok_or_else(|| invalid(format!("VLA flux standard table {name} was not found")))?;
-    Ok(Table::open(TableOptions::new(path))?)
 }
 
 fn read_epochs(table: &Table) -> MsResult<Vec<f64>> {

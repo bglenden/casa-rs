@@ -43,7 +43,6 @@ impl ManualFlux {
             || reference.hz() <= 0.
             || !rotation_measure.is_finite()
             || i < 0.
-            || (i == 0. && (q != 0. || u != 0.))
         {
             return Err(invalid("invalid manual flux or spectral coefficients"));
         }
@@ -55,6 +54,7 @@ impl ManualFlux {
                 fraction.resize(1, 0.);
                 angle.resize(1, 0.);
             }
+            // Zero I with explicit Q/U yields CASA's undefined linear fraction.
             fraction[0] = q.hypot(u) / i;
             angle[0] = 0.5 * u.atan2(q);
         }
@@ -131,7 +131,8 @@ impl ManualFlux {
                 .map_err(invalid)?;
             i * (converted.hz() / f0).powf(alpha)
         };
-        let (q_at_f, u_at_f) = if self.fraction.is_empty() || self.angle.is_empty() {
+        let linear_model = !self.fraction.is_empty() && !self.angle.is_empty();
+        let (q_at_f, u_at_f) = if !linear_model {
             (q, u)
         } else {
             let offset = (f - f0) / f0;
@@ -145,7 +146,13 @@ impl ManualFlux {
             i_at_f,
             q_at_f,
             u_at_f,
-            if i == 0. { v } else { v * i_at_f / i },
+            if i != 0. {
+                v * i_at_f / i
+            } else if linear_model {
+                0.
+            } else {
+                v
+            },
         ])
     }
 }

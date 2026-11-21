@@ -3,14 +3,17 @@
 """Compare the table-backed setjy standards using the same CASA data tables."""
 
 import argparse
+import os
 from pathlib import Path
 
-from casatools import table
+from casatools import ctsys, table
 import numpy as np
 
 from imager_legacy_pbw_oracle import data, make_input
 from record_casa_returns import make_cal_ms
-from setjy_manual_oracle import casa_setjy, compare, compare_returns, rust_setjy, verify_case
+from setjy_manual_oracle import (
+    casa_setjy, compare, compare_returns, read_component, rust_setjy, verify_case,
+)
 
 
 def rename(seed, target, name, *, shift=False):
@@ -43,7 +46,7 @@ def no_new_model(seed, root):
     for engine, task in (('casa', casa_setjy), ('rust', rust_setjy)):
         for scratch in (True, False):
             target = root / f'{engine}-unrecognized-{scratch}.ms'
-            rename(seed, target, 'OUTSIDE_CATALOG', shift=True)
+            rename(seed, target, 'CASA_TEST', shift=True)
             assert task(vis=str(target), usescratch=scratch, **options)
             before = data(target, 'MODEL_DATA') if scratch else None
             results[engine, scratch] = task(vis=str(target), field='0', spw='0', usescratch=scratch)
@@ -80,6 +83,86 @@ def mixed_scratch_fields(root):
     compare('mixed recognized and unrecognized scratch fields', models[1], models[0])
 
 
+def unsupported_scale(seed, root):
+    for label, task in (('casa', casa_setjy), ('rust', rust_setjy)):
+        target = root / f'{label}-missing-coefficients.ms'
+        rename(seed, target, '3C138', shift=True)
+        args = dict(vis=str(target), field='0', spw='0', usescratch=False)
+        assert task(**args, standard='manual', fluxdensity=2.)
+        assert task(**args, standard='Scaife-Heald 2012') == {}
+        np.testing.assert_array_equal(read_component(target)[1]['flux']['value'], [2., 0., 0., 0.])
+
+
+def partial_scale(root):
+    seed = root / 'partial-source.ms'
+    make_cal_ms(str(seed), frequency='300MHz')
+    missing = data(seed, 'FIELD_ID') == 0
+    models = []
+    for label, task in (('casa', casa_setjy), ('rust', rust_setjy)):
+        target = root / f'{label}-partial-source.ms'
+        rename(seed, target, '3C138')
+        writer = table()
+        assert writer.open(str(target / 'FIELD'), nomodify=False)
+        assert writer.putcell('NAME', 1, '3C286') and writer.done()
+        args = dict(vis=str(target), field='0,1', spw='0', usescratch=True)
+        assert task(**args, standard='manual', fluxdensity=2.)
+        before = data(target, 'MODEL_DATA')
+        try:
+            task(**args, standard='Scaife-Heald 2012')
+        except RuntimeError as error:
+            assert 'table is not writable' in str(error) or 'flux coefficients are missing' in str(error)
+        else:
+            raise AssertionError(f'{label} accepted a later field with missing coefficients')
+        after = data(target, 'MODEL_DATA')
+        np.testing.assert_array_equal(before[..., missing], after[..., missing])
+        assert not np.array_equal(before[..., ~missing], after[..., ~missing])
+        models.append(after)
+    compare('completed scratch field before missing coefficients', models[1], models[0])
+
+
+def named_without_cone(seed, root):
+    prior = ctsys.getpath()
+    prior_measures = os.environ.get('CASA_RS_MEASURESPATH')
+    relative = Path('nrao/VLA/standards/PerleyButler2017Coeffs')
+    table_path = next(Path(base) / relative for base in prior if (Path(base) / relative).is_dir())
+    only_coefficients = root / 'coefficients-only'
+    link = only_coefficients / relative
+    link.parent.mkdir(parents=True)
+    link.symlink_to(table_path.resolve(), target_is_directory=True)
+    measures = Path(prior_measures) if prior_measures is not None else Path(ctsys.measurespath())
+    for name in ('geodetic', 'ephemerides', 'readme.txt', '.casa-rs-measures-provenance.json'):
+        source = measures / name
+        if source.exists():
+            (only_coefficients / name).symlink_to(source.resolve(), target_is_directory=source.is_dir())
+    try:
+        assert ctsys.setpath([str(only_coefficients)])
+        os.environ['CASA_RS_MEASURESPATH'] = str(only_coefficients)
+        results = []
+        for label, task in (('casa', casa_setjy), ('rust', rust_setjy)):
+            target = root / f'{label}-no-cone.ms'
+            rename(seed, target, 'J1331+3030', shift=True)
+            results.append(task(vis=str(target), field='0', spw='0', usescratch=False))
+        compare_returns(results[1], results[0])
+        assert results[0]['0']['0']['fluxd'][0] > 10.
+    finally:
+        assert ctsys.setpath(prior)
+        if prior_measures is None:
+            os.environ.pop('CASA_RS_MEASURESPATH', None)
+        else:
+            os.environ['CASA_RS_MEASURESPATH'] = prior_measures
+
+
+def undefined_zero_intensity(seed, root):
+    for label, task in (('casa', casa_setjy), ('rust', rust_setjy)):
+        target = root / f'{label}-zero-iqu.ms'
+        make_input(seed, target, scratch=False)
+        out = task(vis=str(target), field='0', spw='0', usescratch=False,
+                   fluxdensity=[0., .1, .2, 0.])
+        expected = np.array([0., np.nan, np.nan, 0.])
+        np.testing.assert_array_equal(out['0']['0']['fluxd'], expected)
+        np.testing.assert_array_equal(read_component(target)[1]['flux']['value'], expected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('vla_ms', type=Path, help='VLA fixture with phase center near 3C286')
@@ -107,6 +190,12 @@ def main():
     }, standard='Scaife-Heald 2012')
     no_new_model(args.vla_ms, args.root)
     mixed_scratch_fields(args.root)
+    verify_case(args.vla_ms, args.root, 'zero-intensity', {'fluxdensity': 0.}, standard=None)
+    verify_case(args.vla_ms, args.root, 'zero-intensity-v', {'fluxdensity': [0., 0., 0., .1]}, standard=None)
+    undefined_zero_intensity(args.vla_ms, args.root)
+    unsupported_scale(args.vla_ms, args.root)
+    partial_scale(args.root)
+    named_without_cone(args.vla_ms, args.root)
 
 
 if __name__ == '__main__':

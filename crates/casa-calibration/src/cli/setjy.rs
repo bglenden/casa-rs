@@ -23,7 +23,7 @@ use casa_types::measures::frequency::{CasaFrequencyFrame, FrequencyRef, MFrequen
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::attachment::OpenedMs;
-use crate::ft::setjy::standards::{CalibratorSpectrum, CatalogScale, FluxCatalog};
+use crate::ft::setjy::standards::{CalibratorSpectrum, CatalogMatch, CatalogScale, FluxCatalog};
 use crate::ft::setjy::{ManualFlux, sampled_point};
 use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
@@ -66,6 +66,12 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         return empty_selection(task);
     }
     let Some(flux) = flux_parameters(task)? else {
+        if scratch {
+            opened = opened
+                .initialize(VisibilityDataColumn::ModelData)
+                .map_err(execution)?;
+        }
+        opened.release().map_err(execution)?;
         return TaskSuccess::new(
             CasaValue::Dict {
                 entries: Vec::new(),
@@ -76,20 +82,22 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     // Imager::sjy_make_visibilities selects all channels of each chosen SPW.
     selected.channel_selections.clear();
     let spws = requested_windows(&opened.measurement_set, selection.spw.as_deref())?;
-    let (models, fluxes) = prepare(
+    let (models, fluxes, completed) = prepare(
         &opened.measurement_set,
         &selected,
         &flux,
         &spws,
         task.flag("scalebychan")?,
     )?;
+    let partially_written = !completed && models.values().any(|entries| !entries.is_empty());
     if scratch {
         opened = opened
             .initialize(VisibilityDataColumn::ModelData)
             .map_err(execution)?;
         // An unrecognized calibrator reports unit flux and leaves any
         // existing scratch cells alone.
-        if models.values().any(Vec::is_empty) && models.values().any(|entries| !entries.is_empty())
+        if (!completed || models.values().any(Vec::is_empty))
+            && models.values().any(|entries| !entries.is_empty())
         {
             selection.field = Some(
                 models
@@ -129,6 +137,13 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     opened.release().map_err(execution)?;
     super::history::record_task(task, &path);
+    if partially_written {
+        // CASA's cleanup after the later failure raises once an earlier
+        // component list has already been applied and retired.
+        return Err(execution(
+            "flux coefficients are missing for a later field after earlier models were written",
+        ));
+    }
     TaskSuccess::new(fluxes, &())
 }
 
@@ -184,6 +199,10 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
     let Some(reference) = reference_frequency(&reference) else {
         return Ok(None);
     };
+    let input = task.numbers("fluxdensity")?;
+    let Some(&intensity) = input.first() else {
+        return Err(TaskFailure::validation("fluxdensity must contain Stokes I").at("fluxdensity"));
+    };
     if let Some(scale) = scale {
         let interpolation = if scale.time_interpolation() {
             match task.text("interpolation")?.as_deref() {
@@ -196,20 +215,23 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
         } else {
             Curve::Nearest
         };
-        let catalog = Box::new(FluxCatalog::open(scale).map_err(execution)?);
-        return Ok(Some(FluxParameters::Standard {
-            catalog,
-            interpolation,
-        }));
+        // The task suppresses positive user flux on a named standard.
+        // An explicit zero passes through to the manual imager branch.
+        if intensity != 0. {
+            let catalog = Box::new(FluxCatalog::open(scale).map_err(execution)?);
+            return Ok(Some(FluxParameters::Standard {
+                catalog,
+                interpolation,
+            }));
+        }
     }
-    let input = task.numbers("fluxdensity")?;
-    if input.is_empty() || input.len() > 4 {
+    if input.len() > 4 {
         return Err(
             TaskFailure::validation("manual setjy needs one to four Stokes flux values")
                 .at("fluxdensity"),
         );
     }
-    if input[0] < 0. {
+    if intensity < 0. {
         return Err(pending("fluxdensity"));
     }
     let mut flux = [0.; 4];
@@ -273,7 +295,7 @@ fn prepare(
     flux: &FluxParameters,
     spws: &[i32],
     by_channel: bool,
-) -> Result<(FieldModels, CasaValue), TaskFailure> {
+) -> Result<(FieldModels, CasaValue, bool), TaskFailure> {
     let mut groups = BTreeMap::<i32, BTreeMap<i32, Vec<usize>>>::new();
     for row in &selected.selected_rows {
         groups
@@ -296,6 +318,7 @@ fn prepare(
         .with_position(engine.observatory_position().clone());
     let mut models = FieldModels::new();
     let mut returned = BTreeMap::new();
+    let mut completed = true;
     for (field, windows_for_field) in groups.into_iter().rev() {
         let direction = engine
             .observation_direction_j2000(*epoch, field as usize)
@@ -308,9 +331,20 @@ fn prepare(
                 interpolation,
             } => {
                 let midpoint = field_midpoint(&time, &windows_for_field)?;
-                catalog
+                match catalog
                     .spectrum(&name, &direction, midpoint, *interpolation)
                     .map_err(execution)?
+                {
+                    CatalogMatch::Spectrum(spectrum) => Some(spectrum),
+                    CatalogMatch::UnknownSource => None,
+                    CatalogMatch::MissingCoefficients(source) => {
+                        // The failed field never reaches the model clear. Earlier
+                        // fields remain eligible for publication.
+                        tracing::warn!(field = %name, source, "source has no coefficients for the requested flux scale");
+                        completed = false;
+                        break;
+                    }
+                }
             }
             FluxParameters::Manual(_) => None,
         };
@@ -363,15 +397,16 @@ fn prepare(
             },
         );
     }
-    Ok((
-        models,
-        flux_dictionary(
-            returned
-                .into_iter()
-                .map(|(key, value)| entry(key, value))
-                .collect(),
-        ),
-    ))
+    let entries = returned
+        .into_iter()
+        .map(|(key, value)| entry(key, value))
+        .collect();
+    let returned = if completed {
+        flux_dictionary(entries)
+    } else {
+        CasaValue::Dict { entries }
+    };
+    Ok((models, returned, completed))
 }
 
 fn field_midpoint(
