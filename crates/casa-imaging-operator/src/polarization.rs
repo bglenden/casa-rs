@@ -129,10 +129,9 @@ impl PolarizationRouting {
         // Legacy GridFT retains both Stokes planes. FTMachine::initMaps
         // finds I anywhere on that axis, then routes both parallel
         // hands to plane zero.
-        let saved_iu = !require_all
-            && feed != FeedBasis::Stokes
-            && matches!(requested, [StokesI, StokesU] | [StokesU, StokesI]);
-        let grid = if saved_iu {
+        let saved_iu = !require_all && matches!(requested, [StokesI, StokesU] | [StokesU, StokesI]);
+        let parallel_iu = saved_iu && feed != FeedBasis::Stokes;
+        let grid = if parallel_iu {
             requested
                 .iter()
                 .map(|&coordinate| {
@@ -173,7 +172,7 @@ impl PolarizationRouting {
         let pol_map = correlations
             .iter()
             .map(|correlation| {
-                if saved_iu {
+                if parallel_iu {
                     return correlation.is_parallel_hand().then_some(0);
                 }
                 grid.iter()
@@ -189,7 +188,7 @@ impl PolarizationRouting {
                 reason: "selected correlations feed no grid polarization",
             });
         }
-        let coefficient_basis = if saved_iu { FeedBasis::Stokes } else { feed };
+        let coefficient_basis = if parallel_iu { FeedBasis::Stokes } else { feed };
         let to_requested = requested
             .iter()
             .flat_map(|coordinate| {
@@ -216,7 +215,7 @@ impl PolarizationRouting {
             .iter()
             .enumerate()
             .map(|(index, coordinate)| {
-                if saved_iu {
+                if parallel_iu {
                     SumwtSource::Plane(index)
                 } else if stokes_requested {
                     stokes_sumwt_source(feed, requested, index, grid.len())

@@ -80,15 +80,16 @@ def admission_control(work, seed, name, model):
         np.testing.assert_array_equal(data(target, 'MODEL_DATA'), previous)
 
 
-def cross_only_control(work, seed, model):
-    source = work / 'cross-only.ms'
+def unmapped_iu_control(work, seed, model, label, codes, products=None):
+    source = work / f'{label}.ms'
     make_input(seed, source, scratch=True)
     writer = table()
     assert writer.open(str(source / 'POLARIZATION'), nomodify=False)
-    assert writer.putcell('CORR_TYPE', 0, np.array([6, 7], np.int32))
-    assert writer.putcell('CORR_PRODUCT', 0, np.array([[0, 1], [1, 0]], np.int32))
+    assert writer.putcell('CORR_TYPE', 0, np.array(codes, np.int32))
+    if products is not None:
+        assert writer.putcell('CORR_PRODUCT', 0, np.array(products, np.int32))
     assert writer.done()
-    admission_control(work, source, 'iu-cross-only', model)
+    admission_control(work, source, label, model)
 
 
 def saved_exchange(work, seed, name, model, expected, results):
@@ -139,7 +140,8 @@ def run(root, seed, model):
                 admission_control(work, seed, name, target)
                 continue
             if name == 'iu':
-                cross_only_control(work, seed, target)
+                unmapped_iu_control(work, seed, target, 'iu-cross-only', [6, 7], [[0, 1], [1, 0]])
+                unmapped_iu_control(work, seed, target, 'iu-qv-only', [2, 4])
             radial = scratch_pair(work, seed, None, results, f'{name}-radial', model=target)
             shifted = scratch_pair(work, seed, None, results, f'{name}-squint', model=target,
                                    squint=True)
