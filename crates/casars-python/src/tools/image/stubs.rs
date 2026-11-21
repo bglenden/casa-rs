@@ -368,25 +368,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pbimage = None, outfile = None, overwrite = None, r#box = None, region = None, chans = None, stokes = None, mask = None, mode = None, cutoff = None, stretch = None), text_signature = "($self, pbimage='', outfile='', overwrite=False, box='', region={}, chans='', stokes='', mask='', mode='divide', cutoff=-1.0, stretch=False)")]
-    fn pbcor(
-        &self,
-        pbimage: Option<&Bound<'_, PyAny>>,
-        outfile: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        r#box: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        chans: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        mode: Option<&Bound<'_, PyAny>>,
-        cutoff: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("pbcor")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, start = None, end = None, center = None, length = None, pa = None, width = None, unit = None, overwrite = None, region = None, chans = None, stokes = None, mask = None, stretch = None, wantreturn = None), text_signature = "($self, outfile='', start=[], end=[], center=[], length=[], pa=[], width=1, unit='arcsec', overwrite=False, region={}, chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
     fn pv(
         &self,

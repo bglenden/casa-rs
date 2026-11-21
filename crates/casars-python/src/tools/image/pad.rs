@@ -9,59 +9,14 @@ use casa_images::{
     image::image_history_rows,
 };
 use casa_types::RecordValue;
-use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyString};
 
 use super::PyImageTool;
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
-use super::subimage::Region;
-
-struct PadRegion {
-    value: Option<Region>,
-    explicit_record: bool,
-    empty_history: &'static str,
-}
-
-impl Default for PadRegion {
-    fn default() -> Self {
-        Self {
-            value: None,
-            explicit_record: true,
-            empty_history: "{...}",
-        }
-    }
-}
-
-impl<'a, 'py> FromPyObject<'a, 'py> for PadRegion {
-    type Error = PyErr;
-
-    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        let explicit_record = value.is_instance_of::<PyDict>();
-        let empty_history = if explicit_record {
-            "{...}"
-        } else if value.is_instance_of::<PyString>() {
-            "\"\""
-        } else {
-            "[]"
-        };
-        Ok(Self {
-            value: Region::capture(value.py(), (!value.is_none()).then_some(&value))?,
-            explicit_record,
-            empty_history,
-        })
-    }
-}
-
-fn flag(value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    value
-        .cast::<PyBool>()
-        .map(|value| value.is_true())
-        .map_err(|_| PyTypeError::new_err("expected bool"))
-}
+use super::subimage::{RegionArgument, require_bool};
 
 fn copy(
     image: &dyn ImageInterface<f32>,
@@ -117,22 +72,22 @@ fn copy(
 impl PyImageTool {
     /// Select an image region and pad the two direction axes.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (outfile="", npixels=1, value=0.0, padmask=false, overwrite=false, region=PadRegion::default(), r#box="", chans="", stokes="", mask="", stretch=false, wantreturn=true), text_signature = "($self, outfile='', npixels=1, value=0.0, padmask=False, overwrite=False, region={}, box='', chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
+    #[pyo3(signature = (outfile="", npixels=1, value=0.0, padmask=false, overwrite=false, region=RegionArgument::default(), r#box="", chans="", stokes="", mask="", stretch=false, wantreturn=true), text_signature = "($self, outfile='', npixels=1, value=0.0, padmask=False, overwrite=False, region={}, box='', chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
     fn pad(
         &self,
         py: Python<'_>,
         outfile: &str,
         npixels: i64,
         value: f64,
-        #[pyo3(from_py_with = flag)] padmask: bool,
-        #[pyo3(from_py_with = flag)] overwrite: bool,
-        region: PadRegion,
+        #[pyo3(from_py_with = require_bool)] padmask: bool,
+        #[pyo3(from_py_with = require_bool)] overwrite: bool,
+        region: RegionArgument,
         r#box: &str,
         chans: &str,
         stokes: &str,
         mask: &str,
-        #[pyo3(from_py_with = flag)] stretch: bool,
-        #[pyo3(from_py_with = flag)] wantreturn: bool,
+        #[pyo3(from_py_with = require_bool)] stretch: bool,
+        #[pyo3(from_py_with = require_bool)] wantreturn: bool,
     ) -> PyResult<Py<Self>> {
         let output = py.detach(|| {
             let state = self.state();
@@ -142,16 +97,7 @@ impl PyImageTool {
             }
             let pixels = usize::try_from(npixels).ok().filter(|&count| count > 0)
                 .ok_or_else(|| raised("Value of npixels must be greater than zero"))?;
-            if region.explicit_record || region.value.is_some() {
-                if !r#box.is_empty() {
-                    return Err(raised("box and regionPtr cannot be simultaneously specified"));
-                }
-                if !chans.is_empty() || !stokes.is_empty() {
-                    return Err(raised(
-                        "regionPtr and regionName, chans, and/or stokes cannot be simultaneously specified",
-                    ));
-                }
-            }
+            region.validate_selectors(r#box, chans, stokes)?;
             if !outfile.is_empty() && !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
                 return Err(raised(format!(
                     "Replaceable flag is false and there is already a file or directory named {outfile} so the output image will not be written"
@@ -173,12 +119,13 @@ impl PyImageTool {
                         pixels,
                         value: value as f32,
                         padmask,
-                        region: region.value.as_ref().map(Region::as_region),
+                        region: region.selection(),
                         box_selection: (!r#box.is_empty()).then_some(r#box),
                         channels: (!chans.is_empty()).then_some(chans),
                         stokes: (!stokes.is_empty()).then_some(stokes),
                         mask: (!mask.is_empty()).then_some(mask),
                         stretch,
+                        destination: (!outfile.is_empty()).then(|| Path::new(outfile)),
                     };
                     let coordinates = input.coordinate_record();
                     let beams = attachment.beam_view().clone();
@@ -197,9 +144,7 @@ impl PyImageTool {
                     };
                     with_storage!(dest, image => image.append_history_entries(&history)).map_err(raised)?;
                     if state.history {
-                        let selected = region.value.as_ref().map_or_else(
-                            || region.empty_history.into(), Region::history,
-                        );
+                        let selected = region.history();
                         let value = if value.is_nan() { "nan".into() } else { format!("{value:.6}") };
                         output.record_history("pad", format!("ia.pad(outfile={outfile:?}, npixels={npixels}, value={value}, padmask={padmask}, overwrite={overwrite}, region={selected}, box={box:?}, chans={chans:?}, stokes={stokes:?}, mask={mask:?}, stretch={stretch}, wantreturn={wantreturn})", box = r#box))?;
                     }
