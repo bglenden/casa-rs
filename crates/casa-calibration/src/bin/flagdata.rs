@@ -441,10 +441,13 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                     "[]".to_string()
                 }
                 (
-                    "chanbin" | "extendpols",
+                    "chanbin",
                     ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value),
                 ) => python_repr(value),
-                ("combinescans" | "growaround" | "flagneartime" | "flagnearfreq", _) => task
+                (
+                    "extendpols" | "combinescans" | "growaround" | "flagneartime" | "flagnearfreq",
+                    value,
+                ) => task
                     .argument_text(name)
                     .map_or_else(|| python_repr(value), str::to_owned),
                 ("vis", ParameterValue::Array(paths))

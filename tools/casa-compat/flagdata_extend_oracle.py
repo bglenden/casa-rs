@@ -54,6 +54,11 @@ def check_products(libraries):
         ({"flagnearfreq": True, "growfreq": 25.}, [(1, 3)], [(1, c) for c in range(8)]),
         ({"flagneartime": True, "spw": "0:1~2;4~5"}, [(1, 4)], [(r, 4) for r in (0, 1, 2)]),
         ({"flagnearfreq": True, "spw": "0:1~2;4~5"}, [(1, 4)], [(1, c) for c in (2, 4, 5)]),
+        ({"flagnearfreq": True, "spw": "0:4~5;1~2"}, [(1, 4)], [(1, c) for c in (4, 5)]),
+        ({"growfreq": 21., "spw": "0:1~4;3~6"}, [(1, 3)], [(1, c) for c in range(1, 7)]),
+        ({"growfreq": 15., "spw": "0:0~7;3~6"}, [(1, 3)], [(1, c) for c in range(8)]),
+        ({"flagnearfreq": True, "growfreq": 50., "spw": "0:1~4;3~6"},
+         [(1, 2)], [(1, c) for c in range(1, 7)]),
         ({"growtime": 25.}, [(1, 3)], [(r, 3) for r in range(4)]),
         ({"growtime": 25., "combinescans": True}, [(1, 3)], [(1, 3)]),
         ({"growtime": 40.}, [(1, 3)], [(1, 3)]),
@@ -156,6 +161,9 @@ def check_invalid_inputs(libraries):
         ("growfreq", np.array(50.), "must be of cFloat type"),
         ("extendpols", None, "null value not allowed"),
         ("extendpols", np.bool_(True), "must be of cVariant type"),
+        ("extendpols", (True,), "must be of cVariant type"),
+        ("extendpols", np.uint8(1), "must be of cVariant type"),
+        ("extendpols", 1 + 2j, "must be of cVariant type"),
         ("growaround", np.array(True), "must be of cBool type"),
         ("combinescans", [True], "must be of cBool type"),
         ("flagnearfreq", 1, "must be of cBool type"),
@@ -175,14 +183,14 @@ def check_invalid_inputs(libraries):
     return len(invalid)
 
 
-def check_commands(libraries, row):
+def check_commands(libraries, row, extendpols=False):
     written = []
     for name, task in libraries:
         path, out = f"commands-{name}.ms", Path(f"commands-{name}.txt")
         seed(path, [(row, 3, 0)])
         original, auxiliary = snapshot(path), auxiliary_content(path)
         options = dict(vis=path, mode="extend", antenna="0&1", correlation="XX",
-                       extendpols=False, ntime="20s", combinescans=True, growtime=25.,
+                       extendpols=extendpols, ntime="20s", combinescans=True, growtime=25.,
                        growfreq=np.float32(50), flagnearfreq=np.bool_(True), savepars=True)
         assert task(action="none", outfile=str(out), **options) == {}
         assert_preserved(path, original, auxiliary)
@@ -190,8 +198,12 @@ def check_commands(libraries, row):
         with table(f"{path}/FLAG_CMD", ack=False) as commands:
             assert commands.nrows() == 1 and commands.getcell("APPLIED", 0)
             command = commands.getcell("COMMAND", 0)
-        assert "ntime=20.0" in command and "extendpols=False" in command
+        assert "ntime=20.0" in command and f"extendpols={extendpols}" in command
         assert "growtime=25.0" in command and "flagnearfreq=True" in command
+        with table(f"{path}/HISTORY", ack=False) as history:
+            values = [line.split("=", 1)[1].strip() for line in history.getcol("MESSAGE")[-78:]
+                      if line.startswith("extendpols ")]
+        assert values == [str(extendpols)]
         written.append((out.read_text(), command))
     if len(written) == 2:
         assert written[0] == written[1]
@@ -205,6 +217,13 @@ def main():
         polarizations = check_polarizations(libraries, rows)
         invalid = check_invalid_inputs(libraries)
         check_commands(libraries, rows[1])
+        for directory_name, extendpols in (("array-command", np.array([True, False])),
+                                          ("scalar-array-command", np.array(True))):
+            directory = Path(directory_name)
+            directory.mkdir()
+            copytree("source.ms", directory / "source.ms")
+            with chdir(directory):
+                check_commands(libraries, rows[1], extendpols)
     print(f"{count} extension products, {polarizations} polarization products, "
           f"{invalid} refusals, previews, backups and saved commands verified")
 

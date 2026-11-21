@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::clip_time::{mark_time_chunks, read_clip_times};
 use super::{
     ChangeSet, ChannelSelection, CorrelationSelection, FlagDataRequest, FlaggingError,
-    MeasurementSet, Sample, apply_flag_mask_with_preloaded, load_samples,
+    MeasurementSet, Sample, load_samples, stage_flag_mask, write_touched_flag_updates,
 };
 
 pub(super) fn apply(
@@ -69,25 +69,34 @@ pub(super) fn apply(
             .then_with(|| left.time().total_cmp(&right.time()))
             .then_with(|| left.row.cmp(&right.row))
     });
+    // Stage changed cells only. Later invalid rows must not leave a
+    // caller with a partially updated MeasurementSet open in memory.
+    let mut pending = BTreeMap::new();
     for baseline in timed.chunk_by(|a, b| a.baseline_key() == b.baseline_key()) {
         let rows = baseline.iter().map(|row| row.row).collect::<Vec<_>>();
-        let loaded = load_samples(ms, &rows, channels, None, correlations)?;
-        let grown = grow(&loaded.samples, request);
-        let block = apply_flag_mask_with_preloaded(
-            &loaded.samples,
-            &grown,
-            loaded.flags_by_row,
+        let mut loaded = load_samples(
             ms,
-            !request.casa_row_selection,
+            &rows,
+            channels,
+            None,
+            correlations,
+            request.casa_row_selection,
         )?;
-        changed.changed_rows += block.changed_rows;
-        changed.changed_samples += block.changed_samples;
-        changed.changed_flag_row_rows += block.changed_flag_row_rows;
-        changed
-            .changed_row_indices
-            .extend(block.changed_row_indices);
+        let grown = grow(&loaded.samples, request);
+        let (touched, changed_samples) =
+            stage_flag_mask(&loaded.samples, &grown, &mut loaded.flags_by_row);
+        changed.changed_samples += changed_samples;
+        loaded.flags_by_row.retain(|row, _| touched.contains(row));
+        pending.append(&mut loaded.flags_by_row);
     }
-    changed.changed_row_indices.sort_unstable();
+    let touched = pending.keys().copied().collect();
+    write_touched_flag_updates(
+        ms,
+        pending,
+        touched,
+        |_| !request.casa_row_selection,
+        &mut changed,
+    )?;
     Ok(changed)
 }
 
@@ -105,47 +114,45 @@ fn grow(samples: &[Sample], request: &FlagDataRequest) -> Vec<bool> {
 }
 
 fn grow_neighbors(samples: &[Sample], request: &FlagDataRequest, flags: &mut [bool]) {
-    let mut row_ranks = BTreeMap::new();
-    let mut channels = BTreeSet::new();
-    for sample in samples {
-        let next_row = row_ranks.len();
-        row_ranks.entry(sample.row).or_insert(next_row);
-        channels.insert(sample.chan);
+    // Channel slots follow the selection's order, including gaps and
+    // repeated references to the same stored cell in overlapping ranges.
+    let mut positions = Vec::with_capacity(samples.len());
+    for (time, row) in samples.chunk_by(|a, b| a.row == b.row).enumerate() {
+        for plane in row.chunk_by(|a, b| a.corr == b.corr) {
+            positions.extend((0..plane.len()).map(|channel| (plane[0].corr, time, channel)));
+        }
     }
-    // The flag mapper exposes adjacent selected channels even across a gap
-    // in the requested spectral selection.
-    let channel_ranks = channels
-        .into_iter()
-        .enumerate()
-        .map(|(rank, channel)| (channel, rank))
-        .collect::<BTreeMap<_, _>>();
-    let position = |sample: &Sample| {
-        (
-            sample.corr,
-            row_ranks[&sample.row],
-            channel_ranks[&sample.chan],
-        )
-    };
     let original = samples
         .iter()
-        .filter(|sample| sample.flag)
-        .map(position)
+        .zip(&positions)
+        .filter_map(|(sample, &position)| sample.flag.then_some(position))
         .collect::<BTreeSet<_>>();
-    for sample in samples.iter().filter(|sample| !sample.flag) {
-        let (corr, time, channel) = position(sample);
+    let physical_cell = |sample: &Sample| (sample.row, sample.corr, sample.chan);
+    let mut grown = BTreeSet::new();
+    for (sample, &(corr, time, channel)) in samples.iter().zip(&positions) {
+        if sample.flag {
+            continue;
+        }
         let neighbor = |dt: isize, dc: isize| {
             time.checked_add_signed(dt)
                 .zip(channel.checked_add_signed(dc))
                 .is_some_and(|(t, c)| original.contains(&(corr, t, c)))
         };
-        flags[sample.index] = (request.flagneartime && (neighbor(-1, 0) || neighbor(1, 0)))
+        if (request.flagneartime && (neighbor(-1, 0) || neighbor(1, 0)))
             || (request.flagnearfreq && (neighbor(0, -1) || neighbor(0, 1)))
             || (request.growaround
                 && (-1..=1)
                     .flat_map(|dt| (-1..=1).map(move |dc| (dt, dc)))
                     .filter(|&(dt, dc)| neighbor(dt, dc))
                     .count()
-                    > 4);
+                    > 4)
+        {
+            grown.insert(physical_cell(sample));
+        }
+    }
+    // All references to a flag see the same write before percentage growth.
+    for sample in samples {
+        flags[sample.index] |= grown.contains(&physical_cell(sample));
     }
 }
 

@@ -767,18 +767,21 @@ fn flagging_channels(
     let Some(text) = request.spw.as_deref() else {
         return Ok(None);
     };
-    let ranges = if request.casa_row_selection && request.spw == request.selection.spw {
-        Ok(resolved_ranges)
-    } else if request.casa_row_selection {
-        ms.resolve_flagdata_spw_selector(text)
-            .and_then(|spw| crate::selection::flagdata_channel_ranges(ms, &spw))
-    } else {
-        parse_channel_selections(text)
-    }
-    .map_err(|source| FlaggingError::MutateFlags {
-        path: display_ms_path(ms),
-        reason: source.to_string(),
-    })?;
+    let retain_overlaps = request.casa_row_selection && request.mode == FlagDataMode::Extend;
+    let ranges =
+        if request.casa_row_selection && !retain_overlaps && request.spw == request.selection.spw {
+            Ok(resolved_ranges)
+        } else if request.casa_row_selection {
+            ms.resolve_flagdata_spw_selector(text).and_then(|spw| {
+                crate::selection::flagdata_channel_ranges(ms, &spw, retain_overlaps)
+            })
+        } else {
+            parse_channel_selections(text)
+        }
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: display_ms_path(ms),
+            reason: source.to_string(),
+        })?;
     check_channel_selections(ms, &ranges)?;
     Ok(Some(ranges))
 }
@@ -1271,6 +1274,7 @@ fn apply_tfcrop_flags(
         channel_selections,
         Some(request.data_column),
         None,
+        false,
     )?;
     let samples = loaded.samples;
     let loaded_ms = started.elapsed().as_millis();
@@ -1352,6 +1356,7 @@ fn apply_rflag_flags(
         channel_selections,
         Some(request.data_column),
         None,
+        false,
     )?;
     let samples = loaded.samples;
     let loaded_ms = started.elapsed().as_millis();
@@ -1515,7 +1520,14 @@ fn set_selected_flags(
     flag: bool,
     row_policy: SelectedFlagRowPolicy,
 ) -> Result<ChangeSet, FlaggingError> {
-    let loaded = load_samples(ms, selected_rows, channel_selections, None, correlations)?;
+    let loaded = load_samples(
+        ms,
+        selected_rows,
+        channel_selections,
+        None,
+        correlations,
+        false,
+    )?;
     let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
     let mut touched_rows = std::collections::BTreeSet::new();
@@ -1578,7 +1590,27 @@ fn apply_flag_mask_with_preloaded(
     ms: &mut MeasurementSet,
     update_flag_rows: bool,
 ) -> Result<ChangeSet, FlaggingError> {
-    let mut changed = ChangeSet::default();
+    let (touched_rows, changed_samples) = stage_flag_mask(samples, mask, &mut updates);
+    let mut changed = ChangeSet {
+        changed_samples,
+        ..ChangeSet::default()
+    };
+    write_touched_flag_updates(
+        ms,
+        updates,
+        touched_rows,
+        |_| update_flag_rows,
+        &mut changed,
+    )?;
+    Ok(changed)
+}
+
+fn stage_flag_mask(
+    samples: &[Sample],
+    mask: &[bool],
+    updates: &mut BTreeMap<usize, ArrayD<bool>>,
+) -> (std::collections::BTreeSet<usize>, usize) {
+    let mut changed_samples = 0;
     let mut touched_rows = std::collections::BTreeSet::<usize>::new();
     for (sample, flag) in samples.iter().zip(mask.iter()) {
         if !*flag {
@@ -1591,18 +1623,11 @@ fn apply_flag_mask_with_preloaded(
             && !*value
         {
             *value = true;
-            changed.changed_samples += 1;
+            changed_samples += 1;
             touched_rows.insert(sample.row);
         }
     }
-    write_touched_flag_updates(
-        ms,
-        updates,
-        touched_rows,
-        |_| update_flag_rows,
-        &mut changed,
-    )?;
-    Ok(changed)
+    (touched_rows, changed_samples)
 }
 
 fn write_touched_flag_updates(
@@ -1770,6 +1795,7 @@ fn load_samples(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     data_column: Option<FlagDataColumn>,
     flag_correlations: Option<&CorrelationSelection>,
+    retain_channel_overlaps: bool,
 ) -> Result<LoadedSamples, FlaggingError> {
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
@@ -1839,14 +1865,15 @@ fn load_samples(
         }
         let nchan = flags.shape()[1];
         let channels = match channel_selections.and_then(|selectors| selectors.get(&spw)) {
-            Some(selection) => {
-                selection
-                    .indices(nchan)
-                    .map_err(|source| FlaggingError::MutateFlags {
-                        path: path.clone(),
-                        reason: format!("resolve SPW {spw} channels: {source}"),
-                    })?
+            Some(selection) => if retain_channel_overlaps {
+                selection.indices_with_overlaps(nchan)
+            } else {
+                selection.indices(nchan)
             }
+            .map_err(|source| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("resolve SPW {spw} channels: {source}"),
+            })?,
             None => (0..nchan).collect(),
         };
         let metadata = RowSampleMetadata {

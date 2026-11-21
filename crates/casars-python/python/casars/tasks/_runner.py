@@ -572,8 +572,10 @@ def _coerce_flagdata_options(
         value = values["extendpols"]
         if value is None:
             errors["extendpols"] = ["null value not allowed"]
-        elif isinstance(value, np.bool_):
+        elif not isinstance(value, (str, list, dict, np.ndarray, *cfloat)):
             errors["extendpols"] = ["must be of cVariant type"]
+        elif isinstance(value, (np.ndarray, np.int32, np.int64, np.float32, np.float64)):
+            argument_text["extendpols"] = str(value)
     correlation_vector = None
     for parameter in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         if parameter not in values:
