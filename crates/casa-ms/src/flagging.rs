@@ -186,6 +186,9 @@ pub struct FlagDataRequest {
     pub autocorr: bool,
     /// Data column for automatic modes.
     pub data_column: FlagDataColumn,
+    /// Whether a requested display has a scalar data-column name.
+    /// CASA checks this after selection and any apply backup.
+    pub display_column_is_scalar: bool,
     /// Create a `flagdata_N` backup before mutating flags.
     pub flagbackup: bool,
     /// Optional breakdowns for summary mode.
@@ -254,6 +257,7 @@ impl Default for FlagDataRequest {
             action: FlagDataAction::Flag,
             autocorr: false,
             data_column: FlagDataColumn::Data,
+            display_column_is_scalar: true,
             flagbackup: true,
             summary_options: FlagSummaryOptions::default(),
             clipzeros: false,
@@ -368,6 +372,9 @@ pub enum FlaggingError {
     /// A requested clipping column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode clip")]
     MissingClipColumn,
+    /// A display was requested with a vector of data-column names.
+    #[error("'list' object has no attribute 'upper'")]
+    DisplayColumnVector,
     /// The channel averaging widths do not match the spectral windows.
     #[error("Error parsing ChannelAverageTVI configuration")]
     InvalidClipChannelBins,
@@ -379,6 +386,12 @@ pub enum FlaggingError {
         path: String,
         /// Error context.
         reason: String,
+    },
+    /// The requested version table does not exist.
+    #[error("Flag version {version} does not exist")]
+    MissingFlagVersion {
+        /// Requested flag version name.
+        version: String,
     },
     /// A public flagmanager rename cannot proceed with these names.
     #[error("{message}")]
@@ -455,6 +468,9 @@ fn flagdata_with_persistence(
         }
         None => None,
     };
+    if !request.display_column_is_scalar {
+        return Err(FlaggingError::DisplayColumnVector);
+    }
 
     if request.mode == FlagDataMode::Summary {
         return summary::report(
@@ -3002,6 +3018,11 @@ pub fn restore_flag_version(
     let version_path = flag_version_table_path(&path, versionname);
     // The version is read under its read lock, held until the restore ends.
     let table = open_flag_version_for_reading(&version_path).map_err(|source| {
+        if matches!(version_path.try_exists(), Ok(false)) {
+            return FlaggingError::MissingFlagVersion {
+                version: versionname.to_owned(),
+            };
+        }
         FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("open flag version {versionname:?}: {source}"),

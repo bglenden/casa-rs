@@ -24264,7 +24264,7 @@
         {
           "name": "datacolumn",
           "concept": {
-            "id": "parameter.datacolumn",
+            "id": "parameter.datacolumn.flagdata",
             "semantic_revision": 1
           },
           "order": 18,
@@ -24283,7 +24283,7 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": "Used as the visibility data column for automatic flagging modes.",
+          "surface_note": "A string vector is recorded in HISTORY when the active agent ignores this argument.",
           "projections": {
             "cli": {
               "positional": null,
@@ -24308,7 +24308,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata accepts scalar and vector strings, with agent-specific handling."}
         },
         {
           "name": "action",
@@ -24988,7 +24988,7 @@
           "name": "versionname",
           "concept": {
             "id": "parameter.versionname",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {
@@ -25018,7 +25018,7 @@
             },
             "provider": {
               "field": "versionname",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "versionname",
@@ -25037,7 +25037,7 @@
           "name": "oldname",
           "concept": {
             "id": "parameter.oldname",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 3,
           "default": {
@@ -25067,7 +25067,7 @@
             },
             "provider": {
               "field": "oldname",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "oldname",

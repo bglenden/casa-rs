@@ -13,7 +13,7 @@ from casatasks import imregrid, version_string
 from casatools import coordsys, image
 
 INPUTS = ("cube.im", "template.im", "single.im", "masked.im", "transposed.im", "cube_pol.im", "template_pol.im", "double.im",
-          "complex.im", "dcomplex.im", "complex_sfl.im")
+          "complex.im", "dcomplex.im", "complex_sfl.im", "linear.im", "linear_template.im")
 CASES = {
     "frequency": {},
     "velocity": {"asvelocity": True},
@@ -47,6 +47,9 @@ CASES = {
     "double_frame_refused": {"imagename": "double.im", "template": "GALACTIC"},
     "dcomplex_frequency": {"imagename": "dcomplex.im", "axes": [3], "interpolation": "cubic"},
     "dcomplex_spatial": {"imagename": "dcomplex.im", "axes": [0, 1]},
+    "linear_plane": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0, 1]},
+    "one_linear_axis": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0]},
+    "replicate_linear_plane": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0, 1], "replicate": True},
 }
 
 
@@ -152,7 +155,7 @@ def snapshot(path):
                 "shape": shape,
                 "names": cs.names(),
                 "units": cs.units(),
-                "direction_frame": cs.referencecode("direction")[0],
+                "direction_frame": cs.referencecode("direction")[0] if "Direction" in cs.coordinatetype() else None,
                 "reference_pixel": plain(cs.referencepixel()["numeric"]),
                 "reference_value": plain(cs.referencevalue()["numeric"]),
                 "increment": plain(cs.increment()["numeric"]),
@@ -172,6 +175,29 @@ def snapshot(path):
         ia.done()
 
 
+def make_linear():
+    for name, shape, units, increments, reference in [
+        ("linear.im", (7, 6), ["m", "s"], [1.0, 2.0], [0.0, 0.0]),
+        ("linear_template.im", (4, 4), ["km", "ms"], [0.00125, 1500.0], [0.00025, 1000.0]),
+    ]:
+        cs = coordsys().newcoordsys(linear=2)
+        ia = image()
+        try:
+            assert cs.setunits(units, type="linear", overwrite=True)
+            assert cs.setincrement(increments, type="linear")
+            assert cs.setreferencevalue(reference, type="linear")
+            if name == "linear_template.im":
+                assert cs.setlineartransform(type="linear", value=[[1.0, 0.125], [-0.1, 1.0]])
+            x, y = np.indices(shape, dtype=np.float32)
+            assert ia.fromarray(name, x + 10 * y, csys=cs.torecord())
+            assert ia.setbrightnessunit("Jy/pixel")
+            if name == "linear.im":
+                assert ia.putregion(pixelmask=(x + y != 7))
+        finally:
+            cs.done()
+            ia.done()
+
+
 def run_cases():
     cube("cube.im", (14, 12, 1, 5), 1.4e9, 2e6, 1.42e9)
     cube("template.im", (12, 10, 1, 4), 1.401e9, 2.3e6, 1.421e9, shifted=True)
@@ -181,6 +207,7 @@ def run_cases():
     cube("template_pol.im", (12, 10, 2, 4), 1.401e9, 2.3e6, 1.421e9, shifted=True, polarizations=["Q", "U"])
     make_double()
     make_complex()
+    make_linear()
     dictionary = imregrid(imagename="template.im", template="get")
     reference = imregrid(imagename="cube.im", template="get")
     def edit(direction=None, spectral=None):
