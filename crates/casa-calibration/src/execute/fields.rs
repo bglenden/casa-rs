@@ -10,6 +10,9 @@ pub(crate) fn load(
     ms: &MeasurementSet,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
     let family = TimeParameterFamily::from_subtype(&plan.summary.table_subtype);
+    if matches!(family, Some(TimeParameterFamily::SwitchedPower)) {
+        switched_power::validate_context(ms, &plan.spec.path)?;
+    }
     // Interpolate the real FPARAM coefficients before constructing the Jones
     // matrix. Antenna positions, opacity and gain-curve coefficients share
     // the same real time operator as delays.
@@ -254,6 +257,9 @@ fn physical_grid(
         TimeParameterFamily::Tsys => {
             unreachable!("temperature stays real until frequency interpolation")
         }
+        TimeParameterFamily::SwitchedPower => CalibrationGrid::SwitchedPower(
+            switched_power::SwitchedPowerGrid::from_grid(path, grid)?,
+        ),
     }))
 }
 
@@ -266,6 +272,7 @@ pub(super) fn flagged(grid: &CalibrationGrid) -> Arc<CalibrationGrid> {
         CalibrationGrid::Antpos(grid) => grid.flagged = true,
         CalibrationGrid::GainCurve(grid) => grid.flags.fill(true),
         CalibrationGrid::Opacity(grid) => grid.flagged = true,
+        CalibrationGrid::SwitchedPower(grid) => grid.flag_all(),
     }
     Arc::new(grid)
 }

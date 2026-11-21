@@ -19451,7 +19451,12 @@
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tsys"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "opac"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antposvla"}}
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antposvla"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "evlagain"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swpow"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swp/rq"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swpwts"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "rq"}}
           ]}}}
         },
         {

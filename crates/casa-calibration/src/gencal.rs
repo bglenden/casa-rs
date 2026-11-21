@@ -4,9 +4,11 @@
 mod antpos_evla;
 mod antpos_file;
 mod power_curve;
+mod switched_power;
 mod tsys;
 
 pub use antpos_file::AntposInputError;
+pub(crate) use switched_power::CORRELATOR_EFFICIENCY as EVLA_CORRELATOR_EFFICIENCY;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -69,6 +71,17 @@ pub enum GencalType {
     Tsys,
     /// Zenith-opacity table (`TOpac`).
     Opac,
+    /// VLA switched-power gain and system temperature (`G EVLASWPOW`).
+    Swpow,
+    /// CASA's legacy spelling of `swpow`.
+    Evlagain,
+    /// VLA switched-power gain divided by the requantizer factor.
+    #[serde(rename = "swp/rq")]
+    SwpOverRq,
+    /// VLA requantizer gains and switched-power weights.
+    Swpwts,
+    /// VLA requantizer gain and corresponding weight scale.
+    Rq,
 }
 
 impl GencalType {
@@ -80,6 +93,9 @@ impl GencalType {
             Self::Gc | Self::Gceff | Self::Eff => "EGainCurve",
             Self::Tsys => "B TSYS",
             Self::Opac => "TOpac",
+            Self::Swpow | Self::Evlagain | Self::SwpOverRq | Self::Swpwts | Self::Rq => {
+                "G EVLASWPOW"
+            }
         }
     }
 
@@ -92,6 +108,10 @@ impl GencalType {
 
     pub(crate) fn is_gain_curve(self) -> bool {
         matches!(self, Self::Gc | Self::Gceff | Self::Eff)
+    }
+
+    fn is_switched_power(self) -> bool {
+        self.table_subtype() == "G EVLASWPOW"
     }
 }
 
@@ -110,8 +130,13 @@ impl std::str::FromStr for GencalType {
             "eff" => Ok(Self::Eff),
             "tsys" => Ok(Self::Tsys),
             "opac" | "opacity" => Ok(Self::Opac),
+            "swpow" => Ok(Self::Swpow),
+            "evlagain" => Ok(Self::Evlagain),
+            "swp/rq" => Ok(Self::SwpOverRq),
+            "swpwts" => Ok(Self::Swpwts),
+            "rq" => Ok(Self::Rq),
             other => Err(format!(
-                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, or tsys"
+                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, or rq"
             )),
         }
     }
@@ -264,6 +289,16 @@ pub(crate) fn gencal_with_output_mode(
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
     let ms = open_measurement_set(&request.measurement_set)?;
+    let switched_power = request
+        .caltype
+        .is_switched_power()
+        .then(|| switched_power::input_paths(&ms, &request.measurement_set))
+        .transpose()?;
+    if let Some((power, noise_cal)) = &switched_power {
+        for input in [power, noise_cal] {
+            refuse_prior_input_overlap(request, input)?;
+        }
+    }
     let embedded = match request.caltype {
         GencalType::Gc | GencalType::Gceff => {
             power_curve::source_path(&request.measurement_set, ms.main_table())?
@@ -326,6 +361,15 @@ pub(crate) fn gencal_with_output_mode(
             let (rows, spectral) = tsys::rows(&ms, uniform)?;
             collapse_spw = !spectral;
             rows
+        }
+        GencalType::Swpow
+        | GencalType::Evlagain
+        | GencalType::SwpOverRq
+        | GencalType::Swpwts
+        | GencalType::Rq => {
+            validate_prior_selection(&ms, request)?;
+            let (power, noise_cal) = switched_power.expect("switched-power inputs resolved");
+            switched_power::rows(&ms, &power, &noise_cal, request.caltype)?
         }
     };
     let subtype = if embedded.is_some() {

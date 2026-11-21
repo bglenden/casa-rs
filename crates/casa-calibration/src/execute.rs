@@ -70,6 +70,7 @@ mod bandpass;
 mod channels;
 pub(crate) mod parang;
 mod solve_priors;
+mod switched_power;
 pub(crate) mod tsys_weights;
 mod weights;
 use channels::{DataChannelGrid, apply_row};
@@ -2425,6 +2426,12 @@ fn apply_row_all_channels(
                     .map(|code| stokes_name(*code).to_string())
                     .collect(),
             })?;
+            let switched_power_weight = match (ant1.as_ref(), ant2.as_ref()) {
+                (CalibrationGrid::SwitchedPower(left), CalibrationGrid::SwitchedPower(right)) => {
+                    Some(left.weight_scale(receptors.0) * right.weight_scale(receptors.1))
+                }
+                _ => None,
+            };
 
             for chan_index in 0..data.shape()[1] {
                 let gain1 = ant1.sample(
@@ -2469,10 +2476,11 @@ fn apply_row_all_channels(
                     let factor = if is_tsys && has_weight_spectrum && (flag1 || flag2) {
                         0.0
                     } else {
-                        bandpass_weights.as_ref().map_or_else(
-                            || value1.norm_sqr() * value2.norm_sqr(),
-                            |factors| factors[corr_index],
-                        )
+                        switched_power_weight
+                            .or_else(|| {
+                                bandpass_weights.as_ref().map(|factors| factors[corr_index])
+                            })
+                            .unwrap_or_else(|| value1.norm_sqr() * value2.norm_sqr())
                     };
                     if let Some(weight_spectrum) = weight_spectrum.as_mut() {
                         weight_spectrum[[corr_index, chan_index]] *= factor;
@@ -3636,6 +3644,7 @@ enum TimeParameterFamily {
     GainCurve { power: bool },
     Opacity,
     Tsys,
+    SwitchedPower,
 }
 
 impl TimeParameterFamily {
@@ -3647,6 +3656,7 @@ impl TimeParameterFamily {
             "EPowerCurve" => Some(Self::GainCurve { power: true }),
             "TOpac" => Some(Self::Opacity),
             "B TSYS" => Some(Self::Tsys),
+            "G EVLASWPOW" => Some(Self::SwitchedPower),
             _ => None,
         }
     }
@@ -3670,6 +3680,7 @@ pub(crate) enum CalibrationGrid {
     Antpos(AntposGrid),
     GainCurve(GainCurveGrid),
     Opacity(OpacityGrid),
+    SwitchedPower(switched_power::SwitchedPowerGrid),
 }
 
 #[derive(Clone)]
@@ -3758,6 +3769,7 @@ impl CalibrationGrid {
                 grid.sample(receptor, field_id, antenna_id, time_seconds, context)
             }
             Self::Opacity(grid) => grid.sample(field_id, antenna_id, time_seconds, context),
+            Self::SwitchedPower(grid) => Ok(grid.sample(receptor)),
         }
     }
 }
@@ -4418,7 +4430,7 @@ fn load_parameters(
     let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex
         || matches!(
             table_plan.summary.table_subtype.as_str(),
-            "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS"
+            "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"
         );
     let antpos_tropo = match (
         table_plan.summary.table_subtype.as_str(),
@@ -4457,7 +4469,9 @@ fn load_parameters(
                     flags,
                 )?)
             }
-            CalibrationParameterFamily::Float if real_parameters => {
+            CalibrationParameterFamily::Float
+                if real_parameters || table_plan.summary.table_subtype == "G EVLASWPOW" =>
+            {
                 let values = table
                     .cell_accessor(row_index, COL_FPARAM)
                     .and_then(|cell| cell.array())
