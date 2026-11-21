@@ -416,8 +416,10 @@ pub(super) fn publish_image_pair(
         .map_err(raised)?;
     let mut locks = BTreeMap::new();
     let installed = install_images(
-        [companion, primary].into_iter().flatten(),
-        overwrite,
+        [companion, primary]
+            .into_iter()
+            .flatten()
+            .map(|stage| (stage, overwrite)),
         &registry,
         &mut locks,
     )?;
@@ -448,8 +450,7 @@ pub(super) fn publish_image_set<T, const N: usize>(
 }
 
 pub(super) struct NamedImageStages {
-    stages: Vec<Option<StagedImage>>,
-    overwrite: bool,
+    stages: Vec<Option<(StagedImage, bool)>>,
 }
 
 impl NamedImageStages {
@@ -457,17 +458,23 @@ impl NamedImageStages {
         outputs: impl IntoIterator<Item = &'a str>,
         overwrite: bool,
     ) -> PyResult<Self> {
+        Self::with_replacements(outputs.into_iter().map(|name| (name, overwrite)))
+    }
+
+    pub(super) fn with_replacements<'a>(
+        outputs: impl IntoIterator<Item = (&'a str, bool)>,
+    ) -> PyResult<Self> {
         let stages = outputs
             .into_iter()
-            .map(StagedImage::allocate)
+            .map(|(name, overwrite)| {
+                StagedImage::allocate(name).map(|stage| stage.map(|stage| (stage, overwrite)))
+            })
             .collect::<PyResult<Vec<_>>>()?;
-        let set = Self { stages, overwrite };
+        let set = Self { stages };
         set.check_distinct()?;
-        if !overwrite {
-            for stage in set.stages.iter().flatten() {
-                if stage.target.symlink_metadata().is_ok() {
-                    return Err(raised(format!("File {} already exists", stage.requested)));
-                }
+        for (stage, overwrite) in set.stages.iter().flatten() {
+            if !overwrite && stage.target.symlink_metadata().is_ok() {
+                return Err(raised(format!("File {} already exists", stage.requested)));
             }
         }
         Ok(set)
@@ -476,7 +483,10 @@ impl NamedImageStages {
     fn check_distinct(&self) -> PyResult<()> {
         for (index, stage) in self.stages.iter().enumerate() {
             for previous in &self.stages[..index] {
-                check_distinct(stage.as_ref(), previous.as_ref())?;
+                check_distinct(
+                    stage.as_ref().map(|(stage, _)| stage),
+                    previous.as_ref().map(|(stage, _)| stage),
+                )?;
             }
         }
         Ok(())
@@ -485,14 +495,14 @@ impl NamedImageStages {
     pub(super) fn paths(&self) -> Vec<Option<&Path>> {
         self.stages
             .iter()
-            .map(|stage| stage.as_ref().map(|stage| stage.product.as_path()))
+            .map(|stage| stage.as_ref().map(|(stage, _)| stage.product.as_path()))
             .collect()
     }
 
     pub(super) fn publish(mut self, allow_missing: bool) -> PyResult<()> {
         if allow_missing {
             for slot in &mut self.stages {
-                if let Some(stage) = slot
+                if let Some((stage, _)) = slot
                     && let Err(error) = stage.product.symlink_metadata()
                 {
                     if error.kind() == std::io::ErrorKind::NotFound {
@@ -509,27 +519,21 @@ impl NamedImageStages {
             .stages
             .iter()
             .flatten()
-            .map(|stage| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
+            .map(|(stage, _)| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
             .collect::<PyResult<Vec<_>>>()?;
         let mut locks = BTreeMap::new();
-        install_images(
-            self.stages.into_iter().flatten(),
-            self.overwrite,
-            &registry,
-            &mut locks,
-        )?;
+        install_images(self.stages.into_iter().flatten(), &registry, &mut locks)?;
         Ok(())
     }
 }
 
 fn install_images(
-    stages: impl IntoIterator<Item = StagedImage>,
-    overwrite: bool,
+    stages: impl IntoIterator<Item = (StagedImage, bool)>,
     registry: &attachment::OpenImages,
     locks: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> PyResult<Vec<InstalledImage>> {
     let mut prepared = Vec::new();
-    for stage in stages {
+    for (stage, overwrite) in stages {
         let existed = stage.check(overwrite, registry, locks)?;
         prepared.push((stage, existed));
     }

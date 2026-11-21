@@ -8919,3 +8919,35 @@ selected at pixel 1 shows the same mismatch. The output write position is
 initialized to zero and only the spectral position is updated. Casa-rs
 writes the fitted result to the selected polarization and ancillary position.
 The input grid and validity mask remain present in both requested images.
+
+### `image.fitprofile` can mislabel or leave part of a fitted spectrum
+
+In CASA 6.7.6.14, collapsing the spatial axes of a cube centered on
+J2000 zero can place the averaged spectrum near the antipode. On a
+5 × 7 × 27 synthetic line cube the direction record reports a right
+ascension of 12 hours. With default detailed logging the inverse
+projection can fail and the call raises even though the spectral fit
+converged. Casa-rs uses the original direction coordinate evaluated
+at the selected spatial pixel midpoint, including for its model and
+residual products.
+
+In the same process, fit an 11-channel spectrum with a model image and
+then reject a fit to a 23-channel spectrum using an amplitude range.
+CASA's failure buffer keeps the first call's 11-channel shape. Only the
+first 11 channels of the rejected model are NaN and masked. A later
+shorter fit can instead attempt a slice larger than its output.
+Casa-rs uses the current spectrum's shape to mark every rejected
+channel invalid. Profiles skipped by `minpts` still retain the input
+pixels and mask in the products.
+
+A log-transformed polynomial with every coefficient fixed crashes
+CASA during fitting. Casa-rs evaluates the given coefficients in log
+space and reports their zero parameter errors without trying to estimate
+a covariance. Pixels outside the log function's domain remain masked.
+
+For an explicit direction-axis fit on a spectral cube, CASA rejects
+the fit with `The X vector must have some elements` even though the
+box supplies 23 pixels on the requested axis. The spectral-axis branch
+precomputes its abscissa and the alternate-axis branch fails to supply
+one. Casa-rs derives the fit abscissa from the requested pixel axis and
+reports its center and width in that axis's world units.

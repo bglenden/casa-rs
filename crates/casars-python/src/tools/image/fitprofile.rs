@@ -282,7 +282,10 @@ impl ProfileRequest<'_> {
             .destinations()
             .map(|name| self.outputs.spectra.contains(&name) || self.outputs.sigma == name)
             .collect();
-        let stages = NamedImageStages::new(fit.destinations(), false)?;
+        let stages = NamedImageStages::with_replacements(
+            fit.destinations()
+                .map(|name| (name, name == self.outputs.sigma)),
+        )?;
         let paths = stages.paths();
         let (record, summary) = fit.fit(&paths).map_err(raised)?;
         {

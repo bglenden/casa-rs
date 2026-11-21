@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_lattices::TiledShape;
 use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Axis, IxDyn};
 
@@ -395,7 +396,14 @@ impl SpectrumProduct {
 }
 
 fn create(shape: Vec<usize>, coordinates: &RecordValue, path: &Path) -> Result<Image, ImageError> {
-    let mut image = Image::create(shape, CoordinateSystem::from_record(coordinates)?, path)?;
+    let tile = TiledShape::new(shape.clone(), std::mem::size_of::<f32>())?;
+    let mut image = Image::create_with_tile_shape_and_cache(
+        shape,
+        tile.tile_shape().to_vec(),
+        CoordinateSystem::from_record(coordinates)?,
+        path,
+        16 * 1024 * 1024,
+    )?;
     image.set_coordinate_record(coordinates.clone())?;
     Ok(image)
 }

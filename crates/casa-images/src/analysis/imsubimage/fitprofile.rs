@@ -22,13 +22,13 @@ use ndarray::IxDyn;
 
 use crate::{ImageError, ImageInterface};
 
-use super::{SubimageRegion, read_window::PixelSections};
+use super::SubimageRegion;
 use axis::{ProfileAxis, automatic_divisor};
 use curve::Curve;
 use models::{PeakLists, PolynomialEstimate, ProfileModels, SpectralPolynomial};
 use products::{Product, ProfileProducts};
 use results::ProfileResults;
-use selection::{Lane, MeanLane, ProfileSelection};
+use selection::{Lane, MeanLane, ProfileLaneReader, ProfileSelection};
 pub use sigma::ProfileSigma;
 use sigma::Sigma;
 use solver::{Sample, Solution};
@@ -260,7 +260,7 @@ impl<'a> ImageProfileFit<'a> {
     pub fn fit(self, staged: &[Option<&Path>]) -> Result<(RecordValue, [String; 5]), ImageError> {
         let axis = ProfileAxis::new(&self.selection, self.models.spectral_polynomial.is_some())?;
         let plane_mask = self.selection.selected_planes(self.options.planes)?;
-        let reader = self.selection.reader(
+        let mut reader = self.selection.reader(
             self.source,
             self.options.mask,
             self.options.stretch,
@@ -295,7 +295,7 @@ impl<'a> ImageProfileFit<'a> {
         for lane_number in 0..lanes {
             let position = self.selection.position(lane_number);
             let world_pixel = self.world_pixel(&position);
-            let (data, weights) = self.read_fit_lane(&reader, sigma.as_ref(), &position)?;
+            let (data, weights) = self.read_fit_lane(&mut reader, sigma.as_ref(), &position)?;
             let outcome = self.fit_lane(
                 &axis,
                 &position,
@@ -368,12 +368,12 @@ impl<'a> ImageProfileFit<'a> {
 
     fn read_fit_lane(
         &self,
-        reader: &PixelSections<'_, f32>,
+        reader: &mut ProfileLaneReader<'_>,
         sigma: Option<&Sigma<'_>>,
         position: &[usize],
     ) -> Result<(Lane, Option<Lane>), ImageError> {
         if self.options.multifit {
-            let data = self.selection.read_lane(reader, position)?;
+            let data = reader.read(position)?;
             let weights = sigma
                 .map(|sigma| sigma.lane(&self.selection, position))
                 .transpose()?;
@@ -384,7 +384,7 @@ impl<'a> ImageProfileFit<'a> {
         let mut mean_sigma = sigma.map(|_| MeanLane::new(length));
         for lane in 0..self.selection.lanes {
             let lane_pixel = self.selection.position(lane);
-            mean.add(&self.selection.read_lane(reader, &lane_pixel)?);
+            mean.add(&reader.read(&lane_pixel)?);
             if let (Some(sigma), Some(mean_sigma)) = (sigma, &mut mean_sigma) {
                 let mut weights = sigma.lane(&self.selection, &lane_pixel)?;
                 for (valid, &value) in weights.valid.iter_mut().zip(&weights.values) {

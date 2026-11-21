@@ -32,10 +32,12 @@ impl<'a> ProfileAxis<'a> {
             return Err(invalid("The fit axis has no corresponding world axis"));
         };
         let owner = coordinates.world_axis_owner(world_axis);
-        let spectral_owner = coordinates
+        if coordinates
             .find_coordinate(CoordinateType::Spectral)
-            .ok_or_else(|| invalid("Image has no spectral coordinate"))?;
-        let spectral_unit = coordinates.coordinate(spectral_owner).axis_units()[0].clone();
+            .is_none()
+        {
+            return Err(invalid("Image has no spectral coordinate"));
+        }
         let spectral = owner.and_then(|(index, _)| match coordinates.coordinate(index) {
             CoordinateModel::Spectral(coordinate) => Some(coordinate.as_ref()),
             _ => None,
@@ -56,7 +58,7 @@ impl<'a> ProfileAxis<'a> {
                 .factor;
             (299_792_458. / scale, unit)
         } else {
-            (0., spectral_unit)
+            (0., coordinates.world_axis_units()[world_axis].clone())
         };
         Ok(Self {
             coordinates,

@@ -1,5 +1,9 @@
 """Spectral fitting and native image products against CASA 6.7.6.14."""
 
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -285,3 +289,176 @@ def test_collapsed_profile_uses_selected_world_center_and_skips_solution_images(
         np.testing.assert_allclose(coordinate, world, atol=2e-9)
     finally:
         image.done()
+
+
+def test_explicit_nonspectral_axis_and_spectral_selection(casa, tmp_path):
+    grid = np.arange(29.).reshape(-1, 1, 1, 1)
+    data = np.broadcast_to(_line(grid, 8., 13.5, 5.1), (29, 4, 2, 6)).astype(np.float32)
+    arguments = dict(
+        axis=0, box="3,1,25,2", chans="2~4", stokes="Q",
+        multifit=True, pampest=7., pcenterest=10.5, pfwhmest=4., logresults=False,
+    )
+    oracle = casa.image()
+    assert oracle.fromarray(pixels=data)
+    try:
+        with pytest.raises(RuntimeError, match="X vector"):
+            oracle.fitprofile(**arguments)
+    finally:
+        oracle.done()
+    im = tools.image()
+    assert im.fromarray(pixels=data)
+    target = tmp_path / "explicit.mod"
+    try:
+        fit = im.fitprofile(model=str(target), **arguments)
+        assert fit["valid"].shape == (1, 2, 1, 3)
+        assert fit["valid"].all()
+        assert "direction" not in fit
+        assert fit["xUnit"] == "rad"
+        ds = im.coordsys()
+        increment = abs(ds.increment()["numeric"][0])
+        ds.done()
+        np.testing.assert_allclose(fit["gs"]["amp"], 8., atol=2e-6)
+        np.testing.assert_allclose(fit["gs"]["fwhm"], 5.1 * increment, atol=1e-8)
+    finally:
+        im.done()
+    for reader in (casa, tools):
+        product, valid, _, _, _ = _read(reader, target)
+        np.testing.assert_allclose(product, data[3:26, 1:3, 1:2, 2:5], atol=5e-7)
+        assert valid.all()
+
+
+def test_user_region_and_expression_mask(casa, tmp_path):
+    x = np.arange(31.)
+    expected = _line(x, 3.5, 12.1, 6.4)
+    source = _cube(expected, (3, 3))
+    selected = source[:2, :2, 4:28]
+    records = []
+    region = casa.regionmanager()
+    region_record = region.box(blc=[0, 0, 4], trc=[1, 1, 27])
+    region.done()
+    for api in (casa, tools):
+        prefix = tmp_path / api.__name__
+        maker = api.image()
+        assert maker.fromarray(str(prefix), source)
+        target = str(prefix) + ".model"
+        try:
+            fit = maker.fitprofile(
+                region=region_record, mask=f'"{prefix}">0.001',
+                multifit=True, pampest=3., pcenterest=8., pfwhmest=6.,
+                model=target, logresults=False,
+            )
+            records.append(fit)
+        finally:
+            maker.done()
+        for reader in (casa, tools):
+            actual, valid, _, _, _ = _read(reader, target)
+            np.testing.assert_allclose(actual, selected, atol=5e-7)
+            np.testing.assert_array_equal(valid, selected > .001)
+    _compare_records(*records[::-1])
+
+
+def test_fit_range_rejection_and_unseeded_profile(casa, tmp_path):
+    x = np.arange(27.)
+    data = _cube(_line(x, 5., 14., 4.5))
+    for api in (casa, tools):
+        prefix = tmp_path / api.__name__
+        peak = str(prefix) + ".amp"
+        rejected = _fit(api, data, pampest=5., pcenterest=14., pfwhmest=4., goodamprange=[4., 3.],
+                        amp=peak)
+        assert rejected["attempted"].all() and rejected["converged"].all()
+        assert not rejected["valid"].any()
+        np.testing.assert_array_equal(rejected["ncomps"], -1)
+        np.testing.assert_array_equal(rejected["type"], "UNDEF")
+        pixels, mask, *_ = _read(tools, peak + "_0")
+        assert np.isnan(pixels).all()
+        assert not mask.any()
+        empty = _fit(api, _cube(np.zeros_like(x)), amp=str(prefix) + ".unused")
+        assert not empty["attempted"].any()
+        assert not empty["valid"].any()
+        assert not (tmp_path / (api.__name__ + ".unused_0")).exists()
+
+
+def test_fit_log_append_and_replace(casa, tmp_path):
+    for api in (casa, tools):
+        logfile = tmp_path / f"{api.__name__}.log"
+        logfile.write_text("previous fit\n")
+        common = dict(pampest=5., pcenterest=14., pfwhmest=4., logfile=str(logfile))
+        data = _cube(_line(np.arange(27.), 5., 14., 4.5))
+        assert _fit(api, data, **common)["valid"].all()
+        first = logfile.read_text()
+        assert first.startswith("previous fit")
+        assert "Number valid" in first
+        assert "Fit" in first
+        assert _fit(api, data, append=False, **common)["valid"].all()
+        assert "previous fit" not in logfile.read_text()
+
+
+def test_output_failure_preserves_inputs_and_existing_image(tmp_path):
+    image = tools.image()
+    data = _cube(_line(np.arange(31.), 7., 15.2, 6.))
+    original, existing, model = (tmp_path / f"{name}.im" for name in ("orig", "old", "model"))
+    assert image.fromarray(str(original), data)
+    old = tools.image()
+    assert old.fromarray(str(existing), np.full((2, 2), 8., dtype=np.float32))
+    assert old.done()
+    args = dict(multifit=True, pampest=6., pcenterest=15., pfwhmest=5., logresults=False)
+    try:
+        with pytest.raises(RuntimeError):
+            image.fitprofile(model=str(model), residual=str(existing), **args)
+        assert not model.exists()
+        np.testing.assert_array_equal(_read(tools, existing)[0], 8.)
+        with pytest.raises(RuntimeError):
+            image.fitprofile(model=str(model), logfile=str(original / "new-log"), **args)
+        assert not model.exists()
+        assert not (original / "new-log").exists()
+        with pytest.raises(RuntimeError):
+            image.fitprofile(model=str(original), **args)
+        with pytest.raises(RuntimeError):
+            image.fitprofile(model=str(model), logfile=str(tmp_path / "missing" / "fit.log"), **args)
+        assert not model.exists()
+        np.testing.assert_array_equal(image.getchunk(), data)
+    finally:
+        image.done()
+
+
+
+def test_rejected_spectrum_writes_the_whole_current_axis(casa, tmp_path):
+    # CASA caches the failed lane shape across calls in the same process.
+    script = """
+import importlib
+import sys
+import numpy as np
+api = importlib.import_module(sys.argv[1])
+for n, limits in [(11, []), (23, [0., 1.])]:
+    x = np.arange(n)
+    a = (5*np.exp(-4*np.log(2)*((x-5)/4)**2)).reshape(1,1,-1)
+    source = api.image()
+    assert source.fromarray(pixels=a)
+    fit = source.fitprofile(multifit=True, pampest=5., pcenterest=5., pfwhmest=4.,
+                            model=f"model{n}", goodamprange=limits, logresults=False)
+    assert fit["valid"].item() == (n == 11)
+    source.done()
+out = api.image()
+assert out.open("model23")
+print("invalid-count", (~out.getchunk(getmask=True)).sum(), np.isnan(out.getchunk()).sum())
+out.done()
+"""
+    for api, count in ((casa, 11), (tools, 23)):
+        work = tmp_path / api.__name__
+        work.mkdir()
+        result = subprocess.run([sys.executable, "-c", script, api.__name__],
+                                cwd=work, env=os.environ.copy(), text=True,
+                                capture_output=True, check=True)
+        assert f"invalid-count {count} {count}" in result.stdout
+
+
+def test_sigma_output_can_replace_a_closed_native_product(casa, tmp_path):
+    data = _cube(np.linspace(1., 3., 11))
+    for api in (casa, tools):
+        path = str(tmp_path / f"{api.__name__}.sigma")
+        values = np.ones(11)
+        assert _fit(api, data, ngauss=0, poly=1, sigma=values, outsigma=path)["valid"].all()
+        values[2] = 8.
+        assert _fit(api, data, ngauss=0, poly=1, sigma=values, outsigma=path)["valid"].all()
+        for reader in (casa, tools):
+            np.testing.assert_allclose(_read(reader, path)[0][0, 0], values/8.)

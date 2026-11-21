@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateType;
-use casa_types::RecordValue;
+use casa_types::{ArrayD, RecordValue};
+use ndarray::IxDyn;
 
 use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInterface};
@@ -78,8 +79,8 @@ impl ProfileSelection {
         mask: Option<&str>,
         stretch: bool,
         destinations: impl IntoIterator<Item = &'a Path>,
-    ) -> Result<PixelSections<'a, f32>, ImageError> {
-        Ok(PixelSections {
+    ) -> Result<ProfileLaneReader<'a>, ImageError> {
+        let windows = PixelSections {
             image: input,
             selection: &self.plan.selection,
             mask: PreparedMask::new_for_outputs(
@@ -89,6 +90,24 @@ impl ProfileSelection {
                 stretch,
                 destinations,
             )?,
+        };
+        let mut geometry = vec![1; self.plan.shape.len()];
+        let length = self.plan.shape[self.axis];
+        geometry[self.axis] = length;
+        // Traverse spatial profiles in pixel order. Keep blocks with complete
+        // spectra in memory, up to one million samples or one long spectrum.
+        let mut budget = (1_048_576 / length).max(1);
+        for (axis, size) in geometry.iter_mut().enumerate() {
+            if axis != self.axis {
+                *size = self.plan.shape[axis].min(budget);
+                budget /= *size;
+            }
+        }
+        Ok(ProfileLaneReader {
+            selection: self,
+            windows,
+            geometry,
+            cached: None,
         })
     }
 
@@ -112,27 +131,6 @@ impl ProfileSelection {
             .collect()
     }
 
-    pub(super) fn read_lane(
-        &self,
-        source: &PixelSections<'_, f32>,
-        position: &[usize],
-    ) -> Result<Lane, ImageError> {
-        let mut count = vec![1; self.plan.shape.len()];
-        count[self.axis] = self.plan.shape[self.axis];
-        let (values, valid) = source.read(&self.source_pixel(position), &count, &self.stride)?;
-        let values: Vec<_> = values.iter().copied().collect();
-        let has_mask = valid.is_some();
-        let valid = valid.map_or_else(
-            || vec![true; values.len()],
-            |mask| mask.iter().copied().collect(),
-        );
-        Ok(Lane {
-            values,
-            valid,
-            has_mask,
-        })
-    }
-
     pub(super) fn selected_planes(&self, good: &[i64]) -> Result<Vec<bool>, ImageError> {
         if good.iter().any(|&plane| plane < 0) {
             return Err(ImageError::CasaSelection(
@@ -151,6 +149,76 @@ impl ProfileSelection {
             }
         }
         Ok(valid)
+    }
+}
+
+pub(super) struct ProfileLaneReader<'a> {
+    selection: &'a ProfileSelection,
+    windows: PixelSections<'a, f32>,
+    geometry: Vec<usize>,
+    cached: Option<ProfileBlock>,
+}
+
+struct ProfileBlock {
+    origin: Vec<usize>,
+    pixels: ArrayD<f32>,
+    mask: Option<ArrayD<bool>>,
+}
+
+impl ProfileLaneReader<'_> {
+    pub(super) fn read(&mut self, position: &[usize]) -> Result<Lane, ImageError> {
+        let load = self.cached.as_ref().is_none_or(|block| {
+            position
+                .iter()
+                .zip(&block.origin)
+                .zip(block.pixels.shape())
+                .any(|((&pixel, &origin), &extent)| pixel < origin || pixel - origin >= extent)
+        });
+        if load {
+            let origin: Vec<_> = position
+                .iter()
+                .zip(&self.geometry)
+                .map(|(&pixel, &count)| pixel / count * count)
+                .collect();
+            let shape: Vec<_> = self
+                .selection
+                .plan
+                .shape
+                .iter()
+                .zip(&origin)
+                .zip(&self.geometry)
+                .map(|((&extent, &start), &width)| width.min(extent - start))
+                .collect();
+            let start = self.selection.source_pixel(&origin);
+            self.cached = None;
+            let (pixels, mask) = self.windows.read(&start, &shape, &self.selection.stride)?;
+            self.cached = Some(ProfileBlock {
+                origin,
+                pixels,
+                mask,
+            });
+        }
+        let block = self.cached.as_ref().expect("profile block populated");
+        let mut offset: Vec<_> = position
+            .iter()
+            .zip(&block.origin)
+            .map(|(&pixel, &start)| pixel - start)
+            .collect();
+        let axis = self.selection.axis;
+        let length = self.selection.plan.shape[axis];
+        let mut values = Vec::with_capacity(length);
+        let mut valid = Vec::with_capacity(length);
+        for channel in 0..length {
+            offset[axis] = channel;
+            let index = IxDyn(&offset);
+            valid.push(block.mask.as_ref().is_none_or(|mask| mask[index.clone()]));
+            values.push(block.pixels[index]);
+        }
+        Ok(Lane {
+            values,
+            valid,
+            has_mask: block.mask.is_some(),
+        })
     }
 }
 
