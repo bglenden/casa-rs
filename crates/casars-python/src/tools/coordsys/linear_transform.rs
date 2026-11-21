@@ -404,7 +404,9 @@ fn apply_matrix(
             .with_linear_transform(matrix[[0, 0]])
             .map_err(raised)?
             .into(),
-        CoordinateModel::Stokes(_) | CoordinateModel::Quality(_) => return Ok(true),
+        CoordinateModel::Stokes(_) | CoordinateModel::Quality(_) | CoordinateModel::System(_) => {
+            return Ok(true);
+        }
     };
     let mut record = state.record.clone();
     update_stored_coordinate(&mut record, &placement.field, &changed)?;

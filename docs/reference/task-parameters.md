@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 884
-- Surfaces: 49 (49 task, 0 session)
-- Surface bindings: 1159
+- Concepts: 886
+- Surfaces: 50 (50 task, 0 session)
+- Surface bindings: 1164
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -65,6 +65,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Get VLA Calibrator Model](#surface-getcalmodvla)<br><code>getcalmodvla</code> | task | 1 | <code>calibration</code> | 8 | Retrieve a calibrator brightness model from the VLA service. |
 | [Predict Calibrator Component](#surface-predictcomp)<br><code>predictcomp</code> | task | 1 | <code>simulation</code> | 15 | Write a flux calibrator component list and optionally plot its visibility amplitudes. |
 | [Water-vapour Radiometer Calibration](#surface-wvrgcal)<br><code>wvrgcal</code> | task | 1 | <code>calibration</code> | 24 | Use ALMA radiometer measurements to calibrate atmospheric phase. |
+| [Polarization from Gains](#surface-polfromgain)<br><code>polfromgain</code> | task | 1 | <code>calibration</code> | 5 | Estimate fractional linear polarization from receptor gain amplitude ratios. |
 
 <a id="surface-msexplore"></a>
 
@@ -1861,5 +1862,23 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>refant</code> | <code>wvr.refant@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Solve | Preferred reference antenna names or IDs in order. |
 | <code>offsetstable</code> | <code>wvr.offsetstable@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Solve | Subtract temperatures from this matching radiometer offsets table. |
 | <code>rseed</code> | <code>wvr.rseed@r1</code> | <code>integer</code> | <code>0</code>; optional | Solve | Seed the atmospheric fit. Zero selects CASA’s default seed. |
+
+<a id="surface-polfromgain"></a>
+
+## Polarization from Gains (<code>polfromgain</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Estimate fractional linear polarization from receptor gain amplitude ratios.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>tablein</code> | <code>calibration.tablein@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Existing input calibration table. |
+| <code>caltable</code> | <code>calibration.caltable@r2</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Polarization | Calibration table the task writes. |
+| <code>paoffset</code> | <code>polfromgain.paoffset@r1</code> | <code>float</code> | <code>0.0</code>; optional | Polarization | Manual feed position-angle offset (degrees) |
+| <code>minpacov</code> | <code>polfromgain.minpacov@r1</code> | <code>float</code> | <code>30.0</code>; optional | Polarization | Minimum parallactic-angle coverage (degrees) |
 
 _End of generated reference._

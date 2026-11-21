@@ -306,23 +306,14 @@ fn models(coordinates: &CoordinateSystem) -> impl Iterator<Item = &CoordinateMod
 
 // Angles reach casa-coordinates in radians. Other coordinates already use their declared unit.
 fn native_world_units(coordinates: &CoordinateSystem) -> Vec<String> {
-    axis_values(coordinates, true, |coordinate| match coordinate {
-        CoordinateModel::Direction(direction) => {
-            vec!["rad".into(); direction.visible_world_units().len()]
-        }
-        _ => coordinate.axis_units(),
-    })
+    coordinates.world_axis_units()
 }
 
 fn declared_to_native(values: Vec<f64>, coordinates: &CoordinateSystem) -> PyResult<Vec<f64>> {
-    let conversions = axis_values(coordinates, true, |coordinate| match coordinate {
-        CoordinateModel::Direction(direction) => direction
-            .visible_world_units()
-            .into_iter()
-            .map(Some)
-            .collect(),
-        _ => vec![None; coordinate.n_world_axes()],
-    });
+    let conversions = axis_values(coordinates, true, CoordinateModel::declared_axis_units)
+        .into_iter()
+        .zip(coordinates.world_axis_units())
+        .map(|(declared, internal)| (declared != internal).then_some(declared));
     values
         .into_iter()
         .zip(conversions)
@@ -535,7 +526,7 @@ fn update_measures(
                 };
                 quantity_vector(subrecord(value, "linear")?, &units)?
             }
-            CoordinateModel::Quality(_) => continue,
+            CoordinateModel::Quality(_) | CoordinateModel::System(_) => continue,
             CoordinateModel::Tabular(_) => {
                 vec![quantity_record(
                     subrecord(value, "tabular")?,

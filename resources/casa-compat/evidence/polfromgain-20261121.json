@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "0c0a98513184e46c11f8cf1c6e1231fb01e365c1",
+  "casa_version": "6.7.6.14",
+  "result": "passed",
+  "scope": "Two fields and two spectral windows with independently planted per-antenna polarization, mixed receptor flags, sparse antenna coverage, distinct calibration and MeasurementSet FIELD directions, channel preservation and a rank-one fit.",
+  "commands": [
+    "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/polfromgain_oracle.py --work <new-directory>"
+  ],
+  "task_parameters": 5,
+  "fields": 2,
+  "spectral_windows": 2,
+  "calibration_rows": 120,
+  "corrected_complex_gains": 240,
+  "corrected_gain_normalized_rms": 0.0,
+  "review_regressions": [
+    "Tiny finite gains preserve the fractional polarization.",
+    "Unflagged nonfinite gains retain the CASA NaN result and correction error.",
+    "Missing paths, invalid argument types, and nonfinite offsets reproduce CASA exceptions.",
+    "Boolean and NumPy scalar parameters and nonfinite coverage match CASA.",
+    "CASA reads corrected CPARAM, untouched planes, column definedness, descriptors, and storage-manager bindings.",
+    "Per-antenna corrections and the unweighted spectral-window fallback match planted values."
+  ],
+  "publication_controls": [
+    "Existing destination is preserved.",
+    "Failed native correction remains unpublished."
+  ]
+}

@@ -7268,6 +7268,15 @@ CASA error and compares the two native append products. Invalid boolean
 arguments retain the native exception policy documented in
 `docs/python/api.md`.
 
+## `polfromgain` can leave an incomplete corrected gain table
+
+CASA 6.7.6.14 copies the input gain table to the requested destination before
+correcting it. With an unflagged nonfinite gain in a fitted antenna, the task
+raises `Spurious fractional polarization!` and leaves the copied table behind.
+Casa-rs stages the correction and publishes the result only after it succeeds.
+The paired regression checks the exception and the native destination state.
+[Paired oracle](../tools/casa-compat/polfromgain_oracle.py)
+
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
 In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet
@@ -8750,6 +8759,20 @@ public layout and the `ERROR` plane fixed in the record, export terminates
 with a segmentation fault. casa-rs raises a Python error and preserves the
 image in both cases. Its single-HDU FITS writer cannot represent the data
 and error semantics of a native Quality coordinate.
+
+## Mixed conversion of a nested coordinate system can crash
+
+CASA 6.7.6.14 restores a two-axis Linear coordinate system stored as an
+outer `coordsys0` coordinate. With child units `m` and `s`, both
+`coordsys.convert([6.0, 7.0], unitsin=['pix', 'pix'], unitsout=['cm', 'ms'])`
+and the equivalent `convertmany([[6.0], [7.0]], ...)` segfault. Casa-rs
+raises a Python error and leaves the coordinate record usable. Scalar and
+batched `toworld` and `topixel` continue to use the nested transform.
+
+The same CASA version can also segfault in `coordsys.summary(list=False)`
+when a nested Linear system retains two pixel axes but its inner
+`worldmap0` removes one world axis. Casa-rs reports the incompatible
+axis counts and leaves the coordinate tools usable for transformation.
 
 ## An empty nested list crashes `coordsys.convertmany`
 

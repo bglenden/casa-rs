@@ -58,6 +58,29 @@ pub fn solve_weighted_least_squares(
     Some(solution.as_slice().to_vec())
 }
 
+/// Solve an unweighted real least-squares system with the default relative
+/// rank cutoff used by NumPy's `lstsq`. Rank-deficient systems return the
+/// minimum-norm solution.
+#[must_use]
+pub fn solve_least_squares<const N: usize>(rows: &[([f64; N], f64)]) -> Option<[f64; N]> {
+    if N == 0
+        || rows.is_empty()
+        || rows.iter().any(|(basis, value)| {
+            !value.is_finite() || basis.iter().any(|value| !value.is_finite())
+        })
+    {
+        return None;
+    }
+    let design =
+        DMatrix::from_row_iterator(rows.len(), N, rows.iter().flat_map(|(basis, _)| *basis));
+    let observations = DVector::from_iterator(rows.len(), rows.iter().map(|(_, value)| *value));
+    let decomposition = design.svd(true, true);
+    let largest = decomposition.singular_values.max();
+    let tolerance = largest * rows.len().max(N) as f64 * f64::EPSILON;
+    let fit = decomposition.solve(&observations, tolerance).ok()?;
+    fit.as_slice().try_into().ok()
+}
+
 /// Solve a symmetric system with casacore `LSQFit` ordering.
 ///
 /// The input matrix must contain the symmetric system in its upper triangle.

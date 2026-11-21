@@ -29,6 +29,20 @@ pub(crate) fn stage_calibration_table_edit(
     destination: &Path,
     edit_and_save: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
 ) -> Result<(), String> {
+    stage_calibration_table_edit_with_mode(
+        input,
+        destination,
+        CalibrationOutputMode::Replace,
+        edit_and_save,
+    )
+}
+
+pub(crate) fn stage_calibration_table_edit_with_mode(
+    input: &Path,
+    destination: &Path,
+    mode: CalibrationOutputMode,
+    edit_and_save: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
+) -> Result<(), String> {
     let input = normalized(input).map_err(error_text)?;
     let destination = normalized(destination).map_err(error_text)?;
     if input != destination && overlap(&input, &destination).map_err(error_text)? {
@@ -38,8 +52,7 @@ pub(crate) fn stage_calibration_table_edit(
     if source.info().table_type != TABLE_INFO_TYPE {
         return Err("input is not a calibration table".into());
     }
-    let output = CalibrationOutput::prepare(&destination, CalibrationOutputMode::Replace)
-        .map_err(error_text)?;
+    let output = CalibrationOutput::prepare(&destination, mode).map_err(error_text)?;
     let _destination_lock = if input != destination && destination.exists() {
         Some(open_for_snapshot(&destination, false)?)
     } else {

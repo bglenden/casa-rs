@@ -538,6 +538,11 @@
     "doPlot": "cBool",
     "plotName": "cStr"
   },
+  "polfromgain": {
+    "caltable": "cStr",
+    "paoffset": "cFloat",
+    "minpacov": "cFloat"
+  },
   "predictcomp": {
     "objname": "cStr",
     "standard": "cStr",
