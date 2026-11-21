@@ -23,7 +23,10 @@ use casa_types::measures::frequency::{CasaFrequencyFrame, FrequencyRef, MFrequen
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::attachment::OpenedMs;
-use crate::ft::setjy::standards::{CalibratorSpectrum, CatalogMatch, CatalogScale, FluxCatalog};
+use crate::ft::setjy::standards::fixed::FixedScale;
+use crate::ft::setjy::standards::{
+    CalibratorSpectrum, CatalogMatch, CatalogScale, FluxCatalog, FluxScale,
+};
 use crate::ft::setjy::{ManualFlux, sampled_point};
 use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
@@ -31,7 +34,7 @@ use crate::interpolation::Curve;
 enum FluxParameters {
     Manual(ManualFlux),
     Standard {
-        catalog: Box<FluxCatalog>,
+        catalog: FluxCatalog,
         interpolation: Curve,
     },
 }
@@ -166,9 +169,15 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
         |name| TaskFailure::validation("this setjy model configuration is pending #1519").at(name);
     let scale = match task.text("standard")?.as_deref() {
         Some("manual") => None,
-        Some("Perley-Butler 2017") => Some(CatalogScale::PerleyButler2017),
-        Some("Perley-Butler 2013") => Some(CatalogScale::PerleyButler2013),
-        Some("Scaife-Heald 2012") => Some(CatalogScale::ScaifeHeald2012),
+        Some("Perley-Butler 2017") => Some(FluxScale::Table(CatalogScale::PerleyButler2017)),
+        Some("Perley-Butler 2013") => Some(FluxScale::Table(CatalogScale::PerleyButler2013)),
+        Some("Scaife-Heald 2012") => Some(FluxScale::Table(CatalogScale::ScaifeHeald2012)),
+        Some("Baars") => Some(FluxScale::Fixed(FixedScale::Baars)),
+        Some("Perley 90") => Some(FluxScale::Fixed(FixedScale::Perley90)),
+        Some("Perley-Taylor 95") => Some(FluxScale::Fixed(FixedScale::PerleyTaylor95)),
+        Some("Perley-Taylor 99") => Some(FluxScale::Fixed(FixedScale::PerleyTaylor99)),
+        Some("Perley-Butler 2010") => Some(FluxScale::Fixed(FixedScale::PerleyButler2010)),
+        Some("Stevens-Reynolds 2016") => Some(FluxScale::Fixed(FixedScale::StevensReynolds2016)),
         _ => return Err(pending("standard")),
     };
     if task.flag("listmodels")? {
@@ -203,6 +212,8 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
     let Some(&intensity) = input.first() else {
         return Err(TaskFailure::validation("fluxdensity must contain Stokes I").at("fluxdensity"));
     };
+    let scale = scale
+        .or_else(|| (intensity < 0.).then_some(FluxScale::Fixed(FixedScale::PerleyButler2010)));
     if let Some(scale) = scale {
         let interpolation = if scale.time_interpolation() {
             match task.text("interpolation")?.as_deref() {
@@ -218,7 +229,7 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
         // The task suppresses positive user flux on a named standard.
         // An explicit zero passes through to the manual imager branch.
         if intensity != 0. {
-            let catalog = Box::new(FluxCatalog::open(scale).map_err(execution)?);
+            let catalog = FluxCatalog::open(scale).map_err(execution)?;
             return Ok(Some(FluxParameters::Standard {
                 catalog,
                 interpolation,
@@ -230,9 +241,6 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
             TaskFailure::validation("manual setjy needs one to four Stokes flux values")
                 .at("fluxdensity"),
         );
-    }
-    if intensity < 0. {
-        return Err(pending("fluxdensity"));
     }
     let mut flux = [0.; 4];
     flux[..input.len()].copy_from_slice(&input);
