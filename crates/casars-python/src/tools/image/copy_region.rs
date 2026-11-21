@@ -192,6 +192,7 @@ impl Selection {
         let mut projected =
             reduce_subimage_coordinate_record(record, self.shape.len(), &self.retained)
                 .map_err(raised)?;
+        reorder_rebuilt_world_axes(&mut projected)?;
         let model = CoordinateSystem::from_record(&projected).map_err(raised)?;
         let world_at_origin = model
             .to_world(&vec![0.0; self.retained.len()])
@@ -255,6 +256,41 @@ impl Selection {
         );
         Ok(())
     }
+}
+
+fn reorder_rebuilt_world_axes(record: &mut RecordValue) -> PyResult<()> {
+    let coordinates = CoordinateSystem::from_mapped_record(record).map_err(raised)?;
+    if (0..coordinates.n_pixel_axes())
+        .all(|pixel| coordinates.pixel_axis_to_world_axis(pixel) == Some(pixel))
+    {
+        return Ok(());
+    }
+    let placements = coordinates.coordinates_in_record(record).map_err(raised)?;
+    // The copy factories rebuild local coordinates in creation order and
+    // transpose their world rows by the indices they owned in the section.
+    let mut output = vec![0; coordinates.n_world_axes()];
+    for (axis, world) in placements
+        .iter()
+        .flat_map(|item| item.world_axes.iter().flatten())
+        .enumerate()
+    {
+        output[*world] = axis as i32;
+    }
+    let mut packed = 0;
+    for placement in placements {
+        let suffix = placement
+            .field
+            .trim_start_matches(|ch: char| !ch.is_ascii_digit());
+        let key = format!("worldmap{suffix}");
+        let Some(Value::Array(ArrayValue::Int32(axes))) = record.get_mut(&key) else {
+            return Err(raised("Missing reduced world axis map"));
+        };
+        for axis in axes.iter_mut().filter(|axis| **axis >= 0) {
+            *axis = output[packed];
+            packed += 1;
+        }
+    }
+    Ok(())
 }
 
 fn world_value(value: f64, unit: &str, definition: &Value, axis: usize) -> PyResult<f64> {

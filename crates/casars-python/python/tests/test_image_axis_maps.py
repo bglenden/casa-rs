@@ -94,7 +94,8 @@ def test_image_operations_use_the_mapped_frequency_pixel(tmp_path, operation):
     point = [3.0, 1.0, 2.0] if operation == "copy" else [3.0, 1.0, 2.0, 0.0]
     _assert_value(left.toworld(point), right.toworld(point))
     if operation == "copy":
-        np.testing.assert_array_equal(left.coordsys().axesmap(), [1, 0, 2])
+        np.testing.assert_array_equal(left.coordsys().axesmap(), [2, 1, 0])
+        assert left.toworld(point)["numeric"][1] == 1.398e9
         np.testing.assert_array_equal(left.getchunk(), data[:, 1:5, :, 0])
     elif operation == "decimate":
         np.testing.assert_array_equal(left.getchunk(), data[:, ::2, :, :])
