@@ -21,9 +21,13 @@ pub(super) fn solve_channel(
     gains: &mut Vec<[Complex32; 2]>,
     min_baselines: usize,
     min_snr: f32,
-) -> Option<Vec<LeakageEstimate>> {
+) -> Result<Vec<LeakageEstimate>, Vec<[bool; 2]>> {
     let eligible = eligible_antennas(samples, gains.len(), min_baselines);
-    let valid = samples
+    let mut valid = eligible
+        .iter()
+        .map(|&eligible| [eligible; 2])
+        .collect::<Vec<_>>();
+    let usable = samples
         .iter()
         .filter(|sample| sample.pair.iter().all(|&antenna| eligible[antenna]))
         .collect::<Vec<_>>();
@@ -32,8 +36,8 @@ pub(super) fn solve_channel(
             *gain = [Complex32::ONE; 2];
         }
     }
-    if valid.is_empty() {
-        return None;
+    if usable.is_empty() {
+        return Err(valid);
     }
     let mut last_loss = f64::MAX;
     let mut stable_steps = 0_usize;
@@ -41,9 +45,13 @@ pub(super) fn solve_channel(
     let mut direction = vec![[Complex32::ZERO; 2]; gains.len()];
     let mut derivatives = Derivatives::new(gains.len());
     for _ in 0..=50 {
-        let loss = chi_squared(&valid, gains);
-        if !loss.is_finite() || loss == 0.0 {
-            return None;
+        let loss = chi_squared(&usable, gains);
+        if !loss.is_finite() {
+            gains.clone_from(&last_gains);
+            return Err(vec![[false; 2]; gains.len()]);
+        }
+        if loss == 0.0 {
+            return Err(valid);
         }
         let change = loss - last_loss;
         if (change / loss) as f32 <= 0.001 {
@@ -54,23 +62,24 @@ pub(super) fn solve_channel(
             stable_steps = stable_steps.saturating_sub(1);
         }
         if stable_steps > 5 {
-            derivatives.accumulate(&valid, gains);
-            return Some(estimate(
+            derivatives.accumulate(&usable, gains);
+            return Ok(estimate(
                 gains,
-                &eligible,
-                &derivatives,
                 &valid,
+                &derivatives,
+                &usable,
                 loss,
                 min_snr,
             ));
         }
         if change <= 0.0 {
             last_loss = loss;
-            derivatives.accumulate(&valid, gains);
+            derivatives.accumulate(&usable, gains);
             for (antenna, deltas) in direction.iter_mut().enumerate() {
                 for (receptor, delta) in deltas.iter_mut().enumerate() {
                     let hessian = derivatives.hessian[antenna][receptor];
-                    *delta = if eligible[antenna] && hessian > 0.0 {
+                    valid[antenna][receptor] &= hessian > 0.0;
+                    *delta = if valid[antenna][receptor] {
                         let gradient = derivatives.gradient[antenna][receptor] / hessian;
                         Complex32::new(gradient.re as f32, gradient.im as f32) * -0.5
                     } else {
@@ -81,16 +90,22 @@ pub(super) fn solve_channel(
         } else {
             gains.clone_from(&last_gains);
         }
-        let scale = step_scale(&valid, gains, &direction, loss);
+        if !valid.iter().flatten().any(|&usable| usable) {
+            return Err(valid);
+        }
+        let scale = step_scale(&usable, gains, &direction, loss);
         last_gains.clone_from(gains);
         update(gains, &direction, scale);
     }
-    None
+    Err(valid)
 }
 
 fn eligible_antennas(samples: &[StandardSample], antennas: usize, minimum: usize) -> Vec<bool> {
     let mut neighbors = vec![std::collections::BTreeSet::new(); antennas];
-    for sample in samples {
+    for sample in samples
+        .iter()
+        .filter(|sample| sample.weights.iter().any(|&weight| weight > 0.0))
+    {
         let [left, right] = sample.pair;
         neighbors[left].insert(right);
         neighbors[right].insert(left);
@@ -231,7 +246,7 @@ fn step_scale(
 
 fn estimate(
     gains: &[[Complex32; 2]],
-    eligible: &[bool],
+    valid: &[[bool; 2]],
     derivatives: &Derivatives,
     samples: &[&StandardSample],
     loss: f64,
@@ -242,7 +257,7 @@ fn estimate(
         .flat_map(|sample| sample.weights)
         .filter(|weight| *weight > 0.0)
         .count();
-    let parameters = 2 * eligible.iter().filter(|&&eligible| eligible).count();
+    let parameters = valid.iter().flatten().filter(|&&usable| usable).count();
     let degrees = (2 * observations.saturating_sub(parameters)).max(1) as f64;
     let scale = 2.0 * loss / degrees;
     gains
@@ -256,12 +271,20 @@ fn estimate(
                     0.0
                 }
             });
-            let snr = error.map(|error| if error > 0.0 { error.recip() } else { 0.0 });
+            let snr = std::array::from_fn(|receptor| {
+                if valid[antenna][receptor] && error[receptor] > 0.0 {
+                    error[receptor].recip()
+                } else {
+                    0.0
+                }
+            });
             LeakageEstimate {
                 gain,
                 error,
                 snr,
-                valid: snr.map(|snr| eligible[antenna] && snr > min_snr),
+                valid: std::array::from_fn(|receptor| {
+                    valid[antenna][receptor] && error[receptor] > 0.0 && snr[receptor] > min_snr
+                }),
             }
         })
         .collect()

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Group polarized samples and solve known-source leakage.
 
+mod channel_samples;
 mod fit;
 mod interval;
 mod output;
@@ -291,7 +292,7 @@ impl LeakageInputs<'_> {
                         bins: vec![CoherencyMean::default(); count],
                     });
                 if span.is_some_and(|span| row.time_seconds - active.start > span) {
-                    fits.accumulate(pair, &mut active.bins, antennas);
+                    fits.accumulate(pair, &mut active.bins, antennas)?;
                     active.start = row.time_seconds;
                 }
                 let weight = self.average_row(
@@ -304,10 +305,10 @@ impl LeakageInputs<'_> {
             }
         }
         for ((_, _, pair), mut active) in averages {
-            fits.accumulate(pair, &mut active.bins, antennas);
+            fits.accumulate(pair, &mut active.bins, antennas)?;
         }
         Ok(fits
-            .finish(antennas, references, previous, self.request)
+            .finish(antennas, references, previous, self.request)?
             .map(|(reference, values)| LeakageSolution {
                 spectral_window,
                 field: first.field_id,
@@ -382,6 +383,9 @@ impl LeakageInputs<'_> {
         let flags = flags.as_ref().unwrap_or(input.flags.as_ref());
         let samples = input.samples();
         let mut total = 0.0;
+        let retain_unweighted_model = self.request.kind.iterative()
+            && matches!(self.request.interval, GainSolveInterval::Integration)
+            && window.bin_width == 1;
         for (position, &channel) in window.channels.iter().enumerate() {
             if channel >= samples.data.shape()[1]
                 || order.iter().any(|&corr| flags[[corr, channel]])
@@ -394,6 +398,7 @@ impl LeakageInputs<'_> {
                 order.map(|corr| samples.data[[corr, channel]]),
                 order.map(|corr| model[[corr, channel]]),
                 weights,
+                retain_unweighted_model,
             );
             total += weights
                 .into_iter()
@@ -419,27 +424,47 @@ struct CoherencyMean {
 }
 
 impl CoherencyMean {
-    fn observe(&mut self, data: [Complex32; 4], model: [Complex32; 4], weights: [f32; 4]) {
+    fn observe(
+        &mut self,
+        data: [Complex32; 4],
+        model: [Complex32; 4],
+        weights: [f32; 4],
+        retain_unweighted_model: bool,
+    ) {
         for (corr, weight) in weights.into_iter().enumerate() {
             if weight > 0.0
                 && weight.is_finite()
                 && data[corr].is_finite()
                 && model[corr].is_finite()
             {
+                if self.weights[corr] == 0.0 {
+                    self.model[corr] = Complex32::ZERO;
+                }
                 self.data[corr] += weight * data[corr];
                 self.model[corr] += weight * model[corr];
                 self.weights[corr] += weight;
+            } else if retain_unweighted_model
+                && self.weights[corr] == 0.0
+                && model[corr].is_finite()
+            {
+                // The unaveraged model keeps its parallel hands even when
+                // the corresponding observations have zero weight.
+                self.model[corr] = model[corr];
             }
         }
     }
 
-    fn finish(mut self) -> Option<([Complex32; 4], [Complex32; 4], [f32; 4])> {
+    fn finish(mut self, require_all: bool) -> Option<([Complex32; 4], [Complex32; 4], [f32; 4])> {
+        if self.weights.iter().all(|&weight| weight <= 0.0) {
+            return None;
+        }
         for (corr, weight) in self.weights.into_iter().enumerate() {
-            if weight <= 0.0 {
+            if weight > 0.0 {
+                self.data[corr] /= weight;
+                self.model[corr] /= weight;
+            } else if require_all {
                 return None;
             }
-            self.data[corr] /= weight;
-            self.model[corr] /= weight;
         }
         Some((self.data, self.model, self.weights))
     }

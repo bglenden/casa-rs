@@ -3,15 +3,17 @@
 
 use num_complex::Complex32;
 
+use super::channel_samples::ChannelSamples;
 use super::fit::LeakageFit;
 use super::standard::{StandardSample, solve_channel};
 use super::{
-    CoherencyMean, LeakageEstimate, LeakageSolution, LeakageSolveKind, LeakageSolveRequest,
+    CoherencyMean, GainSolveError, LeakageEstimate, LeakageSolution, LeakageSolveKind,
+    LeakageSolveRequest,
 };
 
 pub(super) enum IntervalFits {
     LeastSquares(Vec<LeakageFit>),
-    Iterative(Vec<Vec<StandardSample>>),
+    Iterative(ChannelSamples),
 }
 
 type ChannelEstimates = Vec<LeakageEstimate>;
@@ -20,7 +22,7 @@ type IntervalEstimates = (i32, Vec<ChannelEstimates>);
 impl IntervalFits {
     pub(super) fn new(channels: usize, antennas: usize, kind: LeakageSolveKind) -> Self {
         if kind.iterative() {
-            Self::Iterative((0..channels).map(|_| Vec::new()).collect())
+            Self::Iterative(ChannelSamples::new(channels))
         } else {
             Self::LeastSquares((0..channels).map(|_| LeakageFit::new(antennas)).collect())
         }
@@ -31,26 +33,33 @@ impl IntervalFits {
         pair: [i32; 2],
         bins: &mut [CoherencyMean],
         antennas: usize,
-    ) {
+    ) -> Result<(), GainSolveError> {
         let pair = pair.map(|antenna| antenna as usize);
         if pair.iter().any(|&antenna| antenna >= antennas) {
-            return;
+            return Ok(());
         }
+        let require_all = matches!(self, Self::LeastSquares(_));
         for (channel, mean) in bins.iter_mut().enumerate() {
-            if let Some((data, model, weights)) = std::mem::take(mean).finish() {
+            if let Some((data, model, weights)) = std::mem::take(mean).finish(require_all) {
                 match self {
                     Self::LeastSquares(fits) => {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
-                    Self::Iterative(samples) => samples[channel].push(StandardSample {
-                        pair,
-                        cross_hands: [data[1], data[2]],
-                        model,
-                        weights: [weights[1], weights[2]],
-                    }),
+                    Self::Iterative(samples) => samples
+                        .push(
+                            channel,
+                            StandardSample {
+                                pair,
+                                cross_hands: [data[1], data[2]],
+                                model,
+                                weights: [weights[1], weights[2]],
+                            },
+                        )
+                        .map_err(GainSolveError::PolarizationScratch)?,
                 }
             }
         }
+        Ok(())
     }
 
     pub(super) fn finish(
@@ -59,11 +68,11 @@ impl IntervalFits {
         references: &[i32],
         previous: Option<&LeakageSolution>,
         request: &LeakageSolveRequest,
-    ) -> Option<IntervalEstimates> {
+    ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
-            Self::LeastSquares(fits) => least_squares(fits, antennas, references, previous),
+            Self::LeastSquares(fits) => Ok(least_squares(fits, antennas, references, previous)),
             Self::Iterative(samples) => {
-                iterative(samples, antennas, request).map(|values| (-1, values))
+                Ok(iterative(samples, antennas, request)?.map(|values| (-1, values)))
             }
         }
     }
@@ -105,46 +114,59 @@ fn least_squares(
 }
 
 fn iterative(
-    samples: Vec<Vec<StandardSample>>,
+    mut samples: ChannelSamples,
     antennas: usize,
     request: &LeakageSolveRequest,
-) -> Option<Vec<ChannelEstimates>> {
+) -> Result<Option<Vec<ChannelEstimates>>, GainSolveError> {
     let mut gains = vec![[Complex32::ZERO; 2]; antennas];
     let mut diagnostics = vec![LeakageEstimate::default(); antennas];
     let mut converged = false;
-    let mut values = samples
-        .into_iter()
-        .rev()
-        .map(|samples| {
-            if let Some(result) =
-                solve_channel(&samples, &mut gains, request.min_baselines, request.min_snr)
-            {
-                diagnostics.copy_from_slice(&result);
-                converged = true;
-                result
-            } else {
-                // A failed channel preserves the preceding channel's
-                // diagnostics. Its flags exclude those values from readers.
-                diagnostics
-                    .iter()
-                    .zip(&gains)
-                    .map(|(diagnostics, &gain)| LeakageEstimate {
-                        gain,
-                        valid: [false; 2],
-                        ..*diagnostics
-                    })
-                    .collect()
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut values = Vec::with_capacity(samples.len());
+    for channel in (0..samples.len()).rev() {
+        let channel_samples = samples
+            .take(channel)
+            .map_err(GainSolveError::PolarizationScratch)?;
+        values.push(
+            match solve_channel(
+                &channel_samples,
+                &mut gains,
+                request.min_baselines,
+                request.min_snr,
+            ) {
+                Ok(result) => {
+                    diagnostics.copy_from_slice(&result);
+                    converged = true;
+                    result
+                }
+                Err(valid) => {
+                    // CASA keeps the prior diagnostics and the current
+                    // parameter mask even when this channel cannot converge.
+                    diagnostics
+                        .iter()
+                        .zip(gains.iter().zip(valid))
+                        .map(|(diagnostics, (&gain, valid))| LeakageEstimate {
+                            gain,
+                            valid,
+                            ..*diagnostics
+                        })
+                        .collect()
+                }
+            },
+        );
+    }
     values.reverse();
-    converged.then_some(values)
+    Ok(converged.then_some(values))
 }
 
 pub(super) fn reference_iterative_solutions(
     solutions: &mut [LeakageSolution],
     references: &mut [i32],
 ) {
+    solutions.sort_by(|a, b| {
+        a.spectral_window
+            .cmp(&b.spectral_window)
+            .then_with(|| a.time.total_cmp(&b.time))
+    });
     if references.is_empty() {
         return;
     }
@@ -161,10 +183,9 @@ pub(super) fn reference_iterative_solutions(
         .collect::<std::collections::BTreeSet<_>>();
     let mut previous: Option<usize> = None;
     for index in 0..solutions.len() {
-        let (earlier, remaining) = solutions.split_at_mut(index);
-        let current = &mut remaining[0];
+        let current = &solutions[index];
         let previous_solution = previous
-            .map(|index| &earlier[index])
+            .map(|index| &solutions[index])
             .filter(|previous| previous.spectral_window == current.spectral_window);
         let receptors = 1 + usize::from(second_receptor.contains(&current.spectral_window));
         let reference = references
@@ -177,11 +198,22 @@ pub(super) fn reference_iterative_solutions(
                     })
             })
             .unwrap_or(-1);
+        let offsets = (reference >= 0).then(|| {
+            current
+                .values
+                .iter()
+                .enumerate()
+                .map(|(channel, values)| {
+                    values[reference as usize].gain[0]
+                        - previous_reference(previous_solution, channel, reference)
+                })
+                .collect::<Vec<_>>()
+        });
+        let current = &mut solutions[index];
         current.reference = reference;
         for (channel, values) in current.values.iter_mut().enumerate() {
-            if reference >= 0 {
-                let target = previous_reference(previous_solution, channel, reference);
-                let offset = values[reference as usize].gain[0] - target;
+            if let Some(offsets) = &offsets {
+                let offset = offsets[channel];
                 for estimate in values {
                     estimate.gain[0] -= offset;
                     estimate.gain[1] += offset.conj();

@@ -306,6 +306,10 @@ pub enum GainSolveError {
     #[error("delay solve: {0}")]
     Delay(String),
 
+    /// Temporary samples for an iterative polarization solve could not be stored.
+    #[error("polarization solve scratch I/O failed: {0}")]
+    PolarizationScratch(#[source] std::io::Error),
+
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]
     ResolveRefAnt {
