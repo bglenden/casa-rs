@@ -172,9 +172,9 @@ pub(crate) fn edit_table(
 
 /// A one-axis coordinate defined by a pair of lookup tables.
 ///
-/// The `pixel_values` and `world_values` vectors must have the same length
-/// and must be monotonically ordered (either both increasing or both
-/// decreasing) to allow unique interpolation in both directions.
+/// The `pixel_values` and `world_values` vectors have the same length.
+/// Each table can increase or decrease independently. A single sample
+/// defines a constant mapping in both directions.
 ///
 /// Corresponds to C++ `TabularCoordinate`.
 #[derive(Debug, Clone)]
@@ -192,12 +192,12 @@ pub struct TabularCoordinate {
 impl TabularCoordinate {
     /// Creates a new tabular coordinate.
     ///
-    /// Both vectors must have the same length (at least 2). The pixel values
+    /// Both vectors must have the same length (at least one). The pixel values
     /// should be monotonically increasing or decreasing.
     ///
     /// # Panics
     ///
-    /// Panics if the vectors have different lengths or fewer than 2 entries.
+    /// Panics if the vectors have different lengths or are empty.
     pub fn new(
         pixel_values: Vec<f64>,
         world_values: Vec<f64>,
@@ -210,8 +210,8 @@ impl TabularCoordinate {
             "pixel and world tables must have the same length"
         );
         assert!(
-            pixel_values.len() >= 2,
-            "tabular coordinate requires at least 2 entries"
+            !pixel_values.is_empty(),
+            "tabular coordinate requires at least one entry"
         );
         Self {
             pixel_values,
@@ -222,6 +222,62 @@ impl TabularCoordinate {
             name: name.into(),
             unit: unit.into(),
         }
+    }
+
+    /// Create a tabular coordinate from user-supplied samples.
+    ///
+    /// # Errors
+    /// Returns an error for empty, unmatched, nonfinite, or unusable tables.
+    pub fn from_samples(
+        pixel: Vec<f64>,
+        world: Vec<f64>,
+        name: impl Into<String>,
+        unit: impl Into<String>,
+    ) -> Result<Self, CoordinateError> {
+        let invalid = |message: &str| CoordinateError::InvalidRecord(message.into());
+        if pixel.is_empty() || pixel.len() != world.len() {
+            return Err(invalid(
+                "tabular pixel and world tables must have the same nonzero length",
+            ));
+        }
+        if pixel.iter().chain(&world).any(|x| !x.is_finite()) {
+            return Err(invalid("tabular samples must be finite"));
+        }
+        if pixel.len() > 1 {
+            let last = pixel.len() - 1;
+            let dp = pixel[last] - pixel[0];
+            let dw = world[last] - world[0];
+            if dp == 0.0 {
+                return Err(invalid(
+                    "TabularCoordinate::TabularCoordinate - illegal table first and last pixel values are the same",
+                ));
+            }
+            if dw / dp == 0.0 {
+                return Err(invalid(
+                    "TabularCoordinate - start and end values in table must differ",
+                ));
+            }
+            if !dp.is_finite() || !dw.is_finite() || !(dw / dp).is_finite() {
+                return Err(invalid("tabular sample span must be finite"));
+            }
+            // Casacore checks monotonicity after the first interval. Its
+            // restore and evaluation still need distinct first pixel samples.
+            if pixel[0] == pixel[1]
+                || pixel
+                    .windows(2)
+                    .skip(1)
+                    .any(|pair| (pair[1] - pair[0]) * dp.signum() <= 0.0)
+                || world
+                    .windows(2)
+                    .skip(1)
+                    .any(|pair| (pair[1] - pair[0]) * dw.signum() <= 0.0)
+            {
+                return Err(invalid(
+                    "TabularCoordinate - pixel and world values must increase or decrease monotonically",
+                ));
+            }
+        }
+        Ok(Self::new(pixel, world, name, unit))
     }
 
     /// Creates a linear tabular axis with no samples in its lookup table.
@@ -263,7 +319,7 @@ impl TabularCoordinate {
     /// # Errors
     /// Returns an error for a nonfinite transform or collapsed lookup table.
     pub fn with_linear_transform(mut self, transform: f64) -> Result<Self, CoordinateError> {
-        if self.linear.is_none() {
+        if self.world_values.len() > 1 {
             validate_transform_samples(&self.world_values, self.reference_world(), transform)?;
         } else if !transform.is_finite() {
             return Err(CoordinateError::InvalidRecord(
@@ -288,6 +344,15 @@ impl TabularCoordinate {
         }
     }
 
+    fn constant_world(&self) -> f64 {
+        match self.sample_reference {
+            Some([value, increment, pixel]) => {
+                value + increment * self.linear_transform * (self.pixel_values[0] - pixel)
+            }
+            None => self.world_values[0],
+        }
+    }
+
     /// Restore live reference parameters from an in-memory record containing
     /// unscaled lookup values. Public record restoration normalizes them.
     ///
@@ -308,6 +373,10 @@ impl TabularCoordinate {
     /// # Errors
     /// Returns an error if the edit produces an invalid mapping.
     pub fn edit_live_reference(&mut self, edit: TabularEdit) -> Result<(), CoordinateError> {
+        if self.pixel_values.len() == 1 {
+            self.edit(edit)?;
+            return Ok(());
+        }
         validate_live_edit(edit)?;
         let reference = [
             self.reference_value()[0],
@@ -328,6 +397,27 @@ impl TabularCoordinate {
                 TabularEdit::ReferenceValue(value) => std::mem::replace(crval, value),
                 TabularEdit::Increment(value) => std::mem::replace(cdelt, value),
             });
+        }
+        if self.pixel_values.len() == 1 {
+            let [mut world, mut increment, mut pixel] =
+                self.sample_reference
+                    .unwrap_or([self.world_values[0], 0.0, self.pixel_values[0]]);
+            let (slot, value) = match edit {
+                TabularEdit::ReferencePixel(value) => (&mut pixel, value),
+                TabularEdit::ReferenceValue(value) => (&mut world, value),
+                TabularEdit::Increment(value) => (&mut increment, value),
+            };
+            let old = std::mem::replace(slot, value);
+            if !value.is_finite()
+                || !(world + increment * self.linear_transform * (self.pixel_values[0] - pixel))
+                    .is_finite()
+            {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid tabular reference parameter".into(),
+                ));
+            }
+            self.sample_reference = Some([world, increment, pixel]);
+            return Ok(old);
         }
         let updated = edit_table(
             &self.pixel_values,
@@ -370,10 +460,9 @@ impl TabularCoordinate {
                 unit,
             ));
         }
-        if pixel_values.len() != world_values.len() || pixel_values.len() < 2 {
+        if pixel_values.len() != world_values.len() {
             return Err(CoordinateError::InvalidRecord(
-                "tabular coordinate requires matching pixel/world tables with at least 2 entries"
-                    .into(),
+                "tabular coordinate requires matching pixel/world tables".into(),
             ));
         }
         Ok(Self::new(pixel_values, world_values, name, unit))
@@ -385,39 +474,43 @@ impl TabularCoordinate {
 /// nearest bracketing entries.
 fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
     let n = xs.len();
-    if n < 2 {
+    if n < 2 || x.is_nan() {
         return Err(CoordinateError::ConversionFailed(
-            "tabular interpolation requires at least 2 entries".into(),
+            "tabular interpolation requires a valid argument and at least 2 entries".into(),
         ));
     }
 
     // Determine if xs is increasing or decreasing
     let increasing = xs[n - 1] > xs[0];
 
-    // Find the bracketing interval using binary search
-    let idx = if increasing {
-        match xs.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
-            Ok(i) => return Ok(ys[i]),
-            Err(i) => i,
+    // Search in sample order with the lower middle position, as casacore
+    // does. The first interval can run opposite to the others.
+    let mut lo = 0;
+    let mut hi = n;
+    while lo < hi {
+        let mid = lo + (hi - lo - 1) / 2;
+        if (increasing && xs[mid] < x) || (!increasing && xs[mid] > x) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
         }
-    } else {
-        // For decreasing, search in reverse order
-        let rev: Vec<f64> = xs.iter().rev().copied().collect();
-        match rev.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
-            Ok(i) => return Ok(ys[n - 1 - i]),
-            Err(i) => n - i,
-        }
-    };
+    }
 
     // Clamp to valid interval for interpolation/extrapolation
-    let lo = if idx == 0 { 0 } else { (idx - 1).min(n - 2) };
+    let lo = lo.saturating_sub(1).min(n - 2);
     let hi = lo + 1;
 
     let dx = xs[hi] - xs[lo];
-    if dx.abs() < 1e-300 {
+    if !dx.is_finite() || dx.abs() < 1e-300 {
         return Err(CoordinateError::ConversionFailed(
             "duplicate pixel values in tabular coordinate".into(),
         ));
+    }
+    if x == xs[lo] {
+        return Ok(ys[lo]);
+    }
+    if x == xs[hi] {
+        return Ok(ys[hi]);
     }
     let t = (x - xs[lo]) / dx;
     Ok(ys[lo] + t * (ys[hi] - ys[lo]))
@@ -445,6 +538,8 @@ impl Coordinate for TabularCoordinate {
         }
         let world = if let Some((crval, cdelt, crpix)) = self.linear {
             crval + cdelt * self.linear_transform * (pixel[0] - crpix)
+        } else if self.pixel_values.len() == 1 {
+            self.constant_world()
         } else {
             self.scaled_world(interpolate(
                 &self.pixel_values,
@@ -469,6 +564,8 @@ impl Coordinate for TabularCoordinate {
                 ));
             }
             crpix + (world[0] - crval) / (cdelt * self.linear_transform)
+        } else if self.pixel_values.len() == 1 {
+            self.pixel_values[0]
         } else {
             let mut value = world[0];
             if self.linear_transform != 1.0 {
@@ -559,14 +656,32 @@ impl TabularCoordinate {
             "pixelvalues",
             Value::Array(ArrayValue::from_f64_vec(self.pixel_values.clone())),
         );
+        let world_values = if self.world_values.len() == 1 {
+            vec![self.constant_world()]
+        } else if self.pixel_values.len() > 2
+            && (self.pixel_values[1] > self.pixel_values[0])
+                != (self.pixel_values.last().unwrap() > &self.pixel_values[0])
+        {
+            // Casacore saves evaluated samples, including when the first
+            // supplied pixel falls in a later interval of the table.
+            self.pixel_values
+                .iter()
+                .zip(&self.world_values)
+                .map(|(&pixel, &world)| {
+                    self.scaled_world(
+                        interpolate(&self.pixel_values, &self.world_values, pixel).unwrap_or(world),
+                    )
+                })
+                .collect()
+        } else {
+            self.world_values
+                .iter()
+                .map(|&value| self.scaled_world(value))
+                .collect()
+        };
         rec.upsert(
             "worldvalues",
-            Value::Array(ArrayValue::from_f64_vec(
-                self.world_values
-                    .iter()
-                    .map(|&value| self.scaled_world(value))
-                    .collect(),
-            )),
+            Value::Array(ArrayValue::from_f64_vec(world_values)),
         );
         rec
     }

@@ -135,6 +135,9 @@ pub(super) fn normalize_restored_matrix(
             .iter()
             .any(|field| table.get(field) != normalized.get(field));
         Ok(changed.then_some(edited))
+    } else if matches!(model, CoordinateModel::Tabular(table) if table.pixel_values().len() == 1) {
+        let edited = edit_record(original, model)?;
+        Ok((&edited != original).then_some(edited))
     } else {
         Ok(None)
     }
@@ -153,10 +156,13 @@ fn update_stored_coordinate(
     Ok(())
 }
 
-// A tabular matrix survives edits to a live CASA tool. Its record instead
-// stores the effective samples and rebuilds them with an identity matrix.
-fn live_tabular_matrix(model: &CoordinateModel) -> Option<f64> {
+// Live tabular transforms survive other edits to a CASA tool. Restoration
+// from serialized samples resets the matrix and reference parameters.
+fn live_tabular_factor(model: &CoordinateModel) -> Option<f64> {
     let factor = match model {
+        CoordinateModel::Tabular(table) if table.pixel_values().len() == 1 => {
+            return Some(table.linear_transform());
+        }
         CoordinateModel::Tabular(tabular) => tabular.linear_transform(),
         CoordinateModel::Spectral(spectral) if !spectral.has_linear_mapping() => {
             spectral.linear_transform()
@@ -210,15 +216,15 @@ fn recorded_coordinate<'a>(record: &'a RecordValue, field: &str) -> PyResult<&'a
 }
 
 impl CoordinateState {
-    fn tabular_matrices(&self) -> impl Iterator<Item = (usize, f64)> + '_ {
+    fn live_tabular_factors(&self) -> impl Iterator<Item = (usize, f64)> + '_ {
         (0..self.coordinates.n_coordinates()).filter_map(|index| {
-            live_tabular_matrix(self.coordinates.coordinate(index)).map(|factor| (index, factor))
+            live_tabular_factor(self.coordinates.coordinate(index)).map(|factor| (index, factor))
         })
     }
 
     pub(super) fn editable_record(&self) -> PyResult<RecordValue> {
         let mut record = self.record.clone();
-        let mut matrices = self.tabular_matrices().peekable();
+        let mut matrices = self.live_tabular_factors().peekable();
         if matrices.peek().is_none() {
             return Ok(record);
         }
@@ -248,7 +254,7 @@ impl CoordinateState {
         axis: usize,
         edit: TabularEdit,
     ) -> PyResult<()> {
-        if self.tabular_matrices().next().is_some() {
+        if self.live_tabular_factors().next().is_some() {
             let placements = self
                 .coordinates
                 .coordinates_in_record(record)
@@ -263,7 +269,7 @@ impl CoordinateState {
                     };
                     axes.contains(&Some(axis))
                 })
-                && live_tabular_matrix(self.coordinates.coordinate(index)).is_some()
+                && live_tabular_factor(self.coordinates.coordinate(index)).is_some()
             {
                 let native = recorded_coordinate(record, &placement.field)?;
                 let base = change_tabular_matrix(self.coordinates.coordinate(index), 1.0)?;
@@ -304,7 +310,7 @@ impl CoordinateState {
         mut record: RecordValue,
         mut coordinates: CoordinateSystem,
     ) -> PyResult<()> {
-        let mut matrices = self.tabular_matrices().peekable();
+        let mut matrices = self.live_tabular_factors().peekable();
         if matrices.peek().is_some() {
             let previous = self
                 .coordinates

@@ -17,6 +17,7 @@ mod reference;
 mod rest_frequency;
 mod stubs;
 pub(crate) mod surface;
+mod tabular;
 mod transform_many;
 mod transform_relative;
 pub(super) mod world_reference;

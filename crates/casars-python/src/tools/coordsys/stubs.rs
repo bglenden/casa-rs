@@ -124,17 +124,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixel = None, world = None, which = None), text_signature = "($self, pixel=[-1.0], world=[-1.0], which=0)")]
-    fn settabular(
-        &self,
-        pixel: Option<&Bound<'_, PyAny>>,
-        world: Option<&Bound<'_, PyAny>>,
-        which: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("settabular")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (originshft = None, newshape = None), text_signature = "($self, originshft=[], newshape=[])")]
     fn subimage(
         &self,
