@@ -4,6 +4,51 @@ use super::*;
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
 
 #[test]
+fn read_mask_validates_the_target_section_before_mapping_axes() {
+    use casa_coordinates::defaults::coordinate_system_for_shape;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source.image");
+    let shape = [4, 4];
+    let source = PagedImage::<f32>::create(
+        shape.to_vec(),
+        coordinate_system_for_shape(&shape, false),
+        &path,
+    )
+    .unwrap();
+    drop(source);
+    let expression = format!("\"{}\" >= 0", path.display());
+    let target_shape = [4, 4, 3];
+    let coordinates = coordinate_system_for_shape(&target_shape, false);
+    for (start, stride) in [
+        (&[0][..], &[1, 1, 1][..]),
+        (&[0, 0, 3][..], &[1, 1, 1][..]),
+        (&[0, 0, 0][..], &[1, 1, 0][..]),
+    ] {
+        assert!(matches!(
+            evaluate_image_tool_mask_section(
+                &expression,
+                &target_shape,
+                &coordinates,
+                (start, &[2, 2, 1], stride),
+                true,
+            ),
+            Err(ImageError::Lattice(_))
+        ));
+    }
+    let valid = evaluate_image_tool_mask_section(
+        &expression,
+        &target_shape,
+        &coordinates,
+        (&[1, 1, 1], &[2, 2, 2], &[1, 1, 1]),
+        true,
+    )
+    .unwrap();
+    assert_eq!(valid.shape(), &[2, 2, 2]);
+    assert!(valid.iter().all(|&value| value));
+}
+
+#[test]
 fn converted_operand_keeps_writer_out_between_sections() {
     const CHILD_CASE: &str =
         "analysis::lel_mask::tests::converted_operand_keeps_writer_out_between_sections";

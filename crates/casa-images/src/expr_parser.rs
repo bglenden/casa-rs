@@ -565,9 +565,11 @@ pub fn referenced_images(expression: &str) -> Result<Vec<String>, ExprParseError
 // ---------------------------------------------------------------------------
 
 mod complex;
+mod read_geometry;
 
 use casa_types::Complex64;
 use complex::{arithmetic_complex, compare_complex, complex_constructor, complex_function};
+use read_geometry::Operator;
 
 #[derive(Clone, Copy)]
 struct ScalarLiteral {
@@ -689,6 +691,7 @@ struct Parser<'a, 's, T: ImageExprValue + PartialOrd + ExprValueConvert, R: Imag
     complex_resolver: Option<&'s dyn ImageResolver<'a, Complex64>>,
     casa_scalar_literals: bool,
     fill_empty_reductions: bool,
+    check_lattice_geometry: bool,
     integer_array_argument: bool,
     single_precision_sources: Option<&'s dyn Fn(&str) -> bool>,
     _marker: std::marker::PhantomData<&'a T>,
@@ -710,6 +713,7 @@ where
             complex_resolver: None,
             casa_scalar_literals: false,
             fill_empty_reductions: false,
+            check_lattice_geometry: false,
             integer_array_argument: false,
             single_precision_sources: None,
             _marker: std::marker::PhantomData,
@@ -746,6 +750,7 @@ where
         op: ImageExprBinaryOp,
         pos: usize,
     ) -> Result<ExprNode<'a, T>, ExprParseError> {
+        self.validate_lattice_operands(&lhs, &rhs, pos, Operator::Infix)?;
         if matches!(&lhs, ExprNode::Complex(..)) || matches!(&rhs, ExprNode::Complex(..)) {
             return arithmetic_complex(lhs, rhs, op, pos);
         }
@@ -845,6 +850,7 @@ where
             let pos = self.current_pos;
             self.advance()?;
             let right = self.parse_and_expr()?;
+            self.validate_lattice_operands(&left, &right, pos, Operator::Logical)?;
             let lhs_mask = left.into_mask(pos)?;
             let rhs_mask = right.into_mask(pos)?;
             left = ExprNode::Mask(lhs_mask.or(rhs_mask).map_err(|e| ExprParseError {
@@ -861,6 +867,7 @@ where
             let pos = self.current_pos;
             self.advance()?;
             let right = self.parse_not_expr()?;
+            self.validate_lattice_operands(&left, &right, pos, Operator::Logical)?;
             let lhs_mask = left.into_mask(pos)?;
             let rhs_mask = right.into_mask(pos)?;
             left = ExprNode::Mask(lhs_mask.and(rhs_mask).map_err(|e| ExprParseError {
@@ -897,6 +904,7 @@ where
             let pos = self.current_pos;
             self.advance()?;
             let right = self.parse_add_expr()?;
+            self.validate_lattice_operands(&left, &right, pos, Operator::Infix)?;
 
             if matches!(&left, ExprNode::Complex(..)) || matches!(&right, ExprNode::Complex(..)) {
                 return compare_complex(left, right, op, pos);
@@ -1356,6 +1364,7 @@ where
         };
 
         if let Some(op) = binary_op {
+            self.validate_lattice_operands(&arg1, &arg2, pos, Operator::Function)?;
             return self.combine_binary(arg1, arg2, op, pos);
         }
 
@@ -1982,9 +1991,10 @@ where
     })
 }
 
-enum EmptyReductions {
+enum CasaExpressionMode {
     Fill,
     PreserveValidity,
+    SectionMask,
 }
 
 fn parse_casa_pixel_expression<'a, R>(
@@ -1992,7 +2002,7 @@ fn parse_casa_pixel_expression<'a, R>(
     real: &R,
     complex: &dyn ImageResolver<'a, Complex64>,
     single_precision: &dyn Fn(&str) -> bool,
-    empty_reductions: EmptyReductions,
+    mode: CasaExpressionMode,
 ) -> Result<ExprNode<'a, f64>, ExprParseError>
 where
     R: ImageResolver<'a, f64>,
@@ -2000,7 +2010,8 @@ where
     let mut parser = Parser::new(expression, real)?;
     parser.complex_resolver = Some(complex);
     parser.casa_scalar_literals = true;
-    parser.fill_empty_reductions = matches!(empty_reductions, EmptyReductions::Fill);
+    parser.fill_empty_reductions = !matches!(mode, CasaExpressionMode::PreserveValidity);
+    parser.check_lattice_geometry = matches!(mode, CasaExpressionMode::SectionMask);
     parser.single_precision_sources = Some(single_precision);
     let result = parser.parse_expression()?;
     parser.expect(&Token::Eof)?;
@@ -2016,12 +2027,29 @@ pub(crate) fn parse_image_tool_mask<'a, R>(
 where
     R: ImageResolver<'a, f64>,
 {
+    image_tool_mask_builder(expression, real, complex, single_precision, false)?.compile()
+}
+
+pub(crate) fn image_tool_mask_builder<'a, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+    single_precision: &dyn Fn(&str) -> bool,
+    section: bool,
+) -> Result<MaskExprBuilder<'a, f64>, ImageError>
+where
+    R: ImageResolver<'a, f64>,
+{
     let result = parse_casa_pixel_expression(
         expression,
         real,
         complex,
         single_precision,
-        EmptyReductions::Fill,
+        if section {
+            CasaExpressionMode::SectionMask
+        } else {
+            CasaExpressionMode::Fill
+        },
     )
     .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
     let ExprNode::Mask(mask) = result else {
@@ -2029,7 +2057,7 @@ where
             "Exception: The expression type must be Boolean.".into(),
         ));
     };
-    mask.compile()
+    Ok(mask)
 }
 
 /// The evaluated pixel type of a public image calculator expression.
@@ -2056,7 +2084,7 @@ where
         real,
         complex,
         single_precision,
-        EmptyReductions::Fill,
+        CasaExpressionMode::Fill,
     )
     .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
     match parsed {
@@ -2118,7 +2146,7 @@ where
         real,
         complex,
         single_precision,
-        EmptyReductions::Fill,
+        CasaExpressionMode::Fill,
     )?;
     match result {
         ExprNode::Scalar(literal) => Ok(ReplacementPixels::Real(
@@ -2160,7 +2188,7 @@ where
         real,
         complex,
         single_precision,
-        EmptyReductions::PreserveValidity,
+        CasaExpressionMode::PreserveValidity,
     )?;
     let cannot_convert = || {
         ImageError::CasaSelection(

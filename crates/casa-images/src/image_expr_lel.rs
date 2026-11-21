@@ -12,6 +12,25 @@ use ndarray::{Axis, Dimension, IxDyn, ShapeBuilder, Zip};
 use crate::error::ImageError;
 use crate::image_expr::ImageExprValue;
 
+pub(crate) fn mask_coordinate_axes(
+    system: &CoordinateSystem,
+) -> Vec<(CoordinateType, usize, String)> {
+    (0..system.n_pixel_axes())
+        .map(|axis| {
+            let (index, local) = system.pixel_axis_owner(axis).expect("dense pixel axes");
+            let coordinate = system.coordinate(index);
+            let name = match coordinate {
+                CoordinateModel::Direction(direction) => {
+                    direction.conversion_direction_ref().to_string()
+                }
+                CoordinateModel::Spectral(spectral) => spectral.world_frequency_ref().to_string(),
+                _ => coordinate.axis_names().remove(local),
+            };
+            (coordinate.coordinate_type(), local, name)
+        })
+        .collect()
+}
+
 /// Returns the combined output shape of two LEL operands.
 ///
 /// A scalar (`[]`) broadcasts to any shape. Two non-scalar operands conform

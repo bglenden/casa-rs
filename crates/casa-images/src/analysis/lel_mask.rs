@@ -17,11 +17,13 @@ use crate::analysis::axes::StridedSection;
 use crate::analysis::mask_error_wording;
 use crate::expr_parser::{
     HashMapResolver, ImageToolPixelExpression, ReplacementPixels, compile_image_tool_pixels,
-    evaluate_real_scalar, evaluate_replacement, parse_image_tool_mask, parse_subimage_mask_expr,
-    referenced_images,
+    evaluate_real_scalar, evaluate_replacement, image_tool_mask_builder, parse_image_tool_mask,
+    parse_subimage_mask_expr, referenced_images,
 };
 use crate::fits_read::{FitsToolImport, SharedFitsSectionReader};
-use crate::image_expr::{ImageExprMeta, ImageExprValue, MaskExpression, bounded_read_cursor};
+use crate::image_expr::{
+    ImageExprMeta, ImageExprValue, MaskExpression, bounded_read_cursor, validate_slice_request,
+};
 use crate::image_expr_lel::broadcast_array;
 use crate::{
     AnyPagedImage, ImageError, ImageExprBuilder, ImageExpression, ImageInterface, ImagePixel,
@@ -186,15 +188,22 @@ pub fn evaluate_image_tool_mask_section(
     section: (&[usize], &[usize], &[usize]),
     stretch: bool,
 ) -> Result<ArrayD<bool>, ImageError> {
+    let (start, count, stride) = section;
+    validate_slice_request(shape, start, count, stride)?;
     let opened = image_operands(expression)?;
     let (real, complex) = operand_resolvers(&opened);
-    let compiled = parse_image_tool_mask(expression, &real, &complex, &|name| {
-        is_single_precision(&opened, name)
-    })?;
-    let (start, count, stride) = section;
-    let source_shape = compiled.shape();
+    let mask = image_tool_mask_builder(
+        expression,
+        &real,
+        &complex,
+        &|name| is_single_precision(&opened, name),
+        true,
+    )?;
+    let source_shape = mask.shape();
     if source_shape.is_empty() {
-        return compiled.eval_section_for_shape(start, count, stride, shape);
+        return mask
+            .compile()?
+            .eval_section_for_shape(start, count, stride, shape);
     }
     if source_shape != shape && !stretch {
         return Err(ImageError::CasaSelection(format!(
@@ -202,13 +211,13 @@ pub fn evaluate_image_tool_mask_section(
         )));
     }
     let axes = geometry::image_tool_mask_axes(
-        opened.iter().map(|(_, source)| source.geometry()),
+        mask.expression_coordinates(),
         source_shape,
         coordinates,
         shape,
     )?;
     let select = |values: &[usize]| axes.iter().map(|&axis| values[axis]).collect::<Vec<_>>();
-    let mut mask = compiled.eval_section_for_shape(
+    let mut mask = mask.compile()?.eval_section_for_shape(
         &select(start),
         &select(count),
         &select(stride),

@@ -4,13 +4,13 @@
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::CoordinateSystem;
 use casa_lattices::{Lattice, LatticeError};
 use casa_types::{ArrayD, Complex64, RecordValue};
 
 use crate::expr_parser::{HashMapResolver, referenced_images, subimage_mask_builder};
 use crate::fits_read::FitsToolImport;
-use crate::image_expr_lel::broadcast_shapes;
+use crate::image_expr_lel::{broadcast_shapes, mask_coordinate_axes};
 use crate::{AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage};
 
 use super::{
@@ -18,30 +18,13 @@ use super::{
     validate_mask_name,
 };
 
-fn mask_axes(system: &CoordinateSystem) -> Vec<(CoordinateType, usize, String)> {
-    (0..system.n_pixel_axes())
-        .map(|axis| {
-            let (index, local) = system.pixel_axis_owner(axis).expect("dense pixel axes");
-            let coordinate = system.coordinate(index);
-            let name = match coordinate {
-                CoordinateModel::Direction(direction) => {
-                    direction.conversion_direction_ref().to_string()
-                }
-                CoordinateModel::Spectral(spectral) => spectral.world_frequency_ref().to_string(),
-                _ => coordinate.axis_names().remove(local),
-            };
-            (coordinate.coordinate_type(), local, name)
-        })
-        .collect()
-}
-
-pub(super) fn image_tool_mask_axes<'a>(
-    sources: impl Iterator<Item = (&'a [usize], &'a CoordinateSystem)>,
+pub(super) fn image_tool_mask_axes(
+    source_coordinates: Option<&CoordinateSystem>,
     source_shape: &[usize],
     target_coordinates: &CoordinateSystem,
     target_shape: &[usize],
 ) -> Result<Vec<usize>, ImageError> {
-    let target_axes = mask_axes(target_coordinates);
+    let target_axes = mask_coordinate_axes(target_coordinates);
     let incompatible = || {
         ImageError::CasaSelection(if source_shape == target_shape {
             "WCRegion::toLCRegion - a region axis is unknown or inconsistent in target coordinate system".into()
@@ -50,9 +33,8 @@ pub(super) fn image_tool_mask_axes<'a>(
                 .into()
         })
     };
-    let mut axes = None;
-    for (_, coordinates) in sources.filter(|(shape, _)| *shape == source_shape) {
-        let mapping = mask_axes(coordinates)
+    let axes = if let Some(coordinates) = source_coordinates {
+        let mapping = mask_coordinate_axes(coordinates)
             .iter()
             .map(|axis| target_axes.iter().position(|candidate| candidate == axis))
             .collect::<Option<Vec<_>>>()
@@ -63,12 +45,10 @@ pub(super) fn image_tool_mask_axes<'a>(
                 "WCLELMask::toLCRegion - the order of the mask axes cannot be changed".into(),
             ));
         }
-        if axes.as_ref().is_some_and(|previous| *previous != mapping) {
-            return Err(incompatible());
-        }
-        axes = Some(mapping);
-    }
-    let axes = axes.unwrap_or_else(|| (0..source_shape.len()).collect());
+        mapping
+    } else {
+        (0..source_shape.len()).collect()
+    };
     if axes.iter().zip(source_shape).any(|(&axis, &length)| {
         target_shape
             .get(axis)
