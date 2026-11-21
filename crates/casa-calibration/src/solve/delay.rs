@@ -40,10 +40,11 @@ pub(super) fn solve(
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        false,
+        request.parang,
         true,
         PriorCalibrationMode::Delay {
             share_input_flags: !request.correlation_dependent_flags,
+            rotate_model: request.parang,
         },
     )?;
     let windows = delay_windows(ms, &context.rows, cross_hand)?;

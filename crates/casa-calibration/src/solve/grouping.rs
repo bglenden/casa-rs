@@ -24,7 +24,8 @@ use super::{
 };
 use crate::ApplyCalibrationTableSpec;
 use crate::execute::{
-    EvaluatedApplyRow, PriorSolveBoundary, evaluate_apply_rows, evaluate_solve_priors,
+    EvaluatedApplyRow, PreappliedRows, PriorSolveBoundary, evaluate_apply_rows,
+    evaluate_solve_priors, has_leakage,
 };
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
@@ -42,8 +43,18 @@ use weights::{SpectralWeights, solve_weights};
 
 pub(crate) enum PriorCalibrationMode {
     Data,
-    Bandpass { share_input_flags: bool },
-    Delay { share_input_flags: bool },
+    Gain {
+        scalar: bool,
+        rotate_model: bool,
+    },
+    Bandpass {
+        share_input_flags: bool,
+        rotate_model: bool,
+    },
+    Delay {
+        share_input_flags: bool,
+        rotate_model: bool,
+    },
 }
 
 pub(crate) fn load_preapplied_rows(
@@ -52,11 +63,17 @@ pub(crate) fn load_preapplied_rows(
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
     mode: PriorCalibrationMode,
-) -> Result<Option<HashMap<usize, EvaluatedApplyRow>>, GainSolveError> {
-    if prior_calibration_tables.is_empty() && !parang {
+) -> Result<Option<PreappliedRows>, GainSolveError> {
+    let legacy_rotate = match mode {
+        PriorCalibrationMode::Gain { rotate_model, .. }
+        | PriorCalibrationMode::Bandpass { rotate_model, .. }
+        | PriorCalibrationMode::Delay { rotate_model, .. } => rotate_model,
+        _ => false,
+    };
+    if prior_calibration_tables.is_empty() && (!parang || legacy_rotate) {
         return Ok(None);
     }
-    let plan = plan_apply(
+    let mut plan = plan_apply(
         ms,
         &ApplyPlanRequest {
             selection: selection.clone(),
@@ -68,14 +85,25 @@ pub(crate) fn load_preapplied_rows(
     .map_err(|source| GainSolveError::PriorCalibrationPlan {
         source: Box::new(source),
     })?;
+    if legacy_rotate && !has_leakage(&plan) {
+        plan.parang = false;
+    }
     let preapplied = match mode {
-        PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false),
-        PriorCalibrationMode::Bandpass { share_input_flags } => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Bandpass, share_input_flags)
+        PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false).map(Into::into),
+        PriorCalibrationMode::Gain { scalar, .. } => {
+            let boundary = if scalar {
+                PriorSolveBoundary::ScalarGain
+            } else {
+                PriorSolveBoundary::Gain
+            };
+            evaluate_solve_priors(ms, plan, boundary, false)
         }
-        PriorCalibrationMode::Delay { share_input_flags } => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags)
-        }
+        PriorCalibrationMode::Bandpass {
+            share_input_flags, ..
+        } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Bandpass, share_input_flags),
+        PriorCalibrationMode::Delay {
+            share_input_flags, ..
+        } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags),
     };
     preapplied
         .map(Some)
@@ -87,7 +115,7 @@ pub(crate) fn load_preapplied_rows(
 pub(crate) fn build_solve_groups(
     ms: &MeasurementSet,
     rows: &[SelectedSolveRow],
-    preapplied_rows: Option<&HashMap<usize, EvaluatedApplyRow>>,
+    preapplied_rows: Option<&PreappliedRows>,
     channel_bin_widths: &BTreeMap<i32, usize>,
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
@@ -126,7 +154,14 @@ pub(crate) fn build_solve_groups(
     }
     models.phase_times =
         weights::chunk_phase_times(&ordered, options.combine, models.dynamic_fields());
-    let mut layouts = SolveRowLayouts::new(ms, options.rotate_model, &models, channel_bin_widths)?;
+    let forward_model = preapplied_rows.and_then(|rows| rows.model.as_ref());
+    let mut layouts = SolveRowLayouts::new(
+        ms,
+        options.rotate_model && forward_model.is_none(),
+        &models,
+        channel_bin_widths,
+    )?;
+    layouts.forward_model = forward_model;
     let spectral_weights = if options.polynomial_bandpass {
         SpectralWeights::default()
     } else {
@@ -136,6 +171,7 @@ pub(crate) fn build_solve_groups(
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
         eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
     }
+    let read_uncalibrated_data = preapplied_rows.is_none();
     let read = |batch: &[BucketedRow<'_>]| {
         let _phase = crate::timing::Phase::start("solve_read_decode");
         let indices = batch
@@ -146,7 +182,7 @@ pub(crate) fn build_solve_groups(
             ms,
             &indices,
             (
-                preapplied_rows.is_none(),
+                read_uncalibrated_data,
                 batch
                     .iter()
                     .any(|(row, _, _)| models.uses_fourier(row.field_id)),
@@ -180,7 +216,7 @@ pub(crate) fn build_solve_groups(
                 // interval by FIELD_ID. SDBList::aggregateFld uses the first.
                 group.field_id = group.field_id.min(row.field_id);
             }
-            let preapplied = preapplied_rows.and_then(|rows| rows.get(&row.row_index));
+            let preapplied = preapplied_rows.and_then(|rows| rows.data.get(&row.row_index));
             group.observe(
                 ms,
                 row,
@@ -738,6 +774,32 @@ impl SolveAccumulator {
             .transpose()?
             .flatten();
         let mut samples = inputs.samples();
+        let model_flags = if let Some(forward) = layouts.forward_model {
+            let model = predicted
+                .take()
+                .or_else(|| inputs.model.cloned())
+                .unwrap_or_else(|| {
+                    ArrayD::from_shape_fn(inputs.data.raw_dim(), |index| {
+                        samples::point_visibility(
+                            options.point_stokes,
+                            layout.correlations[index[0]],
+                            layout.correlations[0],
+                        )
+                    })
+                });
+            let (model, flags) = forward
+                .corrupt(row.row_index, &layout.correlations, model, &inputs.flags)
+                .map_err(|source| GainSolveError::PriorCalibrationApply {
+                    source: Box::new(source),
+                })?;
+            predicted = Some(model);
+            flags
+        } else {
+            None
+        };
+        if let Some(flags) = &model_flags {
+            samples.flags = two_dimensional(flags);
+        }
         if let Some(gains) = preapplied_row.and_then(|row| row.model_gains.as_ref()) {
             let model = predicted.as_ref().or(inputs.model);
             if model.is_some_and(|model| model.shape() != gains.shape()) {

@@ -13,11 +13,11 @@
 //! - diagonal `G` / `T`-style application to `RR/RL/LR/LL` and `XX/XY/YX/YY`
 //! - all six apply modes, including strict and flag-only application
 //! - circular-feed and full four-correlation linear-feed parallactic angle
+//! - linearized and full-matrix instrumental polarization leakage
 //! - automatic `CORRECTED_DATA` creation when absent
 //!
 //! Explicitly deferred from this executor cut:
 //!
-//! - non-diagonal Jones terms / polarization leakage
 //! - solver output beyond the existing planner surface
 
 use std::collections::{BTreeSet, HashMap};
@@ -67,14 +67,20 @@ mod gain_validity;
 mod initialization;
 use gain_validity::correcting_gain;
 mod bandpass;
+mod chain;
 mod channels;
 pub(crate) mod parang;
+mod polarization;
 mod solve_priors;
 mod switched_power;
 pub(crate) mod tsys_weights;
 mod weights;
+pub(crate) use chain::has_leakage;
+use chain::{ApplyChain, ApplyStep};
 use channels::{DataChannelGrid, apply_row};
-pub(crate) use solve_priors::{PriorSolveBoundary, evaluate_solve_priors};
+pub(crate) use solve_priors::{
+    ForwardModelApply, PreappliedRows, PriorSolveBoundary, evaluate_solve_priors,
+};
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
@@ -611,28 +617,13 @@ fn for_each_apply_row(
             source,
         }
     })?;
-    let geometry_engine = geometry_engine_for_plan(ms, plan)?;
-    let loaded_tables = plan
-        .calibration_tables
-        .iter()
-        .map(|table_plan| fields::load(table_plan, geometry_engine.as_ref(), ms))
-        .collect::<Result<Vec<_>, _>>()?;
-    let parang_state = if plan.parang {
-        Some(load_parallactic_angle_state(ms).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source,
-            }
-        })?)
-    } else {
-        None
-    };
+    let chain = ApplyChain::load(ms, plan, forward_model)?;
 
     let any_calwt = plan.apply_mode.writes_corrected_data()
         && plan
             .calibration_tables
             .iter()
-            .zip(&loaded_tables)
+            .zip(&chain.tables)
             .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
     let mut columns = vec!["FLAG"];
     if !forward_model {
@@ -765,8 +756,7 @@ fn for_each_apply_row(
                 forward_model,
             },
             plan,
-            &loaded_tables,
-            parang_state.as_ref(),
+            &chain,
             Some(&mut geometry_cache),
             None,
         )?;
@@ -1067,22 +1057,7 @@ fn execute_apply_available(
     })?;
     let correlation_lookup_ns = correlation_lookup_started_at.elapsed().as_nanos() as u64;
     let calibration_load_started_at = Instant::now();
-    let geometry_engine = geometry_engine_for_plan(ms, &plan)?;
-    let loaded_tables = plan
-        .calibration_tables
-        .iter()
-        .map(|table_plan| fields::load(table_plan, geometry_engine.as_ref(), ms))
-        .collect::<Result<Vec<_>, _>>()?;
-    let parang_state = if plan.parang {
-        Some(load_parallactic_angle_state(ms).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source,
-            }
-        })?)
-    } else {
-        None
-    };
+    let chain = ApplyChain::load(ms, &plan, false)?;
     let calibration_load_ns = calibration_load_started_at.elapsed().as_nanos() as u64;
 
     let mut updated_row_count = 0;
@@ -1096,7 +1071,7 @@ fn execute_apply_available(
         && plan
             .calibration_tables
             .iter()
-            .zip(&loaded_tables)
+            .zip(&chain.tables)
             .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
     let first_row = plan.selected_rows.first().map(|row| row.row_index);
     let has_weight_spectrum =
@@ -1380,8 +1355,7 @@ fn execute_apply_available(
                 &prefetched,
                 any_calwt && has_weight_spectrum,
                 &plan,
-                &loaded_tables,
-                parang_state.as_ref(),
+                &chain,
                 Some(&mut geometry_cache),
                 row_compute_profile.as_mut(),
             )?;
@@ -2008,8 +1982,7 @@ fn apply_row_all_channels(
     row: &ApplyRowPlan,
     inputs: ExecutionRowInputs<'_>,
     plan: &ApplyPlan,
-    loaded_tables: &[LoadedCalibrationTable],
-    parang_state: Option<&ParallacticAngleState>,
+    chain: &ApplyChain,
     geometry_cache: Option<&mut RowGeometryCache>,
     compute_profile: Option<&mut ApplyRowComputeProfile>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
@@ -2080,7 +2053,7 @@ fn apply_row_all_channels(
         && plan
             .calibration_tables
             .iter()
-            .zip(loaded_tables)
+            .zip(&chain.tables)
             .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
     let mut weight = match original_weight {
         Some(ArrayValue::Float32(weight)) => Some(weight.clone()),
@@ -2138,12 +2111,33 @@ fn apply_row_all_channels(
         ApplyRowComputeProfile::add_elapsed(&mut profile.setup_ns, setup_started_at);
     }
 
-    for (table_index, (table_plan, loaded_table)) in plan
-        .calibration_tables
-        .iter()
-        .zip(loaded_tables)
-        .enumerate()
-    {
+    let mut output = ApplyBuffer {
+        data_desc_id: row.data_desc_id,
+        correlation_types,
+        data_channels,
+        corrected: &mut corrected,
+        flags: &mut flags,
+        apply_mode: plan.apply_mode,
+        newly_flagged_samples: &mut newly_flagged_samples,
+    };
+    for &step in &chain.steps {
+        let ApplyStep::Table(table_index) = step else {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            apply_parallactic_step(
+                row,
+                chain.parang.as_ref().expect("planned parallactic angle"),
+                &mut output,
+                forward_model,
+                compute_profile.as_deref_mut(),
+            )?;
+            continue;
+        };
+        let table_plan = &plan.calibration_tables[table_index];
+        let loaded_table = &chain.tables[table_index];
         if !table_plan.applies_to(row) {
             continue;
         }
@@ -2220,33 +2214,16 @@ fn apply_row_all_channels(
 
         let (Some(ant1), Some(ant2)) = (ant1, ant2) else {
             if plan.apply_mode.writes_flags() {
-                if !fast_gain_pairs.is_empty() {
-                    let fast_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
-                    apply_complex_gain_pairs_fast(
-                        &fast_gain_pairs,
-                        FastGainApply {
-                            data_desc_id: row.data_desc_id,
-                            correlation_types,
-                            data_channels,
-                            corrected: &mut corrected,
-                            flags: &mut flags,
-                            apply_mode: plan.apply_mode,
-                            newly_flagged_samples: &mut newly_flagged_samples,
-                        },
-                    )?;
-                    if let Some(profile) = compute_profile.as_deref_mut() {
-                        ApplyRowComputeProfile::add_elapsed(
-                            &mut profile.fast_gain_apply_ns,
-                            fast_apply_started_at,
-                        );
-                    }
-                    fast_gain_pairs.clear();
-                }
+                flush_fast_gain_pairs(
+                    &mut fast_gain_pairs,
+                    &mut output,
+                    compute_profile.as_deref_mut(),
+                )?;
                 for corr_index in 0..data.shape()[0] {
                     for chan_index in 0..data.shape()[1] {
-                        if !flags[[corr_index, chan_index]] {
-                            flags[[corr_index, chan_index]] = true;
-                            newly_flagged_samples += 1;
+                        if !output.flags[[corr_index, chan_index]] {
+                            output.flags[[corr_index, chan_index]] = true;
+                            *output.newly_flagged_samples += 1;
                         }
                     }
                 }
@@ -2256,11 +2233,9 @@ fn apply_row_all_channels(
 
         // CASA samples BPOLY on its CAL_DESC window and then interpolates
         // the resulting B grid onto the data window.
-        let is_bandpass = is_tsys
-            || matches!(
-                table_plan.summary.table_subtype.as_str(),
-                "B Jones" | "BPOLY"
-            );
+        let subtype = table_plan.summary.table_subtype.as_str();
+        let is_bandpass = is_tsys || matches!(subtype, "B Jones" | "BPOLY");
+        let resample_frequency = is_bandpass || polarization::Leakage::is_channelized(subtype);
         let first_receptor_only =
             (is_bandpass || is_switched_power) && correlation_types.len() == 1;
         let (ant1_transient, ant2_transient) =
@@ -2269,7 +2244,7 @@ fn apply_row_all_channels(
         let bandpass_weights = (is_bandpass && !is_tsys && calibrate_weights)
             .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types, None))
             .flatten();
-        let (ant1, ant2) = if is_bandpass {
+        let (ant1, ant2) = if resample_frequency {
             let ant1 = bandpass::prepare(
                 ant1,
                 &cal_spw.channel_frequencies_hz,
@@ -2297,15 +2272,15 @@ fn apply_row_all_channels(
         };
         let sampling_context = CalibrationSamplingContext {
             data_channels,
-            cal_frequencies_hz: if is_bandpass {
+            cal_frequencies_hz: if resample_frequency {
                 &data_spw.channel_frequencies_hz
             } else {
                 &cal_spw.channel_frequencies_hz
             },
             cal_ref_frequency_hz: cal_spw_reference_frequency_hz(cal_spw),
-            // Prepared B gains already occupy the full MS grid. Temporal
+            // Prepared solutions already occupy the full MS grid. Temporal
             // interpolation happened at lookup; sample original bins directly.
-            interp: if is_bandpass {
+            interp: if resample_frequency {
                 ApplyInterpolationMode::Nearest
             } else {
                 table_plan.interp
@@ -2314,6 +2289,22 @@ fn apply_row_all_channels(
             engine: loaded_table.engine.as_deref(),
             antpos_tropo: loaded_table.antpos_tropo.as_ref(),
         };
+
+        if let Some(leakage) = polarization::Leakage::from_subtype(subtype) {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            leakage.apply(
+                row,
+                [&ant1, &ant2],
+                &sampling_context,
+                &mut output,
+                forward_model,
+            )?;
+            continue;
+        }
 
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
         if !forward_model
@@ -2391,28 +2382,11 @@ fn apply_row_all_channels(
             }
         }
 
-        if !fast_gain_pairs.is_empty() {
-            let fast_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
-            apply_complex_gain_pairs_fast(
-                &fast_gain_pairs,
-                FastGainApply {
-                    data_desc_id: row.data_desc_id,
-                    correlation_types,
-                    data_channels,
-                    corrected: &mut corrected,
-                    flags: &mut flags,
-                    apply_mode: plan.apply_mode,
-                    newly_flagged_samples: &mut newly_flagged_samples,
-                },
-            )?;
-            if let Some(profile) = compute_profile.as_deref_mut() {
-                ApplyRowComputeProfile::add_elapsed(
-                    &mut profile.fast_gain_apply_ns,
-                    fast_apply_started_at,
-                );
-            }
-            fast_gain_pairs.clear();
-        }
+        flush_fast_gain_pairs(
+            &mut fast_gain_pairs,
+            &mut output,
+            compute_profile.as_deref_mut(),
+        )?;
 
         let generic_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
         for corr_index in 0..data.shape()[0] {
@@ -2462,17 +2436,17 @@ fn apply_row_all_channels(
                 let (value2, flag2) = gain(gain2.value, gain2.flagged);
                 if (flag1 || flag2)
                     && plan.apply_mode.writes_flags()
-                    && !flags[[corr_index, chan_index]]
+                    && !output.flags[[corr_index, chan_index]]
                 {
-                    flags[[corr_index, chan_index]] = true;
-                    newly_flagged_samples += 1;
+                    output.flags[[corr_index, chan_index]] = true;
+                    *output.newly_flagged_samples += 1;
                 }
 
                 let factor = value1 * value2.conj();
                 if forward_model {
-                    corrected[[corr_index, chan_index]] *= factor;
+                    output.corrected[[corr_index, chan_index]] *= factor;
                 } else {
-                    corrected[[corr_index, chan_index]] /= factor;
+                    output.corrected[[corr_index, chan_index]] /= factor;
                 }
                 if calibrate_weights {
                     let factor = if is_tsys && has_weight_spectrum && (flag1 || flag2) {
@@ -2501,63 +2475,11 @@ fn apply_row_all_channels(
         }
     }
 
-    if !fast_gain_pairs.is_empty() {
-        let fast_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
-        apply_complex_gain_pairs_fast(
-            &fast_gain_pairs,
-            FastGainApply {
-                data_desc_id: row.data_desc_id,
-                correlation_types,
-                data_channels,
-                corrected: &mut corrected,
-                flags: &mut flags,
-                apply_mode: plan.apply_mode,
-                newly_flagged_samples: &mut newly_flagged_samples,
-            },
-        )?;
-        if let Some(profile) = compute_profile.as_deref_mut() {
-            ApplyRowComputeProfile::add_elapsed(
-                &mut profile.fast_gain_apply_ns,
-                fast_apply_started_at,
-            );
-        }
-    }
-
-    if let Some(parang_state) = parang_state {
-        let parang_started_at = compute_profile.as_ref().map(|_| Instant::now());
-        let ant1_feed_pa = parang_state.feed_parallactic_angle(
-            row.time_seconds,
-            row.field_id,
-            row.antenna1,
-            row.feed1,
-            row.data_spw_id,
-        )?;
-        let ant2_feed_pa = parang_state.feed_parallactic_angle(
-            row.time_seconds,
-            row.field_id,
-            row.antenna2,
-            row.feed2,
-            row.data_spw_id,
-        )?;
-
-        parang::apply(
-            row.data_desc_id,
-            correlation_types,
-            ant1_feed_pa,
-            ant2_feed_pa,
-            &mut corrected,
-        )?;
-        if plan.apply_mode.writes_flags() {
-            newly_flagged_samples += parang::propagate_flags(correlation_types, &mut flags);
-        }
-
-        if let Some(profile) = compute_profile.as_deref_mut() {
-            ApplyRowComputeProfile::add_elapsed(
-                &mut profile.parallactic_angle_ns,
-                parang_started_at,
-            );
-        }
-    }
+    flush_fast_gain_pairs(
+        &mut fast_gain_pairs,
+        &mut output,
+        compute_profile.as_deref_mut(),
+    )?;
 
     if any_calwt {
         let weight_finalize_started_at = compute_profile.as_ref().map(|_| Instant::now());
@@ -2600,9 +2522,62 @@ fn apply_row_all_channels(
     })
 }
 
+fn flush_fast_gain_pairs(
+    pairs: &mut Vec<FastGainPair>,
+    output: &mut ApplyBuffer<'_>,
+    profile: Option<&mut ApplyRowComputeProfile>,
+) -> Result<(), ApplyExecutionError> {
+    if !pairs.is_empty() {
+        let started = profile.as_ref().map(|_| Instant::now());
+        apply_complex_gain_pairs_fast(pairs, output)?;
+        if let Some(profile) = profile {
+            ApplyRowComputeProfile::add_elapsed(&mut profile.fast_gain_apply_ns, started);
+        }
+        pairs.clear();
+    }
+    Ok(())
+}
+
+fn apply_parallactic_step(
+    row: &ApplyRowPlan,
+    state: &ParallacticAngleState,
+    output: &mut ApplyBuffer<'_>,
+    forward: bool,
+    profile: Option<&mut ApplyRowComputeProfile>,
+) -> Result<(), ApplyExecutionError> {
+    let started = profile.as_ref().map(|_| Instant::now());
+    let sign = if forward { -1.0 } else { 1.0 };
+    let angle = |antenna, feed| {
+        state
+            .feed_parallactic_angle(
+                row.time_seconds,
+                row.field_id,
+                antenna,
+                feed,
+                row.data_spw_id,
+            )
+            .map(|angle| angle * sign)
+    };
+    parang::apply(
+        row.data_desc_id,
+        output.correlation_types,
+        angle(row.antenna1, row.feed1)?,
+        angle(row.antenna2, row.feed2)?,
+        output.corrected,
+    )?;
+    if output.apply_mode.writes_flags() {
+        *output.newly_flagged_samples +=
+            parang::propagate_flags(output.correlation_types, output.flags);
+    }
+    if let Some(profile) = profile {
+        ApplyRowComputeProfile::add_elapsed(&mut profile.parallactic_angle_ns, started);
+    }
+    Ok(())
+}
+
 const FAST_GAIN_RECEPTOR_LIMIT: usize = 4;
 
-struct FastGainApply<'a> {
+struct ApplyBuffer<'a> {
     data_desc_id: i32,
     correlation_types: &'a [i32],
     data_channels: DataChannelGrid<'a>,
@@ -2759,7 +2734,7 @@ impl FastGainPair {
 
 fn apply_complex_gain_pairs_fast(
     pairs: &[FastGainPair],
-    ctx: FastGainApply<'_>,
+    ctx: &mut ApplyBuffer<'_>,
 ) -> Result<(), ApplyExecutionError> {
     if pairs.is_empty() {
         return Ok(());
@@ -3265,8 +3240,7 @@ fn apply_row_prefetched(
     inputs: &PrefetchedExecutionRowInputs,
     has_weight_spectrum: bool,
     plan: &ApplyPlan,
-    loaded_tables: &[LoadedCalibrationTable],
-    parang_state: Option<&ParallacticAngleState>,
+    chain: &ApplyChain,
     geometry_cache: Option<&mut RowGeometryCache>,
     compute_profile: Option<&mut ApplyRowComputeProfile>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
@@ -3285,8 +3259,7 @@ fn apply_row_prefetched(
             forward_model: false,
         },
         plan,
-        loaded_tables,
-        parang_state,
+        chain,
         geometry_cache,
         compute_profile,
     )
@@ -4429,7 +4402,9 @@ fn load_parameters(
             source: MsError::from(source),
         }
     })?;
-    let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex
+    let supports_calwt = (table_plan.summary.parameter_family
+        == CalibrationParameterFamily::Complex
+        && polarization::Leakage::from_subtype(&table_plan.summary.table_subtype).is_none())
         || matches!(
             table_plan.summary.table_subtype.as_str(),
             "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"
@@ -6004,7 +5979,7 @@ mod tests {
                 FastGainPair::Complex(scalar_ant1.clone(), scalar_ant2.clone()),
                 FastGainPair::Complex(channel_ant1.clone(), channel_ant2.clone()),
             ],
-            FastGainApply {
+            &mut ApplyBuffer {
                 data_desc_id: 0,
                 correlation_types: &[5, 8],
                 data_channels: DataChannelGrid::all(&[1.0e9, 1.1e9]),
@@ -6045,7 +6020,7 @@ mod tests {
                     flagged: false,
                 },
             ],
-            FastGainApply {
+            &mut ApplyBuffer {
                 data_desc_id: 0,
                 correlation_types: &[5, 8],
                 data_channels: DataChannelGrid::all(&[1.0e9, 1.1e9]),
@@ -6074,7 +6049,7 @@ mod tests {
                     delay_delta_ns: 1.0,
                     flagged: false,
                 }],
-                FastGainApply {
+                &mut ApplyBuffer {
                     data_desc_id: 0,
                     correlation_types: &[5],
                     data_channels: DataChannelGrid::all(&[1.0e9]),
