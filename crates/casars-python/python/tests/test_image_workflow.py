@@ -82,6 +82,40 @@ def test_casa_recorded_native_workflow(tmp_path, workflow):
             _assert_value(result, expected, f"{call['target']}.{call['method']}")
 
 
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("kind", ["directory", "generic-table"])
+def test_image_factories_refuse_nonimage_directories_without_creating_a_lock(tmp_path, backend, kind):
+    if backend == "casa":
+        api = pytest.importorskip("casatools")
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    else:
+        api = tools
+    path = tmp_path / "nonimage"
+    if kind == "directory":
+        path.mkdir()
+        (path / "unrelated").write_text("keep", encoding="utf-8")
+    else:
+        table = tools.table()
+        try:
+            assert table.create(str(path), {"ID": {"valueType": "int"}}, nrow=2)
+            assert table.putcol("ID", [4, 7])
+        finally:
+            table.done()
+    before = {child.name: child.read_bytes() for child in path.iterdir()}
+    for method in ("open", "newimage", "newimagefromfile", "fromimage", "newimagefromimage"):
+        image = api.image()
+        try:
+            assert image.fromarray(pixels=[4., 7., 11.])
+            with pytest.raises(RuntimeError, match="Unable to open image"):
+                getattr(image, method)(infile=str(path))
+            assert image.isopen() == (method != "open")
+            if image.isopen():
+                np.testing.assert_array_equal(image.getchunk(), [4., 7., 11.])
+        finally:
+            image.done()
+        assert {child.name: child.read_bytes() for child in path.iterdir()} == before
+
+
 @pytest.mark.parametrize("writer", ["casars", "casa"])
 @pytest.mark.parametrize("reader", ["casars", "casa"])
 @pytest.mark.parametrize("linear", [False, True])
