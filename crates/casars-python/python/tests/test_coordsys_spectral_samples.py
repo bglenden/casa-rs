@@ -83,6 +83,18 @@ def test_different_rest_frequency_storage_units_remain_physical(casa):
         np.testing.assert_allclose(spectral["tabular"]["worldvalues"], [1.4e9, 1.41e9, 1.425e9])
 
 
+def test_invalid_rest_frequency_preserves_previous_value(casa):
+    for value, malformed in (("21cm", 0.21), (np.inf, np.inf)):
+        oracle = casa.coordsys().newcoordsys(spectral=True)
+        assert oracle.setspectral(restfreq=value)
+        assert oracle.torecord()["spectral0"]["restfreq"] == pytest.approx(malformed)
+        current = tools.coordsys().newcoordsys(spectral=True)
+        before = current.torecord()
+        with pytest.raises(RuntimeError, match="Rest frequency|rest frequency"):
+            current.setspectral(restfreq=value)
+        _assert_value(current.torecord(), before)
+
+
 def test_ignored_and_refused_arguments_leave_the_coordinate_usable(casa, caplog):
     for api in (tools, casa):
         cs = api.coordsys().newcoordsys(spectral=True)

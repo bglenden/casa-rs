@@ -8409,3 +8409,8 @@ CASA 6.7.6.14 passes the old rest-frequency number to the new `setspectral`
 table in Hz. If the old coordinate declares MHz, a rest frequency of
 `1420.405751786 MHz` becomes `1420.405751786 Hz`. casa-rs converts the active
 rest frequency to Hz before building the new frequency or velocity table.
+
+The same setter accepts a positive rest quantity with incompatible units,
+such as `21cm`, and records it as `0.21 Hz`. It can also store an infinite
+rest frequency. casa-rs rejects these inputs while preserving the prior
+spectral coordinate.
