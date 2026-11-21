@@ -7,8 +7,9 @@ use casa_coordinates::{CoordinateModel, CoordinateType};
 use casa_lattices::SamplePoint;
 use casa_types::quanta::Quantity;
 use casa_types::{ArrayD, RecordValue};
-use ndarray::{Array2, Axis, Ix2, IxDyn};
+use ndarray::{Array2, Axis, Ix2, IxDyn, Zip};
 
+use crate::image_expr::bounded_read_cursor;
 use crate::regrid::{Plane, RegridMethod};
 use crate::{ImageError, ImageInterface, MutableImageInterface};
 
@@ -74,7 +75,7 @@ impl<'a> ImageDeviation<'a> {
         let coordinates = image.coordinates();
         let sky_index = coordinates
             .find_coordinate(CoordinateType::Direction)
-            .ok_or_else(|| invalid("Coordinate system has no direction coordinate"))?;
+            .ok_or_else(|| invalid("Image does not have required coordinate Direction"))?;
         let mapped_axes = coordinates.coordinate_pixel_axes(sky_index);
         let Some([Some(x), Some(y)]) = mapped_axes.as_deref() else {
             return Err(invalid(
@@ -163,6 +164,30 @@ impl<'a> ImageDeviation<'a> {
                 self.options.stretch,
             )?,
         };
+        if self.grid.step == [1, 1] && self.window.is_single_pixel() {
+            let cursor = bounded_read_cursor(section.dense_shape(section.shape))?;
+            for tile in section.cursors(cursor) {
+                let tile = tile?;
+                let (mut values, valid) = reader.read(
+                    &section.source_start(&tile.position),
+                    &tile.shape,
+                    section.stride,
+                )?;
+                if let Some(valid) = &valid {
+                    Zip::from(&mut values).and(valid).for_each(|value, &good| {
+                        *value = if good {
+                            self.statistic.single(*value)
+                        } else {
+                            0.
+                        };
+                    });
+                } else {
+                    values.mapv_inplace(|value| self.statistic.single(value));
+                }
+                write_tile(output, &tile.position, &values, valid.as_ref())?;
+            }
+            return Ok(());
+        }
         let mut cursor = vec![1; image.ndim()];
         for axis in self.axes {
             cursor[axis] = 32;
@@ -248,14 +273,7 @@ impl<'a> ImageDeviation<'a> {
                 *good = inherited && computed.is_some();
                 *value = computed.unwrap_or(0.) as f32;
             }
-            if valid.iter().any(|&entry| !entry) {
-                if output.default_mask_name().is_none() {
-                    output.create_filled_mask("mask0", true)?;
-                    output.set_default_mask("mask0")?;
-                }
-                output.put_mask_slice("mask0", &valid, &tile.position)?;
-            }
-            output.put_slice(&values, &tile.position)?;
+            write_tile(output, &tile.position, &values, Some(&valid))?;
         }
         if interpolation_failed && !source_masked {
             return Err(invalid(
@@ -308,6 +326,22 @@ impl<'a> ImageDeviation<'a> {
         }
         self.statistic.evaluate(sample)
     }
+}
+
+fn write_tile(
+    output: &mut dyn MutableImageInterface<f32>,
+    start: &[usize],
+    values: &ArrayD<f32>,
+    valid: Option<&ArrayD<bool>>,
+) -> Result<(), ImageError> {
+    if let Some(valid) = valid.filter(|mask| mask.iter().any(|&entry| !entry)) {
+        if output.default_mask_name().is_none() {
+            output.create_filled_mask("mask0", true)?;
+            output.set_default_mask("mask0")?;
+        }
+        output.put_mask_slice("mask0", valid, start)?;
+    }
+    output.put_slice(values, start)
 }
 
 struct Grid {

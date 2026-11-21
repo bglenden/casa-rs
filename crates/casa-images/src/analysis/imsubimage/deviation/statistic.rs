@@ -70,15 +70,7 @@ impl LocalStatistic {
             return Ok(None);
         }
         if let [point] = points {
-            let value = point.value;
-            let result = match self.kind {
-                S::Npts => 1.,
-                S::SumSq => value * value,
-                S::Rms => value.abs(),
-                S::Variance | S::Sigma | S::Quartile | S::MedAbsDevMed => 0.,
-                _ => value,
-            };
-            return Ok(Some(result as f32));
+            return Ok(Some(self.single(point.value as f32)));
         }
         let RobustStats::Sample(stats) = compute_robust_stats(points, &self.algorithm)
             .map_err(|error| invalid(error.to_string()))?
@@ -105,5 +97,16 @@ impl LocalStatistic {
             S::Quartile => stats.quartile,
         };
         Ok(Some((f64::from(value as f32) * self.scale) as f32))
+    }
+
+    pub(super) fn single(&self, value: f32) -> f32 {
+        use Statistic as S;
+        match self.kind {
+            S::Npts => 1.,
+            S::SumSq => value * value,
+            S::Rms => value.abs(),
+            S::Variance | S::Sigma | S::Quartile | S::MedAbsDevMed => 0.,
+            _ => value,
+        }
     }
 }

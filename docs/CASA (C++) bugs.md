@@ -8753,3 +8753,14 @@ returned for a 2D Gaussian. With `threshold=0.7`, `maxretry=0`, and
 within 0.00001. The independent solvers can select different centers,
 widths, and angles from the valid solutions. Casa-rs also uses a fixed
 retry sequence so fits with identical inputs are reproducible.
+
+## A circular deviation window with an all-true footprint can abort
+
+On a 15 × 17 Float direction image, CASA 6.7.6.14 terminates the Python
+process with a segmentation fault during
+`image.deviation(xlength=3, ylength="", stattype="npts")`. The 1.5-pixel
+radius includes all nine pixel centers of the bounding square, so there
+is no footprint mask. The diagnostic assumes it exists when reporting
+the circle size. Casa-rs computes the documented circular statistic
+and clips the window at the image's edges, returning counts of 9 in
+the interior, 6 at an edge, and 4 in a corner for an unmasked image.

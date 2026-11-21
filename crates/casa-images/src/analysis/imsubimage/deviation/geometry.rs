@@ -123,6 +123,10 @@ impl Window {
         (lower, upper)
     }
 
+    pub(super) fn is_single_pixel(&self) -> bool {
+        self.lower == [0; 2] && self.upper == [0; 2]
+    }
+
     pub(super) fn contains(&self, center: [usize; 2], at: [usize; 2]) -> bool {
         let dx = at[0] as f64 - center[0] as f64;
         let dy = at[1] as f64 - center[1] as f64;
