@@ -1002,11 +1002,10 @@ impl ConvolutionFunctionSet for MosaicPb {
                 && usize::from(row.antenna_types[1]) < self.dishes,
             "antenna types index the mosaic set's dish classes"
         );
-        CfKey {
-            group: u16::try_from(pair_plane(row.antenna_types, self.dishes))
-                .expect("pair plane fits u16"),
-            cube: u16::try_from(window.first + window.cell_of(freq_hz)).expect("cell fits u16"),
-        }
+        CfKey::new(
+            u16::try_from(pair_plane(row.antenna_types, self.dishes)).expect("pair plane fits u16"),
+            u16::try_from(window.first + window.cell_of(freq_hz)).expect("cell fits u16"),
+        )
     }
 
     /// The imaging cell, or its conjugate under

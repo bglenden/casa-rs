@@ -1033,10 +1033,10 @@ impl ConvolutionFunctionSet for AwCatalog {
             nearest(&self.frequencies_hz, native_frequency_hz).0,
             prediction_w,
         ) + rotation * self.groups.len();
-        CfKey {
-            group: u16::try_from(group).expect("AW group fits u16"),
-            cube: u16::try_from(native).expect("AW group fits u16"),
-        }
+        CfKey::new(
+            u16::try_from(group).expect("AW group fits u16"),
+            u16::try_from(native).expect("AW group fits u16"),
+        )
     }
 
     fn validate_row_context(&self, row: &RowContext) -> Result<(), OperatorError> {

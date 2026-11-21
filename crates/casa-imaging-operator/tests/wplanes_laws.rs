@@ -164,13 +164,7 @@ fn plane_index_is_casa_nint_of_the_root_and_rows_past_the_last_plane_are_dropped
         assert_eq!(planes.admits(w_for(root)), admitted, "root {root}");
         assert_eq!(planes.admits(-w_for(root)), admitted, "root −{root}");
         let key = planes.key(&context(), 1.0e9, w_for(root));
-        assert_eq!(
-            key,
-            CfKey {
-                group: plane as u16,
-                cube: 0
-            }
-        );
+        assert_eq!(key, CfKey::new(plane as u16, 0));
     }
     assert_eq!(planes.normalisation(), KernelNormalisation::RealSum);
     assert!(!planes.pointing_ramp());

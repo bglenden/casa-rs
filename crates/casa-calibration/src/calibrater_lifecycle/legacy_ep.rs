@@ -72,7 +72,7 @@ impl LegacyEpSolver {
         let buffer = attachment.with_write(|ms, selection, _| Ok(first_buffer(ms, selection)?))?;
         let products = convolution(
             &self.cache,
-            self.angle_increment_deg,
+            (self.angle_increment_deg, 1),
             &host,
             &buffer,
             shape,
@@ -82,7 +82,7 @@ impl LegacyEpSolver {
         let fourier =
             LegacyEpConvolution::prepare_model(&pixels, &products.average_beam, products.sampling)
                 .map_err(invalid)?;
-        tracing::debug!(table = %self.table.display(), support = products.support,
+        tracing::debug!(table = %self.table.display(), support = products.support[0],
             convolution_samples = products.convolution.len(), weight_samples = products.weights.len(),
             "legacy EP prepared its Fourier model");
         self.model = Some(PreparedEpModel {
@@ -97,7 +97,7 @@ impl LegacyEpSolver {
 
 pub(crate) fn convolution(
     cache: &EpCache,
-    angle_increment_deg: f64,
+    (angle_increment_deg, w_planes): (f64, usize),
     host: &HostResources,
     buffer: &FirstBuffer,
     shape: [usize; 4],
@@ -111,6 +111,7 @@ pub(crate) fn convolution(
             angle_increment_deg,
             &shape,
             &buffer.correlations,
+            w_planes,
         )
     };
     {
@@ -118,6 +119,11 @@ pub(crate) fn convolution(
         if let Some(products) = read()? {
             return Ok(products);
         }
+    }
+    if w_planes > 1 {
+        return Err(invalid(
+            "legacy PB/W cold multi-plane cache generation is pending #1520",
+        ));
     }
     let _lock = NativeCacheLock::exclusive(cache.path()).map_err(invalid)?;
     cache.recover()?;
@@ -158,6 +164,7 @@ pub(crate) fn convolution(
             angle_increment_deg.max(0.001),
             &shape,
             &buffer.correlations,
+            w_planes,
         )?
         .ok_or_else(|| invalid("legacy EP generated an unusable convolution cache"))
 }
@@ -505,7 +512,7 @@ mod tests {
         let subpixel = std::array::from_fn::<_, 2, _>(|axis| {
             (((loc[axis] + 1) as f32 - position[axis]) * sampling as f32).round() as isize
         });
-        let support = products.support as isize;
+        let support = products.support[0] as isize;
         if loc
             .iter()
             .any(|&value| value < support || value + support >= side as isize)

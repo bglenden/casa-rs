@@ -4,7 +4,7 @@
 use casa_images::PagedImage;
 use casa_imaging_operator::{GridGeometry, LegacyPbWConvolution, PolarizationRouting};
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
-use casa_types::{Complex32, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 
 use super::{FourierRow, GainSolveError, complex_model_image_path, model_error, record_number};
 use crate::ft::legacy_pbw::KERNEL_IMAGE;
@@ -45,7 +45,15 @@ pub(super) fn load(
         };
         u16::try_from(value).map_err(model_error)
     };
-    let support = dimension("casars_legacy_pbw_support")?;
+    let support = match record.get("casars_legacy_pbw_support") {
+        Some(Value::Array(ArrayValue::Int32(widths))) if widths.ndim() == 1 => widths
+            .iter()
+            .copied()
+            .map(u16::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(model_error)?,
+        _ => vec![dimension("casars_legacy_pbw_support")?],
+    };
     let sampling = dimension("casars_legacy_pbw_sampling")?;
     let angle = record_number(record, "casars_legacy_pbw_angle")
         .filter(|angle| angle.is_finite())
@@ -53,18 +61,20 @@ pub(super) fn load(
     let path = complex_model_image_path(record, row.ms)?.join(KERNEL_IMAGE);
     let kernel = PagedImage::<Complex32>::open_with_cache(path, 1).map_err(model_error)?;
     let correlations = row.correlations.len();
-    LegacyPbWConvolution::validate_shape(kernel.shape(), sampling, support, correlations)
+    LegacyPbWConvolution::validate_shape(kernel.shape(), sampling, &support, correlations)
         .map_err(model_error)?;
     let side = kernel.shape()[0];
-    let cache_bytes = (side as u64)
-        .saturating_mul(side as u64)
-        .saturating_mul(correlations as u64)
-        .saturating_mul(size_of::<Complex32>() as u64);
+    let cache_bytes = kernel
+        .shape()
+        .iter()
+        .fold(size_of::<Complex32>() as u64, |bytes, &axis| {
+            bytes.saturating_mul(axis as u64)
+        });
     let retained = LegacyPbWConvolution::resident_bytes(
         side,
         correlations,
         sampling,
-        support,
+        &support,
         geometry.grid_shape(),
     );
     let memory = reserve("legacy PB/W cache image", retained)?;
@@ -114,11 +124,23 @@ mod tests {
             GridPadding::None,
         )
         .unwrap();
-        let budget = LegacyPbWConvolution::resident_bytes(161, 2, 20, 3, grid);
+        let support = [3, 1, 2];
+        let budget = LegacyPbWConvolution::resident_bytes(161, 2, 20, &support, grid);
         let baseline = reset_peak();
-        let kernel = ArrayD::from_elem(IxDyn(&[161, 161, 2, 1]), Complex32::new(0.3, -0.2));
-        let taps = LegacyPbWConvolution::new(kernel, 20, 3, &geometry, 4, &[Some(0), Some(3)], 0.)
-            .unwrap();
+        let kernel = ArrayD::from_elem(
+            IxDyn(&[161, 161, 2, support.len()]),
+            Complex32::new(0.3, -0.2),
+        );
+        let taps = LegacyPbWConvolution::new(
+            kernel,
+            20,
+            support.to_vec(),
+            &geometry,
+            4,
+            &[Some(0), Some(3)],
+            0.,
+        )
+        .unwrap();
         let mut first = CellHold::new();
         let mut second = CellHold::new();
         let mut row = RowContext {
@@ -132,6 +154,15 @@ mod tests {
             spectral_window: 0,
         };
         let initial = taps.taps(taps.key(&row, 1.4e9, 0.), &mut first);
+        let wavelengths = |plane: usize| (plane * plane) as f64 / (scale * support.len() as f64);
+        for (plane, &half_support) in support.iter().enumerate() {
+            let key = taps.key(&row, 1.4e9, wavelengths(plane));
+            assert_eq!(usize::from(key.w_plane), plane);
+            assert_eq!(
+                taps.taps(key, &mut second).half_support(),
+                [half_support; 2]
+            );
+        }
         row.parallactic_angle_rad = [0.5; 2];
         let rotated = taps.taps(taps.key(&row, 1.4e9, 0.), &mut second);
         assert_eq!(initial.half_support(), rotated.half_support());
@@ -140,14 +171,14 @@ mod tests {
         assert!(live_since(baseline) < budget);
         assert_eq!(taps.max_half_support(), [3; 2]);
         assert!(taps.admits(500.));
-        assert!(!taps.admits(-5000.));
+        assert!(!taps.admits(-wavelengths(support.len())));
     }
 
     #[test]
     fn pbw_shape_covers_both_fine_offset_endpoints() {
-        assert!(LegacyPbWConvolution::validate_shape(&[121, 121, 2, 1], 20, 3, 2).is_err());
-        assert!(LegacyPbWConvolution::validate_shape(&[9, 9, 2, 1], 3, 1, 2).is_err());
-        assert!(LegacyPbWConvolution::validate_shape(&[11, 11, 2, 1], 3, 1, 2).is_ok());
+        assert!(LegacyPbWConvolution::validate_shape(&[121, 121, 2, 1], 20, &[3], 2).is_err());
+        assert!(LegacyPbWConvolution::validate_shape(&[9, 9, 2, 1], 3, &[1], 2).is_err());
+        assert!(LegacyPbWConvolution::validate_shape(&[11, 11, 2, 1], 3, &[1], 2).is_ok());
     }
 
     #[test]

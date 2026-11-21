@@ -242,10 +242,10 @@ fn generated_cells_open_with_casa_index_rules_and_swapped_mueller_tables() {
     assert_eq!(key, catalog.key(&context(17.0, 1), 1.6e9, -w_of(0.9)));
     assert_eq!(
         key,
-        CfKey {
-            group: catalog.group_index(0, 1, 1) as u16,
-            cube: catalog.group_index(0, 1, 1) as u16
-        }
+        CfKey::new(
+            catalog.group_index(0, 1, 1) as u16,
+            catalog.group_index(0, 1, 1) as u16
+        )
     );
     // `DataToGridImpl_p` selects the input via muellerElement % nDataPol
     // after selecting the cell: for Stokes I both signs pair RR with its
@@ -262,10 +262,7 @@ fn generated_cells_open_with_casa_index_rules_and_swapped_mueller_tables() {
     // Every cell is dense, four fine offsets, two planes, inside the halo.
     let mut hold = CellHold::new();
     for group in 0..catalog.groups() {
-        let key = CfKey {
-            group: group as u16,
-            cube: 0,
-        };
+        let key = CfKey::new(group as u16, 0);
         let TapLayout::Dense {
             support,
             oversampling: 4,
@@ -304,10 +301,7 @@ fn conjugate_beams_select_the_cell_nearest_the_conjugate_frequency() {
     let key = catalog.key(&context(0.31_f64.to_degrees(), 0), 1.4e9, 0.0);
     assert_eq!(usize::from(key.group), catalog.group_index(0, 1, 0));
     assert_eq!(usize::from(key.cube), catalog.group_index(0, 0, 0));
-    let native = CfKey {
-        group: key.cube,
-        cube: key.cube,
-    };
+    let native = CfKey::new(key.cube, key.cube);
     let dense = |taps: TapLayout<'_>| match taps {
         TapLayout::Dense { data, .. } => data.to_vec(),
         TapLayout::SeparableReal { .. } => panic!("AW cells are dense"),
@@ -565,10 +559,7 @@ fn cold_and_warm_catalogs_give_identical_keys_taps_and_products() {
     )
     .expect("warm open");
     for group in 0..cold.groups() {
-        let key = CfKey {
-            group: group as u16,
-            cube: 0,
-        };
+        let key = CfKey::new(group as u16, 0);
         let (mut a, mut b) = (CellHold::new(), CellHold::new());
         let (
             TapLayout::Dense {
@@ -886,7 +877,7 @@ fn the_bounded_cache_evicts_but_a_held_cell_stays_valid() {
     let root = tempfile::tempdir().expect("cache directory");
     let unbounded = generated(root.path(), false, usize::MAX);
     let mut hold = CellHold::new();
-    let first = CfKey { group: 0, cube: 0 };
+    let first = CfKey::new(0, 0);
     let bytes_of_one = {
         let TapLayout::Dense { data, norms, .. } = unbounded.taps(first, &mut hold) else {
             panic!("dense");
@@ -913,20 +904,8 @@ fn the_bounded_cache_evicts_but_a_held_cell_stays_valid() {
     // Touching every other group evicts the first from the cache.
     let mut scratch = CellHold::new();
     for group in 1..bounded.groups() {
-        let _ = bounded.taps(
-            CfKey {
-                group: group as u16,
-                cube: 0,
-            },
-            &mut scratch,
-        );
-        let _ = bounded.weight_taps(
-            CfKey {
-                group: group as u16,
-                cube: 0,
-            },
-            &mut scratch,
-        );
+        let _ = bounded.taps(CfKey::new(group as u16, 0), &mut scratch);
+        let _ = bounded.weight_taps(CfKey::new(group as u16, 0), &mut scratch);
     }
     assert!(
         bounded.resident_bytes() <= 2 * bytes_of_one,
@@ -1119,10 +1098,7 @@ fn polarized_aw_taylor_weights_include_both_parallel_hands() {
 /// Every group's key: its gridding and prediction group alike.
 fn group_keys(catalog: &AwCatalog) -> Vec<CfKey> {
     (0..catalog.groups())
-        .map(|group| CfKey {
-            group: group as u16,
-            cube: group as u16,
-        })
+        .map(|group| CfKey::new(group as u16, group as u16))
         .collect()
 }
 
@@ -1141,10 +1117,7 @@ fn all_taps(catalog: &AwCatalog) -> Vec<(Vec<Complex32>, Vec<Complex32>)> {
     };
     (0..catalog.groups())
         .map(|group| {
-            let key = CfKey {
-                group: group as u16,
-                cube: group as u16,
-            };
+            let key = CfKey::new(group as u16, group as u16);
             let (mut a, mut b) = (CellHold::new(), CellHold::new());
             (
                 dense(catalog.taps(key, &mut a)),

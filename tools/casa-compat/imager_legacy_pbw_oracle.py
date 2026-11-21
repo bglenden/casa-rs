@@ -18,13 +18,13 @@ from gaincal_oracle import relative_rms
 
 def configured_imager(factory, dataset, cache, *, scratch, spw='', correction=True, limit=.05,
                       interp='nearest', machine='pbwproject', field=0, baseline='',
-                      pointing=False, ep_table=''):
+                      pointing=False, ep_table='', w_planes=1):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
     assert tool.selectvis(field=field, spw=spw, baseline=baseline)
     assert tool.defineimage(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
                             phasecenter=0, stokes='IQUV', outframe='TOPO')
-    assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
+    assert tool.setoptions(ftmachine=machine, wprojplanes=w_planes, numthreads=1,
                            cfcachedirname=str(cache), applypointingoffsets=pointing,
                            epjtablename=str(ep_table),
                            dopbgriddingcorrections=correction, pblimit=limit, freqinterp=interp)
