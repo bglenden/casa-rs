@@ -7963,6 +7963,15 @@ input direction plane before the same sky-coordinate cut restores the CASA
 result. casa-rs interpolates only the requested strip and agrees with the
 padded CASA reference without requiring callers to pad the input (#1024).
 
+## `impv` masks early validation errors during cleanup
+
+CASA 6.7.6.14 raises `UnboundLocalError` when `outfile` is empty, when
+coordinate mode lacks an endpoint, or when length mode lacks a center,
+length, or position angle. The task raises its validation error before
+assigning `myia`, then the `finally` block references that local. casa-rs
+identifies the missing parameter or mode-specific selection and leaves no
+output. The upstream suite checks each implementation's error (#977).
+
 ## imregrid drops brightness units and the beam when broadcasting a channel
 
 In CASA 6.7.6.14, `imregrid` with a one-channel input, an explicitly selected
