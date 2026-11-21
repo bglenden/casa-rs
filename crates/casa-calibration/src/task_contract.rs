@@ -30,7 +30,7 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 26] = [
+pub const CALIBRATION_SURFACES: [&str; 27] = [
     "calibrate",
     "applycal",
     "gaincal",
@@ -57,6 +57,7 @@ pub const CALIBRATION_SURFACES: [&str; 26] = [
     "statwt",
     "calstat",
     "listcal",
+    "sdcal",
 ];
 
 /// Build the current shared calibration protocol descriptor.
@@ -749,8 +750,12 @@ mod tests {
                 "bandpass",
                 "fluxscale",
                 "gencal",
+                "wvrgcal",
+                "polcal",
+                "polfromgain",
                 "getantposalma",
                 "getcalmodvla",
+                "getjyperkalma",
                 "clearcal",
                 "delmod",
                 "uvsub",
@@ -765,6 +770,7 @@ mod tests {
                 "statwt",
                 "calstat",
                 "listcal",
+                "sdcal",
             ]
         );
         assert!(

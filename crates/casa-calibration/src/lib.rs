@@ -59,6 +59,7 @@ mod rerefant;
 mod selected_data;
 mod session;
 mod simulated;
+mod single_dish;
 mod smooth;
 mod solution_edit;
 mod solve;

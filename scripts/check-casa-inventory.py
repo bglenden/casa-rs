@@ -79,6 +79,12 @@ def load_inventory() -> dict[str, dict[str, Any]]:
                 problems.append(f"{path}: {parameter.get('name')} lacks its default or schema")
         if problems:
             raise InventoryError("\n".join(problems))
+        # Generated wrappers can expose Python's **kwargs plumbing as well as
+        # the named task parameters. Only named parameters have task bindings.
+        record["parameters"] = [
+            parameter for parameter in record["parameters"]
+            if parameter["kind"] not in ("VAR_POSITIONAL", "VAR_KEYWORD")
+        ]
         tasks[name] = record
     return tasks
 
@@ -364,7 +370,8 @@ def main() -> int:
         direct_types = {
             name: {parameter["name"]: parameter["schema"]["type"]
                    for parameter in task["parameters"]
-                   if parameter["schema"].get("type") in supported
+                   if isinstance(parameter["schema"], dict)
+                   and parameter["schema"].get("type") in supported
                    and parameter["schema"].get("coerce") == supported[parameter["schema"]["type"]]}
             for name, task in sorted(tasks.items())
         }

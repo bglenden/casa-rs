@@ -355,6 +355,7 @@ mod tests {
             ("imsubimage", false),
             ("simobserve", true),
             ("simalma", false),
+            ("sdcal", false),
             ("tsdimaging", false),
             ("simanalyze", true),
         ]);

@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Convert MS SYSCAL measurements into CASA's B TSYS calibration table.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use casa_ms::{MeasurementSet, schema::SubtableId};
-use casa_tables::{RequiredScalarColumnValues, Table};
+use casa_tables::Table;
 use casa_types::{ArrayValue, ScalarValue};
 use ndarray::{ArrayD, IxDyn};
 
 use super::{GencalError, PriorCalRow, get_f64};
-use crate::constants::{COL_FIELD_ID, COL_INTERVAL, COL_OBSERVATION_ID, COL_SCAN_NUMBER, COL_TIME};
+use crate::constants::{COL_INTERVAL, COL_TIME};
+use crate::session::scan_timing::ScanTiming;
 
 const COL_SYSCAL_SPW: &str = "SPECTRAL_WINDOW_ID";
 const COL_SYSCAL_ANTENNA: &str = "ANTENNA_ID";
@@ -22,14 +23,6 @@ struct Sample {
     antenna: usize,
     time: f64,
     interval: f64,
-}
-
-struct Scan {
-    number: i32,
-    field: i32,
-    observation: i32,
-    first_time: f64,
-    last_time: f64,
 }
 
 pub(super) fn rows(
@@ -49,7 +42,7 @@ pub(super) fn rows(
     };
     let antennas = ms.antenna().map_err(invalid)?.row_count();
     let windows = ms.spectral_window().map_err(invalid)?;
-    let scans = scan_ends(ms.main_table())?;
+    let scans = ScanTiming::read(ms.main_table()).map_err(invalid)?;
     let mut samples = (0..syscal.row_count())
         .map(|row| sample(syscal, row, windows.row_count(), antennas))
         .collect::<Result<Vec<_>, _>>()?;
@@ -65,16 +58,7 @@ pub(super) fn rows(
     {
         let first = &group[0];
         let time = first.time - first.interval / 2.0;
-        // assignCTScanField uses the next scan after a gap, and clips times
-        // outside the observation to the first and last scan.
-        let last = &scans[scans.len() - 1];
-        let scan = if time < scans[0].last_time + 1e-5 {
-            &scans[0]
-        } else if time > last.first_time - 1e-5 {
-            last
-        } else {
-            &scans[scans.partition_point(|scan| time > scan.last_time + 1e-5)]
-        };
+        let scan = scans.at(time);
         let channels = if spectral {
             usize::try_from(windows.num_chan(first.window).map_err(invalid)?).map_err(invalid)?
         } else {
@@ -205,45 +189,6 @@ fn temperatures(
         }
     }
     Ok((values, receptors))
-}
-
-fn scan_ends(main: &Table) -> Result<Vec<Scan>, GencalError> {
-    let columns = main
-        .required_scalar_columns_owned(&[
-            COL_TIME,
-            COL_SCAN_NUMBER,
-            COL_FIELD_ID,
-            COL_OBSERVATION_ID,
-        ])
-        .map_err(invalid)?;
-    let RequiredScalarColumnValues::Float64(times) = &columns[COL_TIME] else {
-        return Err(invalid("MeasurementSet TIME is not Float64."));
-    };
-    let ids = |name: &str| match &columns[name] {
-        RequiredScalarColumnValues::Int32(values) => Ok(values.as_slice()),
-        _ => Err(invalid(format!("MeasurementSet {name} is not Int32."))),
-    };
-    let numbers = ids(COL_SCAN_NUMBER)?;
-    let fields = ids(COL_FIELD_ID)?;
-    let observations = ids(COL_OBSERVATION_ID)?;
-    let mut by_scan = BTreeMap::new();
-    for (row, &time) in times.iter().enumerate() {
-        let scan = by_scan.entry(numbers[row]).or_insert(Scan {
-            number: numbers[row],
-            field: fields[row],
-            observation: observations[row],
-            first_time: time,
-            last_time: time,
-        });
-        scan.first_time = scan.first_time.min(time);
-        scan.last_time = scan.last_time.max(time);
-    }
-    let mut scans = by_scan.into_values().collect::<Vec<_>>();
-    if scans.is_empty() {
-        return Err(invalid("MeasurementSet has no visibility scans."));
-    }
-    scans.sort_by(|left, right| left.last_time.total_cmp(&right.last_time));
-    Ok(scans)
 }
 
 fn invalid(detail: impl std::fmt::Display) -> GencalError {

@@ -84,6 +84,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("plotweather", "casatasks"),
     ("predictcomp", "casatasks"),
     ("rerefant", "casatasks"),
+    ("sdcal", "casatasks"),
     ("setjy", "casatasks"),
     ("simanalyze", "casatasks"),
     ("simalma", "casatasks"),

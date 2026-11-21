@@ -118,7 +118,10 @@ pub(crate) fn write_standard_calibration_subtables(
     Ok(())
 }
 
-fn overlaps_measurement_set(ms: &MeasurementSet, destination: &Path) -> Result<bool, String> {
+pub(crate) fn overlaps_measurement_set(
+    ms: &MeasurementSet,
+    destination: &Path,
+) -> Result<bool, String> {
     let Some(source) = ms.path() else {
         return Ok(false);
     };

@@ -600,6 +600,18 @@
     "refantmode": "cStr",
     "refant": "cStr"
   },
+  "sdcal": {
+    "calmode": "cStr",
+    "noff": "cInt",
+    "width": "cFloat",
+    "elongated": "cBool",
+    "interp": "cStr",
+    "outfile": "cStr",
+    "overwrite": "cBool",
+    "field": "cStr",
+    "spw": "cStr",
+    "scan": "cStr"
+  },
   "setjy": {
     "vis": "cStr",
     "field": "cStr",
