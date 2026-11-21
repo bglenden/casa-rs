@@ -8,12 +8,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import casatasks
-from casatools import measures, table, vpmanager
+from casatools import componentlist, imager as casa_imager, measures, table, vpmanager
 import numpy as np
 
+from calibration_ft_oracle import coordinates
 from gaincal_oracle import relative_rms
-from imager_component_voltage_oracle import scratch_pair, source
+from imager_component_voltage_oracle import compare, predict, scratch_pair, source
 from imager_custom_squint_oracle import saved_exchange
+from imager_legacy_pbw_oracle import data, make_input
+from imager_legacy_squint_oracle import fourier_grid, shifted_tangent_model
 
 
 SHAPES = {
@@ -60,6 +63,46 @@ def frequency_fits(path):
     assert updater.putcell('pbdescription', 0, record) and updater.done()
 
 
+def check_negative_power(work, seed, point, results):
+    outer = work / 'outer.cl'
+    ra, dec = coordinates(seed)
+    frequency = data(seed / 'SPECTRAL_WINDOW', 'CHAN_FREQ')[0, 0]
+    offset = np.radians(33. / 60.) / (frequency / 1.e9)
+    sky = componentlist()
+    assert sky.addcomponent(dir=f'J2000 {ra}rad {dec + offset}rad', flux=3.7, freq='1.55GHz')
+    assert sky.rename(str(outer)) and sky.done()
+    for name, coeff in (('crossing', [1., -.001]), ('flat', [1.])):
+        curve = work / f'{name}.tbl'
+        manager = vpmanager()
+        manager.reset()
+        assert manager.setpbpoly(telescope='VLA', coeff=coeff, maxrad='1500arcsec', reffreq='1.4GHz')
+        assert manager.saveastable(str(curve))
+        inner = scratch_pair(work, seed, point, results, f'{name}-inner', vptable=curve, spw='0:0')
+        far = scratch_pair(work, seed, outer, results, f'{name}-outer', vptable=curve, spw='0:0')
+        assert np.abs(inner[:, 0, :]).max() > 2.
+        if name == 'crossing':
+            assert not np.any(far[:, 0, :])
+        else:
+            assert np.abs(far[:, 0, :]).max() > 3.
+
+
+def check_projected_image(work, seed, model, beam, results):
+    from casars.tools import imager as native_imager
+
+    shifted = work / 'shifted-tangent.im'
+    shifted_tangent_model(model, shifted)
+    scratch_pair(work, seed, None, results, 'inverse-image-projected', model=shifted,
+                 vptable=beam, spw='0:0')
+    grids = []
+    for label, factory in [('casa', casa_imager), ('native', native_imager)]:
+        path = work / f'{label}-shifted-saved.ms'
+        make_input(seed, path, scratch=False)
+        predict(factory, path, None, model=shifted, scratch=False, vptable=beam, spw='0:0')
+        grids.append(fourier_grid(path))
+    assert np.max(np.abs(grids[0])) > .4
+    compare(results, 'inverse-image-projected-grid', grids[1], grids[0])
+
+
 def run(root, seed, model):
     assert casatasks.version_string() == '6.7.6.14'
     root.mkdir(parents=True, exist_ok=True)
@@ -89,6 +132,8 @@ def run(root, seed, model):
         assert relative_rms(varied, unattenuated) > .1
         scratch_pair(work, seed, None, results, 'inverse-frequency-image', model=model,
                      vptable=multiband)
+        check_negative_power(work, seed, point, results)
+        check_projected_image(work, seed, model, work / 'inverse.tbl', results)
         squint = work / 'polynomial-squint.tbl'
         voltage_table(squint, 'polynomial', squint=True)
         live = scratch_pair(work, seed, None, results, 'polynomial-squint-image', model=model,

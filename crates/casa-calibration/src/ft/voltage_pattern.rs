@@ -163,7 +163,7 @@ fn legacy_radial_setup(
     record: &RecordValue,
     requested_squint: bool,
     allow_curves: bool,
-) -> MsResult<(Arc<Admitted<BeamPattern>>, Option<BeamSquintLaw>)> {
+) -> MsResult<TableVoltagePattern> {
     let (peak, retained) = voltage_pattern::radial_curve_storage(record);
     let mut reservation = admit(
         host,
@@ -191,7 +191,22 @@ fn legacy_radial_setup(
     } else {
         None
     };
-    Ok((Arc::new(Admitted { value, reservation }), squint))
+    let projected_image = allow_curves
+        && matches!(
+            text(record, "name"),
+            Some("POLY" | "IPOLY" | "COSPOLY" | "NUMERIC")
+        );
+    Ok(TableVoltagePattern {
+        pattern: Arc::new(Admitted { value, reservation }),
+        squint,
+        projected_image,
+    })
+}
+
+struct TableVoltagePattern {
+    pattern: Arc<Admitted<BeamPattern>>,
+    squint: Option<BeamSquintLaw>,
+    projected_image: bool,
 }
 
 /// A radial voltage pattern selected for the imager's next prediction.
@@ -686,7 +701,7 @@ impl ImagerVoltagePattern {
         let component_squint = squint;
         let squint_law = if squint {
             match (custom.as_ref(), default_beam) {
-                (Some((_, law)), _) => *law,
+                (Some(custom), _) => custom.squint,
                 // PBMath1DEVLA supplies its radial fit when squint is requested.
                 (None, Some((PrimaryBeam::Evla, _))) => None,
                 (None, Some((beam, reference_hz))) if telescope == "VLA" && beam.squints() => {
@@ -706,8 +721,11 @@ impl ImagerVoltagePattern {
                 "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
             ));
         }
-        let pattern = if let Some((pattern, _)) = custom {
-            pattern
+        let projected_model = custom.as_ref().is_some_and(|custom| custom.projected_image)
+            || (telescope == "VLA" && self.table.is_none())
+            || matches!(squint_law, Some(BeamSquintLaw::Table { .. }));
+        let pattern = if let Some(custom) = custom {
+            custom.pattern
         } else {
             let reservation = reserve_radial_lookup(&host)?;
             let value = match default_beam {
@@ -773,8 +791,7 @@ impl ImagerVoltagePattern {
             pattern,
             centre,
             frame,
-            projected_model: (telescope == "VLA" && self.table.is_none())
-                || matches!(squint_law, Some(BeamSquintLaw::Table { .. })),
+            projected_model,
             squint,
             component_squint,
         })
