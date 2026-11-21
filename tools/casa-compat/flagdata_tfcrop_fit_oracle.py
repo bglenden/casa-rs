@@ -136,6 +136,25 @@ def check_equal_axis_lengths(libraries):
             assert not row_flags.any()
 
 
+def check_full_row(libraries):
+    empty, _, broad = make_fixture("broadband-all.ms")
+    with table("broadband-all.ms", readonly=False, ack=False) as main:
+        data = np.ones_like(main.getcol("DATA"))
+        data[broad, :, :] = 30.
+        main.putcol("DATA", data)
+    expected = empty.copy()
+    expected[broad, :, :] = True
+    for name, task in libraries:
+        path = f"broadband-all-{name}.ms"
+        copytree("broadband-all.ms", path)
+        assert task(vis=path, mode="tfcrop", datacolumn="data", antenna="0&1",
+                    flagdimension="time", timefit="poly", timecutoff=2.5, maxnpieces=3,
+                    extendflags=False, flagbackup=False) == {}
+        samples, rows = flags(path)
+        np.testing.assert_array_equal(samples, expected)
+        assert expected.sum() == 64 and not rows.any()
+
+
 def check_commands(libraries):
     written = []
     for name, task in libraries:
@@ -165,6 +184,7 @@ def main():
         fits = check_fits(libraries)
         refusals = check_invalid_schema(libraries)
         check_equal_axis_lengths(libraries)
+        check_full_row(libraries)
         check_commands(libraries)
     print(f"{fits} TFCrop fitting and window products, {refusals} refusals, equal-axis controls "
           "and saved commands verified")

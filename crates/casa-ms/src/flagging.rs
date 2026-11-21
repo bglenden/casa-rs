@@ -1336,20 +1336,16 @@ fn apply_tfcrop_flags(
         for group in groups.values() {
             for by_corr in samples_by_corr(group) {
                 for &direction in options.passes.directions() {
-                    let (fit, cutoff, candidates) = match direction {
-                        TfcropDirection::Freq => {
-                            (options.frequency_fit, request.freqcutoff, &mut freq_flags)
-                        }
-                        TfcropDirection::Time => {
-                            (options.time_fit, request.timecutoff, &mut time_flags)
-                        }
+                    let (cutoff, candidates) = match direction {
+                        TfcropDirection::Freq => (request.freqcutoff, &mut freq_flags),
+                        TfcropDirection::Time => (request.timecutoff, &mut time_flags),
                     };
                     tfcrop_fit_base_and_flag(
                         &by_corr,
                         direction,
-                        fit,
                         cutoff,
                         options,
+                        request.casa_row_selection,
                         &mut modified,
                         candidates,
                     );
@@ -1381,8 +1377,13 @@ fn apply_tfcrop_flags(
             },
         })
     });
-    let mut changes =
-        apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms, true)?;
+    let mut changes = apply_flag_mask_with_preloaded(
+        &samples,
+        &modified,
+        loaded.flags_by_row,
+        ms,
+        !request.casa_row_selection,
+    )?;
     let applied_ms = started.elapsed().as_millis();
     changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
     trace_flagdata(|| {
@@ -2317,9 +2318,9 @@ impl Default for TfcropOptions {
 fn tfcrop_fit_base_and_flag(
     samples: &[Sample],
     direction: TfcropDirection,
-    fit: TfcropFit,
     cutoff: f64,
     options: &TfcropOptions,
+    casa_arithmetic: bool,
     modified: &mut [bool],
     direction_flags: &mut [bool],
 ) {
@@ -2367,11 +2368,21 @@ fn tfcrop_fit_base_and_flag(
         return;
     }
 
+    let fit = match direction {
+        TfcropDirection::Freq => options.frequency_fit,
+        TfcropDirection::Time => options.time_fit,
+    };
     let avg_fit = match fit {
-        TfcropFit::Line => tfcrop_fit_piecewise_poly(&avg_dat, &mut avg_flag, 1, 1),
-        TfcropFit::Poly => {
-            tfcrop_fit_piecewise_poly(&avg_dat, &mut avg_flag, options.max_pieces, 4)
+        TfcropFit::Line => {
+            tfcrop_fit_piecewise_poly(&avg_dat, &mut avg_flag, 1, 1, casa_arithmetic)
         }
+        TfcropFit::Poly => tfcrop_fit_piecewise_poly(
+            &avg_dat,
+            &mut avg_flag,
+            options.max_pieces,
+            4,
+            casa_arithmetic,
+        ),
     };
 
     for key1 in &axis1 {
@@ -2381,7 +2392,7 @@ fn tfcrop_fit_base_and_flag(
             let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
             if let Some(sample) = by_row_chan.get(&(row, chan)) {
                 flags[i0] = sample_is_modified(sample, modified);
-                if !flags[i0] && avg_fit[i0].abs() > f32::EPSILON {
+                if !flags[i0] && (casa_arithmetic || avg_fit[i0].abs() > f32::EPSILON) {
                     normalized[i0] = tfcrop_value(sample) / avg_fit[i0];
                 }
             } else {
@@ -2393,7 +2404,7 @@ fn tfcrop_fit_base_and_flag(
         let mut sd = 0.0;
         for _ in 0..5 {
             sd = tfcrop_std_about_mean(&normalized, &flags, 1.0);
-            if !sd.is_finite() || sd <= f32::EPSILON {
+            if !casa_arithmetic && (!sd.is_finite() || sd <= f32::EPSILON) {
                 break;
             }
             for i0 in 0..axis0.len() {
@@ -2476,6 +2487,7 @@ fn tfcrop_fit_piecewise_poly(
     flag: &mut [bool],
     max_pieces: usize,
     max_degree: usize,
+    casa_arithmetic: bool,
 ) -> Vec<f32> {
     let mut tdata = data.to_vec();
     for i in 0..tdata.len() {
@@ -2538,9 +2550,17 @@ fn tfcrop_fit_piecewise_poly(
                 (0, tdata.len() - 1)
             };
             if degree == 1 {
-                tfcrop_line_fit(&tdata, flag, &mut fitted, left, right);
+                tfcrop_line_fit(&tdata, flag, &mut fitted, left, right, casa_arithmetic);
             } else {
-                tfcrop_poly_fit(&tdata, flag, &mut fitted, left, right, degree);
+                tfcrop_poly_fit(
+                    &tdata,
+                    flag,
+                    &mut fitted,
+                    left,
+                    right,
+                    degree,
+                    casa_arithmetic,
+                );
             }
         }
 
@@ -2570,10 +2590,17 @@ fn tfcrop_fit_piecewise_poly(
     fitted
 }
 
-fn tfcrop_line_fit(data: &[f32], flag: &[bool], fit: &mut [f32], left: usize, right: usize) {
+fn tfcrop_line_fit(
+    data: &[f32],
+    flag: &[bool],
+    fit: &mut [f32],
+    left: usize,
+    right: usize,
+    casa_arithmetic: bool,
+) {
     let mean = tfcrop_mean(data, flag);
     let sd = tfcrop_std_about_mean(data, flag, mean);
-    if !sd.is_finite() || sd <= f32::EPSILON {
+    if !casa_arithmetic && (!sd.is_finite() || sd <= f32::EPSILON) {
         for fitted in fit.iter_mut().take(right + 1).skip(left) {
             *fitted = mean;
         }
@@ -2584,19 +2611,29 @@ fn tfcrop_line_fit(data: &[f32], flag: &[bool], fit: &mut [f32], left: usize, ri
     let mut sum_y = 0.0f32;
     let mut sum_xx = 0.0f32;
     let mut sum_xy = 0.0f32;
-    let weight = 1.0f32 / (sd * sd);
+    let variance = sd * sd;
+    let weight = 1.0f32 / variance;
+    // CASA lets a degenerate fit produce IEEE non-finite values. The
+    // normalized pass then leaves the flags alone in that fit direction.
+    let weighted = |term| {
+        if casa_arithmetic {
+            term / variance
+        } else {
+            term * weight
+        }
+    };
     for i in left..=right {
         if !flag[i] {
             let x = i as f32;
             sum_w += weight;
-            sum_x += x * weight;
-            sum_y += data[i] * weight;
-            sum_xx += x * x * weight;
-            sum_xy += x * data[i] * weight;
+            sum_x += weighted(x);
+            sum_y += weighted(data[i]);
+            sum_xx += weighted(x * x);
+            sum_xy += weighted(x * data[i]);
         }
     }
     let denom = sum_w * sum_xx - sum_x * sum_x;
-    if denom.abs() <= f32::EPSILON {
+    if !casa_arithmetic && denom.abs() <= f32::EPSILON {
         for fitted in fit.iter_mut().take(right + 1).skip(left) {
             *fitted = mean;
         }
@@ -2616,6 +2653,7 @@ fn tfcrop_poly_fit(
     left: usize,
     right: usize,
     degree: usize,
+    casa_arithmetic: bool,
 ) {
     let rows = (left..=right)
         .filter(|index| !flag[*index])
@@ -2628,11 +2666,11 @@ fn tfcrop_poly_fit(
         })
         .collect::<Vec<_>>();
     if rows.len() <= degree {
-        tfcrop_line_fit(data, flag, fit, left, right);
+        tfcrop_line_fit(data, flag, fit, left, right, casa_arithmetic);
         return;
     }
     let Some(solution) = solve_weighted_least_squares(&rows, degree + 1) else {
-        tfcrop_line_fit(data, flag, fit, left, right);
+        tfcrop_line_fit(data, flag, fit, left, right, casa_arithmetic);
         return;
     };
     for (i, fitted) in fit.iter_mut().enumerate().take(right + 1).skip(left) {
@@ -4112,7 +4150,7 @@ mod tests {
     fn tfcrop_fitting_helpers_cover_zero_interpolation_and_fallbacks() {
         let data = [1.0, 0.0, 3.0, 4.0, 40.0, 6.0, 7.0, 8.0, 9.0];
         let mut flags = vec![false; data.len()];
-        let fit = tfcrop_fit_piecewise_poly(&data, &mut flags, 7, 4);
+        let fit = tfcrop_fit_piecewise_poly(&data, &mut flags, 7, 4, false);
         assert_eq!(fit.len(), data.len());
         assert!(fit.iter().all(|value| value.is_finite()));
         assert!(flags.iter().any(|flag| *flag));
@@ -4124,6 +4162,7 @@ mod tests {
             &mut all_flagged_fit,
             0,
             2,
+            false,
         );
         assert_eq!(all_flagged_fit, vec![0.0, 0.0, 0.0]);
 
@@ -4135,6 +4174,7 @@ mod tests {
             0,
             2,
             3,
+            false,
         );
         assert_eq!(fallback_fit, vec![1.0, 1.0, 1.0]);
         assert_eq!(tfcrop_mean(&[1.0, 3.0], &[false, false]), 2.0);
@@ -4396,9 +4436,9 @@ mod tests {
         tfcrop_fit_base_and_flag(
             &[],
             TfcropDirection::Freq,
-            TfcropFit::Poly,
             1.0,
             &TfcropOptions::default(),
+            false,
             &mut modified,
             &mut direction_flags,
         );
@@ -4413,9 +4453,9 @@ mod tests {
         tfcrop_fit_base_and_flag(
             &samples,
             TfcropDirection::Time,
-            TfcropFit::Line,
             1.0,
             &TfcropOptions::default(),
+            false,
             &mut modified,
             &mut direction_flags,
         );
@@ -4423,12 +4463,12 @@ mod tests {
         assert_eq!(direction_flags, vec![false; samples.len()]);
 
         let mut flagged = vec![false, true, false, true];
-        let fit = tfcrop_fit_piecewise_poly(&[0.0, 0.0, 2.0, 0.0], &mut flagged, 3, 2);
+        let fit = tfcrop_fit_piecewise_poly(&[0.0, 0.0, 2.0, 0.0], &mut flagged, 3, 2, false);
         assert_eq!(fit.len(), 4);
         assert!(fit.iter().all(|value| value.is_finite()));
 
         let mut all_zero_flags = vec![false, false];
-        let all_zero_fit = tfcrop_fit_piecewise_poly(&[0.0, 0.0], &mut all_zero_flags, 1, 1);
+        let all_zero_fit = tfcrop_fit_piecewise_poly(&[0.0, 0.0], &mut all_zero_flags, 1, 1, false);
         assert_eq!(all_zero_fit, vec![0.0, 0.0]);
         assert_eq!(all_zero_flags, vec![true, true]);
     }
