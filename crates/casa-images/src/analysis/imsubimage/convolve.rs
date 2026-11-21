@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+mod fft;
+
 use std::path::Path;
 
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
@@ -146,6 +148,9 @@ impl ImageConvolution {
             .map(|(((&width, &mid), &low), &len)| width.min(mid.saturating_add(len)) - low)
             .collect::<Vec<_>>();
         let kernel_cursor = bounded_read_cursor(support.clone())?;
+        // A zero divisor poisons an active FFT plane. With a fully
+        // degenerate kernel the selected center coefficient is scalar.
+        let invalid_normalization = divisor == Some(0.0) && support.iter().any(|&width| width > 1);
 
         let selection = &self.section.selection;
         let unit = vec![1; shape.len()];
@@ -189,6 +194,12 @@ impl ImageConvolution {
                 output.put_mask_slice("mask0", &mask, &tile.position)?;
             }
 
+            if invalid_normalization {
+                result.fill(f64::NAN);
+                output.put_slice(&result.mapv(T::from_f64), &tile.position)?;
+                continue;
+            }
+
             for patch in tiles(&support, kernel_cursor.clone()) {
                 let patch = patch?;
                 let start = patch
@@ -197,7 +208,9 @@ impl ImageConvolution {
                     .zip(&first)
                     .map(|(&i, &lo)| i + lo)
                     .collect::<Vec<_>>();
-                let weights = kernel.read(&start, &patch.shape)?;
+                let weights = kernel
+                    .read(&start, &patch.shape)?
+                    .mapv(|weight| scaling.apply::<T>(weight.into()));
                 let delta = center
                     .iter()
                     .enumerate()
@@ -243,20 +256,33 @@ impl ImageConvolution {
                         start: &data_start,
                         shape: &piece.shape,
                     };
-                    for (index, &weight) in weights.indexed_iter() {
-                        let offsets = delta.iter().enumerate().map(|(axis, &lo)| {
-                            lo + index.slice().get(axis).copied().unwrap_or_default() as isize
-                        });
-                        let Some(overlap) = output_region.overlap(data_region, offsets) else {
-                            continue;
+                    if let Some(convolved) = fft::convolve_block(&data, &weights)? {
+                        let block = Window {
+                            start: &data_start,
+                            shape: convolved.shape(),
                         };
-                        let weight = scaling.apply::<T>(weight.into());
-                        let source = data.slice_each_axis(|axis| overlap[axis.axis.index()].0);
-                        let target =
-                            result.slice_each_axis_mut(|axis| overlap[axis.axis.index()].1);
-                        Zip::from(target)
-                            .and(source)
-                            .for_each(|accum, &value| *accum += weight * value);
+                        accumulate(
+                            &mut result,
+                            output_region,
+                            &convolved,
+                            block,
+                            delta.iter().copied(),
+                            1.,
+                        );
+                    } else {
+                        for (index, &weight) in weights.indexed_iter() {
+                            let offsets = delta.iter().enumerate().map(|(axis, &lo)| {
+                                lo + index.slice().get(axis).copied().unwrap_or_default() as isize
+                            });
+                            accumulate(
+                                &mut result,
+                                output_region,
+                                &data,
+                                data_region,
+                                offsets,
+                                weight,
+                            );
+                        }
                     }
                 }
             }
@@ -290,6 +316,23 @@ impl Scaling {
             Self::Divide(sum) => value / T::from_f64(sum).into(),
         };
         T::from_f64(result).into()
+    }
+}
+
+fn accumulate(
+    result: &mut ArrayD<f64>,
+    destination: Window<'_>,
+    input: &ArrayD<f64>,
+    source: Window<'_>,
+    offsets: impl Iterator<Item = isize>,
+    weight: f64,
+) {
+    if let Some(overlap) = destination.overlap(source, offsets) {
+        let source = input.slice_each_axis(|axis| overlap[axis.axis.index()].0);
+        let target = result.slice_each_axis_mut(|axis| overlap[axis.axis.index()].1);
+        Zip::from(target)
+            .and(source)
+            .for_each(|accum, &value| *accum += weight * value);
     }
 }
 

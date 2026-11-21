@@ -168,7 +168,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
             param("stretch", K::Bool, Bool(false)),
         ],
-        R::Tool,
+        R::Any,
         Yes,
     ),
     method(
