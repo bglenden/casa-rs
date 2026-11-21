@@ -8269,6 +8269,10 @@ It also accepts nonfinite samples, which can turn even finite input
 positions into `NaN`. casa-rs rejects these samples before changing the
 coordinate. Finite one-sample tables still define constant mappings.
 
+CASA also replaces the samples when either argument is a tuple, then raises
+a Python `SystemError` after the replacement. casa-rs raises the Python
+error before changing the coordinate.
+
 ## `image.statistics` can overwrite a logfile omitted from the current call
 
 With CASA 6.7.6.14, call `ia.statistics(logfile='report.txt')`, replace

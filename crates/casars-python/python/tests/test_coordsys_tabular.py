@@ -26,7 +26,7 @@ def test_interpolation_and_extrapolation(pixels, worlds, sample, expected):
     cs = tools.coordsys().newcoordsys(tabular=True)
     assert cs.settabular(pixels, worlds)
     np.testing.assert_allclose(cs.toworldmany([sample])["numeric"], [expected])
-    np.testing.assert_allclose(cs.topixelmany([expected])["numeric"], [sample])
+    np.testing.assert_allclose(cs.topixelmany(np.array([expected], dtype=float))["numeric"], [sample])
 
 
 def test_selection_uses_creation_order_and_reuses_live_world_samples(casa):
@@ -126,7 +126,6 @@ def test_default_and_bad_arguments_leave_original_coordinate(casa):
             (([0, 1], [2, 3], -1), RuntimeError, "must be >= 0"),
             (([0, 1], [2, 3], None), RuntimeError, "must be >= 0"),
             (([0, 1], [2, 3], 1), RuntimeError, "could not be found"),
-            (((0, 1), [2, 3], 0), SystemError, "with an exception set"),
             (([0, 1], [2, 3], 0.9), TypeError, "must be an integer"),
         ):
             with pytest.raises(error, match=phrase):
@@ -143,6 +142,19 @@ def test_unusable_samples_preserve_the_prior_mapping():
     with pytest.raises(RuntimeError, match="monotonically"):
         cs.settabular([0, 0, 2], [5, 6, 7])
     _assert_value(cs.torecord(), before)
+
+
+def test_tuple_binding_error_preserves_samples(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(tabular=True)
+        assert cs.settabular([0, 1, 3], [1, 2, 5])
+        before = cs.torecord()
+        with pytest.raises(SystemError, match="with an exception set"):
+            cs.settabular((0, 1), [2, 3])
+        if api is tools:
+            _assert_value(cs.torecord(), before)
+        else:
+            np.testing.assert_array_equal(cs.torecord()["tabular0"]["worldvalues"], [2, 3])
 
 
 @pytest.mark.parametrize("single", [False, True])
