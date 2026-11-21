@@ -461,3 +461,33 @@ def test_sigma_output_can_replace_a_closed_native_product(casa, tmp_path):
         assert _fit(api, data, ngauss=0, poly=1, sigma=values, outsigma=path)["valid"].all()
         for reader in (casa, tools):
             np.testing.assert_allclose(_read(reader, path)[0][0, 0], values/8.)
+
+
+@pytest.mark.parametrize("frame", ["GALACTIC", "ECLIPTIC", "conversion"])
+def test_profile_direction_reports_the_frame_used_for_the_angles(casa, frame):
+    coords = casa.coordsys()
+    assert coords.newcoordsys(direction=True, spectral=True)
+    if frame == "conversion":
+        assert coords.setconversiontype(direction="GALACTIC")
+    else:
+        assert coords.setreferencecode(value=frame, type="direction", adjust=False)
+    assert coords.setreferencepixel([0, 0, 0])
+    assert coords.setreferencevalue(value=[.1, .2, 1.4e9])
+    assert coords.setincrement(value=[-.0002, .0002, 1000])
+    csys = coords.torecord()
+    coords.done()
+    data = _cube(_line(np.arange(11.), 3., 5., 4.), (1, 1))
+    arguments = dict(pampest=3., pcenterest=5., pfwhmest=4.)
+    expected = _fit(casa, data, csys, **arguments)
+    native = _fit(tools, data, csys, **arguments)
+    if frame == "conversion":
+        assert expected["direction"].item().startswith("J2000 ")
+        name, longitude, latitude = native["direction"].item().split()
+        assert name == "GALACTIC"
+        # CASA evaluated the same coordinates in the converted frame, then
+        # formatted their longitude as equatorial hours.
+        np.testing.assert_allclose([float(longitude), float(latitude)],
+                                   [96.3432845, -60.1862163], atol=5e-6)
+        _compare_records(native, expected, compare_direction=False)
+    else:
+        _compare_records(native, expected)

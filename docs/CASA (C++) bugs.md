@@ -8951,3 +8951,8 @@ box supplies 23 pixels on the requested axis. The spectral-axis branch
 precomputes its abscissa and the alternate-axis branch fails to supply
 one. Casa-rs derives the fit abscissa from the requested pixel axis and
 reports its center and width in that axis's world units.
+
+With a Galactic conversion frame on a J2000 image, the angles in the
+`fitprofile` direction record are Galactic but CASA labels and formats
+them as equatorial. Casa-rs reports the conversion frame and displays
+its longitude and latitude in degrees.

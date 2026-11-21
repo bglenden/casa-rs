@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate};
-use casa_types::measures::direction::{format_declination, format_right_ascension};
+use casa_types::measures::direction::{DirectionRef, format_declination, format_right_ascension};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::quanta::Unit;
+use casa_types::quanta::format::{DIG2, TIME, format_angle};
 use casa_types::{ScalarValue, Value};
 
 use crate::ImageError;
@@ -130,12 +131,43 @@ impl<'a> ProfileAxis<'a> {
         let Ok(world) = self.coordinates.to_world(position) else {
             return String::new();
         };
-        format!(
-            "{} {} {}",
-            direction.conversion_direction_ref().as_str(),
-            format_right_ascension(world[*lon], 3),
-            format_declination(world[*lat], 3)
-        )
+        let frame = direction.conversion_direction_ref();
+        let longitude = world[*lon];
+        let latitude = world[*lat];
+        let angles = match frame {
+            DirectionRef::GALACTIC
+            | DirectionRef::SUPERGAL
+            | DirectionRef::ITRF
+            | DirectionRef::AZEL
+            | DirectionRef::AZELSW
+            | DirectionRef::AZELGEO
+            | DirectionRef::AZELSWGEO => {
+                format!(
+                    "{:.6} {:.6}",
+                    longitude.to_degrees().rem_euclid(360.),
+                    latitude.to_degrees()
+                )
+            }
+            DirectionRef::ECLIPTIC | DirectionRef::MECLIPTIC | DirectionRef::TECLIPTIC => {
+                let longitude = (longitude.to_degrees() + 180.).rem_euclid(360.) - 180.;
+                format!("{longitude:.6} {:.6}", latitude.to_degrees())
+            }
+            DirectionRef::HADEC => {
+                format!(
+                    "{} {}",
+                    format_angle(longitude, TIME | DIG2, 9),
+                    format_declination(latitude, 3)
+                )
+            }
+            _ => {
+                format!(
+                    "{} {}",
+                    format_right_ascension(longitude, 3),
+                    format_declination(latitude, 3)
+                )
+            }
+        };
+        format!("{} {angles}", frame.as_str())
     }
 
     fn pixels(&self, position: &[f64], center: f64) -> Vec<f64> {
