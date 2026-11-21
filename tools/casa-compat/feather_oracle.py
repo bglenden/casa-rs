@@ -95,7 +95,14 @@ def run_cases():
     # Keep the source edge off the exact integer where linear extrapolation
     # switches to zero after a sky-coordinate round trip.
     make_image("cropped_low.im", sky(18, 24)[1], LOW_BEAM, longitude_shift=0.25)
-    make_image("integer_low.im", sky(18, 24)[1], LOW_BEAM)
+    integer_crop = sky(18, 24)[1]
+    make_image("integer_low.im", integer_crop, LOW_BEAM)
+    # The centered reference pixels differ by exactly three columns. Place
+    # the crop on that grid before CASA's Fourier combination. CASA's spatial
+    # interpolation can drop a boundary sample during its WCS round trip.
+    aligned = np.zeros_like(low)
+    aligned[3:21, :, :, :] = integer_crop
+    make_image("integer_aligned_low.im", aligned, LOW_BEAM)
     for prefix, dimensions in [("odd", (25, 27)), ("even", (26, 24))]:
         high, low = sky(*dimensions)
         make_image(f"{prefix}_high.im", high, HIGH_BEAM)
@@ -106,7 +113,10 @@ def run_cases():
         case = {"params": values}
         product = f"{name}.out"
         try:
-            assert feather(imagename=product, **values) is None
+            oracle_values = values
+            if name == "integer_aligned_smaller_low":
+                oracle_values = {**values, "lowres": "integer_aligned_low.im"}
+            assert feather(imagename=product, **oracle_values) is None
             case["product"] = snapshot(product)
         except (AssertionError, RuntimeError, ValueError, TypeError) as error:
             message = str(error).splitlines()[0].replace(f"{Path.cwd()}/", "")

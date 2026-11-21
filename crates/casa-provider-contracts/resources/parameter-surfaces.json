@@ -27947,7 +27947,7 @@
             "kind": "literal",
             "value": {
               "kind": "bool",
-              "value": false
+              "value": true
             }
           },
           "required_when": {
@@ -27958,14 +27958,14 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": "casa-rs's own control: CASA's feather has no overwrite parameter.",
+          "surface_note": "CASA replaces an existing output image. Set this control to false to refuse replacement.",
           "projections": {
             "cli": {
               "positional": null,
               "flags": [
                 "--overwrite"
               ],
-              "false_flags": [],
+              "false_flags": ["--no-overwrite"],
               "metavar": null
             },
             "provider": {

@@ -721,8 +721,8 @@ pub struct FeatherRequest {
     /// Low-pass filter the dish image at its nominal diameter when no positive diameter is given.
     #[serde(default)]
     pub lowpassfiltersd: bool,
-    /// Replace an existing output image.
-    #[serde(default)]
+    /// Replace an existing output image. CASA feather replaces by default.
+    #[serde(default = "default_true")]
     pub overwrite: bool,
 }
 

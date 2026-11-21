@@ -1297,7 +1297,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>sdfactor</code> | <code>parameter.sdfactor@r1</code> | <code>float</code> | <code>1.0</code>; optional | Feather | Single-dish scaling factor |
 | <code>effdishdiam</code> | <code>feather.effdishdiam@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Feather | Effective single-dish diameter in metres; a negative value keeps the image's beam. |
 | <code>lowpassfiltersd</code> | <code>feather.lowpassfiltersd@r1</code> | <code>bool</code> | <code>false</code>; optional | Feather | Filter the single-dish image's high spatial frequencies out. |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file<br><em>Surface:</em> casa-rs's own control: CASA's feather has no overwrite parameter. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Replace an existing output file<br><em>Surface:</em> CASA replaces an existing output image. Set this control to false to refuse replacement. |
 
 <a id="surface-importfits"></a>
 
