@@ -3,7 +3,9 @@
 use std::{path::Path, sync::Arc};
 
 use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
-use casa_ms::voltage_pattern::{VoltagePatternTable, radial_pattern};
+use casa_ms::voltage_pattern::{
+    VoltagePatternTable, radial_curve_storage, radial_lookup, radial_pattern,
+};
 use casa_types::{
     RecordValue, ScalarValue, Value,
     quanta::{Quantity, Unit},
@@ -190,100 +192,11 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
     })
 }
 
-fn numbers(record: &RecordValue, name: &str) -> SimulatorResult<Vec<f64>> {
-    match record.get(name) {
-        Some(Value::Array(casa_types::ArrayValue::Float64(values))) if values.ndim() == 1 => {
-            Ok(values.iter().copied().collect())
-        }
-        _ => Err(raised(format!("missing numeric vector {name}"))),
-    }
-}
-
 fn saved_curve(session: &Simulator, record: &RecordValue) -> SimulatorResult<BeamSource> {
-    let ghz = quantity(record, "reffreq", "GHz")?;
-    let radius = quantity(record, "maxrad", "arcmin")? * ghz;
-    if !ghz.is_finite() || ghz <= 0. || !radius.is_finite() || radius <= 0. {
-        return Err(raised(
-            "reference frequency and support must be finite and positive",
-        ));
-    }
-    let voltage = boolean(record, "isthisvp")?;
-    if text(record, "name")? == "IPOLY" && record.get("fitfreqs").is_some() {
-        return saved_frequency_curve(session, record, radius, voltage);
-    }
-    let mut reservation = reserve(session, 2 * BeamPattern::BYTES + 256)?;
-    let pattern = match text(record, "name")? {
-        "POLY" | "IPOLY" => BeamPattern::polynomial(
-            radius,
-            &numbers(record, "coeff")?,
-            text(record, "name")? == "IPOLY",
-            voltage,
-        ),
-        "COSPOLY" => BeamPattern::cosine_polynomial(
-            radius,
-            &numbers(record, "coeff")?,
-            &numbers(record, "scale")?
-                .into_iter()
-                .map(|scale| scale / ghz)
-                .collect::<Vec<_>>(),
-            voltage,
-        ),
-        "NUMERIC" => BeamPattern::numeric(
-            radius,
-            &numbers(record, "vect")?
-                .into_iter()
-                .map(|v| v as f32)
-                .collect::<Vec<_>>(),
-            voltage,
-        ),
-        _ => unreachable!("the selected radial curve form"),
-    }
-    .ok_or_else(|| raised("invalid support, coefficients or voltage samples"))?;
-    reservation.retain(BeamPattern::BYTES + 128);
-    Ok(BeamSource::Tabulated(Arc::new(Admitted {
-        value: pattern,
-        reservation,
-    })))
-}
-
-fn saved_frequency_curve(
-    session: &Simulator,
-    record: &RecordValue,
-    radius: f64,
-    voltage: bool,
-) -> SimulatorResult<BeamSource> {
-    let Some(Value::Array(casa_types::ArrayValue::Float64(coefficients))) = record.get("coeff")
-    else {
-        return Err(raised("missing coefficient matrix"));
-    };
-    let Some(Value::Array(casa_types::ArrayValue::Float64(frequencies))) = record.get("fitfreqs")
-    else {
-        return Err(raised("missing fit frequency vector"));
-    };
-    if coefficients.ndim() != 2
-        || frequencies.ndim() != 1
-        || coefficients.shape()[1] != frequencies.len()
-    {
-        return Err(raised(
-            "coefficient columns and fit frequencies do not match",
-        ));
-    }
-    let bytes = ((coefficients.len() + frequencies.len()) * size_of::<f64>()) as u64;
-    let mut reservation = reserve(session, 2 * bytes + 256)?;
-    let mut columns = Vec::with_capacity(coefficients.len());
-    for fit in 0..frequencies.len() {
-        for power in 0..coefficients.shape()[0] {
-            columns.push(coefficients[[power, fit]]);
-        }
-    }
-    let pattern = BeamPattern::frequency_inverse_polynomial(
-        radius,
-        columns,
-        frequencies.iter().copied().collect(),
-        voltage,
-    )
-    .ok_or_else(|| raised("invalid inverse-polynomial fit matrix or frequencies"))?;
-    reservation.retain(bytes + 256);
+    let (peak, retained) = radial_curve_storage(record);
+    let mut reservation = reserve(session, peak)?;
+    let pattern = radial_lookup(record).map_err(raised)?;
+    reservation.retain(retained);
     Ok(BeamSource::Tabulated(Arc::new(Admitted {
         value: pattern,
         reservation,
@@ -294,13 +207,6 @@ fn text<'a>(record: &'a RecordValue, field: &str) -> SimulatorResult<&'a str> {
     match record.get(field) {
         Some(Value::Scalar(ScalarValue::String(value))) => Ok(value),
         _ => Err(raised(format!("missing string {field}"))),
-    }
-}
-
-fn boolean(record: &RecordValue, field: &str) -> SimulatorResult<bool> {
-    match record.get(field) {
-        Some(Value::Scalar(ScalarValue::Bool(value))) => Ok(*value),
-        _ => Err(raised(format!("missing boolean {field}"))),
     }
 }
 

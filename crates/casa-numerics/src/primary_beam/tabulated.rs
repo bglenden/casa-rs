@@ -60,7 +60,9 @@ impl BeamPattern {
                 power *= radius * radius;
             }
             if !is_voltage {
-                value = value.sqrt();
+                // PBMath1D masks each NaN from a negative power sample
+                // when it applies the lookup.
+                value = value.max(0.).sqrt();
             }
             if inverse && value != 0. {
                 value = 1. / value;
@@ -97,7 +99,7 @@ impl BeamPattern {
             if is_voltage {
                 value as f32
             } else {
-                value.sqrt() as f32
+                value.max(0.).sqrt() as f32
             }
         })
     }
