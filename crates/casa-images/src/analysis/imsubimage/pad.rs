@@ -68,8 +68,14 @@ impl<'a> ImagePad<'a> {
             image,
             options.box_selection,
             options.region,
-            options.channels,
-            options.stokes,
+            options.channels.filter(|text| {
+                !text.trim().eq_ignore_ascii_case("all")
+                    && image.find_axis(CoordinateType::Spectral).is_some()
+            }),
+            options.stokes.filter(|text| {
+                !text.trim().eq_ignore_ascii_case("all")
+                    && image.find_axis(CoordinateType::Stokes).is_some()
+            }),
         )?;
         if selection.has_multiple_regions {
             return Err(ImageError::CasaSelection(

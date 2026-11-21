@@ -177,3 +177,19 @@ def test_pad_rejects_unsupported_pixel_or_coordinate_types(casa):
                 parent.pad()
             np.testing.assert_array_equal(parent.getchunk(), pixels)
             parent.done()
+
+
+def test_nan_fill_and_selectors_on_absent_axes_match_casa(casa):
+    data = np.arange(12, dtype=np.float32).reshape(3, 4)
+    for api in (tools, casa):
+        parent = api.image()
+        assert parent.fromarray(pixels=data)
+        product = parent.pad(region="", chans="1", stokes="Q", value=float("nan"), padmask=True)
+        try:
+            expected = np.pad(data, ((1, 1), (1, 1)), constant_values=np.nan)
+            np.testing.assert_array_equal(product.getchunk(), expected)
+            assert product.getchunk(getmask=True).all()
+            assert "value=nan" in product.history()[-3]
+        finally:
+            product.done()
+            parent.done()

@@ -191,7 +191,8 @@ impl PyImageTool {
                     let selected = region.value.as_ref().map_or_else(
                         || region.empty_history.into(), Region::history,
                     );
-                    output.record_history("pad", format!("ia.pad(outfile={outfile:?}, npixels={npixels}, value={value:.6}, padmask={padmask}, overwrite={overwrite}, region={selected}, box={box:?}, chans={chans:?}, stokes={stokes:?}, mask={mask:?}, stretch={stretch}, wantreturn={wantreturn})", box = r#box))?;
+                    let value = if value.is_nan() { "nan".into() } else { format!("{value:.6}") };
+                    output.record_history("pad", format!("ia.pad(outfile={outfile:?}, npixels={npixels}, value={value}, padmask={padmask}, overwrite={overwrite}, region={selected}, box={box:?}, chans={chans:?}, stokes={stokes:?}, mask={mask:?}, stretch={stretch}, wantreturn={wantreturn})", box = r#box))?;
                 }
                 let source_name = input.path().map_or_else(
                     || "Temporary_Image".into(),
