@@ -159,9 +159,18 @@ pub(super) fn legacy_subimage_coordinates_with_stokes<T: ImagePixel>(
     shape: &[usize],
     stokes: Option<&[StokesType]>,
 ) -> Option<RecordValue> {
-    let Some(Value::Record(mut coords)) = image.table().keywords().get("coords").cloned() else {
+    let Some(Value::Record(coords)) = image.table().keywords().get("coords") else {
         return None;
     };
+    subimage_coordinate_record(coords.clone(), start, shape, stokes)
+}
+
+pub(super) fn subimage_coordinate_record(
+    mut coords: RecordValue,
+    start: &[usize],
+    shape: &[usize],
+    stokes: Option<&[StokesType]>,
+) -> Option<RecordValue> {
     // The image's coordinates were read from this record, so its fields
     // resolve; if not, the output keeps the coordinates casa-rs writes.
     shift_record_reference_pixels(&mut coords, start, shape).ok()?;

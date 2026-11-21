@@ -223,10 +223,15 @@ fn is_fits_file(path: &Path) -> Result<bool, ImageError> {
 
 /// Generate a CASA `immoments`-style moment map.
 pub fn immoments(request: &ImmomentsRequest) -> Result<MomentMapSummary, ImageError> {
+    if request.imagename.is_file() && is_fits_file(&request.imagename)? {
+        let (image, history) =
+            lel_mask::open_fits_expression_with_history::<f32>(&request.imagename, true)?;
+        return immoments::run(&image, image.legacy_coords_ref(), &history, request);
+    }
     let image = AnyPagedImage::open(&request.imagename)?;
     match &image {
-        AnyPagedImage::Float32(image) => immoments::run(image, request),
-        AnyPagedImage::Float64(image) => immoments::run(image, request),
+        AnyPagedImage::Float32(image) => immoments::run_paged(image, request),
+        AnyPagedImage::Float64(image) => immoments::run_paged(image, request),
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
             Err(ImageError::InvalidMetadata(
                 "immoments currently supports real-valued images".to_string(),
@@ -3614,7 +3619,7 @@ fn direction_pixel_area(coords: &CoordinateSystem) -> Option<f64> {
 }
 
 fn combined_selection_mask<T: ImagePixel>(
-    image: &PagedImage<T>,
+    image: &dyn ImageInterface<T>,
     selection: &imsubimage::region::SubimageSelection,
     mask_expr: Option<&str>,
     stretch: bool,
