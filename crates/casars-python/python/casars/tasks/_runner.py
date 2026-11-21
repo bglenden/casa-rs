@@ -377,6 +377,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise Exception(completion.message) from error
             if completion.parameter == "rflag-threshold-file":
                 raise UnboundLocalError(completion.message) from error
+            if completion.parameter == "rflag-threshold-path.not-found":
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), completion.message) from error
+            if completion.parameter == "rflag-threshold-path.is-directory":
+                raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), completion.message) from error
             if completion.parameter == "datacolumn" and column_vector:
                 raise AttributeError(f"'{column_vector}' object has no attribute 'upper'") from error
             if (completion.parameter in ("maxnpieces", "halfwin")

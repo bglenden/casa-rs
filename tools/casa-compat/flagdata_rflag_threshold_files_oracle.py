@@ -75,6 +75,15 @@ def check_arrays(root, source, column, engines):
         ('malformed', 'bad-time.txt', [], 'apply'),
         ('reported', [[0, 0, 1.0]], [], 'calculate'),
         ('tuple', ((0, 0, 0.1),), ((0, 0, 1.2),), 'apply'),
+        ('numpy-float', 100.0, np.float32(0.2), 'apply'),
+        ('numpy-int32', 100.0, np.int32(4), 'apply'),
+        ('numpy-int64', 100.0, np.int64(4), 'apply'),
+        ('numpy-empty', 100.0, np.empty((0, 3)), 'apply'),
+        ('numpy-scalar-array', 100.0, np.array(0.1), 'apply'),
+        ('flat-calculate', [], [0.0, 0.0, 0.2], 'calculate'),
+        ('edited-file', 100.0, 'edited.txt', 'apply'),
+        ('directory-input', 100.0, 'input-dir', 'apply'),
+        ('missing-parent', 'kept.txt', 'missing-parent/freq.txt', 'calculate'),
     ]
     for name, time, frequency, action in matrices:
         result = {}
@@ -86,12 +95,20 @@ def check_arrays(root, source, column, engines):
             original = original_columns(vis)
             with chdir(case):
                 Path('bad-time.txt').write_text('No threshold list\n')
+                Path('edited.txt').write_text("{'name': 'Rflag', 'freqdev': [[0, 0, .2],],}\n")
+                Path('input-dir').mkdir()
+                Path('kept.txt').write_text('previous thresholds\n')
                 report = outcome(task, vis, mode='rflag', datacolumn=column,
                                  action=action, timedev=time, freqdev=frequency,
                                  freqdevscale=-1.0 if name == 'unmatched-scale' else 5.0,
-                                 flagbackup=False, extendflags=False)
+                                 flagbackup=name == 'malformed', extendflags=False)
+                if name == 'missing-parent' and engine == 'native':
+                    assert Path('kept.txt').read_text() == 'previous thresholds\n'
             result[engine] = (report, flags(vis))
             preserved(vis, original)
+            if name == 'malformed':
+                versions = vis.with_name(f'{vis.name}.flagversions')
+                assert_flags(versions / 'flags.flagdata_1', flags(source), version=True)
         compare_report(result['casa'][0], result['native'][0])
         np.testing.assert_array_equal(result['native'][1], result['casa'][1])
         if action == 'calculate' or name in ('flat', 'malformed'):
@@ -105,9 +122,10 @@ def check_saved_commands(root, source, column, engines):
         ('calculate', dict(action='calculate')),
         ('calculate-file', dict(action='calculate', timedev='saved-time.txt', freqdev='saved-freq.txt')),
         ('save-only', dict(action='', timedev=0.1, freqdev=[[0, 0, 1.2]])),
+        ('invalid-file', dict(action='apply', timedev='missing-time.txt', freqdev='flat-freq.txt')),
     ]
     for name, options in cases:
-        commands, reports, observed = {}, {}, {}
+        commands, reports, observed, replay = {}, {}, {}, {}
         for engine, task in engines.items():
             case = root / f'{column}-save-{name}-{engine}'
             case.mkdir()
@@ -115,19 +133,23 @@ def check_saved_commands(root, source, column, engines):
             shutil.copytree(source, vis)
             original = original_columns(vis)
             with chdir(case):
+                Path('flat-freq.txt').write_text("{'name':'Rflag','freqdev':[0,0,0.2]}\n")
                 reports[engine] = outcome(task, vis, mode='rflag', datacolumn=column,
                                           savepars=True, outfile='saved.txt', cmdreason='threshold test',
                                           flagbackup=False, extendflags=False, **options)
                 saved = Path('saved.txt')
                 assert saved.is_file(), (engine, name, reports[engine])
                 commands[engine] = Parser(' ', '=').parse2Dictionary(saved.read_text().strip())
-                if options['action'] == 'calculate':
+                if options['action'] == 'calculate' or name == 'invalid-file':
                     # The reference task reads saved commands from both engines.
                     assert_flags(vis, flags(source))
-                    assert casa.flagdata(str(vis), mode='list', inpfile='saved.txt', flagbackup=False) == {}
+                    replay[engine] = outcome(casa.flagdata, vis, mode='list',
+                                             inpfile='saved.txt', flagbackup=False)
                 observed[engine] = flags(vis)
                 preserved(vis, original)
         compare_report(reports['casa'], reports['native'])
+        if replay:
+            assert replay['casa'] == replay['native'], replay
         assert commands['casa'].keys() == commands['native'].keys()
         for key, expected in commands['casa'].items():
             actual = commands['native'][key]

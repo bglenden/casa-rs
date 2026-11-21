@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
-use casa_ms::flagging::{FlagDataRequest, RFlagThresholdReport};
+use casa_ms::flagging::RFlagThresholdReport;
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
@@ -15,9 +15,25 @@ pub(super) struct ThresholdInput {
     pub(super) scalar: Option<f64>,
     pub(super) by_field_spw: BTreeMap<(i32, i32), f64>,
     pub(super) invalid: bool,
+    file_argument: Option<ParameterValue>,
 }
 
-pub(super) fn threshold_input(
+#[derive(Default)]
+pub(super) struct ThresholdInputs {
+    pub(super) time: ThresholdInput,
+    pub(super) frequency: ThresholdInput,
+}
+
+impl ThresholdInputs {
+    pub(super) fn read(task: &TaskInvocation<'_>, calculate: bool) -> Result<Self, TaskFailure> {
+        Ok(Self {
+            time: threshold_input(task, "timedev", calculate)?,
+            frequency: threshold_input(task, "freqdev", calculate)?,
+        })
+    }
+}
+
+fn threshold_input(
     task: &TaskInvocation<'_>,
     name: &str,
     calculate: bool,
@@ -37,6 +53,10 @@ pub(super) fn threshold_input(
             Ok(ThresholdInput::default())
         }
         ParameterValue::Array(rows) => Ok(matrix(rows)),
+        ParameterValue::ScalarArray(value) if number(value).is_some() => Ok(ThresholdInput {
+            invalid: true,
+            ..ThresholdInput::default()
+        }),
         _ => Ok(ThresholdInput {
             invalid: !calculate,
             ..ThresholdInput::default()
@@ -48,9 +68,7 @@ fn number(value: &ParameterValue) -> Option<f64> {
     match value {
         ParameterValue::Float(value) => Some(*value),
         ParameterValue::Integer(value) => Some(*value as f64),
-        ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value) => {
-            number(value)
-        }
+        ParameterValue::NumpyScalar { value, .. } => number(value),
         _ => None,
     }
 }
@@ -86,8 +104,13 @@ fn matrix(rows: &[ParameterValue]) -> ThresholdInput {
 fn read_file(path: &str, name: &str) -> Result<ThresholdInput, TaskFailure> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(ThresholdInput::default()),
-        Err(error) => return Err(TaskFailure::execution(error.to_string()).at(name)),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(ThresholdInput {
+                file_argument: Some(ParameterValue::Array(Vec::new())),
+                ..ThresholdInput::default()
+            });
+        }
+        Err(error) => return Err(file_failure(error, Path::new(path), name)),
     };
     let value = contents
         .lines()
@@ -97,7 +120,7 @@ fn read_file(path: &str, name: &str) -> Result<ThresholdInput, TaskFailure> {
             // CASA emits a one-line Python dictionary with single-quoted keys
             // and a nested numeric array. Parse the data without evaluation.
             let mut record = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
-                &line.replace('\'', "\""),
+                &threshold_json(line),
             )
             .ok()?;
             record.remove(name)
@@ -107,17 +130,72 @@ fn read_file(path: &str, name: &str) -> Result<ThresholdInput, TaskFailure> {
             "cannot access local variable 'devthreshold' where it is not associated with a value",
         ).at("rflag-threshold-file")
         })?;
-    Ok(match ParameterValue::from_plain_json(&value) {
-        Some(ParameterValue::Array(rows)) => matrix(&rows),
-        other => {
-            let scalar = other.as_ref().and_then(number);
+    let literal = ParameterValue::from_plain_json(&value);
+    let mut input = match &literal {
+        Some(ParameterValue::Array(rows)) => matrix(rows),
+        value => {
+            let scalar = value.as_ref().and_then(number);
             ThresholdInput {
                 scalar,
                 invalid: scalar.is_none(),
                 ..ThresholdInput::default()
             }
         }
-    })
+    };
+    input.file_argument = literal;
+    Ok(input)
+}
+
+// Translate the Python literal spelling used in threshold records. The JSON
+// decoder still checks the structure, and no expressions are evaluated.
+fn threshold_json(line: &str) -> String {
+    let mut output = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    let mut quote = None;
+    let mut previous = None;
+    while let Some(character) = chars.next() {
+        if let Some(delimiter) = quote {
+            match character {
+                '\\' if let Some(escaped) = chars.next() => {
+                    if escaped != '\'' {
+                        output.push('\\');
+                    }
+                    output.push(escaped);
+                }
+                character if character == delimiter => {
+                    quote = None;
+                    output.push('"');
+                }
+                '"' => output.push_str("\\\""),
+                _ => output.push(character),
+            }
+        } else {
+            match character {
+                '\'' | '"' => {
+                    quote = Some(character);
+                    output.push('"');
+                }
+                '#' => break,
+                ',' if matches!(
+                    chars.clone().find(|ch| !ch.is_whitespace()),
+                    Some(']' | '}')
+                ) => {}
+                '.' => {
+                    if !previous.is_some_and(|ch: char| ch.is_ascii_digit()) {
+                        output.push('0');
+                    }
+                    output.push('.');
+                    if !chars.peek().is_some_and(char::is_ascii_digit) {
+                        output.push('0');
+                    }
+                }
+                '+' if !matches!(previous, Some('e' | 'E')) => {}
+                _ => output.push(character),
+            }
+        }
+        previous = Some(character);
+    }
+    output
 }
 
 pub(super) fn write_files(
@@ -134,9 +212,7 @@ pub(super) fn write_files(
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let failure = |error: std::io::Error| {
-            TaskFailure::execution(format!("{}: {error}", path.display())).at(name)
-        };
+        let failure = |error: std::io::Error| file_failure(error, &path, name);
         let mut output = tempfile::NamedTempFile::new_in(parent).map_err(failure)?;
         let data = serde_json::to_string(rows)
             .map_err(|error| TaskFailure::execution(error.to_string()).at(name))?;
@@ -144,11 +220,20 @@ pub(super) fn write_files(
         outputs.push((name, path, output));
     }
     for (name, path, output) in outputs {
-        output.persist(&path).map_err(|error| {
-            TaskFailure::execution(format!("{}: {}", path.display(), error.error)).at(name)
-        })?;
+        output
+            .persist(&path)
+            .map_err(|error| file_failure(error.error, &path, name))?;
     }
     Ok(())
+}
+
+fn file_failure(error: std::io::Error, path: &Path, name: &str) -> TaskFailure {
+    let spelling = match error.kind() {
+        ErrorKind::NotFound => "rflag-threshold-path.not-found",
+        ErrorKind::IsADirectory => "rflag-threshold-path.is-directory",
+        _ => return TaskFailure::execution(format!("{}: {error}", path.display())).at(name),
+    };
+    TaskFailure::execution(path.display().to_string()).at(spelling)
 }
 
 fn output_path(input: Option<&ParameterValue>, name: &str) -> PathBuf {
@@ -168,7 +253,7 @@ pub(super) fn saved_threshold(
     original: Option<&ParameterValue>,
     name: &str,
     action: &str,
-    request: Option<&FlagDataRequest>,
+    inputs: Option<&ThresholdInputs>,
     report: Option<&RFlagThresholdReport>,
 ) -> Option<(ParameterValue, bool)> {
     let rows_value = |rows: Vec<[f64; 3]>| {
@@ -198,25 +283,14 @@ pub(super) fn saved_threshold(
     }
     if action == "apply"
         && matches!(original, Some(ParameterValue::String(path)) if !path.is_empty())
-        && let Some(request) = request
+        && let Some(inputs) = inputs
     {
-        let (scalar, fields) = if name == "timedev" {
-            (request.timedev, &request.timedev_by_field_spw)
+        let input = if name == "timedev" {
+            &inputs.time
         } else {
-            (request.freqdev, &request.freqdev_by_field_spw)
+            &inputs.frequency
         };
-        if fields.is_empty() {
-            return scalar.map(|value| (ParameterValue::Float(value), false));
-        }
-        return Some((
-            rows_value(
-                fields
-                    .iter()
-                    .map(|(&(field, spw), &value)| [f64::from(field), f64::from(spw), value])
-                    .collect(),
-            ),
-            false,
-        ));
+        return input.file_argument.clone().map(|value| (value, false));
     }
     original
         .filter(|_| !empty)
