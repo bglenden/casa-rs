@@ -61,6 +61,7 @@ def test_copy_text_uses_the_casa_origin_even_when_pixel_types_differ(
                 assert active.pixeltype() == "complex"
             np.testing.assert_array_equal(product.getchunk(), expected)
             np.testing.assert_array_equal(product.getchunk(getmask=True), True)
+            assert f'region="{text}"' in product.history()[-1]
         finally:
             if product is not None and product is not active:
                 product.done()
@@ -172,6 +173,8 @@ def test_copy_empty_text_and_boolean_vector_have_casa_attachment_rules(
             result = getattr(active, method)(infile=source, region=argument)
             product = active if result is True else result
             np.testing.assert_array_equal(product.getchunk(), pixels)
+            history = '""' if isinstance(argument, str) else "[true,false]"
+            assert f"region={history}" in product.history()[-1]
         finally:
             if product is not None and product is not active:
                 product.done()

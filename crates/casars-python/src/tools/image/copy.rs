@@ -10,6 +10,7 @@ use casa_images::{
 use casa_lattices::TiledShape;
 use casa_types::RecordValue;
 use ndarray::{ArrayD, SliceInfoElem, Zip};
+use numpy::{PyArrayDyn, PyArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
@@ -316,8 +317,8 @@ impl CopyImage<'_> {
                 )
             } else {
                 format!(
-                    "infile={:?}, outfile={:?}, region={{...}}, vmask={}",
-                    self.infile, self.outfile, self.mask_history
+                    "infile={:?}, outfile={:?}, region={}, vmask={}",
+                    self.infile, self.outfile, self.region_history, self.mask_history
                 )
             };
             copy.record_history(
@@ -406,10 +407,11 @@ impl CopyImage<'_> {
 fn copy_region_argument(
     py: Python<'_>,
     raw: Option<&Bound<'_, PyAny>>,
+    default_history: &str,
 ) -> PyResult<(CopyRegion, String)> {
     let empty_record = || CopyRegion::Record(RecordValue::default());
     let Some(raw) = raw else {
-        return Ok((empty_record(), "[]".into()));
+        return Ok((empty_record(), default_history.into()));
     };
     if let Ok(dict) = raw.cast::<PyDict>() {
         return Ok((
@@ -422,7 +424,26 @@ fn copy_region_argument(
         let history = format!("{text:?}");
         return Ok((CopyRegion::Text(text), history));
     }
-    if is_boolean_sequence(raw)? || raw.extract::<Variant>()?.is_empty_sequence() {
+    if is_boolean_sequence(raw)? {
+        let values = if let Ok(array) = raw.cast::<PyArrayDyn<bool>>() {
+            array
+                .readonly()
+                .as_array()
+                .reversed_axes()
+                .iter()
+                .copied()
+                .collect()
+        } else {
+            raw.extract::<Vec<bool>>()?
+        };
+        let history = values
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        return Ok((empty_record(), format!("[{history}]")));
+    }
+    if raw.extract::<Variant>()?.is_empty_sequence() {
         return Ok((empty_record(), "[]".into()));
     }
     Err(raised("Unsupported type for region"))
@@ -459,7 +480,7 @@ impl PyImageTool {
         overwrite: bool,
     ) -> PyResult<bool> {
         let method = "fromimage";
-        let (region, region_history) = copy_region_argument(py, region)?;
+        let (region, region_history) = copy_region_argument(py, region, "[]")?;
         let (mask, mask_history) = mask_argument(mask)?;
         let request = CopyImage {
             method,
@@ -491,7 +512,7 @@ impl PyImageTool {
         overwrite: bool,
     ) -> PyResult<Py<Self>> {
         let method = "newimagefromimage";
-        let (region, region_history) = copy_region_argument(py, region)?;
+        let (region, region_history) = copy_region_argument(py, region, "{...}")?;
         let (mask, mask_history) = mask_argument(mask)?;
         let request = CopyImage {
             method,
