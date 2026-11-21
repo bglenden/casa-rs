@@ -161,7 +161,7 @@ def test_two_point_keeps_linear_coordinates_on_non_sky_axes(casa, tmp_path):
         try:
             assert source.fromshape(shape=list(data.shape), linear=True)
             assert source.putchunk(data)
-            assert source.twopointcorrelation(path, axes=[]) is True
+            assert source.twopointcorrelation(path, axes=np.array([.6,1.8])) is True
             assert output.open(path)
             coords = output.coordsys()
             assert coords.names() == ["linear1", "linear2"]
@@ -171,5 +171,71 @@ def test_two_point_keeps_linear_coordinates_on_non_sky_axes(casa, tmp_path):
         finally:
             if coords is not None:
                 coords.done()
+            output.done()
+            source.done()
+
+
+def test_two_point_refuses_tuple_axes_before_the_named_output_changes(casa, tmp_path):
+    data = _ramp((5,7))
+    for api, exception in ((casa,SystemError), (tools,TypeError)):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            with pytest.raises(exception):
+                source.twopointcorrelation(axes=(0,1))
+        finally:
+            source.done()
+    source, previous = tools.image(), tools.image()
+    path = str(tmp_path/"previous.im")
+    try:
+        assert source.fromarray(pixels=data)
+        assert previous.fromarray(path, pixels=data+3)
+        previous.done()
+        with pytest.raises(TypeError):
+            source.twopointcorrelation(path, axes=(0,1), overwrite=True)
+        assert previous.open(path)
+        np.testing.assert_array_equal(previous.getchunk(), data+3)
+    finally:
+        previous.done()
+        source.done()
+
+
+@pytest.mark.parametrize("order,axes,shape,types,reference", [
+    ("0213", None, [9,1,13,3], ["Linear","Stokes","Linear","Spectral"], [4.,0.,6.,1.]),
+    ("1203", [0,2], [13,1,9,3], ["Linear","Stokes","Linear","Spectral"], [6.,0.,4.,1.]),
+    ("2301", [0,2], [1,3,9,7], ["Stokes","Spectral","Direction","Direction"], [0.,1.,2.,3.]),
+])
+def test_two_point_uses_mapped_axes_and_keeps_other_axes(casa, tmp_path, order, axes, shape, types, reference):
+    input_plane = _ramp((5,7))
+    data = input_plane[..., None, None] + 10*np.arange(3, dtype=np.float32)
+    for api in (casa, tools):
+        source, output = api.image(), api.image()
+        path = str(tmp_path/f"{api.__name__}-mapped.im")
+        coords = mapped = None
+        try:
+            assert source.fromarray(pixels=data)
+            mapped = source.transpose(order=order)
+            if order == "1203":
+                with pytest.raises(RuntimeError):
+                    mapped.twopointcorrelation(path)
+            assert mapped.twopointcorrelation(path, **({"axes": axes} if axes is not None else {}))
+            assert output.open(path)
+            assert output.shape().tolist() == shape
+            coords = output.coordsys()
+            assert coords.axiscoordinatetypes() == types
+            np.testing.assert_array_equal(coords.referencepixel()["numeric"], reference)
+            if order == "2301":
+                expected = np.broadcast_to((np.arange(-4,5)**2)[None,:,None], (3,9,7))
+                np.testing.assert_array_equal(output.getchunk()[0], expected)
+            else:
+                expected = _expected_ramp((5,7), 1)
+                if order == "1203":
+                    expected = expected.T
+                np.testing.assert_array_equal(output.getchunk()[:, 0, :, 0], expected)
+        finally:
+            if coords is not None:
+                coords.done()
+            if mapped is not None:
+                mapped.done()
             output.done()
             source.done()

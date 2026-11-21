@@ -22,6 +22,7 @@ use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::records::numeric_axis_vector;
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 fn make_product<T: StructurePixel>(
@@ -77,7 +78,7 @@ impl PyImageTool {
         outfile: &str,
         region: RegionArgument,
         mask: Option<&Bound<'_, PyAny>>,
-        axes: IntList,
+        #[pyo3(from_py_with = numeric_axis_vector)] axes: IntList,
         method: &str,
         #[pyo3(from_py_with = require_bool)] overwrite: bool,
         #[pyo3(from_py_with = require_bool)] stretch: bool,

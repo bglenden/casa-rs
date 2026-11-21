@@ -45,11 +45,11 @@ impl StructurePixel for f32 {
 
 impl StructurePixel for Complex32 {
     fn as_complex64(self) -> Complex64 {
-        self.cast()
+        Complex64::new(f64::from(self.re), f64::from(self.im))
     }
 
     fn from_complex64(value: Complex64) -> Self {
-        value.cast()
+        Complex32::new(value.re as f32, value.im as f32)
     }
 }
 
@@ -278,7 +278,8 @@ fn ordered_axes(
         ));
     }
     if let Some(sky) = sky
-        && sky.contains(&plane[0]) != sky.contains(&plane[1])
+        && sky.contains(&plane[0])
+        && !sky.contains(&plane[1])
     {
         return Err(invalid("Cannot select just one direction axis"));
     }
