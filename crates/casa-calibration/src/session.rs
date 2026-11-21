@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical calibration solve session boundary.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_ms::{
@@ -14,7 +14,7 @@ use crate::ApplyCalibrationTableSpec;
 use crate::bandpass::{
     BandpassSolveError, BandpassSolveReport, BandpassSolveRequest, solve_bandpass,
 };
-use crate::execute::EvaluatedApplyRow;
+use crate::execute::PreappliedRows;
 use crate::selected_data::SelectedData;
 use crate::solve::grouping::{
     PriorCalibrationMode, SelectedSolveRow, all_antenna_ids, collect_selected_rows,
@@ -151,7 +151,7 @@ pub(crate) struct CalibrationSolveContext {
     pub(crate) rows: Vec<SelectedSolveRow>,
     /// What `rows` select, for the solve's report.
     pub(crate) selected_data: SelectedData,
-    pub(crate) preapplied_rows: Option<HashMap<usize, EvaluatedApplyRow>>,
+    pub(crate) preapplied_rows: Option<PreappliedRows>,
 }
 
 /// Resolve the common selection, reference-antenna, and preapply lifecycle.

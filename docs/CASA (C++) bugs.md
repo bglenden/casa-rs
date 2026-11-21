@@ -7277,6 +7277,19 @@ Casa-rs stages the correction and publishes the result only after it succeeds.
 The paired regression checks the exception and the native destination state.
 [Paired oracle](../tools/casa-compat/polfromgain_oracle.py)
 
+## Leakage application can correct the wrong correlations or abort on a malformed table
+
+CASA 6.7.6.14 applies the linearized leakage correction to positional slots
+in a four-product visibility vector. With `CORR_TYPE=[XX, YY, XY, YX]` and
+consistently reordered MAIN cells, it modifies `YY` and leaves `YX` without
+its correction. Casa-rs resolves the products from `CORR_TYPE` and applies
+the correction and flag dependencies to the corresponding cells.
+
+A `D Jones` table with one receptor in each `CPARAM` and `FLAG` cell causes
+CASA to abort with `ArrayShapeError`. Casa-rs returns a catchable error with
+the offending calibration row and shape.
+[Paired oracle](../tools/casa-compat/calibration_leakage_apply_oracle.py)
+
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
 In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet
