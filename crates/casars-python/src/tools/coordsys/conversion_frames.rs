@@ -225,6 +225,14 @@ pub(in crate::tools) fn profile_frequency_frame(
     if model.conversion_frequency_ref().unwrap_or(native) == frame {
         return Ok(None);
     }
+    if matches!(native, FrequencyRef::REST) || matches!(frame, FrequencyRef::REST) {
+        return Ok(None);
+    }
+    if matches!(native, FrequencyRef::Undefined) || matches!(frame, FrequencyRef::Undefined) {
+        return Err(spectral_error(
+            "Transformations to/from frame \"Undefined\" are not possible",
+        ));
+    }
     let Some(owner) = coordinates.find_coordinate(CoordinateType::Direction) else {
         return Err(spectral_error(
             "No DirectionCoordinate; cannot set Spectral conversion layer",

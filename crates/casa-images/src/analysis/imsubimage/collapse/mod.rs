@@ -8,7 +8,7 @@ use std::path::Path;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayD, RecordValue};
-use ndarray::{Dimension, IxDyn};
+use ndarray::{Axis, Dimension, IxDyn, Zip};
 
 use crate::{ImageError, ImageInterface, MutableImageInterface};
 
@@ -319,10 +319,23 @@ impl<'a> ImageCollapse<'a> {
             }
         } else {
             let mut cells = (0..size).map(|_| Summary::default()).collect::<Vec<_>>();
-            groups.for_each(start, shape, |index, position, sample| {
-                cells[index].add(function, sample, position);
-                Ok(())
-            })?;
+            let mut retained = self
+                .reduced
+                .iter()
+                .enumerate()
+                .filter_map(|(axis, &reduced)| (!reduced).then_some(axis));
+            if !matches!(function, CollapseFunction::Min | CollapseFunction::Max)
+                && let (Some(axis), None) = (retained.next(), retained.next())
+            {
+                groups.for_each_plane(start, shape, axis, |index, sample| {
+                    cells[index].add(function, sample, 0)
+                })?;
+            } else {
+                groups.for_each(start, shape, |index, position, sample| {
+                    cells[index].add(function, sample, position);
+                    Ok(())
+                })?;
+            }
             let counts = cells.iter().map(|cell| cell.count).collect();
             let (values, validity) = cells
                 .iter()
@@ -478,6 +491,90 @@ impl<T: CollapsePixel> Groups<'_, T> {
         shape: &[usize],
         mut visit: impl FnMut(usize, usize, T) -> Result<(), ImageError>,
     ) -> Result<(), ImageError> {
+        let mut group_step = 1;
+        let group_weights: Vec<_> = shape
+            .iter()
+            .rev()
+            .map(|&length| {
+                let weight = group_step;
+                group_step *= length;
+                weight
+            })
+            .collect();
+        let mut collapse_step = 1;
+        let collapse_weights: Vec<_> = self
+            .reduced
+            .iter()
+            .zip(self.section.shape)
+            .map(|(&reduce, &length)| {
+                if !reduce {
+                    return 0;
+                }
+                let weight = collapse_step;
+                collapse_step *= length;
+                weight
+            })
+            .collect();
+        self.visit_windows(start, shape, |tile_position, pixels, valid| {
+            let pixels = pixels.reversed_axes();
+            let valid = valid.map(ArrayD::reversed_axes);
+            for (index, &pixel) in pixels.indexed_iter() {
+                if valid.as_ref().is_some_and(|valid| !valid[&index]) {
+                    continue;
+                }
+                let mut group = 0;
+                let mut position = 0;
+                for (axis, (&local, &tile_start)) in
+                    index.slice().iter().rev().zip(tile_position).enumerate()
+                {
+                    if self.reduced[axis] {
+                        position += (tile_start + local) * collapse_weights[axis];
+                    } else {
+                        group += local * group_weights[shape.len() - 1 - axis];
+                    }
+                }
+                visit(group, position, pixel)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn for_each_plane(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        retained_axis: usize,
+        mut visit: impl FnMut(usize, T),
+    ) -> Result<(), ImageError> {
+        self.visit_windows(start, shape, |tile_position, values, mask| {
+            let axis = Axis(retained_axis);
+            let offset = tile_position[retained_axis];
+            for (index, plane) in values.axis_iter(axis).enumerate() {
+                let group = offset + index;
+                if let Some(mask) = &mask {
+                    Zip::from(plane).and(mask.index_axis(axis, index)).for_each(
+                        |&value, &valid| {
+                            if valid {
+                                visit(group, value);
+                            }
+                        },
+                    );
+                } else {
+                    for &value in &plane {
+                        visit(group, value);
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    fn visit_windows(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        mut visit: impl FnMut(&[usize], ArrayD<T>, Option<ArrayD<bool>>) -> Result<(), ImageError>,
+    ) -> Result<(), ImageError> {
         let full = self.section.shape;
         let stride = self.section.stride;
         let request: Vec<_> = self
@@ -514,30 +611,6 @@ impl<T: CollapsePixel> Groups<'_, T> {
                 }
             })
             .collect();
-        let mut group_step = 1;
-        let group_weights: Vec<_> = shape
-            .iter()
-            .rev()
-            .map(|&length| {
-                let weight = group_step;
-                group_step *= length;
-                weight
-            })
-            .collect();
-        let mut collapse_step = 1;
-        let collapse_weights: Vec<_> = self
-            .reduced
-            .iter()
-            .zip(full)
-            .map(|(&reduce, &length)| {
-                if !reduce {
-                    return 0;
-                }
-                let weight = collapse_step;
-                collapse_step *= length;
-                weight
-            })
-            .collect();
         for tile in TraversalCursorIter::new(request, cursor, TraversalSpec::tiles()) {
             let tile = tile?;
             let packed: Vec<_> = tile
@@ -555,25 +628,7 @@ impl<T: CollapsePixel> Groups<'_, T> {
                 continue;
             }
             let (pixels, valid) = self.reader.read(&source, &tile.shape, stride)?;
-            let pixels = pixels.reversed_axes();
-            let valid = valid.map(ArrayD::reversed_axes);
-            for (index, &pixel) in pixels.indexed_iter() {
-                if valid.as_ref().is_some_and(|valid| !valid[&index]) {
-                    continue;
-                }
-                let mut group = 0;
-                let mut position = 0;
-                for (axis, (&local, &tile_start)) in
-                    index.slice().iter().rev().zip(&tile.position).enumerate()
-                {
-                    if self.reduced[axis] {
-                        position += (tile_start + local) * collapse_weights[axis];
-                    } else {
-                        group += local * group_weights[shape.len() - 1 - axis];
-                    }
-                }
-                visit(group, position, pixel)?;
-            }
+            visit(&tile.position, pixels, valid)?;
         }
         Ok(())
     }

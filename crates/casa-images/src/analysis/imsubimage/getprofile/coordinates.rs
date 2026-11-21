@@ -236,6 +236,9 @@ impl Conversion {
             } else {
                 spectral.rest_frequency_hz()?
             };
+            if !rest_hz.is_finite() || rest_hz < 0. {
+                return Err(invalid("A rest frequency must be finite and nonnegative"));
+            }
             Ok(Self::Velocity {
                 convention,
                 frequency_unit,
@@ -246,7 +249,10 @@ impl Conversion {
             .val()
             .conformant(Unit::new("m").expect("length unit").val())
         {
-            if matches!(display, SpectralDisplay::Radio | SpectralDisplay::Optical) {
+            if matches!(
+                display,
+                SpectralDisplay::Radio | SpectralDisplay::Optical | SpectralDisplay::Relativistic
+            ) {
                 return Err(invalid(
                     "Inconsistent spectral type used for wavelength units",
                 ));
@@ -273,6 +279,9 @@ impl Conversion {
                 rest_hz,
                 scale,
             } => {
+                if *rest_hz == 0. {
+                    return f64::NAN;
+                }
                 let ratio = value * frequency_unit / rest_hz;
                 MDoppler::new(ratio, DopplerRef::RATIO)
                     .convert_to(*convention, &MeasFrame::default())

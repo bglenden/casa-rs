@@ -19,7 +19,9 @@ mod decompose;
 mod deviation;
 mod findsources;
 mod getprofile;
-pub use getprofile::{ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile};
+pub use getprofile::{
+    ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile,
+};
 mod fitcomponents;
 mod fitprofile;
 pub use fitcomponents::{

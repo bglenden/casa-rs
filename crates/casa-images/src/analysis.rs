@@ -53,13 +53,15 @@ pub use imsubimage::{
 };
 pub use imsubimage::{DecompositionOptions, ImageDecomposition, decompose_image};
 pub use imsubimage::{DeviationOptions, ImageDeviation};
-pub use imsubimage::{ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile};
 pub use imsubimage::{FindSourcesOptions, find_image_sources};
 pub use imsubimage::{FourierOptions, FourierPixel, ImageFourier};
 pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
 pub use imsubimage::{
     ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
     ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
+};
+pub use imsubimage::{
+    ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile,
 };
 mod list_log;
 mod planes;

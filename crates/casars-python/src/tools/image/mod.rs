@@ -68,6 +68,7 @@ mod stubs;
 mod subimage;
 mod summary;
 pub(crate) mod surface;
+mod text_output;
 mod transpose;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};

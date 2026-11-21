@@ -9012,3 +9012,22 @@ fixed gives a different center in CASA after its peak and sample values
 are scaled from 1 to 10⁻¹⁵. The velocity center shifts by about
 0.0175 km/s. Casa-rs scales the solver's damping to its curvature and
 fits the same physical center at both intensities.
+
+### `image.getprofile` can return values on a different axis than requested
+
+On a 4 × 5 × 1 × 7 image, CASA 6.7.6.14 returns the right pixels for
+a region selecting channels 1 through 5, but with `frame="BARY"` its
+reported frequencies come from channels 0 through 4. The conversion
+uses the original coordinate system with channel numbers starting at
+zero. Casa-rs converts the actual selected channels and pairs their
+coordinates with the corresponding reduced samples.
+
+A declination profile on the same image can fail an
+`AlwaysAssert newWorldOrder.nelements() == nWorldAxes()` when a world
+unit is requested. Casa-rs keeps the selected declination axis and
+evaluates its coordinates along the spatially collapsed image grid.
+
+With `spectype="beta"` and `unit="m"`, CASA reports its unchanged
+frequency values while labeling them as meters. Casa-rs rejects
+relativistic velocity with a wavelength unit, as it does for radio
+and optical velocity.

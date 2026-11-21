@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::fmt::Write as _;
-use std::io::Write as _;
 use std::path::Path;
 
 use casa_coordinates::CoordinateType;
@@ -24,6 +23,7 @@ use super::attachment::{AttachedImage, read_locked};
 use super::data_compat::record_to_py;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::{RegionArgument, require_bool};
+use super::text_output::StagedTextOutput;
 
 struct ReadRequest<'a> {
     axis: usize,
@@ -64,7 +64,9 @@ impl PyImageTool {
             };
             match *attachment.lock() {
                 ImageHandle::Float(_) | ImageHandle::Complex(_) => Ok(()),
-                _ => Err(raised("getprofile does not support images with double precision pixel values")),
+                _ => Err(raised(
+                    "getprofile does not support images with double precision pixel values",
+                )),
             }
         })?;
         let axis = usize::try_from(axis).map_err(|_| raised("Axis must be greater than 0"))?;
@@ -107,7 +109,9 @@ impl ReadRequest<'_> {
             ImageHandle::Complex(storage) => with_storage!(
                 storage, image => self.compute(attachment, source, image.as_ref())
             ),
-            _ => Err(raised("getprofile does not support images with double precision pixel values")),
+            _ => Err(raised(
+                "getprofile does not support images with double precision pixel values",
+            )),
         })
     }
 
@@ -173,7 +177,7 @@ impl ReadRequest<'_> {
                 .path()
                 .map(|path| path.to_string_lossy())
                 .unwrap_or_else(|| "Temporary_Image".into());
-            write_report(path, &report(&profile, &name, region_path))?;
+            StagedTextOutput::new(path, &report(&profile, &name, region_path), false)?.install()?;
         }
         Ok(ProfileRecord::new(profile))
     }
@@ -274,17 +278,6 @@ fn report<T: ProfilePixel>(
         }
     }
     text
-}
-
-fn write_report(path: &Path, text: &str) -> PyResult<()> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let mut staging = tempfile::NamedTempFile::new_in(parent).map_err(raised)?;
-    staging.write_all(text.as_bytes()).map_err(raised)?;
-    staging.persist(path).map_err(raised)?;
-    Ok(())
 }
 
 fn nonempty(text: &str) -> Option<&str> {

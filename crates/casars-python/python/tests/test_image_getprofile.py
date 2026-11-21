@@ -246,3 +246,50 @@ def test_double_precision_images_remain_attached_on_refusal(casa):
             np.testing.assert_array_equal(image.getchunk(), data)
         finally:
             image.done()
+
+
+def test_zero_rest_frequency_and_absent_radial_frame(casa):
+    data, mask = _data()
+    results = []
+    for api in (casa, tools):
+        image = _attached(api, data, mask)
+        try:
+            zero = image.getprofile(3, unit="km/s", restfreq="0Hz")
+            assert np.isnan(zero["coords"]).all()
+            # REST needs a source radial velocity, which this image does not carry.
+            _compare(image.getprofile(3, frame="REST"), image.getprofile(3))
+            results.append(image.getprofile(3, unit="km/s", restfreq={"value": 1.42, "unit": "GHz"}))
+        finally:
+            image.done()
+    _compare(*results[::-1])
+
+
+def test_relativistic_velocity_cannot_use_a_wavelength_unit(casa):
+    data, mask = _data()
+    pinned = _attached(casa, data, mask)
+    native = _attached(tools, data, mask)
+    try:
+        mislabeled = pinned.getprofile(3, unit="m", spectype="beta")
+        assert mislabeled["xUnit"] == "m"
+        np.testing.assert_array_equal(mislabeled["coords"], pinned.getprofile(3)["coords"])
+        with pytest.raises(RuntimeError, match="Inconsistent spectral type"):
+            native.getprofile(3, unit="m", spectype="beta")
+    finally:
+        native.done()
+        pinned.done()
+
+
+def test_text_report_follows_existing_log_symlink(tmp_path):
+    data, mask = _data()
+    image = _attached(tools, data, mask)
+    target = tmp_path / "measurements.txt"
+    target.write_text("prior\n")
+    link = tmp_path / "report.txt"
+    link.symlink_to(target)
+    try:
+        result = image.getprofile(3, unit="pixel", logfile=str(link))
+        assert link.is_symlink()
+        assert "Frequency profile" in target.read_text()
+        assert result["mask"].sum() == 6
+    finally:
+        image.done()
