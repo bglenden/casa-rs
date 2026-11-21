@@ -86,7 +86,7 @@ pub(crate) struct RemovedAxis {
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
-pub(crate) fn fiducial_latitude_degrees(proj: &Projection) -> f64 {
+fn fiducial_latitude_degrees(proj: &Projection) -> f64 {
     use crate::projection::ProjectionType;
     match proj.projection_type() {
         ProjectionType::CAR
@@ -533,6 +533,7 @@ impl DirectionCoordinate {
             self.crpix,
         )
         .with_normalized_pc_matrix(self.pc.clone())?;
+        rebuilt.validate_native_pole()?;
         rebuilt.latpole = rebuilt.native_pole[1];
         rebuilt.world_units = self.world_units.clone();
         rebuilt.removed_axis = self.removed_axis;
@@ -595,6 +596,59 @@ impl DirectionCoordinate {
     /// Reading it does not change the stored coordinate or its serialized record.
     pub fn native_pole(&self) -> [f64; 2] {
         self.native_pole
+    }
+
+    pub(crate) fn validate_native_pole(&self) -> Result<(), CoordinateError> {
+        let fiducial = fiducial_latitude_degrees(&self.projection);
+        if fiducial == 90.0 {
+            return Ok(());
+        }
+        let latitude = self.crval[1].to_degrees();
+        let longitude = self.longpole.to_degrees();
+        // Use the unclamped WCSLIB candidates. Checking only the residual
+        // of the selected pole misses impossibility near LONPOLE = 90°.
+        let (u, v) = if longitude == 0.0 {
+            (fiducial, 90.0 - latitude)
+        } else {
+            let (_, cosine) = wcslib_sin_cos_degrees(longitude);
+            let (sine_latitude, _) = wcslib_sin_cos_degrees(latitude);
+            let (y, cos_fiducial) = wcslib_sin_cos_degrees(fiducial);
+            let x = cos_fiducial * cosine;
+            let z = x.hypot(y);
+            let invalid = || {
+                CoordinateError::InvalidRecord("invalid direction coordinate transformation".into())
+            };
+            if z == 0.0 {
+                return if sine_latitude == 0.0 {
+                    Ok(())
+                } else {
+                    Err(invalid())
+                };
+            }
+            let ratio = sine_latitude / z;
+            if ratio.abs() - 1.0 >= 1e-10 {
+                return Err(invalid());
+            }
+            (
+                wcslib_atan2_degrees(y, x),
+                wcslib_acos_degrees(ratio.clamp(-1.0, 1.0)),
+            )
+        };
+        let wrap = |angle: f64| {
+            if angle > 180.0 {
+                angle - 360.0
+            } else if angle < -180.0 {
+                angle + 360.0
+            } else {
+                angle
+            }
+        };
+        if wrap(u + v).abs().min(wrap(u - v).abs()) > 90.0 + 1e-10 {
+            return Err(CoordinateError::InvalidRecord(
+                "ill-conditioned direction coordinate transformation".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Returns a reference to the PC rotation/coupling matrix.

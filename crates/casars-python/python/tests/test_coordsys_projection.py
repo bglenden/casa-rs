@@ -154,13 +154,28 @@ def test_failed_reference_edit_keeps_the_projected_grid(casa, name, parameters, 
         coords = setup_direction(api)
         assert coords.setprojection(name, parameters)
         before = coords.torecord()
+        world_before = coords.toworld([0., 0.])["numeric"]
         with pytest.raises(RuntimeError, match="coordinate transformation"):
             coords.setreferencevalue([0., invalid_latitude])
         if api is tools:
             _assert_value(coords.torecord(), before)
-            np.testing.assert_allclose(coords.toworld([0., 0.])["numeric"], [0., 0.], atol=1e-12)
+            # A zero-longitude WCS coordinate can be represented by 2π.
+            np.testing.assert_array_equal(coords.toworld([0., 0.])["numeric"], world_before)
         else:
             assert coords.torecord()["direction0"]["crval"][1] == pytest.approx(invalid_latitude)
+
+
+def test_conic_frame_adjustment_rejects_an_unusable_native_pole(casa):
+    for api in (tools, casa):
+        coords = setup_direction(api)
+        # J2000 coordinates of Galactic north require a different native
+        # pole when changing the reference code of this conic plane.
+        assert coords.setreferencevalue(np.deg2rad([192.85948, 27.12825]))
+        assert coords.setprojection("COD", [30., 10.])
+        before = coords.torecord()
+        with pytest.raises(RuntimeError, match="coordinate transformation"):
+            coords.setreferencecode("GALACTIC")
+        _assert_value(coords.torecord(), before)
 
 
 @pytest.mark.parametrize("high_order", [False, True])

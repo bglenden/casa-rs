@@ -4,7 +4,7 @@ use casa_types::measures::direction::DirectionRef;
 
 use crate::{CoordinateError, ProjectionType};
 
-use super::{DirectionCoordinate, theta_0_for_projection};
+use super::DirectionCoordinate;
 
 impl DirectionCoordinate {
     /// Rebuild the projection in a native frame. When supplied, `reference`
@@ -36,18 +36,12 @@ impl DirectionCoordinate {
                 coordinate.crpix[1] -= reference[1] / coordinate.cdelt[1];
                 reference[1] = 0.0;
             }
-            // WCSLIB retains LONPOLE when casacore changes only CRVAL. A
-            // projection whose fiducial point is on the native equator cannot
-            // cross the celestial equator with the old pole longitude.
-            if theta_0_for_projection(&self.projection) == 0.0
-                && (self.crval[1] >= 0.0) != (reference[1] >= 0.0)
-                && reference[1].abs() > 1.0e-12
-            {
-                return Err(CoordinateError::InvalidRecord(
-                    "wcs wcsset_error: Ill-conditioned coordinate transformation parameter".into(),
-                ));
-            }
             coordinate = coordinate.with_reference_value(reference);
+            coordinate.validate_native_pole().map_err(|_| {
+                CoordinateError::InvalidRecord(
+                    "wcs wcsset_error: Ill-conditioned coordinate transformation parameter".into(),
+                )
+            })?;
         }
         coordinate.latpole = coordinate.native_pole[1];
         Ok(coordinate)
