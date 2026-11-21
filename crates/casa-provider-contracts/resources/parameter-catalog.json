@@ -9474,7 +9474,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Average baseline integrations within each scan before clipping.", "details": "Clip decisions propagate to the original selected integrations. A Boolean vector passes validation and is rejected by the clipping agent.", "examples": ["false", "true"]},
+      "documentation": {"summary": "Average baseline integrations before clipping or TFCrop.", "details": "Flags propagate to the original selected integrations. A Boolean vector passes validation and is rejected by the flagging agent.", "examples": ["false", "true"]},
       "persistence_class": "profile"
     },
     {

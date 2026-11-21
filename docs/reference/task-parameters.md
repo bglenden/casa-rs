@@ -1113,7 +1113,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>clipoutside</code> | <code>flagdata.clipoutside@r1</code> | <code>variant</code> | <code>true</code>; optional | Clip | Flag samples outside the closed clip range when true, or inside it when false. |
 | <code>channelavg</code> | <code>flagdata.channelavg@r2</code> | <code>variant</code> | <code>false</code>; optional | Clip | Average selected channels before clipping or TFCrop. |
 | <code>chanbin</code> | <code>parameter.chanbin@r3</code> | <code>variant</code> | <code>1</code>; optional | Clip | Channel averaging width for clipping or TFCrop. |
-| <code>timeavg</code> | <code>flagdata.timeavg@r2</code> | <code>variant</code> | <code>false</code>; optional | Clip | Average baseline integrations within each scan before clipping. |
+| <code>timeavg</code> | <code>flagdata.timeavg@r2</code> | <code>variant</code> | <code>false</code>; optional | Clip | Average baseline integrations before clipping or TFCrop. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Clip | Averaging time bin, a time quantity as CASA writes it. |
 | <code>clipzeros</code> | <code>parameter.clipzeros@r1</code> | <code>bool</code> | <code>false</code>; optional | Flagging | Flag exact zero amplitudes in clip mode. |
 | <code>quackinterval</code> | <code>parameter.quackinterval@r1</code> | <code>variant</code> | <code>1.0</code>; optional | Quack | Quack interval in seconds. |

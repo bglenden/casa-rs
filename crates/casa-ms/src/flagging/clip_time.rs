@@ -379,21 +379,64 @@ impl TimeClip<'_> {
         options: ClipOptions<'_>,
         matched: &mut Vec<(usize, usize)>,
     ) -> Result<Vec<(usize, usize)>, FlaggingError> {
+        let averaged = average.reduced_visibility(self.column, channels, width, row, self.path)?;
+        let (flags, channels) = averaged
+            .bins
+            .as_ref()
+            .map_or((averaged.flags, channels), |bins| (bins.flags(), None));
+        apply_clip_array(
+            &averaged.data,
+            flags,
+            channels,
+            options,
+            self.path,
+            row,
+            matched,
+        )?;
+        let original = matched.iter().flat_map(|(plane, channel)| {
+            let channels = averaged
+                .bins
+                .as_ref()
+                .map_or(std::slice::from_ref(channel), |bins| {
+                    bins.original_channels(*channel)
+                });
+            channels.iter().map(move |&original| (*plane, original))
+        });
+        Ok(original.collect())
+    }
+}
+
+pub(super) struct TimeAveragedVisibility<'a> {
+    pub(super) data: Cow<'a, ArrayValue>,
+    pub(super) flags: &'a ArrayD<bool>,
+    pub(super) bins: Option<ChannelBins<'a>>,
+}
+
+impl ClipTimeAccumulator {
+    pub(super) fn reduced_visibility<'a>(
+        &'a mut self,
+        column: FlagDataColumn,
+        channels: Option<&'a [usize]>,
+        width: u32,
+        row: usize,
+        path: &str,
+    ) -> Result<TimeAveragedVisibility<'a>, FlaggingError> {
         let sum_weights = matches!(
-            self.column,
+            column,
             FlagDataColumn::Weight | FlagDataColumn::WeightSpectrum
         );
-        average.normalize(sum_weights);
-        let bins = channels.and_then(|indices| ChannelBins::new(width, indices, &average.flags));
-        let mut data = Cow::Borrowed(&average.data);
-        let mut model = average.model.as_ref().map(Cow::Borrowed);
+        self.normalize(sum_weights);
+        let bins = channels.and_then(|indices| ChannelBins::new(width, indices, &self.flags));
+        let mut data = Cow::Borrowed(&self.data);
+        let mut model = self.model.as_ref().map(Cow::Borrowed);
         if let Some(bins) = &bins {
             let inverse_sigma = matches!(
-                self.column,
+                column,
                 FlagDataColumn::Data | FlagDataColumn::FloatData | FlagDataColumn::ResidualData
             );
+            let mass = std::mem::take(&mut self.mass);
             let stats = ArrayValue::Float32(if inverse_sigma {
-                average.mass.mapv(|weight| {
+                mass.mapv_into(|weight| {
                     if weight > f32::MIN_POSITIVE {
                         1.0 / weight.sqrt()
                     } else {
@@ -401,11 +444,11 @@ impl TimeClip<'_> {
                     }
                 })
             } else {
-                average.mass
+                mass
             });
             let reduction = if sum_weights {
                 ChannelReduction::Sum
-            } else if self.column == FlagDataColumn::ModelData {
+            } else if column == FlagDataColumn::ModelData {
                 ChannelReduction::Mean
             } else {
                 ChannelReduction::Weighted {
@@ -413,25 +456,18 @@ impl TimeClip<'_> {
                     inverse_sigma,
                 }
             };
-            data = Cow::Owned(bins.average(&data, &average.flags, reduction));
-            model = model.map(|model| {
-                Cow::Owned(bins.average(&model, &average.flags, ChannelReduction::Mean))
-            });
+            data = Cow::Owned(bins.average(&data, &self.flags, reduction));
+            model = model
+                .map(|model| Cow::Owned(bins.average(&model, &self.flags, ChannelReduction::Mean)));
         }
         if let Some(model) = model {
-            data = Cow::Owned(subtract_model(&data, &model, row, self.path)?);
+            data = Cow::Owned(subtract_model(&data, &model, row, path)?);
         }
-        let (flags, channels) = bins
-            .as_ref()
-            .map_or((&average.flags, channels), |bins| (bins.flags(), None));
-        apply_clip_array(&data, flags, channels, options, self.path, row, matched)?;
-        let original = matched.iter().flat_map(|(plane, channel)| {
-            let channels = bins.as_ref().map_or(std::slice::from_ref(channel), |bins| {
-                bins.original_channels(*channel)
-            });
-            channels.iter().map(move |&original| (*plane, original))
-        });
-        Ok(original.collect())
+        Ok(TimeAveragedVisibility {
+            data,
+            flags: &self.flags,
+            bins,
+        })
     }
 }
 

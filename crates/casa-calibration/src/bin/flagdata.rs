@@ -898,7 +898,7 @@ fn flagdata_request(
         clipminmax,
         clipoutside,
         clip_channel_bins: channel_averaging_bins(task, mode, channel_bins)?,
-        clip_time_bin: clip_time_bin(task, mode)?,
+        clip_time_bin: time_averaging_bin(task, mode)?,
         time_chunk: None,
         combinescans: task.flag("combinescans")?,
         quackinterval,
@@ -972,11 +972,11 @@ fn antint_min_channel_fraction(task: &TaskInvocation<'_>) -> Result<f64, TaskFai
     task.number("minchanfrac")
 }
 
-fn clip_time_bin(
+fn time_averaging_bin(
     task: &TaskInvocation<'_>,
     mode: FlagDataMode,
 ) -> Result<Option<String>, TaskFailure> {
-    if mode != FlagDataMode::Clip {
+    if !matches!(mode, FlagDataMode::Clip | FlagDataMode::Tfcrop) {
         return Ok(None);
     }
     match task.value("timeavg") {
