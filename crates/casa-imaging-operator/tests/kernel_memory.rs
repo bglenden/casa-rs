@@ -541,6 +541,26 @@ fn native_generation_holds_at_most_its_charge() {
     }
 }
 
+#[test]
+fn legacy_aw_generation_holds_at_most_its_charge() {
+    if !alone("legacy_aw_generation_holds_at_most_its_charge") {
+        return;
+    }
+    let mut request = aw_request(256);
+    request.frequencies.truncate(1);
+    request.w_values = vec![0.];
+    request.w_increment = 0.;
+    request.terms.w_term = false;
+    request.maximum_cells = 2;
+    let root = tempfile::tempdir().unwrap();
+    let workers = 2;
+    let (peak, _, result) =
+        measure(|| AwCatalog::generate_legacy_vla(root.path(), &request, "test", workers));
+    result.unwrap();
+    let charge = AwCatalog::generation_bytes(&request, workers);
+    assert!(peak <= charge, "legacy A/W held {peak}, charged {charge}");
+}
+
 /// #747 review: generation's bookkeeping grows with the request, and is
 /// charged. Requests of 16 frequencies and 512 or 2,048 w planes, 16,384
 /// (the review's probe) and 65,536 cells, whose flat dish fails at its

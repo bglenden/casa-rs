@@ -645,7 +645,16 @@ impl AwCatalog {
         std::fs::create_dir_all(root)
             .map_err(|error| cache_error(root, format!("cannot create: {error}")))?;
         let units = generation::units(root, input, only_missing, workers);
-        generation::generate(root, input, &units, (only_missing, false), workers)?;
+        generation::generate(
+            root,
+            input,
+            &units,
+            generation::GenerationOptions {
+                only_missing,
+                legacy_vla_band: None,
+            },
+            workers,
+        )?;
         write_manifest(root, input)
     }
 
@@ -655,13 +664,23 @@ impl AwCatalog {
     pub fn generate_legacy_vla(
         root: &Path,
         input: &NativeAwRequestInput,
+        band: &str,
         workers: usize,
     ) -> Result<(), AwCatalogError> {
         input
             .validate()
             .map_err(|error| cache_error(root, format!("invalid legacy A/W request: {error}")))?;
         let units = generation::units(root, input, false, workers);
-        generation::generate(root, input, &units, (false, true), workers)
+        generation::generate(
+            root,
+            input,
+            &units,
+            generation::GenerationOptions {
+                only_missing: false,
+                legacy_vla_band: Some(band),
+            },
+            workers,
+        )
     }
 
     /// The cache directory.

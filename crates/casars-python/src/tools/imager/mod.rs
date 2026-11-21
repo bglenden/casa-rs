@@ -227,8 +227,9 @@ impl PyImager {
         wbawp: bool,
         conjbeams: bool,
     ) -> PyResult<bool> {
-        // The A/W controls are consumed by their Fourier machines. Ordinary
-        // GridFT and WProjectFT do not use them.
+        // In the supported A/W geometry the parallel-hand cell set and
+        // prediction agree for either setting of the Mueller term.
+        let _ = mterm;
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -276,7 +277,6 @@ impl PyImager {
                         pa_step_deg: pastep,
                         rotation_step_deg: rotpastep,
                         conjugate_beams: conjbeams,
-                        mueller_term: mterm,
                         wideband: wbawp,
                     },
                     [psterm, aterm],

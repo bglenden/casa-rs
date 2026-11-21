@@ -126,7 +126,9 @@ pub(super) fn prepare_model(
                 ));
             }
             let spw = row.spectral_window_id;
-            let frequencies = ms.spectral_window()?.chan_freq(spw as usize)?;
+            let window = ms.spectral_window()?;
+            let band = window.name(spw as usize)?;
+            let frequencies = window.chan_freq(spw as usize)?;
             let channels = match selected.channel_selections.get(&spw) {
                 Some(selection) => selection.indices(frequencies.len())?,
                 None => (0..frequencies.len()).collect(),
@@ -169,7 +171,7 @@ pub(super) fn prepare_model(
                 },
                 maximum_cells: 2,
             };
-            Ok(input)
+            Ok((input, band))
         },
         &host,
         geometry.native_threads,
@@ -306,7 +308,7 @@ fn recover_stage(root: &Path, stage: &Path) -> MsResult<()> {
 
 fn ready_cache(
     root: &Path,
-    request: impl FnOnce() -> MsResult<NativeAwRequestInput>,
+    request: impl FnOnce() -> MsResult<(NativeAwRequestInput, String)>,
     host: &HostResources,
     desired_workers: i32,
 ) -> MsResult<NativeCacheLock> {
@@ -320,7 +322,7 @@ fn ready_cache(
         recover_stage(root, &stage)?;
     }
     if !has_cells(root)? {
-        let input = request()?;
+        let (input, band) = request()?;
         let workers = if desired_workers > 1 { 2 } else { 1 };
         let _memory = admit(
             host,
@@ -336,7 +338,7 @@ fn ready_cache(
             .tempdir_in(root)
             .map_err(invalid)?;
         std::fs::File::create(stage.path().join(OWNED_STAGE)).map_err(invalid)?;
-        AwCatalog::generate_legacy_vla(stage.path(), &input, workers).map_err(invalid)?;
+        AwCatalog::generate_legacy_vla(stage.path(), &input, &band, workers).map_err(invalid)?;
         promote_cells(root, stage)?;
     }
     drop(lock);

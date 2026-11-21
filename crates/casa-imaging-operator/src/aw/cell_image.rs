@@ -297,7 +297,7 @@ pub(super) fn dense_cell_padded(
 }
 
 /// The misc info `CFCell::makePersistent` writes.
-pub(super) struct CellMisc {
+pub(super) struct CellMisc<'a> {
     pub(super) sampling: f64,
     pub(super) pa_deg: f64,
     pub(super) mueller: usize,
@@ -306,7 +306,7 @@ pub(super) struct CellMisc {
     pub(super) conjugate_frequency: f64,
     pub(super) conjugate_mueller: u32,
     pub(super) diameter_m: f64,
-    pub(super) legacy_vla: bool,
+    pub(super) legacy_vla_band: Option<&'a str>,
     /// The working sky increment and size the cell was generated on:
     /// private keys (`CasaRsSkyIncrement`, `CasaRsWorkingSize`) the loader
     /// checks against the image geometry so a cache is never reused for
@@ -325,7 +325,7 @@ pub(super) fn write_cell(
     plane: &NativeAwPlane<'_>,
     frequency_hz: f64,
     grid: casa_imaging_model::NativeAwGrid,
-    misc: &CellMisc,
+    misc: &CellMisc<'_>,
 ) -> Result<(), AwCatalogError> {
     let write_error = |detail: String| AwCatalogError::Write {
         path: path.to_path_buf(),
@@ -366,7 +366,7 @@ fn build_cell(
     plane: &NativeAwPlane<'_>,
     frequency_hz: f64,
     grid: casa_imaging_model::NativeAwGrid,
-    misc: &CellMisc,
+    misc: &CellMisc<'_>,
 ) -> Result<(), String> {
     let write_error = |detail: String| detail;
     let side = plane.size;
@@ -425,11 +425,18 @@ fn build_cell(
             ),
             field(
                 "TelescopeName",
-                ScalarValue::String(if misc.legacy_vla { "VLA" } else { "EVLA" }.into()),
+                ScalarValue::String(
+                    if misc.legacy_vla_band.is_some() {
+                        "VLA"
+                    } else {
+                        "EVLA"
+                    }
+                    .into(),
+                ),
             ),
             field(
                 "BandName",
-                ScalarValue::String(if misc.legacy_vla { "none" } else { "" }.into()),
+                ScalarValue::String(misc.legacy_vla_band.unwrap_or_default().into()),
             ),
             field("Diameter", ScalarValue::Float64(misc.diameter_m)),
             field("OpCode", ScalarValue::Bool(false)),
