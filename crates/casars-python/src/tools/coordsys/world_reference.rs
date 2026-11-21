@@ -229,16 +229,9 @@ impl<'a> Values<'a> {
         } else {
             coordinate.increment()
         };
-        let (declared, units) = match coordinate {
-            CoordinateModel::Direction(direction) => {
-                let (reference, increment) = direction.reference_and_increment_in_world_units();
-                (
-                    if absolute { reference } else { increment },
-                    direction.visible_world_units(),
-                )
-            }
-            _ => (native.clone(), coordinate.axis_units()),
-        };
+        let (reference, increment) = coordinate.reference_and_increment_in_declared_units();
+        let declared = if absolute { reference } else { increment };
+        let units = coordinate.declared_axis_units();
         let visible_axes: Vec<_> = axis_map
             .iter()
             .enumerate()
@@ -272,32 +265,32 @@ impl<'a> Values<'a> {
         full_coordinate: Option<CoordinateModel>,
         converted: bool,
     ) -> PyResult<Self> {
-        let units = match coordinate {
-            CoordinateModel::Direction(direction) => direction.visible_world_units(),
-            _ => coordinate.axis_units(),
+        use casa_types::quanta::{Quantity, Unit};
+        let visible = |units: Vec<String>| {
+            if units.len() == visible_axes.len() {
+                units
+            } else {
+                visible_axes
+                    .iter()
+                    .map(|&axis| units[axis].clone())
+                    .collect()
+            }
         };
-        let units = if units.len() == visible_axes.len() {
-            units
-        } else {
-            visible_axes
-                .iter()
-                .map(|&axis| units[axis].clone())
-                .collect()
-        };
-        let declared = if matches!(coordinate, CoordinateModel::Direction(_)) {
-            use casa_types::quanta::{Quantity, Unit};
-            native
-                .iter()
-                .zip(&units)
-                .map(|(&value, unit)| {
-                    Unit::new(unit)
-                        .and_then(|unit| Quantity::new(value, "rad")?.get_value_in(&unit))
-                        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
-                })
-                .collect::<PyResult<_>>()?
-        } else {
-            native.to_vec()
-        };
+        let units = visible(coordinate.declared_axis_units());
+        let native_units = visible(coordinate.axis_units());
+        let declared = native
+            .iter()
+            .zip(native_units)
+            .zip(&units)
+            .map(|((&value, native_unit), unit)| {
+                if native_unit == *unit {
+                    return Ok(value);
+                }
+                Unit::new(unit)
+                    .and_then(|unit| Quantity::new(value, &native_unit)?.get_value_in(&unit))
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+            })
+            .collect::<PyResult<_>>()?;
         let full_measure = full_coordinate.map(|full| {
             let mut components = full.reference_value();
             for (&axis, &value) in visible_axes.iter().zip(native) {
@@ -457,6 +450,9 @@ impl<'a> Values<'a> {
             CoordinateModel::Stokes(_) => Err(invalid("Stokes")),
             CoordinateModel::Quality(_) => Err(PyRuntimeError::new_err(
                 "Cannot handle Coordinates of type Quality",
+            )),
+            CoordinateModel::System(_) => Err(PyRuntimeError::new_err(
+                "Cannot handle Coordinates of type System",
             )),
         }
     }

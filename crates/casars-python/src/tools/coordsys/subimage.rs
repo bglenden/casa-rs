@@ -201,6 +201,18 @@ fn shift_coordinate(
                 *stored = CoordinateModel::from(coordinate).to_record();
             }
         }
+        CoordinateModel::System(system) => {
+            let references = system.reference_pixel();
+            for (local, (axis, reference)) in
+                placement.pixel_axes.iter().zip(references).enumerate()
+            {
+                if let Some(axis) = axis {
+                    let shifted = reference - f64::from(origin[*axis]);
+                    CoordinateSystem::set_reference_pixel_in_record(stored, local, shifted)
+                        .map_err(raised)?;
+                }
+            }
+        }
         _ => shift_reference_pixel(stored, placement, origin)?,
     }
     Ok(None)

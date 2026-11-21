@@ -81,14 +81,9 @@ fn native_coordinate_field(name: &str) -> Option<(&str, usize)> {
 pub(in crate::tools) fn validate_coordinate_indices(record: &RecordValue) -> PyResult<usize> {
     let mut indices = Vec::new();
     for field in record.fields() {
-        let Some((kind, index)) = native_coordinate_field(&field.name) else {
+        let Some((_, index)) = native_coordinate_field(&field.name) else {
             continue;
         };
-        if kind == "coordsys" {
-            return Err(raised(format!(
-                "The CASA {kind} coordinate is unsupported (#1626)"
-            )));
-        }
         indices.push(index);
     }
     indices.sort_unstable();
@@ -116,7 +111,11 @@ pub(in crate::tools) fn append_coordinate(
         .to_world(&vec![0.0; n_pixel])
         .map_err(|error| raised(error.to_string()))?;
     let kind = coordinate.coordinate_type();
-    let name = kind.to_string().to_ascii_lowercase();
+    let name = if kind == CoordinateType::System {
+        "coordsys".to_owned()
+    } else {
+        kind.to_string().to_ascii_lowercase()
+    };
     let mut axis_record = coordinate.to_record();
     match kind {
         CoordinateType::Spectral => {
@@ -208,6 +207,11 @@ fn normalize_stokes_records(record: &mut RecordValue) -> PyResult<()> {
         let Value::Record(subrecord) = &mut field.value else {
             continue;
         };
+        if kind == "coordsys" {
+            validate_coordinate_indices(subrecord)?;
+            normalize_stokes_records(subrecord)?;
+            continue;
+        }
         if kind != "stokes"
             && !matches!(subrecord.get("coordinate_type"), Some(Value::Scalar(ScalarValue::String(kind))) if kind == "Stokes")
         {

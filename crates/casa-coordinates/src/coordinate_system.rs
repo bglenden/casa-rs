@@ -518,6 +518,7 @@ fn record_basename(kind: CoordinateType) -> &'static str {
         CoordinateType::Stokes => "stokes",
         CoordinateType::Tabular => "tabular",
         CoordinateType::Quality => "quality",
+        CoordinateType::System => "coordsys",
     }
 }
 
@@ -565,6 +566,7 @@ fn legacy_coordinate_prefix(name: &str) -> Option<&'static str> {
         "linear",
         "tabular",
         "quality",
+        "coordsys",
     ]
     .into_iter()
     .find(|prefix| name.starts_with(prefix))
@@ -579,6 +581,7 @@ fn inferred_coordinate_type(name: &str) -> Option<&'static str> {
         "stokes" => Some("Stokes"),
         "tabular" => Some("Tabular"),
         "quality" => Some("Quality"),
+        "coordsys" => Some("System"),
         _ => None,
     }
 }
@@ -601,6 +604,7 @@ fn parse_coordinate_record(
         "Stokes" => StokesCoordinate::from_record(rec).map(CoordinateModel::Stokes),
         "Tabular" => TabularCoordinate::from_record(rec).map(CoordinateModel::Tabular),
         "Quality" => crate::QualityCoordinate::from_record(rec).map(CoordinateModel::Quality),
+        "System" => CoordinateSystem::from_record(rec).map(Into::into),
         other => Err(CoordinateError::InvalidRecord(format!(
             "unsupported coordinate type '{other}' in '{name}'"
         ))),

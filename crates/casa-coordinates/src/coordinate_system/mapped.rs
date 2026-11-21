@@ -489,6 +489,7 @@ fn convert_local_world_offsets(
     match model {
         CoordinateModel::Stokes(_) | CoordinateModel::Quality(_) => Ok(()),
         CoordinateModel::Direction(direction) => direction.convert_world_offset(values, absolute),
+        CoordinateModel::System(system) => system.convert_world_offsets(values, absolute),
         _ => {
             for (value, reference) in values.iter_mut().zip(model.reference_value()) {
                 if absolute {
@@ -547,18 +548,25 @@ impl CoordinateSystem {
 
     /// Units of the values returned by `to_world`, in public world-axis order.
     pub fn world_axis_units(&self) -> Vec<String> {
-        let mut units = vec![String::new(); self.n_world_axes()];
+        self.world_axis_values(CoordinateModel::axis_units)
+    }
+
+    pub(crate) fn world_axis_values<T: Default + Clone>(
+        &self,
+        values: impl Fn(&CoordinateModel) -> Vec<T>,
+    ) -> Vec<T> {
+        let mut result = vec![T::default(); self.n_world_axes()];
         for (index, model) in self.coordinates.iter().enumerate() {
             let world = self
                 .coordinate_world_axes(index)
                 .expect("existing coordinate");
-            for (axis, unit) in world.into_iter().zip(model.axis_units()) {
+            for (axis, value) in world.into_iter().zip(values(model)) {
                 if let Some(axis) = axis {
-                    units[axis] = unit;
+                    result[axis] = value;
                 }
             }
         }
-        units
+        result
     }
 
     fn reference_axes(&self, pixel: bool) -> Vec<f64> {
