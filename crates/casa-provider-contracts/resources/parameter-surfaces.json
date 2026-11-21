@@ -40900,6 +40900,986 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "wvrgcal",
+      "contract_version": 1,
+      "display_name": "Water-vapour Radiometer Calibration",
+      "category": "Calibration",
+      "summary": "Use ALMA radiometer measurements to calibrate atmospheric phase.",
+      "provider_family": "calibration",
+      "casa_task": "wvrgcal",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "wvrgcal"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "caltable",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "caltable"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "vis",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 2
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "caltable",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "toffset",
+          "concept": {
+            "id": "wvr.toffset",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--toffset"
+              ]
+            },
+            "provider": {
+              "field": "toffset",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "toffset"
+            },
+            "presentation": {
+              "label": "toffset",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "segsource",
+          "concept": {
+            "id": "wvr.segsource",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--segsource"
+              ]
+            },
+            "provider": {
+              "field": "segsource",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "segsource"
+            },
+            "presentation": {
+              "label": "segsource",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "sourceflag",
+          "concept": {
+            "id": "wvr.sourceflag",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--sourceflag"
+              ]
+            },
+            "provider": {
+              "field": "sourceflag",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "sourceflag"
+            },
+            "presentation": {
+              "label": "sourceflag",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "tie",
+          "concept": {
+            "id": "wvr.tie",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--tie"
+              ]
+            },
+            "provider": {
+              "field": "tie",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "tie"
+            },
+            "presentation": {
+              "label": "tie",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "nsol",
+          "concept": {
+            "id": "wvr.nsol",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--nsol"
+              ]
+            },
+            "provider": {
+              "field": "nsol",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "nsol"
+            },
+            "presentation": {
+              "label": "nsol",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "disperse",
+          "concept": {
+            "id": "wvr.disperse",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--disperse"
+              ]
+            },
+            "provider": {
+              "field": "disperse",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "disperse"
+            },
+            "presentation": {
+              "label": "disperse",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "wvrflag",
+          "concept": {
+            "id": "wvr.wvrflag",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--wvrflag"
+              ]
+            },
+            "provider": {
+              "field": "wvrflag",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "wvrflag"
+            },
+            "presentation": {
+              "label": "wvrflag",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "statfield",
+          "concept": {
+            "id": "wvr.statfield",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--statfield"
+              ]
+            },
+            "provider": {
+              "field": "statfield",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "statfield"
+            },
+            "presentation": {
+              "label": "statfield",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "statsource",
+          "concept": {
+            "id": "wvr.statsource",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--statsource"
+              ]
+            },
+            "provider": {
+              "field": "statsource",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "statsource"
+            },
+            "presentation": {
+              "label": "statsource",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "smooth",
+          "concept": {
+            "id": "wvr.smooth",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--smooth"
+              ]
+            },
+            "provider": {
+              "field": "smooth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "smooth"
+            },
+            "presentation": {
+              "label": "smooth",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "scale",
+          "concept": {
+            "id": "wvr.scale",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scale"
+              ]
+            },
+            "provider": {
+              "field": "scale",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scale"
+            },
+            "presentation": {
+              "label": "scale",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 7
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "spw",
+              "group": "Solve"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "WVR output windows are an explicit list of integer IDs."
+          }
+        },
+        {
+          "name": "wvrspw",
+          "concept": {
+            "id": "wvr.wvrspw",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--wvrspw"
+              ]
+            },
+            "provider": {
+              "field": "wvrspw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "wvrspw"
+            },
+            "presentation": {
+              "label": "wvrspw",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "reversespw",
+          "concept": {
+            "id": "wvr.reversespw",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--reversespw"
+              ]
+            },
+            "provider": {
+              "field": "reversespw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "reversespw"
+            },
+            "presentation": {
+              "label": "reversespw",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "cont",
+          "concept": {
+            "id": "wvr.cont",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--cont"
+              ]
+            },
+            "provider": {
+              "field": "cont",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "cont"
+            },
+            "presentation": {
+              "label": "cont",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "maxdistm",
+          "concept": {
+            "id": "wvr.maxdistm",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 500.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--maxdistm"
+              ]
+            },
+            "provider": {
+              "field": "maxdistm",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "maxdistm"
+            },
+            "presentation": {
+              "label": "maxdistm",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "minnumants",
+          "concept": {
+            "id": "wvr.minnumants",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minnumants"
+              ]
+            },
+            "provider": {
+              "field": "minnumants",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minnumants"
+            },
+            "presentation": {
+              "label": "minnumants",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "mingoodfrac",
+          "concept": {
+            "id": "wvr.mingoodfrac",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.8
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--mingoodfrac"
+              ]
+            },
+            "provider": {
+              "field": "mingoodfrac",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "mingoodfrac"
+            },
+            "presentation": {
+              "label": "mingoodfrac",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "usefieldtab",
+          "concept": {
+            "id": "wvr.usefieldtab",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--usefieldtab"
+              ]
+            },
+            "provider": {
+              "field": "usefieldtab",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "usefieldtab"
+            },
+            "presentation": {
+              "label": "usefieldtab",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "refant",
+          "concept": {
+            "id": "wvr.refant",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refant"
+              ]
+            },
+            "provider": {
+              "field": "refant",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refant"
+            },
+            "presentation": {
+              "label": "refant",
+              "group": "Solve"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Preferred reference antenna names or IDs in order."
+          }
+        },
+        {
+          "name": "offsetstable",
+          "concept": {
+            "id": "wvr.offsetstable",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--offsetstable"
+              ]
+            },
+            "provider": {
+              "field": "offsetstable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "offsetstable"
+            },
+            "presentation": {
+              "label": "offsetstable",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "rseed",
+          "concept": {
+            "id": "wvr.rseed",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--rseed"
+              ]
+            },
+            "provider": {
+              "field": "rseed",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "rseed"
+            },
+            "presentation": {
+              "label": "rseed",
+              "group": "Solve"
+            }
+          }
+        }
+      ]
     }
   ]
 }

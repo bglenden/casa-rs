@@ -30,6 +30,7 @@ from .._core import (
     simulator,
     table,
     tablerow,
+    wvr,
 )
 
 __all__ = [
@@ -46,4 +47,5 @@ __all__ = [
     "simulator",
     "table",
     "tablerow",
+    "wvr",
 ]

@@ -1,0 +1,318 @@
+{
+  "task": "wvrgcal",
+  "parameters": {
+    "vis": {
+      "status": "Implemented",
+      "scope": "One input MeasurementSet path.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options",
+        "two-seeds-and-application"
+      ]
+    },
+    "caltable": {
+      "status": "Implemented",
+      "scope": "Create a CASA-readable T Jones calibration table and refuse existing destinations.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options",
+        "two-seeds-and-application"
+      ]
+    },
+    "toffset": {
+      "status": "Implemented",
+      "scope": "Shift radiometer timestamps by this many seconds.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "segsource": {
+      "status": "Implemented",
+      "scope": "Fit atmospheric coefficients separately for each contiguous source group.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "sourceflag": {
+      "status": "Implemented",
+      "scope": "Exclude these source names from the path solutions.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "tie": {
+      "status": "Implemented",
+      "scope": "Comma-separated groups of source names or IDs that share a fit.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "nsol": {
+      "status": "Implemented",
+      "scope": "Number of fits for unsegmented data.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "disperse": {
+      "status": "Implemented",
+      "scope": "Apply the frequency-dependent wet-path dispersion correction.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "wvrflag": {
+      "status": "Implemented",
+      "scope": "Replace radiometer data for the specified antenna names or IDs.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "statfield": {
+      "status": "Implemented",
+      "scope": "Limit reported statistics to this field name or ID.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "statsource": {
+      "status": "Implemented",
+      "scope": "Limit reported statistics to this source name.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "smooth": {
+      "status": "Implemented",
+      "scope": "Mean smoothing interval for the output calibration table, such as 10s.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "scale": {
+      "status": "Implemented",
+      "scope": "Multiply the wet path by this factor before converting it to phase.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "spw": {
+      "status": "Implemented",
+      "scope": "Write corrections for these spectral-window IDs. An empty list selects all.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "wvrspw": {
+      "status": "Implemented",
+      "scope": "Read radiometer data from these four-channel spectral windows.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "reversespw": {
+      "status": "Implemented",
+      "scope": "Reverse the phase sign on selected spectral windows.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "cont": {
+      "status": "Implemented",
+      "scope": "Fit the atmospheric continuum opacity in one fixed-interval solution.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options",
+        "two-seeds-and-application"
+      ]
+    },
+    "maxdistm": {
+      "status": "Implemented",
+      "scope": "Maximum distance in meters from an antenna to a replacement radiometer.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "minnumants": {
+      "status": "Implemented",
+      "scope": "Minimum number of eligible neighboring radiometers for replacement.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "mingoodfrac": {
+      "status": "Implemented",
+      "scope": "Minimum good fraction required to use an antenna’s measured temperatures.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "usefieldtab": {
+      "status": "Implemented",
+      "scope": "Use the FIELD direction in place of recorded POINTING elevations.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "refant": {
+      "status": "Implemented",
+      "scope": "Preferred reference antenna names or IDs in order.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "offsetstable": {
+      "status": "Implemented",
+      "scope": "Subtract temperatures from this matching radiometer offsets table.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options"
+      ]
+    },
+    "rseed": {
+      "status": "Implemented",
+      "scope": "Seed the atmospheric fit. Zero selects CASA’s default seed.",
+      "behaviors": [
+        "phase"
+      ],
+      "evidence": [
+        "parameter-options",
+        "two-seeds-and-application"
+      ]
+    }
+  },
+  "schema_version": 1,
+  "casa_version": "6.7.6.14",
+  "audit_revision": "21eea39f94e248c733060694b7e746d6db08e1cb",
+  "behaviors": [
+    {
+      "id": "phase",
+      "title": "Radiometer phase correction",
+      "status": "Implemented",
+      "scope": "Native CASA-readable T Jones gains from seeded water-vapour retrievals, atmospheric paths and spectral-window phase conversion. Includes task reports, direct logging, smoothing and antenna replacement.",
+      "gap": "The compact fixtures have been compared with CASA 6.7.6.14. The recorded ALMA case is pending under #1531.",
+      "evidence": [
+        "two-seeds-and-application",
+        "parameter-options",
+        "recorded-alma"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "sparse-window-phase-reversal",
+      "state": "Previously agreed",
+      "record": "WVR global phase reversal can miss sparse spectral-window selections",
+      "inputs": "A direct wvr.gcal invocation with global phase reversal and a sparse spectral-window selection.",
+      "casa": "CASA 6.7.6.14 can leave selected windows unchanged when the selected position differs from the actual ID.",
+      "ours": "Reverse the phase of every selected spectral-window ID.",
+      "rationale": "Match the documented phase operation and the algebraic conjugation of the ordinary gains.",
+      "impact": "A sparse output selection produces the same reversed phases as the corresponding subset of an all-window reversal.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "parameter-options"
+      ]
+    }
+  ],
+  "evidence": {
+    "two-seeds-and-application": {
+      "kind": "Seeded WVR phase, CASA applycal and solver preapply",
+      "state": "passed",
+      "scope": "Compare the nominal T Jones table, continuum table and log, corrected visibilities and recovery of injected gains across both engines.",
+      "result": "Two ordinary seeds, four applycal pairings and four preapply pairings passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "21eea39f94e248c733060694b7e746d6db08e1cb",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_oracle.py --work <new-directory>",
+      "receipt": "resources/casa-compat/evidence/wvr-calibration-20261121.json",
+      "links": [
+        "tools/casa-compat/wvrgcal_oracle.py"
+      ]
+    },
+    "parameter-options": {
+      "kind": "Multi-source WVR and publication options",
+      "state": "passed",
+      "scope": "Compare selected products and antenna reports with the installed task or tool on the same input. Exercise offsets, source controls, flags, dispersion, smoothing, references and failure paths.",
+      "result": "19 paired cases and the zero-evidence retry passed. Maximum gain normalized RMS 1.92e-09.",
+      "casa_version": "6.7.6.14",
+      "revision": "21eea39f94e248c733060694b7e746d6db08e1cb",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --work <new-directory>",
+      "receipt": "resources/casa-compat/evidence/wvr-calibration-20261121.json",
+      "links": [
+        "tools/casa-compat/wvrgcal_options_oracle.py"
+      ]
+    },
+    "recorded-alma": {
+      "kind": "Recorded ALMA data",
+      "state": "planned",
+      "scope": "Compare CASA and native WVR on uid___A002_X8ca70c_X5_shortened.ms on the Mac mini. This requires tailnet access.",
+      "links": [
+        "tools/casa-compat/wvrgcal_options_oracle.py"
+      ]
+    }
+  }
+}

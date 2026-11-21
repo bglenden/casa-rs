@@ -27,10 +27,11 @@ from _casa_tools import (
 
 #: Each tool, and the issue its refused methods name.
 ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030,
-          "calibrater": 1528, "agentflagger": 1527}
+          "calibrater": 1528, "agentflagger": 1527, "wvr": 1531}
 
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
+IMPLEMENTED["wvr"] = {"gcal"}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",

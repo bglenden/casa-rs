@@ -9336,3 +9336,9 @@ For a direction image of shape `[1, 7]` with an all-false pixel mask,
 repeated CASA 6.7.6.14 calls can also report valid samples near the zero
 lag. Casa-rs reports every lag as masked because the input contains no
 valid pairs.
+
+## WVR global phase reversal can miss sparse spectral-window selections
+
+CASA 6.7.6.14's `wvr.gcal(reverse=True, spw=[1])` uses the position of each selected window to build the reversal mask. Its writer then looks up that mask by spectral-window ID. A selection containing only window 1 therefore leaves that window's phase unchanged.
+
+casa-rs applies the global reversal to each selected spectral-window ID. The compact ALMA comparison confirms that the corrected gain for window 1 is the complex conjugate of the ordinary gain, while the installed CASA result retains the ordinary sign. [Pinned CASA WVR tool source](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/tools/wvr/wvr_cmpt.cc?at=refs%2Ftags%2F6.7.6.14)

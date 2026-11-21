@@ -45,6 +45,7 @@
     "tclean",
     "tsdimaging",
     "uvmodelfit",
-    "uvsub"
+    "uvsub",
+    "wvrgcal"
   ]
 }
