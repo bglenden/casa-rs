@@ -221,15 +221,13 @@ fn wvr_antennas(
     let spw = ms.spectral_window()?;
     for row in 0..feed.row_count() {
         let id = feed.i32(row, "SPECTRAL_WINDOW_ID")?;
-        if id >= 0 && !windows.is_empty() && windows.contains(&id)
-            || (windows.is_empty()
-                && id >= 0
-                && (id as usize) < spw.row_count()
-                && spw.num_chan(id as usize)? == 4)
-        {
-            if let Some(value) = present.get_mut(feed.i32(row, "ANTENNA_ID")? as usize) {
-                *value = true;
-            }
+        let selected = if windows.is_empty() {
+            id >= 0 && (id as usize) < spw.row_count() && spw.num_chan(id as usize)? == 4
+        } else {
+            windows.contains(&id)
+        };
+        if selected && let Some(value) = present.get_mut(feed.i32(row, "ANTENNA_ID")? as usize) {
+            *value = true;
         }
     }
     if !present.iter().any(|&value| value) {

@@ -22,11 +22,12 @@ pub(super) fn smooth(points: &mut [RadiometerIntegration], samples: usize) {
                 for offset in 0..=2 * radius {
                     let point = &run[index - radius + offset];
                     let temperatures = point.temperatures[antenna].unwrap_or([0.0; 4]);
-                    let weight = if samples % 2 == 0 && (offset == 0 || offset == 2 * radius) {
-                        0.5
-                    } else {
-                        1.0
-                    };
+                    let weight =
+                        if samples.is_multiple_of(2) && (offset == 0 || offset == 2 * radius) {
+                            0.5
+                        } else {
+                            1.0
+                        };
                     for (sum, temperature) in value.iter_mut().zip(temperatures) {
                         *sum += temperature * weight;
                     }

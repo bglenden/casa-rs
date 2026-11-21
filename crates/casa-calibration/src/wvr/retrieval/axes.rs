@@ -107,11 +107,12 @@ fn qr_sweep(matrix: &mut Matrix, basis: &mut Matrix, first: usize, last: usize) 
         for row in &mut matrix[first..=last] {
             rotate(row, left, right, cosine, sine);
         }
-        for column in first..=last {
-            let a = matrix[left][column];
-            let b = matrix[right][column];
-            matrix[left][column] = cosine * a - sine * b;
-            matrix[right][column] = sine * a + cosine * b;
+        let (upper, lower) = matrix.split_at_mut(right);
+        for (a, b) in upper[left][first..=last]
+            .iter_mut()
+            .zip(&mut lower[0][first..=last])
+        {
+            (*a, *b) = (cosine * *a - sine * *b, sine * *a + cosine * *b);
         }
         for row in &mut *basis {
             rotate(row, left, right, cosine, sine);

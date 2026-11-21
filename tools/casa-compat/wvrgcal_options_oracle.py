@@ -9,7 +9,6 @@ from pathlib import Path
 import time
 
 import casatasks
-from casacore.tables import makearrcoldesc, makescacoldesc, maketabdesc, table
 from casatools import wvr
 import numpy as np
 
@@ -20,6 +19,8 @@ from wvrgcal_oracle import fixture
 
 def extra_inputs(ms, offset_table):
     """Add a second source, a valid POINTING series, and impaired antenna DA05."""
+    from casacore.tables import makearrcoldesc, makescacoldesc, maketabdesc, table
+
     for subtable, name in (('FIELD', 'SCIENCE'), ('SOURCE', 'SCIENCE')):
         with opened(ms / subtable, True) as tab:
             values = {col: tab.getcell(col, 0) for col in tab.colnames()
