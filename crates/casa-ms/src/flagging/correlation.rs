@@ -10,8 +10,8 @@ use super::{FlagDataColumn, FlagDataMode, FlaggingError, display_ms_path};
 
 // CASA checks the first named receptor product in this order before
 // constructing its clipping visibility mapper for a buffer.
-const RECEPTOR_PRODUCTS: [&str; 8] = ["XX", "YY", "XY", "YX", "RR", "LL", "LR", "RL"];
-const STOKES_PRODUCTS: [&str; 4] = ["I", "Q", "U", "V"];
+pub(super) const RECEPTOR_PRODUCTS: [&str; 8] = ["XX", "YY", "XY", "YX", "RR", "LL", "LR", "RL"];
+pub(super) const STOKES_PRODUCTS: [&str; 4] = ["I", "Q", "U", "V"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ClipMetric {
@@ -22,7 +22,7 @@ pub(super) enum ClipMetric {
     SquaredMagnitude,
 }
 
-const CLIP_OPERATORS: [(&str, ClipMetric); 5] = [
+pub(super) const CLIP_OPERATORS: [(&str, ClipMetric); 5] = [
     ("REAL", ClipMetric::Real),
     ("IMAG", ClipMetric::Imaginary),
     ("ARG", ClipMetric::Phase),

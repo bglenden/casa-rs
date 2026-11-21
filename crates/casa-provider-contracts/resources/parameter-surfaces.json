@@ -24476,7 +24476,7 @@
         },
         {
           "name": "winsize",
-          "concept": {"id": "flagdata.winsize", "semantic_revision": 1},
+          "concept": {"id": "flagdata.winsize", "semantic_revision": 2},
           "order": 43,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 3}},
           "required_when": {"kind": "never"},
@@ -24486,8 +24486,7 @@
             "provider": {"field": "winsize"},
             "python": {"name": "winsize"},
             "presentation": {"label": "Window Size", "group": "Automatic", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
+          }
         },
         {
           "name": "timedevscale",

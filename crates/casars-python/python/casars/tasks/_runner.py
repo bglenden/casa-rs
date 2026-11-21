@@ -608,7 +608,7 @@ def _coerce_flagdata_options(
             errors["extendpols"] = ["must be of cVariant type"]
         elif isinstance(value, (np.ndarray, np.int32, np.int64, np.float32, np.float64)):
             argument_text["extendpols"] = str(value)
-    for parameter, default in (("maxnpieces", 7), ("halfwin", 1)):
+    for parameter, default in (("maxnpieces", 7), ("halfwin", 1), ("winsize", 3)):
         if parameter not in values:
             continue
         value = values[parameter]

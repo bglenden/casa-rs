@@ -8105,6 +8105,23 @@ bandpass and FPARAM Tsys tables for `spw='0:1~5^2'`. The channel stride
 selects channels 1, 3, and 5. Casa-rs flags those channels and preserves
 channels 2 and 4. The calibration flagdata oracle checks both outcomes.
 
+## Calibration RFlag can extend flags outside the selected channels
+
+In CASA 6.7.6.14, `flagdata(mode='rflag', spw='0:3~7')` with automatic
+extension can flag channel 0 in both CPARAM bandpass and FPARAM Tsys
+tables. The corresponding selected channels agree with casa-rs, which
+preserves every flag outside the requested slice.
+
+On a calibration table with a single antenna and ten integrations,
+`winsize=0` and `winsize=-1` abort the CASA process with an
+out-of-range vector access. Casa-rs rejects nonpositive window lengths
+before running the agent.
+
+Using a positive explicit time or frequency threshold with a zero or
+negative scale can also crash CASA while applying flags. Casa-rs rejects
+these combinations before writing flags. Calculate mode ignores the
+scale factors and reports the unscaled calculated thresholds.
+
 ## Calibration flagdata summary can crash on a wildcard field
 
 CASA 6.7.6.14 `flagdata(mode='summary')` can segfault on a delay table
