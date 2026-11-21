@@ -9,7 +9,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::{
-    FluxParameters, execution, flux_dictionary, prepare, publish_models, requested_windows,
+    FluxParameters, add_time_selection, execution, flux_dictionary, prepare, publish_models,
+    requested_windows,
 };
 use crate::attachment::OpenedMs;
 use crate::ft::setjy::ManualFlux;
@@ -39,63 +40,53 @@ pub(super) fn run(
             );
         }
     }
-    if scratch {
-        opened = opened
-            .initialize(VisibilityDataColumn::ModelData)
-            .map_err(execution)?;
-    }
     let dictionary = FluxDictionary::new(task.value("fluxdict"))?;
-    let preflight = if scratch
-        || (selection.timerange.is_none()
-            && selection.scan.is_none()
-            && selection.observation.is_none())
-    {
-        None
-    } else {
-        let mut preflight = selection.clone();
-        preflight.timerange = None;
-        preflight.scan = None;
-        preflight.observation = None;
-        Some(opened.resolve(&preflight).map_err(execution)?)
-    };
-    let selected_fields = preflight
-        .as_ref()
-        .unwrap_or(selected)
+    let selected_fields = selected
         .selected_rows
         .iter()
         .map(|row| row.field_id)
         .collect::<BTreeSet<_>>();
-    let fields = dictionary.fields(&selected_fields)?;
+    let fields = dictionary.fields(&selected_fields, task.argument_text("fluxdict"))?;
+    let selected_windows = selection
+        .spw
+        .as_deref()
+        .map(|spw| {
+            requested_windows(&opened.measurement_set, Some(spw))
+                .map(|windows| windows.into_iter().collect::<BTreeSet<_>>())
+        })
+        .transpose()?;
     let by_channel = task.flag("scalebychan")?;
     let mut combined = Vec::new();
+    let mut scratch_ready = !scratch;
     for (id, record) in fields {
+        let ParameterValue::Table(record) = record else {
+            return Err(invalid(format!("fluxdict field {id} must be a dictionary")));
+        };
         let index = spectral_index(record, id)?;
-        if selection.spw.is_some() {
-            // The pinned wrapper calls an unbound ms.msseltoindex with vis as self.
-            return Err(execution("'str' object has no attribute '_swigobj'").at("spw"));
+        let windows = dictionary.windows(record, selected_windows.as_ref())?;
+        if windows.is_empty() {
+            append_values(&mut combined, flux_dictionary(Vec::new()));
+            continue;
         }
-        let windows = dictionary.windows(record)?;
         let (flux, hz) = dictionary.reference(record, &windows)?;
         let Some(model) = model(task, flux, hz, index)? else {
             continue;
         };
         let mut field_request = selection.clone();
+        if !scratch {
+            add_time_selection(task, &mut field_request)?;
+        }
         field_request.field = Some(id.to_string());
-        field_request.spw = (!windows.is_empty()).then(|| {
+        field_request.spw = Some(
             windows
                 .iter()
                 .map(i32::to_string)
                 .collect::<Vec<_>>()
-                .join(",")
-        });
+                .join(","),
+        );
         let mut field_rows = opened.resolve(&field_request).map_err(execution)?;
         if field_rows.selected_rows.is_empty() {
-            if combined.is_empty() {
-                let CasaValue::Dict { entries } = flux_dictionary(Vec::new()) else {
-                    unreachable!()
-                };
-                combined = entries;
-            }
+            append_values(&mut combined, flux_dictionary(Vec::new()));
             continue;
         }
         field_rows.channel_selections.clear();
@@ -107,18 +98,33 @@ pub(super) fn run(
             &spws,
             by_channel,
         )?;
-        publish_models(&mut opened, &field_rows, prepared, &spws, scratch)?;
-        let CasaValue::Dict { entries } = values else {
-            unreachable!()
-        };
-        for entry in entries {
-            if !combined.iter().any(|existing| existing.key == entry.key) {
-                combined.push(entry);
-            }
+        if !scratch_ready {
+            opened = opened
+                .initialize(VisibilityDataColumn::ModelData)
+                .map_err(execution)?;
+            scratch_ready = true;
         }
+        publish_models(&mut opened, &field_rows, prepared, &spws, scratch)?;
+        append_values(&mut combined, values);
     }
     opened.release().map_err(execution)?;
     Ok(CasaValue::Dict { entries: combined })
+}
+
+fn append_values(combined: &mut Vec<casa_provider_contracts::CasaEntry>, values: CasaValue) {
+    let CasaValue::Dict { entries } = values else {
+        unreachable!()
+    };
+    for entry in entries {
+        if let Some(existing) = combined
+            .iter_mut()
+            .find(|existing| existing.key == entry.key)
+        {
+            existing.value = entry.value;
+        } else {
+            combined.push(entry);
+        }
+    }
 }
 
 struct FluxDictionary<'a> {
@@ -167,19 +173,23 @@ impl<'a> FluxDictionary<'a> {
         })
     }
 
-    fn fields(&self, selected: &BTreeSet<i32>) -> Result<BTreeMap<i32, &'a Record>, TaskFailure> {
-        let mut fields = BTreeMap::new();
-        for (key, value) in self.data {
+    fn fields(
+        &self,
+        selected: &BTreeSet<i32>,
+        order: Option<&str>,
+    ) -> Result<Vec<(i32, &'a ParameterValue)>, TaskFailure> {
+        let supplied = order.and_then(|text| serde_json::from_str::<Vec<String>>(text).ok());
+        let mut visited = BTreeSet::new();
+        let mut fields = Vec::new();
+        for key in supplied.iter().flatten().chain(self.data.keys()) {
             let Ok(id) = key.parse::<i32>() else { continue };
-            if !selected.contains(&id) {
+            if !selected.contains(&id) || !visited.insert(key) {
                 continue;
             }
-            let ParameterValue::Table(field) = value else {
-                return Err(invalid(format!(
-                    "fluxdict field {key} must be a dictionary"
-                )));
+            let Some(value) = self.data.get(key) else {
+                continue;
             };
-            fields.insert(id, field);
+            fields.push((id, value));
         }
         if fields.is_empty() {
             return Err(invalid(
@@ -189,9 +199,16 @@ impl<'a> FluxDictionary<'a> {
         Ok(fields)
     }
 
-    fn windows(&self, field: &Record) -> Result<Vec<i32>, TaskFailure> {
+    fn windows(
+        &self,
+        field: &Record,
+        requested: Option<&BTreeSet<i32>>,
+    ) -> Result<Vec<i32>, TaskFailure> {
         let mut valid = Vec::new();
         for &window in &self.windows {
+            if requested.is_some_and(|ids| !ids.contains(&window)) {
+                continue;
+            }
             let flux = window_flux(field, window)?;
             if flux[0] > -1. {
                 valid.push(window);
@@ -228,9 +245,10 @@ fn spectral_index(field: &Record, id: i32) -> Result<Vec<f64>, TaskFailure> {
         .get("spidx")
         .and_then(numbers)
         .ok_or_else(|| invalid("fluxdict spidx must be an array of numbers"))?;
-    let Some(alpha) = coefficients.get(1).copied() else {
-        return Err(invalid("index 0 is out of bounds for axis 0 with size 0"));
-    };
+    if coefficients.is_empty() {
+        return Err(invalid("fluxdict spidx must include its intercept"));
+    }
+    let alpha = coefficients.get(1).copied().unwrap_or_default();
     if alpha.abs() > 10. {
         let relation = if alpha < -10. {
             "less than -10"

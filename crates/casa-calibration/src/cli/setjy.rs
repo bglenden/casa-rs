@@ -51,6 +51,20 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let scratch = task.flag("usescratch")?;
     let mut opened = OpenedMs::open(&path).map_err(execution)?;
     let mut selection = selection(task)?;
+    if task.text("standard")?.as_deref() == Some("fluxscale") {
+        // The wrapper validates the dictionary before its virtual imager
+        // call applies time, scan or observation predicates.
+        if scratch {
+            add_time_selection(task, &mut selection)?;
+        }
+        let selected = opened.resolve(&selection).map_err(execution)?;
+        if selected.selected_rows.is_empty() {
+            return empty_selection(task);
+        }
+        let result = fluxdict::run(task, opened, selection, &selected, scratch)?;
+        super::history::record_task(task, &path);
+        return TaskSuccess::new(result, &());
+    }
     // The task first checks field, SPW and intent for virtual models.
     // The imager then applies time, scan and observation to the model selection.
     let time_filtered = ["timerange", "scan", "observation"].into_iter().any(
@@ -69,11 +83,6 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             return TaskSuccess::new(flux_dictionary(Vec::new()), &());
         }
         return empty_selection(task);
-    }
-    if task.text("standard")?.as_deref() == Some("fluxscale") {
-        let result = fluxdict::run(task, opened, selection, &selected, scratch)?;
-        super::history::record_task(task, &path);
-        return TaskSuccess::new(result, &());
     }
     let Some(flux) = flux_parameters(task)? else {
         if scratch {
