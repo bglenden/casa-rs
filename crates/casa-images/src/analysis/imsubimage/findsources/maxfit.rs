@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_components::ComponentList;
-use casa_coordinates::CoordinateType;
-use casa_types::RecordValue;
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_types::{RecordValue, quanta::Unit};
 use ndarray::Dimension;
 
 use crate::analysis::axes::direction_plane_axes;
@@ -47,18 +47,24 @@ pub fn fit_image_maximum(
     coordinate_record: RecordValue,
     options: MaxFitOptions<'_>,
 ) -> Result<ImageMaxFit, ImageError> {
-    if image.image_info()?.beam_set.has_multi_beam() {
-        return Err(invalid(
-            "This application does not support images with multiple beams",
-        ));
-    }
     let coords = image.coordinates();
     if coords.find_coordinate(CoordinateType::Direction).is_none() {
         return Err(invalid("The image must contain a direction coordinate"));
     }
     let direction_axes = direction_plane_axes(image)?;
-    let mut selection =
-        SubimageSelection::resolve_section(image, None, options.region, None, None)?;
+    let selection = SubimageSelection::resolve_section(image, None, options.region, None, None)?;
+    if selection.has_multiple_regions {
+        return Err(invalid(
+            "Only a single n-dimensional rectangular region is supported",
+        ));
+    }
+    let requested = SubimagePlan::from_selection(image, None, selection, true, &[], None)?;
+    if requested.image_info.beam_set.has_multi_beam() {
+        return Err(invalid(
+            "This application does not support images with multiple beams",
+        ));
+    }
+    let mut selection = requested.selection;
     if let Some(axis) = image.find_axis(CoordinateType::Stokes) {
         // CASA searches the first Stokes plane included in the region.
         selection.shape[axis] = 1;
@@ -115,31 +121,37 @@ pub fn fit_image_maximum(
         for (&axis, sky_pixel) in plan.kept_axes.iter().zip(peak.position) {
             selected_pixel[axis] = sky_pixel;
         }
-        let source_pixel = selected_pixel
+        let pixel = requested
+            .kept_axes
             .iter()
-            .zip(origin)
-            .zip(section.stride)
-            .map(|((&pixel, origin), &step)| origin as f64 + pixel * step as f64)
+            .map(|&axis| selected_pixel[axis])
             .collect::<Vec<_>>();
+        let coords = &requested.coordinates;
         let values = component.flux().values().map(|value| value.re);
         messages.push(format!(
             "Brightness     = {values:?} {}",
             component.flux().unit().name()
         ));
-        messages.push(format!("World Axis Units: {:?}", coords.world_axis_units()));
-        if let Ok(world) = coords.to_world(&source_pixel) {
-            messages.push(format!("Absolute world = {world:?}"));
-            let mut relative = world;
-            if coords.convert_world_offsets(&mut relative, false).is_ok() {
-                messages.push(format!("Relative world = {relative:?}"));
+        let mut units = coords.world_axis_units();
+        for (axis, unit) in units.iter_mut().enumerate() {
+            if let Some((model, local)) = coords.world_axis_owner(axis)
+                && let CoordinateModel::Direction(direction) = coords.coordinate(model)
+            {
+                *unit = direction.visible_world_units()[local].clone();
             }
         }
-        let relative = offsets(&source_pixel, &coords.reference_pixel())
-            .into_iter()
-            .zip(section.stride)
-            .map(|(offset, &step)| offset / step as f64)
-            .collect::<Vec<_>>();
-        messages.push(format!("Absolute pixel = {selected_pixel:?}"));
+        messages.push(format!("World Axis Units: {units:?}"));
+        if let Ok(world) = coords.to_world(&pixel) {
+            let displayed = displayed_world(coords, &units, &world);
+            messages.push(format!("Absolute world = {displayed:?}"));
+            let mut relative = world;
+            if coords.convert_world_offsets(&mut relative, false).is_ok() {
+                let displayed = displayed_world(coords, &units, &relative);
+                messages.push(format!("Relative world = {displayed:?}"));
+            }
+        }
+        let relative = offsets(&pixel, &coords.reference_pixel());
+        messages.push(format!("Absolute pixel = {pixel:?}"));
         messages.push(format!("Relative pixel = {relative:?}"));
     }
     let mut components = ComponentList::new();
@@ -231,5 +243,23 @@ fn offsets(coordinate: &[f64], reference: &[f64]) -> Vec<f64> {
         .iter()
         .zip(reference)
         .map(|(&value, &reference)| value - reference)
+        .collect()
+}
+
+fn displayed_world(coordinates: &CoordinateSystem, units: &[String], world: &[f64]) -> Vec<f64> {
+    world
+        .iter()
+        .zip(units)
+        .enumerate()
+        .map(|(axis, (&value, unit))| {
+            if let Some((model, _)) = coordinates.world_axis_owner(axis)
+                && matches!(coordinates.coordinate(model), CoordinateModel::Direction(_))
+                && let Ok(unit) = Unit::new(unit)
+            {
+                value / unit.val().factor
+            } else {
+                value
+            }
+        })
         .collect()
 }

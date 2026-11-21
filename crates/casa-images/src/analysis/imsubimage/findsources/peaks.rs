@@ -157,8 +157,10 @@ pub(super) fn search(
                 },
             );
             peaks.truncate(nmax);
-            for row in &mut active {
-                row.done[start..=x + 1].fill(true);
+            if !maximum {
+                for row in &mut active {
+                    row.done[start..=x + 1].fill(true);
+                }
             }
         }
     }
