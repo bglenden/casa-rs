@@ -38,6 +38,7 @@ mod fits_export;
 mod fits_header;
 mod fits_import;
 mod fits_rename;
+mod histograms;
 mod handle;
 mod imagecalc;
 mod insert;

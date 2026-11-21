@@ -20,6 +20,8 @@ mod deviation;
 mod findsources;
 mod fitcomponents;
 mod fitprofile;
+mod histogram;
+pub use histogram::{HistogramOptions, HistogramPixel, image_histogram};
 pub use fitcomponents::{
     ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
     fit_image_components,
