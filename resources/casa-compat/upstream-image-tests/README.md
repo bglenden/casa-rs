@@ -12,3 +12,7 @@ matching `casatestdata/unittest` fixture directory separately for each run,
 retains pytest logs and JUnit results, and uses CASA's tools as independent
 fixture builders and output readers. Before a native subprocess reads fixtures
 built by an open CASA image tool, the harness flushes those tables to disk.
+
+The `impv` suite retains the upstream `UnboundLocalError` assertions for the
+CASA run. Its casa-rs run checks the specific validation errors for those
+same calls, which avoid CASA's uninitialized local during error cleanup.

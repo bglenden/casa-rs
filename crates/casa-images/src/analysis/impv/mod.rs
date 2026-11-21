@@ -89,7 +89,9 @@ where
         output.set_default_mask("mask0")?;
     }
     output.append_history_entries(&crate::image::image_history_rows(&request.imagename)?)?;
-    output.append_history_at("::impv", &[format!(
+    output.append_history_at("::impv", &[
+        concat!("version: casa-rs ", env!("CARGO_PKG_VERSION")).into(),
+        format!(
         "impv(imagename={:?}, outfile={:?}, mode={:?}, start={:?}, end={:?}, width={width}, unit={:?})",
         request.imagename.display().to_string(), request.outfile.display().to_string(), request.mode,
         request.start, request.end, request.unit,
