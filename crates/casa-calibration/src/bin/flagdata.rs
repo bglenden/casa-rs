@@ -87,7 +87,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                     ))
                     .at("vis")
                 })?;
-                save_flag_parameters(task, &path, &mode, &action)?;
+                save_flag_parameters(task, &path, &mode, &action, time_chunk)?;
             } else {
                 tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
             }
@@ -118,7 +118,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             }
             Err(error)
         })?;
-    request.time_chunk = time_chunk;
+    request.time_chunk = time_chunk.filter(|seconds| *seconds > 0.0 && seconds.is_finite());
     request.display_column_is_scalar = display_option.is_empty() || column.is_some();
     if matches!(display_option.as_str(), "data" | "report" | "both") {
         tracing::warn!(display = %display_option, "running flagdata with its headless provider");
@@ -137,6 +137,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                 | FlagDataMode::Quack
                 | FlagDataMode::Summary
                 | FlagDataMode::Elevation
+                | FlagDataMode::Extend
         )
     {
         return Err(not_yet("action", &action));
@@ -163,7 +164,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         error => TaskFailure::execution(error.to_string()),
     })?;
     if save_parameters && display_option.is_empty() {
-        save_flag_parameters(task, &path, &mode, &action)?;
+        save_flag_parameters(task, &path, &mode, &action, time_chunk)?;
     }
     if !calculate
         && request.mode != FlagDataMode::Summary
@@ -184,6 +185,7 @@ fn save_flag_parameters(
     vis: &Path,
     mode: &str,
     action: &str,
+    time_chunk: Option<f64>,
 ) -> Result<(), TaskFailure> {
     let mut arguments = Vec::new();
     for name in STRING_SELECTORS {
@@ -230,6 +232,16 @@ fn save_flag_parameters(
         ],
         "quack" => &["quackmode", "quackinterval", "quackincrement"],
         "elevation" => &["lowerlimit", "upperlimit"],
+        "extend" => &[
+            "ntime",
+            "combinescans",
+            "extendpols",
+            "growtime",
+            "growfreq",
+            "growaround",
+            "flagneartime",
+            "flagnearfreq",
+        ],
         _ => return Err(not_yet("savepars", mode)),
     };
     for &field in fields {
@@ -238,6 +250,12 @@ fn save_flag_parameters(
         } else if field == "datacolumn" {
             let column = task.required_text(field)?.to_ascii_uppercase();
             push_command_argument(&mut arguments, field, &ParameterValue::String(column));
+        } else if field == "ntime" {
+            push_command_argument(
+                &mut arguments,
+                field,
+                &ParameterValue::Float(time_chunk.unwrap_or(0.0)),
+            );
         } else {
             let value = if field == "chanbin" {
                 task.session()
@@ -246,6 +264,10 @@ fn save_flag_parameters(
             } else {
                 task.value(field)
                     .expect("flagdata has a literal default for the agent parameter")
+            };
+            let value = match (field, value) {
+                ("extendpols", ParameterValue::ScalarArray(value)) => value,
+                _ => value,
             };
             push_command_argument(&mut arguments, field, value);
         }
@@ -419,9 +441,12 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                     "[]".to_string()
                 }
                 (
-                    "chanbin",
+                    "chanbin" | "extendpols",
                     ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value),
                 ) => python_repr(value),
+                ("combinescans" | "growaround" | "flagneartime" | "flagnearfreq", _) => task
+                    .argument_text(name)
+                    .map_or_else(|| python_repr(value), str::to_owned),
                 ("vis", ParameterValue::Array(paths))
                     if let [ParameterValue::String(path)] = paths.as_slice() =>
                 {
@@ -511,7 +536,7 @@ fn time_chunk_argument(task: &TaskInvocation<'_>) -> Result<Option<f64>, TaskFai
             if seconds < 0.0 {
                 tracing::warn!(%seconds, "Provided time interval is negative");
             }
-            return Ok((seconds > 0.0 && seconds.is_finite()).then_some(seconds));
+            return Ok(Some(seconds));
         }
         Some(ParameterValue::Float(value)) => *value,
         Some(ParameterValue::Integer(value)) => *value as f64,
@@ -524,7 +549,7 @@ fn time_chunk_argument(task: &TaskInvocation<'_>) -> Result<Option<f64>, TaskFai
     if seconds.is_nan() {
         tracing::warn!("Provided time interval is negative: nan");
     }
-    Ok(seconds.is_finite().then_some(seconds))
+    Ok(Some(seconds))
 }
 
 fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
@@ -590,6 +615,10 @@ fn flagdata_request(
     if mode == FlagDataMode::Quack && quackmode == QuackMode::Disabled {
         tracing::warn!("quack mode and interval require supported scalar options");
     }
+    let extendpols = match task.value("extendpols") {
+        Some(ParameterValue::Bool(value)) => Some(*value),
+        _ => None,
+    };
     Ok(FlagDataRequest {
         selection: selection(task, &spw)?,
         casa_row_selection: true,
@@ -617,6 +646,7 @@ fn flagdata_request(
         clip_channel_bins: clip_channel_bins(task, mode, channel_bins)?,
         clip_time_bin: clip_time_bin(task, mode)?,
         time_chunk: None,
+        combinescans: task.flag("combinescans")?,
         quackinterval,
         quackmode,
         quackincrement,
@@ -630,7 +660,11 @@ fn flagdata_request(
         timedev: task.optional_number("timedev")?,
         freqdev: task.optional_number("freqdev")?,
         extendflags: task.flag("extendflags")?,
-        extendpols: task.flag("extendpols")?,
+        extendpols: extendpols.unwrap_or(false),
+        extension_enabled: extendpols.is_some(),
+        growaround: task.flag("growaround")?,
+        flagneartime: task.flag("flagneartime")?,
+        flagnearfreq: task.flag("flagnearfreq")?,
         growtime: task.number("growtime")?,
         growfreq: task.number("growfreq")?,
     })

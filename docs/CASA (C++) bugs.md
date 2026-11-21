@@ -4022,7 +4022,7 @@ and accumulates each weight spectrum over its actual contributing
 integrations. The test calculates the expected masks from the stored values,
 then compares flags and data using both CASA and casacore readback.
 
-## Decorated manual, quack and elevation selections can flag unnamed correlations
+## Decorated manual, quack, elevation and extension selections can flag unnamed correlations
 
 In CASA 6.7.6.14, manual, quack and elevation flagging ignore the correlation scope
 when a recognized visibility operator appears in the expression. For example,
@@ -4032,9 +4032,14 @@ The `tools/casa-compat/flagdata_routine_expressions_oracle.py` comparison
 reproduces the extra flags and checks casa-rs against explicit CASA selection
 of the named planes. `ALL` still selects every stored correlation. An
 expression with no known product leaves the flags unchanged.
-An elevation comparison also verifies that `ABS_YY` selects only YY in
-casa-rs. CASA changes all four planes with that expression.
+An elevation comparison verifies that `ABS_YY` selects only YY in
+casa-rs. CASA changes all four planes with that expression. An extension
+comparison starts with four flagged XX channels. With `growfreq=50`,
+`growtime=0`, and `extendpols=True`, CASA fills both XX and YY for
+`ABS_XX`. Native extension fills all eight XX channels and preserves
+YY, matching the explicit CASA `XX` product.
 [Elevation oracle](../tools/casa-compat/flagdata_elevation_oracle.py)
+· [Extension oracle](../tools/casa-compat/flagdata_extend_oracle.py)
 
 ## Time-averaged clipping can derive row flags from a subset of channels
 

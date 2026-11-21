@@ -3,36 +3,152 @@
 //! and correlation, as CASA 6.7.6.14's extension agent grows them
 //! (`FlagAgentExtension.cc`, `computeAntennaPairFlags`).
 //!
-//! The agent works on one baseline of one chunk at a time (here a field,
-//! spectral window and scan), a cube of correlations by channels by
-//! timesteps:
-//! 1. per correlation, a timestep whose flagged channels reach `growfreq`
+//! The agent works on one baseline of one visibility-iterator chunk at a time:
+//! 1. Grow from existing flags to neighboring times and channels.
+//! 2. Per correlation, a timestep whose flagged channels reach `growfreq`
 //!    percent is flagged in every channel, and a channel whose flagged
 //!    timesteps reach `growtime` percent is flagged at every timestep. Both
-//!    counts are of the flags before either growth;
-//! 2. then, with `extendpols`, a channel and timestep flagged in one
+//!    counts are from the flags after neighbor growth.
+//! 3. With `extendpols`, a channel and timestep flagged in one
 //!    correlation is flagged in every correlation.
 //!
 //! The agent reads flags only, so the data column plays no part.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::{FlagDataRequest, Sample, group_samples};
+use super::clip_time::{mark_time_chunks, read_clip_times};
+use super::{
+    ChangeSet, ChannelSelection, CorrelationSelection, FlagDataRequest, FlaggingError,
+    MeasurementSet, Sample, apply_flag_mask_with_preloaded, load_samples,
+};
 
-/// The flags of `samples`, indexed by [`Sample::index`], after `request`'s
-/// growth: each sample's own flag, or a flag the growth gives it.
-pub(super) fn grow(samples: &[Sample], request: &FlagDataRequest) -> Vec<bool> {
-    let mut flags = samples.iter().map(|sample| sample.flag).collect::<Vec<_>>();
-    for baseline in group_samples(samples).values() {
-        grow_across_time_and_frequency(baseline, request, &mut flags);
-        if request.extendpols {
-            extend_across_correlations(baseline, &mut flags);
+pub(super) fn apply(
+    ms: &mut MeasurementSet,
+    selected: &[usize],
+    channels: Option<&BTreeMap<i32, ChannelSelection>>,
+    correlations: Option<&CorrelationSelection>,
+    request: &FlagDataRequest,
+    path: &str,
+) -> Result<ChangeSet, FlaggingError> {
+    let mut changed = ChangeSet::default();
+    if !request.extension_enabled {
+        tracing::warn!("extendpols must be a scalar Boolean to start the extend agent");
+        return Ok(changed);
+    }
+    // The CASA constructor uses these comparisons directly. A NaN disables
+    // its percentage test, so neighbor growth and polarization can still run.
+    for (parameter, value) in [
+        ("growtime", request.growtime),
+        ("growfreq", request.growfreq),
+    ] {
+        if !value.is_nan() && !(0.0..=100.0).contains(&value) {
+            tracing::warn!(
+                parameter,
+                value,
+                "extend requires percentages from 0 through 100"
+            );
+            return Ok(changed);
         }
+    }
+    let mut timed = read_clip_times(ms, selected, path)?;
+    if request.combinescans {
+        for row in &mut timed {
+            row.combine_scans();
+        }
+    }
+    if let Some(seconds) = request
+        .time_chunk
+        .filter(|seconds| *seconds > 0.0 && seconds.is_finite())
+    {
+        mark_time_chunks(&mut timed, seconds);
+    }
+    timed.sort_unstable_by(|left, right| {
+        left.baseline_key()
+            .cmp(&right.baseline_key())
+            .then_with(|| left.time().total_cmp(&right.time()))
+            .then_with(|| left.row.cmp(&right.row))
+    });
+    for baseline in timed.chunk_by(|a, b| a.baseline_key() == b.baseline_key()) {
+        let rows = baseline.iter().map(|row| row.row).collect::<Vec<_>>();
+        let loaded = load_samples(ms, &rows, channels, None, correlations)?;
+        let grown = grow(&loaded.samples, request);
+        let block = apply_flag_mask_with_preloaded(
+            &loaded.samples,
+            &grown,
+            loaded.flags_by_row,
+            ms,
+            !request.casa_row_selection,
+        )?;
+        changed.changed_rows += block.changed_rows;
+        changed.changed_samples += block.changed_samples;
+        changed.changed_flag_row_rows += block.changed_flag_row_rows;
+        changed
+            .changed_row_indices
+            .extend(block.changed_row_indices);
+    }
+    changed.changed_row_indices.sort_unstable();
+    Ok(changed)
+}
+
+/// Flag mask for one baseline's selected samples in time order.
+fn grow(samples: &[Sample], request: &FlagDataRequest) -> Vec<bool> {
+    let mut flags = samples.iter().map(|sample| sample.flag).collect::<Vec<_>>();
+    if request.growaround || request.flagneartime || request.flagnearfreq {
+        grow_neighbors(samples, request, &mut flags);
+    }
+    grow_across_time_and_frequency(samples, request, &mut flags);
+    if request.extendpols {
+        extend_across_correlations(samples, &mut flags);
     }
     flags
 }
 
-/// Step 1, for one baseline's samples.
+fn grow_neighbors(samples: &[Sample], request: &FlagDataRequest, flags: &mut [bool]) {
+    let mut row_ranks = BTreeMap::new();
+    let mut channels = BTreeSet::new();
+    for sample in samples {
+        let next_row = row_ranks.len();
+        row_ranks.entry(sample.row).or_insert(next_row);
+        channels.insert(sample.chan);
+    }
+    // The flag mapper exposes adjacent selected channels even across a gap
+    // in the requested spectral selection.
+    let channel_ranks = channels
+        .into_iter()
+        .enumerate()
+        .map(|(rank, channel)| (channel, rank))
+        .collect::<BTreeMap<_, _>>();
+    let position = |sample: &Sample| {
+        (
+            sample.corr,
+            row_ranks[&sample.row],
+            channel_ranks[&sample.chan],
+        )
+    };
+    let original = samples
+        .iter()
+        .filter(|sample| sample.flag)
+        .map(position)
+        .collect::<BTreeSet<_>>();
+    for sample in samples.iter().filter(|sample| !sample.flag) {
+        let (corr, time, channel) = position(sample);
+        let neighbor = |dt: isize, dc: isize| {
+            time.checked_add_signed(dt)
+                .zip(channel.checked_add_signed(dc))
+                .is_some_and(|(t, c)| original.contains(&(corr, t, c)))
+        };
+        flags[sample.index] = (request.flagneartime && (neighbor(-1, 0) || neighbor(1, 0)))
+            || (request.flagnearfreq && (neighbor(0, -1) || neighbor(0, 1)))
+            || (request.growaround
+                && (-1..=1)
+                    .flat_map(|dt| (-1..=1).map(move |dc| (dt, dc)))
+                    .filter(|&(dt, dc)| neighbor(dt, dc))
+                    .count()
+                    > 4);
+    }
+}
+
+/// Percentage growth reads the original counts after the neighbor pass.
 fn grow_across_time_and_frequency(
     baseline: &[Sample],
     request: &FlagDataRequest,
@@ -51,7 +167,7 @@ fn grow_across_time_and_frequency(
             (&mut by_channel, (sample.corr, sample.chan)),
         ] {
             let (flagged, total) = counts.entry(key).or_default();
-            *flagged += usize::from(sample.flag);
+            *flagged += usize::from(flags[sample.index]);
             *total += 1;
         }
     }
@@ -67,8 +183,7 @@ fn grow_across_time_and_frequency(
     }
 }
 
-/// Step 2, for one baseline's samples: every correlation of a channel and
-/// timestep any of them flags.
+/// Flag every correlation of a channel and timestep with any flagged correlation.
 fn extend_across_correlations(baseline: &[Sample], flags: &mut [bool]) {
     let mut flagged = BTreeMap::<(usize, usize), bool>::new();
     for sample in baseline {

@@ -143,6 +143,7 @@ impl CorrelationSelection {
                     | FlagDataMode::Quack
                     | FlagDataMode::Clip
                     | FlagDataMode::Elevation
+                    | FlagDataMode::Extend
             ) || (mode == FlagDataMode::Clip && has_operator && clip_operator.is_none()))
         {
             return Err(unsupported());
@@ -150,7 +151,10 @@ impl CorrelationSelection {
         let decorated_stored_products = has_operator
             && matches!(
                 mode,
-                FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Elevation
+                FlagDataMode::Manual
+                    | FlagDataMode::Quack
+                    | FlagDataMode::Elevation
+                    | FlagDataMode::Extend
             );
         if decorated_stored_products {
             let Some(products) = stored_products_with_operator(text) else {

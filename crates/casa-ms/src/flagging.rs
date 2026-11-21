@@ -209,6 +209,8 @@ pub struct FlagDataRequest {
     pub clip_time_bin: Option<String>,
     /// Positive visibility-iterator chunk interval, in seconds.
     pub time_chunk: Option<f64>,
+    /// Omit scan boundaries when grouping the extension agent's rows.
+    pub combinescans: bool,
     /// Quack interval in seconds.
     pub quackinterval: f64,
     /// Quack scan edge.
@@ -243,6 +245,14 @@ pub struct FlagDataRequest {
     pub extendflags: bool,
     /// Extend flags across correlations/polarizations.
     pub extendpols: bool,
+    /// Whether the public CASA values allow the extension agent to start.
+    pub extension_enabled: bool,
+    /// Flag samples with at least five flagged neighbors.
+    pub growaround: bool,
+    /// Extend existing flags one integration in each time direction.
+    pub flagneartime: bool,
+    /// Extend existing flags one selected channel in each frequency direction.
+    pub flagnearfreq: bool,
     /// If > 0, flag full channel time columns whose flagged percentage meets
     /// this threshold.
     pub growtime: f64,
@@ -271,6 +281,7 @@ impl Default for FlagDataRequest {
             clip_channel_bins: None,
             clip_time_bin: None,
             time_chunk: None,
+            combinescans: false,
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
             quackincrement: false,
@@ -285,6 +296,10 @@ impl Default for FlagDataRequest {
             freqdev: None,
             extendflags: true,
             extendpols: false,
+            extension_enabled: true,
+            growaround: false,
+            flagneartime: false,
+            flagnearfreq: false,
             growtime: 0.0,
             growfreq: 0.0,
         }
@@ -456,6 +471,7 @@ fn flagdata_with_persistence(
                 | FlagDataMode::Clip
                 | FlagDataMode::Quack
                 | FlagDataMode::Elevation
+                | FlagDataMode::Extend
         );
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
@@ -543,9 +559,14 @@ fn flagdata_with_persistence(
         FlagDataMode::Rflag => {
             apply_rflag_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
-        FlagDataMode::Extend => {
-            apply_extend_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
-        }
+        FlagDataMode::Extend => extend::apply(
+            ms,
+            &selected_rows,
+            channel_selections.as_ref(),
+            correlations.as_ref(),
+            request,
+            &ms_path,
+        )?,
         FlagDataMode::Summary => ChangeSet::default(),
     };
 
@@ -1301,7 +1322,8 @@ fn apply_tfcrop_flags(
             },
         })
     });
-    let mut changes = apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms)?;
+    let mut changes =
+        apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms, true)?;
     let applied_ms = started.elapsed().as_millis();
     changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
     trace_flagdata(|| {
@@ -1373,7 +1395,8 @@ fn apply_rflag_flags(
             },
         })
     });
-    let mut changes = apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms)?;
+    let mut changes =
+        apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms, true)?;
     let applied_ms = started.elapsed().as_millis();
     changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
     changes.thresholds = Some(thresholds.representative_pair());
@@ -1388,18 +1411,6 @@ fn apply_rflag_flags(
         })
     });
     Ok(changes)
-}
-
-fn apply_extend_flags(
-    ms: &mut MeasurementSet,
-    selected_rows: &[usize],
-    channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
-    request: &FlagDataRequest,
-) -> Result<ChangeSet, FlaggingError> {
-    // CASA's extension agent reads flags only: no data column.
-    let loaded = load_samples(ms, selected_rows, channel_selections, None, None)?;
-    let grown = extend::grow(&loaded.samples, request);
-    apply_flag_mask_with_preloaded(&loaded.samples, &grown, loaded.flags_by_row, ms)
 }
 
 fn extend_autoflag_grouped(
@@ -1565,6 +1576,7 @@ fn apply_flag_mask_with_preloaded(
     mask: &[bool],
     mut updates: BTreeMap<usize, ArrayD<bool>>,
     ms: &mut MeasurementSet,
+    update_flag_rows: bool,
 ) -> Result<ChangeSet, FlaggingError> {
     let mut changed = ChangeSet::default();
     let mut touched_rows = std::collections::BTreeSet::<usize>::new();
@@ -1583,7 +1595,13 @@ fn apply_flag_mask_with_preloaded(
             touched_rows.insert(sample.row);
         }
     }
-    write_touched_flag_updates(ms, updates, touched_rows, |_| true, &mut changed)?;
+    write_touched_flag_updates(
+        ms,
+        updates,
+        touched_rows,
+        |_| update_flag_rows,
+        &mut changed,
+    )?;
     Ok(changed)
 }
 
