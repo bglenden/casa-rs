@@ -143,13 +143,19 @@ def test_saved_region_edits_honor_membership_bounds_or_rejection(casa, tmp_path,
                     assert image.calcmask("F", "invalid")
                 assert image.done()
                 assert image.open(path)
-                np.testing.assert_array_equal(image.haslock(), [True, False])
-                with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
-                    if method == "modify":
-                        image.modify(components.torecord(), region=region, subtract=False, list=False)
-                    else:
-                        image.replacemaskedpixels(pixels="-2", region=region)
-                np.testing.assert_array_equal(image.haslock(), [True, False])
+                missing_members = {key: value for key, value in region.items() if key != "regions"}
+                cases = (
+                    (region, "Only a single n-dimensional rectangular region"),
+                    (missing_members, "RecordInterface: field regions is unknown"),
+                )
+                for value, message in cases:
+                    np.testing.assert_array_equal(image.haslock(), [True, False])
+                    with pytest.raises(RuntimeError, match=message):
+                        if method == "modify":
+                            image.modify(components.torecord(), region=value, subtract=False, list=False)
+                        else:
+                            image.replacemaskedpixels(pixels="-2", region=value)
+                    np.testing.assert_array_equal(image.haslock(), [True, False])
                 np.testing.assert_array_equal(image.getchunk(), data)
                 np.testing.assert_array_equal(image.getchunk(getmask=True), method == "modify")
         finally:
