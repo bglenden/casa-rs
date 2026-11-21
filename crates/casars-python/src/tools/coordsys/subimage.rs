@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_coordinates::tabular::TabularEdit;
-use casa_coordinates::{Coordinate, CoordinateModel, RecordCoordinate};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, RecordCoordinate};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError};
