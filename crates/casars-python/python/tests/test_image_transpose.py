@@ -164,7 +164,7 @@ def test_reflection_preserves_the_sampled_axis_world_values(kind):
         expected = np.array([100.0, 101.0, 106.0, 111.0, 115.5, 120.0])
     else:
         expected = np.array([1.415e9, 1.415001e9, 1.415004e9, 1.415009e9, 1.415016e9, 1.415025e9])
-        assert cs.setspectral(frequencies=expected)
+        assert cs.setspectral(frequencies={"value": expected, "unit": "Hz"})
     axis = cs.findcoordinate(kind)["pixel"][0]
     shape = [4, 4]
     shape[axis] = expected.size
