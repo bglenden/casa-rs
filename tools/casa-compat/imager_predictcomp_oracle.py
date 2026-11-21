@@ -31,15 +31,15 @@ def read_component(factory, path):
     return record
 
 
-def compare(actual, expected, label):
+def compare(actual, expected, label, *, rtol=3e-7):
     if isinstance(expected, dict):
         assert set(actual) == set(expected), (label, set(actual), set(expected))
         for key, value in expected.items():
-            compare(actual[key], value, f'{label}.{key}')
-    elif isinstance(expected, str):
+            compare(actual[key], value, f'{label}.{key}', rtol=rtol)
+    elif expected is None or isinstance(expected, str):
         assert actual == expected, (label, actual, expected)
     else:
-        np.testing.assert_allclose(actual, expected, rtol=3e-7, atol=2e-11, err_msg=label)
+        np.testing.assert_allclose(actual, expected, rtol=rtol, atol=2e-11, err_msg=label)
 
 
 def files_and_records(root):

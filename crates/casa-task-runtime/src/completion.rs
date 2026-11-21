@@ -209,6 +209,7 @@ enum DecodedManagedResult {
     Imager(ImagerOutputWire),
     Immoments(Vec<ArtifactWire>),
     Plotms(Vec<ArtifactWire>),
+    Predictcomp(Vec<ArtifactWire>),
     Simobserve(SimobserveOutputWire),
 }
 
@@ -218,7 +219,9 @@ impl DecodedManagedResult {
         match self {
             Self::Calibration(_) => None,
             Self::Imager(result) => Some(&result.artifacts),
-            Self::Immoments(artifacts) | Self::Plotms(artifacts) => Some(artifacts),
+            Self::Immoments(artifacts) | Self::Plotms(artifacts) | Self::Predictcomp(artifacts) => {
+                Some(artifacts)
+            }
             Self::Simobserve(result) => Some(&result.artifacts),
         }
     }
@@ -238,6 +241,7 @@ impl DecodedManagedResult {
                 result.run.warnings,
             ),
             Self::Immoments(products) => (format!("{} moment images", products.len()), Vec::new()),
+            Self::Predictcomp(_) => ("predictcomp completed".into(), Vec::new()),
             Self::Plotms(_) => ("plotms completed".into(), Vec::new()),
             Self::Simobserve(result) => (
                 format!("{} products of {}", result.artifacts.len(), result.run.stem),
@@ -269,10 +273,20 @@ fn decode_managed_result(
         ManagedResultDecoder::PlotmsRunV1 => serde_json::from_str::<PlotmsOutputWire>(stdout)
             .map(|output| DecodedManagedResult::Plotms(output.artifacts()))
             .map_err(malformed),
+        ManagedResultDecoder::PredictcompRunV1 => {
+            serde_json::from_str::<PredictcompOutputWire>(stdout)
+                .map(|output| DecodedManagedResult::Predictcomp(output.artifacts))
+                .map_err(malformed)
+        }
         ManagedResultDecoder::SimobserveRunV1 => serde_json::from_str(stdout)
             .map(DecodedManagedResult::Simobserve)
             .map_err(malformed),
     }
+}
+
+#[derive(Deserialize)]
+struct PredictcompOutputWire {
+    artifacts: Vec<ArtifactWire>,
 }
 
 #[derive(Deserialize)]

@@ -1028,8 +1028,9 @@ impl OrderStatsCache {
     }
 }
 
+/// Classical sample moments and extrema accumulated without retaining data.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct RunningStats {
+pub struct RunningStats {
     npts: usize,
     sum: f64,
     sumsq: f64,
@@ -1056,7 +1057,8 @@ impl Default for RunningStats {
 }
 
 impl RunningStats {
-    pub(crate) fn push(&mut self, value: f64) {
+    /// Add one valid, unweighted sample.
+    pub fn push(&mut self, value: f64) {
         if self.npts == 0 {
             self.origin = value;
         }
@@ -1071,6 +1073,19 @@ impl RunningStats {
         self.centered_sumsq += delta * (shifted - self.mean);
         self.min = self.min.min(value);
         self.max = self.max.max(value);
+    }
+
+    /// Return a moment, count, or extremum for a nonempty sample.
+    /// An empty sample or a statistic that depends on order returns `None`.
+    pub fn statistic(self, stat: Statistic) -> Option<f64> {
+        match stat {
+            Statistic::Median
+            | Statistic::Q1
+            | Statistic::Q3
+            | Statistic::Quartile
+            | Statistic::MedAbsDevMed => None,
+            _ => (self.npts > 0).then(|| self.finish(stat)),
+        }
     }
 
     fn merge(&mut self, other: Self) {

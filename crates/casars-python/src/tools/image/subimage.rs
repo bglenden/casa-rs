@@ -115,6 +115,14 @@ impl<'a, 'py> FromPyObject<'a, 'py> for RegionArgument {
 }
 
 impl RegionArgument {
+    pub(super) fn empty_text() -> Self {
+        Self {
+            selection: None,
+            record: false,
+            empty_history: r#""""#,
+        }
+    }
+
     pub(super) fn selection(&self) -> Option<SubimageRegion<'_>> {
         self.selection.as_ref().map(Region::as_region)
     }

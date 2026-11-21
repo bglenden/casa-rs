@@ -538,6 +538,23 @@
     "doPlot": "cBool",
     "plotName": "cStr"
   },
+  "predictcomp": {
+    "objname": "cStr",
+    "standard": "cStr",
+    "epoch": "cStr",
+    "minfreq": "cStr",
+    "maxfreq": "cStr",
+    "nfreqs": "cInt",
+    "prefix": "cPath",
+    "antennalist": "cStr",
+    "showplot": "cBool",
+    "savefig": "cStr",
+    "symb": "cStr",
+    "include0amp": "cBool",
+    "include0bl": "cBool",
+    "blunit": "cStr",
+    "showbl0flux": "cBool"
+  },
   "rerefant": {
     "caltable": "cStr",
     "refantmode": "cStr",

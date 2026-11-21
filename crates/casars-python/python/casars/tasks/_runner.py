@@ -273,6 +273,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_initweights(values)
     if name == "plotbandpass":
         return _call_plotbandpass(values, arguments)
+    if name == "predictcomp":
+        return _call_predictcomp(values, arguments)
     if name == "plotweather":
         return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
@@ -896,6 +898,68 @@ def _flagdata_clip_range(
     return bounds
 
 
+def _call_predictcomp(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    from os.path import expanduser
+
+    import numpy as np
+
+    flags = ("showplot", "include0amp", "include0bl", "showbl0flux")
+    errors = {}
+    for parameter, value in arguments.items():
+        if parameter == "nfreqs":
+            valid = isinstance(value, (int, np.int32, np.int64))
+            expected = "cInt"
+        elif parameter in flags:
+            valid = isinstance(value, (bool, np.bool_))
+            expected = "cBool"
+        else:
+            valid = isinstance(value, str)
+            expected = "cPath" if parameter == "prefix" else "cStr"
+        if not valid:
+            errors[parameter] = ["null value not allowed" if value is None else f"must be of {expected} type"]
+    if errors:
+        raise AssertionError(str(errors))
+    if "nfreqs" in values:
+        values["nfreqs"] = int(values["nfreqs"])
+    for flag in flags:
+        if flag in values:
+            values[flag] = bool(values[flag])
+    if "prefix" in values:
+        prefix = values["prefix"]
+        if prefix and not prefix.startswith(("/", "./", "../")):
+            values["prefix"] = expanduser(prefix)
+    # Direct filenames are literal, even when they contain characters
+    # reserved by reusable parameter profiles.
+    literal = {
+        key: values.pop(key)
+        for key in ("prefix", "savefig")
+        if key in values and any(character in values[key] for character in "$`")
+    }
+    try:
+        if literal:
+            workspace = Path.cwd()
+            resolved = TaskParameters.defaults("predictcomp", workspace=workspace)
+            resolved.set_many(values)
+            result = _execute_task("predictcomp", resolved, workspace, None, argument_text=literal).value
+        else:
+            result = run("predictcomp", **values).value
+    except TaskParameterError as error:
+        if error.completion.message == "m0" and error.completion.parameter == "epoch":
+            raise KeyError("m0") from error
+        if error.completion.parameter in ("objname", "minfreq"):
+            raise ValueError(error.completion.message) from error
+        raise
+    except ValueError as error:
+        for parameter in ("standard", "blunit"):
+            if f"for {parameter}:" in str(error):
+                raise AssertionError(str({parameter: [f"unallowed value {arguments[parameter]}"]})) from error
+        raise
+    if result and arguments["antennalist"]:
+        zero_flux = result["spectrum"]["bl0flux"]
+        zero_flux["value"] = np.float64(zero_flux["value"])
+    return result
+
+
 def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
     import numpy as np
 
@@ -1444,6 +1508,13 @@ def _execute_task(
             from ._weather_plot import render_weather
 
             render_weather(plot, workspace)
+
+    if task == "predictcomp" and process.returncode == 0:
+        plot = loads(stdout)["result"]["plot"]
+        if plot is not None:
+            from ._predictcomp_plot import render_prediction
+
+            render_prediction(plot, workspace)
 
     values = [
         (name, _display_value(state.value))

@@ -10,8 +10,9 @@ from tempfile import TemporaryDirectory
 
 from casaconfig import config
 import casatasks as casa
-from casatools import ms, table
+from casatools import imager as casa_imager, ms, table
 from casars import tasks as rust
+from casars.tools import imager as rust_imager
 import numpy as np
 
 from bandpass_oracle import source_data
@@ -43,10 +44,12 @@ def ephemeris_observation(path, body, epoch, frequency):
 
 
 def paired(seed, root, body, epoch, *, frequency=None, by_channel=True, missing=False,
-           direction=None, attached_ephemeris=None, time_frame='UTC', **options):
+           direction=None, attached_ephemeris=None, time_frame='UTC', check_readers=False,
+           check_solvers=False, direct_tool=False, **options):
     with TemporaryDirectory(dir=root, prefix=f'{body}-') as tmp:
         work = Path(tmp)
         answers = []
+        solutions = {}
         for label, module in (('casa', casa), ('rust', rust)):
             path = work / f'{label}.ms'
             make_input(seed, path, scratch=True)
@@ -74,16 +77,27 @@ def paired(seed, root, body, epoch, *, frequency=None, by_channel=True, missing=
             if missing:
                 module.setjy(str(path), field='0', standard='manual', fluxdensity=7.)
                 saved = data(path, 'MODEL_DATA')
-            result = module.setjy(str(path), field='0', standard=SCALE, scalebychan=by_channel,
-                                  **options)
+            if direct_tool:
+                tool = (casa_imager if label == 'casa' else rust_imager)()
+                assert tool.open(str(path), usescratch=True)
+                result = tool.setjy(field='0', standard=SCALE, scalebychan=by_channel, **options)
+                assert tool.close()
+            else:
+                result = module.setjy(str(path), field='0', standard=SCALE, scalebychan=by_channel,
+                                      **options)
             model = data(path, 'MODEL_DATA')
             if missing:
                 assert result == {}
                 np.testing.assert_array_equal(model, saved)
             if options.get('fluxdensity') == 0.:
                 np.testing.assert_array_equal(model[..., data(path, 'FIELD_ID') == 0], 0.)
-            if (body == 'Mars' and epoch == 55000. and by_channel and not options
-                    and direction is None and time_frame == 'UTC'):
+            if check_solvers:
+                writer = table()
+                assert writer.open(str(path / 'FIELD'), nomodify=False)
+                assert writer.putcell('TIME', 0, epoch * 86400.) and writer.done()
+                compare_solves(path, work, label, solutions)
+            if check_readers or (body == 'Mars' and epoch == 55000. and by_channel and not options
+                                 and direction is None and time_frame == 'UTC'):
                 read_scratch_in_both(path, model)
             answers.append((result, model))
         reference, native = answers
@@ -103,6 +117,21 @@ def paired(seed, root, body, epoch, *, frequency=None, by_channel=True, missing=
     return flux[0]
 
 
+def compare_solves(path, work, writer, references):
+    for label, reader in (('casa', casa), ('rust', rust)):
+        for task in ('gaincal', 'bandpass'):
+            destination = work / f'{writer}-{label}-{task}.cal'
+            options = {'calmode': 'ap'} if task == 'gaincal' else {}
+            getattr(reader, task)(str(path), str(destination), field='0', spw='0',
+                                  refant='A0', minsnr=0., solint='inf', **options)
+            flags = data(destination, 'FLAG')
+            values = data(destination, 'CPARAM')
+            assert np.any(~flags)
+            expected_flags, expected = references.setdefault(task, (flags, values))
+            np.testing.assert_array_equal(flags, expected_flags)
+            compare(f'legacy APP {writer} writer {label} {task}', values[~flags], expected[~flags])
+
+
 def read_scratch_in_both(path, model):
     for module in (casa, rust):
         writer = table()
@@ -110,6 +139,29 @@ def read_scratch_in_both(path, model):
         assert writer.putcol('CORRECTED_DATA', np.zeros_like(model)) and writer.done()
         module.uvsub(str(path), reverse=True)
         np.testing.assert_array_equal(data(path, 'CORRECTED_DATA'), model)
+
+
+def refuses_invalid_legacy_grid(seed, root, apparent):
+    with TemporaryDirectory(dir=root, prefix='invalid-legacy-grid-') as tmp:
+        path = Path(tmp) / 'invalid.ms'
+        make_input(seed, path, scratch=True)
+        ephemeris_observation(path, 'Uranus', 55000.12345, 100.e9)
+        attachment = ms()
+        assert attachment.open(str(path), nomodify=False)
+        assert attachment.addephemeris(0, str(apparent), 'Uranus', [0])
+        assert attachment.done()
+        ephemeris = next((path / 'FIELD').glob('EPHEM0_*.tab'))
+        writer = table()
+        assert writer.open(str(ephemeris), nomodify=False)
+        assert writer.putkeyword('dMJD', 0.) and writer.done()
+        original = data(path, 'MODEL_DATA')
+        try:
+            rust.setjy(str(path), field='0', standard=SCALE)
+        except RuntimeError as error:
+            assert 'invalid MJD sampling grid' in str(error), error
+        else:
+            raise AssertionError('a zero ephemeris step was accepted')
+        np.testing.assert_array_equal(data(path, 'MODEL_DATA'), original)
 
 
 def refuses_virtual(seed, root):
@@ -163,6 +215,20 @@ def main():
     assert writer.putkeyword('posrefsys', 'ICRF/J2000.0') and writer.done()
     paired(seed, args.root, 'Uranus', 55000., direction=(1e-6, -2e-6),
            attached_ephemeris=ephemeris)
+    # Pre-ICRS Horizons tables use apparent directions when posrefsys is
+    # absent. Attach the unmodified table and retain a nonzero FIELD offset.
+    apparent = ephemerides / ephemeris.name
+    assert writer.open(str(apparent))
+    assert 'posrefsys' not in writer.keywordnames() and writer.done()
+    paired(seed, args.root, 'Uranus', 55000.12345, frequency=100.e9,
+           direction=(1.e-6, -2.e-6), attached_ephemeris=apparent, check_readers=True,
+           check_solvers=True)
+    paired(seed, args.root, 'Uranus', 55000.37, frequency=355.e9,
+           direction=(-1.3e-6, 2.5e-6), attached_ephemeris=apparent, time_frame='TAI')
+    paired(seed, args.root, 'Uranus', 55000.12345, frequency=100.e9,
+           direction=(1.e-6, -2.e-6), attached_ephemeris=apparent, direct_tool=True,
+           reffreq='100GHz', fluxdensity=-1.)
+    refuses_invalid_legacy_grid(seed, args.root, apparent)
     custom = args.root.resolve() / 'custom-ephemeris'
     custom.mkdir()
     override = custom / 'Mars_54708-55437dUTC.tab'
