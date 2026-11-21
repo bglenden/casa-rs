@@ -2,6 +2,7 @@
 
 use std::f64::consts::{FRAC_PI_2, LN_2, PI, SQRT_2};
 
+#[derive(Clone, Copy)]
 pub(super) struct Uncertainty {
     pub(super) peak: f64,
     pub(super) flux: f64,
@@ -29,19 +30,28 @@ impl Noise {
     ) -> Uncertainty {
         let fwhm_sigma = (8. * LN_2).sqrt();
         let signal_to_noise = brightness.abs() / self.rms;
-        let [peak_factor, major_factor, minor_factor] = if let Some(noise) = self.correlation {
-            let effective_snr = signal_to_noise * 0.5 * (major * minor).sqrt() / noise;
-            let major_term = 1. + (noise / major).powi(2);
-            let minor_term = 1. + (noise / minor).powi(2);
-            [[1.5, 1.5], [2.5, 0.5], [0.5, 2.5]].map(|[a, b]| {
-                SQRT_2 / (effective_snr * major_term.powf(a / 2.) * minor_term.powf(b / 2.))
-            })
-        } else {
-            let effective_snr = PI.sqrt() / fwhm_sigma / self.pixel_width
-                * signal_to_noise
-                * (major * minor).sqrt();
-            [SQRT_2 / effective_snr; 3]
-        };
+        let [peak_factor, mut major_factor, mut minor_factor] =
+            if let Some(noise) = self.correlation {
+                let effective_snr = signal_to_noise * 0.5 * (major * minor).sqrt() / noise;
+                let major_term = 1. + (noise / major).powi(2);
+                let minor_term = 1. + (noise / minor).powi(2);
+                [[1.5, 1.5], [2.5, 0.5], [0.5, 2.5]].map(|[a, b]| {
+                    SQRT_2 / (effective_snr * major_term.powf(a / 2.) * minor_term.powf(b / 2.))
+                })
+            } else {
+                let effective_snr = PI.sqrt() / fwhm_sigma / self.pixel_width
+                    * signal_to_noise
+                    * (major * minor).sqrt();
+                [SQRT_2 / effective_snr; 3]
+            };
+        if self.correlation.is_some() {
+            if fix_major && fix_x {
+                major_factor = 0.;
+            }
+            if fix_major && fix_ratio && fix_y && fix_angle {
+                minor_factor = 0.;
+            }
+        }
         let peak_error = if fix_flux {
             0.
         } else {

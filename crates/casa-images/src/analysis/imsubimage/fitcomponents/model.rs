@@ -16,6 +16,7 @@ use crate::{GaussianBeam, ImageError};
 
 use super::super::decompose::Parameters;
 use super::super::findsources::components::{PixelEllipse, SkyPlane, gaussian_area};
+use super::deconvolution::deconvolve;
 use super::planes::{FitPlane, FitSelection};
 use super::record::Measurement;
 use super::summary::SummaryRow;
@@ -125,14 +126,9 @@ impl FitGeometry<'_> {
         let deconvolved = if let Some(beam) = self.sky.beam {
             let convolved = GaussianBeam::new(angular[0], angular[1], angular[2]);
             let mut result = shape.clone();
-            let candidate = convolved.fitted_deconvolution(beam);
-            measurement.is_point = candidate.is_none_or(|(_, point)| point);
-            if let Some((source, false)) = candidate {
-                let axis_error = Uncertainty {
-                    major: level.major * angular[0] / source.major,
-                    minor: level.minor * angular[1] / source.minor,
-                    ..level
-                };
+            let fitted = deconvolve(convolved, beam, &level);
+            measurement.is_point = fitted.is_point;
+            if let Some((source, axis_error)) = fitted.gaussian {
                 let ellipse = Ellipse::new(source.major, source.minor, source.position_angle)
                     .map_err(invalid)?;
                 *result.shape_mut() = component_shape(ellipse, direction, &axis_error)?;

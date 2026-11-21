@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_components::SkyComponent;
+use casa_components::{ShapeType, SkyComponent};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{GaussianBeam, ImageError};
@@ -45,7 +45,7 @@ impl Measurement {
         }
         if let Some(beam) = self.beam {
             record.upsert("ispoint", Value::Scalar(ScalarValue::Bool(self.is_point)));
-            if !deconvolved || self.deconvolved_peak.is_some() {
+            if !deconvolved || component.shape().shape_type() == ShapeType::Gaussian {
                 let mut metadata = RecordValue::default();
                 metadata.upsert("beamarcsec", Value::Record(beam.to_record()));
                 metadata.upsert("beampixels", real(self.beam_in_pixels));

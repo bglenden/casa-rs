@@ -50,7 +50,7 @@ impl FitPlane {
     pub(super) fn selected_samples<'a>(
         &'a self,
         range: &'a IntensityRange,
-    ) -> impl Iterator<Item = ([f64; 2], f32)> + 'a {
+    ) -> impl Iterator<Item = ([f64; 2], f32)> + Clone + 'a {
         let width = self.shape[0];
         self.values
             .iter()

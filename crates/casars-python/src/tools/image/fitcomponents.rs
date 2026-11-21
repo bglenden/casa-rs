@@ -323,9 +323,10 @@ impl FitRequest<'_> {
                     .join(", ")
             )
         };
-        let region = match self.region.history() {
-            "{...}" => "[]",
-            value => value,
+        let region = if self.region.selection().is_none() {
+            "[]".to_owned()
+        } else {
+            self.region.history()
         };
         format!(
             "ia.fitcomponents(box={:?}, region={}, chans={}, stokes={:?}, mask={:?}, includepix={}, excludepix={}, residual={:?}, model={:?}, estimates={:?}, logfile={:?}, append={}, newestimates={:?}, complist={:?}, dooff={}, offset={:.6}, fixoffset={}, stretch={}, rms={}, noisefwhm={})",

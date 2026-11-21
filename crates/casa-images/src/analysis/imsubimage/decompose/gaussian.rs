@@ -268,19 +268,16 @@ pub(in crate::analysis::imsubimage) struct SkyFit {
     pub(in crate::analysis::imsubimage) offset_error: f64,
 }
 
-fn observations(pixels: impl IntoIterator<Item = ([f64; 2], f32)>) -> Vec<Observation> {
-    pixels
-        .into_iter()
-        .map(|([x, y], pixel)| Observation {
-            position: [x, y, 0.],
-            value: f64::from(pixel),
-        })
-        .collect()
+fn sky_observation(([x, y], pixel): ([f64; 2], f32)) -> Observation {
+    Observation {
+        position: [x, y, 0.],
+        value: f64::from(pixel),
+    }
 }
 
 // Fit2D's initial guess uses absolute moments above five percent of the
 // largest magnitude. Lower samples still enter the least-squares fit.
-fn moment_seed(samples: &[Observation], scale: f64) -> Option<Parameters> {
+fn moment_seed(samples: impl Iterator<Item = Observation>, scale: f64) -> Option<Parameters> {
     const FACTOR: f64 = 4. * LN_2;
     let clip = f64::from((0.05 * scale) as f32);
     let mut signed_sum = 0.;
@@ -317,12 +314,12 @@ pub(in crate::analysis::imsubimage) fn fit_window(
     pixels: impl IntoIterator<Item = ([f64; 2], f32)>,
     peak: f64,
 ) -> WindowFit {
-    let mut samples = observations(pixels);
+    let mut samples: Vec<_> = pixels.into_iter().map(sky_observation).collect();
     if samples.len() < 6 || samples.iter().any(|row| !row.value.is_finite()) {
         return WindowFit::Point;
     }
     let scale = samples.iter().map(|row| row.value.abs()).fold(0., f64::max);
-    let Some(mut seed) = moment_seed(&samples, scale) else {
+    let Some(mut seed) = moment_seed(samples.iter().copied(), scale) else {
         return WindowFit::Point;
     };
     seed[0] = peak / scale;
@@ -339,19 +336,24 @@ pub(in crate::analysis::imsubimage) fn fit_window(
 }
 
 pub(in crate::analysis::imsubimage) fn fit_sky(
-    pixels: impl IntoIterator<Item = ([f64; 2], f32)>,
+    pixels: impl Iterator<Item = ([f64; 2], f32)> + Clone,
     shape: [usize; 2],
     provided: Option<(&[Parameters], &[[bool; 6]])>,
     zero_level: Option<(f64, bool)>,
 ) -> Option<SkyFit> {
-    let mut samples = observations(pixels);
-    if samples.iter().any(|row| !row.value.is_finite()) {
-        return None;
+    let unscaled = pixels.map(sky_observation);
+    let mut selected = 0;
+    let mut extremum: Option<Observation> = None;
+    for row in unscaled.clone() {
+        if !row.value.is_finite() {
+            return None;
+        }
+        selected += 1;
+        if extremum.is_none_or(|old| (row.value.abs(), row.value) > (old.value.abs(), old.value)) {
+            extremum = Some(row);
+        }
     }
-    let extremum = samples
-        .iter()
-        .rev()
-        .max_by(|a, b| a.value.abs().total_cmp(&b.value.abs()))?;
+    let extremum = extremum?;
     let default = || {
         let [x, y, _] = extremum.position;
         let width = (shape[0].max(shape[1]) / 2).max(1) as f64;
@@ -365,27 +367,29 @@ pub(in crate::analysis::imsubimage) fn fit_sky(
     let (mut gaussians, fixed) = provided.map_or_else(
         || {
             (
-                vec![moment_seed(&samples, scale).unwrap_or_else(default)],
+                vec![moment_seed(unscaled.clone(), scale).unwrap_or_else(default)],
                 None,
             )
         },
         |(seeds, fixed)| (seeds.to_vec(), Some(fixed)),
     );
-    for row in &mut samples {
+    let samples = unscaled.map(|mut row| {
         row.value /= scale;
-    }
+        row
+    });
     for seed in &mut gaussians {
         seed[0] /= scale;
     }
     let offset = zero_level.map_or(0., |(value, _)| value / scale);
     let fit_offset = zero_level.is_some_and(|(_, fixed)| !fixed);
     let solver = Solver {
-        observations: &samples,
+        observations: samples,
+        observation_count: selected,
         variables: parameters(gaussians.len(), 2, fixed, fit_offset),
         rank: 2,
         scale,
     };
-    if samples.len() < solver.variables.len() {
+    if selected < solver.variables.len() {
         return None;
     }
     let mut fit = solver.optimize(Model { gaussians, offset }, &FIT_2D)?;
@@ -395,6 +399,7 @@ pub(in crate::analysis::imsubimage) fn fit_sky(
         0.
     };
     for component in &mut fit.gaussians {
+        normalize_shape(component, 2);
         component[0] *= scale;
     }
     Some(SkyFit {
@@ -418,7 +423,8 @@ fn optimize(
         });
     }
     let solver = Solver {
-        observations,
+        observations: observations.iter().copied(),
+        observation_count: observations.len(),
         variables,
         rank,
         scale,
@@ -431,7 +437,12 @@ fn optimize(
             },
             options,
         )
-        .map(|model| model.gaussians)
+        .map(|mut model| {
+            for component in &mut model.gaussians {
+                normalize_shape(component, rank);
+            }
+            model.gaussians
+        })
 }
 
 #[derive(Clone, Copy)]
@@ -496,18 +507,19 @@ impl Model {
     }
 }
 
-struct Solver<'a> {
-    observations: &'a [Observation],
+struct Solver<I> {
+    observations: I,
+    observation_count: usize,
     variables: Vec<Parameter>,
     rank: usize,
     scale: f64,
 }
 
-impl Solver<'_> {
+impl<I: Iterator<Item = Observation> + Clone> Solver<I> {
     fn optimize(&self, seeds: Model, options: &FitOptions) -> Option<Model> {
         let mut best = None;
         let mut best_cost = f64::INFINITY;
-        let precision = f64::EPSILON * self.observations.len() as f64;
+        let precision = f64::EPSILON * self.observation_count as f64;
         let retries = if options.retries < 0 {
             self.rank * seeds.gaussians.len()
         } else {
@@ -532,23 +544,19 @@ impl Solver<'_> {
                 best_cost = score;
                 best = Some(model);
             }
-            if self.scale * (best_cost / self.observations.len() as f64).sqrt()
+            if self.scale * (best_cost / self.observation_count as f64).sqrt()
                 <= options.maximum_rms
                 || best_cost <= precision
             {
                 break;
             }
         }
-        let mut best = best?;
-        for component in &mut best.gaussians {
-            normalize_shape(component, self.rank);
-        }
-        Some(best)
+        best
     }
 
     fn cost(&self, model: &Model) -> f64 {
         self.observations
-            .iter()
+            .clone()
             .map(|row| (row.value - model.value(self.rank, row.position)).powi(2))
             .sum()
     }
@@ -578,7 +586,7 @@ impl Solver<'_> {
             };
             let residual = |row: Observation| row.value - model.value(self.rank, row.position);
             let Some(step) = damped_step(
-                self.observations,
+                self.observations.clone(),
                 self.variables.len(),
                 damping,
                 linearize,
@@ -617,22 +625,24 @@ impl Solver<'_> {
 
     fn offset_error(&self, model: &Model) -> f64 {
         let count = self.variables.len() - 1;
-        let degrees = self.observations.len().saturating_sub(self.variables.len()) as f64;
+        let degrees = self.observation_count.saturating_sub(self.variables.len()) as f64;
         if degrees == 0. {
             return f64::NAN;
         }
         // The offset column is one for every row. Remove its projection onto
         // the fitted Gaussian columns to obtain the Schur complement of the
         // normal matrix without constructing a separate dense inverse.
-        let mut precision = self.observations.len() as f64;
+        let mut precision = self.observation_count as f64;
         if count > 0 {
             let linearize = |row: Observation, slope: &mut [f64]| {
                 for (entry, &parameter) in slope.iter_mut().zip(&self.variables) {
                     *entry = model.slope(self.rank, row.position, parameter);
                 }
             };
-            if let Some(projection) = damped_step(self.observations, count, 0., linearize, |_| 1.) {
-                for row in self.observations {
+            if let Some(projection) =
+                damped_step(self.observations.clone(), count, 0., linearize, |_| 1.)
+            {
+                for row in self.observations.clone() {
                     precision -= projection
                         .iter()
                         .zip(&self.variables)
@@ -679,7 +689,7 @@ pub(in crate::analysis::imsubimage) fn evaluate_sky(
 }
 
 fn damped_step(
-    observations: &[Observation],
+    observations: impl Iterator<Item = Observation> + Clone,
     size: usize,
     damping: f64,
     linearize: impl Fn(Observation, &mut [f64]),
@@ -690,7 +700,7 @@ fn damped_step(
     let mut slope = vec![0.; size];
     let mut diagonal = vec![0.; size];
     let mut gram = (size <= DENSE_LIMIT).then(|| vec![0.; size * size]);
-    for &row in observations {
+    for row in observations.clone() {
         linearize(row, &mut slope);
         let residual = residual(row);
         for (i, &entry) in slope.iter().enumerate() {
@@ -742,7 +752,7 @@ fn damped_step(
         for ((out, &lambda), &step) in product.iter_mut().zip(&regularization).zip(&direction) {
             *out = lambda * step;
         }
-        for &row in observations {
+        for row in observations.clone() {
             linearize(row, &mut slope);
             let projection = dot(&slope, &direction);
             for (entry, derivative) in product.iter_mut().zip(&slope) {
@@ -806,7 +816,10 @@ mod tests {
             slope[index] = 1.;
             slope[(index + 1) % SIZE] = 0.25;
         };
-        let result = damped_step(&rows, SIZE, damping, linearize, |row| row.value).unwrap();
+        let result = damped_step(rows.iter().copied(), SIZE, damping, linearize, |row| {
+            row.value
+        })
+        .unwrap();
         let residual = (0..SIZE)
             .map(|i| result[i] + 0.25 * result[(i + 1) % SIZE] - rows[i].value)
             .collect::<Vec<_>>();
