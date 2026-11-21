@@ -117,17 +117,20 @@ fn text<'a>(record: &'a RecordValue, key: &str) -> Option<&'a str> {
 }
 
 pub(super) fn legacy_radial_pattern(path: &Path, telescope: &str) -> MsResult<PrimaryBeam> {
-    legacy_radial_setup(path, telescope, false).map(|(pattern, _)| pattern)
+    let host = HostResources::detect().map_err(invalid)?;
+    read_legacy_radial(&host, path, telescope, |record| {
+        voltage_pattern::radial_pattern(record).map_err(invalid)
+    })
 }
 
-fn legacy_radial_setup(
+fn read_legacy_radial<T>(
+    host: &HostResources,
     path: &Path,
     telescope: &str,
-    requested_squint: bool,
-) -> MsResult<(PrimaryBeam, Option<BeamSquintLaw>)> {
-    let host = HostResources::detect().map_err(invalid)?;
+    decode: impl FnOnce(&RecordValue) -> MsResult<T>,
+) -> MsResult<T> {
     let _table_memory = admit(
-        &host,
+        host,
         &ResourcePolicy::Balanced,
         &Demand {
             phase: "legacy voltage-pattern table",
@@ -146,24 +149,64 @@ fn legacy_radial_setup(
         let record = table.cell_accessor(row, "pbdescription")?.record()?;
         match record.get("name") {
             Some(Value::Scalar(ScalarValue::String(name))) if name != "REFERENCE" => {
-                let pattern = voltage_pattern::radial_pattern(&record).map_err(invalid)?;
-                let squint = if requested_squint {
-                    voltage_pattern::radial_squint(&record)
-                        .map_err(invalid)?
-                        .map(|(offset_rad, reference_hz)| BeamSquintLaw::Table {
-                            offset_rad,
-                            reference_hz,
-                        })
-                } else {
-                    None
-                };
-                return Ok((pattern, squint));
+                return decode(&record);
             }
             Some(Value::Scalar(ScalarValue::String(_))) | None => {}
             _ => return Err(invalid("legacy voltage pattern name must be a string")),
         }
     }
     Err(invalid(format!("no voltage pattern for {telescope}")))
+}
+
+fn legacy_radial_setup(
+    host: &HostResources,
+    record: &RecordValue,
+    requested_squint: bool,
+    allow_curves: bool,
+) -> MsResult<TableVoltagePattern> {
+    let (peak, retained) = voltage_pattern::radial_curve_storage(record);
+    let mut reservation = admit(
+        host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy voltage-pattern lookup",
+            memory: peak,
+        },
+    )
+    .map_err(invalid)?;
+    let value = if allow_curves {
+        voltage_pattern::radial_lookup(record)
+    } else {
+        voltage_pattern::radial_pattern(record).map(PrimaryBeam::pattern)
+    }
+    .map_err(invalid)?;
+    reservation.retain(retained);
+    let squint = if requested_squint {
+        voltage_pattern::radial_squint(record)
+            .map_err(invalid)?
+            .map(|(offset_rad, reference_hz)| BeamSquintLaw::Table {
+                offset_rad,
+                reference_hz,
+            })
+    } else {
+        None
+    };
+    let projected_image = allow_curves
+        && matches!(
+            text(record, "name"),
+            Some("POLY" | "IPOLY" | "COSPOLY" | "NUMERIC")
+        );
+    Ok(TableVoltagePattern {
+        pattern: Arc::new(Admitted { value, reservation }),
+        squint,
+        projected_image,
+    })
+}
+
+struct TableVoltagePattern {
+    pattern: Arc<Admitted<BeamPattern>>,
+    squint: Option<BeamSquintLaw>,
+    projected_image: bool,
 }
 
 /// A radial voltage pattern selected for the imager's next prediction.
@@ -612,6 +655,7 @@ impl ImagerVoltagePattern {
         selected: &ResolvedMsSelection,
         squint: bool,
         scratch: bool,
+        allow_curves: bool,
     ) -> MsResult<PreparedVoltagePattern> {
         let main = ms.main_table();
         let mut first = None;
@@ -636,7 +680,6 @@ impl ImagerVoltagePattern {
             .observation()?
             .string(usize::try_from(array).map_err(invalid)?, "TELESCOPE_NAME")?;
         let host = HostResources::detect().map_err(invalid)?;
-        let reservation = reserve_radial_lookup(&host)?;
         let default_beam = self
             .table
             .is_none()
@@ -649,22 +692,25 @@ impl ImagerVoltagePattern {
         let custom = self
             .table
             .as_ref()
-            .map(|path| legacy_radial_setup(path, &telescope, squint))
+            .map(|path| {
+                read_legacy_radial(&host, path, &telescope, |record| {
+                    legacy_radial_setup(&host, record, squint, allow_curves)
+                })
+            })
             .transpose()?;
         let component_squint = squint;
         let squint_law = if squint {
-            match (custom, default_beam) {
-                (Some((_, law)), _) => law,
-                // PBMath1DEVLA supplies its radial fit when squint is requested.
-                (None, Some((PrimaryBeam::Evla, _))) => None,
-                (None, Some((beam, reference_hz))) if telescope == "VLA" && beam.squints() => {
+            match (custom.as_ref(), default_beam) {
+                (Some(custom), _) => custom.squint,
+                (None, Some((beam, reference_hz)))
+                    if beam.squint_displacement_rad(reference_hz, reference_hz, 0., true)
+                        != [0.; 2] =>
+                {
                     Some(BeamSquintLaw::Telescope { beam, reference_hz })
                 }
-                _ => {
-                    return Err(invalid(
-                        "this legacy voltage-pattern squint is pending #1520",
-                    ));
-                }
+                // CASA accepts GOFIGURE for the other default profiles and
+                // its dish-diameter fallback, which have no physical offset.
+                (None, _) => None,
             }
         } else {
             None
@@ -674,16 +720,21 @@ impl ImagerVoltagePattern {
                 "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
             ));
         }
-        let pattern = if let Some((pattern, _)) = custom {
-            pattern.pattern()
+        let projected_model = custom.as_ref().is_some_and(|custom| custom.projected_image)
+            || (telescope == "VLA" && self.table.is_none())
+            || squint_law.is_some();
+        let pattern = if let Some(custom) = custom {
+            custom.pattern
         } else {
-            match default_beam {
+            let reservation = reserve_radial_lookup(&host)?;
+            let value = match default_beam {
                 Some((pattern, _)) => pattern.pattern(),
                 None => BeamPattern::for_dish_diameter(ms.antenna()?.dish_diameter(0)?)
                     .ok_or_else(|| {
                         invalid("no usable dish diameter for a default voltage pattern")
                     })?,
-            }
+            };
+            Arc::new(Admitted { value, reservation })
         };
         let engine = if squint_law.is_some() {
             MsCalEngine::for_calibration(ms)?
@@ -736,14 +787,10 @@ impl ImagerVoltagePattern {
             None
         };
         Ok(PreparedVoltagePattern {
-            pattern: Arc::new(Admitted {
-                value: pattern,
-                reservation,
-            }),
+            pattern,
             centre,
             frame,
-            projected_model: (telescope == "VLA" && self.table.is_none())
-                || matches!(squint_law, Some(BeamSquintLaw::Table { .. })),
+            projected_model,
             squint,
             component_squint,
         })

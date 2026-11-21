@@ -1004,8 +1004,7 @@ def flagdata(
     ``inpfile``, ``reason``, ``tbuff``, ``channelavg``, ``chanbin``,
     ``timeavg``, ``timebin``, ``combinescans``, ``timefit``, ``freqfit``,
     ``maxnpieces``, ``flagdimension``, ``usewindowstats``, ``halfwin``,
-    ``winsize``, ``antint_ref_antenna``, ``minchanfrac``, ``verbose``,
-    ``savepars``.
+    ``winsize``, ``savepars``.
     Accepted only at CASA's default, where CASA reads them, until #1616:
     ``ntime``.
     """

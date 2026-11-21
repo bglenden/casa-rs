@@ -1103,7 +1103,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>spectralmax</code> | <code>flagdata.spectralmax@r1</code> | <code>float</code> | <code>1000000.0</code>; optional | Automatic | rflag flags a whole spectrum whose deviation exceeds this. |
 | <code>spectralmin</code> | <code>flagdata.spectralmin@r1</code> | <code>float</code> | <code>0.0</code>; optional | Automatic | rflag flags a whole spectrum whose deviation is below this. |
 | <code>antint_ref_antenna</code> | <code>flagdata.antint_ref_antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Antint | Antenna whose baselines antint mode examines. |
-| <code>minchanfrac</code> | <code>flagdata.minchanfrac@r1</code> | <code>float</code> | <code>0.6</code>; optional | Antint | Fraction of flagged channels at which antint flags an integration. |
+| <code>minchanfrac</code> | <code>flagdata.minchanfrac@r2</code> | <code>variant</code> | <code>0.6</code>; optional | Antint | Fraction of flagged channels at which antint flags an integration. |
 | <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Antint | Verbose logging. |
 | <code>extendpols</code> | <code>parameter.extendpols@r2</code> | <code>variant</code> | <code>true</code>; optional | Extend | Extend flags across correlations. |
 | <code>growtime</code> | <code>flagdata.growtime@r2</code> | <code>variant</code> | <code>50.0</code>; optional | Extend | Percentage of flagged time at which extend mode flags a whole channel. |

@@ -143,6 +143,7 @@ impl CorrelationSelection {
                 | FlagDataMode::Elevation
                 | FlagDataMode::Extend
                 | FlagDataMode::Shadow
+                | FlagDataMode::Antint
         );
         if match mode {
             FlagDataMode::Summary => false,

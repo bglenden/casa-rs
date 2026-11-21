@@ -565,7 +565,7 @@ def _coerce_flagdata_options(
     cint = (int, np.int32, np.int64)
     errors = _flagging_choice_errors("flagdata", values)
     column_vector = _coerce_flagdata_column(values, argument_text, errors)
-    for parameter in ("tolerance", "lowerlimit", "upperlimit", "growtime", "growfreq"):
+    for parameter in ("tolerance", "lowerlimit", "upperlimit", "minchanfrac", "growtime", "growfreq"):
         if parameter in values:
             value = values[parameter]
             if value is None:
@@ -671,6 +671,7 @@ def _coerce_flagdata_options(
         ("display", str, "cStr"),
         ("cmdreason", str, "cStr"),
         ("outfile", str, "cStr"),
+        ("antint_ref_antenna", str, "cStr"),
         ("flagbackup", bool, "cBool"),
         ("savepars", bool, "cBool"),
         ("overwrite", bool, "cBool"),
@@ -685,6 +686,7 @@ def _coerce_flagdata_options(
         ("growaround", bool, "cBool"),
         ("flagneartime", bool, "cBool"),
         ("flagnearfreq", bool, "cBool"),
+        ("verbose", bool, "cBool"),
     ):
         if parameter not in values:
             continue
@@ -692,7 +694,7 @@ def _coerce_flagdata_options(
         if value is None:
             errors[parameter] = ["null value not allowed"]
         elif expected is bool and isinstance(value, np.bool_):
-            if parameter in ("combinescans", "growaround", "flagneartime", "flagnearfreq"):
+            if parameter in ("combinescans", "growaround", "flagneartime", "flagnearfreq", "verbose"):
                 argument_text[parameter] = str(bool(value))
             # Some CASA switches use their defaults for NumPy Booleans.
             values[parameter] = (

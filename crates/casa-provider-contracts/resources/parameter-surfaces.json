@@ -23635,12 +23635,11 @@
             "provider": {"field": "antint_ref_antenna"},
             "python": {"name": "antint_ref_antenna"},
             "presentation": {"label": "Reference Antenna", "group": "Antint", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
+          }
         },
         {
           "name": "minchanfrac",
-          "concept": {"id": "flagdata.minchanfrac", "semantic_revision": 1},
+          "concept": {"id": "flagdata.minchanfrac", "semantic_revision": 2},
           "order": 51,
           "default": {"kind": "literal", "value": {"kind": "float", "value": 0.6}},
           "required_when": {"kind": "never"},
@@ -23648,10 +23647,9 @@
           "projections": {
             "cli": {"flags": ["--minchanfrac"], "metavar": "FRACTION"},
             "provider": {"field": "minchanfrac"},
-            "python": {"name": "minchanfrac"},
+            "python": {"name": "minchanfrac", "type_hint": "float"},
             "presentation": {"label": "Min Channel Fraction", "group": "Antint", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
+          }
         },
         {
           "name": "verbose",
@@ -23665,8 +23663,7 @@
             "provider": {"field": "verbose"},
             "python": {"name": "verbose"},
             "presentation": {"label": "Verbose", "group": "Antint", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
+          }
         },
         {
           "name": "growtime",
@@ -23895,8 +23892,7 @@
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}
           ]}}
         },
         {

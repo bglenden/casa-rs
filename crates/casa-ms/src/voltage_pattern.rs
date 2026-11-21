@@ -11,6 +11,9 @@ use casa_types::{
     quanta::{Quantity, Unit},
 };
 
+mod curves;
+pub use curves::{radial_curve_storage, radial_lookup};
+
 /// Failure to read a saved voltage-pattern table or interpret its record.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -194,13 +197,7 @@ pub fn radial_pattern(record: &RecordValue) -> Result<PrimaryBeam, VoltagePatter
     let Some(Value::Scalar(ScalarValue::String(name))) = record.get("name") else {
         return Err(VoltagePatternError::read("missing string name"));
     };
-    let ghz = quantity(record, "reffreq", "GHz")?;
-    let radius = quantity(record, "maxrad", "arcmin")? * ghz;
-    if !ghz.is_finite() || ghz <= 0. || !radius.is_finite() || radius <= 0. {
-        return Err(VoltagePatternError::read(
-            "reference frequency and support must be finite and positive",
-        ));
-    }
+    let (radius, ghz) = reference_radius(record)?;
     match name.as_str() {
         "AIRY" => {
             let diameter = quantity(record, "dishdiam", "m")?;
@@ -241,6 +238,17 @@ pub fn radial_pattern(record: &RecordValue) -> Result<PrimaryBeam, VoltagePatter
             "saved radial law {name} (#1307)"
         ))),
     }
+}
+
+fn reference_radius(record: &RecordValue) -> Result<(f64, f64), VoltagePatternError> {
+    let ghz = quantity(record, "reffreq", "GHz")?;
+    let radius = quantity(record, "maxrad", "arcmin")? * ghz;
+    if !ghz.is_finite() || ghz <= 0. || !radius.is_finite() || radius <= 0. {
+        return Err(VoltagePatternError::read(
+            "reference frequency and support must be finite and positive",
+        ));
+    }
+    Ok((radius, ghz))
 }
 
 /// Read a stored radial pattern's squint in tangent-angle radians and Hz.
