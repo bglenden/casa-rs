@@ -84,19 +84,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (refcode = None, restfreq = None, frequencies = None, doppler = None, velocities = None), text_signature = "($self, refcode='', restfreq=[], frequencies=[], doppler='', velocities=[])")]
-    fn setspectral(
-        &self,
-        refcode: Option<&Bound<'_, PyAny>>,
-        restfreq: Option<&Bound<'_, PyAny>>,
-        frequencies: Option<&Bound<'_, PyAny>>,
-        doppler: Option<&Bound<'_, PyAny>>,
-        velocities: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setspectral")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (doppler = None, list = None), text_signature = "($self, doppler='RADIO', list=True)")]
     fn summary(
         &self,

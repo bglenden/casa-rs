@@ -7,7 +7,10 @@
 
 use std::str::FromStr;
 
+mod channel_samples;
 mod subimage;
+
+pub use channel_samples::SpectralNativeType;
 
 use casa_types::measures::direction_to_record;
 use casa_types::measures::doppler::DopplerRef;
@@ -27,8 +30,8 @@ use crate::record_utils::{
     get_optional_vec_string, get_required_f64, get_required_vec_f64,
 };
 use crate::tabular::{
-    TabularEdit, edit_table, sample_reference, scaled_world, validate_live_edit,
-    validate_transform_samples,
+    TabularEdit, edit_table, interpolate_samples as interpolate, inverse_sampled_axis,
+    sample_reference, scaled_world, validate_live_edit, validate_transform_samples,
 };
 
 #[derive(Debug, Clone)]
@@ -91,13 +94,15 @@ pub struct SpectralCoordinate {
     undefined_frame: bool,
     /// Optional CASA conversion-layer state for world-coordinate display.
     conversion: Option<SpectralConversion>,
-    /// Active rest frequency (Hz for new coordinates, stored unit on restore).
-    rest_frequency: f64,
+    /// The active entry in the rest-frequency list.
+    rest_frequency_index: usize,
     /// Every rest frequency the coordinate lists, the active one among them
     /// (C++ `restFrequencies()`).
     rest_frequencies: Vec<f64>,
     /// Doppler convention used by this coordinate when expressing velocities.
     velocity_convention: DopplerRef,
+    /// Preferred spectral representation written to CASA coordinate records.
+    native_type: SpectralNativeType,
     /// Pixel-to-world mapping state.
     mapping: SpectralMapping,
     /// Native WCS (or live sampled) linear transform.
@@ -129,9 +134,10 @@ impl SpectralCoordinate {
             frequency_ref,
             undefined_frame: frequency_ref == FrequencyRef::Undefined,
             conversion: None,
-            rest_frequency,
+            rest_frequency_index: 0,
             rest_frequencies: vec![rest_frequency],
             velocity_convention: DopplerRef::RADIO,
+            native_type: SpectralNativeType::Frequency,
             mapping: SpectralMapping::Linear {
                 crval,
                 cdelt,
@@ -168,9 +174,10 @@ impl SpectralCoordinate {
             frequency_ref,
             undefined_frame: frequency_ref == FrequencyRef::Undefined,
             conversion: None,
-            rest_frequency,
+            rest_frequency_index: 0,
             rest_frequencies: vec![rest_frequency],
             velocity_convention: DopplerRef::RADIO,
+            native_type: SpectralNativeType::Frequency,
             mapping: SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
@@ -229,7 +236,7 @@ impl SpectralCoordinate {
     ///
     /// Returns an error if the stored unit is not a supported frequency unit.
     pub fn rest_frequency_hz(&self) -> Result<f64, CoordinateError> {
-        self.value_in_hz(self.rest_frequency)
+        self.value_in_hz(self.rest_frequency())
     }
 
     /// Return the world-frame frequency at a pixel, in Hz.
@@ -430,7 +437,7 @@ impl SpectralCoordinate {
             crval * scale,
             cdelt * scale,
             crpix,
-            self.rest_frequency,
+            self.rest_frequency(),
         )?
         .mapping;
         Ok(self)
@@ -459,15 +466,15 @@ impl SpectralCoordinate {
     /// Hz; a coordinate restored from a CASA record retains its stored world
     /// unit, which may differ from Hz (#977).
     pub fn rest_frequency(&self) -> f64 {
-        self.rest_frequency
+        self.rest_frequencies[self.rest_frequency_index]
     }
 
     /// Sets the rest frequencies the coordinate lists, the first active,
     /// as C++ `setRestFrequencies(frequencies, 0)` does. An empty list
     /// leaves the coordinate as it is. Returns `self` for chaining.
     pub fn with_rest_frequencies(mut self, frequencies: Vec<f64>) -> Self {
-        if let Some(&active) = frequencies.first() {
-            self.rest_frequency = active;
+        if !frequencies.is_empty() {
+            self.rest_frequency_index = 0;
             self.rest_frequencies = frequencies;
         }
         self
@@ -625,6 +632,9 @@ impl SpectralCoordinate {
             coord = coord.with_conversion(conversion.frequency_ref, conversion.frame);
         }
         coord.undefined_frame = undefined_frame;
+        if let Some(code) = get_optional_i32(rec, "nativeType") {
+            coord.native_type = SpectralNativeType::from_code(code);
+        }
         // C++ `restoreRestFrequencies` clamps the optional list and selects
         // the listed frequency nearest the saved `restfreq` selector.
         if let Some(field) = rec.get("restfreqs") {
@@ -643,7 +653,7 @@ impl SpectralCoordinate {
             }
             coord.rest_frequencies = list.into_iter().map(|value| value.max(0.0)).collect();
             if let Some(index) = closest_rest_frequency(&coord.rest_frequencies, rest_frequency) {
-                coord.rest_frequency = coord.rest_frequencies[index];
+                coord.rest_frequency_index = index;
             }
         }
         Ok(coord)
@@ -726,14 +736,13 @@ impl Coordinate for SpectralCoordinate {
                 world_values,
                 crval,
                 ..
-            } => {
-                let unscaled = if self.linear_transform == 1.0 {
-                    native_world
-                } else {
-                    crval + (native_world - crval) / self.linear_transform
-                };
-                interpolate(world_values, pixel_values, unscaled)?
-            }
+            } => inverse_sampled_axis(
+                pixel_values,
+                world_values,
+                *crval,
+                self.linear_transform,
+                native_world,
+            )?,
         };
         Ok(vec![pixel])
     }
@@ -791,7 +800,7 @@ impl SpectralCoordinate {
         );
         rec.upsert(
             "restfreq",
-            Value::Scalar(ScalarValue::Float64(self.rest_frequency)),
+            Value::Scalar(ScalarValue::Float64(self.rest_frequency())),
         );
         rec.upsert(
             "restfreqs",
@@ -801,7 +810,10 @@ impl SpectralCoordinate {
             "velType",
             Value::Scalar(ScalarValue::Int32(self.velocity_convention.casacore_code())),
         );
-        rec.upsert("nativeType", Value::Scalar(ScalarValue::Int32(0)));
+        rec.upsert(
+            "nativeType",
+            Value::Scalar(ScalarValue::Int32(self.native_type as i32)),
+        );
         rec.upsert("velUnit", Value::Scalar(ScalarValue::String("km/s".into())));
         rec.upsert("waveUnit", Value::Scalar(ScalarValue::String("mm".into())));
         rec.upsert(
@@ -867,7 +879,7 @@ impl SpectralCoordinate {
                 );
                 tabular.upsert(
                     "axes",
-                    Value::Array(ArrayValue::from_string_vec(vec![self.name.clone()])),
+                    Value::Array(ArrayValue::from_string_vec(vec!["Frequency".into()])),
                 );
                 tabular.upsert(
                     "units",
@@ -983,44 +995,6 @@ fn parse_conversion(rec: &RecordValue) -> Option<SpectralConversion> {
             .with_position(position)
             .with_epoch(epoch),
     })
-}
-
-fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
-    let n = xs.len();
-    if n == 0 || ys.len() != n {
-        return Err(CoordinateError::ConversionFailed(
-            "tabular interpolation requires matching lookup tables with at least one entry".into(),
-        ));
-    }
-
-    if n == 1 {
-        // Casacore uses a constant nearest-neighbour table in both directions.
-        return Ok(ys[0]);
-    }
-    let increasing = xs[n - 1] > xs[0];
-    let idx = if increasing {
-        match xs.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
-            Ok(i) => return Ok(ys[i]),
-            Err(i) => i,
-        }
-    } else {
-        let rev: Vec<f64> = xs.iter().rev().copied().collect();
-        match rev.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
-            Ok(i) => return Ok(ys[n - 1 - i]),
-            Err(i) => n - i,
-        }
-    };
-
-    let lo = if idx == 0 { 0 } else { (idx - 1).min(n - 2) };
-    let hi = lo + 1;
-    let dx = xs[hi] - xs[lo];
-    if dx.abs() < 1e-300 {
-        return Err(CoordinateError::ConversionFailed(
-            "duplicate values in tabular spectral coordinate".into(),
-        ));
-    }
-    let t = (x - xs[lo]) / dx;
-    Ok(ys[lo] + t * (ys[hi] - ys[lo]))
 }
 
 #[cfg(test)]
