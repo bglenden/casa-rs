@@ -328,7 +328,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "flagdata":
         argument_text: dict[str, str] = {}
         correlation_vector, column_vector = _coerce_flagdata_options(values, argument_text)
-        if values["savepars"]:
+        if values.get("savepars"):
             _validate_required_path(values, "vis", arguments["vis"])
             argument_text.update(_flagdata_saved_argument_text(arguments))
         try:
@@ -369,6 +369,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "flagmanager":
         errors = _flagging_choice_errors(name, values)
         for parameter in ("versionname", "oldname", "comment", "merge"):
+            if parameter not in values:
+                continue
             value = values[parameter]
             if value is None:
                 errors[parameter] = ["null value not allowed"]
@@ -521,6 +523,8 @@ def _flagging_choices(surface: str) -> dict[str, frozenset[str]]:
 def _flagging_choice_errors(surface: str, values: dict[str, Any]) -> dict[str, list[str]]:
     errors = {}
     for parameter, choices in _flagging_choices(surface).items():
+        if parameter not in values:
+            continue
         value = values[parameter]
         if value is None:
             errors[parameter] = ["unallowed value None", "null value not allowed"]
@@ -668,6 +672,8 @@ def _coerce_flagdata_options(
 def _coerce_flagdata_column(values, argument_text, errors) -> str | None:
     import numpy as np
 
+    if "datacolumn" not in values:
+        return None
     column = values["datacolumn"]
     if isinstance(column, str):
         values["datacolumn"] = str(column)
