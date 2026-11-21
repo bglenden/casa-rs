@@ -331,6 +331,7 @@ def compare_services(root, vis, engines):
             if case == 'retry':
                 assert .95 <= records[1][2] - records[0][2] <= 3
             np.testing.assert_allclose(gains(output)[:, 0], gain, rtol=2e-7)
+            np.testing.assert_array_equal(gains(output)[:, 5:], 1.)
             service_outputs[label, case] = output
 
         for endpoint in ('interpolation', 'model-fit'):
@@ -354,7 +355,8 @@ def compare_services(root, vis, engines):
             else:
                 interpolation_queries[endpoint] = queries
             expected = [.5, 1., 1., 1., 1.] if endpoint == 'interpolation' else [.25]*5
-            np.testing.assert_allclose(gains(output), np.broadcast_to(expected, (2, 5)), rtol=2e-7)
+            wanted = np.broadcast_to([*expected, *([1.] * 5)], (2, 10))
+            np.testing.assert_allclose(gains(output), wanted, rtol=2e-7)
             service_outputs[label, endpoint] = output
     os.environ.pop('JYPERKDB_URL', None)
     for case in ('retry', 'progress', 'timeout', 'backup', 'file-fallback', 'interpolation', 'model-fit'):
