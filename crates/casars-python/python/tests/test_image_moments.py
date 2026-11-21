@@ -245,6 +245,33 @@ def test_spectral_moments_convolve_varying_beams_to_common_resolution(casa):
     _compare(results[1], results[0])
 
 
+@pytest.mark.parametrize("method", [["window"], ["fit"], ["window", "fit"]])
+@pytest.mark.parametrize("sigma", [0., .9])
+def test_moment_fit_admission_on_constant_noise_and_line_profiles(casa, method, sigma):
+    rng = np.random.default_rng(137)
+    shape = (5, 7, 1, 81)
+    inputs = (
+        np.full(shape, 4., dtype=np.float32),
+        np.zeros(shape, dtype=np.float32),
+        rng.normal(0., .9, shape).astype(np.float32),
+        (rng.normal(0., .9, shape) + 7. * np.exp(-((np.arange(81) - 42.4) / 3) ** 2)).astype(np.float32),
+    )
+    for pixels in inputs:
+        results = []
+        for api in (casa, tools):
+            image = api.image()
+            product = None
+            try:
+                assert image.fromarray(pixels=pixels)
+                product = image.moments(method=method, stddev=sigma)
+                results.append(_read(product))
+            finally:
+                if product is not None:
+                    product.done()
+                image.done()
+        _compare(results[1], results[0])
+
+
 def test_moments_rejects_invalid_requests_without_replacing_a_product(tmp_path):
     input_path = str(tmp_path / "source.im")
     output_path = str(tmp_path / "output.im")
