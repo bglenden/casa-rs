@@ -35,6 +35,10 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
+pub use imsubimage::{
+    ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
+    fit_image_components,
+};
 pub use imsubimage::{ContinuumSummary, ImageContinuum};
 pub use imsubimage::{ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution};
 pub use imsubimage::{

@@ -17,21 +17,24 @@ use crate::{GaussianBeam, ImageError};
 use super::invalid;
 use super::peaks::Peak;
 
-pub(super) struct PixelEllipse {
-    pub(super) major: f64,
-    pub(super) minor: f64,
-    pub(super) x_to_y: f64,
+pub(in crate::analysis::imsubimage) struct PixelEllipse {
+    pub(in crate::analysis::imsubimage) major: f64,
+    pub(in crate::analysis::imsubimage) minor: f64,
+    pub(in crate::analysis::imsubimage) x_to_y: f64,
 }
 
-pub(super) struct SkyPlane<'a> {
-    pub(super) direction: &'a DirectionCoordinate,
-    pub(super) sky_order: [usize; 2],
-    pub(super) brightness: &'a str,
-    pub(super) beam: Option<GaussianBeam>,
+pub(in crate::analysis::imsubimage) struct SkyPlane<'a> {
+    pub(in crate::analysis::imsubimage) direction: &'a DirectionCoordinate,
+    pub(in crate::analysis::imsubimage) sky_order: [usize; 2],
+    pub(in crate::analysis::imsubimage) brightness: &'a str,
+    pub(in crate::analysis::imsubimage) beam: Option<GaussianBeam>,
 }
 
 impl SkyPlane<'_> {
-    fn world(&self, pixel: [f64; 2]) -> Result<[f64; 2], ImageError> {
+    pub(in crate::analysis::imsubimage) fn world(
+        &self,
+        pixel: [f64; 2],
+    ) -> Result<[f64; 2], ImageError> {
         Ok(self
             .direction
             .pixel_to_world(self.sky_order.map(|axis| pixel[axis]))?)
@@ -49,7 +52,7 @@ impl SkyPlane<'_> {
             self.direction.conversion_direction_ref(),
         );
         let (shape, value, unit) = if let Some(ellipse) = ellipse {
-            let axes = self.world_ellipse(peak.position, center, ellipse)?;
+            let axes = self.world_ellipse(peak.position, center, ellipse, [1.; 2])?;
             let area = gaussian_area(axes.major_axis(), axes.minor_axis());
             let (value, unit) = self.integrated_flux(peak.height, area);
             let shape = ComponentShape::new(
@@ -86,11 +89,12 @@ impl SkyPlane<'_> {
         Ok(SkyComponent::new(flux, shape, spectrum))
     }
 
-    fn world_ellipse(
+    pub(in crate::analysis::imsubimage) fn world_ellipse(
         &self,
         center_pixel: [f64; 2],
         center_world: [f64; 2],
         ellipse: PixelEllipse,
+        pixel_stride: [f64; 2],
     ) -> Result<Ellipse, ImageError> {
         let endpoints = [
             (ellipse.major, ellipse.x_to_y),
@@ -99,8 +103,8 @@ impl SkyPlane<'_> {
         let axis = |(width, angle): (f64, f64)| {
             let (sin, cos) = angle.sin_cos();
             let tip = self.world([
-                center_pixel[0] + 0.5 * width * cos,
-                center_pixel[1] + 0.5 * width * sin,
+                center_pixel[0] + 0.5 * width * cos * pixel_stride[0],
+                center_pixel[1] + 0.5 * width * sin * pixel_stride[1],
             ])?;
             Ok::<_, ImageError>(sky_axis(center_world, tip))
         };
@@ -115,7 +119,11 @@ impl SkyPlane<'_> {
             .map_err(|err| invalid(err.to_string()))
     }
 
-    fn integrated_flux(&self, peak: f64, area: f64) -> (f64, &'static str) {
+    pub(in crate::analysis::imsubimage) fn integrated_flux(
+        &self,
+        peak: f64,
+        area: f64,
+    ) -> (f64, &'static str) {
         let increments = self.direction.increment();
         let pixel_area = (increments[0] * increments[1]).abs();
         let beam_area = self.beam.map_or_else(
@@ -158,7 +166,7 @@ impl SkyPlane<'_> {
     }
 }
 
-fn gaussian_area(major: f64, minor: f64) -> f64 {
+pub(in crate::analysis::imsubimage) fn gaussian_area(major: f64, minor: f64) -> f64 {
     PI / (4. * LN_2) * major * minor
 }
 

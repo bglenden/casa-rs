@@ -18,6 +18,11 @@ mod decimate;
 mod decompose;
 mod deviation;
 mod findsources;
+mod fitcomponents;
+pub use fitcomponents::{
+    ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
+    fit_image_components,
+};
 mod fourier;
 pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};
 pub use deviation::{DeviationOptions, ImageDeviation};

@@ -255,34 +255,41 @@ pub(in crate::analysis::imsubimage) enum WindowFit {
     Fitted(Parameters),
 }
 
-// Fit2D's initial guess uses absolute moments above five percent of
-// the largest magnitude. Lower samples still enter the least-squares fit.
-pub(in crate::analysis::imsubimage) fn fit_window(
-    pixels: impl IntoIterator<Item = ([f64; 2], f32)>,
-    peak: f64,
-) -> WindowFit {
-    const FACTOR: f64 = 4. * LN_2;
-    let mut samples: Vec<_> = pixels
+const FIT_2D: FitOptions = FitOptions {
+    maximum_rms: -1.,
+    retries: 0,
+    iterations: 1000,
+    criterion: 0.0001,
+};
+
+pub(in crate::analysis::imsubimage) struct SkyFit {
+    pub(in crate::analysis::imsubimage) gaussians: Vec<Parameters>,
+    pub(in crate::analysis::imsubimage) offset: f64,
+    pub(in crate::analysis::imsubimage) offset_error: f64,
+}
+
+fn observations(pixels: impl IntoIterator<Item = ([f64; 2], f32)>) -> Vec<Observation> {
+    pixels
         .into_iter()
         .map(|([x, y], pixel)| Observation {
             position: [x, y, 0.],
             value: f64::from(pixel),
         })
-        .collect();
-    if samples.iter().any(|row| !row.value.is_finite()) {
-        return WindowFit::Point;
-    }
-    let scale = samples.iter().map(|row| row.value.abs()).fold(0., f64::max);
-    if samples.len() < 6 || scale == 0. {
-        return WindowFit::Point;
-    }
+        .collect()
+}
+
+// Fit2D's initial guess uses absolute moments above five percent of the
+// largest magnitude. Lower samples still enter the least-squares fit.
+fn moment_seed(samples: &[Observation], scale: f64) -> Option<Parameters> {
+    const FACTOR: f64 = 4. * LN_2;
     let clip = f64::from((0.05 * scale) as f32);
+    let mut signed_sum = 0.;
     let mut moments = [0.; 6];
-    for row in &mut samples {
+    for row in samples {
         let magnitude = row.value.abs();
-        row.value /= scale;
         if magnitude > clip {
             let [x, y, _] = row.position;
+            signed_sum += row.value;
             for (sum, term) in moments.iter_mut().zip([1., x, y, x * y, x * x, y * y]) {
                 *sum += magnitude * term;
             }
@@ -295,26 +302,106 @@ pub(in crate::analysis::imsubimage) fn fit_window(
     let xx = xx / sum - x * x;
     let yy = yy / sum - y * y;
     let span = (xx - yy).hypot(2. * xy);
-    let major = 0.95 * (FACTOR * (xx + yy + span)).sqrt();
+    let major = (FACTOR * (xx + yy + span)).sqrt();
     let minor = (FACTOR * (xx + yy - span)).sqrt();
     if minor <= 0. || !major.is_finite() || !minor.is_finite() {
-        return WindowFit::Point;
+        return None;
     }
     let angle = 0.5 * (2. * xy).atan2(yy - xx);
-    let seed = [peak / scale, x, y, major, minor / major, -angle, 0., 0., 0.];
-    let options = FitOptions {
-        maximum_rms: -1.,
-        retries: 0,
-        iterations: 1000,
-        criterion: 0.0001,
+    let height = signed_sum.signum() * FACTOR * sum / (PI * major * minor);
+    let major = 0.95 * major;
+    Some([height, x, y, major, minor / major, -angle, 0., 0., 0.])
+}
+
+pub(in crate::analysis::imsubimage) fn fit_window(
+    pixels: impl IntoIterator<Item = ([f64; 2], f32)>,
+    peak: f64,
+) -> WindowFit {
+    let mut samples = observations(pixels);
+    if samples.len() < 6 || samples.iter().any(|row| !row.value.is_finite()) {
+        return WindowFit::Point;
+    }
+    let scale = samples.iter().map(|row| row.value.abs()).fold(0., f64::max);
+    let Some(mut seed) = moment_seed(&samples, scale) else {
+        return WindowFit::Point;
     };
+    seed[0] = peak / scale;
+    for row in &mut samples {
+        row.value /= scale;
+    }
     let Some(mut result) =
-        optimize(&samples, &[seed], 2, &options, scale).and_then(|mut fit| fit.pop())
+        optimize(&samples, &[seed], 2, &FIT_2D, scale).and_then(|mut fit| fit.pop())
     else {
         return WindowFit::DefaultWidth;
     };
     result[0] *= scale;
     WindowFit::Fitted(result)
+}
+
+pub(in crate::analysis::imsubimage) fn fit_sky(
+    pixels: impl IntoIterator<Item = ([f64; 2], f32)>,
+    shape: [usize; 2],
+    provided: Option<(&[Parameters], &[[bool; 6]])>,
+    zero_level: Option<(f64, bool)>,
+) -> Option<SkyFit> {
+    let mut samples = observations(pixels);
+    if samples.iter().any(|row| !row.value.is_finite()) {
+        return None;
+    }
+    let extremum = samples
+        .iter()
+        .rev()
+        .max_by(|a, b| a.value.abs().total_cmp(&b.value.abs()))?;
+    let default = || {
+        let [x, y, _] = extremum.position;
+        let width = (shape[0].max(shape[1]) / 2).max(1) as f64;
+        [extremum.value, x, y, width, 0.9, -PI / 2., 0., 0., 0.]
+    };
+    let scale = extremum
+        .value
+        .abs()
+        .max(zero_level.map_or(0., |(offset, _)| offset.abs()));
+    let scale = if scale > 0. { scale } else { 1. };
+    let (mut gaussians, fixed) = provided.map_or_else(
+        || {
+            (
+                vec![moment_seed(&samples, scale).unwrap_or_else(default)],
+                None,
+            )
+        },
+        |(seeds, fixed)| (seeds.to_vec(), Some(fixed)),
+    );
+    for row in &mut samples {
+        row.value /= scale;
+    }
+    for seed in &mut gaussians {
+        seed[0] /= scale;
+    }
+    let offset = zero_level.map_or(0., |(value, _)| value / scale);
+    let fit_offset = zero_level.is_some_and(|(_, fixed)| !fixed);
+    let solver = Solver {
+        observations: &samples,
+        variables: parameters(gaussians.len(), 2, fixed, fit_offset),
+        rank: 2,
+        scale,
+    };
+    if samples.len() < solver.variables.len() {
+        return None;
+    }
+    let mut fit = solver.optimize(Model { gaussians, offset }, &FIT_2D)?;
+    let offset_error = if fit_offset {
+        solver.offset_error(&fit) * scale
+    } else {
+        0.
+    };
+    for component in &mut fit.gaussians {
+        component[0] *= scale;
+    }
+    Some(SkyFit {
+        gaussians: fit.gaussians,
+        offset: fit.offset * scale,
+        offset_error,
+    })
 }
 
 fn optimize(
@@ -324,90 +411,198 @@ fn optimize(
     options: &FitOptions,
     scale: f64,
 ) -> Option<Vec<Parameters>> {
-    let count = rank * 3;
-    let mut variables = (0..seeds.len())
-        .flat_map(|i| (0..count).map(move |j| (i, j)))
-        .collect::<Vec<_>>();
+    let mut variables = parameters(seeds.len(), rank, None, false);
     if observations.len() <= seeds.len() {
-        variables.retain(|&(i, j)| j == 0 && i + observations.len() >= seeds.len());
+        variables.retain(|parameter| {
+            matches!(*parameter, Parameter::Gaussian(i, 0) if i + observations.len() >= seeds.len())
+        });
+    }
+    let solver = Solver {
+        observations,
+        variables,
+        rank,
+        scale,
+    };
+    solver
+        .optimize(
+            Model {
+                gaussians: seeds.to_vec(),
+                offset: 0.,
+            },
+            options,
+        )
+        .map(|model| model.gaussians)
+}
+
+#[derive(Clone, Copy)]
+enum Parameter {
+    Gaussian(usize, usize),
+    Offset,
+}
+
+fn parameters(
+    count: usize,
+    rank: usize,
+    fixed: Option<&[[bool; 6]]>,
+    fit_offset: bool,
+) -> Vec<Parameter> {
+    let mut parameters: Vec<_> = (0..count)
+        .flat_map(|i| {
+            (0..rank * 3).filter_map(move |j| {
+                fixed
+                    .is_none_or(|fixed| !fixed[i][j])
+                    .then_some(Parameter::Gaussian(i, j))
+            })
+        })
+        .collect();
+    parameters.extend(fit_offset.then_some(Parameter::Offset));
+    parameters
+}
+
+#[derive(Clone)]
+struct Model {
+    gaussians: Vec<Parameters>,
+    offset: f64,
+}
+
+impl Model {
+    fn value(&self, rank: usize, position: [f64; 3]) -> f64 {
+        self.gaussians
+            .iter()
+            .map(|p| gaussian(p, rank, position))
+            .sum::<f64>()
+            + self.offset
     }
 
-    let evaluate = |model: &[Parameters], row: Observation| {
-        model
-            .iter()
-            .map(|p| gaussian(p, rank, row.position))
-            .sum::<f64>()
-    };
-    let error = |model: &[Parameters]| {
-        observations
-            .iter()
-            .map(|&row| (row.value - evaluate(model, row)).powi(2))
-            .sum::<f64>()
-    };
-    let mut best = seeds.to_vec();
-    let mut best_cost = f64::INFINITY;
-    let fit_precision = f64::EPSILON * observations.len() as f64;
-    let criterion = options.criterion.powi(2);
-    let retries = if options.retries < 0 {
-        rank * seeds.len()
-    } else {
-        options.retries as usize
-    };
-    for attempt in 0..=retries {
-        let mut model = seeds.to_vec();
-        if attempt > 0 {
-            let component = (attempt - 1) % model.len();
-            let factor = [0.8, 1.25, 0.55, 1.55][((attempt - 1) / model.len()) % 4];
-            let width_count = if rank == 2 { 1 } else { rank };
-            for width in &mut model[component][rank + 1..rank + 1 + width_count] {
-                *width *= factor;
+    fn slope(&self, rank: usize, position: [f64; 3], parameter: Parameter) -> f64 {
+        let Parameter::Gaussian(i, j) = parameter else {
+            return 1.;
+        };
+        let mut component = self.gaussians[i];
+        let delta = component[j].abs().max(1.) * 1e-5;
+        component[j] += delta;
+        let plus = gaussian(&component, rank, position);
+        component[j] -= 2. * delta;
+        (plus - gaussian(&component, rank, position)) / (2. * delta)
+    }
+
+    fn adjust(&mut self, changes: impl IntoIterator<Item = (Parameter, f64)>) {
+        for (parameter, delta) in changes {
+            match parameter {
+                Parameter::Gaussian(i, j) => self.gaussians[i][j] += delta,
+                Parameter::Offset => self.offset += delta,
             }
         }
-        let mut score = error(&model);
-        let mut converged = score <= fit_precision;
+    }
+}
+
+struct Solver<'a> {
+    observations: &'a [Observation],
+    variables: Vec<Parameter>,
+    rank: usize,
+    scale: f64,
+}
+
+impl Solver<'_> {
+    fn optimize(&self, seeds: Model, options: &FitOptions) -> Option<Model> {
+        let mut best = None;
+        let mut best_cost = f64::INFINITY;
+        let precision = f64::EPSILON * self.observations.len() as f64;
+        let retries = if options.retries < 0 {
+            self.rank * seeds.gaussians.len()
+        } else {
+            options.retries as usize
+        };
+        for attempt in 0..=retries {
+            let mut model = seeds.clone();
+            if attempt > 0 {
+                let count = model.gaussians.len();
+                let component = (attempt - 1) % count;
+                let factor = [0.8, 1.25, 0.55, 1.55][((attempt - 1) / count) % 4];
+                let width_count = if self.rank == 2 { 1 } else { self.rank };
+                for width in
+                    &mut model.gaussians[component][self.rank + 1..self.rank + 1 + width_count]
+                {
+                    *width *= factor;
+                }
+            }
+            if let Some((model, score)) = self.refine(model, options, precision)
+                && score < best_cost
+            {
+                best_cost = score;
+                best = Some(model);
+            }
+            if self.scale * (best_cost / self.observations.len() as f64).sqrt()
+                <= options.maximum_rms
+                || best_cost <= precision
+            {
+                break;
+            }
+        }
+        let mut best = best?;
+        for component in &mut best.gaussians {
+            normalize_shape(component, self.rank);
+        }
+        Some(best)
+    }
+
+    fn cost(&self, model: &Model) -> f64 {
+        self.observations
+            .iter()
+            .map(|row| (row.value - model.value(self.rank, row.position)).powi(2))
+            .sum()
+    }
+
+    fn refine(
+        &self,
+        mut model: Model,
+        options: &FitOptions,
+        precision: f64,
+    ) -> Option<(Model, f64)> {
+        let mut score = self.cost(&model);
+        if self.variables.is_empty() {
+            return score.is_finite().then_some((model, score));
+        }
+        let mut converged = score <= precision;
         let mut damping = 0.001;
         let mut candidate = model.clone();
+        let criterion = options.criterion.powi(2);
         for _ in 0..options.iterations {
             if converged {
                 break;
             }
             let linearize = |row: Observation, slope: &mut [f64]| {
-                for (entry, &(i, j)) in slope.iter_mut().zip(&variables) {
-                    let mut p = model[i];
-                    let delta = p[j].abs().max(1.) * 1e-5;
-                    p[j] += delta;
-                    let plus = gaussian(&p, rank, row.position);
-                    p[j] -= 2. * delta;
-                    *entry = (plus - gaussian(&p, rank, row.position)) / (2. * delta);
+                for (entry, &parameter) in slope.iter_mut().zip(&self.variables) {
+                    *entry = model.slope(self.rank, row.position, parameter);
                 }
             };
-            let residual = |row: Observation| row.value - evaluate(&model, row);
-            let Some(step) =
-                damped_step(observations, variables.len(), damping, linearize, residual)
-            else {
+            let residual = |row: Observation| row.value - model.value(self.rank, row.position);
+            let Some(step) = damped_step(
+                self.observations,
+                self.variables.len(),
+                damping,
+                linearize,
+                residual,
+            ) else {
                 break;
             };
-            candidate.copy_from_slice(&model);
-            for (&(i, j), delta) in variables.iter().zip(step) {
-                candidate[i][j] += delta;
-            }
-            let widths = if rank == 2 { 3..5 } else { 4..7 };
+            candidate.clone_from(&model);
+            candidate.adjust(self.variables.iter().copied().zip(step));
+            let widths = if self.rank == 2 { 3..5 } else { 4..7 };
             if candidate
+                .gaussians
                 .iter()
                 .any(|p| p[widths.clone()].iter().any(|&width| width <= 0.))
             {
                 damping *= 10.;
                 continue;
             }
-            let cost = error(&candidate);
+            let cost = self.cost(&candidate);
             if cost < score {
-                model.copy_from_slice(&candidate);
-                converged = cost <= fit_precision || score - cost <= criterion * score;
+                model.clone_from(&candidate);
+                converged = cost <= precision || score - cost <= criterion * score;
                 score = cost;
                 damping *= 0.25;
-                if converged {
-                    break;
-                }
             } else if damping <= 0.001 && (score - cost).abs() <= criterion * score {
                 converged = true;
             } else {
@@ -417,43 +612,70 @@ fn optimize(
                 }
             }
         }
-        if converged && score < best_cost {
-            best_cost = score;
-            best = model;
-        }
-        if scale * (best_cost / observations.len() as f64).sqrt() <= options.maximum_rms
-            || best_cost <= fit_precision
-        {
-            break;
-        }
+        converged.then_some((model, score))
     }
-    if !best_cost.is_finite() {
-        return None;
-    }
-    for component in &mut best {
-        if rank == 2 {
-            if component[4] > 1. {
-                component[3] *= component[4];
-                component[4] = component[4].recip();
-                component[5] += PI / 2.;
-            }
-            component[5] = component[5].rem_euclid(PI);
-            if (component[5] - PI).abs() < 1e-7 {
-                component[5] = 0.;
-            }
-        } else {
-            for (angle, width) in [(7, 5), (8, 6)] {
-                let position = (component[angle] + PI / 2.).rem_euclid(PI) - PI / 2.;
-                component[angle] = if position.abs() > PI / 4. {
-                    component.swap(4, width);
-                    position - position.signum() * PI / 2.
-                } else {
-                    position
-                };
+
+    fn offset_error(&self, model: &Model) -> f64 {
+        let count = self.variables.len() - 1;
+        let degrees = self.observations.len().saturating_sub(self.variables.len()) as f64;
+        if degrees == 0. {
+            return f64::NAN;
+        }
+        // The offset column is one for every row. Remove its projection onto
+        // the fitted Gaussian columns to obtain the Schur complement of the
+        // normal matrix without constructing a separate dense inverse.
+        let mut precision = self.observations.len() as f64;
+        if count > 0 {
+            let linearize = |row: Observation, slope: &mut [f64]| {
+                for (entry, &parameter) in slope.iter_mut().zip(&self.variables) {
+                    *entry = model.slope(self.rank, row.position, parameter);
+                }
+            };
+            if let Some(projection) = damped_step(self.observations, count, 0., linearize, |_| 1.) {
+                for row in self.observations {
+                    precision -= projection
+                        .iter()
+                        .zip(&self.variables)
+                        .map(|(&weight, &parameter)| {
+                            weight * model.slope(self.rank, row.position, parameter)
+                        })
+                        .sum::<f64>();
+                }
             }
         }
+        (self.cost(model) / degrees / precision).sqrt()
     }
-    Some(best)
+}
+
+fn normalize_shape(component: &mut Parameters, rank: usize) {
+    if rank == 2 {
+        if component[4] > 1. {
+            component[3] *= component[4];
+            component[4] = component[4].recip();
+            component[5] += PI / 2.;
+        }
+        component[5] = component[5].rem_euclid(PI);
+        if (component[5] - PI).abs() < 1e-7 {
+            component[5] = 0.;
+        }
+    } else {
+        for (angle, width) in [(7, 5), (8, 6)] {
+            let position = (component[angle] + PI / 2.).rem_euclid(PI) - PI / 2.;
+            component[angle] = if position.abs() > PI / 4. {
+                component.swap(4, width);
+                position - position.signum() * PI / 2.
+            } else {
+                position
+            };
+        }
+    }
+}
+
+pub(in crate::analysis::imsubimage) fn evaluate_sky(
+    parameters: &Parameters,
+    position: [f64; 2],
+) -> f64 {
+    gaussian(parameters, 2, [position[0], position[1], 0.])
 }
 
 fn damped_step(
