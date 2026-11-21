@@ -70,8 +70,8 @@ fn clip_visibility_operator(text: &str) -> Option<(ClipMetric, String)> {
 }
 
 fn stored_products_with_operator(mut text: String) -> Option<String> {
-    // Manual and quack use stored flags. Keep the explicitly requested
-    // planes after peeling the visibility metric from the expression.
+    // Keep the explicitly requested planes after peeling the visibility
+    // metric from the expression.
     for (operator, _) in CLIP_OPERATORS {
         text = text.replace(operator, " ");
     }
@@ -136,22 +136,21 @@ impl CorrelationSelection {
         if mode == FlagDataMode::Summary && has_operator {
             return Ok(None);
         }
-        if mode != FlagDataMode::Summary
-            && (!matches!(
-                mode,
-                FlagDataMode::Manual
-                    | FlagDataMode::Quack
-                    | FlagDataMode::Clip
-                    | FlagDataMode::Elevation
-            ) || (mode == FlagDataMode::Clip && has_operator && clip_operator.is_none()))
-        {
+        let uses_stored_products = matches!(
+            mode,
+            FlagDataMode::Manual
+                | FlagDataMode::Quack
+                | FlagDataMode::Elevation
+                | FlagDataMode::Extend
+        );
+        if match mode {
+            FlagDataMode::Summary => false,
+            FlagDataMode::Clip => has_operator && clip_operator.is_none(),
+            _ => !uses_stored_products,
+        } {
             return Err(unsupported());
         }
-        let decorated_stored_products = has_operator
-            && matches!(
-                mode,
-                FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Elevation
-            );
+        let decorated_stored_products = has_operator && uses_stored_products;
         if decorated_stored_products {
             let Some(products) = stored_products_with_operator(text) else {
                 return Ok(None);

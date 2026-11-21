@@ -1084,7 +1084,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>addantenna</code> | <code>flagdata.addantenna@r1</code> | <code>string</code> | <code>""</code>; optional | Shadow | Antennas, from a file or dictionary, that shadow mode adds. |
 | <code>lowerlimit</code> | <code>flagdata.lowerlimit@r2</code> | <code>variant</code> | <code>0.0</code>; optional | Elevation | Lowest elevation, in degrees, that elevation mode keeps. |
 | <code>upperlimit</code> | <code>flagdata.upperlimit@r2</code> | <code>variant</code> | <code>90.0</code>; optional | Elevation | Highest elevation, in degrees, that elevation mode keeps. |
-| <code>ntime</code> | <code>flagdata.ntime@r2</code> | <code>variant</code> | <code>"scan"</code>; optional | Automatic | Visibility iterator time chunk: 'scan', a duration string, or seconds.<br><em>Surface:</em> Manual, unflag, quack, clip and summary validate ntime before running. Clip time averaging does not cross iterator chunks. Automatic agents remain on #1616. |
+| <code>ntime</code> | <code>flagdata.ntime@r2</code> | <code>variant</code> | <code>"scan"</code>; optional | Automatic | Visibility iterator time chunk: 'scan', a duration string, or seconds.<br><em>Surface:</em> Time-averaged clipping and flag extension process each iterator chunk independently. Tfcrop and rflag chunk controls remain on #1616. |
 | <code>combinescans</code> | <code>flagdata.combinescans@r1</code> | <code>bool</code> | <code>false</code>; optional | Automatic | Let the automatic modes' time chunks span scans. |
 | <code>timecutoff</code> | <code>parameter.timecutoff@r1</code> | <code>float</code> | <code>4.0</code>; optional | Automatic | TFCrop time cutoff in robust sigma units. |
 | <code>freqcutoff</code> | <code>parameter.freqcutoff@r1</code> | <code>float</code> | <code>3.0</code>; optional | Automatic | TFCrop frequency cutoff in robust sigma units. |
@@ -1105,9 +1105,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>antint_ref_antenna</code> | <code>flagdata.antint_ref_antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Antint | Antenna whose baselines antint mode examines. |
 | <code>minchanfrac</code> | <code>flagdata.minchanfrac@r1</code> | <code>float</code> | <code>0.6</code>; optional | Antint | Fraction of flagged channels at which antint flags an integration. |
 | <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Antint | Verbose logging. |
-| <code>extendpols</code> | <code>parameter.extendpols@r1</code> | <code>bool</code> | <code>true</code>; optional | Extend | Extend flags across correlations. |
-| <code>growtime</code> | <code>flagdata.growtime@r1</code> | <code>float</code> | <code>50.0</code>; optional | Extend | Percentage of flagged time at which extend mode flags a whole channel. |
-| <code>growfreq</code> | <code>flagdata.growfreq@r1</code> | <code>float</code> | <code>50.0</code>; optional | Extend | Percentage of flagged channels at which extend mode flags a whole time step. |
+| <code>extendpols</code> | <code>parameter.extendpols@r2</code> | <code>variant</code> | <code>true</code>; optional | Extend | Extend flags across correlations. |
+| <code>growtime</code> | <code>flagdata.growtime@r2</code> | <code>variant</code> | <code>50.0</code>; optional | Extend | Percentage of flagged time at which extend mode flags a whole channel. |
+| <code>growfreq</code> | <code>flagdata.growfreq@r2</code> | <code>variant</code> | <code>50.0</code>; optional | Extend | Percentage of flagged channels at which extend mode flags a whole time step. |
 | <code>growaround</code> | <code>flagdata.growaround@r1</code> | <code>bool</code> | <code>false</code>; optional | Extend | Extend flags to points mostly surrounded by flags. |
 | <code>flagneartime</code> | <code>flagdata.flagneartime@r1</code> | <code>bool</code> | <code>false</code>; optional | Extend | Flag the time steps either side of each flagged one. |
 | <code>flagnearfreq</code> | <code>flagdata.flagnearfreq@r1</code> | <code>bool</code> | <code>false</code>; optional | Extend | Flag the channels either side of each flagged one. |

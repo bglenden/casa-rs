@@ -23440,11 +23440,10 @@
             "python": {"name": "ntime", "type_hint": "str | float"},
             "presentation": {"label": "Time Chunk", "group": "Automatic", "advanced": true}
           },
-          "surface_note": "Manual, unflag, quack, clip and summary validate ntime before running. Clip time averaging does not cross iterator chunks. Automatic agents remain on #1616.",
+          "surface_note": "Time-averaged clipping and flag extension process each iterator chunk independently. Tfcrop and rflag chunk controls remain on #1616.",
           "unimplemented": {"issue": 1616, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
           ]}}
         },
         {
@@ -23462,8 +23461,7 @@
           },
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
           ]}}
         },
         {
@@ -23674,7 +23672,7 @@
         },
         {
           "name": "growtime",
-          "concept": {"id": "flagdata.growtime", "semantic_revision": 1},
+          "concept": {"id": "flagdata.growtime", "semantic_revision": 2},
           "order": 54,
           "default": {"kind": "literal", "value": {"kind": "float", "value": 50.0}},
           "required_when": {"kind": "never"},
@@ -23682,13 +23680,13 @@
           "projections": {
             "cli": {"flags": ["--growtime"], "metavar": "PERCENT"},
             "provider": {"field": "growtime"},
-            "python": {"name": "growtime"},
+            "python": {"name": "growtime", "type_hint": "float"},
             "presentation": {"label": "Grow Time", "group": "Extend", "advanced": true}
           }
         },
         {
           "name": "growfreq",
-          "concept": {"id": "flagdata.growfreq", "semantic_revision": 1},
+          "concept": {"id": "flagdata.growfreq", "semantic_revision": 2},
           "order": 55,
           "default": {"kind": "literal", "value": {"kind": "float", "value": 50.0}},
           "required_when": {"kind": "never"},
@@ -23696,7 +23694,7 @@
           "projections": {
             "cli": {"flags": ["--growfreq"], "metavar": "PERCENT"},
             "provider": {"field": "growfreq"},
-            "python": {"name": "growfreq"},
+            "python": {"name": "growfreq", "type_hint": "float"},
             "presentation": {"label": "Grow Frequency", "group": "Extend", "advanced": true}
           }
         },
@@ -23712,8 +23710,7 @@
             "provider": {"field": "growaround"},
             "python": {"name": "growaround"},
             "presentation": {"label": "Grow Around", "group": "Extend", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
+          }
         },
         {
           "name": "flagneartime",
@@ -23727,8 +23724,7 @@
             "provider": {"field": "flagneartime"},
             "python": {"name": "flagneartime"},
             "presentation": {"label": "Flag Near Time", "group": "Extend", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
+          }
         },
         {
           "name": "flagnearfreq",
@@ -23742,8 +23738,7 @@
             "provider": {"field": "flagnearfreq"},
             "python": {"name": "flagnearfreq"},
             "presentation": {"label": "Flag Near Frequency", "group": "Extend", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
+          }
         },
         {
           "name": "minrel",
@@ -23902,7 +23897,6 @@
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}
@@ -24808,7 +24802,7 @@
           "name": "extendpols",
           "concept": {
             "id": "parameter.extendpols",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 53,
           "default": {
@@ -24833,7 +24827,9 @@
               "flags": [
                 "--extendpols"
               ],
-              "false_flags": [],
+              "false_flags": [
+                "--no-extendpols"
+              ],
               "metavar": null
             },
             "provider": {

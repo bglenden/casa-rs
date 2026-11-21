@@ -41,6 +41,16 @@ impl ChannelSelection {
     /// Expand the selection into concrete channel indices for a spectral window
     /// with `total_channels` channels.
     pub fn indices(&self, total_channels: usize) -> MsResult<Vec<usize>> {
+        self.expand_indices(total_channels, false)
+    }
+
+    /// Expand the ordered logical channel axis of a flagging agent. Overlaps
+    /// contribute one logical channel for each segment that names the cell.
+    pub(crate) fn indices_with_overlaps(&self, total_channels: usize) -> MsResult<Vec<usize>> {
+        self.expand_indices(total_channels, true)
+    }
+
+    fn expand_indices(&self, total_channels: usize, retain_overlaps: bool) -> MsResult<Vec<usize>> {
         let mut indices = Vec::<usize>::new();
         for segment in &self.segments {
             if segment.stride == 0 {
@@ -75,7 +85,7 @@ impl ChannelSelection {
                         segment
                     )));
                 }
-                if !indices.contains(&index) {
+                if retain_overlaps || !indices.contains(&index) {
                     indices.push(index);
                 }
                 if current == segment.end {
