@@ -249,6 +249,10 @@ impl DirectionCoordinate {
         self.removed_axis
     }
 
+    pub(crate) fn take_removed_axis(&mut self) -> Option<RemovedAxis> {
+        self.removed_axis.take()
+    }
+
     fn select_axis<T>(&self, values: [T; 2]) -> Vec<T> {
         let [x, y] = values;
         match self.removed_axis.map(|axis| axis.index) {
@@ -960,7 +964,7 @@ fn wcslib_atan2_degrees(y: f64, x: f64) -> f64 {
     }
 }
 
-fn convert_value_to_unit(
+pub(crate) fn convert_value_to_unit(
     value: f64,
     from_unit: &str,
     to_unit: &str,

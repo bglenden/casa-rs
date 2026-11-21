@@ -13,6 +13,7 @@
 //! order of their axes.
 
 mod edit;
+mod mapped;
 mod record_axes;
 
 use casa_types::{ArrayValue, RecordValue, Value};
@@ -39,6 +40,7 @@ use crate::tabular::TabularCoordinate;
 pub struct CoordinateSystem {
     coordinates: Vec<CoordinateModel>,
     obs_info: ObsInfo,
+    maps: Option<Box<mapped::AxisMaps>>,
 }
 
 impl CoordinateSystem {
@@ -47,6 +49,7 @@ impl CoordinateSystem {
         Self {
             coordinates: Vec::new(),
             obs_info: ObsInfo::default(),
+            maps: None,
         }
     }
 
@@ -54,7 +57,11 @@ impl CoordinateSystem {
     ///
     /// The new coordinate's axes are appended after all existing axes.
     pub fn add_coordinate(&mut self, coord: impl Into<CoordinateModel>) {
-        self.coordinates.push(coord.into());
+        let mut coord = coord.into();
+        if let Some(maps) = &mut self.maps {
+            maps.append(&mut coord);
+        }
+        self.coordinates.push(coord);
     }
 
     /// Returns the number of coordinates in the system.
@@ -84,23 +91,32 @@ impl CoordinateSystem {
         index: usize,
         coord: impl Into<CoordinateModel>,
     ) -> CoordinateModel {
-        let coord = coord.into();
+        let mut coord = coord.into();
         let old = &self.coordinates[index];
         assert_eq!(
             (coord.n_pixel_axes(), coord.n_world_axes()),
             (old.n_pixel_axes(), old.n_world_axes()),
             "a replacing coordinate has the same axes"
         );
+        if let Some(maps) = &mut self.maps {
+            maps.replace_coordinate(index, old, &mut coord);
+        }
         std::mem::replace(&mut self.coordinates[index], coord)
     }
 
     /// Returns the total number of pixel axes across all coordinates.
     pub fn n_pixel_axes(&self) -> usize {
+        if let Some(maps) = &self.maps {
+            return maps.n_pixel;
+        }
         self.coordinates.iter().map(|c| c.n_pixel_axes()).sum()
     }
 
     /// Returns the total number of world axes across all coordinates.
     pub fn n_world_axes(&self) -> usize {
+        if let Some(maps) = &self.maps {
+            return maps.n_world;
+        }
         self.coordinates.iter().map(|c| c.n_world_axes()).sum()
     }
 
@@ -141,6 +157,9 @@ impl CoordinateSystem {
                 got: pixel.len(),
             });
         }
+        if let Some(maps) = self.nonconsecutive_maps() {
+            return maps.to_world(&self.coordinates, pixel);
+        }
 
         let mut world = Vec::with_capacity(self.n_world_axes());
         let mut pix_offset = 0;
@@ -179,6 +198,9 @@ impl CoordinateSystem {
                 expected: n_world,
                 got: world.len(),
             });
+        }
+        if let Some(maps) = self.nonconsecutive_maps() {
+            return maps.to_pixel(&self.coordinates, world, undefined);
         }
 
         let mut pixel = Vec::with_capacity(self.n_pixel_axes());
@@ -239,6 +261,9 @@ impl CoordinateSystem {
                 got: world.nrows(),
             });
         }
+        if let Some(maps) = self.nonconsecutive_maps() {
+            return maps.to_pixel_columns(&self.coordinates, world, undefined);
+        }
 
         let mut pixels = Array2::zeros((self.n_pixel_axes(), world.ncols()).f());
         let mut input = Vec::new();
@@ -284,17 +309,15 @@ impl CoordinateSystem {
     /// `CoordinateSystem::save()` layout.
     pub fn to_record(&self) -> RecordValue {
         let mut rec = self.obs_info.to_record();
+        if let Some(maps) = &self.maps {
+            maps.write_record(&self.coordinates, &mut rec);
+            return rec;
+        }
         let mut next_world_axis = 0i32;
         let mut next_pixel_axis = 0i32;
 
         for (index, coord) in self.coordinates.iter().enumerate() {
-            let basename = match coord.coordinate_type() {
-                CoordinateType::Linear => "linear",
-                CoordinateType::Direction => "direction",
-                CoordinateType::Spectral => "spectral",
-                CoordinateType::Stokes => "stokes",
-                CoordinateType::Tabular => "tabular",
-            };
+            let basename = record_basename(coord.coordinate_type());
             rec.upsert(
                 format!("{basename}{index}"),
                 Value::Record(coord.to_record()),
@@ -412,7 +435,7 @@ impl CoordinateSystem {
     ///
     /// As [`from_record`](Self::from_record).
     pub fn record_coordinates(rec: &RecordValue) -> Result<Vec<RecordCoordinate>, CoordinateError> {
-        Ok(read_coordinates(rec)?
+        Ok(record_axes::read_coordinates(rec)?
             .into_iter()
             .map(|(placed, _)| placed)
             .collect())
@@ -496,41 +519,19 @@ impl RecordCoordinate {
     }
 }
 
-/// `rec`'s coordinates with where they come from, in the order of their
-/// axes.
-fn read_coordinates(
-    rec: &RecordValue,
-) -> Result<Vec<(RecordCoordinate, CoordinateModel)>, CoordinateError> {
-    let mut parsed = Vec::new();
-    for (index, key) in coordinate_record_entries(rec) {
-        let Some(Value::Record(coord_rec)) = rec.get(&key) else {
-            return Err(CoordinateError::InvalidRecord(format!(
-                "coordinate field '{key}' is not a record"
-            )));
-        };
-        let coordinate = parse_coordinate_record(&key, coord_rec)?;
-        parsed.push((index, key, coordinate));
-    }
-    let placements = record_axes::coordinate_order(rec, &mut parsed)?;
-    let mut parsed = parsed.into_iter().map(Some).collect::<Vec<_>>();
-    Ok(placements
-        .into_iter()
-        .map(|placement| {
-            let (_, field, coordinate) = parsed[placement.index]
-                .take()
-                .expect("an order names each coordinate once");
-            let placed = RecordCoordinate {
-                field,
-                pixel_axes: placement.pixel_axes,
-            };
-            (placed, coordinate)
-        })
-        .collect())
-}
-
 impl Default for CoordinateSystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn record_basename(kind: CoordinateType) -> &'static str {
+    match kind {
+        CoordinateType::Linear => "linear",
+        CoordinateType::Direction => "direction",
+        CoordinateType::Spectral => "spectral",
+        CoordinateType::Stokes => "stokes",
+        CoordinateType::Tabular => "tabular",
     }
 }
 
