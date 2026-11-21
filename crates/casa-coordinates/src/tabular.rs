@@ -57,16 +57,29 @@ pub(crate) fn validate_transform_samples(
     if !transform.is_finite() || transform == 0.0 || values.len() < 2 {
         return Err(invalid());
     }
+    let overall_order = values[values.len() - 1].partial_cmp(&values[0]);
+    if !matches!(
+        overall_order,
+        Some(std::cmp::Ordering::Less | std::cmp::Ordering::Greater)
+    ) {
+        return Err(invalid());
+    }
     let mut previous = scaled_world(values[0], reference, transform);
-    for pair in values.windows(2) {
+    for (interval, pair) in values.windows(2).enumerate() {
         let next = scaled_world(pair[1], reference, transform);
-        let increasing = (pair[1] > pair[0]) == (transform > 0.0);
-        if !previous.is_finite()
-            || !next.is_finite()
-            || next == previous
-            || pair[1] == pair[0]
-            || (next > previous) != increasing
-        {
+        let order = if interval == 0 {
+            pair[1].partial_cmp(&pair[0])
+        } else {
+            overall_order
+        };
+        let expected = order.map(|order| {
+            if transform < 0.0 {
+                order.reverse()
+            } else {
+                order
+            }
+        });
+        if !previous.is_finite() || !next.is_finite() || next.partial_cmp(&previous) != expected {
             return Err(invalid());
         }
         previous = next;
@@ -154,16 +167,17 @@ pub(crate) fn edit_table(
     let last = values[values.len() - 1];
     let span = pixel_values[pixel_values.len() - 1] - pixel_values[0];
     let increment = (last - first) / span;
-    let reversed = (last > first) != (world_values[world_values.len() - 1] > world_values[0]);
+    let increasing = last > first;
+    let reversed = increasing != (world_values[world_values.len() - 1] > world_values[0]);
+    let first_order = world_values[1]
+        .partial_cmp(&world_values[0])
+        .map(|order| if reversed { order.reverse() } else { order });
     if !increment.is_normal()
+        || values[1].partial_cmp(&first) != first_order
         || values
             .windows(2)
-            .zip(world_values.windows(2))
-            .any(|(pair, old)| {
-                pair[1] == pair[0]
-                    || old[1] == old[0]
-                    || ((pair[1] > pair[0]) != (old[1] > old[0])) != reversed
-            })
+            .skip(1)
+            .any(|pair| pair[0] == pair[1] || (pair[1] > pair[0]) != increasing)
     {
         return Err(CoordinateError::InvalidRecord(
             "tabular edit produces an invalid increment (#977)".into(),
