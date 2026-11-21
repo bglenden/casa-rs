@@ -569,6 +569,7 @@ impl ImagerVoltagePattern {
         let main = ms.main_table();
         let mut first = None;
         let mut first_array = None;
+        let mut mixed_arrays = false;
         for row in &selected.selected_rows {
             let ScalarValue::Int32(array) =
                 main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
@@ -576,11 +577,7 @@ impl ImagerVoltagePattern {
                 return Err(invalid("ARRAY_ID must be Int32"));
             };
             let key = (*array, row.field_id, row.data_desc_id, row.time_mjd_seconds);
-            if squint && scratch && *first_array.get_or_insert(*array) != *array {
-                return Err(invalid(
-                    "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
-                ));
-            }
+            mixed_arrays |= *first_array.get_or_insert(*array) != *array;
             if first.as_ref().is_none_or(|(previous, _)| key < *previous) {
                 first = Some((key, row));
             }
@@ -602,6 +599,13 @@ impl ImagerVoltagePattern {
             })
             .transpose()?
             .flatten();
+        // PBMath1DEVLA supplies its radial fit even when dosquint was set.
+        let squint = squint && !matches!(default_beam, Some((PrimaryBeam::Evla, _)));
+        if squint && scratch && mixed_arrays {
+            return Err(invalid(
+                "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
+            ));
+        }
         let pattern = if let Some(path) = &self.table {
             legacy_radial_pattern(path, &telescope)?.pattern()
         } else {
