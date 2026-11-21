@@ -53,6 +53,7 @@ pub use region_write::{put_image_region, validate_put_region_shapes};
 mod replace_masked;
 mod sepconvolve;
 mod smoothing;
+mod two_point;
 
 pub use replace_masked::{
     MaskReplacementOptions, MaskReplacementOutcome, replace_masked_complex_pixels,
@@ -71,6 +72,7 @@ pub use pixel_edit::ImagePixelSelection;
 pub use rebin::{ImageRebin, ImageRebinOptions};
 pub use sepconvolve::{ImageSepConvolution, SepConvolutionOptions};
 pub use smoothing::{ImageSmoothing, SmoothingKernel, SmoothingOptions, SmoothingPixel};
+pub use two_point::{ImageTwoPoint, StructurePixel, TwoPointOptions};
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -290,6 +292,30 @@ impl SubimagePlan {
     /// Image metadata with the restoring beams cropped to this section.
     pub fn image_info(&self) -> &ImageInfo {
         &self.image_info
+    }
+
+    fn transformed_coordinate_record(
+        &self,
+        coordinates: &casa_coordinates::CoordinateSystem,
+        axes: &[usize],
+    ) -> Result<RecordValue, ImageError> {
+        let mut output = coordinates.to_record();
+        if let Some(native) = &self.coordinate_record {
+            let originals = self.coordinates.coordinates_in_record(native)?;
+            let transformed = coordinates.coordinates_in_record(&output)?;
+            for (source, destination) in originals.iter().zip(transformed) {
+                if !source
+                    .pixel_axes
+                    .iter()
+                    .flatten()
+                    .any(|axis| axes.contains(axis))
+                    && let Some(value) = native.get(&source.field)
+                {
+                    output.upsert(destination.field, value.clone());
+                }
+            }
+        }
+        Ok(output)
     }
 
     /// Whether the resolved selection consists of multiple regions or
