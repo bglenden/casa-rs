@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use crate::{Coordinate, CoordinateError, CoordinateModel, CoordinateSystem};
+use crate::{CoordinateError, CoordinateModel, CoordinateSystem};
 
 impl CoordinateSystem {
     /// Clear the transient mixed-coordinate search intervals, as on record restore.
