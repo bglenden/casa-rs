@@ -15,28 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, region = None, mask = None, overwrite = None, stretch = None, grid = None, anchor = None, xlength = None, ylength = None, interp = None, stattype = None, statalg = None, zscore = None, maxiter = None), text_signature = "($self, outfile='', region='', mask='', overwrite=False, stretch=False, grid=[1, 1], anchor='ref', xlength='1pix', ylength='1pix', interp='cubic', stattype='sigma', statalg='classic', zscore=-1.0, maxiter=-1)")]
-    fn deviation(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        grid: Option<&Bound<'_, PyAny>>,
-        anchor: Option<&Bound<'_, PyAny>>,
-        xlength: Option<&Bound<'_, PyAny>>,
-        ylength: Option<&Bound<'_, PyAny>>,
-        interp: Option<&Bound<'_, PyAny>>,
-        stattype: Option<&Bound<'_, PyAny>>,
-        statalg: Option<&Bound<'_, PyAny>>,
-        zscore: Option<&Bound<'_, PyAny>>,
-        maxiter: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("deviation")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (real = None, imag = None, amp = None, phase = None, axes = None, region = None, mask = None, stretch = None, complex = None), text_signature = "($self, real='', imag='', amp='', phase='', axes=[-1], region={}, mask='', stretch=False, complex='')")]
     fn fft(
         &self,

@@ -1356,7 +1356,7 @@ fn shape_contains(shape: &SpatialShape, x: usize, y: usize) -> bool {
     }
 }
 
-fn point_in_polygon_f64(x: f64, y: f64, vertices: &[[f64; 2]]) -> bool {
+pub(super) fn point_in_polygon_f64(x: f64, y: f64, vertices: &[[f64; 2]]) -> bool {
     let mut inside = false;
     let mut prev = vertices[vertices.len() - 1];
     for &cur in vertices {
