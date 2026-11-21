@@ -119,6 +119,9 @@ fn grouped_flags(
             .main_table()
             .schema()
             .is_some_and(|schema| schema.contains_column(request.data_column.name()));
+        if valid && let Some(parameter) = request.automatic_average_vector {
+            return Err(FlaggingError::InvalidAutomaticAverageVector(parameter));
+        }
         match (request.mode, valid) {
             (FlagDataMode::Tfcrop, true) => {
                 apply_tfcrop_flags(table, &selected.rows, channels, request, None)?

@@ -282,6 +282,8 @@ pub struct FlagDataRequest {
     /// Maximum number of time samples in an RFlag variance window.
     /// A rejected agent record disables RFlag and leaves extension available.
     pub rflag_window: Option<usize>,
+    /// Boolean-vector switch to reject after selecting rows and validating the column.
+    pub automatic_average_vector: Option<&'static str>,
     /// Optional RFlag time threshold, before [`Self::timedevscale`]. `None`
     /// computes one from the data.
     pub timedev: Option<f64>,
@@ -347,6 +349,7 @@ impl Default for FlagDataRequest {
             spectralmax: 1.0e6,
             spectralmin: 0.0,
             rflag_window: Some(3),
+            automatic_average_vector: None,
             timedev: None,
             freqdev: None,
             timedev_by_field_spw: BTreeMap::new(),
@@ -476,6 +479,9 @@ pub enum FlaggingError {
     /// An active explicit RFlag cutoff has a zero or negative scale.
     #[error("{0} must be positive when its threshold is positive")]
     InvalidRFlagScale(&'static str),
+    /// The automatic calibration agent expects a scalar Boolean.
+    #[error("RecordInterface::asBool - invalid data type")]
+    InvalidAutomaticAverageVector(&'static str),
     /// The automatic visibility operator did not name a polarization product.
     #[error(
         "Unknown polarization requested, ({0}) supported types are: XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
