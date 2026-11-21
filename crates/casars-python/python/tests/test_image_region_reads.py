@@ -87,6 +87,17 @@ def test_read_region_values_and_statistics_match_the_selected_pixels(
                 np.testing.assert_array_equal(statistics["sum"], selected.sum(axis=0, dtype=np.float64))
                 np.testing.assert_array_equal(statistics["blc"], [*start, 0, 0])
                 np.testing.assert_array_equal(statistics["trc"], [*stop, 0, 2])
+                if kind in {"polygon", "difference"}:
+                    expression = f'"{name}" > 80'
+                    accepted = mask & (raw > 80)
+                    np.testing.assert_array_equal(
+                        image.getregion(region=region, mask=expression, getmask=True), accepted,
+                    )
+                    filtered = image.statistics(region=region, mask=expression, axes=[0, 1])
+                    np.testing.assert_array_equal(filtered["npts"], accepted.sum(axis=(0, 1, 2)))
+                    np.testing.assert_array_equal(
+                        filtered["sum"], np.where(accepted, raw, 0).sum(axis=(0, 1, 2)),
+                    )
             finally:
                 image.done()
 
