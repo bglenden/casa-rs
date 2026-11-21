@@ -559,6 +559,15 @@ def _coerce_flagdata_options(
     cint = (int, np.int32, np.int64)
     errors = _flagging_choice_errors("flagdata", values)
     column_vector = _coerce_flagdata_column(values, argument_text, errors)
+    for limit in ("lowerlimit", "upperlimit"):
+        if limit in values:
+            value = values[limit]
+            if value is None:
+                errors[limit] = ["null value not allowed"]
+            elif isinstance(value, cfloat):
+                values[limit] = float(value)
+            else:
+                errors[limit] = ["must be of cFloat type"]
     correlation_vector = None
     for parameter in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         if parameter not in values:
