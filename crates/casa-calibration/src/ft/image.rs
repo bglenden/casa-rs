@@ -652,6 +652,21 @@ impl ImageTransform {
                 "the model image's Stokes axis does not match its planes",
             ));
         }
+        if options
+            .voltage_pattern
+            .as_ref()
+            .is_some_and(|beam| beam.has_squint())
+        {
+            use StokesType::{I, LL, Q, RR, U, V};
+            if !matches!(
+                stokes.stokes(),
+                [I] | [Q] | [V] | [I, Q] | [I, V] | [RR, LL] | [I, Q, U, V]
+            ) {
+                return Err(invalid(
+                    "legacy voltage-pattern squint for these Stokes axes is pending #1520",
+                ));
+            }
+        }
         let correlations = first_correlations(ms, selected)?
             .into_iter()
             .map(|code| {
@@ -667,8 +682,14 @@ impl ImageTransform {
                     .ok_or_else(|| invalid("unsupported polarization plane in model image"))
             })
             .collect::<MsResult<Vec<_>>>()?;
-        let routing =
-            PolarizationRouting::from_saved_planes(&correlations, &requested).map_err(invalid)?;
+        let routing = if requested == [PolarizationCoordinate::StokesQ] {
+            // CASA can save the nonzero cross-hand model even when the
+            // selected MeasurementSet contains only parallel hands.
+            PolarizationRouting::from_saved_planes(&correlations, &requested)
+        } else {
+            PolarizationRouting::compile(&correlations, &requested)
+        }
+        .map_err(invalid)?;
         let increment = [direction.increment()[0], direction.increment()[1]];
         // GridFT phases on the world direction of the integer image
         // midpoint, which need not be the WCS reference pixel.
