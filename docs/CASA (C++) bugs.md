@@ -8781,3 +8781,14 @@ at MJD 58000.25 with the same first frequency, changing the final
 frequency can leave the old spectrum in place while the task reports the
 new frequency grid. The casa-rs task replaces a prior component list at
 the generated path after completing its new table.
+
+## A circular deviation window with an all-true footprint can abort
+
+On a 15 × 17 Float direction image, CASA 6.7.6.14 terminates the Python
+process with a segmentation fault during
+`image.deviation(xlength=3, ylength="", stattype="npts")`. The 1.5-pixel
+radius includes all nine pixel centers of the bounding square, so there
+is no footprint mask. The diagnostic assumes it exists when reporting
+the circle size. Casa-rs computes the documented circular statistic
+and clips the window at the image's edges, returning counts of 9 in
+the interior, 6 at an edge, and 4 in a corner for an unmasked image.
