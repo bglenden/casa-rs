@@ -50,6 +50,16 @@ def test_direction_defaults_rebuild_the_axis_at_its_system_axes(casa):
     _assert_value(*results)
 
 
+def test_direction_constructor_distinguishes_numpy_arrays_from_integer_scalars():
+    coords = original(tools)
+    with pytest.raises(RuntimeError, match="Unrecognized format for world coordinate"):
+        coords.setdirection(refval=np.int64(25))
+    assert coords.setdirection(refval=np.array(25), incr=np.float32(-0.25))
+    direction = coords.torecord()["direction0"]
+    np.testing.assert_allclose(direction["crval"], np.deg2rad([25., 23.]))
+    np.testing.assert_allclose(direction["cdelt"], np.deg2rad([-0.25, 1.]))
+
+
 @pytest.mark.parametrize("parameters", [
     {"refval": [25.], "incr": [-0.4]},
     {"refval": ["25deg"], "incr": ["-0.4deg"]},

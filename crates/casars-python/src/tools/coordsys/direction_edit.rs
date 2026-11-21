@@ -95,6 +95,15 @@ fn capture_world_value(
     value: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<WorldArgument> {
     if let Some(value) = value
+        && let Ok(array) = value.cast::<PyUntypedArray>()
+        && array.ndim() == 0
+    {
+        // CASA treats a zero-dimensional array as a one-element coordinate
+        // vector, including when the array holds an integer.
+        let flattened = value.call_method1("reshape", (1,))?;
+        return WorldArgument::capture(py, Some(&flattened));
+    }
+    if let Some(value) = value
         && value.is_instance(&py.import("numpy")?.getattr("generic")?)?
     {
         let dtype = value.getattr("dtype")?;
