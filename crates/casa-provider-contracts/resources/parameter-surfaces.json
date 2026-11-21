@@ -23401,7 +23401,7 @@
         },
         {
           "name": "lowerlimit",
-          "concept": {"id": "flagdata.lowerlimit", "semantic_revision": 1},
+          "concept": {"id": "flagdata.lowerlimit", "semantic_revision": 2},
           "order": 30,
           "default": {"kind": "literal", "value": {"kind": "float", "value": 0.0}},
           "required_when": {"kind": "never"},
@@ -23411,12 +23411,11 @@
             "provider": {"field": "lowerlimit"},
             "python": {"name": "lowerlimit"},
             "presentation": {"label": "Lower Limit", "group": "Elevation", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "elevation"}}}
+          }
         },
         {
           "name": "upperlimit",
-          "concept": {"id": "flagdata.upperlimit", "semantic_revision": 1},
+          "concept": {"id": "flagdata.upperlimit", "semantic_revision": 2},
           "order": 31,
           "default": {"kind": "literal", "value": {"kind": "float", "value": 90.0}},
           "required_when": {"kind": "never"},
@@ -23426,8 +23425,7 @@
             "provider": {"field": "upperlimit"},
             "python": {"name": "upperlimit"},
             "presentation": {"label": "Upper Limit", "group": "Elevation", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "elevation"}}}
+          }
         },
         {
           "name": "ntime",
@@ -23907,7 +23905,6 @@
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "elevation"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}
           ]}}
         },

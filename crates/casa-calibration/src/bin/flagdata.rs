@@ -132,7 +132,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if calculate
         && !matches!(
             request.mode,
-            FlagDataMode::Manual | FlagDataMode::Clip | FlagDataMode::Quack | FlagDataMode::Summary
+            FlagDataMode::Manual
+                | FlagDataMode::Clip
+                | FlagDataMode::Quack
+                | FlagDataMode::Summary
+                | FlagDataMode::Elevation
         )
     {
         return Err(not_yet("action", &action));
@@ -225,6 +229,7 @@ fn save_flag_parameters(
             "clipzeros",
         ],
         "quack" => &["quackmode", "quackinterval", "quackincrement"],
+        "elevation" => &["lowerlimit", "upperlimit"],
         _ => return Err(not_yet("savepars", mode)),
     };
     for &field in fields {
@@ -615,6 +620,7 @@ fn flagdata_request(
         quackinterval,
         quackmode,
         quackincrement,
+        elevation_limits_deg: [task.number("lowerlimit")?, task.number("upperlimit")?],
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         timedevscale: task.number("timedevscale")?,
@@ -791,11 +797,12 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
         "unflag" => Ok((FlagDataMode::Manual, FlagDataAction::Unflag)),
         "clip" => flag(FlagDataMode::Clip),
         "quack" => flag(FlagDataMode::Quack),
+        "elevation" => flag(FlagDataMode::Elevation),
         "tfcrop" => flag(FlagDataMode::Tfcrop),
         "rflag" => flag(FlagDataMode::Rflag),
         "extend" => flag(FlagDataMode::Extend),
         "summary" => flag(FlagDataMode::Summary),
-        "list" | "shadow" | "elevation" | "antint" => Err(not_yet("mode", text)),
+        "list" | "shadow" | "antint" => Err(not_yet("mode", text)),
         _ => Err(unknown(
             "mode",
             text,
@@ -1024,6 +1031,23 @@ mod tests {
         assert_eq!(request.quackmode, QuackMode::End);
         // A command line cannot give action=''; tests/flagging.rs runs it.
         assert!(read(&["--vis", "in.ms", "--action", "none"], run).is_ok());
+    }
+
+    #[test]
+    fn elevation_limits_are_numbers_in_the_cli() {
+        let request = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "elevation",
+            "--lowerlimit",
+            "-5.5",
+            "--upperlimit",
+            "82",
+        ])
+        .unwrap();
+        assert_eq!(request.mode, FlagDataMode::Elevation);
+        assert_eq!(request.elevation_limits_deg, [-5.5, 82.0]);
     }
 
     #[test]

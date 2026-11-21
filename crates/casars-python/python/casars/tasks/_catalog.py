@@ -950,8 +950,8 @@ def flagdata(
     quackincrement: bool | list[bool] = False,
     tolerance: float = 0.0,
     addantenna: str = '',
-    lowerlimit: float = 0.0,
-    upperlimit: float = 90.0,
+    lowerlimit: ParameterData = 0.0,
+    upperlimit: ParameterData = 90.0,
     ntime: str | float = 'scan',
     combinescans: bool = False,
     timecutoff: float = 4.0,
@@ -1002,11 +1002,11 @@ def flagdata(
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``inpfile``, ``reason``, ``tbuff``, ``channelavg``, ``chanbin``,
-    ``timeavg``, ``timebin``, ``tolerance``, ``addantenna``, ``lowerlimit``,
-    ``upperlimit``, ``combinescans``, ``timefit``, ``freqfit``,
-    ``maxnpieces``, ``flagdimension``, ``usewindowstats``, ``halfwin``,
-    ``winsize``, ``antint_ref_antenna``, ``minchanfrac``, ``verbose``,
-    ``growaround``, ``flagneartime``, ``flagnearfreq``, ``savepars``.
+    ``timeavg``, ``timebin``, ``tolerance``, ``addantenna``,
+    ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
+    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
+    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
+    ``flagneartime``, ``flagnearfreq``, ``savepars``.
     Accepted only at CASA's default, where CASA reads them, until #1616:
     ``ntime``.
     """
