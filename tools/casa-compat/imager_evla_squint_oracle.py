@@ -85,7 +85,9 @@ def run(root, dataset, model, telescope='EVLA'):
                             baseline = values
                         elif choice == 'radial':
                             expected = values
-                            assert relative_rms(expected, baseline) > 1.e-2
+                            # ACA's wider beam changes this component by about 0.53%.
+                            minimum_effect = .003 if telescope == 'ACA' else .01
+                            assert relative_rms(expected, baseline) > minimum_effect
                         elif name == 'linear':
                             # GOFIGURE still converts a stored Linear component
                             # into circular while applying the radial beam.
@@ -93,7 +95,9 @@ def run(root, dataset, model, telescope='EVLA'):
                         else:
                             np.testing.assert_array_equal(values, expected)
                     elif beam:
-                        compare(results, f'{label}-{name}-{choice}', values, pinned)
+                        result = f'{label}-{name}-{choice}'
+                        compare(results, result, values, pinned)
+                        assert results[result] < 1.e-5
                     for column in ('DATA', 'FLAG', 'FLAG_ROW', 'WEIGHT'):
                         np.testing.assert_array_equal(data(target, column), data(seed, column))
             if name == 'image':
