@@ -12,7 +12,7 @@ use pyo3::types::{PyDict, PyList, PyTuple};
 use crate::convert::value::CasaValue;
 use crate::tools::table::casa_record;
 
-use super::PyCoordsys;
+use super::{PyCoordsys, inspect::axis_values};
 
 fn raised(message: impl Into<String>) -> PyErr {
     PyRuntimeError::new_err(message.into())
@@ -109,19 +109,20 @@ pub(super) fn capture(
 }
 
 pub(super) fn world_scale(coordinates: &CoordinateSystem) -> PyResult<Vec<f64>> {
-    let mut result = Vec::with_capacity(coordinates.n_world_axes());
-    for index in 0..coordinates.n_coordinates() {
-        match coordinates.coordinate(index) {
-            CoordinateModel::Direction(direction) => {
-                for unit in direction.visible_world_units() {
-                    let unit = Unit::new(&unit).map_err(|error| raised(error.to_string()))?;
-                    result.push(1.0 / unit.val().factor);
-                }
-            }
-            coordinate => result.extend(std::iter::repeat_n(1.0, coordinate.n_world_axes())),
-        }
-    }
-    Ok(result)
+    axis_values(coordinates, true, |coordinate| match coordinate {
+        CoordinateModel::Direction(direction) => direction
+            .visible_world_units()
+            .iter()
+            .map(|unit| {
+                Unit::new(unit)
+                    .map(|parsed| 1.0 / parsed.val().factor)
+                    .map_err(|error| raised(error.to_string()))
+            })
+            .collect(),
+        coordinate => (0..coordinate.n_world_axes()).map(|_| Ok(1.0)).collect(),
+    })
+    .into_iter()
+    .collect()
 }
 
 fn transform(
