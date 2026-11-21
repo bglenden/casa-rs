@@ -2,16 +2,15 @@
 //! Retrieve and publish a VLA calibrator component list and its provenance.
 
 use std::fmt::Write as _;
-use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
 use casa_components::ComponentList;
-use casa_provider_contracts::{CasaValue, ParameterValue};
-use casa_tables::publication::rename_without_replacing;
+use casa_provider_contracts::{CasaValue, ParameterValue, casa_numpy_scalar_root};
+use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
-use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::direction::casa_direction_frame_name;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::Array1;
@@ -28,7 +27,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     let destination = task.workspace().join(outfile);
     let overwrite = task.flag("overwrite")?;
-    if !overwrite && destination.exists() {
+    if !overwrite && destination.symlink_metadata().is_ok() {
         return Err(exists(&destination));
     }
     let source = task.required_text("source")?;
@@ -79,7 +78,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         write!(query, "&refdate={}", ref_mjd as i64).expect("writing to a string");
     }
     let (url, response) = retrieve(&hosts, &query)?;
-    let components = ComponentList::from_record(&response).map_err(execution)?;
+    let components = ComponentList::from_import_record(&response).map_err(execution)?;
     let now = OffsetDateTime::now_local()
         .unwrap_or_else(|_| OffsetDateTime::now_utc())
         .date();
@@ -137,7 +136,6 @@ fn validate_direction(direction: &str) -> Result<(), TaskFailure> {
     let parts = direction.split(' ').collect::<Vec<_>>();
     let rad = Unit::new("rad").expect("rad is a unit");
     if let [frame, longitude, latitude] = parts.as_slice()
-        && frame.parse::<DirectionRef>().is_ok()
         && [longitude, latitude].into_iter().all(|angle| {
             Quantity::read(angle)
                 .ok()
@@ -145,6 +143,9 @@ fn validate_direction(direction: &str) -> Result<(), TaskFailure> {
                 .is_some()
         })
     {
+        if casa_direction_frame_name(frame).is_none() {
+            tracing::warn!(%frame, "unknown direction reference frame; CASA accepts the angles with its default frame");
+        }
         Ok(())
     } else {
         Err(invalid(
@@ -183,8 +184,9 @@ fn observation_date(
                 if *value { 1. } else { 0. },
             ));
         }
-        Some(ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value)) => {
-            return observation_date(Some(value), name);
+        Some(value @ ParameterValue::NumpyScalar { .. }) => {
+            let converted = casa_numpy_scalar_root(value).map_err(|error| invalid(name, error))?;
+            return observation_date(Some(&converted), name);
         }
         Some(ParameterValue::String(value)) => value,
         _ => {
@@ -346,28 +348,16 @@ fn publish(
         .upsert("web_service", Value::Record(provenance));
     table.save_metadata_only(options).map_err(execution)?;
     drop(table);
-    if overwrite && fs::symlink_metadata(path).is_ok() {
-        let previous = staging.path().join("previous");
-        rename_without_replacing(path, &previous).map_err(execution)?;
-        if let Err(error) = rename_without_replacing(&component_path, path) {
-            if rename_without_replacing(&previous, path).is_err() {
-                let backup = staging.keep().join("previous");
-                return Err(execution(format!(
-                    "{error}; previous output is at {}",
-                    backup.display()
-                ))
-                .at("outfile"));
-            }
-            return Err(execution(error).at("outfile"));
-        }
-    } else {
-        rename_without_replacing(&component_path, path).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                exists(path)
+    match rename_without_replacing(&component_path, path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if overwrite {
+                exchange_directories(&component_path, path)
+                    .map_err(|error| execution(error).at("outfile"))
             } else {
-                execution(error).at("outfile")
+                Err(exists(path))
             }
-        })?;
+        }
+        Err(error) => Err(execution(error).at("outfile")),
     }
-    Ok(())
 }

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from threading import Event, Thread
 from unittest.mock import patch
 
 import casatasks as casa
@@ -51,6 +52,9 @@ def compare_records(actual, expected):
         if isinstance(baseline, dict):
             compare_records(actual[name], baseline)
         else:
+            assert type(actual[name]) is type(baseline), (name, type(actual[name]), type(baseline))
+            if isinstance(baseline, np.ndarray):
+                assert actual[name].dtype == baseline.dtype, name
             np.testing.assert_equal(actual[name], baseline, err_msg=name)
 
 
@@ -89,6 +93,10 @@ def valid_calls(root, endpoint, calls):
          ['failure', 'invalid', 'empty', 'positions'],
          {'position': ['J2000 01:37:41.1 33.09.32'], 'band': ['Q'], 'obsdate': ['60000'],
           'refdate': ['0']}),
+        ('abbreviated-direction', {'direction': 'J20 01h30m00 33d09m32',
+                                   'band': 'Q', 'obsdate': 60000, 'hosts': endpoint + '/positions'},
+         ['positions'], {'position': ['J20 01h30m00 33d09m32'], 'band': ['Q'],
+                         'obsdate': ['60000']}),
     )
     for name, options, paths, query in patterns:
         results = []
@@ -160,6 +168,68 @@ def cli_call(root, endpoint, calls):
     assert tool.open(str(path)) and tool.length() == 2 and tool.done()
 
 
+def overwrite_publication(root, endpoint):
+    path = root / 'atomic.cl'
+    options = {'source': '3C286', 'band': 'L', 'obsdate': 60000, 'overwrite': True,
+               'hosts': [endpoint + '/positions']}
+    path.mkdir()
+    (path / 'prior').write_text('previous product')
+    stop = Event()
+    observed = Event()
+    missing = Event()
+
+    def watch():
+        while not stop.is_set():
+            try:
+                path.stat()
+            except FileNotFoundError:
+                missing.set()
+            observed.set()
+
+    watcher = Thread(target=watch)
+    watcher.start()
+    try:
+        assert observed.wait(5.)
+        for _ in range(16):
+            assert rust.getcalmodvla(str(path), **options) is None
+    finally:
+        stop.set()
+        watcher.join()
+    assert not missing.is_set()
+    tool = componentlist()
+    assert tool.open(str(path)) and tool.length() == 2 and tool.done()
+
+
+def component_record_defaults(root):
+    document = frozen_model()
+    document['component0']['flux']['value'] = 2.5
+    document['component1']['flux']['value'] = [.7]
+    del document['component0']['spectrum']
+    with frozen_service(document) as (endpoint, _):
+        options = {'source': '3C286', 'band': 'L', 'obsdate': 60000,
+                   'hosts': [endpoint + '/positions']}
+        paths = [root / 'scalar-casa.cl', root / 'scalar-rust.cl']
+        for module, path in zip((casa, rust), paths):
+            assert module.getcalmodvla(str(path), **options) is None
+        compare_tables(paths[1], paths[0])
+
+    document['component1']['flux']['error'] = [1., 2.]
+    with frozen_service(document) as (endpoint, _):
+        options['hosts'] = [endpoint + '/positions']
+        for module, path in zip((casa, rust), paths):
+            try:
+                module.getcalmodvla(str(path), overwrite=True, **options)
+            except RuntimeError:
+                reader = table()
+                assert reader.open(str(path))
+                meta = reader.getkeyword('web_service')
+                np.testing.assert_array_equal(meta['response']['component1']['flux']['error'],
+                                              [0., 0., 0., 0.])
+                assert reader.done()
+            else:
+                raise AssertionError('a malformed response replaced an existing model')
+
+
 def live(root):
     default = {'source': '3C286', 'band': 'L', 'obsdate': 60000, 'hosts': [LIVE_SERVICE]}
     pinned = root / 'live-casa.cl'
@@ -203,6 +273,8 @@ def main():
         valid_calls(args.root, endpoint, calls)
         invalid_calls(args.root, endpoint, calls)
         cli_call(args.root, endpoint, calls)
+        overwrite_publication(args.root, endpoint)
+    component_record_defaults(args.root)
     if args.captured is not None:
         recorded_response(args.root, json.loads(args.captured.read_text()))
     if args.live:
