@@ -118,7 +118,7 @@ impl Selection {
         image_shape: &[usize],
         method: &str,
     ) -> PyResult<RecordValue> {
-        for axis in 0..self.shape.len() {
+        for (axis, &source_length) in image_shape.iter().enumerate() {
             let (number, within_coord) = original
                 .pixel_axis_owner(axis)
                 .ok_or_else(|| raised("Image section pixel axis has no coordinate"))?;
@@ -130,7 +130,7 @@ impl Selection {
                 if shift != 0 || step != 1 || self.shape[axis] != stokes.stokes().len() {
                     self.set_stokes(&mut record, stokes, axis)?;
                 }
-            } else if shift != 0 || step != 1 || self.shape[axis] != image_shape[axis] {
+            } else if shift != 0 || step != 1 || self.shape[axis] != source_length {
                 if kind == CoordinateType::Spectral
                     && self.crop_tabular_spectral(&mut record, axis)?
                 {
