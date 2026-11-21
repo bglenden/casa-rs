@@ -15,6 +15,7 @@ use crate::{ImageError, ImageInterface, MutableImageInterface};
 use super::super::axes::{StridedSection, direction_plane_axes};
 use super::super::lel_mask::PreparedMask;
 use super::super::statistics_flux_scale;
+use super::decimate::{DecimationMethod, apply_decimation};
 use super::read_window::PixelSections;
 use super::region::{SubimageSelection, implicit_positional_axes};
 use super::{SubimagePlan, SubimageRegion};
@@ -101,8 +102,15 @@ impl<'a> ImageCollapse<'a> {
                 selection.shape[axis] = 1;
             }
         }
+        let tabular = source
+            .coordinates()
+            .find_coordinate(CoordinateType::Tabular)
+            .map(|_| native.clone());
         let mut section =
             SubimagePlan::from_selection(source, Some(native), selection, false, &[], Some(beams))?;
+        if let Some(tabular) = &tabular {
+            apply_decimation(&mut section, Some(tabular), 0, 1, DecimationMethod::Copy)?;
+        }
         let units = if options.function == CollapseFunction::Flux {
             flux_units(source, &section, options.axes)?
         } else {

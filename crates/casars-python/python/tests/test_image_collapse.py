@@ -248,3 +248,62 @@ def test_collapse_trims_only_output_path(casa, monkeypatch, tmp_path):
         finally:
             result.done()
             source.done()
+
+
+@pytest.mark.parametrize("first,stride,total,midpoint,increment", [
+    (0, 1, 15., 41.5, 15.4),
+    (1, 1, 15., 48.9, 15.4),
+    (1, 2, 9., 25.4, 30.8),
+    (0, 2, 6., 10., 30.8),
+])
+def test_collapse_lookup_axis_uses_selected_world_grid(casa, first, stride, total, midpoint, increment):
+    manager = casa.regionmanager()
+    region = manager.box([first], [5], [stride])
+    manager.done()
+    for api in (casa, tools):
+        coordinate = api.coordsys()
+        assert coordinate.newcoordsys(tabular=True)
+        assert coordinate.settabular(pixel=[0, 1, 2, 3, 4, 5], world=[3, 4, 10, 14, 64, 80])
+        source = api.image()
+        assert source.fromarray(pixels=np.arange(6, dtype=np.float32), csys=coordinate.torecord())
+        coordinate.done()
+        result = source.collapse("sum", 0, region=region)
+        coords = result.coordsys()
+        try:
+            np.testing.assert_array_equal(result.getchunk(), [total])
+            np.testing.assert_allclose(coords.referencepixel()["numeric"], [0.], atol=1e-12)
+            np.testing.assert_allclose(coords.referencevalue()["numeric"], [midpoint], atol=1e-12)
+            np.testing.assert_allclose(coords.increment()["numeric"], [increment], atol=1e-12)
+            np.testing.assert_allclose(coords.toworld([0.])["numeric"], [midpoint], atol=1e-12)
+        finally:
+            coords.done()
+            result.done()
+            source.done()
+
+
+def test_collapse_flux_uses_each_selected_beam(casa):
+    pixels = np.arange(24, dtype=np.float32).reshape(2, 2, 2, 3)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=pixels)
+        assert source.setbrightnessunit("Jy/beam")
+        for channel in range(3):
+            for stokes in range(2):
+                assert source.setrestoringbeam(
+                    major=f"{3 + channel}arcmin", minor=f"{2 + stokes / 2}arcmin", pa="20deg",
+                    channel=channel, polarization=stokes,
+                )
+        flux = source.collapse("flux", [0, 1], chans="1~2", stokes="Q")
+        channels = source.collapse("sum", 3, chans="1~2")
+        try:
+            areas = np.pi * np.array([4., 5.]) * 2.5 / (4. * np.log(2.))
+            np.testing.assert_allclose(flux.getchunk().reshape(-1), np.array([52., 56.]) / areas, rtol=2e-6)
+            assert flux.restoringbeam()["nChannels"] == 2
+            major = channels.restoringbeam()["major"]
+            arcseconds = major["value"] * {"arcsec": 1., "arcmin": 60., "deg": 3600.}[major["unit"]]
+            assert arcseconds == pytest.approx(240.)
+            np.testing.assert_array_equal(channels.getchunk(), pixels[..., 1:3].sum(axis=-1, keepdims=True))
+        finally:
+            flux.done()
+            channels.done()
+            source.done()

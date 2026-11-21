@@ -61,7 +61,11 @@ impl Axes {
             if let Some(values) = items.iter().map(integer).collect() {
                 return Ok(Self::Numbers(values));
             }
-            if let Ok(values) = items.iter().map(Bound::extract::<String>).collect() {
+            if let Ok(values) = items
+                .iter()
+                .map(|item| item.extract::<String>())
+                .collect::<PyResult<Vec<_>>>()
+            {
                 return Ok(Self::Names(values));
             }
         }
