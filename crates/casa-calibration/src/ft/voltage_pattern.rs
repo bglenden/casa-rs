@@ -957,7 +957,8 @@ impl PreparedVoltagePattern {
         let centre = pixel_centre(direction, &centre)?;
         let [right, left] = shifted.unwrap_or([centre; 2]);
         let pattern = self.pattern().at_frequency(frequency);
-        let increment_deg = direction.increment().map(f64::to_degrees);
+        let increments = direction.increment();
+        let increment_deg = [increments[0].to_degrees(), increments[1].to_degrees()];
         Ok(polarizations
             .iter()
             .map(|polarization| {

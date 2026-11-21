@@ -835,9 +835,7 @@ impl ImageTransform {
         )
         .map_err(invalid)?;
         let taper_bytes = if squint {
-            nx.saturating_mul(ny)
-                .saturating_mul(grid_pols)
-                .saturating_mul(size_of::<f32>()) as u64
+            model_taper_bytes([nx, ny], grid_pols)
         } else {
             0
         };
@@ -1146,6 +1144,12 @@ fn model_plane_memory(
         .saturating_mul(grid_polarizations + 1)
         .saturating_mul(2 * size_of::<f64>());
     (image_bytes.saturating_add(grid_bytes) as u64).saturating_add(grid_planning_bytes(grid_cells))
+}
+
+fn model_taper_bytes([nx, ny]: [usize; 2], grid_polarizations: usize) -> u64 {
+    nx.saturating_mul(ny)
+        .saturating_mul(grid_polarizations)
+        .saturating_mul(size_of::<f32>()) as u64
 }
 
 #[cfg(test)]
