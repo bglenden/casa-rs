@@ -4,6 +4,7 @@
 use num_complex::Complex32;
 
 use super::channel_samples::ChannelSamples;
+use super::cross_hand::CrossHandFit;
 use super::fit::LeakageFit;
 use super::joint::{SourceFit, SourceFitMode};
 use super::standard::{LeakageAlgebra, StandardSample, solve_channel};
@@ -14,6 +15,7 @@ use super::{
 
 pub(super) enum IntervalFits {
     LeastSquares(Vec<LeakageFit>),
+    CrossHand(Vec<CrossHandFit>),
     Iterative {
         algebra: LeakageAlgebra,
         samples: ChannelSamples,
@@ -26,7 +28,9 @@ type IntervalEstimates = (i32, Vec<ChannelEstimates>);
 
 impl IntervalFits {
     pub(super) fn new(channels: usize, antennas: usize, kind: LeakageSolveKind) -> Self {
-        if kind.iterative() {
+        if kind.cross_hand() {
+            Self::CrossHand((0..channels).map(|_| CrossHandFit::default()).collect())
+        } else if kind.iterative() {
             Self::Iterative {
                 algebra: kind.algebra(),
                 samples: ChannelSamples::new(channels),
@@ -54,6 +58,7 @@ impl IntervalFits {
                     Self::LeastSquares(fits) => {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
+                    Self::CrossHand(fits) => fits[channel].add(data, weights),
                     Self::Iterative {
                         algebra,
                         samples,
@@ -93,6 +98,7 @@ impl IntervalFits {
     ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
             Self::LeastSquares(fits) => Ok(least_squares(fits, antennas, references, previous)),
+            Self::CrossHand(fits) => Ok(cross_hand(fits, antennas, location)),
             Self::Iterative {
                 algebra,
                 samples,
@@ -115,6 +121,43 @@ impl IntervalFits {
             }
         }
     }
+}
+
+fn cross_hand(
+    fits: Vec<CrossHandFit>,
+    antennas: usize,
+    (field, spw): (i32, i32),
+) -> Option<IntervalEstimates> {
+    if !fits.iter().any(CrossHandFit::saw_samples) {
+        return None;
+    }
+    let mut sum = Complex32::ZERO;
+    let mut channels = 0;
+    let values = fits
+        .into_iter()
+        .map(|fit| {
+            let phase = fit.phase();
+            if let Some(phase) = phase {
+                sum += phase;
+                channels += 1;
+            }
+            let estimate = LeakageEstimate {
+                gain: [phase.unwrap_or(Complex32::ONE), Complex32::ZERO],
+                valid: [phase.is_some(), false],
+                ..LeakageEstimate::default()
+            };
+            vec![estimate; antennas]
+        })
+        .collect();
+    if channels > 0 {
+        tracing::info!(
+            field,
+            spw,
+            phase_degrees = sum.arg().to_degrees(),
+            "Mean cross-hand phase solution"
+        );
+    }
+    Some((-1, values))
 }
 
 fn least_squares(

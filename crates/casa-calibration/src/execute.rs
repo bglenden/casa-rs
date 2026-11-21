@@ -2196,8 +2196,9 @@ fn apply_row_all_channels(
         let subtype = table_plan.summary.table_subtype.as_str();
         let is_tsys = subtype == "B TSYS";
         let is_switched_power = subtype == "G EVLASWPOW";
-        let channelized_leakage = polarization::Leakage::is_channelized(subtype);
-        let bounded_frequency_cache = is_tsys || channelized_leakage;
+        let channelized_polarization =
+            polarization::Leakage::is_channelized(subtype) || subtype == "Xf Jones";
+        let bounded_frequency_cache = is_tsys || channelized_polarization;
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
                 table_index,
@@ -2250,9 +2251,10 @@ fn apply_row_all_channels(
         // CASA samples BPOLY on its CAL_DESC window and then interpolates
         // the resulting B grid onto the data window.
         let is_bandpass = is_tsys || matches!(subtype, "B Jones" | "BPOLY");
-        let resample_frequency = is_bandpass || channelized_leakage;
+        let resample_frequency = is_bandpass || channelized_polarization;
         let first_receptor_only =
-            (is_bandpass || is_switched_power) && correlation_types.len() == 1;
+            (is_bandpass || is_switched_power || matches!(subtype, "X Jones" | "Xf Jones"))
+                && correlation_types.len() == 1;
         let (ant1_transient, ant2_transient) = (
             bounded_frequency_cache && ant1.interpolated,
             bounded_frequency_cache && ant2.interpolated,
@@ -3767,6 +3769,34 @@ impl CalibrationGrid {
 }
 
 impl GainGrid {
+    fn cross_hand_diagonal(self, path: &Path) -> Result<Self, ApplyExecutionError> {
+        if self.receptor_count != 1 {
+            return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                path: path.display().to_string(),
+                reason: format!(
+                    "cross-hand phase requires one CPARAM receptor, found {:?}",
+                    self.values.shape()
+                ),
+            });
+        }
+        let channel_count = self.channel_count;
+        let shape = IxDyn(&[2, channel_count]).f();
+        let values = ArrayD::from_shape_fn(shape.clone(), |index| {
+            if index[0] == 0 {
+                self.value_at(0, index[1])
+            } else {
+                Complex32::ONE
+            }
+        });
+        let flags = ArrayD::from_shape_fn(shape, |index| self.flag_at(0, index[1]));
+        Ok(Self {
+            receptor_count: 2,
+            channel_count,
+            values,
+            flags,
+        })
+    }
+
     pub(crate) fn from_arrays(
         path: &Path,
         gains: &ArrayValue,
@@ -4420,9 +4450,14 @@ fn load_parameters(
         }
     })?;
     let leakage = polarization::Leakage::from_subtype(&table_plan.summary.table_subtype);
+    let cross_hand_phase = matches!(
+        table_plan.summary.table_subtype.as_str(),
+        "X Jones" | "Xf Jones"
+    );
     let supports_calwt = (table_plan.summary.parameter_family
         == CalibrationParameterFamily::Complex
-        && leakage.is_none())
+        && leakage.is_none()
+        && !cross_hand_phase)
         || matches!(
             table_plan.summary.table_subtype.as_str(),
             "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"
@@ -4467,11 +4502,13 @@ fn load_parameters(
                         ),
                     });
                 }
-                CalibrationGrid::Complex(GainGrid::from_arrays(
-                    &table_plan.spec.path,
-                    gains,
-                    flags,
-                )?)
+                let path = &table_plan.spec.path;
+                let grid = GainGrid::from_arrays(path, gains, flags)?;
+                CalibrationGrid::Complex(if cross_hand_phase {
+                    grid.cross_hand_diagonal(path)?
+                } else {
+                    grid
+                })
             }
             CalibrationParameterFamily::Float
                 if real_parameters || table_plan.summary.table_subtype == "G EVLASWPOW" =>

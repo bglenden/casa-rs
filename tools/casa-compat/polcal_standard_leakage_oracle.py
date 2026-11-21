@@ -19,7 +19,7 @@ def normalized_rms(got, want):
     return float(np.linalg.norm(got - want) / scale) if scale else float(np.linalg.norm(got))
 
 
-def compare(reference, native, *, gain_tolerance=1e-3):
+def compare(reference, native, *, gain_tolerance=1e-3, time_tolerance=2e-5):
     with opened(reference) as want, opened(native) as got:
         assert want.nrows() == got.nrows() > 0
         assert want.info()['subType'] == got.info()['subType']
@@ -28,7 +28,7 @@ def compare(reference, native, *, gain_tolerance=1e-3):
             np.testing.assert_array_equal(got.getcol(column), want.getcol(column), err_msg=column)
         for column in ('TIME', 'INTERVAL'):
             np.testing.assert_allclose(got.getcol(column), want.getcol(column),
-                                       atol=2e-5, rtol=0., err_msg=column)
+                                       atol=time_tolerance, rtol=0., err_msg=column)
         valid = ~want.getcol('FLAG')
         gain = normalized_rms(got.getcol('CPARAM')[valid], want.getcol('CPARAM')[valid])
         error = normalized_rms(got.getcol('PARAMERR'), want.getcol('PARAMERR'))
@@ -41,14 +41,15 @@ def compare(reference, native, *, gain_tolerance=1e-3):
     return gain, error, snr
 
 
-def solve(root, vis, api, stokes, *, gain_tolerance=1e-3, **options):
+def solve(root, vis, api, stokes, *, gain_tolerance=1e-3, time_tolerance=2e-5, **options):
     root.mkdir()
     outputs = {label: root/f'{label}.cal' for label in ('casa', 'native')}
     params = dict(field='0', refant='A0', smodel=stokes)
     params.update(options)
     for label, task in [('casa', casa.polcal), ('native', api.polcal)]:
         assert task(str(vis), str(outputs[label]), **params) is None
-    difference = compare(outputs['casa'], outputs['native'], gain_tolerance=gain_tolerance)
+    difference = compare(outputs['casa'], outputs['native'], gain_tolerance=gain_tolerance,
+                         time_tolerance=time_tolerance)
     print(root.parent.name, root.name, 'gain, formal error and SNR normalized RMS', difference)
     return outputs
 

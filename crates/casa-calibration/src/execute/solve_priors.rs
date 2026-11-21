@@ -19,6 +19,7 @@ pub(crate) enum PriorSolveBoundary {
     Gain,
     ScalarGain,
     Leakage,
+    CrossHand,
 }
 
 impl PriorSolveBoundary {
@@ -29,6 +30,7 @@ impl PriorSolveBoundary {
             Self::Gain => "G Jones",
             Self::ScalarGain => "T Jones",
             Self::Leakage => "D Jones",
+            Self::CrossHand => "X Jones",
         })
     }
 }
@@ -183,7 +185,11 @@ pub(crate) fn evaluate_solve_priors(
     boundary: PriorSolveBoundary,
     share_input_flags: bool,
 ) -> Result<PreappliedRows, ApplyExecutionError> {
-    let polarized = matches!(boundary, PriorSolveBoundary::Leakage) || has_leakage(&plan);
+    let deferred_data = matches!(
+        boundary,
+        PriorSolveBoundary::Leakage | PriorSolveBoundary::CrossHand
+    );
+    let polarized = deferred_data || has_leakage(&plan);
     if !polarized
         && matches!(
             boundary,
@@ -213,11 +219,10 @@ pub(crate) fn evaluate_solve_priors(
         polarized && plan.parang && viscal_order("P Jones") >= boundary.viscal_order();
     plan.parang &= !forward_parang;
     plan.calibration_tables = data_tables;
-    let leakage = matches!(boundary, PriorSolveBoundary::Leakage);
-    let data_prior = (leakage && (!plan.calibration_tables.is_empty() || plan.parang))
+    let data_prior = (deferred_data && (!plan.calibration_tables.is_empty() || plan.parang))
         .then(|| SolvePriorApply::new(ms, plan.clone(), false))
         .transpose()?;
-    let mut rows = if leakage {
+    let mut rows = if deferred_data {
         HashMap::new()
     } else {
         evaluate_apply_rows(ms, &plan, share_input_flags)?
