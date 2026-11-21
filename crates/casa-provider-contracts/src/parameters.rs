@@ -27,10 +27,9 @@ pub const FIELD_CONCEPT_ID: &str = "ms.selection.field";
 pub const SPW_CONCEPT_ID: &str = "ms.selection.spw";
 pub const OVERWRITE_CONCEPT_ID: &str = "output.overwrite";
 
-/// The surfaces whose `overwrite` defaults to true, as CASA's do: CASA's
-/// simulation tasks replace only the files they write inside their project
-/// directory. Every other `overwrite` defaults to false (#931).
-pub const PROJECT_DIRECTORY_OVERWRITE_SURFACES: [&str; 2] = ["simobserve", "simanalyze"];
+/// The CASA tasks that replace existing output products by default.
+/// Other task surfaces require explicit overwrite permission.
+pub const CASA_OVERWRITE_BY_DEFAULT_TASKS: [&str; 3] = ["simobserve", "simanalyze", "feather"];
 
 /// Stable semantic identity of a parameter concept.
 #[derive(
@@ -1420,16 +1419,14 @@ fn validate_profile_parameter_name(
     }
 }
 
-/// An overwrite binding defaults to `false`, as CASA's tasks do, so a task
-/// replaces a product only when asked. A surface that writes only inside its
-/// own project directory keeps CASA's `true`
-/// ([`PROJECT_DIRECTORY_OVERWRITE_SURFACES`]).
+/// An overwrite binding defaults to `false` except for the tasks listed in
+/// [`CASA_OVERWRITE_BY_DEFAULT_TASKS`], whose CASA behavior replaces products.
 fn validate_overwrite_defaults(
     bundle: &SurfaceContractRef<'_>,
     errors: &mut Vec<ContractValidationError>,
 ) {
     let surface = &bundle.surface;
-    let expected = PROJECT_DIRECTORY_OVERWRITE_SURFACES.contains(&surface.id());
+    let expected = CASA_OVERWRITE_BY_DEFAULT_TASKS.contains(&surface.id());
     for binding in surface
         .bindings()
         .iter()
@@ -2230,8 +2227,8 @@ mod tests {
     }
 
     #[test]
-    fn a_project_directory_surface_keeps_casas_overwrite_default() {
-        for surface in PROJECT_DIRECTORY_OVERWRITE_SURFACES {
+    fn known_casa_tasks_keep_their_overwrite_default() {
+        for surface in CASA_OVERWRITE_BY_DEFAULT_TASKS {
             for (default, valid) in [(true, true), (false, false)] {
                 let mut bundle = overwrite_bundle(default);
                 let SurfaceDefinition::Task(definition) = &mut bundle.surface;

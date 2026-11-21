@@ -4449,6 +4449,31 @@ direction-first pair's (`casa-images` `casa_axis_maps` test
 `feather_takes_the_direction_wherever_its_axes_are`), and the direction-first
 result is checked against CASA's in `image_analysis_casa`.
 
+## `feather` drops units and restoring beams in its per-plane path
+
+CASA 6.7.6.14 combines the `papersky_standard.intimage` and
+`papersky_standard.sdimage` upstream cubes into pixels calibrated in the
+high-resolution beam. The parent output image has an empty brightness unit
+and no restoring beams. casa-rs retains the high-resolution `Jy/beam` unit
+and the matching per-plane beam set. On the upstream test cubes, all three
+pixel planes agree with CASA to a normalized RMS below `3e-7` (#977).
+
+CASA's per-plane slicing also limits the low-resolution sky plane to the
+high-resolution pixel bounds before regridding. With centered 8- and
+12-column images, this discards low-resolution signal in columns 8–9
+that maps to high-resolution columns 6–7. casa-rs pairs the channel and
+Stokes indices while regridding the complete low-resolution sky plane.
+
+## `feather` rounds an integer-aligned image edge inconsistently
+
+CASA 6.7.6.14 can lose or extrapolate boundary values when its sky-coordinate
+round trip lands beside an exact integer pixel. In the smaller-low-image
+fixture, the reference pixels differ by exactly three columns. Placing the
+low-resolution crop at that offset with zero padding before CASA's Fourier
+combination gives an independent reference. Native feathering of the original
+crop agrees with it to a normalized RMS of `1.93e-7`. CASA's direct regrid
+of the crop differs from that reference by `6.01e-4` (#977).
+
 ## `tb.copyrows` adds the rows before it finds a cell it cannot convert, and wraps integers
 
 - Date noted: 2026-10-31

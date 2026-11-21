@@ -234,6 +234,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             _validate_required_path(values, "vis", vis, search_data=True)
     if name == "plotms":
         return _call_plotms(values, arguments)
+    if name == "feather":
+        for parameter in ("highres", "lowres"):
+            if not arguments[parameter]:
+                raise AssertionError(f"{parameter} must be specified")
     if name == "importfits":
         try:
             return run(name, **values).value

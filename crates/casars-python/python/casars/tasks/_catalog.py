@@ -1139,7 +1139,7 @@ def feather(
     effdishdiam: float = -1.0,
     lowpassfiltersd: bool = False,
     *,
-    overwrite: bool = False,
+    overwrite: bool = True,
 ) -> Any:
     """Combine high-resolution and low-resolution images in the Fourier domain
 

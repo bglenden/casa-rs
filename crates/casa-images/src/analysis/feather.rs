@@ -5,7 +5,9 @@ use std::{io, path::Path};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_fft::Fft2;
-use casa_tables::publication::{exchange_directories, rename_without_replacing};
+use casa_tables::publication::{
+    exchange_directories, lock_table_tree_for_replacement, rename_without_replacing,
+};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, Value};
 use ndarray::{Array2, IxDyn, ShapeBuilder, Zip};
@@ -16,7 +18,8 @@ use super::planes::{PlaneAt, unravel_index};
 use super::{SPEED_OF_LIGHT_M_S, ensure_outfile_does_not_alias_input, patch_saved_coords_keyword};
 use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 use crate::{
-    AnyPagedImage, FeatherRequest, FeatherSummary, GaussianBeam, ImageError, PagedImage, TempImage,
+    AnyPagedImage, FeatherRequest, FeatherSummary, GaussianBeam, ImageBeamSet, ImageError,
+    PagedImage, SubImage, TempImage,
 };
 
 /// Feather high- and low-resolution images on the high-resolution grid.
@@ -44,12 +47,28 @@ fn feather_typed(
     let destination = std::path::absolute(&request.imagename).map_err(output_io)?;
     check_output(request, &destination)?;
     let high_shape = high.shape().to_vec();
-    // Feather::setSDImage regrids the low-resolution image linearly.
+    let high_info = high.image_info()?;
+    let low_info = low.image_info()?;
+    let high_beams = &high_info.beam_set;
+    let low_beams = &low_info.beam_set;
+    if high_beams.is_empty() || low_beams.is_empty() {
+        return Err(invalid("feather requires restoring beams on both images"));
+    }
+    let mut template = RegridTemplate::of(high);
+    let low_regridded = if high_beams.is_multi() || low_beams.is_multi() {
+        // CASA pairs channel and polarization planes by pixel index before it
+        // regrids the low-resolution sky plane. Retain those low-image axes.
+        let paired_shape = pair_nonspatial_axes(&mut template, low)?;
+        let paired = SubImage::new(low, vec![0; low.ndim()], paired_shape)?;
+        regrid(&paired, &template, RegridMethod::Linear)?
+    } else {
+        regrid(low, &template, RegridMethod::Linear)?
+    };
     let Regridded {
         data: mut low_data,
         mask: low_mask,
         ..
-    } = regrid(low, &RegridTemplate::of(high), RegridMethod::Linear)?;
+    } = low_regridded;
     let origin = vec![0; high.ndim()];
     let mut high_data = high.get_slice(&origin, &high_shape)?;
     let high_mask = high.get_mask_slice(&origin, &high_shape, &vec![1; high.ndim()])?;
@@ -59,16 +78,6 @@ fn feather_typed(
     // before they can contribute to the Fourier transform.
     clear_masked_pixels(&mut high_data, high_mask.as_ref());
     clear_masked_pixels(&mut low_data, low_mask.as_ref());
-    let high_beam = high.image_info()?.beam_set.single_beam().ok_or_else(|| {
-        ImageError::InvalidMetadata(
-            "high-resolution image requires a single restoring beam".to_string(),
-        )
-    })?;
-    let low_beam = low.image_info()?.beam_set.single_beam().ok_or_else(|| {
-        ImageError::InvalidMetadata(
-            "low-resolution image requires a single restoring beam".to_string(),
-        )
-    })?;
     if high_shape.len() < 2 {
         return Err(ImageError::InvalidMetadata(
             "feather requires at least two direction axes".to_string(),
@@ -83,9 +92,13 @@ fn feather_typed(
         .collect::<Vec<_>>();
     let nx = high_shape[direction[0]];
     let ny = high_shape[direction[1]];
-    let (low_beam, filter) = single_dish_filter([nx, ny], low_beam, high.coordinates(), request)?;
-    let crossover = feather_crossover_weight(nx, ny, low_beam, high.coordinates())?;
-    let low_scale = request.sdfactor * (high_beam.area() / low_beam.area()) as f32;
+    let common = high_beams
+        .single_beam()
+        .zip(low_beams.single_beam())
+        .map(|beams| plane_transfer([nx, ny], beams, high.coordinates(), 0, request))
+        .transpose()?;
+    let beam_axes =
+        [CoordinateType::Spectral, CoordinateType::Stokes].map(|kind| high.find_axis(kind));
     let mut output_data = ArrayD::<f32>::zeros(IxDyn(&high_shape).f());
     let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&high_shape).f(), true);
     for plane in 0..other_shape.iter().product() {
@@ -94,6 +107,30 @@ fn feather_typed(
             others: &others,
             values: &unravel_index(plane, &other_shape),
         };
+        let plane_filter;
+        let transfer = if let Some(common) = &common {
+            common
+        } else {
+            let [channel, stokes] = beam_axes.map(|axis| {
+                axis.and_then(|axis| {
+                    others
+                        .iter()
+                        .position(|&other| other == axis)
+                        .map(|i| at.values[i])
+                })
+                .unwrap_or(0)
+            });
+            let hi_beam = plane_beam(high_beams, channel, stokes)?;
+            let lo_beam = plane_beam(low_beams, channel, stokes)?;
+            plane_filter = plane_transfer(
+                [nx, ny],
+                (hi_beam, lo_beam),
+                high.coordinates(),
+                channel,
+                request,
+            )?;
+            &plane_filter
+        };
         let high_plane = at.extract(&high_data);
         let low_plane = at.extract(&low_data);
         let high_fft = centered_fft2(&high_plane.mapv(|value| Complex32::new(value, 0.0)));
@@ -101,11 +138,12 @@ fn feather_typed(
         let mut combined = Array2::<Complex32>::zeros((nx, ny));
         for x in 0..nx {
             for y in 0..ny {
-                let high_weight = crossover[(x, y)];
-                let low_value = filter.as_ref().map_or(low_fft[(x, y)], |transfer| {
-                    low_fft[(x, y)] * transfer[(x, y)]
-                });
-                combined[(x, y)] = high_fft[(x, y)] * high_weight + low_value * low_scale;
+                let high_weight = transfer.crossover[(x, y)];
+                let low_value = transfer
+                    .low_filter
+                    .as_ref()
+                    .map_or(low_fft[(x, y)], |filter| low_fft[(x, y)] * filter[(x, y)]);
+                combined[(x, y)] = high_fft[(x, y)] * high_weight + low_value * transfer.low_scale;
             }
         }
         let image_plane = centered_ifft2(&combined).mapv(|value| value.re);
@@ -132,7 +170,7 @@ fn feather_typed(
     )?;
     let legacy_coordinates = high.table().keywords().get("coords").cloned();
     output.set_units(high.units())?;
-    output.set_image_info(&high.image_info()?)?;
+    output.set_image_info(&high_info)?;
     output.set_misc_info(high.misc_info())?;
     output.put_slice(&output_data, &vec![0; output.ndim()])?;
     if let Some(name) = high.default_mask_name().or(low_mask_name) {
@@ -149,6 +187,7 @@ fn feather_typed(
     match rename_without_replacing(&product, &destination) {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists && request.overwrite => {
             check_output(request, &destination)?;
+            let _locks = lock_table_tree_for_replacement(&destination)?;
             exchange_directories(&product, &destination).map_err(output_io)?;
         }
         result => result.map_err(output_io)?,
@@ -214,10 +253,89 @@ fn output_io(error: io::Error) -> ImageError {
     ImageError::Io(error.to_string())
 }
 
+fn pair_nonspatial_axes(
+    template: &mut RegridTemplate,
+    low: &PagedImage<f32>,
+) -> Result<Vec<usize>, ImageError> {
+    let mut paired_shape = low.shape().to_vec();
+    for kind in [CoordinateType::Spectral, CoordinateType::Stokes] {
+        let (Some(target), Some(source)) = (
+            template.coordinates.find_coordinate(kind),
+            low.coordinates().find_coordinate(kind),
+        ) else {
+            continue;
+        };
+        let [Some(output_axis), Some(input_axis)] = [
+            template
+                .coordinates
+                .coordinate_pixel_axes(target)
+                .and_then(|axes| axes.first().copied().flatten()),
+            low.coordinates()
+                .coordinate_pixel_axes(source)
+                .and_then(|axes| axes.first().copied().flatten()),
+        ] else {
+            continue;
+        };
+        if template.shape[output_axis] > low.shape()[input_axis] {
+            return Err(invalid(
+                "per-plane feather requires a low-resolution plane for each high-resolution plane",
+            ));
+        }
+        paired_shape[input_axis] = template.shape[output_axis];
+        template
+            .coordinates
+            .replace_coordinate(target, low.coordinates().coordinate(source).clone());
+    }
+    Ok(paired_shape)
+}
+
+fn plane_beam(
+    beams: &ImageBeamSet,
+    channel: usize,
+    stokes: usize,
+) -> Result<GaussianBeam, ImageError> {
+    if (beams.n_channels() != 1 && channel >= beams.n_channels())
+        || (beams.n_stokes() != 1 && stokes >= beams.n_stokes())
+    {
+        return Err(invalid(
+            "restoring beam set does not conform to the image planes",
+        ));
+    }
+    let beam = *beams.beam(channel, stokes);
+    if beam.is_null() {
+        return Err(invalid("a feather plane is missing its restoring beam"));
+    }
+    Ok(beam)
+}
+
+struct PlaneTransfer {
+    crossover: Array2<Complex32>,
+    low_filter: Option<Array2<Complex32>>,
+    low_scale: f32,
+}
+
+fn plane_transfer(
+    shape: [usize; 2],
+    (high, low): (GaussianBeam, GaussianBeam),
+    coordinates: &CoordinateSystem,
+    channel: usize,
+    request: &FeatherRequest,
+) -> Result<PlaneTransfer, ImageError> {
+    let (low, low_filter) = single_dish_filter(shape, low, coordinates, channel, request)?;
+    let crossover = feather_crossover_weight(shape[0], shape[1], low, coordinates)?;
+    let low_scale = request.sdfactor * (high.area() / low.area()) as f32;
+    Ok(PlaneTransfer {
+        crossover,
+        low_filter,
+        low_scale,
+    })
+}
+
 fn single_dish_filter(
     [nx, ny]: [usize; 2],
     low_beam: GaussianBeam,
     coordinates: &CoordinateSystem,
+    channel: usize,
     request: &FeatherRequest,
 ) -> Result<(GaussianBeam, Option<Array2<Complex32>>), ImageError> {
     if !request.effdishdiam.is_finite() {
@@ -234,7 +352,7 @@ fn single_dish_filter(
             _ => None,
         })
         .ok_or_else(|| invalid("single-dish filtering requires a spectral coordinate"))?
-        .world_frequency_hz(0.0)?;
+        .world_frequency_hz(channel as f64)?;
     if !frequency.is_finite() || frequency <= 0.0 || low_beam.is_null() {
         return Err(invalid(
             "single-dish filtering requires a positive frequency and a restoring beam",

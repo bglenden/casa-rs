@@ -6,7 +6,13 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use casa_images::PagedImage;
+use casa_coordinates::{
+    CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
+    StokesCoordinate, StokesType,
+};
+use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, PagedImage};
+use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+use ndarray::{ArrayD, Axis, IxDyn};
 use serde_json::{Value, json};
 
 fn copy_images(source: &Path, destination: &Path) {
@@ -45,6 +51,176 @@ fn run(workspace: &Path, values: &Value) -> Output {
         )
         .unwrap();
     process.wait_with_output().unwrap()
+}
+
+#[test]
+fn mixed_beams_use_the_plane_area_ratios_and_allow_explicit_overwrite_refusal() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [0.2, 0.4],
+        [-1e-5, 1e-5],
+        [4., 4.],
+    ));
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.4e9,
+        1e6,
+        0.,
+        1.42e9,
+    ));
+    let high_beams = ImageBeamSet::from_grid(vec![
+        vec![GaussianBeam::new(2e-5, 2e-5, 0.)],
+        vec![GaussianBeam::new(3e-5, 3e-5, 0.)],
+    ]);
+    let low_beams = ImageBeamSet::new(GaussianBeam::new(6e-5, 6e-5, 0.));
+    for (name, beams, value) in [
+        ("high.im", high_beams.clone(), 12.),
+        ("low.im", low_beams, 36.),
+    ] {
+        let mut image =
+            PagedImage::<f32>::create(vec![8, 8, 1, 2], coordinates.clone(), root.join(name))
+                .unwrap();
+        image
+            .set_image_info(&ImageInfo {
+                beam_set: beams,
+                ..ImageInfo::default()
+            })
+            .unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image
+            .put_slice(&ArrayD::from_elem(IxDyn(&[8, 8, 1, 2]), value), &[0; 4])
+            .unwrap();
+        image.save().unwrap();
+    }
+    let mut values = json!({"imagename":"combined.im", "highres":"high.im", "lowres":"low.im"});
+    let check_product = |expected: [f32; 2]| {
+        let output = PagedImage::<f32>::open(root.join("combined.im")).unwrap();
+        assert_eq!(output.units(), "Jy/beam");
+        let beams = output.image_info().unwrap().beam_set;
+        assert_eq!((beams.n_channels(), beams.n_stokes()), (2, 1));
+        for channel in 0..2 {
+            let actual = beams.beam(channel, 0);
+            let expected = high_beams.beam(channel, 0);
+            assert!((actual.major - expected.major).abs() < 1e-15);
+            assert!((actual.minor - expected.minor).abs() < 1e-15);
+            assert_eq!(actual.position_angle, expected.position_angle);
+        }
+        let pixels = output.get().unwrap();
+        for (index, actual) in pixels.indexed_iter() {
+            assert!(
+                (*actual - expected[index[3]]).abs() < 2e-5,
+                "{index:?}: {actual}"
+            );
+        }
+    };
+    let reply = run(root, &values);
+    assert!(
+        reply.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reply.stdout)
+    );
+    check_product([4., 9.]);
+
+    values["sdfactor"] = json!(2.0);
+    values["overwrite"] = json!(false);
+    let reply = run(root, &values);
+    assert!(!reply.status.success());
+    check_product([4., 9.]);
+
+    values.as_object_mut().unwrap().remove("overwrite");
+    #[cfg(unix)]
+    {
+        let history = root.join("combined.im/logtable");
+        let open = casa_tables::TableUseLock::acquire(&history).unwrap();
+        let reply = run(root, &values);
+        assert!(!reply.status.success());
+        assert!(open.matches_directory(&history));
+        check_product([4., 9.]);
+    }
+    let reply = run(root, &values);
+    assert!(
+        reply.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reply.stdout)
+    );
+    check_product([8., 18.]);
+
+    let low_beams = ImageBeamSet::from_grid(
+        [6e-5, 7e-5, 8e-5]
+            .map(|width| vec![GaussianBeam::new(width, width, 0.)])
+            .to_vec(),
+    );
+    for (name, width) in [("longer", 8), ("wider", 12)] {
+        let mut low_coords = coordinates.clone();
+        let casa_coordinates::CoordinateModel::Direction(direction) = low_coords.coordinate(0)
+        else {
+            panic!("direction coordinate");
+        };
+        low_coords.replace_coordinate(
+            0,
+            direction
+                .clone()
+                .with_reference_pixel([width as f64 / 2., 4.]),
+        );
+        let shape = [width, 8, 1, 3];
+        let pixels = ArrayD::from_shape_fn(IxDyn(&shape), |index| {
+            if width == 8 || (8..10).contains(&index[0]) {
+                (index[3] + 1) as f32
+            } else {
+                0.
+            }
+        });
+        let low = format!("{name}.im");
+        let mut image =
+            PagedImage::<f32>::create(shape.to_vec(), low_coords, root.join(&low)).unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image
+            .set_image_info(&ImageInfo {
+                beam_set: low_beams.clone(),
+                ..ImageInfo::default()
+            })
+            .unwrap();
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        if width == 8 {
+            let mask = ArrayD::from_shape_fn(IxDyn(&shape), |index| index[0] != 0 || index[1] != 0);
+            image.put_mask("mask0", &mask).unwrap();
+            image.set_default_mask("mask0").unwrap();
+        }
+        image.save().unwrap();
+        drop(image);
+        let product = format!("{name}.out");
+        let reply = run(
+            root,
+            &json!({"imagename": product, "highres":"high.im", "lowres":low}),
+        );
+        assert!(
+            reply.status.success(),
+            "{}",
+            String::from_utf8_lossy(&reply.stdout)
+        );
+        let output = PagedImage::<f32>::open(root.join(product)).unwrap();
+        assert_eq!(output.shape(), [8, 8, 1, 2]);
+        let selected_fraction = if width == 8 {
+            assert!(!output.get_mask().unwrap().unwrap()[[0, 0, 0, 0]]);
+            63. / 64.
+        } else {
+            // Low columns 8–9 fall on two of the eight high-grid columns.
+            2. / 8.
+        };
+        let actual = output.get().unwrap();
+        for (channel, scaled) in [1. / 9., 18. / 49.].into_iter().enumerate() {
+            let mean = actual.index_axis(Axis(3), channel).mean().unwrap();
+            assert!(
+                (mean - scaled * selected_fraction).abs() < 2e-6,
+                "{name} channel {channel}: {mean}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -101,15 +277,7 @@ fn dish_filters_match_casa() {
             squared_reference += reference.powi(2);
         }
         let nrms = (squared_error / squared_reference).sqrt();
-        // At an integer-aligned footprint, CASA can alternate between
-        // excluding and extrapolating the same edge by row after its sky
-        // coordinate round trip. Use #977's scientific tolerance for this case.
-        let tolerance = if name == "integer_aligned_smaller_low" {
-            1e-3
-        } else {
-            2e-6
-        };
-        assert!(nrms < tolerance, "{name} normalized RMS error {nrms}");
+        assert!(nrms < 2e-6, "{name} normalized RMS error {nrms}");
     }
     let output = workspace.path().join("default.out/table.dat");
     let before = fs::read(&output).unwrap();
