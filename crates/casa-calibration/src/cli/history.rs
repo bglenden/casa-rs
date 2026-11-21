@@ -14,12 +14,23 @@ pub(super) fn record_applycal(task: &TaskInvocation<'_>, vis: &Path) {
 }
 
 pub(super) fn record_task(task: &TaskInvocation<'_>, vis: &Path) {
-    if let Err(error) = append(task, vis) {
+    if let Err(error) = append(vis, "ms", task.surface(), messages(task)) {
         tracing::warn!(task = task.surface(), "updating HISTORY: {error}");
     }
 }
 
-fn append(task: &TaskInvocation<'_>, vis: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub(super) fn record_setjy_flux(vis: &Path, messages: Vec<String>) {
+    if let Err(error) = append(vis, "setjy", "setjy", messages) {
+        tracing::warn!("updating setjy flux HISTORY: {error}");
+    }
+}
+
+fn append(
+    vis: &Path,
+    application: &str,
+    origin: &str,
+    messages: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let path = vis.join("HISTORY");
     #[cfg(unix)]
     let mut table = Table::open_with_lock(
@@ -32,11 +43,11 @@ fn append(task: &TaskInvocation<'_>, vis: &Path) -> Result<(), Box<dyn std::erro
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs_f64()
         + 40_587. * 86_400.;
-    for message in messages(task) {
+    for message in messages {
         let mut row = RecordValue::new(Vec::new());
         for (name, value) in [
-            ("APPLICATION", "ms"),
-            ("ORIGIN", task.surface()),
+            ("APPLICATION", application),
+            ("ORIGIN", origin),
             ("PRIORITY", "INFO"),
             ("MESSAGE", &message),
         ] {

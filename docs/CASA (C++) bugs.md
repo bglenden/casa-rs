@@ -8668,3 +8668,42 @@ across direct accumulation, FFT blocks, and tile sizes. A kernel with no
 active axes still applies the scalar coefficient with IEEE arithmetic.
 Masked samples contribute zero and the output retains the selected input
 validity.
+
+## Solar System setjy drops a scan or time restriction
+
+CASA 6.7.6.14 uses the requested scan to choose the epoch for
+`setjy(standard="Butler-JPL-Horizons 2012")` but omits the scan when writing
+`MODEL_DATA`. Even when one scan has been selected, the task replaces
+existing models in other scans of that field and spectral window. With a
+time range, it writes the correct rows but calculates the spectrum at the
+first timestamp outside the requested range because it passes `timerange`
+where the CASA tool expects `time`.
+
+casa-rs uses the scan and time selection both for the model epoch and for
+writing. A pinned comparison checks the selected scan against CASA and
+verifies that unselected model cells retain their previous values. A
+second comparison physically selects the requested time range in the CASA
+reference MeasurementSet and checks both the returned flux and complex model
+visibilities.
+
+## Solar System setjy changes the integrated flux for reversed channel widths
+
+CASA 6.7.6.14 passes the two channel edges in reverse order to its
+brightness integrator when `CHAN_WIDTH` is negative. For a Titan channel
+centered at 345.9 GHz with a 1 GHz bandwidth, the reported flux changes
+by more than ten percent when only the width's sign is reversed. A
+one-channel spectrum also changes its reference edge.
+
+casa-rs integrates the physical band from its lower to its higher
+frequency. A paired one-channel check compares both signed widths with
+CASA's positive-width result, including the model published to the
+MeasurementSet.
+
+## setjy fails to read an observation selector supplied as a string
+
+CASA 6.7.6.14 assigns its local observation selector only for non-string
+values when `usescratch=True`. For example, `observation="1"` raises before
+selecting a row, while `observation=1` reaches the same documented selector.
+casa-rs resolves either form. The 2012 Solar System comparison uses the
+integer form in CASA and the string form in casa-rs against an MS with two
+observatory rows.
