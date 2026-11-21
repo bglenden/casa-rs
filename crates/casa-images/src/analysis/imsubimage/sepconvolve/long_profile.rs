@@ -88,7 +88,7 @@ impl Profile<'_> {
         first: usize,
         count: usize,
     ) -> Result<ArrayD<f32>, ImageError> {
-        image.get_slice(&self.position(first), &self.shape(count), self.stride)
+        Ok(image.get_slice(&self.position(first), &self.shape(count), self.stride)?)
     }
 
     fn is_finite(&self, image: &dyn ImageInterface<f32>, step: usize) -> Result<bool, ImageError> {
