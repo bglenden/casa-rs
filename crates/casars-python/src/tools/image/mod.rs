@@ -17,6 +17,7 @@ mod concatenate;
 mod conformance;
 mod continuum;
 mod convertflux;
+mod convolve;
 mod coordinate_conversion;
 mod copy;
 mod copy_region;

@@ -168,8 +168,8 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
             param("stretch", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Tool,
+        Yes,
     ),
     method(
         "convolve2d",

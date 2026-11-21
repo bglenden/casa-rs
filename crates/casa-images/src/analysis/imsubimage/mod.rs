@@ -6,8 +6,10 @@
 mod bounding_box;
 mod collapse;
 mod continuum;
+mod convolve;
 pub use collapse::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use continuum::{ContinuumSummary, ImageContinuum};
+pub use convolve::{ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution};
 pub(super) mod coords;
 mod crop;
 mod decimate;
