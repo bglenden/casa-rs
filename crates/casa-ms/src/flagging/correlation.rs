@@ -89,6 +89,17 @@ fn stored_products_with_operator(mut text: String) -> Option<String> {
     Some(products.join(","))
 }
 
+fn stored_correlation_modes(ms: &MeasurementSet) -> Result<Vec<Vec<&'static str>>, MsError> {
+    let polarization = ms.polarization()?;
+    (0..polarization.row_count())
+        .map(|row| {
+            polarization
+                .corr_type(row)
+                .map(|codes| codes.into_iter().map(stokes_name).collect())
+        })
+        .collect()
+}
+
 impl CorrelationSelection {
     pub(super) fn read(
         ms: &MeasurementSet,
@@ -152,15 +163,7 @@ impl CorrelationSelection {
             path: display_ms_path(ms),
             reason: format!("resolve stored flagging correlations: {source}"),
         };
-        let polarization = ms.polarization().map_err(failed)?;
-        let modes = (0..polarization.row_count())
-            .map(|row| {
-                polarization
-                    .corr_type(row)
-                    .map(|codes| codes.into_iter().map(stokes_name).collect::<Vec<_>>())
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(failed)?;
+        let modes = stored_correlation_modes(ms).map_err(failed)?;
         // CASA finds names in the expression using the whole POLARIZATION
         // table, then requires each selected buffer to contain every match.
         let required: BTreeSet<_> = modes
