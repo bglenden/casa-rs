@@ -145,6 +145,21 @@ def test_provisional_peak_does_not_hide_a_stronger_adjacent_source(signed, stron
         image.done()
 
 
+@pytest.mark.parametrize("signed", [False, True])
+def test_raw_extremum_wins_even_if_a_broader_source_fits_higher(signed):
+    center = (8., 7.)
+    sign = -1. if signed else 1.
+    values = _gaussian(sign * 12., center, (.27, .27)) + _gaussian(11., (17., 19.), (8., 8.))
+    image = tools.image()
+    try:
+        assert image.fromarray(pixels=values)
+        component, = _components(image.maxfit(negfind=signed, list=False))
+        assert 9. < sign * component["flux"]["value"][0] < 10.
+        _assert_position(image, component, center)
+    finally:
+        image.done()
+
+
 def test_maxfit_listing_is_optional_and_preserves_attachment(caplog):
     image = tools.image()
     try:
@@ -227,6 +242,19 @@ def test_maxfit_accepts_a_circle_and_rejects_disjoint_regions(casa):
         finally:
             image.done()
     _compare(records[1], records[0])
+
+
+def test_maxfit_rejects_thin_direction_regions_across_channels(casa):
+    image = tools.image()
+    try:
+        values = _gaussian(6., (7.3, 8.8))
+        image.fromarray(pixels=np.broadcast_to(values[:, :, None, None], (24, 26, 1, 8)).copy())
+        region = casa.regionmanager().box([0, 7, 0, 0], [23, 10, 0, 7])
+        with pytest.raises(RuntimeError, match="No sources were found"):
+            image.maxfit(region=region, list=False)
+        assert image.isopen()
+    finally:
+        image.done()
 
 
 def test_maxfit_empty_and_masked_regions(casa):

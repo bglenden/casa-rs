@@ -65,6 +65,18 @@ pub fn fit_image_maximum(
         ));
     }
     let mut selection = requested.selection;
+    let packed = selection.packed_shape();
+    let mut sky_axes = direction_axes;
+    sky_axes.sort_unstable();
+    let [width, height] = sky_axes.map(|axis| packed[axis]);
+    if width <= 1 || height <= 1 {
+        return Err(invalid(
+            "Source finding requires both nondegenerate sky axes",
+        ));
+    }
+    if !peaks::admits_shape(width, height)? {
+        return Err(invalid("No sources were found in the selected sky plane"));
+    }
     if let Some(axis) = image.find_axis(CoordinateType::Stokes) {
         // CASA searches the first Stokes plane included in the region.
         selection.shape[axis] = 1;
@@ -262,4 +274,95 @@ fn displayed_world(coordinates: &CoordinateSystem, units: &[String], world: &[f6
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{any::Any, path::Path};
+
+    use casa_coordinates::{DirectionCoordinate, Projection, SpectralCoordinate};
+    use casa_lattices::{Lattice, LatticeError};
+    use casa_types::{
+        ArrayD,
+        measures::{direction::DirectionRef, frequency::FrequencyRef},
+    };
+
+    use super::*;
+    use crate::ImageInfo;
+
+    struct ThinImage(CoordinateSystem);
+
+    impl Lattice<f32> for ThinImage {
+        fn shape(&self) -> &[usize] {
+            &[4096, 4, 20_000]
+        }
+
+        fn get_at(&self, _: &[usize]) -> Result<f32, LatticeError> {
+            panic!("a geometrically impossible fit should never read pixels")
+        }
+
+        fn get_slice(
+            &self,
+            _: &[usize],
+            _: &[usize],
+            _: &[usize],
+        ) -> Result<ArrayD<f32>, LatticeError> {
+            panic!("a geometrically impossible fit should never read pixels")
+        }
+    }
+
+    impl ImageInterface<f32> for ThinImage {
+        fn as_any(&self) -> Option<&dyn Any> {
+            None
+        }
+        fn coordinates(&self) -> &CoordinateSystem {
+            &self.0
+        }
+        fn units(&self) -> &str {
+            ""
+        }
+        fn misc_info(&self) -> RecordValue {
+            RecordValue::default()
+        }
+        fn image_info(&self) -> Result<ImageInfo, ImageError> {
+            Ok(ImageInfo::default())
+        }
+        fn name(&self) -> Option<&Path> {
+            None
+        }
+    }
+
+    #[test]
+    fn thin_sky_plane_is_refused_before_any_pixel_reads() {
+        let mut coords = CoordinateSystem::new();
+        coords.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::TAN,
+            [0.; 2],
+            [-1e-5, 1e-5],
+            [0.; 2],
+        ));
+        coords.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1.4e9,
+            1e3,
+            0.,
+            1.4e9,
+        ));
+        let record = coords.to_record();
+        let result = fit_image_maximum(
+            &ThinImage(coords),
+            record,
+            MaxFitOptions {
+                region: None,
+                point: true,
+                width: 5,
+                negative: false,
+                list: false,
+            },
+        );
+        assert!(
+            matches!(result, Err(ImageError::CasaSelection(message)) if message.contains("No sources were found"))
+        );
+    }
 }

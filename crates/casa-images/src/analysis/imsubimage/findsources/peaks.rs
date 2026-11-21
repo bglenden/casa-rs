@@ -52,6 +52,15 @@ fn read_row(
     Ok(Row { pixels, done })
 }
 
+pub(super) fn admits_shape(width: usize, height: usize) -> Result<bool, ImageError> {
+    if height < 4 {
+        return Err(invalid(format!(
+            "Need at least 4 rows in image. Found only {height}"
+        )));
+    }
+    Ok(width >= 3 && height > 4)
+}
+
 pub(super) fn search(
     reader: &PixelSections<'_, f32>,
     plan: &SubimagePlan,
@@ -67,12 +76,7 @@ pub(super) fn search(
     let maximum = matches!(ranking, PeakRanking::Maximum { .. });
     let width = plan.shape[0];
     let height = plan.shape[1];
-    if height < 4 {
-        return Err(invalid(format!(
-            "Need at least 4 rows in image. Found only {height}"
-        )));
-    }
-    if nmax == 0 || width < 3 || height == 4 {
+    if !admits_shape(width, height)? || nmax == 0 {
         return Ok(Vec::new());
     }
     let axes = [plan.kept_axes[0], plan.kept_axes[1]];
@@ -84,6 +88,7 @@ pub(super) fn search(
         read_row(reader, section, axes, 4, width)?,
     ];
     let mut peaks: Vec<Peak> = Vec::new();
+    let mut strongest_sample = 0.;
     for y in 3..height - 1 {
         if y > 3 {
             active.rotate_left(1);
@@ -92,14 +97,15 @@ pub(super) fn search(
         for x in 1..width - 1 {
             let start = x - 1;
             let center = f64::from(active[1].pixels[x]);
-            let magnitude = if signed { center.abs() } else { center };
-            if magnitude <= 0. {
+            let sample_magnitude = if signed { center.abs() } else { center };
+            if sample_magnitude <= 0. || (maximum && sample_magnitude < strongest_sample) {
                 continue;
             }
             let brightest = peaks.first().map_or(0., |peak| peak.height.abs());
             let weakest = peaks.get(nmax - 1).map_or(0., |peak| peak.height.abs());
-            if magnitude < 0.8 * cutoff * brightest
-                || magnitude < 0.8 * weakest
+            if (!maximum
+                && (sample_magnitude < 0.8 * cutoff * brightest
+                    || sample_magnitude < 0.8 * weakest))
                 || [
                     active[0].pixels[x],
                     active[1].pixels[x - 1],
@@ -110,9 +116,9 @@ pub(super) fn search(
                 .any(|other| {
                     let other = f64::from(other);
                     if maximum {
-                        magnitude < if signed { other.abs() } else { other }
+                        sample_magnitude < if signed { other.abs() } else { other }
                     } else {
-                        magnitude <= other.abs()
+                        sample_magnitude <= other.abs()
                     }
                 })
             {
@@ -132,20 +138,21 @@ pub(super) fn search(
                 continue;
             };
             let magnitude = if signed { height.abs() } else { height };
-            if magnitude < cutoff * brightest {
+            if !maximum && magnitude < cutoff * brightest {
                 continue;
             }
-            let position = peaks
-                .iter()
-                .position(|peak| {
-                    let previous = if maximum && signed {
-                        peak.height.abs()
-                    } else {
-                        peak.height
-                    };
-                    magnitude >= previous
-                })
-                .unwrap_or(peaks.len());
+            let position = if maximum {
+                if height <= 0. || (sample_magnitude == strongest_sample && magnitude < brightest) {
+                    continue;
+                }
+                strongest_sample = sample_magnitude;
+                0
+            } else {
+                peaks
+                    .iter()
+                    .position(|peak| magnitude >= peak.height)
+                    .unwrap_or(peaks.len())
+            };
             if position >= nmax {
                 continue;
             }

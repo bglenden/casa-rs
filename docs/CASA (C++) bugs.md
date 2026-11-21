@@ -9098,6 +9098,10 @@ plane-selection branch applies the opposite sign policy to the one
 documented, and the subsequent source search can miss a negative peak.
 Casa-rs ranks positive peaks by value by default and ranks both signs
 by magnitude with `negfind=True`, retaining the fitted peak's sign.
+It ranks fit-eligible peaks by their sampled pixel values. A broad
+source with a larger fitted height cannot replace a sharper source
+whose sampled peak is stronger. The fit can resolve an extremum
+between two equally bright adjacent pixels.
 
 On an entirely masked Float direction image, default `image.maxfit`
 can dereference an absent maximum and terminate the CASA Python
