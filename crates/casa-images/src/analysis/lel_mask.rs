@@ -446,11 +446,11 @@ fn stretch_axes(
     target_shape: &[usize],
 ) -> Result<Vec<usize>, ImageError> {
     let axes = |coords: &CoordinateSystem| {
-        (0..coords.n_coordinates())
-            .flat_map(|i| {
-                let coord = coords.coordinate(i);
-                let kind = coord.coordinate_type();
-                coord.axis_names().into_iter().map(move |name| (kind, name))
+        (0..coords.n_pixel_axes())
+            .map(|axis| {
+                let (index, local) = coords.pixel_axis_owner(axis).expect("dense pixel axes");
+                let coord = coords.coordinate(index);
+                (coord.coordinate_type(), coord.axis_names().remove(local))
             })
             .collect::<Vec<_>>()
     };

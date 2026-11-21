@@ -8301,3 +8301,17 @@ CASA 6.7.6.14 indexes the world-unit vector with pixel positions in
 `["","rad"]` and Stokes units `["rad"]`. The empty unit belongs to Stokes.
 casa-rs uses the coordinate's world axes and reports `["rad","rad"]`
 for direction and `[""]` for Stokes. See #1002 and #1819.
+
+## FITS import with independently placed spectral and Stokes axes
+
+CASA 6.7.6.14 writes a two-axis image with Stokes followed by frequency
+in pixel order and frequency followed by Stokes in world order. The
+FITS PC matrix has zero diagonal and unit off-diagonal terms. The
+same CASA build segfaults in `image.fromfits` when opening its output.
+
+casa-rs pairs the world rows with their pixel columns using the PC
+matrix before parsing the local coordinate models. Imported pixels
+keep the FITS array order and the native record retains the original
+world order. The regression reads files written by CASA and by casa-rs
+and independently checks which pixel step moves each world coordinate.
+See #1002 and #1823.

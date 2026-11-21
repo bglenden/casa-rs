@@ -51,6 +51,18 @@ fn read<T: ImagePixel + Copy>(
         || coords.find_coordinate(CoordinateType::Direction) != Some(0)
         || coords.find_coordinate(CoordinateType::Stokes) != Some(1)
         || coords.find_coordinate(CoordinateType::Spectral) != Some(2)
+        || coords
+            .coordinate_pixel_axes(0)
+            .expect("existing coordinate")
+            != [Some(0), Some(1)]
+        || coords
+            .coordinate_pixel_axes(1)
+            .expect("existing coordinate")
+            != [Some(2)]
+        || coords
+            .coordinate_pixel_axes(2)
+            .expect("existing coordinate")
+            != [Some(3)]
     {
         return Err(raised(
             "Jones images require direction, four correlation and spectral axes",

@@ -336,6 +336,11 @@ fn image_direction(
         unreachable!("the coordinate found is a direction coordinate");
     };
     require_native_direction_frame(coordinate)?;
+    let [_, _] = pixel_axes.as_slice() else {
+        return Err(SkyModelError::Model(
+            "modifymodel needs both direction pixel axes".into(),
+        ));
+    };
     axes.assign(0, pixel_axes[0]);
     axes.assign(1, pixel_axes[1]);
     let refpix = [
@@ -600,6 +605,48 @@ fn unit(name: &str) -> casa_types::quanta::Unit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flatimage_and_modifymodel_refuse_one_direction_pixel_axis() {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("slice.image");
+        let pixels = ArrayD::from_elem(IxDyn(&[4, 1, 2]), 1.0_f32);
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(DirectionCoordinate::new(
+            casa_types::measures::direction::DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, -0.5],
+            [-0.001, 0.001],
+            [1.0, 1.0],
+        ));
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            casa_types::measures::frequency::FrequencyRef::LSRK,
+            1.4e9,
+            1e6,
+            0.0,
+            0.0,
+        ));
+        coordinates.remove_world_axis(0, 1.0).unwrap();
+        write_image(&path, &pixels, coordinates, "Jy/pixel").unwrap();
+        let flat = super::super::flat::flat_image(&path, None).unwrap_err();
+        // flatimage already checks this prerequisite and names its axes.
+        assert!(
+            flat.to_string()
+                .contains("flatimage needs both direction axes"),
+            "{flat}"
+        );
+        let modified = modify_model(
+            &path,
+            &scratch.path().join("out.im"),
+            &ModelOverrides::default(),
+        )
+        .unwrap_err();
+        assert!(
+            modified.to_string().contains("both direction pixel axes"),
+            "{modified}"
+        );
+    }
 
     #[test]
     fn a_direction_stokes_model_gains_a_distinct_spectral_axis() {

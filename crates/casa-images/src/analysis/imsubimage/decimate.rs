@@ -172,19 +172,10 @@ impl<'a> ImageDecimation<'a> {
                 .unwrap_or_else(|| plan.coordinates.to_record());
             if factor > 1 && plan.coordinates.pixel_axis_type(axis) != Some(CoordinateType::Tabular)
             {
-                let (coordinate, local) = (0..plan.coordinates.n_coordinates())
-                    .scan(0, |offset, index| {
-                        let model = plan.coordinates.coordinate(index);
-                        let start = *offset;
-                        *offset += model.n_pixel_axes();
-                        Some((model, start..*offset))
-                    })
-                    .find_map(|(model, range)| {
-                        range.contains(&axis).then(|| (model, axis - range.start))
-                    })
-                    .ok_or_else(|| {
-                        ImageError::CasaSelection("Decimation axis has no coordinate".into())
-                    })?;
+                let (index, local) = plan.coordinates.pixel_axis_owner(axis).ok_or_else(|| {
+                    ImageError::CasaSelection("Decimation axis has no coordinate".into())
+                })?;
+                let coordinate = plan.coordinates.coordinate(index);
                 CoordinateSystem::set_reference_pixel_in_record(
                     &mut record,
                     axis,

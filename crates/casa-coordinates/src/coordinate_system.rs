@@ -383,40 +383,19 @@ impl CoordinateSystem {
         rec
     }
 
-    /// Deserializes a coordinate system from a casacore-compatible record.
+    /// Reads a casacore coordinate-system record.
     ///
-    /// Unknown or malformed coordinate sub-records are rejected; callers never
-    /// receive a silently truncated coordinate system.
-    ///
-    /// casacore's `CoordinateSystem::restore` keeps the record's coordinates
-    /// in index order (`direction0`, `stokes1`, ...) and takes the axes each
-    /// owns from `pixelmap<i>` and `worldmap<i>`. A system transposed in
-    /// casacore (`imtrans`, `ia.transpose`, `coordsys.transpose`) keeps its
-    /// coordinates in creation order over permuted axes. This reads the
-    /// coordinates in the order of the axes they own, so that each owns
-    /// consecutive axes as a [`CoordinateSystem`] holds them. The system is
-    /// the same, but its coordinate numbers can differ from casacore's
-    /// (`coordsys.findcoordinate`), and [`to_record`](Self::to_record) numbers
-    /// them in this order. [`record_coordinates`](Self::record_coordinates)
-    /// says where in the record each coordinate came from.
-    ///
-    /// casacore keeps a removed axis in its coordinate, as `-(axis + 1)` in
-    /// the maps with a replacement value. A linear coordinate whose other axes
-    /// do not depend on its removed ones (the offset axis of an `impv`
-    /// position-velocity image) is read over its other axes only, which
-    /// converts as casacore does.
+    /// Contiguous records retain the compact representation, ordered by
+    /// public pixel axis. Other layouts retain the original local models,
+    /// creation order, signed placements and replacement values.
     ///
     /// # Errors
-    ///
-    /// [`CoordinateError::UnsupportedAxisLayout`] for a valid casacore record
-    /// that no coordinate order represents: a coordinate whose axes are out
-    /// of its own order (`imtrans order='1023'`) or not adjacent
-    /// (`order='0213'`), world axes ordered unlike the pixel axes, or any
-    /// removed axis other than a direction slice or an independent linear axis.
-    /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
-    /// the system's axes, as for any other malformed record.
+    /// The record's coordinates, axis maps or observation metadata are invalid.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
-        Self::restore_record(rec, false)
+        match Self::restore_record(rec, false) {
+            Err(CoordinateError::UnsupportedAxisLayout(_)) => Self::from_mapped_record(rec),
+            result => result,
+        }
     }
 
     /// The coordinates of `rec` as [`from_record`](Self::from_record) reads
@@ -435,10 +414,13 @@ impl CoordinateSystem {
     ///
     /// As [`from_record`](Self::from_record).
     pub fn record_coordinates(rec: &RecordValue) -> Result<Vec<RecordCoordinate>, CoordinateError> {
-        Ok(record_axes::read_coordinates(rec)?
-            .into_iter()
-            .map(|(placed, _)| placed)
-            .collect())
+        match record_axes::read_coordinates(rec) {
+            Ok(placed) => Ok(placed.into_iter().map(|(placed, _)| placed).collect()),
+            Err(CoordinateError::UnsupportedAxisLayout(_)) => {
+                Self::from_mapped_record(rec)?.coordinates_in_record(rec)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Return the first spectral coordinate in the record's creation order.

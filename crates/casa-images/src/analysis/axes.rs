@@ -8,8 +8,7 @@
 //! record's coordinates are found where the record places them.
 
 use casa_coordinates::{
-    CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType, RecordCoordinate,
-    StokesCoordinate, StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
 };
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -177,7 +176,7 @@ pub(super) fn replace_stokes_in_record(
     record: &mut RecordValue,
     stokes: &[StokesType],
 ) -> Result<(), ImageError> {
-    let placed = section_record_axes(record).map_err(|error| {
+    let placed = CoordinateSystem::record_coordinates(record).map_err(|error| {
         ImageError::InvalidMetadata(format!("stokes record coordinates: {error}"))
     })?;
     for coordinate in placed {
@@ -230,15 +229,6 @@ pub(super) fn replace_stokes_in_record(
     Ok(())
 }
 
-fn section_record_axes(record: &RecordValue) -> Result<Vec<RecordCoordinate>, CoordinateError> {
-    match CoordinateSystem::record_coordinates(record) {
-        Err(CoordinateError::UnsupportedAxisLayout(_)) => {
-            CoordinateSystem::from_mapped_record(record)?.coordinates_in_record(record)
-        }
-        result => result,
-    }
-}
-
 /// Moves each coordinate in `record` back by `start`, the subimage's first
 /// pixel, along the coordinate's own axes.
 ///
@@ -263,7 +253,7 @@ pub(super) fn section_record_reference_pixels(
     shape: &[usize],
     stride: Option<&[usize]>,
 ) -> Result<(), ImageError> {
-    let placed = section_record_axes(record).map_err(|error| {
+    let placed = CoordinateSystem::record_coordinates(record).map_err(|error| {
         ImageError::InvalidMetadata(format!("subimage coordinate system: {error}"))
     })?;
     for coordinate in placed {

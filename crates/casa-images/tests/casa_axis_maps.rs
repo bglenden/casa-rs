@@ -11,13 +11,9 @@
 //! 6.7.6 through `tools/images/axis_map_oracle.py fixture`, which also
 //! recorded what CASA reads in `axis_maps.json`: each image's shape, axis
 //! types, names and units, its axis maps, and at a few pixels the world
-//! coordinates and the pixel value. casa-rs reads the images whose
-//! coordinates each own adjacent axes in order, and those whose linear
-//! coordinate has independent removed axes (`impv`'s position-velocity
-//! image, and a linear image dropped on its first or second axis), and a
-//! direction slice. It refuses the layouts it cannot represent (#1002). The record also holds
-//! CASA's world coordinates and values for boxes cut from three of them,
-//! which casa-rs's `imsubimage` cuts alike.
+//! coordinates and the pixel value. The fixtures cover contiguous,
+//! swapped, interleaved and removed axes (#1002), along with pixel and
+//! coordinate samples for cutouts from `imsubimage`.
 
 use std::path::{Path, PathBuf};
 
@@ -26,7 +22,7 @@ use casa_coordinates::{
     Projection, ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::{
-    FeatherRequest, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType, ImpvRequest,
+    FeatherRequest, GaussianBeam, ImageBeamSet, ImageInfo, ImageType, ImpvRequest,
     ImsubimageRequest, PagedImage, PvPosition, feather, impv, imsubimage,
 };
 use casa_tables::{Table, TableOptions};
@@ -116,9 +112,7 @@ fn assert_reads_as_casa(image: &PagedImage<f32>, casa: &Json, label: &str) {
         "{label}: names"
     );
     let coordinates = image.coordinates();
-    let units: Vec<String> = (0..coordinates.n_coordinates())
-        .flat_map(|index| coordinates.coordinate(index).axis_units())
-        .collect();
+    let units = coordinates.world_axis_units();
     assert_eq!(units, strings(&casa["units"]), "{label}: units");
 
     for sample in casa["samples"].as_array().expect("samples") {
@@ -149,6 +143,8 @@ fn transposed_casa_images_read_as_casa_reads_them() {
     for name in [
         "transposed.image",
         "spectral_first.image",
+        "swapped.image",
+        "interleaved.image",
         "pv.image",
         "dropdeg_linear.image",
         "dropdeg_linear_between.image",
@@ -176,34 +172,6 @@ fn transposed_casa_images_read_as_casa_reads_them() {
         casa["maps"]["direction0"]["pixelmap"],
         serde_json::json!([1, 2])
     );
-}
-
-#[test]
-fn casa_images_whose_axes_casa_rs_cannot_represent_are_refused() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    for (name, coordinate, refusal) in [
-        (
-            "swapped.image",
-            "direction0",
-            "Declination, Right Ascension",
-        ),
-        ("interleaved.image", "direction0", "which are not adjacent"),
-    ] {
-        let maps = &casa(name)["maps"][coordinate];
-        let error = PagedImage::<f32>::open(copy_image(name, scratch.path()))
-            .err()
-            .unwrap_or_else(|| panic!("{name}: casa-rs read it"));
-        let ImageError::InvalidMetadata(message) = &error else {
-            panic!("{name}: {error:?}");
-        };
-        assert!(
-            message.starts_with("unsupported axis layout: ")
-                && message.contains(coordinate)
-                && message.contains(refusal)
-                && message.contains("#1002"),
-            "{name} (maps {maps}): {message}"
-        );
-    }
 }
 
 /// The `coords` keyword record of the image at `path`.
@@ -321,6 +289,10 @@ fn complete_axis_maps_match_casa_and_round_trip_through_native_images() {
         image.save().unwrap();
         drop(image);
 
+        let reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_reads_as_casa(&reopened, &oracle, name);
+        assert_eq!(reopened.get().unwrap(), *data, "{name}: pixels");
+        drop(reopened);
         let saved = coords_record(&path);
         for field in record.fields() {
             if ["worldmap", "pixelmap", "worldreplace", "pixelreplace"]
@@ -786,23 +758,35 @@ fn subimages_read_as_casa_reads_the_pixels_they_cut() {
     let path = fixture_dir().join("axis_maps.json");
     let document: Json = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let crops = document["crops"].as_array().expect("crops");
-    assert_eq!(crops.len(), 3);
+    assert_eq!(crops.len(), 5);
     let scratch = tempfile::tempdir().expect("scratch");
+    let output_dir = mapped_rewrite_directory(scratch.path());
     for crop in crops {
         let name = crop["image"].as_str().expect("image name");
         let blc = numbers(&crop["blc"]);
         let trc = numbers(&crop["trc"]);
+        let input = copy_image(name, scratch.path());
         let (box_pixels, chans) = if name == "tabular_spectral_first.image" {
             // The whole image but channels 1 to 2 of axis 0.
             assert_eq!((blc[0], trc[0]), (1.0, 2.0));
             (None, Some("1~2".to_string()))
         } else {
-            let box_pixels = format!("{},{},{},{}", blc[0], blc[1], trc[0], trc[1]);
+            let image = PagedImage::<f32>::open(&input).unwrap();
+            let coordinates = image.coordinates();
+            let mut plane = [0, 1];
+            if let Some(index) = coordinates.find_coordinate(CoordinateType::Direction)
+                && let Some(axes) = coordinates.coordinate_pixel_axes(index)
+                && let [Some(x), Some(y)] = axes.as_slice()
+            {
+                plane = [*x, *y];
+            }
+            let [x, y] = plane;
+            let box_pixels = format!("{},{},{},{}", blc[x], blc[y], trc[x], trc[y]);
             (Some(box_pixels), None)
         };
-        let outfile = scratch.path().join(format!("crop-{name}"));
+        let outfile = output_dir.join(format!("crop-{name}"));
         imsubimage(&ImsubimageRequest {
-            imagename: copy_image(name, scratch.path()),
+            imagename: input,
             outfile: outfile.clone(),
             box_pixels,
             chans,

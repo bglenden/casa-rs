@@ -28,9 +28,7 @@ pub(super) fn pixel_position(
     shape: &[usize],
     requested: &[i64],
 ) -> Option<Vec<usize>> {
-    let reference = (0..coordinates.n_coordinates())
-        .flat_map(|i| coordinates.coordinate(i).reference_pixel())
-        .collect::<Vec<_>>();
+    let reference = coordinates.reference_pixel();
     let requested = if requested == [-1] {
         &[][..]
     } else {
