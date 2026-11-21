@@ -380,7 +380,15 @@ impl<'a> Values<'a> {
                     ),
                 ))
             }
-            CoordinateModel::Tabular(_) => Ok(("tabular", numbered_quantities(self.quantities()))),
+            CoordinateModel::Tabular(_) => Ok((
+                "tabular",
+                numbered_quantities(
+                    self.declared
+                        .iter()
+                        .copied()
+                        .zip(self.units.iter().map(String::as_str)),
+                ),
+            )),
             CoordinateModel::Stokes(_) if absolute => {
                 Ok(("stokes", CasaValue::Text(stokes(self.native[0]))))
             }
