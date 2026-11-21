@@ -487,8 +487,8 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `inpfile`, `reason`, `tbuff`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `combinescans`, `winsize`, `savepars`
-- Accepted only at CASA's default until #1616: `ntime`
+- Accepted only at CASA's default until #978: `inpfile`, `reason`, `tbuff`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `winsize`, `savepars`
+- Accepted only at CASA's default until #1616: `ntime`, `combinescans`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 76, in CASA's order: yes
 - Defaults that differ: none
