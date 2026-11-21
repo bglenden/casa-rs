@@ -8508,3 +8508,12 @@ CASA 6.7.6.14 exits with a segmentation fault when a two-axis coordinate
 system receives `convertmany([[], []])`. The equivalent NumPy array with
 shape `(2, 0)` returns an empty double array of that shape. casa-rs returns
 the same empty array for both representations.
+
+## Invalid slice indices can terminate `image.getslice`
+
+On a `[7, 8, 3]` image, CASA 6.7.6.14 aborts on `getslice([0, 2],
+[0, 2], coord=[0, 0, 100])`. Its axis-vector reader also accesses the
+second entry when an explicit list contains only the first axis. casa-rs
+raises a Python error for an out-of-range fixed coordinate or a missing
+second axis and preserves the attached image. An explicit `npts=None` also
+aborts CASA. casa-rs raises a type error for that argument.

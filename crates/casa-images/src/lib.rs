@@ -75,6 +75,7 @@ mod image_expr_lel;
 mod image_expr_ops;
 pub mod image_info;
 mod linear_mosaic;
+pub mod pixel_slice;
 pub mod regrid;
 pub mod saved_region;
 pub mod subimage;

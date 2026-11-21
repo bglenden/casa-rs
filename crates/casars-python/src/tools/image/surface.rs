@@ -569,7 +569,7 @@ const METHODS: &[Method] = &[
             param("method", K::Text, Text("linear")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "hanning",
