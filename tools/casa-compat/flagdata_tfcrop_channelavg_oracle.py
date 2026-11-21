@@ -19,7 +19,9 @@ from casars import tasks
 from flagdata_preview_oracle import auxiliary_content
 from flagdata_routine_controls_oracle import flags
 from flagdata_tfcrop_fit_oracle import make_fixture
-from flagdata_tfcrop_sources_oracle import check_science_state, put_samples, science_state
+from flagdata_tfcrop_sources_oracle import (
+    check_science_state, put_samples, science_state, seed_fourier_models,
+)
 from ms_selection_tasks_oracle import add_second_window, casa_table
 
 
@@ -184,6 +186,7 @@ def check_refusals(libraries):
     kind = "Error parsing ChannelAverageTVI configuration"
     cases = (
         ({"chanbin": [2, 3]}, kind),
+        ({"chanbin": [2, 3], "maxnpieces": 0, "extendflags": True}, kind),
         ({"chanbin": np.array(2)}, kind),
         ({"channelavg": [True], "chanbin": 2}, "RecordInterface::asBool - invalid data type"),
     )
@@ -207,6 +210,50 @@ def check_refusals(libraries):
                 else:
                     verify_flags(str(Path(path + ".flagversions", "flags.flagdata_1")), seeded)
     return len(cases)
+
+
+def check_extension_iterator(libraries, broad):
+    for index, overrides in enumerate((dict(chanbin=0, spw="0:0~4"), dict(chanbin=2, maxnpieces=0))):
+        for name, task in libraries:
+            path = f"average-extend-{index}-{name}.ms"
+            copytree("averaging-source.ms", path)
+            with table(path, readonly=False, ack=False) as main:
+                main.putcol("DATA", np.ones_like(main.getcol("DATA")))
+                seeded = main.getcol("FLAG")
+                if index == 0:
+                    seeded[broad, :4, :] = True
+                else:
+                    seeded[broad, 16, 0] = True
+                main.putcol("FLAG", seeded)
+            expected = seeded.copy()
+            if index == 0:
+                expected[broad, 4, :] = True
+            options = FREQUENCY_FIT | dict(vis=path, extendflags=True, freqcutoff=1e5) | overrides
+            run_product(name, task, options, seeded, expected)
+
+
+def check_fourier_excluded_channel(libraries):
+    empty, narrow, model = seed_fourier_models()
+    row = np.flatnonzero(narrow)[0]
+    assert abs(model[row, 6, 0]) > 0.
+    seeded = empty.copy()
+    seeded[row, 6, 0] = True
+    expected = seeded.copy()
+    expected[narrow, 16:18, 0] = True
+    for source in ("scratch", "virtual"):
+        for excluded_amplitude in (0., 1e12):
+            for name, task in libraries:
+                path = f"averaged-fourier-{source}-{excluded_amplitude:g}-{name}.ms"
+                copytree(f"model-{source}.ms", path)
+                with table(path, readonly=False, ack=False) as main:
+                    observed = model + 1.
+                    observed[narrow, 16, 0] += 30.
+                    observed[row, 6, 0] += excluded_amplitude
+                    main.putcol("DATA", observed)
+                    main.putcol("FLAG", seeded)
+                options = dict(vis=path, field="0", chanbin=2, datacolumn="residual_data",
+                               correlation="ABS_XX")
+                run_product(name, task, FREQUENCY_FIT | options, seeded, expected)
 
 
 def verify_flags(path, expected):
@@ -257,8 +304,11 @@ def main():
         products, broad = check_products(libraries)
         products += check_windows(libraries) + check_other_sources(libraries)
         refusals = check_refusals(libraries)
+        check_extension_iterator(libraries, broad)
+        check_fourier_excluded_channel(libraries)
         check_stride(broad, tasks.flagdata)
-    print(f"{products} TFCrop channel averaging products, {refusals} refusals, and a strided selection verified")
+    print(f"{products} TFCrop channel averaging products, {refusals} refusals, "
+          "two extension iterator controls, four Fourier controls and a strided selection verified")
 
 
 if __name__ == "__main__":

@@ -1408,7 +1408,7 @@ fn apply_tfcrop_flags(
         .as_deref()
         .filter(|_| request.casa_row_selection && !calibration);
     let average = widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
-    let mut columns = if request.casa_row_selection && !calibration {
+    let (mut columns, configures_averaging) = if request.casa_row_selection && !calibration {
         tfcrop_columns(
             ms,
             column,
@@ -1418,7 +1418,7 @@ fn apply_tfcrop_flags(
             average,
         )?
     } else {
-        None
+        (None, false)
     };
     let options =
         options.filter(|_| !request.casa_row_selection || calibration || columns.is_some());
@@ -1428,7 +1428,7 @@ fn apply_tfcrop_flags(
     let correlations = (request.casa_row_selection && !calibration)
         .then(|| TfcropCorrelations::read(ms, request.correlation.as_deref(), column))
         .transpose()?;
-    let widths = widths.filter(|_| options.is_some());
+    let widths = widths.filter(|_| configures_averaging);
     if let Some(widths) = widths {
         check_channel_bins(ms, widths, &display_ms_path(ms))?;
     }
@@ -1537,8 +1537,7 @@ fn apply_tfcrop_flags(
             &groups,
             &samples,
             &loaded.flags_by_row,
-            &loaded.averaged_channels,
-            request.casa_row_selection && channel_selections.is_some(),
+            request.casa_row_selection && channel_selections.is_some() && widths.is_none(),
             correlations.as_ref(),
             &mut modified,
         );
@@ -1590,7 +1589,6 @@ fn extend_tfcrop_groups(
     groups: &[(Option<i32>, Vec<Sample>)],
     samples: &[Sample],
     flags: &BTreeMap<usize, ArrayD<bool>>,
-    averaged_channels: &BTreeMap<usize, AveragedChannels>,
     selected_channels: bool,
     correlations: Option<&TfcropCorrelations>,
     modified: &mut [bool],
@@ -1601,23 +1599,7 @@ fn extend_tfcrop_groups(
     let mask = restricted_mask.as_deref_mut().unwrap_or(modified);
     if selected_channels {
         for (_, group) in groups {
-            if !averaged_channels.contains_key(&group[0].row) {
-                extend_tfcrop_selected_channels(group, flags, mask);
-            }
-        }
-        let averaged = groups
-            .iter()
-            .filter(|(_, group)| averaged_channels.contains_key(&group[0].row));
-        let averaged_samples = averaged
-            .clone()
-            .flat_map(|(_, group)| group.iter().copied())
-            .collect::<Vec<_>>();
-        if !averaged_samples.is_empty() {
-            extend_autoflag_grouped(
-                averaged.map(|(_, group)| group.as_slice()),
-                &averaged_samples,
-                mask,
-            );
+            extend_tfcrop_selected_channels(group, flags, mask);
         }
     } else {
         extend_autoflag_grouped(
@@ -1720,7 +1702,7 @@ fn tfcrop_columns(
     model_factory: Option<FlagDataModelFactory>,
     active: bool,
     average: bool,
-) -> Result<Option<ClipColumns>, FlaggingError> {
+) -> Result<(Option<ClipColumns>, bool), FlaggingError> {
     let table = ms.main_table();
     let exists = |name| {
         table
@@ -1739,23 +1721,24 @@ fn tfcrop_columns(
     if !required_sources_exist {
         return Err(FlaggingError::MissingTfcropColumn);
     }
-    // CASA admits the column names before it starts the fit. Only a
-    // running fit opens a virtual recipe's image.
-    if !active {
-        return Ok(None);
-    }
     if column == FlagDataColumn::Residual && !exists("CORRECTED_DATA") {
         tracing::warn!(
             "Cannot create agent Tfcrop: necessary CORRECTED_DATA column is not available"
         );
-        return Ok(None);
+        return Ok((None, false));
+    }
+    // An admitted agent configures the iterator before validating its fit.
+    // A surviving extension agent uses that iterator. Only a running fit
+    // opens a virtual recipe's image.
+    if !active {
+        return Ok((None, true));
     }
     let path = display_ms_path(ms);
     let models =
         clip_models::ClipModels::for_selection(ms, column, selected_rows, model_factory, &path)?;
     match ClipColumns::bind(table, column, average, models) {
         Err(FlaggingError::MissingClipColumn) => Err(FlaggingError::MissingTfcropColumn),
-        result => result,
+        result => result.map(|columns| (columns, true)),
     }
 }
 
@@ -2657,6 +2640,7 @@ fn load_samples(
                 if let Some(bins) = &bins {
                     bins.original_channels(sample.chan)
                         .iter()
+                        .filter(|&&chan| flags[[sample.corr, chan]] == sample.flag)
                         .map(|&chan| roundoff[[sample.corr, chan]])
                         .fold(0.0, f32::max)
                 } else {
