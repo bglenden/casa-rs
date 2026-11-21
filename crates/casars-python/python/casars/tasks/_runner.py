@@ -559,15 +559,23 @@ def _coerce_flagdata_options(
     cint = (int, np.int32, np.int64)
     errors = _flagging_choice_errors("flagdata", values)
     column_vector = _coerce_flagdata_column(values, argument_text, errors)
-    for limit in ("lowerlimit", "upperlimit"):
-        if limit in values:
-            value = values[limit]
+    for parameter in ("lowerlimit", "upperlimit", "growtime", "growfreq"):
+        if parameter in values:
+            value = values[parameter]
             if value is None:
-                errors[limit] = ["null value not allowed"]
+                errors[parameter] = ["null value not allowed"]
             elif isinstance(value, cfloat):
-                values[limit] = float(value)
+                values[parameter] = float(value)
             else:
-                errors[limit] = ["must be of cFloat type"]
+                errors[parameter] = ["must be of cFloat type"]
+    if "extendpols" in values:
+        value = values["extendpols"]
+        if value is None:
+            errors["extendpols"] = ["null value not allowed"]
+        elif not isinstance(value, (str, list, dict, np.ndarray, *cfloat)):
+            errors["extendpols"] = ["must be of cVariant type"]
+        elif isinstance(value, (np.ndarray, np.int32, np.int64, np.float32, np.float64)):
+            argument_text["extendpols"] = str(value)
     correlation_vector = None
     for parameter in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         if parameter not in values:
@@ -657,6 +665,10 @@ def _coerce_flagdata_options(
         ("maxabs", cint, "cInt"),
         ("clipzeros", bool, "cBool"),
         ("writeflags", bool, "cBool"),
+        ("combinescans", bool, "cBool"),
+        ("growaround", bool, "cBool"),
+        ("flagneartime", bool, "cBool"),
+        ("flagnearfreq", bool, "cBool"),
     ):
         if parameter not in values:
             continue
@@ -664,8 +676,9 @@ def _coerce_flagdata_options(
         if value is None:
             errors[parameter] = ["null value not allowed"]
         elif expected is bool and isinstance(value, np.bool_):
-            # CASA admits these scalars and uses the switch defaults.
-            # Preserve autocorr=True to avoid flagging cross-correlations.
+            if parameter in ("combinescans", "growaround", "flagneartime", "flagnearfreq"):
+                argument_text[parameter] = str(bool(value))
+            # Some CASA switches use their defaults for NumPy Booleans.
             values[parameter] = (
                 bool(value) if parameter in ("autocorr", "writeflags", "flagbackup", "savepars", "overwrite")
                 else False

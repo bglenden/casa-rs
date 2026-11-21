@@ -862,7 +862,7 @@ def flagdata(
     antint_ref_antenna: str = ...,
     minchanfrac: float = ...,
     verbose: bool = ...,
-    extendpols: bool = ...,
+    extendpols: ParameterData = ...,
     growtime: float = ...,
     growfreq: float = ...,
     growaround: bool = ...,

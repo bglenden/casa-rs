@@ -57,6 +57,14 @@ impl ClipTimedRow {
     pub(super) fn time(&self) -> f64 {
         self.seconds
     }
+
+    pub(super) fn combine_scans(&mut self) {
+        self.group[2] = 0;
+    }
+
+    pub(super) fn baseline_key(&self) -> ([i32; GROUP_COLUMNS.len()], usize) {
+        (self.group, self.chunk)
+    }
 }
 
 pub(super) fn time_bin_seconds(text: &str) -> Option<f64> {
@@ -146,7 +154,7 @@ pub(super) fn clip_time_groups(
     })
 }
 
-fn mark_time_chunks(rows: &mut [ClipTimedRow], interval: f64) {
+pub(super) fn mark_time_chunks(rows: &mut [ClipTimedRow], interval: f64) {
     let compare_group =
         |left: &ClipTimedRow, right: &ClipTimedRow| left.group[..5].cmp(&right.group[..5]);
     sort_iterator_rows(rows);

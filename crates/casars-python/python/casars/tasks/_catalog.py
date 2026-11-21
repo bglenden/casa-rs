@@ -973,7 +973,7 @@ def flagdata(
     antint_ref_antenna: str = '',
     minchanfrac: float = 0.6,
     verbose: bool = False,
-    extendpols: bool = True,
+    extendpols: ParameterData = True,
     growtime: float = 50.0,
     growfreq: float = 50.0,
     growaround: bool = False,
@@ -1005,8 +1005,7 @@ def flagdata(
     ``timeavg``, ``timebin``, ``tolerance``, ``addantenna``,
     ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
     ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
-    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
-    ``flagneartime``, ``flagnearfreq``, ``savepars``.
+    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``savepars``.
     Accepted only at CASA's default, where CASA reads them, until #1616:
     ``ntime``.
     """

@@ -2841,10 +2841,10 @@
     },
     {
       "id": "parameter.extendpols",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "extendpols",
       "value_domain": {
-        "kind": "bool"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -2854,7 +2854,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Extend flags across correlations.",
-        "details": null,
+        "details": "CASA accepts a variant at the task boundary. Extension starts only with a Boolean value.",
         "examples": [
           "false"
         ]
@@ -9592,10 +9592,10 @@
     },
     {
       "id": "flagdata.growtime",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "growtime",
-      "value_domain": {"kind": "float"},
-      "normalization": {"kind": "identity"},
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "numeric_variant"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
@@ -9604,10 +9604,10 @@
     },
     {
       "id": "flagdata.growfreq",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "growfreq",
-      "value_domain": {"kind": "float"},
-      "normalization": {"kind": "identity"},
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "numeric_variant"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
