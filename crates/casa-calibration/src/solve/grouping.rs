@@ -59,6 +59,7 @@ pub(crate) enum PriorCalibrationMode {
     },
     Leakage,
     CrossHand,
+    PositionAngle,
 }
 
 pub(crate) fn load_preapplied_rows(
@@ -117,6 +118,9 @@ pub(crate) fn load_preapplied_rows(
         }
         PriorCalibrationMode::CrossHand => {
             evaluate_solve_priors(ms, plan, PriorSolveBoundary::CrossHand, true)
+        }
+        PriorCalibrationMode::PositionAngle => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::PositionAngle, true)
         }
     };
     preapplied
@@ -1008,13 +1012,18 @@ impl SolveAccumulator {
                     correlation_types[0],
                 )
             };
+            let normalization = |channel| {
+                samples
+                    .model
+                    .map_or(point, |model| model[[corr_index, channel]])
+            };
             if delay {
                 row_weight += samples::centroid_weight(
                     samples,
                     corr_index,
                     channels,
                     shared_flags.as_deref(),
-                    point,
+                    normalization,
                     true,
                 );
             }
@@ -1027,7 +1036,7 @@ impl SolveAccumulator {
                         corr_index,
                         channels,
                         shared_flags.as_deref(),
-                        point,
+                        normalization,
                         options.channelized,
                     );
                 }

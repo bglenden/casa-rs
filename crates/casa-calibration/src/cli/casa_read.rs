@@ -206,6 +206,7 @@ pub(super) fn leakage_request(
         "Dfgen+X" => LeakageSolveKind::DfGenX,
         "Xf" => LeakageSolveKind::Xf,
         "Xj" => LeakageSolveKind::Xj,
+        "PosAng" => LeakageSolveKind::PosAng,
         "X" => {
             return Err(TaskFailure::execution(
                 "Can't do selfGatherAndSolve for X Mueller",

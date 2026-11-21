@@ -4,7 +4,7 @@
 use num_complex::Complex32;
 
 use super::channel_samples::ChannelSamples;
-use super::cross_hand::CrossHandFit;
+use super::cross_hand::{CrossHandFit, Measurement};
 use super::fit::LeakageFit;
 use super::joint::{SourceFit, SourceFitMode};
 use super::standard::{LeakageAlgebra, StandardSample, solve_channel};
@@ -15,7 +15,7 @@ use super::{
 
 pub(super) enum IntervalFits {
     LeastSquares(Vec<LeakageFit>),
-    CrossHand(Vec<CrossHandFit>),
+    CrossHand(Vec<CrossHandFit>, Measurement),
     Iterative {
         algebra: LeakageAlgebra,
         samples: ChannelSamples,
@@ -27,9 +27,22 @@ type ChannelEstimates = Vec<LeakageEstimate>;
 type IntervalEstimates = (i32, Vec<ChannelEstimates>);
 
 impl IntervalFits {
-    pub(super) fn new(channels: usize, antennas: usize, kind: LeakageSolveKind) -> Self {
+    pub(super) fn new(
+        channels: usize,
+        antennas: usize,
+        kind: LeakageSolveKind,
+        circular: bool,
+    ) -> Self {
         if kind.cross_hand() {
-            Self::CrossHand((0..channels).map(|_| CrossHandFit::default()).collect())
+            let measurement = match (kind, circular) {
+                (LeakageSolveKind::PosAng, true) => Measurement::CircularAngle,
+                (LeakageSolveKind::PosAng, false) => Measurement::LinearAngle,
+                _ => Measurement::Phase,
+            };
+            Self::CrossHand(
+                (0..channels).map(|_| CrossHandFit::default()).collect(),
+                measurement,
+            )
         } else if kind.iterative() {
             Self::Iterative {
                 algebra: kind.algebra(),
@@ -58,7 +71,9 @@ impl IntervalFits {
                     Self::LeastSquares(fits) => {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
-                    Self::CrossHand(fits) => fits[channel].add(data, weights),
+                    Self::CrossHand(fits, measurement) => {
+                        fits[channel].add(*measurement, data, model, weights)
+                    }
                     Self::Iterative {
                         algebra,
                         samples,
@@ -98,7 +113,9 @@ impl IntervalFits {
     ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
             Self::LeastSquares(fits) => Ok(least_squares(fits, antennas, references, previous)),
-            Self::CrossHand(fits) => Ok(cross_hand(fits, antennas, location)),
+            Self::CrossHand(fits, measurement) => {
+                Ok(cross_hand(fits, measurement, antennas, location))
+            }
             Self::Iterative {
                 algebra,
                 samples,
@@ -125,6 +142,7 @@ impl IntervalFits {
 
 fn cross_hand(
     fits: Vec<CrossHandFit>,
+    measurement: Measurement,
     antennas: usize,
     (field, spw): (i32, i32),
 ) -> Option<IntervalEstimates> {
@@ -133,6 +151,7 @@ fn cross_hand(
     }
     let mut sum = Complex32::ZERO;
     let mut channels = 0;
+    let position_angle = !matches!(measurement, Measurement::Phase);
     let values = fits
         .into_iter()
         .map(|fit| {
@@ -141,15 +160,27 @@ fn cross_hand(
                 sum += phase;
                 channels += 1;
             }
+            let parameter = if position_angle {
+                Complex32::new(phase.map_or(0.0, |value| 0.5 * value.arg()), 0.0)
+            } else {
+                phase.unwrap_or(Complex32::ONE)
+            };
             let estimate = LeakageEstimate {
-                gain: [phase.unwrap_or(Complex32::ONE), Complex32::ZERO],
+                gain: [parameter, Complex32::ZERO],
                 valid: [phase.is_some(), false],
                 ..LeakageEstimate::default()
             };
             vec![estimate; antennas]
         })
         .collect();
-    if channels > 0 {
+    if channels > 0 && position_angle {
+        tracing::info!(
+            field,
+            spw,
+            position_angle_degrees = 0.5 * sum.arg().to_degrees(),
+            "Mean position angle offset solution"
+        );
+    } else if channels > 0 {
         tracing::info!(
             field,
             spw,

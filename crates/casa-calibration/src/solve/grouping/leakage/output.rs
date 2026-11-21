@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA calibration table output for known-source leakage fits.
 
-use super::{LeakageSolution, LeakageSolveRequest, SelectedSolveRow};
+use super::{LeakageSolution, LeakageSolveKind, LeakageSolveRequest, SelectedSolveRow};
 use casa_ms::{MeasurementSet, schema::SubtableId};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -22,13 +22,14 @@ pub(super) fn write(
     if solutions.is_empty() {
         return Ok(0);
     }
+    let complex = request.kind != LeakageSolveKind::PosAng;
     let mut writer = CalibrationTableWriter::with_mode(
         ms,
         CalibrationTableDescriptor {
             output: &request.output,
-            schema: new_calibration_table_schema(true),
+            schema: new_calibration_table_schema(complex),
             subtype: request.kind.subtype(),
-            parameter_type: Some("Complex"),
+            parameter_type: Some(if complex { "Complex" } else { "Float" }),
             measurement_set_name: ms
                 .path()
                 .map_or_else(|| "<memory>".into(), |path| path.display().to_string()),
@@ -48,7 +49,7 @@ pub(super) fn write(
         let antennas = interval.values.first().map_or(0, Vec::len);
         for antenna in 0..antennas {
             writer
-                .append(solution_row(interval, antenna, receptors))
+                .append(solution_row(interval, antenna, receptors, complex))
                 .map_err(|error| error.to_string())?;
             written += 1;
         }
@@ -78,11 +79,27 @@ pub(super) fn write(
     Ok(written)
 }
 
-fn solution_row(interval: &LeakageSolution, antenna: usize, receptors: usize) -> RecordValue {
+fn solution_row(
+    interval: &LeakageSolution,
+    antenna: usize,
+    receptors: usize,
+    complex: bool,
+) -> RecordValue {
     let shape = IxDyn(&[receptors, interval.values.len()]).f();
-    let complex = ArrayD::from_shape_fn(shape.clone(), |index| {
-        interval.values[index[1]][antenna].gain[index[0]]
-    });
+    let parameter = |index: IxDyn| interval.values[index[1]][antenna].gain[index[0]];
+    let (column, values) = if complex {
+        (
+            "CPARAM",
+            ArrayValue::Complex32(ArrayD::from_shape_fn(shape.clone(), parameter)),
+        )
+    } else {
+        (
+            "FPARAM",
+            ArrayValue::Float32(ArrayD::from_shape_fn(shape.clone(), |index| {
+                parameter(index).re
+            })),
+        )
+    };
     let flags = ArrayD::from_shape_fn(shape.clone(), |index| {
         !interval.values[index[1]][antenna].valid[index[0]]
     });
@@ -104,7 +121,7 @@ fn solution_row(interval: &LeakageSolution, antenna: usize, receptors: usize) ->
         integer("SCAN_NUMBER", interval.scan),
         integer("ANTENNA1", antenna as i32),
         integer("ANTENNA2", interval.reference),
-        array("CPARAM", ArrayValue::Complex32(complex)),
+        array(column, values),
         array("FLAG", ArrayValue::Bool(flags)),
         array("PARAMERR", ArrayValue::Float32(errors)),
         array("SNR", ArrayValue::Float32(snr)),

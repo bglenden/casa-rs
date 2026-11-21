@@ -282,7 +282,7 @@ pub(super) fn centroid_weight(
     correlation: usize,
     channels: SelectedChannels<'_>,
     shared_flags: Option<&[bool]>,
-    point: Complex32,
+    normalization: impl Fn(usize) -> Complex32,
     channelized: bool,
 ) -> f64 {
     let flagged = |channel| {
@@ -295,10 +295,7 @@ pub(super) fn centroid_weight(
         if flagged(channel) {
             0.0
         } else {
-            let model = samples
-                .model
-                .map_or(point, |model| model[[correlation, channel]]);
-            let power = model.norm_sqr();
+            let power = normalization(channel).norm_sqr();
             let scale = if power == 0.0 { 1.0 } else { power };
             samples.weights[[correlation, channel]] * scale
         }

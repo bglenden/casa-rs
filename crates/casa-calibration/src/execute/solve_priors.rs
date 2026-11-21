@@ -20,6 +20,7 @@ pub(crate) enum PriorSolveBoundary {
     ScalarGain,
     Leakage,
     CrossHand,
+    PositionAngle,
 }
 
 impl PriorSolveBoundary {
@@ -31,6 +32,7 @@ impl PriorSolveBoundary {
             Self::ScalarGain => "T Jones",
             Self::Leakage => "D Jones",
             Self::CrossHand => "X Jones",
+            Self::PositionAngle => "PosAng Jones",
         })
     }
 }
@@ -187,7 +189,9 @@ pub(crate) fn evaluate_solve_priors(
 ) -> Result<PreappliedRows, ApplyExecutionError> {
     let deferred_data = matches!(
         boundary,
-        PriorSolveBoundary::Leakage | PriorSolveBoundary::CrossHand
+        PriorSolveBoundary::Leakage
+            | PriorSolveBoundary::CrossHand
+            | PriorSolveBoundary::PositionAngle
     );
     let polarized = deferred_data || has_leakage(&plan);
     if !polarized

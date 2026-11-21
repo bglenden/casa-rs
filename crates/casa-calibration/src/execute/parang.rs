@@ -43,22 +43,30 @@ pub(crate) fn apply(
     let (s2, c2) = second_angle.sin_cos();
     let (s1, c1, s2, c2) = (s1 as f32, c1 as f32, s2 as f32, c2 as f32);
     for channel in 0..corrected.shape()[1] {
-        let (vxx, vxy, vyx, vyy) = (
-            corrected[[xx, channel]],
-            corrected[[xy, channel]],
-            corrected[[yx, channel]],
-            corrected[[yy, channel]],
-        );
-        // P = [[cos(a), sin(a)],[-sin(a), cos(a)]]. Correction is
-        // transpose(P1) * V * P2, since these matrices are real orthogonal.
-        let (a, b) = (vxx * c1 - vyx * s1, vxy * c1 - vyy * s1);
-        let (c, d) = (vxx * s1 + vyx * c1, vxy * s1 + vyy * c1);
-        corrected[[xx, channel]] = a * c2 - b * s2;
-        corrected[[xy, channel]] = a * s2 + b * c2;
-        corrected[[yx, channel]] = c * c2 - d * s2;
-        corrected[[yy, channel]] = c * s2 + d * c2;
+        let indices = [xx, xy, yx, yy];
+        let data = indices.map(|index| corrected[[index, channel]]);
+        let rotated = rotate_linear(data, [(s1, c1), (s2, c2)]);
+        for (index, value) in indices.into_iter().zip(rotated) {
+            corrected[[index, channel]] = value;
+        }
     }
     Ok(())
+}
+
+/// Correction for two real Jones matrices with rows [cos(a), sin(a)] and
+/// [-sin(a), cos(a)] uses transpose(P1) * V * P2.
+pub(super) fn rotate_linear(
+    [xx, xy, yx, yy]: [Complex32; 4],
+    [(s1, c1), (s2, c2)]: [(f32, f32); 2],
+) -> [Complex32; 4] {
+    let (a, b) = (xx * c1 - yx * s1, xy * c1 - yy * s1);
+    let (c, d) = (xx * s1 + yx * c1, xy * s1 + yy * c1);
+    [
+        a * c2 - b * s2,
+        a * s2 + b * c2,
+        c * c2 - d * s2,
+        c * s2 + d * c2,
+    ]
 }
 
 /// Jones::flagRight then flagLeft propagates an input flag through all four
