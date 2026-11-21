@@ -229,35 +229,44 @@ pub(super) fn prepare_model(
                 Some(rotation(samples.clone())),
                 true,
             )?;
-            record.upsert("name", Value::Scalar(ScalarValue::String(MACHINE.into())));
-            record.upsert(
-                "casars_legacy_aw_conjbeams",
-                Value::Scalar(ScalarValue::Bool(options.conjugate_beams)),
-            );
-            record.upsert(
-                "casars_legacy_aw_angles",
-                Value::Array(ArrayValue::from_f64_vec(
-                    samples
-                        .into_iter()
-                        .flat_map(|(time, angle)| [time, f64::from(angle)])
-                        .collect(),
-                )),
-            );
-            if let Some(map) = frequency_map {
-                record.upsert(
-                    FREQUENCY_MAP,
-                    Value::Array(ArrayValue::from_f64_vec(vec![
-                        map.start_channel as f64,
-                        map.channel_stride as f64,
-                        map.mapped_channels as f64,
-                        map.start_hz,
-                        map.increment_hz,
-                    ])),
-                );
-            }
+            save_metadata(record, options.conjugate_beams, samples, frequency_map);
             Ok(())
         },
     )
+}
+
+fn save_metadata(
+    record: &mut RecordValue,
+    conjugate_beams: bool,
+    samples: Vec<(f64, f32)>,
+    frequency_map: Option<AwLegacyFrequencyMap>,
+) {
+    record.upsert("name", Value::Scalar(ScalarValue::String(MACHINE.into())));
+    record.upsert(
+        "casars_legacy_aw_conjbeams",
+        Value::Scalar(ScalarValue::Bool(conjugate_beams)),
+    );
+    record.upsert(
+        "casars_legacy_aw_angles",
+        Value::Array(ArrayValue::from_f64_vec(
+            samples
+                .into_iter()
+                .flat_map(|(time, angle)| [time, f64::from(angle)])
+                .collect(),
+        )),
+    );
+    if let Some(map) = frequency_map {
+        record.upsert(
+            FREQUENCY_MAP,
+            Value::Array(ArrayValue::from_f64_vec(vec![
+                map.start_channel as f64,
+                map.channel_stride as f64,
+                map.mapped_channels as f64,
+                map.start_hz,
+                map.increment_hz,
+            ])),
+        );
+    }
 }
 
 fn selected_frequency_map(
