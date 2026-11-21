@@ -20,7 +20,7 @@ def check_catalog(task, prefix):
         ("save", {}, ValueError, "Illegal empty versionname: ''", False),
         ("restore", {}, ValueError, "Illegal versionname: ''", False),
         ("delete", {}, ValueError, "Illegal versionname: ''", False),
-        ("restore", {"versionname": "missing"}, RuntimeError, None, True),
+        ("restore", {"versionname": "missing"}, RuntimeError, "Flag version missing does not exist", True),
         ("delete", {"versionname": "missing"}, None, None, True),
         ("rename", {"oldname": "missing", "versionname": "new"}, ValueError,
          "No such flagversions: missing", False),
@@ -34,10 +34,9 @@ def check_catalog(task, prefix):
         try:
             result = task(vis=str(vis), mode=mode, **options)
         except Exception as error:
-            assert expected_error and isinstance(error, expected_error), (mode, error)
+            assert type(error) is expected_error, (mode, error)
             if message:
-                completion = getattr(error, "completion", None)
-                assert (completion.message if completion else str(error)) == message, mode
+                assert str(error) == message, mode
         else:
             assert expected_error is None, mode
             if mode == "list":
@@ -84,13 +83,47 @@ def check_merges(task, vis):
         assert versions(task, vis) == {0: {"name": "first", "comment": "retained"}}
 
 
+def check_literal_lookup(task, vis):
+    make_cal_ms(str(vis), channels=4, scan_seconds=20)
+    sidecar = Path(f"{vis}.flagversions")
+    catalog = sidecar / "FLAG_VERSION_LIST"
+    saved = set_flags(vis, 0, shared_row=4)
+    for name in ("seed", "none", "auto"):
+        assert task(vis=str(vis), mode="save", versionname=name) is None
+        assert_flags(sidecar / f"flags.{name}", saved)
+    for name in ("none", "auto"):
+        set_flags(vis, 1, shared_row=4)
+        assert task(vis=str(vis), mode="restore", versionname=name) is None
+        assert_flags(vis, saved)
+    assert task(vis=str(vis), mode="rename", oldname="none", versionname="renamed") is None
+    assert_flags(sidecar / "flags.renamed", saved)
+
+    working = set_flags(vis, 1, shared_row=4)
+    for name in (" seed ", "seed"):
+        if name == "seed":
+            # An orphaned on-disk version is not a member of the catalog.
+            catalog.write_bytes(b"")
+        before = catalog.read_bytes()
+        try:
+            task(vis=str(vis), mode="restore", versionname=name)
+        except RuntimeError as error:
+            assert type(error) is RuntimeError
+            assert str(error) == f"Flag version {name} does not exist"
+        else:
+            raise AssertionError(name)
+        assert_flags(vis, working)
+        assert_flags(sidecar / "flags.seed", saved)
+        assert catalog.read_bytes() == before
+
+
 def main():
     assert tuple(casatasks.version()) == (6, 7, 6, 14)
     with TemporaryDirectory(prefix="flagmanager-store-") as work, chdir(work):
         for task, prefix in ((casatasks.flagmanager, "reference"), (tasks.flagmanager, "native")):
             check_catalog(task, prefix)
             check_merges(task, Path(f"{prefix}-merge.ms"))
-    print("Seven flag-version catalog cases and six restore choices checked against CASA 6.7.6.14")
+            check_literal_lookup(task, Path(f"{prefix}-lookup.ms"))
+    print("Catalog initialization, six restore choices, and literal version lookup verified with CASA 6.7.6.14")
 
 
 if __name__ == "__main__":
