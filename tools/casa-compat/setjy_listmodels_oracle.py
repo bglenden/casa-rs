@@ -91,17 +91,27 @@ def main():
     (hidden / 'hidden-alternate.im').touch()
     names = compare(workspace, {}, empty_data)
     assert 'alternate.im' in names and 'hidden-alternate.im' not in names
+    (fallback / 'ignored.txt').touch()
+    assert compare(fallback, {}, empty_data) == ['alternate.im']
 
     solar = workspace / 'observatory' / 'SolarSystemModels'
     solar.mkdir()
     for name in ('Mars_Tb_001.dat', 'Ceres_fd_time.dat', 'irrelevant.dat'):
         (solar / name).touch()
+    excluded = workspace / 'tables' / 'SolarSystemModels'
+    excluded.mkdir(parents=True)
+    (excluded / 'excluded_Tb_file.dat').touch()
     assert compare(workspace, {'standard': 'Butler-JPL-Horizons 2012'}, empty_data) == [
         'Mars_Tb_001.dat', 'Ceres_fd_time.dat',
     ]
     expected_2010 = ('Venus Mars Jupiter Uranus Neptune Pluto Io Europa Ganymede Callisto Titan '
                      'Triton Ceres Pallas Vesta Juno Victoria Davida').split()
     assert native(workspace, {'standard': 'Butler-JPL-Horizons 2010'}, empty_data) == expected_2010
+    local = workspace / 'nrao' / 'VLA' / 'CalModels'
+    local.mkdir(parents=True)
+    (local / 'local-3C286.im').touch()
+    names = compare(workspace, {})
+    assert 'local-3C286.im' in names and '3C286_L.im' not in names
 
 
 if __name__ == '__main__':

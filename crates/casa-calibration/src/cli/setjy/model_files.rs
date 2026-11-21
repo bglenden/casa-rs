@@ -30,8 +30,12 @@ pub(super) fn list(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure
             let mut candidates = list_directory(task.workspace(), |name| {
                 name.contains(".im") || name.contains(".mod")
             });
-            for directory in model_directories(task.workspace(), "CalModels", "nrao/VLA/CalModels")
-            {
+            for directory in model_directories(
+                task.workspace(),
+                "CalModels",
+                "nrao/VLA/CalModels",
+                &[".ms", ".im", ".tab"],
+            ) {
                 candidates.extend(list_directory(&directory, |_| true));
             }
             candidates
@@ -48,7 +52,12 @@ pub(super) fn list(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure
 }
 
 fn solar_system_models(workspace: &Path) -> Vec<String> {
-    let directories = model_directories(workspace, "SolarSystemModels", "alma/SolarSystemModels");
+    let directories = model_directories(
+        workspace,
+        "SolarSystemModels",
+        "alma/SolarSystemModels",
+        &[".im", ".ms", "tab"],
+    );
     if directories.is_empty() {
         tracing::warn!("SolarSystemModels was not found in the CASA data directory");
     }
@@ -66,12 +75,22 @@ fn solar_system_models(workspace: &Path) -> Vec<String> {
     models
 }
 
-fn model_directories(workspace: &Path, name: &str, relative: &str) -> Vec<PathBuf> {
+fn model_directories(
+    workspace: &Path,
+    name: &str,
+    relative: &str,
+    excluded_extensions: &[&str],
+) -> Vec<PathBuf> {
+    let local = workspace.join(relative);
+    if local.is_dir() {
+        return vec![local];
+    }
     if let Some(directory) = MeasuresRuntime::discover_candidates()
         .unwrap_or_default()
         .into_iter()
+        .next()
         .map(|candidate| candidate.path.join(relative))
-        .find(|directory| directory.is_dir())
+        .filter(|directory| directory.is_dir())
     {
         return vec![directory];
     }
@@ -82,7 +101,7 @@ fn model_directories(workspace: &Path, name: &str, relative: &str) -> Vec<PathBu
         let Ok(path) = directory.canonicalize() else {
             continue;
         };
-        if directory.file_name().is_some_and(|base| base == name) {
+        if directory != workspace && directory.file_name().is_some_and(|base| base == name) {
             found.insert(path.clone());
         }
         if !visited.insert(path) {
@@ -95,17 +114,17 @@ fn model_directories(workspace: &Path, name: &str, relative: &str) -> Vec<PathBu
             let basename = entry.file_name();
             let name = basename.to_str()?;
             let path = entry.path();
-            (may_contain_models(name) && path.is_dir()).then_some(path)
+            (may_contain_models(name, excluded_extensions) && path.is_dir()).then_some(path)
         }));
     }
     found.into_iter().collect()
 }
 
-fn may_contain_models(name: &str) -> bool {
+fn may_contain_models(name: &str, excluded_extensions: &[&str]) -> bool {
     !name.starts_with('.')
         && !matches!(name, "regression" | "ephemerides" | "geodetic" | "gui")
         && !(cfg!(target_os = "macos") && matches!(name, "Frameworks" | "Library" | "lib"))
-        && ![".ms", ".im", ".tab"]
+        && !excluded_extensions
             .iter()
             .any(|extension| name.contains(extension))
 }
