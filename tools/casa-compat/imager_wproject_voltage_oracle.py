@@ -8,22 +8,25 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import casatasks
-from casatools import imager as casa_imager, ms as casa_ms
+from casatools import imager as casa_imager, ms as casa_ms, table
 import numpy as np
 
 from gaincal_oracle import relative_rms
+from imager_changing_voltage_oracle import pointings
 from imager_component_voltage_oracle import compare, source
 from imager_custom_squint_oracle import radial_table
 from imager_legacy_pbw_oracle import corrected_or_data, data, make_input
+from imager_saved_radial_curves_oracle import SHAPES, voltage_table
 
 
-def predict(factory, target, model, beam, *, scratch=True, squint=True, planes=8):
+def predict(factory, target, model, beam, *, scratch=True, squint=True, planes=8, angle='360deg'):
     tool = factory()
     assert tool.open(str(target), usescratch=scratch)
     assert tool.selectvis(field=0, spw='0')
     assert tool.defineimage(nx=64, ny=64, cellx='64arcsec', celly='64arcsec')
     assert tool.setoptions(ftmachine='wproject', padding=1.4, wprojplanes=planes, numthreads=1)
-    assert tool.setvp(dovp=True, usedefaultvp=False, vptable=str(beam), dosquint=squint)
+    assert tool.setvp(dovp=True, usedefaultvp=False, vptable=str(beam), dosquint=squint,
+                      parangleinc=angle, skyposthreshold='180deg')
     assert tool.ft(**model) and tool.done()
 
 
@@ -69,6 +72,28 @@ def saved_exchange(work, seed, cases, beam, results):
     return expected
 
 
+def changing_beam(work, seed, image, beam, results):
+    active = work / 'changing-pointings.ms'
+    epochs = pointings(seed, active)
+    times = data(active, 'TIME')
+    writer = table()
+    assert writer.open(str(active), nomodify=False)
+    uvw = writer.getcol('UVW')
+    uvw[2, times == epochs[1]] *= 4.
+    assert writer.putcol('UVW', uvw) and writer.done()
+    for planes in (8, -1):
+        held = scratch_pair(work, active, f'{planes}-held', image, beam, results, planes=planes)
+        label = f'{planes}-refreshed'
+        refreshed = scratch_pair(work, active, label, image, beam, results,
+                                 planes=planes, angle='0deg')
+        assert relative_rms(refreshed, held) > .5
+        actual = data(work / f'{label}-native.ms', 'MODEL_DATA')
+        # Each group must keep the full selection's automatic W-plane spacing.
+        for epoch in epochs:
+            rows = times == epoch
+            assert relative_rms(actual[..., rows], refreshed[..., rows]) < 1.e-6
+
+
 def run(root, seed, model):
     assert casatasks.version_string() == '6.7.6.14'
     root.mkdir(parents=True)
@@ -86,6 +111,14 @@ def run(root, seed, model):
             squint = scratch_pair(work, seed, f'{name}-squint', models, beam, results)
             assert relative_rms(squint, radial) > .1 and np.max(np.abs(squint)) > .001
         scratch_pair(work, seed, 'auto-w-image', image, beam, results, planes=-1)
+        changing_beam(work, seed, image, beam, results)
+        for shape in SHAPES:
+            custom = work / f'{shape}.tbl'
+            voltage_table(custom, shape)
+            for name, models in (('image', image), ('point', component)):
+                values = scratch_pair(work, seed, f'{shape}-{name}', models, custom, results,
+                                      squint=False)
+                assert np.max(np.abs(values)) > .001
         saved = saved_exchange(work, seed, cases, beam, results)
         assert relative_rms(saved['point'], saved['image']) > .1
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')

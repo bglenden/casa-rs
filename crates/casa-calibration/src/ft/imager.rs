@@ -595,6 +595,16 @@ impl ImagerPrediction {
                     )));
                 }
                 if scratch {
+                    let mut settings = self.options;
+                    if matches!(settings.gridder, ImagerGridder::AutoWProject)
+                        && !model.images.is_empty()
+                    {
+                        // CASA chooses the W-plane geometry once for the
+                        // visibility selection, before any beam refresh.
+                        let planes = super::image::automatic_w_planes(ms, selection)
+                            .map_err(AttachmentError::PredictionPreparation)?;
+                        settings.gridder = ImagerGridder::WProject(planes);
+                    }
                     let local_pointings = pointing_may_use_local_frame(ms);
                     let groups = scratch_voltage_batches(ms, selection, self.voltage_angle_increment, local_pointings)
                         .map_err(AttachmentError::PredictionPreparation)?;
@@ -604,7 +614,7 @@ impl ImagerPrediction {
                     for rows in groups {
                         batch.selected_rows = rows;
                         let Some(PreparedPrediction { mut components, mut images, component_voltage }) = self
-                            .prepare(ms, &batch, selection, &model, true)
+                            .prepare(ms, &batch, (selection, settings), &model, true)
                             .map_err(AttachmentError::PredictionPreparation)?
                         else {
                             if writing_scratch {
@@ -629,7 +639,7 @@ impl ImagerPrediction {
                 }
             }
             let Some(PreparedPrediction { mut components, mut images, .. }) =
-                self.prepare(ms, selection, selection, &model, scratch)
+                self.prepare(ms, selection, (selection, self.options), &model, scratch)
                     .map_err(AttachmentError::PredictionPreparation)?
             else {
                 return Ok(false);
@@ -709,7 +719,7 @@ impl ImagerPrediction {
         &mut self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
-        image_selection: &ResolvedMsSelection,
+        image_context: (&ResolvedMsSelection, ImagerTransformOptions),
         model: &ImagerPredictionModel<'_>,
         scratch: bool,
     ) -> MsResult<Option<PreparedPrediction>> {
@@ -717,7 +727,7 @@ impl ImagerPrediction {
         let mut temporary = ModelSources::default();
         let sources = retained.as_mut().unwrap_or(&mut temporary);
         let result =
-            self.prepare_with_sources(ms, selected, image_selection, model, scratch, sources);
+            self.prepare_with_sources(ms, selected, image_context, model, scratch, sources);
         self.retained_sources = retained;
         result
     }
@@ -726,11 +736,12 @@ impl ImagerPrediction {
         &mut self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
-        image_selection: &ResolvedMsSelection,
+        image_context: (&ResolvedMsSelection, ImagerTransformOptions),
         model: &ImagerPredictionModel<'_>,
         scratch: bool,
         sources: &mut ModelSources,
     ) -> MsResult<Option<PreparedPrediction>> {
+        let (image_selection, settings) = image_context;
         if model
             .images
             .iter()
@@ -884,7 +895,7 @@ impl ImagerPrediction {
                     images.extend(self.prepare_images(
                         ms,
                         &field,
-                        (model, sources),
+                        (model, sources, settings),
                         reference_hz,
                         true,
                         Some(voltage_pattern),
@@ -903,7 +914,7 @@ impl ImagerPrediction {
                 images = self.prepare_images(
                     ms,
                     selected,
-                    (model, sources),
+                    (model, sources, settings),
                     reference_hz,
                     scratch,
                     voltage_pattern,
@@ -998,12 +1009,16 @@ impl ImagerPrediction {
         &self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
-        inputs: (&ImagerPredictionModel<'_>, &ModelSources),
+        inputs: (
+            &ImagerPredictionModel<'_>,
+            &ModelSources,
+            ImagerTransformOptions,
+        ),
         reference_hz: Option<f64>,
         scratch: bool,
         voltage_pattern: Option<super::voltage_pattern::PreparedVoltagePattern>,
     ) -> MsResult<Vec<ImageModel>> {
-        let (model, sources) = inputs;
+        let (model, sources, settings) = inputs;
         let terms = self.taylor.0;
         let facets = self.facet_count();
         let dish = self.options.single_dish;
@@ -1040,7 +1055,7 @@ impl ImagerPrediction {
             _ => None,
         };
         let mut geometry = PredictionGeometry {
-            settings: self.options,
+            settings,
             native_threads: self.options.threads,
             facets,
             tangent,

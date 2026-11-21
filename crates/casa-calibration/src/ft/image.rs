@@ -410,7 +410,7 @@ fn effective_padding(options: &PredictionGeometry) -> MsResult<GridPadding> {
     ))
 }
 
-fn automatic_w_planes(
+pub(super) fn automatic_w_planes(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
 ) -> MsResult<WPlaneCount> {
