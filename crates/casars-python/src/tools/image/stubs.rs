@@ -368,26 +368,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, npixels = None, value = None, padmask = None, overwrite = None, region = None, r#box = None, chans = None, stokes = None, mask = None, stretch = None, wantreturn = None), text_signature = "($self, outfile='', npixels=1, value=0.0, padmask=False, overwrite=False, region={}, box='', chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
-    fn pad(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        npixels: Option<&Bound<'_, PyAny>>,
-        value: Option<&Bound<'_, PyAny>>,
-        padmask: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        r#box: Option<&Bound<'_, PyAny>>,
-        chans: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        wantreturn: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("pad")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, start = None, end = None, center = None, length = None, pa = None, width = None, unit = None, overwrite = None, region = None, chans = None, stokes = None, mask = None, stretch = None, wantreturn = None), text_signature = "($self, outfile='', start=[], end=[], center=[], length=[], pa=[], width=1, unit='arcsec', overwrite=False, region={}, chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
     fn pv(
         &self,

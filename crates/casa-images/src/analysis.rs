@@ -33,9 +33,9 @@ mod imregrid;
 mod imsubimage;
 pub use imsubimage::{
     DecimationMethod, DecimationPixel, ImageCrop, ImageCropOptions, ImageDecimation,
-    ImageDecimationOptions, ImageInsertion, ImagePbcor, ImagePbcorBeam, ImagePbcorOptions,
-    ImagePixelSelection, ImageRebin, ImageRebinOptions, ImageRegionBounds, MaskReplacementOptions,
-    MaskReplacementOutcome, SubimageOptions, SubimagePlan, SubimageRegion,
+    ImageDecimationOptions, ImageInsertion, ImagePad, ImagePadOptions, ImagePbcor, ImagePbcorBeam,
+    ImagePbcorOptions, ImagePixelSelection, ImageRebin, ImageRebinOptions, ImageRegionBounds,
+    MaskReplacementOptions, MaskReplacementOutcome, SubimageOptions, SubimagePlan, SubimageRegion,
     ensure_outfile_does_not_alias_input, put_image_region, reduce_subimage_coordinate_record,
     replace_masked_complex_pixels, replace_masked_real_pixels, validate_put_region_shapes,
 };

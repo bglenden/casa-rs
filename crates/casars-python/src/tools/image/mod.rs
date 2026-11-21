@@ -39,6 +39,7 @@ mod masks;
 mod metadata;
 mod modify;
 mod noise;
+mod pad;
 mod pbcor;
 mod pixel_edit;
 mod pixels;
