@@ -4,7 +4,6 @@
 //! returns (#931): the summary dictionary in summary mode, `{}` otherwise.
 //! The CASA values it does not implement yet are refused naming #978.
 
-use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -23,10 +22,14 @@ use casa_provider_contracts::{
     TaskFailureKind, python_repr,
 };
 use casa_task_runtime::{
-    CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, semantic_eq,
+    CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
 use casa_types::quanta::Quantity;
 
+#[path = "flagdata/automatic.rs"]
+mod automatic;
+#[path = "flagdata/command.rs"]
+mod command;
 #[path = "flagdata/rflag.rs"]
 mod rflag;
 #[path = "flagdata/shadow.rs"]
@@ -66,6 +69,7 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     let mode = task.required_text("mode")?;
+    let automatic_calibration = automatic::table_kind(task, &mode)?;
     tfcrop::integer_setting(task, "winsize")?;
     if mode == "antint" {
         antint_min_channel_fraction(task)?;
@@ -151,7 +155,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         })?;
     }
     let path = task.path("vis")?;
-    let calibration = is_calibration_table(&path);
+    let calibration = automatic_calibration.unwrap_or_else(|| is_calibration_table(&path));
     let (mut request, threshold_inputs) = prepare_flagdata_request(
         task,
         &mode,
@@ -211,6 +215,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         FlaggingError::InvalidRFlagScale(parameter) => {
             TaskFailure::validation(error.to_string()).at(parameter)
+        }
+        FlaggingError::InvalidAutomaticAverageVector(parameter) => {
+            TaskFailure::execution(error.to_string()).at(parameter)
         }
         FlaggingError::UnknownTfcropProduct(_) => {
             TaskFailure::execution(error.to_string()).at("correlation")
@@ -529,59 +536,12 @@ fn save_flag_parameters(
     }
     push_command_argument(&mut arguments, "reason", &ParameterValue::String(reason));
     let content = arguments.join(" ");
-    write_flag_command_file(
+    command::write_file(
         &outfile,
         &content,
         task.flag("overwrite")?,
         matches!(action, "none" | ""),
     )
-}
-
-fn write_flag_command_file(
-    outfile: &str,
-    content: &str,
-    overwrite: bool,
-    save_only: bool,
-) -> Result<(), TaskFailure> {
-    let path = Path::new(outfile);
-    let parent = path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let save = || -> std::io::Result<()> {
-        let mut builder = tempfile::Builder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            builder.permissions(std::fs::Permissions::from_mode(0o666));
-        }
-        let mut pending = builder.tempfile_in(parent)?;
-        writeln!(pending, "{content}")?;
-        if overwrite {
-            pending.persist(path)?;
-        } else {
-            pending.persist_noclobber(path)?;
-        }
-        Ok(())
-    };
-    save().map_err(|error| {
-        if !overwrite && error.kind() == ErrorKind::AlreadyExists {
-            let message = format!(
-                "You have set overwrite to False. Remove {outfile} before saving the flag commands"
-            );
-            if save_only {
-                return TaskFailure::validation(message).at("outfile");
-            }
-            return TaskFailure::execution(message).at("outfile");
-        }
-        let parameter = if error.kind() == ErrorKind::NotFound {
-            "outfile.not_found"
-        } else {
-            "outfile"
-        };
-        TaskFailure::execution(format!("Error writing flag commands to {outfile}: {error}"))
-            .at(parameter)
-    })
 }
 
 fn is_calibration_table(path: &Path) -> bool {
@@ -842,7 +802,8 @@ fn flagdata_request(
     thresholds: &rflag::ThresholdInputs,
 ) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
-    let automatic_enabled = automatic_controls(task, mode, calibration)?;
+    let (automatic_enabled, automatic_average_vector) =
+        automatic::controls(task, mode, calibration)?;
     let spw = task_selection_text(task, "spw")?;
     let correlation = task_selection_text(task, "correlation")?;
     let clipminmax = match task.numbers("clipminmax")?.as_slice() {
@@ -951,6 +912,7 @@ fn flagdata_request(
         } else {
             Some(3)
         },
+        automatic_average_vector,
         timedev: timedev.scalar,
         freqdev: freqdev.scalar,
         timedev_by_field_spw: timedev.by_field_spw.clone(),
@@ -964,67 +926,6 @@ fn flagdata_request(
         growtime: task.number("growtime")?,
         growfreq: task.number("growfreq")?,
     })
-}
-
-fn automatic_controls(
-    task: &TaskInvocation<'_>,
-    mode: FlagDataMode,
-    calibration: bool,
-) -> Result<bool, TaskFailure> {
-    if !matches!(mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag) {
-        return Ok(true);
-    }
-    if calibration {
-        for name in ["channelavg", "timeavg"] {
-            if matches!(task.value(name), Some(ParameterValue::Array(_))) {
-                return Err(
-                    TaskFailure::execution("RecordInterface::asBool - invalid data type").at(name),
-                );
-            }
-        }
-        // The calibration iterator uses stored samples. The agent still
-        // parses its time bin when time averaging was requested.
-        if matches!(task.value("timeavg"), Some(ParameterValue::Bool(true))) {
-            return Ok(Quantity::read(&task.required_text("timebin")?).is_ok());
-        }
-        return Ok(true);
-    }
-
-    let bundle = task.session().bundle();
-    for (name, issue) in [
-        ("channelavg", 978),
-        ("chanbin", 978),
-        ("timeavg", 978),
-        ("timebin", 978),
-        ("ntime", 1616),
-        ("combinescans", 1616),
-    ] {
-        if issue == 1616 && mode != FlagDataMode::Rflag {
-            continue;
-        }
-        let binding = bundle
-            .surface
-            .bindings()
-            .iter()
-            .find(|binding| binding.name == name)
-            .expect("automatic controls are in the flagdata surface");
-        let DefaultSpec::Literal { value: default } = &binding.default else {
-            unreachable!("automatic controls have literal defaults");
-        };
-        let concept = bundle
-            .catalog
-            .concept(&binding.concept)
-            .expect("validated contract");
-        if let Some(value) = task.value(name)
-            && !matches!(semantic_eq(value, default, concept), Ok(true))
-        {
-            return Err(TaskFailure::validation(format!(
-                "parameter {name:?} is not implemented by casa-rs yet (#{issue}); only CASA's default {} is accepted",
-                python_repr(default),
-            )).at(name));
-        }
-    }
-    Ok(true)
 }
 
 fn antint_min_channel_fraction(task: &TaskInvocation<'_>) -> Result<f64, TaskFailure> {

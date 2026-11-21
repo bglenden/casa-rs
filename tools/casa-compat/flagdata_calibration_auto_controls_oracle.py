@@ -19,6 +19,7 @@ def controls():
     yield 'default', {}, True
     yield 'channel-average', {'channelavg': True, 'chanbin': 2}, True
     yield 'time-average', {'timeavg': True, 'timebin': '5s'}, True
+    yield 'time-C-string-prefix', {'timeavg': True, 'timebin': '5s\0ignored'}, True
     yield 'time-chunk', {'ntime': '4s', 'combinescans': True}, True
     yield 'time-only-chunk', {'ntime': 4.0}, True
     yield 'time-zero-bin', {'timeavg': True, 'timebin': '0s'}, True
@@ -32,6 +33,9 @@ def controls():
     yield 'channel-array-bin', {'channelavg': True, 'chanbin': [2]}, True
     yield 'channel-average-vector', {'channelavg': [True], 'chanbin': 2}, False
     yield 'time-average-vector', {'timeavg': [True], 'timebin': '5s'}, False
+    yield 'time-numpy-vector', {'timeavg': np.array(True), 'timebin': '5s'}, False
+    yield 'missing-column-before-vector', {'datacolumn': 'DATA', 'timeavg': [True]}, False
+    yield 'selection-before-vector', {'antenna': 'unavailable', 'channelavg': [True]}, False
     yield 'calculate-time-average', {'action': 'calculate', 'timeavg': True, 'timebin': '5s'}, False
     yield 'calculate-invalid-bin', {'action': 'calculate', 'timeavg': True, 'timebin': 'bad'}, False
 
@@ -44,7 +48,7 @@ def main():
     root = args.work.resolve()
     root.mkdir()
     os.environ['CASARS_FLAGDATA_BIN'] = str(args.native_bin.resolve())
-    from casars.tasks import flagdata as native
+    from casars.tasks import flagdata as native, run as run_native
     assert casa.version_string() == '6.7.6.14'
     checked = 0
     with chdir(root):
@@ -65,8 +69,9 @@ def main():
                     for path in (expected, actual):
                         shutil.copytree(timed, path)
                     metadata = original_columns(actual)
-                    want = outcome(casa.flagdata, expected, **base, **extra)
-                    have = outcome(native, actual, **base, **extra)
+                    settings = base | extra
+                    want = outcome(casa.flagdata, expected, **settings)
+                    have = outcome(native, actual, **settings)
                     compare_report(want, have)
                     changed = flags(expected)
                     if reference is None:
@@ -76,6 +81,18 @@ def main():
                     assert_flags(actual, changed)
                     preserved(actual, metadata)
                     checked += 1
+                if mode == 'rflag' and column == 'CPARAM':
+                    def provider(vis, **settings):
+                        return run_native('flagdata', vis=vis, **settings)
+
+                    for invalid in ({'channelavg': 'oops'}, {'timeavg': 17}, {'channelavg': [1]}):
+                        settings = base | {'flagbackup': True} | invalid
+                        compare_report(outcome(casa.flagdata, timed, **settings),
+                                       outcome(native, timed, **settings))
+                        result = outcome(provider, timed, **settings)
+                        assert isinstance(result, tuple) and result[0] == 'TaskParameterError', result
+                        assert_flags(timed, original)
+                        assert not timed.with_name(f'{timed.name}.flagversions').exists()
                 if mode == 'rflag':
                     scoped = scan_fixture(timed, column, root / f'scoped-{column}.cal')
                     for chunk in ({'combinescans': True}, {'ntime': '2s', 'combinescans': True}):
@@ -93,18 +110,26 @@ def main():
                         assert_flags(actual, changed)
                         preserved(actual, metadata)
                         checked += 1
-        ms = root / 'source.ms'
+        ms = root / 'ms-controls.ms'
+        shutil.copytree(root / 'source.ms', ms)
         original = flags(ms)
         for mode, settings, issue in [
             ('tfcrop', {'channelavg': True}, 978),
             ('rflag', {'timeavg': True}, 978),
             ('rflag', {'ntime': '2s'}, 1616),
             ('rflag', {'combinescans': True}, 1616),
+            ('rflag', {'ntime': -1, 'flagbackup': True}, 1616),
+            ('rflag', {'ntime': 'bogus', 'flagbackup': True}, 1616),
+            ('rflag', {'ntime': '2s', 'action': 'none', 'savepars': True,
+                       'outfile': 'should-not-exist.txt'}, 1616),
         ]:
-            result = outcome(native, ms, mode=mode, flagbackup=False, **settings)
+            result = outcome(native, ms, mode=mode, **{'flagbackup': False, **settings})
             assert result[0] == 'TaskParameterError' and f'#{issue}' in result[1], result
             np.testing.assert_array_equal(flags(ms), original)
-    print(f'{checked} paired automatic calibration control cases and four MeasurementSet refusals.')
+            assert not ms.with_name('ms-controls.ms.flagversions').exists()
+            assert not Path('should-not-exist.txt').exists()
+    print(f'{checked} paired automatic calibration control cases, three typed-provider refusals '
+          'and seven MeasurementSet refusals.')
 
 
 if __name__ == '__main__':
