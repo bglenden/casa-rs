@@ -435,10 +435,11 @@ pub(super) fn publish_image_pair(
     }
 }
 
-pub(super) fn publish_new_images<const N: usize>(
+pub(super) fn publish_image_set<T, const N: usize>(
     outputs: [&str; N],
-    build: impl FnOnce([Option<&Path>; N]) -> PyResult<()>,
-) -> PyResult<()> {
+    overwrite: bool,
+    build: impl FnOnce([Option<&Path>; N]) -> PyResult<T>,
+) -> PyResult<T> {
     let stages = outputs
         .into_iter()
         .map(StagedImage::allocate)
@@ -452,12 +453,14 @@ pub(super) fn publish_new_images<const N: usize>(
         Ok::<_, PyErr>(())
     };
     check()?;
-    for stage in stages.iter().flatten() {
-        if stage.target.symlink_metadata().is_ok() {
-            return Err(raised(format!("File {} already exists", stage.requested)));
+    if !overwrite {
+        for stage in stages.iter().flatten() {
+            if stage.target.symlink_metadata().is_ok() {
+                return Err(raised(format!("File {} already exists", stage.requested)));
+            }
         }
     }
-    build(std::array::from_fn(|index| {
+    let product = build(std::array::from_fn(|index| {
         stages[index].as_ref().map(|stage| stage.product.as_path())
     }))?;
     let registry = attachment::registry();
@@ -468,8 +471,13 @@ pub(super) fn publish_new_images<const N: usize>(
         .map(|stage| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
         .collect::<PyResult<Vec<_>>>()?;
     let mut locks = BTreeMap::new();
-    install_images(stages.into_iter().flatten(), false, &registry, &mut locks)?;
-    Ok(())
+    install_images(
+        stages.into_iter().flatten(),
+        overwrite,
+        &registry,
+        &mut locks,
+    )?;
+    Ok(product)
 }
 
 fn install_images(

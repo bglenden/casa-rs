@@ -32,6 +32,7 @@ mod default_record;
 mod deviation;
 mod fft;
 mod findsources;
+mod fitcomponents;
 mod fits_export;
 mod fits_header;
 mod fits_import;

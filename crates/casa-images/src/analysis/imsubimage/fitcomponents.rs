@@ -4,6 +4,7 @@ mod estimate_seed;
 mod estimates;
 mod model;
 mod planes;
+mod products;
 mod record;
 mod samples;
 mod summary;
@@ -28,7 +29,7 @@ use self::samples::IntensityRange;
 use self::summary::{SummaryRow, format_summary};
 use self::uncertainty::Noise;
 use super::SubimageRegion;
-use super::decompose::{Parameters, SkyFit, evaluate_sky, fit_sky};
+use super::decompose::{SkyFit, evaluate_sky, fit_sky};
 use super::findsources::components::SkyPlane;
 use super::read_window::PixelSections;
 
@@ -70,6 +71,8 @@ pub struct FitComponentsOptions<'a> {
     pub stokes: Option<&'a str>,
     /// Optional Boolean image expression.
     pub mask: Option<&'a str>,
+    /// Output artifact paths protected against aliasing the fitted mask.
+    pub destinations: &'a [&'a Path],
     /// Broadcast a compatible singleton-axis expression mask.
     pub stretch: bool,
     /// Pixel values admitted to the fit.
@@ -107,6 +110,45 @@ pub struct ImageComponentFit {
 }
 
 impl ImageComponentFit {
+    /// Fitted component estimates from the last converged plane, in the
+    /// original input pixel grid.
+    pub fn estimates_text(&self) -> String {
+        use std::fmt::Write;
+
+        let Some(last) = self.summary.last() else {
+            return String::new();
+        };
+        let mut output = String::new();
+        let Value::Record(components) = self.record.get("results").expect("fit results") else {
+            unreachable!("fit result component list")
+        };
+        for (index, row) in self
+            .summary
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.channel == last.channel)
+        {
+            let name = format!("component{index}");
+            let Some(Value::Record(record)) = components.get(&name) else {
+                continue;
+            };
+            let Some(Value::Array(ArrayValue::Float64(pixel))) = record.get("pixelcoords") else {
+                continue;
+            };
+            let [x, y] = [pixel[ndarray::IxDyn(&[0])], pixel[ndarray::IxDyn(&[1])]];
+            let [major, minor, angle, ..] = row.convolved;
+            let _ = writeln!(
+                output,
+                "{}, {x}, {y}, {} arcsec, {} arcsec, {} deg",
+                row.peak[0],
+                major.to_degrees() * 3600.,
+                minor.to_degrees() * 3600.,
+                angle.to_degrees()
+            );
+        }
+        output
+    }
+
     /// CASA's text summary for the fitted components.
     pub fn summary_text(&self) -> String {
         let Some(first) = self.components.get(0) else {
@@ -118,7 +160,7 @@ impl ImageComponentFit {
             ""
         };
         format_summary(
-            self.summary.iter().map(|row| SummaryRow { ..*row }),
+            self.summary.iter().copied(),
             &self.direction_frame,
             stokes,
             first.flux().unit().name(),
@@ -200,11 +242,12 @@ pub fn fit_image_components<T: ComponentFitPixel>(
     let reader = PixelSections {
         image,
         selection: &selection.region,
-        mask: PreparedMask::new(
+        mask: PreparedMask::new_for_outputs(
             options.mask,
             image.shape(),
             image.coordinates(),
             options.stretch,
+            options.destinations.iter().copied(),
         )?,
     };
     let mut progress = FitProgress::default();

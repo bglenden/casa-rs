@@ -34,8 +34,9 @@ impl Estimate {
                 "Estimated axes must be finite, positive and ordered from major to minor".into(),
             ));
         }
-        let to_selected =
-            |pixel: [f64; 2]| std::array::from_fn(|i| (pixel[i] - lower[i]) / stride[i]);
+        let to_selected = |pixel: [f64; 2]| -> [f64; 2] {
+            std::array::from_fn(|i| (pixel[i] - lower[i]) / stride[i])
+        };
         let center = to_selected(self.center);
         let center_world = direction.pixel_to_world(self.center)?;
         let major_tip_world = offset_direction(center_world, 0.5 * major, angle);

@@ -15,36 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#box = None, region = None, chans = None, stokes = None, mask = None, includepix = None, excludepix = None, residual = None, model = None, estimates = None, logfile = None, append = None, newestimates = None, complist = None, overwrite = None, dooff = None, offset = None, fixoffset = None, stretch = None, rms = None, noisefwhm = None, summary = None), text_signature = "($self, box='', region=[], chans=[], stokes='', mask='', includepix=[-1.0], excludepix=[-1.0], residual='', model='', estimates='', logfile='', append=True, newestimates='', complist='', overwrite=False, dooff=False, offset=0.0, fixoffset=False, stretch=False, rms='', noisefwhm='', summary='')")]
-    fn fitcomponents(
-        &self,
-        r#box: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        chans: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        includepix: Option<&Bound<'_, PyAny>>,
-        excludepix: Option<&Bound<'_, PyAny>>,
-        residual: Option<&Bound<'_, PyAny>>,
-        model: Option<&Bound<'_, PyAny>>,
-        estimates: Option<&Bound<'_, PyAny>>,
-        logfile: Option<&Bound<'_, PyAny>>,
-        append: Option<&Bound<'_, PyAny>>,
-        newestimates: Option<&Bound<'_, PyAny>>,
-        complist: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        dooff: Option<&Bound<'_, PyAny>>,
-        offset: Option<&Bound<'_, PyAny>>,
-        fixoffset: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        rms: Option<&Bound<'_, PyAny>>,
-        noisefwhm: Option<&Bound<'_, PyAny>>,
-        summary: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fitcomponents")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#box = None, region = None, chans = None, stokes = None, axis = None, mask = None, ngauss = None, poly = None, estimates = None, minpts = None, multifit = None, model = None, residual = None, amp = None, amperr = None, center = None, centererr = None, fwhm = None, fwhmerr = None, integral = None, integralerr = None, stretch = None, logresults = None, pampest = None, pcenterest = None, pfwhmest = None, pfix = None, gmncomps = None, gmampcon = None, gmcentercon = None, gmfwhmcon = None, gmampest = None, gmcenterest = None, gmfwhmest = None, gmfix = None, spxtype = None, spxest = None, spxfix = None, div = None, spxsol = None, spxerr = None, logfile = None, append = None, pfunc = None, goodamprange = None, goodcenterrange = None, goodfwhmrange = None, sigma = None, outsigma = None, planes = None), text_signature = "($self, box='', region='', chans='', stokes='', axis=-1, mask='', ngauss=1, poly=-1, estimates='', minpts=1, multifit=False, model='', residual='', amp='', amperr='', center='', centererr='', fwhm='', fwhmerr='', integral='', integralerr='', stretch=False, logresults=True, pampest=[], pcenterest=[], pfwhmest=[], pfix='', gmncomps=0, gmampcon=[], gmcentercon=[], gmfwhmcon=[], gmampest=[0.0], gmcenterest=[0.0], gmfwhmest=[0.0], gmfix='', spxtype='', spxest=[], spxfix=[], div=[], spxsol='', spxerr='', logfile='', append=True, pfunc='', goodamprange=[0.0], goodcenterrange=[0.0], goodfwhmrange=[0.0], sigma='', outsigma='', planes=[])")]
     fn fitprofile(
         &self,
