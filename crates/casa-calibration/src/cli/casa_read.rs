@@ -198,6 +198,12 @@ pub(super) fn leakage_request(
         "Df+QU" => LeakageSolveKind::DfQu,
         "D+X" => LeakageSolveKind::DX,
         "Df+X" => LeakageSolveKind::DfX,
+        "Dgen" => LeakageSolveKind::DGen,
+        "Dfgen" => LeakageSolveKind::DfGen,
+        "Dgen+QU" => LeakageSolveKind::DGenQu,
+        "Dfgen+QU" => LeakageSolveKind::DfGenQu,
+        "Dgen+X" => LeakageSolveKind::DGenX,
+        "Dfgen+X" => LeakageSolveKind::DfGenX,
         "Dlls" => LeakageSolveKind::Dlls,
         "Dflls" => LeakageSolveKind::Dflls,
         _ => {

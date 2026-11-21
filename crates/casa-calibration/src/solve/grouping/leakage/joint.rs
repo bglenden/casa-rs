@@ -56,8 +56,8 @@ impl SourceFit {
         let [_, rl, lr, _] = sample.model;
         for ((model, observed), weight) in [rl, lr.conj()]
             .into_iter()
-            .zip([sample.cross_hands[0], sample.cross_hands[1].conj()])
-            .zip(sample.weights)
+            .zip([sample.data[1], sample.data[2].conj()])
+            .zip([sample.weights[1], sample.weights[2]])
         {
             if weight > 0.0 && model != Complex32::ZERO && observed != Complex32::ZERO {
                 let weight = f64::from(weight);

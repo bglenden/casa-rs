@@ -6,7 +6,7 @@ use num_complex::Complex32;
 use super::channel_samples::ChannelSamples;
 use super::fit::LeakageFit;
 use super::joint::{SourceFit, SourceFitMode};
-use super::standard::{StandardSample, solve_channel};
+use super::standard::{LeakageAlgebra, StandardSample, solve_channel};
 use super::{
     CoherencyMean, GainSolveError, LeakageEstimate, LeakageSolution, LeakageSolveKind,
     LeakageSolveRequest,
@@ -15,6 +15,7 @@ use super::{
 pub(super) enum IntervalFits {
     LeastSquares(Vec<LeakageFit>),
     Iterative {
+        algebra: LeakageAlgebra,
         samples: ChannelSamples,
         source: Option<(SourceFitMode, SourceFit)>,
     },
@@ -27,6 +28,7 @@ impl IntervalFits {
     pub(super) fn new(channels: usize, antennas: usize, kind: LeakageSolveKind) -> Self {
         if kind.iterative() {
             Self::Iterative {
+                algebra: kind.algebra(),
                 samples: ChannelSamples::new(channels),
                 source: kind.source().map(|mode| (mode, SourceFit::default())),
             }
@@ -52,12 +54,21 @@ impl IntervalFits {
                     Self::LeastSquares(fits) => {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
-                    Self::Iterative { samples, source } => {
+                    Self::Iterative {
+                        algebra,
+                        samples,
+                        source,
+                    } => {
+                        let mut weights = weights;
+                        if matches!(algebra, LeakageAlgebra::Linearized) {
+                            weights[0] = 0.0;
+                            weights[3] = 0.0;
+                        }
                         let sample = StandardSample {
                             pair,
-                            cross_hands: [data[1], data[2]],
+                            data,
                             model,
-                            weights: [weights[1], weights[2]],
+                            weights,
                         };
                         if let Some((_, fit)) = source {
                             fit.observe(&sample);
@@ -82,7 +93,11 @@ impl IntervalFits {
     ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
             Self::LeastSquares(fits) => Ok(least_squares(fits, antennas, references, previous)),
-            Self::Iterative { samples, source } => {
+            Self::Iterative {
+                algebra,
+                samples,
+                source,
+            } => {
                 if samples.is_empty() || source.as_ref().is_some_and(|(_, fit)| !fit.has_model()) {
                     return Ok(None);
                 }
@@ -95,7 +110,8 @@ impl IntervalFits {
                         Ok::<_, GainSolveError>(multiplier)
                     })
                     .transpose()?;
-                Ok(iterative(samples, antennas, request, multiplier)?.map(|values| (-1, values)))
+                Ok(iterative(samples, antennas, request, multiplier, algebra)?
+                    .map(|values| (-1, values)))
             }
         }
     }
@@ -141,6 +157,7 @@ fn iterative(
     antennas: usize,
     request: &LeakageSolveRequest,
     multiplier: Option<Complex32>,
+    algebra: LeakageAlgebra,
 ) -> Result<Option<Vec<ChannelEstimates>>, GainSolveError> {
     let mut gains = vec![[Complex32::ZERO; 2]; antennas];
     let mut diagnostics = vec![LeakageEstimate::default(); antennas];
@@ -162,6 +179,7 @@ fn iterative(
                 &mut gains,
                 request.min_baselines,
                 request.min_snr,
+                algebra,
             ) {
                 Ok(result) => {
                     diagnostics.copy_from_slice(&result);

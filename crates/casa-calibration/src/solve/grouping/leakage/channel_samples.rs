@@ -9,7 +9,7 @@ use num_complex::Complex32;
 use super::standard::StandardSample;
 
 const SAMPLE_BUFFER_BYTES: usize = 32 * 1024 * 1024;
-const ENCODED_BYTES: usize = 64;
+const ENCODED_BYTES: usize = 88;
 
 pub(super) struct ChannelSamples {
     pending: Vec<Vec<StandardSample>>,
@@ -113,7 +113,7 @@ fn encode(sample: &StandardSample) -> [u8; ENCODED_BYTES] {
         .into_iter()
         .chain(
             sample
-                .cross_hands
+                .data
                 .into_iter()
                 .chain(sample.model)
                 .flat_map(|value| [value.re.to_bits(), value.im.to_bits()]),
@@ -136,9 +136,9 @@ fn decode(bytes: [u8; ENCODED_BYTES]) -> StandardSample {
     };
     StandardSample {
         pair: [words[0] as usize, words[1] as usize],
-        cross_hands: [complex(2), complex(4)],
-        model: [complex(6), complex(8), complex(10), complex(12)],
-        weights: [f32::from_bits(words[14]), f32::from_bits(words[15])],
+        data: std::array::from_fn(|corr| complex(2 + 2 * corr)),
+        model: std::array::from_fn(|corr| complex(10 + 2 * corr)),
+        weights: std::array::from_fn(|corr| f32::from_bits(words[18 + corr])),
     }
 }
 
@@ -149,14 +149,19 @@ mod tests {
     fn sample(index: usize) -> StandardSample {
         StandardSample {
             pair: [index, 0x10203],
-            cross_hands: [Complex32::new(1.5, -0.75), Complex32::new(2.0, -3.0)],
+            data: [
+                Complex32::new(1.5, -0.75),
+                Complex32::new(2.0, -3.0),
+                Complex32::new(-0.125, -1.25),
+                Complex32::new(2.75, 3.25),
+            ],
             model: [
                 Complex32::new(4.0, -5.0),
                 Complex32::new(-6.0, 7.0),
                 Complex32::new(8.0, 9.0),
                 Complex32::new(-10.0, -11.0),
             ],
-            weights: [12.0, 13.0],
+            weights: [12.0, 13.0, 14.0, 15.0],
         }
     }
 
