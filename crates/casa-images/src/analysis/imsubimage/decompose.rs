@@ -3,6 +3,7 @@
 mod contours;
 mod gaussian;
 mod points;
+mod runs;
 
 use casa_coordinates::CoordinateSystem;
 use casa_types::{ArrayD, RecordValue};
@@ -112,13 +113,30 @@ pub fn decompose_image(
         )?,
     };
     let threshold = options.threshold as f32;
+    let connection = options.neighbor_axes.clamp(1, 3) as usize;
+    if options.simple && !options.fit {
+        let bounds = runs::locate(&reader, &plan, threshold, connection)?;
+        let rows = bounds.len();
+        let mut blc = Vec::with_capacity(rows * rank);
+        let mut trc = Vec::with_capacity(rows * rank);
+        for region in bounds {
+            blc.extend(region.lower.into_iter().map(|i| i as i64));
+            trc.extend(region.upper.into_iter().map(|i| i as i64));
+        }
+        return Ok(ImageDecomposition {
+            components: matrix(Vec::new(), 0, 0),
+            blc: matrix(blc, rows, rank),
+            trc: matrix(trc, rows, rank),
+        });
+    }
+
     let pixels = points::Pixels::read(&reader, &plan, threshold)?;
     let maximum = pixels
         .samples
         .iter()
         .map(|sample| sample.value)
         .fold(threshold, f32::max);
-    let offsets = points::neighborhood(rank, options.neighbor_axes.clamp(1, 3) as usize);
+    let offsets = points::neighborhood(rank, connection);
     let mut visited = vec![false; pixels.samples.len()];
     let islands = points::connected(
         &pixels,

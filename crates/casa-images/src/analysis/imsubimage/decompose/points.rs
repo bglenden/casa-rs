@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_types::ArrayD;
 use ndarray::Dimension;
 
 use crate::ImageError;
@@ -27,53 +28,21 @@ impl Pixels {
         threshold: f32,
     ) -> Result<Self, ImageError> {
         let shape = plan.shape.clone();
-        let mut strides = vec![1usize; shape.len()];
-        for axis in (0..shape.len().saturating_sub(1)).rev() {
-            strides[axis] = strides[axis + 1]
-                .checked_mul(shape[axis + 1])
-                .ok_or_else(|| {
-                    ImageError::InvalidMetadata(
-                        "Decomposition pixel index exceeds the supported range".into(),
-                    )
-                })?;
-        }
-        shape
-            .iter()
-            .try_fold(1usize, |n, &d| n.checked_mul(d))
-            .filter(|&n| n <= isize::MAX as usize)
-            .ok_or_else(|| {
-                ImageError::InvalidMetadata(
-                    "Decomposition pixel index exceeds the supported range".into(),
-                )
-            })?;
-        let packed_shape = plan.selection.packed_shape();
-        let unit = vec![1; packed_shape.len()];
-        let selected = StridedSection {
-            start: &plan.selection.start,
-            shape: &packed_shape,
-            stride: plan.selection.stride.as_deref().unwrap_or(&unit),
-        };
+        let strides = pixel_strides(&shape)?;
         let mut samples = Vec::new();
-        let cursor = bounded_read_cursor(selected.dense_shape(&packed_shape))?;
-        for tile in selected.cursors(cursor) {
-            let tile = tile?;
-            let (data, valid) = reader.read(
-                &selected.source_start(&tile.position),
-                &tile.shape,
-                selected.stride,
-            )?;
+        visit_selection(reader, plan, |position, data, valid| {
             for (index, &value) in data.indexed_iter() {
                 if value >= threshold && valid.as_ref().is_none_or(|valid| valid[&index]) {
                     let index = plan
                         .kept_axes
                         .iter()
                         .zip(&strides)
-                        .map(|(&axis, step)| (tile.position[axis] + index.slice()[axis]) * step)
+                        .map(|(&axis, step)| (position[axis] + index.slice()[axis]) * step)
                         .sum();
                     samples.push(Sample { index, value });
                 }
             }
-        }
+        })?;
         // CASA discovers the first pixel in each island with the final
         // axis varying fastest, regardless of the native tile layout.
         samples.sort_unstable_by_key(|sample| sample.index);
@@ -162,6 +131,51 @@ impl Pixels {
         self.index_of(at)
             .map_or(0., |point| self.samples[point].value)
     }
+}
+
+pub(super) fn pixel_strides(shape: &[usize]) -> Result<Vec<usize>, ImageError> {
+    let Some(total) = shape
+        .iter()
+        .try_fold(1usize, |n, &d| n.checked_mul(d))
+        .filter(|&n| n <= isize::MAX as usize)
+    else {
+        return Err(ImageError::InvalidMetadata(
+            "Decomposition pixel index exceeds the supported range".into(),
+        ));
+    };
+    let mut suffix = total;
+    Ok(shape
+        .iter()
+        .map(|&length| {
+            suffix /= length;
+            suffix
+        })
+        .collect())
+}
+
+pub(super) fn visit_selection(
+    reader: &PixelSections<'_, f32>,
+    plan: &SubimagePlan,
+    mut visit: impl FnMut(&[usize], ArrayD<f32>, Option<ArrayD<bool>>),
+) -> Result<(), ImageError> {
+    let packed_shape = plan.selection.packed_shape();
+    let unit = vec![1; packed_shape.len()];
+    let selected = StridedSection {
+        start: &plan.selection.start,
+        shape: &packed_shape,
+        stride: plan.selection.stride.as_deref().unwrap_or(&unit),
+    };
+    let cursor = bounded_read_cursor(selected.dense_shape(&packed_shape))?;
+    for tile in selected.cursors(cursor) {
+        let tile = tile?;
+        let (data, valid) = reader.read(
+            &selected.source_start(&tile.position),
+            &tile.shape,
+            selected.stride,
+        )?;
+        visit(&tile.position, data, valid);
+    }
+    Ok(())
 }
 
 pub(super) fn neighborhood(rank: usize, naxis: usize) -> Vec<[isize; 3]> {

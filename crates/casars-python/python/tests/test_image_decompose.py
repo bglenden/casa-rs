@@ -149,3 +149,51 @@ def test_decompose_no_detections_does_not_fit_the_background():
             assert all(a.shape == (0, 0) for a in result.values())
     finally:
         source.done()
+
+
+def test_decompose_contour_range_controls_blended_sources(casa):
+    x, y = np.indices((25, 25), dtype=float)
+    values = (7 * np.exp(-((x - 9.3)**2 / 7 + (y - 11.7)**2 / 4))
+              + 4 * np.exp(-((x - 15.4)**2 / 6 + (y - 12.1)**2 / 4))).astype(np.float32)
+    expected = [
+        [7., -2.7, -.3, 2 * np.sqrt(7 * np.log(2)) - 12., np.sqrt(4/7)],
+        [4., 3.4, .1, 2 * np.sqrt(6 * np.log(2)) - 12., np.sqrt(4/6)],
+    ]
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, linear=True)
+        try:
+            original = source.decompose(threshold=.8, fit=False, minrange=1)
+            np.testing.assert_array_equal(original["blc"], [[6, 9], [13, 10]])
+            np.testing.assert_array_equal(original["trc"], [[14, 15], [19, 15]])
+            np.testing.assert_allclose(original["components"][:, 1:3],
+                                       [[-2.5908165, -.3041191], [3.3486948, .1218748]], atol=3e-5)
+            merged = source.decompose(threshold=.8, fit=False, minrange=4)
+            np.testing.assert_array_equal(merged["blc"], [[6, 9]])
+            np.testing.assert_array_equal(merged["trc"], [[19, 15]])
+            assert merged["components"].shape == (1, 6)
+            fitted = source.decompose(threshold=.8, fit=True, maxrms=1e-4, maxretry=0)
+            np.testing.assert_allclose(fitted["components"][:, :5], expected, rtol=4e-4, atol=4e-4)
+        finally:
+            source.done()
+
+
+def test_decompose_bounds_merge_runs_across_tiles_and_cube_faces():
+    values = np.zeros((550003, 3, 3), np.float32)
+    values[49149:49155, 0, 0] = 10.
+    values[49155:49158, 1, 0] = 7.  # Connects only across an edge.
+    values[49158:49162, 2, 1] = 3.  # Connects only across a corner.
+    values[500000:500002, 1, 1] = 4.
+    # Use an analytic law here so very large synthetic CASA images do not
+    # make the pinned regression suite duplicate a separate resource probe.
+    source = tools.image()
+    assert source.fromarray(pixels=values, linear=True)
+    try:
+        edges = source.decompose(simple=True, threshold=1., fit=False, naxis=2)
+        np.testing.assert_array_equal(edges["blc"], [[49149, 0, 0], [49158, 2, 1], [500000, 1, 1]])
+        np.testing.assert_array_equal(edges["trc"], [[49158, 2, 1], [49162, 3, 2], [500002, 2, 2]])
+        corners = source.decompose(simple=True, threshold=1., fit=False, naxis=3)
+        np.testing.assert_array_equal(corners["blc"], [[49149, 0, 0], [500000, 1, 1]])
+        np.testing.assert_array_equal(corners["trc"], [[49162, 3, 2], [500002, 2, 2]])
+    finally:
+        source.done()

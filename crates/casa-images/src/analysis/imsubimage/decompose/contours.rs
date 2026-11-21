@@ -158,7 +158,8 @@ pub(super) fn deblend(
     }
     order
         .into_iter()
-        .filter_map(|seed| (!by_seed[seed].is_empty()).then(|| std::mem::take(&mut by_seed[seed])))
+        .map(|seed| std::mem::take(&mut by_seed[seed]))
+        .filter(|region| !region.is_empty())
         .collect()
 }
 

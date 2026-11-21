@@ -256,8 +256,9 @@ fn optimize(
         if attempt > 0 {
             let component = (attempt - 1) % model.len();
             let factor = [0.8, 1.25, 0.55, 1.55][((attempt - 1) / model.len()) % 4];
-            for axis in rank + 1..(rank + 1 + if rank == 2 { 1 } else { rank }) {
-                model[component][axis] *= factor;
+            let width_count = if rank == 2 { 1 } else { rank };
+            for width in &mut model[component][rank + 1..rank + 1 + width_count] {
+                *width *= factor;
             }
         }
         let mut score = error(&model);
