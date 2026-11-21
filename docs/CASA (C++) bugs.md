@@ -9117,3 +9117,21 @@ inside the lattice collapse. It checks each axis in isolation and
 passes a duplicated axis to the tile iterator. Casa-rs raises a Python
 error for duplicate axes and keeps the image attached and its pixels
 intact.
+
+### `image.maxfit` can select the wrong channel or crash on an all-masked image
+
+On a direction cube with peaks of +6 in one channel and +2 and −12 in
+another, CASA 6.7.6.14 returns the weaker positive source with
+`negfind=False` and the +6 source with `negfind=True`. The
+plane-selection branch applies the opposite sign policy to the one
+documented, and the subsequent source search can miss a negative peak.
+Casa-rs ranks positive peaks by value by default and ranks both signs
+by magnitude with `negfind=True`, retaining the fitted peak's sign.
+It ranks fit-eligible peaks by their sampled pixel values. A broad
+source with a larger fitted height cannot replace a sharper source
+whose sampled peak is stronger. The fit can resolve an extremum
+between two equally bright adjacent pixels.
+
+On an entirely masked Float direction image, default `image.maxfit`
+can dereference an absent maximum and terminate the CASA Python
+process. Casa-rs raises a Python error and preserves the image.
