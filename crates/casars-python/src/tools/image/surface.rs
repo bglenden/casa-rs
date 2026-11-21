@@ -762,7 +762,7 @@ const METHODS: &[Method] = &[
         "newimage",
         &[param("infile", K::Any, Required)],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "newimagefromarray",
@@ -782,7 +782,7 @@ const METHODS: &[Method] = &[
         "newimagefromfile",
         &[param("infile", K::Any, Required)],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "newimagefromfits",
@@ -831,7 +831,7 @@ const METHODS: &[Method] = &[
             param("cache", K::Bool, Bool(true)),
         ],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "pad",

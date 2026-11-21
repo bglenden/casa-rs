@@ -46,7 +46,9 @@ IMPLEMENTED["calibrater"] = {
 }
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve"},
-    "image": {"fromimage", "imageconcat", "newimagefromimage"},
+    "image": {
+        "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
+    },
 }
 
 IMPLEMENTED["coordsys"] = {
@@ -82,8 +84,8 @@ IMPLEMENTED["image"] = {
     "adddegaxes",
     "statistics",
     "beamarea", "beamforconvolvedsize", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "deconvolvefrombeam", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
-    "getchunk", "getregion", "haslock", "history", "imagecalc", "isconform", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
-    "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
+    "getchunk", "getregion", "haslock", "history", "imagecalc", "isconform", "isopen", "ispersistent", "lock", "name", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
+    "newimagefromarray", "newimagefromfits", "newimagefromshape",
     "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",
     "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "rotatebeam", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
     "summary", "set", "tofits", "putregion",
