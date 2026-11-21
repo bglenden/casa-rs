@@ -65,6 +65,7 @@ pub(super) fn apply(
             None,
             correlations,
             request.casa_row_selection,
+            None,
         )?;
         let grown = grow(&loaded.samples, request);
         let (touched, changed_samples) =

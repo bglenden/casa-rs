@@ -24229,10 +24229,8 @@
             "python": {"name": "channelavg", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Channel Average", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
-          ]}}
+          "unimplemented": {"issue": 978, "applies_when":
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
         },
         {
           "name": "chanbin",
@@ -24248,10 +24246,8 @@
             "presentation": {"label": "Channel Bin", "group": "Clip", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata accepts per-window channel counts and maps averaged flags back to the input channels. Mstransform uses the bin width to create new visibility channels."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
-          ]}}
+          "unimplemented": {"issue": 978, "applies_when":
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
         },
         {
           "name": "timeavg",

@@ -68,8 +68,11 @@ impl<'a> ChannelBins<'a> {
     }
 
     pub(super) fn original_channels(&self, bin: usize) -> &[usize] {
-        let start = bin * self.width;
-        &self.channels[start..(start + self.width).min(self.channels.len())]
+        bin_members(self.channels, self.width, bin)
+    }
+
+    pub(super) fn width(&self) -> usize {
+        self.width
     }
 
     pub(super) fn average(
@@ -146,6 +149,11 @@ impl<'a> ChannelBins<'a> {
         })
         .into_dyn()
     }
+}
+
+pub(super) fn bin_members(channels: &[usize], width: usize, bin: usize) -> &[usize] {
+    let start = bin * width;
+    &channels[start..(start + width).min(channels.len())]
 }
 
 #[derive(Clone, Copy)]

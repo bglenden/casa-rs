@@ -63,7 +63,7 @@ mod summary;
 
 pub use antint::AntennaIntegrationOptions;
 use clip::{ClipOptions, apply_clip_array};
-use clip_average::{ChannelBins, check_channel_bins};
+use clip_average::{ChannelBins, bin_members, check_channel_bins};
 use clip_columns::ClipColumns;
 use clip_time::{TimeClip, time_bin_seconds};
 pub use command::append_flag_command;
@@ -239,8 +239,9 @@ pub struct FlagDataRequest {
     pub clipminmax: Option<[f64; 2]>,
     /// Flag outside or inside the range. An accepted vector disables the clip agent.
     pub clipoutside: Option<bool>,
-    /// Average selected channels before clipping. A singleton width is used
-    /// for all spectral windows. Zero passes through and one takes the whole window.
+    /// Average selected channels before clipping or public MS TFCrop. A singleton
+    /// width is used for all spectral windows. Zero passes through and one takes
+    /// the whole window.
     pub clip_channel_bins: Option<Vec<u32>>,
     /// Duration string used to average integrations on each baseline before clipping.
     pub clip_time_bin: Option<String>,
@@ -1392,8 +1393,20 @@ fn apply_tfcrop_flags(
     let options = request.tfcrop.filter(|options| {
         (1..=9).contains(&options.max_pieces) && (1..=3).contains(&options.half_window)
     });
+    let widths = request
+        .clip_channel_bins
+        .as_deref()
+        .filter(|_| request.casa_row_selection && !calibration);
+    let average = widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
     let mut columns = if request.casa_row_selection && !calibration {
-        tfcrop_columns(ms, column, selected_rows, model_factory, options.is_some())?
+        tfcrop_columns(
+            ms,
+            column,
+            selected_rows,
+            model_factory,
+            options.is_some(),
+            average,
+        )?
     } else {
         None
     };
@@ -1405,6 +1418,10 @@ fn apply_tfcrop_flags(
     let correlations = (request.casa_row_selection && !calibration)
         .then(|| TfcropCorrelations::read(ms, request.correlation.as_deref(), column))
         .transpose()?;
+    let widths = widths.filter(|_| options.is_some());
+    if let Some(widths) = widths {
+        check_channel_bins(ms, widths, &display_ms_path(ms))?;
+    }
     let loaded = load_samples(
         ms,
         selected_rows,
@@ -1418,6 +1435,7 @@ fn apply_tfcrop_flags(
         }),
         None,
         false,
+        widths,
     )?;
     let mut samples = loaded.samples;
     let calibration_projection = calibration
@@ -1509,6 +1527,7 @@ fn apply_tfcrop_flags(
             &groups,
             &samples,
             &loaded.flags_by_row,
+            &loaded.averaged_channels,
             request.casa_row_selection && channel_selections.is_some(),
             correlations.as_ref(),
             &mut modified,
@@ -1535,15 +1554,15 @@ fn apply_tfcrop_flags(
             },
         })
     });
-    let mut changes = apply_flag_mask_with_preloaded(
+    let changes = apply_tfcrop_mask(
         &samples,
         &modified,
         loaded.flags_by_row,
+        &loaded.averaged_channels,
         ms,
         !request.casa_row_selection,
     )?;
     let applied_ms = started.elapsed().as_millis();
-    changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
     trace_flagdata(|| {
         json!({
             "mode": "tfcrop",
@@ -1561,6 +1580,7 @@ fn extend_tfcrop_groups(
     groups: &[(Option<i32>, Vec<Sample>)],
     samples: &[Sample],
     flags: &BTreeMap<usize, ArrayD<bool>>,
+    averaged_channels: &BTreeMap<usize, AveragedChannels>,
     selected_channels: bool,
     correlations: Option<&TfcropCorrelations>,
     modified: &mut [bool],
@@ -1571,7 +1591,23 @@ fn extend_tfcrop_groups(
     let mask = restricted_mask.as_deref_mut().unwrap_or(modified);
     if selected_channels {
         for (_, group) in groups {
-            extend_tfcrop_selected_channels(group, flags, mask);
+            if !averaged_channels.contains_key(&group[0].row) {
+                extend_tfcrop_selected_channels(group, flags, mask);
+            }
+        }
+        let averaged = groups
+            .iter()
+            .filter(|(_, group)| averaged_channels.contains_key(&group[0].row));
+        let averaged_samples = averaged
+            .clone()
+            .flat_map(|(_, group)| group.iter().copied())
+            .collect::<Vec<_>>();
+        if !averaged_samples.is_empty() {
+            extend_autoflag_grouped(
+                averaged.map(|(_, group)| group.as_slice()),
+                &averaged_samples,
+                mask,
+            );
         }
     } else {
         extend_autoflag_grouped(
@@ -1673,6 +1709,7 @@ fn tfcrop_columns(
     selected_rows: &[usize],
     model_factory: Option<FlagDataModelFactory>,
     active: bool,
+    average: bool,
 ) -> Result<Option<ClipColumns>, FlaggingError> {
     let table = ms.main_table();
     let exists = |name| {
@@ -1706,7 +1743,7 @@ fn tfcrop_columns(
     let path = display_ms_path(ms);
     let models =
         clip_models::ClipModels::for_selection(ms, column, selected_rows, model_factory, &path)?;
-    match ClipColumns::bind(table, column, false, models) {
+    match ClipColumns::bind(table, column, average, models) {
         Err(FlaggingError::MissingClipColumn) => Err(FlaggingError::MissingTfcropColumn),
         result => result,
     }
@@ -1804,6 +1841,7 @@ fn apply_rflag_flags(
         Some(SampleData::Stored(request.data_column)),
         None,
         false,
+        None,
     )?;
     let samples = loaded.samples;
     let projection = is_calibration_table(ms)
@@ -2055,6 +2093,7 @@ fn set_selected_flags(
         None,
         correlations,
         false,
+        None,
     )?;
     let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
@@ -2133,26 +2172,87 @@ fn apply_flag_mask_with_preloaded(
     Ok(changed)
 }
 
+fn apply_tfcrop_mask(
+    samples: &[Sample],
+    mask: &[bool],
+    mut flags: BTreeMap<usize, ArrayD<bool>>,
+    averaged_channels: &BTreeMap<usize, AveragedChannels>,
+    ms: &mut MeasurementSet,
+    update_flag_rows: bool,
+) -> Result<ChangeSet, FlaggingError> {
+    if averaged_channels.is_empty() {
+        let mut changes =
+            apply_flag_mask_with_preloaded(samples, mask, flags, ms, update_flag_rows)?;
+        changes.summary = Some(summary_after_flag_only(samples, changes.changed_samples));
+        return Ok(changes);
+    }
+
+    // A flag on a bin is written back to each of its selected physical
+    // channels. Preview and apply both count flags on that original axis.
+    let channels = |sample: &Sample| {
+        averaged_channels
+            .get(&sample.row)
+            .map_or_else(
+                || std::slice::from_ref(&sample.chan),
+                |average| bin_members(&average.channels, average.width, sample.chan),
+            )
+            .iter()
+            .copied()
+            .map(|chan| (sample.row, sample.corr, chan))
+    };
+    let mut summary = FlagSummary {
+        flagged_samples: 0,
+        total_samples: 0,
+    };
+    for (row, corr, chan) in samples.iter().flat_map(channels) {
+        summary.flagged_samples += usize::from(flags[&row][[corr, chan]]);
+        summary.total_samples += 1;
+    }
+    let coordinates = samples
+        .iter()
+        .zip(mask)
+        .filter(|(_, flag)| **flag)
+        .flat_map(|(sample, _)| channels(sample));
+    let (touched, changed_samples) = stage_flag_coordinates(coordinates, &mut flags);
+    summary.flagged_samples += changed_samples;
+    let mut changed = ChangeSet {
+        changed_samples,
+        summary: Some(summary),
+        ..ChangeSet::default()
+    };
+    write_touched_flag_updates(ms, flags, touched, |_| update_flag_rows, &mut changed)?;
+    Ok(changed)
+}
+
 fn stage_flag_mask(
     samples: &[Sample],
     mask: &[bool],
     updates: &mut BTreeMap<usize, ArrayD<bool>>,
 ) -> (std::collections::BTreeSet<usize>, usize) {
+    let coordinates = samples
+        .iter()
+        .zip(mask)
+        .filter(|(_, flag)| **flag)
+        .map(|(sample, _)| (sample.row, sample.corr, sample.chan));
+    stage_flag_coordinates(coordinates, updates)
+}
+
+fn stage_flag_coordinates(
+    coordinates: impl Iterator<Item = (usize, usize, usize)>,
+    updates: &mut BTreeMap<usize, ArrayD<bool>>,
+) -> (std::collections::BTreeSet<usize>, usize) {
     let mut changed_samples = 0;
     let mut touched_rows = std::collections::BTreeSet::<usize>::new();
-    for (sample, flag) in samples.iter().zip(mask.iter()) {
-        if !*flag {
-            continue;
-        }
-        let Some(flags) = updates.get_mut(&sample.row) else {
+    for (row, corr, chan) in coordinates {
+        let Some(flags) = updates.get_mut(&row) else {
             continue;
         };
-        if let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan]))
+        if let Some(value) = flags.get_mut(IxDyn(&[corr, chan]))
             && !*value
         {
             *value = true;
             changed_samples += 1;
-            touched_rows.insert(sample.row);
+            touched_rows.insert(row);
         }
     }
     (touched_rows, changed_samples)
@@ -2340,6 +2440,7 @@ fn load_samples(
     data: Option<SampleData<'_>>,
     flag_correlations: Option<&CorrelationSelection>,
     retain_channel_overlaps: bool,
+    widths: Option<&[u32]>,
 ) -> Result<LoadedSamples, FlaggingError> {
     let path = display_ms_path(ms);
     let calibration = is_calibration_table(ms);
@@ -2416,6 +2517,7 @@ fn load_samples(
     let mut samples = Vec::new();
     let mut flags_by_row = BTreeMap::new();
     let mut model_roundoff = Vec::new();
+    let mut averaged_channels = BTreeMap::new();
     for (row_slot, (&row, flags)) in selected_rows.iter().zip(flag_cells).enumerate() {
         let ddid = ddids[row_slot];
         let spw = if calibration {
@@ -2429,26 +2531,52 @@ fn load_samples(
                     reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
                 })?
         };
+        let nchan = flags.shape()[1];
+        let (channels, width) = if widths.is_some() {
+            clip_channel_selection(
+                Some(ddid),
+                &ddid_to_spw,
+                channel_selections,
+                widths,
+                nchan,
+                &path,
+            )?
+        } else {
+            let channels = channel_selections
+                .and_then(|selectors| selectors.get(&spw))
+                .map(|selection| {
+                    if retain_channel_overlaps {
+                        selection.indices_with_overlaps(nchan)
+                    } else {
+                        selection.indices(nchan)
+                    }
+                    .map_err(|source| FlaggingError::MutateFlags {
+                        path: path.clone(),
+                        reason: format!("resolve SPW {spw} channels: {source}"),
+                    })
+                })
+                .transpose()?;
+            (channels, 0)
+        };
+        let channels = channels.unwrap_or_else(|| (0..nchan).collect());
+        let bins = ChannelBins::new(width, &channels, &flags);
         let data = if let Some((column, cells)) = &stored {
             let value = checked_row_data(cells.get(row_slot), &flags, row, column, &path)?;
             Some((*column, Cow::Borrowed(value)))
         } else if let Some((column, cells)) = &visibility {
-            Some((*column, cells.row(row_slot, &flags, None, row, &path)?))
+            Some((
+                *column,
+                cells.row(row_slot, &flags, bins.as_ref(), row, &path)?,
+            ))
         } else {
             None
         };
-        let nchan = flags.shape()[1];
-        let channels = match channel_selections.and_then(|selectors| selectors.get(&spw)) {
-            Some(selection) => if retain_channel_overlaps {
-                selection.indices_with_overlaps(nchan)
-            } else {
-                selection.indices(nchan)
-            }
-            .map_err(|source| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("resolve SPW {spw} channels: {source}"),
-            })?,
-            None => (0..nchan).collect(),
+        let binned_channels;
+        let (fit_flags, fit_channels) = if let Some(bins) = &bins {
+            binned_channels = (0..bins.flags().shape()[1]).collect::<Vec<_>>();
+            (bins.flags(), binned_channels.as_slice())
+        } else {
+            (&flags, channels.as_slice())
         };
         let metadata = RowSampleMetadata {
             row,
@@ -2462,16 +2590,16 @@ fn load_samples(
         match data {
             Some((column, value)) => push_row_samples(
                 value.as_ref(),
-                &flags,
-                &channels,
+                fit_flags,
+                fit_channels,
                 metadata,
                 &path,
                 column,
                 &mut samples,
             )?,
             None => push_flag_samples(
-                &flags,
-                &channels,
+                fit_flags,
+                fit_channels,
                 flag_correlations.map(|selection| selection.planes(ddid)),
                 metadata,
                 &mut samples,
@@ -2481,11 +2609,19 @@ fn load_samples(
             && let Some(roundoff) = cells.fourier_residual_roundoff(row_slot, &flags, row, &path)?
         {
             model_roundoff.resize(first_sample, 0.0);
-            model_roundoff.extend(
-                samples[first_sample..]
-                    .iter()
-                    .map(|sample| roundoff[[sample.corr, sample.chan]]),
-            );
+            model_roundoff.extend(samples[first_sample..].iter().map(|sample| {
+                if let Some(bins) = &bins {
+                    bins.original_channels(sample.chan)
+                        .iter()
+                        .map(|&chan| roundoff[[sample.corr, chan]])
+                        .fold(0.0, f32::max)
+                } else {
+                    roundoff[[sample.corr, sample.chan]]
+                }
+            }));
+        }
+        if let Some(width) = bins.map(|bins| bins.width()) {
+            averaged_channels.insert(row, AveragedChannels { channels, width });
         }
         flags_by_row.insert(row, flags);
     }
@@ -2493,6 +2629,7 @@ fn load_samples(
         samples,
         flags_by_row,
         model_roundoff,
+        averaged_channels,
     })
 }
 
@@ -4366,6 +4503,12 @@ struct LoadedSamples {
     samples: Vec<Sample>,
     flags_by_row: BTreeMap<usize, ArrayD<bool>>,
     model_roundoff: Vec<f32>,
+    averaged_channels: BTreeMap<usize, AveragedChannels>,
+}
+
+struct AveragedChannels {
+    channels: Vec<usize>,
+    width: usize,
 }
 
 #[derive(Default)]
