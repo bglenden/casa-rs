@@ -1560,14 +1560,14 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 12, Implemented: 28, Not implemented: 1, Partial: 61, Unassessed: 0.
+Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 12, Implemented: 28, Not implemented: 1, Partial: 61, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
 | CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
 |---|---|---|---|---|---|
 | `vis` | `''` | `''`; `vis` → `vis` | Partial | Input MS or CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (table) | [paired](#plotms-evidence-paired) |
-| `caltable` | `''` | `''`; `caltable` → `caltable` | Partial | Input CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (calibration_table) | [paired](#plotms-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Partial | Input CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (calibration_table) | [paired](#plotms-evidence-paired), [legacy-calibration](#plotms-evidence-legacy-calibration) |
 | `gridrows` | `1` | `1`; `gridrows` → `gridrows` | Implemented | Number of subplot rows [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
 | `gridcols` | `1` | `1`; `gridcols` → `gridcols` | Implemented | Number of subplot columns [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
 | `rowindex` | `0` | `0`; `rowindex` → `rowindex` | Default only | Row location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
@@ -1672,31 +1672,31 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 #### plotms interacting modes and task behavior
 
 <a id="plotms-behavior-table"></a>
-##### Read current-format calibrations
+##### Read MeasurementSets and calibration tables
 
-**Partial** — Open a current casacore calibration table through vis or caltable, preserving the public None return and input-path checks.
+**Partial** — Open casacore MeasurementSets and current, BPOLY and GSPLINE calibration tables through vis or caltable, preserving the public None return and input-path checks.
 
-Legacy BPOLY and GSPLINE table loading and the remaining MS plotting paths are open.
+Remaining MeasurementSet plotting paths are open under #1032 and #215.
 
-Evidence: [paired](#plotms-evidence-paired).
+Evidence: [paired](#plotms-evidence-paired), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-selection"></a>
 ##### Select solution samples
 
-**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors.
+**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC.
 
-Further legacy formats and MS plotting paths remain open.
+Remaining MeasurementSet selection paths are open under #1032 and #215.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-coordinates"></a>
 ##### Project axes and flags
 
-**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.
+**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata.
 
 Pointing-coordinate axes and advanced per-axis MS data columns are open.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [callibrary](#plotms-evidence-callibrary).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-averaging"></a>
 ##### Average solution points
@@ -1728,18 +1728,18 @@ Evidence: [paired](#plotms-evidence-paired), [calibration-controls](#plotms-evid
 <a id="plotms-behavior-export"></a>
 ##### Save and publish selected plot products
 
-**Partial** — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.
+**Partial** — Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.
 
 More export, multi-plot state and interactive display forms remain open.
 
-Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary).
+Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
 
 **Partial** — Apply calibration libraries to MeasurementSet plots in memory. Compute transmission, sky temperature and receiver sidebands for MeasurementSets and calibration tables, including selected channels and requested overlay color groups.
 
-The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.
+Remaining shared PlotMS forms are tracked in #1032 and #215.
 
 Evidence: [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining), [callibrary](#plotms-evidence-callibrary).
 
@@ -1747,7 +1747,7 @@ Evidence: [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evi
 
 ##### disable-selection: Proposed
 
-- Record: [PlotMS disabling selection calls the selection setter with a missing argument](https://github.com/bglenden/casa-rs/blob/e775bd07a6e5b9ebfbb4b812844564b063dc78e9/docs/CASA%20%28C%2B%2B%29%20bugs.md#plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument)
+- Record: [PlotMS disabling selection calls the selection setter with a missing argument](https://github.com/bglenden/casa-rs/blob/b60d8a6a140bd6f0a29177584db5ff91244f5d12/docs/CASA%20%28C%2B%2B%29%20bugs.md#plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument)
 - Inputs: A PlotMS request with selectdata=False and supplied selection text.
 - CASA: Raises Exception with message updateImmediately must be a boolean.
 - casa-rs: Displays and exports all available solution points without applying the selector text.
@@ -1766,6 +1766,17 @@ Evidence: [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evi
 - Owner decision: Pending; not an accepted deviation.
 - Evidence: [selectors](#plotms-evidence-selectors).
 
+##### gspline-negative-antenna: Proposed
+
+- Record: [PlotMS shows the excluded antenna on a GSPLINE plot](https://github.com/bglenden/casa-rs/blob/b60d8a6a140bd6f0a29177584db5ff91244f5d12/docs/CASA%20%28C%2B%2B%29%20bugs.md#plotms-shows-the-excluded-antenna-on-a-gspline-plot)
+- Inputs: A five-antenna GSPLINE table plotted with antenna="!A2".
+- CASA: Displays only antenna A2, despite negation.
+- casa-rs: Displays A0, A1, A3 and A4.
+- Rationale: Honor the documented antenna exclusion instead of passing the excluded ID to the plot cache.
+- User impact: The displayed antenna membership follows the source-row filter.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [legacy-calibration](#plotms-evidence-legacy-calibration).
+
 #### plotms evidence
 
 Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
@@ -1783,7 +1794,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-remaining"></a>
 ##### remaining
 
-**Remaining calibration PlotMS workflow comparisons — planned.** Requires additional native behavior and paired evidence. Advanced calibration table and MS plotting under #1526, #1032 and #215.
+**Remaining calibration PlotMS workflow comparisons — planned.** Requires additional native behavior and paired evidence. Shared PlotMS rendering, MeasurementSet workflows and interactive controls under #1032 and #215.
 
 
 <a id="plotms-evidence-atmosphere"></a>
@@ -1835,6 +1846,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `f9215c62670dfc19138bd9d65a949d22065f1c59`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_callibrary_oracle.py --work <new-dir> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-callibrary-20261119.json`.
+
+<a id="plotms-evidence-legacy-calibration"></a>
+##### legacy-calibration
+
+**Same-input legacy calibration PlotMS comparison — passed.** 20 text exports, 31,696 points, exact headers and metadata, and 2,080 rendered coordinates matched. Maximum ordinate normalized RMS 3.78525e-07. Four invalid requests were refused by both engines. The negated-antenna diagnostic confirms the CASA bug and native selection behavior. The input tables and associated MeasurementSet were unchanged. CASA 6.7.6.14 and casaplotms 2.9.1 on the same persisted BPOLY and GSPLINE tables with receptor-dependent gains, surviving and flagged receptors, and source-row selection.
+
+- [tools/casa-compat/plotms_legacy_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/b60d8a6a140bd6f0a29177584db5ff91244f5d12/tools/casa-compat/plotms_legacy_calibration_oracle.py)
+- Revision: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_legacy_calibration_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-legacy-calibration-20261121.json`.
 
 ### plotweather
 

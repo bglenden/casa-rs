@@ -25,7 +25,7 @@ pub(super) struct Panel {
 }
 
 #[derive(Clone, Copy)]
-enum IterationAxis {
+pub(super) enum IterationAxis {
     Scan,
     Field,
     Spw,
@@ -44,6 +44,13 @@ enum Key {
 }
 
 impl IterationAxis {
+    pub(super) fn from_task(task: &TaskInvocation<'_>) -> Result<Option<Self>, TaskFailure> {
+        task.text("iteraxis")?
+            .filter(|value| !value.is_empty())
+            .map(|axis| Self::parse(&axis))
+            .transpose()
+    }
+
     fn parse(name: &str) -> Result<Self, TaskFailure> {
         Ok(match name.to_ascii_lowercase().as_str() {
             "scan" => Self::Scan,
@@ -145,12 +152,8 @@ impl PlotPanels {
         task: &TaskInvocation<'_>,
         table: &CalibrationTable,
         series: Vec<PlotSeries>,
+        axis: Option<IterationAxis>,
     ) -> Result<Self, TaskFailure> {
-        let axis = task
-            .text("iteraxis")?
-            .filter(|value| !value.is_empty())
-            .map(|axis| IterationAxis::parse(&axis))
-            .transpose()?;
         let count = |name| {
             u32::try_from(task.integer(name)?)
                 .ok()

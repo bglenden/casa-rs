@@ -8018,6 +8018,15 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## PlotMS shows the excluded antenna on a GSPLINE plot
+
+On a GSPLINE table with antennas A0 through A4, CASA 6.7.6.14 and
+casaplotms 2.9.1 plot only A2 for `antenna="!A2"`. The legacy selector
+excludes A2 from the source row query, then passes the excluded ID to the
+plot cache as an antenna to display. The cache evaluates and plots that ID.
+casa-rs applies the exclusion to the source rows and plots A0, A1, A3, and
+A4. The legacy calibration PlotMS oracle checks both outcomes.
+
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
 With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and
