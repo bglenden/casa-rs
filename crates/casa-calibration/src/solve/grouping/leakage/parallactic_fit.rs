@@ -65,7 +65,13 @@ pub(super) fn solve(
                     row.corrected / row.weight,
                 )
             }))?;
-            slope / slope.norm()
+            let amplitude = slope.norm();
+            if amplitude == 0.0 || !amplitude.is_finite() {
+                phases.push(None);
+                previous = Complex64::ONE;
+                continue;
+            }
+            slope / amplitude
         } else {
             ambiguity * fit_phase(rows.clone())
         };
@@ -91,9 +97,13 @@ pub(super) fn solve(
                     let Some(phase) = phase.filter(|_| row.weight > 0.0) else {
                         return (weight, model, corrected);
                     };
+                    let amplitude = row.model.norm();
+                    if amplitude == 0.0 || !amplitude.is_finite() {
+                        return (weight, model, corrected);
+                    }
                     (
                         weight + row.weight,
-                        model + row.weight * row.model / row.model.norm(),
+                        model + row.weight * row.model / amplitude,
                         corrected + row.corrected / phase,
                     )
                 },

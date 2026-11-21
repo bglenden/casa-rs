@@ -109,6 +109,67 @@ def compare_degenerate_coverage(root, vis, native, basis, stokes, sky, phase):
             np.testing.assert_array_equal(result['FLUX']['Spw0'], [1., 0., 0., 0.])
 
 
+def compare_irregular_sampling(root, source, native, stokes):
+    root.mkdir()
+    vis = root/'irregular.ms'
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        fields = table.getcol('FIELD_ID')
+        times = table.getcol('TIME')
+        first, _, _, fourth = np.unique(times[fields == 0])[:4]
+        baseline = (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 1)
+        fields[(fields == 0) & ((baseline & (times == first)) | (times == fourth))] = 1
+        table.putcol('FIELD_ID', fields)
+        data = table.getcol('DATA')
+        data[1, :, baseline] *= np.exp(.9j)
+        data[2, :, baseline] *= np.exp(-.9j)
+        table.putcol('DATA', data)
+    solve(root/'joint-flush', vis, native, 'Xfparang+QU', stokes, preavg=1300.)
+
+
+def compare_exact_linear_phases(root, vis, native, stokes, sky):
+    stokes = [*stokes[:3], 0.]
+    for name, phase in [('real', 1.), ('imaginary', 1j)]:
+        data = put_observations(vis, sky.real.astype(np.complex64), [])
+        data[1] *= phase
+        data[2] *= np.conjugate(phase)
+        with opened(vis, True) as table:
+            table.putcol('DATA', data)
+        for label, task in [('casa', casa.polcal), ('native', native.polcal)]:
+            output = root/f'{label}-{name}.cal'
+            solved = task(str(vis), str(output), field='0', poltype='Xfparang+QU', smodel=stokes)
+            with opened(output) as table:
+                gain = table.getcol('CPARAM')
+                if label == 'native':
+                    np.testing.assert_allclose(gain, phase, atol=3e-5, rtol=0.)
+                    np.testing.assert_allclose(solved['FLUX']['Spw0'][1:3],
+                                               np.asarray(stokes[1:3])/stokes[0], atol=8e-5)
+                else:
+                    assert np.max(np.abs(gain-phase)) > 1.
+
+
+def compare_zero_circular_signal(root, vis, native, stokes, sky, phase, expected):
+    data = put_observations(vis, sky, [phase])
+    data[1:3, 0] = 0.
+    with opened(vis, True) as table:
+        table.putcol('DATA', data)
+    for label, task in [('casa', casa.polcal), ('native', native.polcal)]:
+        output = root/f'{label}-zero-signal.cal'
+        solved = task(str(vis), str(output), field='0', poltype='Xfparang+QU', smodel=stokes)
+        with opened(output) as table:
+            gains, flags = table.getcol('CPARAM'), table.getcol('FLAG')
+            qu = solved['FLUX']['Spw0'][1:3]
+            if label == 'native':
+                assert flags[:, 0].all() and not flags[:, 1:].any()
+                np.testing.assert_array_equal(gains[:, 0], 1.)
+                np.testing.assert_allclose(gains[:, 1:], expected[:, 1:], atol=3e-5, rtol=0.)
+                np.testing.assert_allclose(qu, [np.hypot(*stokes[1:3])/stokes[0], 0.],
+                                           atol=8e-5, rtol=0.)
+            else:
+                assert np.isnan(gains[:, 0]).all() and not flags[:, 0].any()
+                assert np.isnan(qu).all()
+
+
 def compare_basis(root, basis, api):
     root.mkdir()
     vis, leak, gains, stokes, sky = plant(root, basis)
@@ -129,6 +190,10 @@ def compare_basis(root, basis, api):
     compare_apply(root/'spectrum', vis, products, api, [], cross_hand_tolerance=1e-4)
     if basis.startswith('XX'):
         compare_windows(root/'windows', vis, api, stokes)
+        compare_irregular_sampling(root/'irregular', vis, api, stokes)
+        compare_exact_linear_phases(root, vis, api, stokes, sky)
+    else:
+        compare_zero_circular_signal(root, vis, api, stokes, sky, planted, gains_at_phase)
 
     priors = [gains, leak]
     put_observations(vis, sky, [*priors, planted])

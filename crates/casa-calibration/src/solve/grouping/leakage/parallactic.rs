@@ -16,6 +16,7 @@ pub(super) struct BaselineSegment {
     pub(super) spectral_window: i32,
     pub(super) start: f64,
     pub(super) end: f64,
+    pub(super) emission: f64,
 }
 
 struct BaselineFlags {
@@ -54,7 +55,7 @@ impl ParallacticAverages {
         let id = self.segments.len();
         let segment = self
             .segments
-            .entry((context.start.to_bits(), context.field, context.data_desc))
+            .entry((context.emission.to_bits(), context.field, context.data_desc))
             .or_insert_with(|| SegmentRows {
                 id,
                 context,

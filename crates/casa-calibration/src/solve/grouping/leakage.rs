@@ -424,6 +424,7 @@ impl LeakageInputs<'_> {
                             spectral_window: row.data_spw_id,
                             start: row.time_seconds,
                             end: row.time_seconds,
+                            emission: f64::INFINITY,
                         },
                         bins: vec![CoherencyMean::default(); count],
                         centroid: WeightedTime::default(),
@@ -432,7 +433,11 @@ impl LeakageInputs<'_> {
                     if kind.cross_hand() {
                         active.finish_time(&mut time);
                     }
-                    fits.accumulate(pair, &mut active.bins, antennas, active.segment)?;
+                    let segment = BaselineSegment {
+                        emission: row.time_seconds,
+                        ..active.segment
+                    };
+                    fits.accumulate(pair, &mut active.bins, antennas, segment)?;
                     active.segment.start = row.time_seconds;
                 }
                 active.segment.end = row.time_seconds;
