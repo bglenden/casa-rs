@@ -9209,3 +9209,13 @@ selection to one row. Other half-pixel centers can construct an
 inverted region and fail. Casa-rs includes both equidistant boundary
 rows, making the cut independent of low-order rounding and image
 extent outside the strip.
+
+### `image.regrid` can extrapolate just outside an integer-aligned region
+
+On a default `[31, 33, 1, 7]` Float cube, regridding the inclusive box
+`[3, 4, 0, 1]` through `[14, 19, 0, 5]` onto the original coordinate
+record can mark adjacent rows or columns valid in CASA 6.7.6.14. A
+sky-coordinate round trip moves those samples across the linear
+interpolator's boundary by a fraction of a pixel at floating-point
+precision. Casa-rs uses the exact integer shift on the same tangent
+plane, preserving the selected region's validity boundary.

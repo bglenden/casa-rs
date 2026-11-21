@@ -63,7 +63,7 @@ IMPLEMENTED["image"] = {
     "boxcar", "collapse", "continuumsub", "convolve", "convolve2d", "decompose", "deviation", "fft", "findsources", "fitcomponents", "fitprofile", "hanning", "histograms",
     "maxfit",
     "moments",
-    "pad", "pbcor", "pv", "transpose",
+    "pad", "pbcor", "pv", "regrid", "transpose",
     "getprofile", "getslice",
     "crop",
     "decimate",

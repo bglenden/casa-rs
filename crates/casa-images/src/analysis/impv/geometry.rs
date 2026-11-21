@@ -21,6 +21,7 @@ impl Strip {
         [start, end]: [[f64; 2]; 2],
         image_shape: [usize; 2],
         width: usize,
+        include_half_pixel_ties: bool,
     ) -> Result<Self, ImageError> {
         if start == end {
             return Err(ImageError::CasaSelection(
@@ -66,7 +67,12 @@ impl Strip {
             last = rotated.world_to_pixel(source.pixel_to_world(end)?)?;
             rotation = Some(rotated);
         }
-        let (lower_y, upper_y) = transverse_rows(first[1], last[1], half, rotation.is_some());
+        let (lower_y, upper_y) = transverse_rows(
+            first[1],
+            last[1],
+            half,
+            rotation.is_some() && include_half_pixel_ties,
+        );
         let lower = [first[0].round() as i64, lower_y];
         let upper = [last[0].round() as i64, upper_y];
         if lower[0] > upper[0] || lower[1] > upper[1] {
@@ -143,14 +149,14 @@ impl Strip {
     }
 }
 
-fn transverse_rows(first: f64, last: f64, half_width: f64, rotated: bool) -> (i64, i64) {
+fn transverse_rows(first: f64, last: f64, half_width: f64, include_ties: bool) -> (i64, i64) {
     // Both endpoints of a rotated strip should occupy the same row. At a
     // half-pixel center, both neighboring rows are equally close. Include
     // both ties at the transverse boundaries independent of WCS roundoff.
     let midpoint = (first + last) / 2.0;
     let tie = midpoint.floor() + 0.5;
     const WCS_ROUNDOFF: f64 = 1e-7;
-    if rotated && (first - tie).abs() < WCS_ROUNDOFF && (last - tie).abs() < WCS_ROUNDOFF {
+    if include_ties && (first - tie).abs() < WCS_ROUNDOFF && (last - tie).abs() < WCS_ROUNDOFF {
         (
             (tie - half_width).floor() as i64,
             (tie + half_width).ceil() as i64,
