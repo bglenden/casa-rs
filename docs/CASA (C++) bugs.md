@@ -8807,3 +8807,12 @@ linear coordinate is selected. A 7 × 8 image with linear transform
 The linear-coordinate Fourier operation rejects the partial inversion,
 after which the tool dereferences the absent coordinate. Casa-rs returns
 the coordinate error and leaves the output destinations untouched.
+
+For a Fourier transform of a linear frequency or time coordinate, CASA
+6.7.6.14 labels the output in seconds or hertz and uses the input's
+unconverted increment. A four-pixel axis with 2 MHz spacing produces
+`0.125 s`, while the same axis expressed as 2,000,000 Hz produces
+`1.25e-7 s`. A four-pixel axis spaced by 2 ms likewise produces
+`0.125 Hz` instead of 125 Hz. Casa-rs converts the spacing to hertz or
+seconds before taking the reciprocal so equivalent inputs give the same
+Fourier coordinates.

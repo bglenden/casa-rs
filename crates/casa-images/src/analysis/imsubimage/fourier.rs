@@ -91,6 +91,7 @@ pub struct ImageFourier<'a> {
     section: SubimagePlan,
     axes: Vec<usize>,
     coordinates: CoordinateSystem,
+    coordinate_record: RecordValue,
     options: FourierOptions<'a>,
 }
 
@@ -150,10 +151,50 @@ impl<'a> ImageFourier<'a> {
         axes.sort_unstable();
         axes.dedup();
         let coordinates = section.coordinates.fourier_axes(&section.shape, &axes)?;
+        let beams = &section.image_info().beam_set;
+        if beams.is_multi() {
+            let planes = |kind| {
+                coordinates
+                    .find_coordinate(kind)
+                    .and_then(|index| coordinates.coordinate_pixel_axes(index))
+                    .and_then(|axes| axes.into_iter().flatten().next())
+                    .map_or(1, |axis| section.shape[axis])
+            };
+            if beams.n_channels() != 1 && beams.n_channels() != planes(CoordinateType::Spectral) {
+                return Err(invalid("Number of channels is not consistent"));
+            }
+            if beams.n_stokes() != 1 && beams.n_stokes() != planes(CoordinateType::Stokes) {
+                return Err(invalid("Number of polarizations is not consistent"));
+            }
+            if (0..beams.n_channels()).any(|channel| {
+                (0..beams.n_stokes()).any(|stokes| beams.beam(channel, stokes).is_null())
+            }) {
+                return Err(invalid(
+                    "At least one of the beams in the beam set is null and thus invalid",
+                ));
+            }
+        }
+        let mut coordinate_record = coordinates.to_record();
+        if let Some(native) = &section.coordinate_record {
+            let originals = section.coordinates.coordinates_in_record(native)?;
+            let transformed = coordinates.coordinates_in_record(&coordinate_record)?;
+            for (source, destination) in originals.iter().zip(transformed) {
+                if !source
+                    .pixel_axes
+                    .iter()
+                    .flatten()
+                    .any(|axis| axes.contains(axis))
+                    && let Some(value) = native.get(&source.field)
+                {
+                    coordinate_record.upsert(destination.field, value.clone());
+                }
+            }
+        }
         Ok(Self {
             section,
             axes,
             coordinates,
+            coordinate_record,
             options,
         })
     }
@@ -163,9 +204,19 @@ impl<'a> ImageFourier<'a> {
         &self.section.shape
     }
 
+    /// Source selection, including retained beam planes and image metadata.
+    pub fn section(&self) -> &SubimagePlan {
+        &self.section
+    }
+
     /// Fourier coordinates for an allocated output.
     pub fn coordinates(&self) -> &CoordinateSystem {
         &self.coordinates
+    }
+
+    /// Native Fourier coordinate record, retaining untouched coordinate fields.
+    pub fn coordinate_record(&self) -> &RecordValue {
+        &self.coordinate_record
     }
 
     /// Transform the selected region to complex scratch storage.
@@ -206,6 +257,7 @@ impl<'a> ImageFourier<'a> {
                 scratch: ScratchSpace::SystemTemp,
             },
         )?;
+        scratch.set_pixel_cache_budget(16 * 1024 * 1024)?;
         for tile in selected.cursors(bounded_read_cursor(selected.dense_shape(selected.shape))?) {
             let tile = tile?;
             let (pixels, validity) = reader.read(
@@ -283,10 +335,12 @@ impl<'a> ImageFourier<'a> {
         source: &dyn ImageInterface<S>,
         scratch: &dyn ImageInterface<C>,
         output: &mut dyn MutableImageInterface<D>,
+        image_info: &RecordValue,
         phase: bool,
         component: impl Fn(C) -> D,
     ) -> Result<(), ImageError> {
         self.section.copy_metadata(source, output)?;
+        output.set_image_info_record(image_info.clone())?;
         let unit = if phase {
             "rad"
         } else {

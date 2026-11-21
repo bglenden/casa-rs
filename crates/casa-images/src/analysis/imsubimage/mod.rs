@@ -466,7 +466,8 @@ impl SubimagePlan {
         Ok(())
     }
 
-    fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
+    /// Indices of the original beam planes retained on a selected source axis.
+    pub fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
         let Some(axis) = axis.filter(|_| planes > 1) else {
             return vec![0];
         };

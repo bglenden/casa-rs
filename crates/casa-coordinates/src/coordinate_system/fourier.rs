@@ -89,7 +89,9 @@ fn fourier_coordinate(
         CoordinateModel::Linear(linear) => {
             for (i, length) in lengths.iter().enumerate() {
                 if length.is_some() {
-                    inverse_axis_units(&mut names[i], &mut units[i])?;
+                    let original = units[i].clone();
+                    let canonical = inverse_axis_units(&mut names[i], &mut units[i])?;
+                    increment[i] = convert_increment(increment[i], &original, &canonical)?;
                 }
             }
             invert_pc(linear.pc_matrix(), lengths)?

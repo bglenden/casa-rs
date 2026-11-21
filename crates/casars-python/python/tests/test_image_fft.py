@@ -147,6 +147,43 @@ def test_image_fft_transforms_direction_and_linear_frequency(casa, tmp_path):
             source.done()
 
 
+def test_image_fft_preserves_per_channel_beam_records_for_sky_transform(casa, tmp_path):
+    coordinate = casa.coordsys()
+    assert coordinate.newcoordsys(direction=True, spectral=True)
+    record = coordinate.torecord()
+    coordinate.done()
+    pixels = np.zeros((7, 8, 3), dtype=np.float32)
+    pixels[3, 4] = [2., 5., 9.]
+    for index, api in enumerate((casa, tools)):
+        source = api.image()
+        assert source.fromarray(pixels=pixels, csys=record)
+        source.setbrightnessunit("Jy")
+        try:
+            for channel in range(3):
+                source.setrestoringbeam(major=f"{(8+channel)/60}arcmin", minor="3arcsec",
+                                        pa="7deg", channel=channel, polarization=0)
+            beams = [source.restoringbeam(channel=i, polarization=0) for i in range(3)]
+            path = str(tmp_path / f"sky-beams-{index}.im")
+            assert source.fft(real=path)
+            output = api.image()
+            assert output.open(path)
+            try:
+                assert output.brightnessunit() == "Jy/beam"
+                for channel, expected in enumerate(beams):
+                    assert output.restoringbeam(channel=channel, polarization=0) == expected
+                np.testing.assert_array_equal(output.getchunk(), np.broadcast_to([2., 5., 9.], pixels.shape))
+            finally:
+                output.done()
+            path = tmp_path / f"time-beams-{index}.im"
+            companion = tmp_path / f"time-complex-{index}.im"
+            with pytest.raises(RuntimeError, match="Number of channels is not consistent"):
+                source.fft(axes=[0, 1, 2], real=str(path), complex=str(companion))
+            if api is not casa:
+                assert not path.exists() and not companion.exists()
+        finally:
+            source.done()
+
+
 def test_image_fft_default_sky_axes_follow_a_transposed_cube(casa, tmp_path):
     values = np.zeros((7, 8, 2), dtype=np.float32)
     values[3, 4] = [2., 5.]
@@ -175,6 +212,72 @@ def test_image_fft_default_sky_axes_follow_a_transposed_cube(casa, tmp_path):
         finally:
             transposed.done()
             source.done()
+
+
+def test_image_fft_preserves_untransformed_spectral_display_fields(casa, tmp_path):
+    coordinate = casa.coordsys()
+    assert coordinate.newcoordsys(direction=True, spectral=True)
+    record = coordinate.torecord()
+    coordinate.done()
+    spectral = next(value for key, value in record.items() if key.startswith("spectral"))
+    settings = dict(nativeType=1, velUnit="m/s", waveUnit="cm", formatUnit="m/s")
+    spectral.update(settings)
+    values = np.ones((7, 8, 3), dtype=np.float32)
+    for index, api in enumerate((casa, tools)):
+        source = api.image()
+        assert source.fromarray(pixels=values, csys=record)
+        try:
+            path = str(tmp_path / f"spectral-display-{index}.im")
+            assert source.fft(complex=path)
+            output = casa.image()
+            assert output.open(path)
+            try:
+                coords = output.coordsys()
+                try:
+                    actual = next(value for key, value in coords.torecord().items() if key.startswith("spectral"))
+                    assert {key: actual[key] for key in settings} == settings
+                finally:
+                    coords.done()
+            finally:
+                output.done()
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("unit, increment, name, transformed_unit, expected", [
+    ("MHz", 2., "Time", "s", 1.25e-7),
+    ("Hz", 2.e6, "Time", "s", 1.25e-7),
+    ("ms", 2., "Frequency", "Hz", 125.),
+    ("s", .002, "Frequency", "Hz", 125.),
+])
+def test_image_fft_uses_physical_frequency_and_time_spacing(casa, tmp_path, unit, increment,
+                                                            name, transformed_unit, expected):
+    coordinate = casa.coordsys()
+    assert coordinate.newcoordsys(linear=2)
+    record = coordinate.torecord()
+    coordinate.done()
+    linear = next(value for key, value in record.items() if key.startswith("linear"))
+    linear["units"] = [unit, "km"]
+    linear["cdelt"] = np.array([increment, 1.])
+    source = tools.image()
+    try:
+        assert source.fromarray(pixels=np.ones((4, 6), dtype=np.float32), csys=record)
+        path = str(tmp_path / "converted.im")
+        assert source.fft(real=path, axes=[0])
+        output = casa.image()
+        assert output.open(path)
+        try:
+            coords = output.coordsys()
+            try:
+                assert coords.names()[0] == name
+                assert coords.units()[0] == transformed_unit
+                assert coords.increment()["numeric"][0] == pytest.approx(expected, rel=1e-12)
+            finally:
+                coords.done()
+        finally:
+            output.done()
+    finally:
+        source.done()
 
 
 def test_image_fft_stretches_a_named_mask_before_transforming(casa, tmp_path):

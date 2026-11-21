@@ -2,13 +2,15 @@
 
 use std::path::Path;
 
+use casa_coordinates::CoordinateType;
 use casa_images::{
-    ImageInterface, ImagePixel,
+    ImageInterface, ImagePixel, PagedImage,
     analysis::{
         FourierOptions, FourierPixel, ImageFourier, SubimageRegion,
         ensure_outfile_does_not_alias_input,
     },
 };
+use casa_lattices::TiledShape;
 use num_complex::{Complex, Complex32, Complex64};
 use pyo3::prelude::*;
 
@@ -16,6 +18,7 @@ use crate::convert::IntList;
 
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
+use super::beams::subset_beam_record;
 use super::create::publish_new_images;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
@@ -34,6 +37,20 @@ trait ProductPixel: ImagePixel {
 }
 
 type ExtractComponent<T> = fn(Complex<T>) -> T;
+
+fn create_product<T: ImagePixel>(plan: &ImageFourier<'_>, path: &Path) -> PyResult<Storage<T>> {
+    let shape = plan.shape().to_vec();
+    let tiled = TiledShape::new(shape.clone(), std::mem::size_of::<T>()).map_err(raised)?;
+    PagedImage::create_with_tile_shape_and_cache(
+        shape,
+        tiled.tile_shape().to_vec(),
+        plan.coordinates().clone(),
+        path,
+        16 * 1024 * 1024,
+    )
+    .map(|image| Storage::Paged(Box::new(image)))
+    .map_err(raised)
+}
 
 macro_rules! product_pixels {
     ($($pixel:ty => $kind:ident),+ $(,)?) => {
@@ -108,10 +125,11 @@ impl Request<'_> {
         T::Scalar: ProductPixel,
         Complex<T::Scalar>: ProductPixel,
     {
+        let beams = attachment.beam_view();
         let plan = ImageFourier::new(
             input,
             source.coordinate_record(),
-            attachment.beam_view().record(),
+            beams.record(),
             FourierOptions {
                 region: self.region.selection(),
                 axes: &self.axes.0,
@@ -121,6 +139,27 @@ impl Request<'_> {
             },
         )
         .map_err(raised)?;
+        let section = plan.section();
+        let mut image_info = section.image_info().to_record();
+        let original = beams.beam_set().map_err(raised)?;
+        if original.is_multi() {
+            let channels = section.beam_planes(
+                input.find_axis(CoordinateType::Spectral),
+                original.n_channels(),
+            );
+            let polarizations =
+                section.beam_planes(input.find_axis(CoordinateType::Stokes), original.n_stokes());
+            subset_beam_record(
+                &mut image_info,
+                Some(beams.record()),
+                &original,
+                &channels,
+                &polarizations,
+            )
+            .map_err(raised)?;
+        } else {
+            beams.apply_to(&mut image_info);
+        }
         let scratch = plan.transform(input).map_err(raised)?;
         let components: [ExtractComponent<T::Scalar>; 4] =
             [|value| value.re, |value| value.im, T::amplitude, T::phase];
@@ -128,18 +167,13 @@ impl Request<'_> {
         let call = self.history.then(|| self.history_call());
         for (index, component) in components.into_iter().enumerate() {
             if let Some(path) = staged[index] {
-                let mut output = Storage::create(
-                    plan.shape().to_vec(),
-                    plan.coordinates().clone(),
-                    Some(path),
-                    None,
-                )
-                .map_err(raised)?;
+                let mut output = create_product(&plan, path)?;
                 with_storage!(&mut output, image =>
-                    plan.write_product(input, &scratch, image.as_mut(), index == 3, component)
+                    plan.write_product(input, &scratch, image.as_mut(), &image_info, index == 3, component)
                 )
                 .map_err(raised)?;
                 let mut output = T::Scalar::wrap(output);
+                output.set_coordinate_record(plan.coordinate_record().clone())?;
                 output.append_history_entries(&history)?;
                 if let Some(call) = &call {
                     output.record_history("fft", call.clone())?;
@@ -148,16 +182,11 @@ impl Request<'_> {
             }
         }
         if let Some(path) = staged[4] {
-            let mut output = Storage::create(
-                plan.shape().to_vec(),
-                plan.coordinates().clone(),
-                Some(path),
-                None,
-            )
-            .map_err(raised)?;
-            with_storage!(&mut output, image => plan.write_product(input, &scratch, image.as_mut(), false, |value| value))
+            let mut output = create_product(&plan, path)?;
+            with_storage!(&mut output, image => plan.write_product(input, &scratch, image.as_mut(), &image_info, false, |value| value))
                 .map_err(raised)?;
             let mut output = Complex::<T::Scalar>::wrap(output);
+            output.set_coordinate_record(plan.coordinate_record().clone())?;
             output.append_history_entries(&history)?;
             if let Some(call) = call {
                 output.record_history("fft", call)?;
