@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_components::{Flux, Polarisation, SkyComponent};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
 use casa_images::PagedImage;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
@@ -21,6 +22,7 @@ use casa_types::measures::{
 };
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
+use num_complex::Complex64;
 
 use super::invalid;
 use crate::execute::{load_parallactic_angle_state, single_receptor_angle};
@@ -152,7 +154,7 @@ pub struct ImagerVoltagePattern {
 }
 
 #[derive(Clone)]
-pub(super) struct PreparedVoltagePattern {
+pub(crate) struct PreparedVoltagePattern {
     pattern: Arc<Admitted<BeamPattern>>,
     centre: MDirection,
     frame: MeasFrame,
@@ -165,6 +167,63 @@ struct BeamSquint {
     beam: PrimaryBeam,
     reference_hz: f64,
     angle: f64,
+}
+
+pub(crate) struct ComponentVoltage<'a> {
+    pattern: &'a PreparedVoltagePattern,
+    component: &'a SkyComponent,
+    datum_basis: Polarisation,
+    original: Flux,
+    beam_flux: Flux,
+    centre: MDirection,
+    separation: f64,
+}
+
+impl ComponentVoltage<'_> {
+    pub(crate) fn flux_at(&self, frequency: f64) -> MsResult<[Complex64; 4]> {
+        let pattern = self.pattern.pattern();
+        let power = |separation| f64::from(pattern.power_at(separation, frequency));
+        let central = power(self.separation);
+        let mut gains = [central; 4];
+        if let Some(squint) = self.pattern.squint {
+            for (index, right) in [(0, true), (3, false)] {
+                let shift = squint.beam.squint_displacement_rad(
+                    squint.reference_hz,
+                    frequency,
+                    squint.angle,
+                    right,
+                );
+                let centre = offset_true_angle(&self.centre, shift).map_err(invalid)?;
+                gains[index] = power(angular_separation(
+                    self.component.shape().reference_direction().as_angles(),
+                    centre.as_angles(),
+                ));
+            }
+        }
+        let mut flux = self.beam_flux.clone();
+        let values = *flux.values();
+        flux.set_values(std::array::from_fn(|index| values[index] * gains[index]));
+        flux.convert_polarisation(self.original.polarisation());
+        let spectrum = self
+            .component
+            .flux_in(frequency, self.original.polarisation())
+            .map_err(invalid)?;
+        // BeamSkyJones samples a point spectrum in the original basis,
+        // normalizes by the magnitude of the stored flux and tabulates
+        // the result. This also preserves its signed-flux behavior.
+        let values = *flux.values();
+        flux.set_values(std::array::from_fn(|index| {
+            let amplitude = self.original.values()[index].norm();
+            let scale = if amplitude > 0. {
+                amplitude.recip()
+            } else {
+                1.
+            };
+            values[index] * spectrum[index] * scale
+        }));
+        flux.convert_polarisation(self.datum_basis);
+        Ok(*flux.values())
+    }
 }
 
 /// Partition scratch rows in legacy visibility-buffer order. The first row
@@ -509,6 +568,39 @@ impl PreparedVoltagePattern {
         &self.pattern.value
     }
 
+    pub(crate) fn component<'a>(
+        &'a self,
+        component: &'a SkyComponent,
+        datum_basis: Polarisation,
+    ) -> MsResult<ComponentVoltage<'a>> {
+        let direction = component.shape().reference_direction();
+        let centre = self
+            .centre
+            .convert_to(direction.refer(), &self.frame)
+            .map_err(invalid)?;
+        let separation = angular_separation(direction.as_angles(), centre.as_angles());
+        let basis = match component.flux().polarisation() {
+            Polarisation::Stokes => datum_basis,
+            basis => basis,
+        };
+        let [i, q, u, v] = component.flux().stokes_jy_values().map_err(invalid)?;
+        let mut original = Flux::stokes_jy(i, q, u, v);
+        original.convert_polarisation(basis);
+        let mut beam_flux = original.clone();
+        if self.squint.is_some() {
+            beam_flux.convert_polarisation(Polarisation::Circular);
+        }
+        Ok(ComponentVoltage {
+            pattern: self,
+            component,
+            datum_basis,
+            original,
+            beam_flux,
+            centre,
+            separation,
+        })
+    }
+
     #[cfg(test)]
     pub(super) fn test_pattern() -> Self {
         use casa_types::measures::direction::DirectionRef;
@@ -636,16 +728,20 @@ impl PreparedVoltagePattern {
         [nx, ny]: [usize; 2],
         centre: &MDirection,
     ) -> MsResult<Array2<f64>> {
-        let (lon0, lat0) = centre.as_angles();
+        let centre = centre.as_angles();
         Ok(Array2::from_shape_fn((ny, nx), |(y, x)| {
             let Ok([lon, lat]) = direction.pixel_to_world([x as f64, y as f64]) else {
                 return f64::INFINITY;
             };
-            let separation = ((lat - lat0) * 0.5).sin().powi(2)
-                + lat.cos() * lat0.cos() * ((lon - lon0) * 0.5).sin().powi(2);
-            2.0 * separation.clamp(0., 1.).sqrt().asin()
+            angular_separation((lon, lat), centre)
         }))
     }
+}
+
+fn angular_separation((lon, lat): (f64, f64), (lon0, lat0): (f64, f64)) -> f64 {
+    let separation = ((lat - lat0) * 0.5).sin().powi(2)
+        + lat.cos() * lat0.cos() * ((lon - lon0) * 0.5).sin().powi(2);
+    2.0 * separation.clamp(0., 1.).sqrt().asin()
 }
 
 fn pixel_centre(direction: &DirectionCoordinate, centre: &MDirection) -> MsResult<[f64; 2]> {

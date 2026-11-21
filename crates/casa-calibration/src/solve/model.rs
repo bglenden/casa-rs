@@ -23,6 +23,8 @@ use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 
+use crate::ft::PreparedVoltagePattern;
+
 use super::grouping::{BucketedRow, SelectedSolveRow, VisibilityBuffer};
 use super::{GainSolveCombine, GainSolveError, GainSolveModelSource, get_i32};
 use fourier::{FourierMerge, FourierModel, FourierRow};
@@ -41,6 +43,7 @@ pub(super) struct ModelInputs {
     model_buffers: BTreeMap<usize, Arc<ModelBuffer>>,
     single_dish_pointings: HashMap<PointingQuery, BTreeMap<usize, MDirection>>,
     single_dish_feeds: FeedOffsets,
+    component_voltage: Option<PreparedVoltagePattern>,
 }
 
 struct ModelBuffer {
@@ -187,7 +190,12 @@ impl ModelInputs {
             model_buffers: BTreeMap::new(),
             single_dish_pointings: HashMap::new(),
             single_dish_feeds: FeedOffsets::default(),
+            component_voltage: None,
         }
+    }
+
+    pub(super) fn set_component_voltage(&mut self, voltage: PreparedVoltagePattern) {
+        self.component_voltage = Some(voltage);
     }
 
     fn load_geometry(
@@ -591,10 +599,25 @@ impl ModelInputs {
                         .map_err(model_error)?;
                 let (rotated, phase) = projection.convert_projected([-uvw[0], -uvw[1], uvw[2]]);
                 let baseline = [-rotated[0], -rotated[1], rotated[2]];
+                let voltage = self
+                    .component_voltage
+                    .as_ref()
+                    .map(|voltage| voltage.component(component, basis))
+                    .transpose()
+                    .map_err(model_error)?;
                 for (channel, &frequency) in frequencies.iter().enumerate() {
-                    let visibility = component
-                        .visibility(baseline, frequency, basis)
-                        .map_err(model_error)?;
+                    let visibility = if let Some(voltage) = &voltage {
+                        let flux = voltage.flux_at(frequency).map_err(model_error)?;
+                        let scale = component
+                            .transform()
+                            .and_then(|shape| shape.at_baseline(baseline).at_frequency(frequency))
+                            .map_err(model_error)?;
+                        flux.map(|value| value * scale)
+                    } else {
+                        component
+                            .visibility(baseline, frequency, basis)
+                            .map_err(model_error)?
+                    };
                     let rotation = Complex64::from_polar(
                         1.0,
                         std::f64::consts::TAU * phase * frequency / 299_792_458.0,

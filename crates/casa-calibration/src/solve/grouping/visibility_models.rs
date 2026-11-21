@@ -7,6 +7,7 @@ use casa_ms::{MeasurementSet, ResolvedMsSelectionRow, VirtualModelEntry, scratch
 use casa_types::Complex32;
 use ndarray::ArrayD;
 
+use crate::ft::PreparedVoltagePattern;
 use crate::solve::{GainSolveCombine, GainSolveError, GainSolveModelSource, model::ModelInputs};
 
 use super::{SelectedSolveRow, SolveBaseKey, SolveBucketKey, selected_solve_row, weights};
@@ -77,6 +78,11 @@ impl VisibilityModels {
             .collect::<Result<Vec<_>, _>>()?;
         let models = ModelInputs::from_entries(ms, &rows, entries)?;
         Self::with_models(ms, rows, models, LEGACY_COMBINE)
+    }
+
+    pub(crate) fn with_component_voltage(mut self, voltage: PreparedVoltagePattern) -> Self {
+        self.models.set_component_voltage(voltage);
+        self
     }
 
     fn with_models(
