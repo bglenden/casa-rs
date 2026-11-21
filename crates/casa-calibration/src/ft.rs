@@ -16,6 +16,7 @@ mod voltage_pattern;
 pub use imager::{ImagerImageDefinition, ImagerPrediction, ImagerPredictionModel};
 pub use imager_definition::{ImagerDefinitionRequest, ImagerPhaseCentre, ImagerSpectralAxis};
 pub use voltage_pattern::ImagerVoltagePattern;
+pub(crate) use voltage_pattern::{ComponentVoltageCache, PreparedVoltagePattern};
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};

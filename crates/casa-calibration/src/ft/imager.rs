@@ -17,6 +17,7 @@ use casa_types::measures::position::MPosition;
 use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::model_columns::has_column;
+use crate::solve::grouping::VisibilityModels;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
 use super::image::{ImageModel, TaylorTerm, image_reference_frequency, prepare_configured_images};
@@ -31,7 +32,8 @@ use super::settings::{
 use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::{
-    ImagerVoltagePattern, pointing_may_use_local_frame, scratch_voltage_batches,
+    ImagerVoltagePattern, PreparedVoltagePattern, pointing_may_use_local_frame,
+    scratch_voltage_batches,
 };
 use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
 
@@ -93,6 +95,12 @@ struct PendingPublication {
     selection: MsSelection,
     model: PredictionInputs,
     publication: VirtualFtPublication,
+}
+
+struct PreparedPrediction {
+    components: Vec<VirtualModelEntry>,
+    images: Vec<ImageModel>,
+    component_voltage: Option<PreparedVoltagePattern>,
 }
 
 struct PartialBatch {
@@ -578,12 +586,7 @@ impl ImagerPrediction {
             if scratch && !has_column(ms, ModelData) {
                 return Ok(false);
             }
-            let supported_voltage_geometry = matches!(self.options.gridder, ImagerGridder::Spheroidal | ImagerGridder::Boxcar)
-                && self.options.single_dish.is_none()
-                && self.legacy_pbw.is_none()
-                && self.legacy_aw.is_none()
-                && self.facet_count() <= 1
-                && self.taylor.0 <= 1;
+            let supported_voltage_geometry = self.supports_voltage_batches();
             let apply_sky_voltage = self.apply_voltage_pattern && self.voltage_pattern.is_some();
             if apply_sky_voltage && (supported_voltage_geometry || self.voltage_angle_increment != TAU) {
                 if !supported_voltage_geometry {
@@ -600,7 +603,7 @@ impl ImagerPrediction {
                     batch.row_blocks.clear();
                     for rows in groups {
                         batch.selected_rows = rows;
-                        let Some((mut components, mut images)) = self
+                        let Some(PreparedPrediction { mut components, mut images, component_voltage }) = self
                             .prepare(ms, &batch, selection, &model, true)
                             .map_err(AttachmentError::PredictionPreparation)?
                         else {
@@ -614,13 +617,18 @@ impl ImagerPrediction {
                         self.track_images(ms, &batch, &mut images, moving_anchor)
                             .map_err(AttachmentError::PredictionPreparation)?;
                         components.extend(images.iter().map(|image| image.entry.clone()));
+                        let prepared = component_voltage.map(|pattern| {
+                            VisibilityModels::from_entries(ms, &batch.selected_rows, &components)
+                                .map(|models| models.with_component_voltage(pattern))
+                                .map_err(|error| AttachmentError::PredictionPreparation(invalid(error)))
+                        }).transpose()?;
                         writing_scratch |= !components.is_empty();
-                        write_model_scratch(ms, &batch, &components, model.incremental, false, None, lock)?;
+                        write_model_scratch(ms, &batch, &components, model.incremental, false, prepared, lock)?;
                     }
                     return Ok(true);
                 }
             }
-            let Some((mut components, mut images)) =
+            let Some(PreparedPrediction { mut components, mut images, .. }) =
                 self.prepare(ms, selection, selection, &model, scratch)
                     .map_err(AttachmentError::PredictionPreparation)?
             else {
@@ -704,7 +712,7 @@ impl ImagerPrediction {
         image_selection: &ResolvedMsSelection,
         model: &ImagerPredictionModel<'_>,
         scratch: bool,
-    ) -> MsResult<Option<(Vec<VirtualModelEntry>, Vec<ImageModel>)>> {
+    ) -> MsResult<Option<PreparedPrediction>> {
         let mut retained = self.retained_sources.take();
         let mut temporary = ModelSources::default();
         let sources = retained.as_mut().unwrap_or(&mut temporary);
@@ -722,7 +730,7 @@ impl ImagerPrediction {
         model: &ImagerPredictionModel<'_>,
         scratch: bool,
         sources: &mut ModelSources,
-    ) -> MsResult<Option<(Vec<VirtualModelEntry>, Vec<ImageModel>)>> {
+    ) -> MsResult<Option<PreparedPrediction>> {
         if model
             .images
             .iter()
@@ -744,10 +752,15 @@ impl ImagerPrediction {
         let pattern = self
             .voltage_pattern
             .as_ref()
-            .filter(|_| self.apply_voltage_pattern && !mosaic);
-        if pattern.is_some() && model.components.is_some() {
+            .filter(|_| self.apply_voltage_pattern && !mosaic)
+            .filter(|_| !model.images.is_empty() || (scratch && !model.incremental));
+        if scratch
+            && pattern.is_some()
+            && model.components.is_some()
+            && !self.supports_voltage_batches()
+        {
             return Err(invalid(
-                "a radial imager voltage pattern currently needs image models",
+                "component voltage patterns for this legacy Fourier mode are pending #1520",
             ));
         }
         let (terms, explicit_reference) = self.taylor;
@@ -848,6 +861,7 @@ impl ImagerPrediction {
                 .get_or_insert_with(|| self.voltage_pattern.clone().unwrap_or_default());
         }
         let mut images = Vec::new();
+        let mut component_voltage = None;
         match (pattern, scratch) {
             (Some(pattern), true) => {
                 let mut fields = BTreeMap::<_, Vec<_>>::new();
@@ -858,6 +872,9 @@ impl ImagerPrediction {
                 for (_, rows) in fields {
                     field.selected_rows = rows;
                     let voltage_pattern = pattern.prepare(ms, &field, self.voltage_squint, true)?;
+                    if !components.is_empty() {
+                        component_voltage = Some(voltage_pattern.clone());
+                    }
                     images.extend(self.prepare_images(
                         ms,
                         &field,
@@ -885,7 +902,22 @@ impl ImagerPrediction {
                 )?;
             }
         }
-        Ok(Some((components, images)))
+        Ok(Some(PreparedPrediction {
+            components,
+            images,
+            component_voltage,
+        }))
+    }
+
+    fn supports_voltage_batches(&self) -> bool {
+        matches!(
+            self.options.gridder,
+            ImagerGridder::Spheroidal | ImagerGridder::Boxcar
+        ) && self.options.single_dish.is_none()
+            && self.legacy_pbw.is_none()
+            && self.legacy_aw.is_none()
+            && self.facet_count() <= 1
+            && self.taylor.0 <= 1
     }
 
     fn prepare_legacy_ep(
