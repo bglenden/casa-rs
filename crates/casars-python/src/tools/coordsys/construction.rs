@@ -260,8 +260,13 @@ fn replacement(value: &Value, key: &str) -> PyResult<Value> {
 fn restore(mut record: RecordValue, parent_name: String) -> PyResult<CoordinateState> {
     validate_coordinate_indices(&record)?;
     normalize_stokes_records(&mut record)?;
-    let mut coordinates =
-        CoordinateSystem::from_record(&record).map_err(|error| raised(error.to_string()))?;
+    let mut coordinates = match CoordinateSystem::from_record(&record) {
+        Err(casa_coordinates::CoordinateError::UnsupportedAxisLayout(_)) => {
+            CoordinateSystem::from_mapped_record(&record)
+        }
+        result => result,
+    }
+    .map_err(|error| raised(error.to_string()))?;
     let info = coordinates.obs_info_mut();
     if record.get("observer").is_none() && info.observer.is_empty() {
         info.observer = "UNKNOWN".into();
@@ -273,8 +278,9 @@ fn restore(mut record: RecordValue, parent_name: String) -> PyResult<CoordinateS
         info.date = Some(MEpoch::from_mjd(0.0, EpochRef::LAST));
     }
 
-    let placements =
-        CoordinateSystem::record_coordinates(&record).map_err(|error| raised(error.to_string()))?;
+    let placements = coordinates
+        .coordinates_in_record(&record)
+        .map_err(|error| raised(error.to_string()))?;
     let mut restored = coordinates.obs_info().to_record();
     for (model_index, placement) in placements.into_iter().enumerate() {
         let field = placement.field;

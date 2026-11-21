@@ -7940,6 +7940,23 @@ beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
 of the pixels being copied.
 
+## `imregrid` can attach new linear coordinates to unshifted data
+
+CASA 6.7.6.14 can copy pixels and masks unchanged when regridding a leading
+axis of a three-axis linear coordinate at the same shape. The
+`same_shape_linear_shift` case in
+`crates/casa-images/tests/data/imregrid/expected.json` changes the first
+axis's reference value by 0.25 m on a 7 × 6 × 5 image. CASA reports the new
+reference value but retains the source samples. In casacore's
+`LinearCoordinate::near`, the exclusion loop marks consecutive entries
+instead of the indexes in the supplied exclusion list. The comparison can
+therefore skip the axis being regridded.
+
+Casa-rs samples the shifted grid and updates the mask. For unit-spaced
+pixels, the first two samples with values 0 and 1 yield 0.25 at output pixel
+zero. The last sample lies outside the input and is masked. The fixture
+records both CASA's actual product and the independently calculated shift.
+
 ## Legacy MosaicFT rejects split voltage-pattern image records
 
 The CASA 6.7.6.14 legacy `HetArrayConvFunc::findAntennaSizes` checks
@@ -8234,3 +8251,29 @@ CASA 6.7.6.14 writes the named output of `ia.rebin("output.im", (2, 2))`
 and then raises a Python `SystemError`. A list with the same values succeeds.
 casa-rs reads the factors as integers and returns the rebinned image for
 either sequence.
+
+## Coordinate setters and measure input with a removed world axis
+
+CASA 6.7.6.14 accepts a two-axis linear coordinate record with
+`worldmap0=[-1,0]` and both pixel axes retained. Its reference measure
+correctly retains both local quantities. Passing that measure to
+`coordsys.topixel` aborts the process. Giving the same record to
+`coordsys.setreferencevalue` with `type="linear"` also aborts when the tool
+addresses the removed world slot. The typed setter can abort for a
+direction coordinate with the same map.
+
+casa-rs decodes the complete measure and uses the coordinate record's
+replacement when conversion needs the hidden world component. A typed
+numeric edit accepts the visible components in local order or the full
+local vector. Edits from either representation update visible axes and
+retain the hidden value and its replacement. The mapped inspection and
+conversion tests exercise these cases. See #1002 and #1819.
+
+## Typed coordinate units with different pixel and world orders
+
+CASA 6.7.6.14 indexes the world-unit vector with pixel positions in
+`coordsys.units(type=...)`. In a record whose direction pixel axes are
+`[1,0]` and world axes are `[0,2]`, CASA reports direction units
+`["","rad"]` and Stokes units `["rad"]`. The empty unit belongs to Stokes.
+casa-rs uses the coordinate's world axes and reports `["rad","rad"]`
+for direction and `[""]` for Stokes. See #1002 and #1819.

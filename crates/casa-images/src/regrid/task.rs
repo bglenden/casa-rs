@@ -162,12 +162,9 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             }
             (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) if n_axes == 2 => {
                 let dimensions = [lengths[0], lengths[1]];
-                validate_decimation(
-                    options.decimate,
-                    dimensions,
-                    &selected,
-                    all_axes || after_singleton,
-                )?;
+                if options.decimate < 0 {
+                    return Err(invalid("decimate must be nonnegative"));
+                }
                 if input_lengths != lengths || !same_linear_grid(ours, theirs) {
                     apply_linear_plane(
                         &mut result,
@@ -178,6 +175,17 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                         &options,
                     )?;
                 }
+                CoordinateModel::Linear(theirs.clone())
+            }
+            (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) => {
+                apply_linear_axes(
+                    &mut result,
+                    first,
+                    lengths,
+                    &selected,
+                    (ours, theirs),
+                    &options,
+                )?;
                 CoordinateModel::Linear(theirs.clone())
             }
             (CoordinateModel::Spectral(ours), CoordinateModel::Spectral(theirs)) => {
@@ -585,6 +593,66 @@ fn replicated_grid(input: [usize; 2], output: [usize; 2]) -> Vec<Option<[f64; 2]
         .collect()
 }
 
+fn linear_axis_unit_factor(input: &str, target: &str, axis: usize) -> Result<f64, ImageError> {
+    if input == target {
+        return Ok(1.0);
+    }
+    let factor = || Quantity::new(1.0, target)?.get_value_in(&Unit::new(input)?);
+    factor().map_err(|error| invalid(format!("linear regrid axis {axis}: {error}")))
+}
+
+fn apply_linear_axes<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    first: usize,
+    lengths: &[usize],
+    selected: &[bool],
+    (input, target): (&LinearCoordinate, &LinearCoordinate),
+    options: &TaskRegridOptions<'_>,
+) -> Result<(), ImageError> {
+    let mut axes: Vec<_> = (0..lengths.len()).filter(|&axis| selected[axis]).collect();
+    axes.sort_by_key(|&axis| {
+        options
+            .axes
+            .iter()
+            .position(|&i| i == (first + axis) as i64)
+            .unwrap_or(axis)
+    });
+    let input_units = input.axis_units();
+    let target_units = target.axis_units();
+    let mut factors = vec![1.0; lengths.len()];
+    let mut target_pixel = target.reference_pixel();
+    let same_grid = same_linear_grid(input, target);
+    for local in axes {
+        let axis = first + local;
+        let length = lengths[local];
+        let old_length = result.data.shape()[axis];
+        // casacore aligns the selected axis's units and retains earlier conversions.
+        factors[local] = linear_axis_unit_factor(&input_units[local], &target_units[local], axis)?;
+        if same_grid && length == old_length {
+            continue;
+        }
+        let reference_pixel = target_pixel[local];
+        let positions = (0..length)
+            .map(|pixel| {
+                if options.replicate {
+                    return Some(replicated_position(pixel, old_length, length));
+                }
+                target_pixel[local] = pixel as f64;
+                let mut world = target.to_world(&target_pixel).ok()?;
+                world
+                    .iter_mut()
+                    .zip(&factors)
+                    .for_each(|(value, factor)| *value *= factor);
+                let pixel = input.to_pixel(&world).ok()?[local];
+                pixel.is_finite().then_some(pixel)
+            })
+            .collect();
+        target_pixel[local] = reference_pixel;
+        apply_one_axis(result, axis, length, positions, options.method);
+    }
+    Ok(())
+}
+
 fn apply_linear_plane<T: RegridPixel>(
     result: &mut Regridded<T>,
     axis: usize,
@@ -595,14 +663,10 @@ fn apply_linear_plane<T: RegridPixel>(
 ) -> Result<(), ImageError> {
     let input_units = input.axis_units();
     let target_units = target.axis_units();
-    let conversion = |axis: usize| {
-        let factor = || {
-            Quantity::new(1.0, target_units[axis].as_str())?
-                .get_value_in(&Unit::new(input_units[axis].as_str())?)
-        };
-        factor().map_err(|error| invalid(format!("linear regrid axis {axis}: {error}")))
-    };
-    let factors = [conversion(0)?, conversion(1)?];
+    let factors = [
+        linear_axis_unit_factor(&input_units[0], &target_units[0], axis)?,
+        linear_axis_unit_factor(&input_units[1], &target_units[1], axis + 1)?,
+    ];
     let grid = if options.replicate {
         replicated_grid(
             [result.data.shape()[axis], result.data.shape()[axis + 1]],
