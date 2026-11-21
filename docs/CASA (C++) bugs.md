@@ -4125,6 +4125,18 @@ Native TFCrop uses the named time axis regardless of the buffer shape.
 Both fixture sizes yield the same empty flag mask for this signal.
 [TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
 
+## TFCrop post-extension can flag channels outside an explicit selection
+
+CASA 6.7.6.14 applies TFCrop's automatic extension to the full spectral
+window. With `spw='0:0~7'` on a 32-channel window, an existing XX flag at
+channel 16 is copied to YY even though the selection excludes channel 16.
+
+Native TFCrop uses the full-window counts and writes the extension results
+within the selected range. The paired fixture also verifies that seven
+existing flags in an eight-channel selection do not meet the 80 percent
+frequency threshold for the 32-channel window.
+[TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
+
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 
 In CASA 6.7.6.14, run `flagdata(mode="clip", timeavg=True, timebin="40s",

@@ -354,8 +354,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except TaskParameterError as error:
             completion = error.completion
-            if (completion.parameter == "datacolumn"
-                    and completion.message == "Failed to parse parameters for mode clip"):
+            if (completion.parameter == "datacolumn" and completion.message in (
+                    "Failed to parse parameters for mode clip",
+                    "Failed to parse parameters for mode tfcrop",
+            )):
                 raise ValueError(completion.message) from error
             if completion.parameter in ("vis", "outfile"):
                 raise ValueError(completion.message) from error
@@ -369,6 +371,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise KeyError("nreport") from error
             if completion.parameter == "datacolumn" and column_vector:
                 raise AttributeError(f"'{column_vector}' object has no attribute 'upper'") from error
+            if (completion.parameter in ("maxnpieces", "halfwin")
+                    and completion.message == ("<built-in function agentflagger_parseagentparameters>"
+                                               " returned a result with an exception set")):
+                raise SystemError(completion.message) from error
             if completion.message == f"argument _{completion.parameter} must be a string":
                 raise TypeError(completion.message) from error
             if completion.parameter == "ntime":
@@ -606,7 +612,11 @@ def _coerce_flagdata_options(
             argument_text[parameter] = str(value)
             values[parameter] = default
         elif not isinstance(value, bool):
-            values[parameter] = max(-(2**63), min(int(value), 2**63 - 1))
+            value = int(value)
+            # The agent reads a 32-bit record value, while commands keep the Python integer.
+            if not -(2**31) <= value < 2**31:
+                argument_text[parameter] = str(value)
+            values[parameter] = max(-(2**63), min(value, 2**63 - 1))
     if "addantenna" in values:
         value = values["addantenna"]
         if value is None:

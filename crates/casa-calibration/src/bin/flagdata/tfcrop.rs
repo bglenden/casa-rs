@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::num::IntErrorKind;
+
 use casa_ms::flagging::{TfcropFit, TfcropOptions, TfcropPasses, TfcropWindowStats};
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
@@ -7,6 +9,25 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 pub(super) fn validate_types(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
     integer_setting(task, "maxnpieces")?;
     integer_setting(task, "halfwin")?;
+    Ok(())
+}
+
+pub(super) fn validate_agent_record(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
+    for name in ["maxnpieces", "halfwin"] {
+        if let Some(text) = task.argument_text(name)
+            && text.parse::<i64>().is_err_and(|error| {
+                matches!(
+                    error.kind(),
+                    IntErrorKind::PosOverflow | IntErrorKind::NegOverflow
+                )
+            })
+        {
+            return Err(TaskFailure::execution(
+                "<built-in function agentflagger_parseagentparameters> returned a result with an exception set",
+            )
+            .at(name));
+        }
+    }
     Ok(())
 }
 
@@ -42,7 +63,8 @@ fn integer_setting(task: &TaskInvocation<'_>, name: &str) -> Result<Option<i64>,
         other => other,
     };
     match value {
-        Some(ParameterValue::Integer(value)) => Ok(Some(*value)),
+        // The CASA record narrows the Python long to a casacore Int.
+        Some(ParameterValue::Integer(value)) => Ok(Some(i64::from(*value as i32))),
         Some(ParameterValue::Bool(_)) => Ok(None),
         _ => {
             Err(TaskFailure::validation(format!("parameter {name:?} must be an integer")).at(name))
@@ -58,6 +80,9 @@ fn agent_options(
     passes: &str,
     statistics: &str,
 ) -> Result<TfcropOptions, String> {
+    let [time_fit, frequency_fit, passes, statistics] =
+        [time_fit, frequency_fit, passes, statistics]
+            .map(|text| text.split_once('\0').map_or(text, |(head, _)| head));
     let max_pieces = pieces.ok_or("Parameter 'maxnpieces' must be of type 'int'")?;
     if !(1..=9).contains(&max_pieces) {
         return Err(format!(

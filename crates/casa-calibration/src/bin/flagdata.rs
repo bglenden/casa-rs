@@ -130,6 +130,12 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             TaskFailure::execution(format!("argument _{selector} must be a string")).at(selector),
         );
     }
+    if mode == "tfcrop" {
+        tfcrop::validate_agent_record(task).or_else(|error| {
+            backup_before_failed_apply(task, &action)?;
+            Err(error)
+        })?;
+    }
     let mut request =
         flagdata_request(task, column.unwrap_or_default(), channel_bins).or_else(|error| {
             let parameter = error.parameter.as_deref();
@@ -181,7 +187,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         FlaggingError::MissingCorrelationSummary => {
             TaskFailure::execution(error.to_string()).at("correlation")
         }
-        FlaggingError::MissingClipColumn => {
+        FlaggingError::MissingClipColumn | FlaggingError::MissingTfcropColumn => {
             TaskFailure::validation(error.to_string()).at("datacolumn")
         }
         FlaggingError::DisplayColumnVector => {

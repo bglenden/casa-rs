@@ -414,6 +414,9 @@ pub enum FlaggingError {
     /// A requested clipping column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode clip")]
     MissingClipColumn,
+    /// A requested TFCrop visibility column is missing from the MeasurementSet.
+    #[error("Failed to parse parameters for mode tfcrop")]
+    MissingTfcropColumn,
     /// A display was requested with a vector of data-column names.
     #[error("'list' object has no attribute 'upper'")]
     DisplayColumnVector,
@@ -1313,6 +1316,14 @@ fn apply_tfcrop_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
+    if request.casa_row_selection
+        && !ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column(request.data_column.name()))
+    {
+        return Err(FlaggingError::MissingTfcropColumn);
+    }
     let options = request.tfcrop.filter(|options| {
         (1..=9).contains(&options.max_pieces) && (1..=3).contains(&options.half_window)
     });
@@ -1356,7 +1367,13 @@ fn apply_tfcrop_flags(
         }
     }
     if request.extendflags {
-        extend_autoflag_grouped(&groups, &samples, &mut modified);
+        if request.casa_row_selection && channel_selections.is_some() {
+            for group in groups.values() {
+                extend_tfcrop_selected_channels(group, &loaded.flags_by_row, &mut modified);
+            }
+        } else {
+            extend_autoflag_grouped(groups.values().map(Vec::as_slice), &samples, &mut modified);
+        }
     }
     let union_candidates = count_mask(&modified);
     let planned_ms = started.elapsed().as_millis();
@@ -1401,6 +1418,49 @@ fn apply_tfcrop_flags(
     Ok(changes)
 }
 
+fn extend_tfcrop_selected_channels(
+    group: &[Sample],
+    flags: &BTreeMap<usize, ArrayD<bool>>,
+    modified: &mut [bool],
+) {
+    // The extension agent counts a whole window. Publish the results only
+    // for samples in the explicit channel selection.
+    let mut full = Vec::new();
+    let mut indices = Vec::with_capacity(group.len());
+    for row in sample_row_runs(group) {
+        let sample = row[0];
+        let flags = &flags[&sample.row];
+        let channels = flags.shape()[1];
+        let start = full.len();
+        push_flag_samples(
+            flags,
+            &(0..channels).collect::<Vec<_>>(),
+            None,
+            RowSampleMetadata {
+                row: sample.row,
+                field: sample.field,
+                spw: sample.spw,
+                scan: sample.scan,
+                ant1: sample.ant1,
+                ant2: sample.ant2,
+            },
+            &mut full,
+        );
+        indices.extend(
+            row.iter()
+                .map(|sample| (sample.index, start + sample.corr * channels + sample.chan)),
+        );
+    }
+    let mut extended = vec![false; full.len()];
+    for &(selected, all) in &indices {
+        extended[all] = modified[selected];
+    }
+    extend_autoflag_grouped([full.as_slice()], &full, &mut extended);
+    for (selected, all) in indices {
+        modified[selected] = extended[all];
+    }
+}
+
 fn apply_rflag_flags(
     ms: &mut MeasurementSet,
     selected_rows: &[usize],
@@ -1434,7 +1494,7 @@ fn apply_rflag_flags(
     }
     let mut modified = union_masks(&time_flags, &freq_flags);
     if request.extendflags {
-        extend_autoflag_grouped(&groups, &samples, &mut modified);
+        extend_autoflag_grouped(groups.values().map(Vec::as_slice), &samples, &mut modified);
     }
     let union_candidates = count_mask(&modified);
     let planned_ms = started.elapsed().as_millis();
@@ -1476,13 +1536,13 @@ fn apply_rflag_flags(
     Ok(changes)
 }
 
-fn extend_autoflag_grouped(
-    groups: &BTreeMap<GroupKey, Vec<Sample>>,
+fn extend_autoflag_grouped<'a>(
+    groups: impl IntoIterator<Item = &'a [Sample]>,
     samples: &[Sample],
     modified: &mut [bool],
 ) {
     let mut grown = modified.to_vec();
-    for group in groups.values() {
+    for group in groups {
         for by_corr in samples_by_corr(group) {
             for by_row in sample_row_runs(&by_corr) {
                 if percent_modified(by_row, modified) >= 80.0 {
@@ -4018,7 +4078,7 @@ mod tests {
         modified[2] = true;
         modified[3] = true;
         modified[4] = true;
-        extend_autoflag_grouped(&groups, &samples, &mut modified);
+        extend_autoflag_grouped(groups.values().map(Vec::as_slice), &samples, &mut modified);
         assert!(modified[0]);
         assert!(modified[5]);
 
