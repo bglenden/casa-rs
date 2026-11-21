@@ -5,8 +5,8 @@ use std::path::Path;
 use casa_images::{
     ImageInterface,
     analysis::{
-        ImageRegridOptions, ImageRegridProduct, SubimageRegion, ensure_artifacts_do_not_overlap,
-        ensure_outfile_does_not_alias_input, regrid_image,
+        ImageRegridOptions, ImageRegridProduct, ImageRegridTarget, SubimageRegion,
+        ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input, regrid_image,
     },
     image::image_history_rows,
     regrid::RegridPixel,
@@ -20,7 +20,7 @@ use crate::convert::{DoubleList, IntList};
 use crate::tools::table::casa_record;
 
 use super::PyImageTool;
-use super::attachment::read_locked;
+use super::attachment::{AttachedImage, read_locked};
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
 use super::create::publish_image;
@@ -45,7 +45,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for GridCoordinates {
     }
 }
 
-fn regrid_indices(value: &Bound<'_, PyAny>) -> PyResult<IntList> {
+pub(super) fn regrid_indices(value: &Bound<'_, PyAny>) -> PyResult<IntList> {
     if let Ok(integers) = value.extract::<IntList>() {
         return Ok(integers);
     }
@@ -99,52 +99,78 @@ impl PyImageTool {
             let mask = mask?;
             let destination = (!outfile.is_empty()).then(|| Path::new(outfile));
             let options = ImageRegridOptions {
-                shape: &shape.0, target: target.as_ref(), axes: &axes.0,
+                shape: &shape.0, target: ImageRegridTarget::Coordinates(target.as_ref()), axes: &axes.0,
                 region: region.as_ref().map(Region::as_region), mask: (!mask.is_empty()).then_some(mask.as_str()),
                 method, decimate, replicate, convert_reference: doref, dropdeg, force,
                 as_velocity: asvelocity, stretch, outfile: destination,
             };
-            publish_image(outfile, overwrite, |stage| read_locked(input, |handle| {
-                if let Some(destination) = destination {
-                    for source in handle.path().into_iter().chain(input.operand_paths().iter().map(|path| path.as_path())) {
-                        ensure_outfile_does_not_alias_input(destination, source).map_err(raised)?;
-                    }
-                    if let Some(region) = options.region.and_then(SubimageRegion::external_path) {
-                        ensure_artifacts_do_not_overlap(destination, region).map_err(raised)?;
-                    }
-                }
-                let native = handle.coordinate_record();
-                let beams = input.beam_view();
-                let mut output = match handle {
-                    ImageHandle::Float(source) => ImageHandle::Float(source.with_float_view(|image| {
-                        make_product(image, native, &beams, options, stage)
-                    })?),
-                    ImageHandle::Double(source) => ImageHandle::Double(with_storage!(source, image =>
-                        make_product(image.as_ref(), native, &beams, options, stage))?),
-                    ImageHandle::Complex(source) => ImageHandle::Complex(with_storage!(source, image =>
-                        make_product(image.as_ref(), native, &beams, options, stage))?),
-                    ImageHandle::DComplex(source) => ImageHandle::DComplex(with_storage!(source, image =>
-                        make_product(image.as_ref(), native, &beams, options, stage))?),
-                };
-                let history = with_pixels!(handle, source => match source {
-                    Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
-                    Storage::Temp { image, .. } => image.history_rows().to_vec(),
-                });
-                with_pixels!(&mut output, storage => with_storage!(storage, image => image.append_history_entries(&history))).map_err(raised)?;
-                if state.history {
-                    let region = region.as_ref().map_or_else(|| "{}".into(), Region::history);
-                    let csys = if target.is_some() { "{...}" } else { "{}" };
-                    output.record_history("regrid", format!(
-                        "ia.regrid(outfile={outfile:?}, shape={:?}, csys={csys}, axes={:?}, region={region}, mask={mask:?}, method={method:?}, decimate={decimate}, replicate={replicate}, doref={doref}, dropdegen={dropdeg}, overwrite={overwrite}, force={force}, asvelocity={asvelocity}, stretch={stretch})",
-                        shape.0, axes.0,
-                    ))?;
-                }
-                output.save().map_err(raised)?;
-                Ok(output)
-            }))
+            let history = state.history.then(|| {
+                let region = region.as_ref().map_or_else(|| "{}".into(), Region::history);
+                let csys = if target.is_some() { "{...}" } else { "{}" };
+                ("regrid", format!(
+                    "ia.regrid(outfile={outfile:?}, shape={:?}, csys={csys}, axes={:?}, region={region}, mask={mask:?}, method={method:?}, decimate={decimate}, replicate={replicate}, doref={doref}, dropdegen={dropdeg}, overwrite={overwrite}, force={force}, asvelocity={asvelocity}, stretch={stretch})",
+                    shape.0, axes.0,
+                ))
+            });
+            publish_regridded_image(input, outfile, overwrite, options, history)
         })?;
         Py::new(py, Self::attached(attachment))
     }
+}
+
+pub(super) fn publish_regridded_image(
+    input: &AttachedImage,
+    outfile: &str,
+    overwrite: bool,
+    options: ImageRegridOptions<'_>,
+    history: Option<(&str, String)>,
+) -> PyResult<AttachedImage> {
+    let destination = options.outfile;
+    publish_image(outfile, overwrite, |stage| {
+        read_locked(input, |handle| {
+            if let Some(destination) = destination {
+                for source in handle
+                    .path()
+                    .into_iter()
+                    .chain(input.operand_paths().iter().map(|path| path.as_path()))
+                {
+                    ensure_outfile_does_not_alias_input(destination, source).map_err(raised)?;
+                }
+                if let Some(region) = options.region.and_then(SubimageRegion::external_path) {
+                    ensure_artifacts_do_not_overlap(destination, region).map_err(raised)?;
+                }
+            }
+            let native = handle.coordinate_record();
+            let beams = input.beam_view();
+            let mut output = match handle {
+                ImageHandle::Float(source) => {
+                    ImageHandle::Float(source.with_float_view(|image| {
+                        make_product(image, native, &beams, options, stage)
+                    })?)
+                }
+                ImageHandle::Double(source) => ImageHandle::Double(with_storage!(source, image =>
+                make_product(image.as_ref(), native, &beams, options, stage))?),
+                ImageHandle::Complex(source) => {
+                    ImageHandle::Complex(with_storage!(source, image =>
+                make_product(image.as_ref(), native, &beams, options, stage))?)
+                }
+                ImageHandle::DComplex(source) => {
+                    ImageHandle::DComplex(with_storage!(source, image =>
+                make_product(image.as_ref(), native, &beams, options, stage))?)
+                }
+            };
+            let inherited = with_pixels!(handle, source => match source {
+                Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
+                Storage::Temp { image, .. } => image.history_rows().to_vec(),
+            });
+            with_pixels!(&mut output, storage => with_storage!(storage, image => image.append_history_entries(&inherited))).map_err(raised)?;
+            if let Some((method, arguments)) = history {
+                output.record_history(method, arguments)?;
+            }
+            output.save().map_err(raised)?;
+            Ok(output)
+        })
+    })
 }
 
 fn make_product<T: RegridPixel>(

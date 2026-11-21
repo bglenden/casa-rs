@@ -9219,3 +9219,11 @@ sky-coordinate round trip moves those samples across the linear
 interpolator's boundary by a fraction of a pixel at floating-point
 precision. Casa-rs uses the exact integer shift on the same tangent
 plane, preserving the selected region's validity boundary.
+
+### `image.rotate` can reject an overlapping right-angle sky rotation
+
+For a default `[24, 26]` direction image, CASA 6.7.6.14 rejects
+`rotate(pa="90deg", method="nearest")` with a no-overlap error.
+The longitude and latitude grids still overlap after a right-angle
+rotation about the reference pixel. Casa-rs samples the actual
+overlapping pixels and masks the portions outside the source.

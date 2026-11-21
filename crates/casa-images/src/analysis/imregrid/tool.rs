@@ -18,12 +18,23 @@ use crate::regrid::{
 };
 use crate::{ImageError, ImageInfo, ImageInterface, TempImage};
 
-/// Output coordinates, selection and sampling controls for `image.regrid`.
+use super::rotation::rotated_grid;
+
+/// How the target grid is constructed from a coordinate record or selected image.
+#[derive(Clone, Copy)]
+pub enum ImageRegridTarget<'a> {
+    /// Target CASA record. An empty target retains each source axis and length.
+    Coordinates(Option<&'a RecordValue>),
+    /// Rotate the selected direction or linear coordinate by this many radians.
+    Rotation(f64),
+}
+
+/// Output coordinates, selection and sampling controls for the public image tools.
 pub struct ImageRegridOptions<'a> {
     /// Destination pixel lengths, or the source shape when omitted.
     pub shape: &'a [i64],
-    /// Target CASA coordinates. An empty target retains each input axis at its current length.
-    pub target: Option<&'a RecordValue>,
+    /// The coordinate record or rotation used to construct the target grid.
+    pub target: ImageRegridTarget<'a>,
     /// Pixel axes to regrid, or the compatible nondegenerate axes by default.
     pub axes: &'a [i64],
     /// Input region read before interpolation.
@@ -83,9 +94,17 @@ pub fn regrid_image<T: RegridPixel>(
     {
         return Err(invalid("PV images are not supported by regrid"));
     }
-    let shape_specified = options.shape.first().is_some_and(|&size| size >= 0);
+    let rotating = matches!(options.target, ImageRegridTarget::Rotation(_));
+    let shape_specified = options.shape.first().is_some_and(|&size| size >= 0)
+        || (rotating && options.shape.len() == 1 && options.shape != [-1]);
     let shape: Vec<i64> = if !shape_specified {
-        input.shape().iter().map(|&size| size as i64).collect()
+        input
+            .shape()
+            .iter()
+            .copied()
+            .filter(|&size| !(rotating && options.dropdeg && size == 1))
+            .map(|size| size as i64)
+            .collect()
     } else {
         options.shape.to_vec()
     };
@@ -98,21 +117,13 @@ pub fn regrid_image<T: RegridPixel>(
                 .ok_or_else(|| invalid("output shape lengths must be positive"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let target = match options.target {
-        Some(record) => CoordinateSystem::from_record(record)?,
-        None => CoordinateSystem::new(),
+    let explicit_target = match options.target {
+        ImageRegridTarget::Coordinates(Some(record)) => {
+            Some(CoordinateSystem::from_record(record)?)
+        }
+        _ => None,
     };
     let info = ImageInfo::from_record(beam_record)?;
-    let all_axes = options.axes.is_empty() || options.axes == [-1];
-    if info.beam_set.is_multi()
-        && target.find_coordinate(CoordinateType::Spectral).is_some()
-        && let Some(axis) = input.find_axis(CoordinateType::Spectral)
-        && (all_axes || options.axes.contains(&(axis as i64)))
-    {
-        return Err(invalid(
-            "An image with multiple beams cannot be regridded along the spectral axis",
-        ));
-    }
     if let (Some(output), Some(mask)) = (options.outfile, options.mask) {
         for operand in ImageToolExpressionInputs::resolve(mask)?.paths() {
             ensure_outfile_does_not_alias_input(output, operand)?;
@@ -141,6 +152,38 @@ pub fn regrid_image<T: RegridPixel>(
             "This application does not support multiple region selection",
         ));
     }
+    let (selected_coords, ndim) = selection
+        .as_ref()
+        .map_or((input.coordinates(), input.ndim()), |selection| {
+            (&selection.coordinates, selection.shape.len())
+        });
+    if output_shape.len() != ndim {
+        return Err(invalid(
+            "The number of pixel axes in the output shape and Coordinate System must be the same",
+        ));
+    }
+    let rotation_axes;
+    let (target, axes) = match options.target {
+        ImageRegridTarget::Coordinates(_) => (
+            explicit_target.unwrap_or_else(CoordinateSystem::new),
+            options.axes,
+        ),
+        ImageRegridTarget::Rotation(angle) => {
+            let (target, axes) = rotated_grid(selected_coords, angle)?;
+            rotation_axes = axes;
+            (target, rotation_axes.as_slice())
+        }
+    };
+    let all_axes = axes.is_empty() || axes == [-1];
+    if info.beam_set.is_multi()
+        && target.find_coordinate(CoordinateType::Spectral).is_some()
+        && let Some(axis) = input.find_axis(CoordinateType::Spectral)
+        && (all_axes || axes.contains(&(axis as i64)))
+    {
+        return Err(invalid(
+            "An image with multiple beams cannot be regridded along the spectral axis",
+        ));
+    }
     let selected = selection
         .as_ref()
         .map(|selection| {
@@ -159,11 +202,6 @@ pub fn regrid_image<T: RegridPixel>(
     let source = selected
         .as_ref()
         .map_or(input, |image| image as &dyn ImageInterface<T>);
-    if output_shape.len() != source.ndim() {
-        return Err(invalid(
-            "The number of pixel axes in the output shape and Coordinate System must be the same",
-        ));
-    }
     let template = RegridTemplate {
         shape: template_shape(source.coordinates(), &target, &output_shape),
         coordinates: target,
@@ -172,7 +210,7 @@ pub fn regrid_image<T: RegridPixel>(
         source,
         &template,
         TaskRegridOptions {
-            axes: options.axes,
+            axes,
             shape: &shape,
             as_velocity: options.as_velocity,
             decimate: options.decimate.max(0),
