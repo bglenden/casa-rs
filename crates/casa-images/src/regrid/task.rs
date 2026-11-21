@@ -40,9 +40,9 @@ pub(crate) fn regrid_task<T: RegridPixel>(
 ) -> Result<Regridded<T>, ImageError> {
     let input_shape = input.shape();
     let frame = frame::observation_frame(input.coordinates());
-    let all_axes = options.axes.first().is_none_or(|&axis| axis < 0);
-    let chosen = requested_axes(options.axes, all_axes, input_shape.len())?;
     let resized = requested_shape(options.shape, input_shape)?;
+    let all_axes = use_default_axes(input, template, options.axes, resized.is_none());
+    let chosen = requested_axes(options.axes, all_axes, input_shape.len())?;
     let mut shape = resized.clone().unwrap_or_else(|| input_shape.to_vec());
     let ordered = index_coordinates(input.coordinates());
     let target_order = index_coordinates(&template.coordinates);
@@ -83,11 +83,13 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         });
         let input_lengths: Vec<_> = axes.iter().map(|&axis| input_shape[axis]).collect();
         let Some((other, theirs)) = target else {
-            if axes.iter().any(|&axis| shape[axis] != input_shape[axis]) {
-                return Err(invalid(
-                    "an axis missing from the template must keep its input length",
-                ));
-            }
+            validate_omitted_coordinate(
+                ours.coordinate_type(),
+                !all_axes && chosen[first],
+                &axes,
+                input_shape,
+                &shape,
+            )?;
             continue;
         };
         let theirs = *theirs;
@@ -119,21 +121,18 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             .copied()
             .enumerate()
             .map(|(i, axis)| {
-                if all_axes
-                    || (after_singleton && ours.coordinate_type() != CoordinateType::Spectral)
-                {
+                let spectral = ours.coordinate_type() == CoordinateType::Spectral;
+                let selected = if all_axes || (after_singleton && !spectral) {
                     input_lengths[i] > 1 && target_lengths[i] > 1
                 } else {
                     chosen[axis]
-                }
+                };
+                selected && (resized.is_some() || !spectral || target_lengths[i] > 1)
             })
             .collect();
         if resized.is_none() {
             for (i, &axis) in axes.iter().enumerate() {
-                if selected[i]
-                    && !(ours.coordinate_type() == CoordinateType::Spectral
-                        && target_lengths[i] == 1)
-                {
+                if selected[i] {
                     shape[axis] = target_lengths[i];
                 }
             }
@@ -240,6 +239,51 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     Ok(result)
 }
 
+fn validate_omitted_coordinate(
+    kind: CoordinateType,
+    explicitly_selected: bool,
+    axes: &[usize],
+    input_shape: &[usize],
+    output_shape: &[usize],
+) -> Result<(), ImageError> {
+    if explicitly_selected && kind == CoordinateType::Spectral {
+        return Err(invalid(
+            "cannot regrid a spectral axis missing from the template",
+        ));
+    }
+    if axes
+        .iter()
+        .any(|&axis| output_shape[axis] != input_shape[axis])
+    {
+        return Err(invalid(
+            "an axis missing from the template must keep its input length",
+        ));
+    }
+    Ok(())
+}
+
+fn use_default_axes<T: ImagePixel>(
+    source: &impl ImageInterface<T>,
+    target: &RegridTemplate,
+    axes: &[i64],
+    infer_shape: bool,
+) -> bool {
+    if axes.first().is_none_or(|&axis| axis < 0) {
+        return true;
+    }
+    let Some(source_spectral) = source.find_axis(CoordinateType::Spectral) else {
+        return false;
+    };
+    let target_spectral = target
+        .coordinates
+        .find_coordinate(CoordinateType::Spectral)
+        .and_then(|index| target.coordinates.coordinate_pixel_axes(index))
+        .and_then(|axes| axes.first().copied().flatten());
+    infer_shape
+        && axes == [source_spectral as i64]
+        && target_spectral.is_some_and(|axis| target.shape[axis] == 1)
+}
+
 fn regrid_linear_coordinate<T: RegridPixel>(
     result: &mut Regridded<T>,
     units: &str,
@@ -343,7 +387,6 @@ fn same_linear_grid(input: &LinearCoordinate, output: &LinearCoordinate) -> bool
 
 fn same_direction_grid(input: &DirectionCoordinate, output: &DirectionCoordinate) -> bool {
     input.direction_ref() == output.direction_ref()
-        && input.conversion_direction_ref() == output.conversion_direction_ref()
         && input.projection() == output.projection()
         && input.pc_matrix() == output.pc_matrix()
         && input.reference_pixel() == output.reference_pixel()
@@ -487,6 +530,34 @@ fn velocity_regrid(
     }
     let rest = input.rest_frequency_hz()?;
     let convention = input.velocity_convention();
+    if rest == template.rest_frequency_hz()?
+        && convention == DopplerRef::RADIO
+        && template.velocity_convention() == convention
+        && template.has_linear_mapping()
+        && template.frequency_ref() == template.world_frequency_ref()
+    {
+        // Radio velocity is affine here. Keep the exact template grid and
+        // the input's rest-frequency inventory.
+        let (pixel, reference, increment) = template.fits_linearized_axis_hz()?;
+        let coordinate = SpectralCoordinate::new(
+            input.world_frequency_ref(),
+            reference,
+            increment,
+            pixel,
+            rest,
+        )
+        .with_name(input.axis_names()[0].clone())
+        .with_linear_transform(template.linear_transform())?
+        .with_rest_frequencies(
+            input
+                .rest_frequencies()
+                .iter()
+                .map(|&rest| input.value_in_hz(rest))
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+        .with_velocity_convention(convention);
+        return Ok((coordinate, [source, target]));
+    }
     let frequency = |velocity| MDoppler::new(velocity, convention).shift_frequency_hz(rest);
     let reference = frequency(target.reference);
     let increment = frequency(target.reference + target.increment) - reference;
@@ -609,8 +680,10 @@ fn apply_direction<T: RegridPixel>(
     let grid = if options.replicate {
         replicated_grid(input_shape, shape)
     } else {
-        let from = target.conversion_direction_ref();
-        let to = input.conversion_direction_ref();
+        // Casacore's inter-coordinate conversion uses native frames, while
+        // toWorldMany and toPixelMany retain each coordinate's conversion layer.
+        let from = target.direction_ref();
+        let to = input.direction_ref();
         let decimate = options.decimate.max(0) as usize;
         let project = |pixel| {
             let world = target.pixel_to_world(pixel).ok()?;

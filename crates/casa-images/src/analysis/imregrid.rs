@@ -17,7 +17,9 @@ use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_provider_contracts::{
     ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
 };
-use casa_tables::publication::{exchange_directories, rename_without_replacing};
+use casa_tables::publication::{
+    exchange_directories, lock_table_tree_for_replacement, rename_without_replacing,
+};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -211,8 +213,9 @@ fn write_product<T: RegridPixel>(
     let shape = data.shape().to_vec();
     let valid_pixels = mask.iter().filter(|&&bit| bit).count();
     if let Some(destination) = destination {
+        let input_info = input.image_info()?;
         let info = output_image_info(
-            input.image_info()?,
+            input_info.clone(),
             input.coordinates(),
             &coordinates,
             beam_rotation,
@@ -222,7 +225,13 @@ fn write_product<T: RegridPixel>(
         let product = stage.path().join("image");
         let mut image = PagedImage::<T>::create(shape.clone(), coordinates, &product)?;
         image.set_units(input.units())?;
-        image.set_image_info(&info)?;
+        if info == input_info
+            && let Some(Value::Record(record)) = input.table().keywords().get("imageinfo")
+        {
+            image.set_image_info_record(record.clone())?;
+        } else {
+            image.set_image_info(&info)?;
+        }
         image.set_misc_info(input.misc_info())?;
         image.put_slice(&data, &vec![0; shape.len()])?;
         if valid_pixels < data.len() {
@@ -232,16 +241,20 @@ fn write_product<T: RegridPixel>(
         image.append_history_entries(&crate::image::image_history_rows(&request.imagename)?)?;
         image.append_history_at(
             "::imregrid",
-            &[format!(
-                "imregrid(imagename={:?}, output={:?}, interpolation={:?})",
-                request.imagename, output, request.interpolation
-            )],
+            &[
+                concat!("version: casa-rs ", env!("CARGO_PKG_VERSION")).into(),
+                format!(
+                    "imregrid(imagename={:?}, output={:?}, interpolation={:?})",
+                    request.imagename, output, request.interpolation
+                ),
+            ],
         )?;
         image.save()?;
         drop(image);
         match rename_without_replacing(&product, &destination) {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists && overwrite => {
                 check_output(request, &destination, overwrite)?;
+                let _locks = lock_table_tree_for_replacement(&destination)?;
                 exchange_directories(&product, &destination).map_err(output_io)?;
             }
             result => result.map_err(output_io)?,
