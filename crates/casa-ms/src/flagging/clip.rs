@@ -10,6 +10,7 @@ use super::{FlaggingError, is_casa_clip, is_casa_clip_complex32, is_casa_clip_co
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ClipOptions<'a> {
     pub(super) zeros: bool,
+    pub(super) signed_zeros: bool,
     pub(super) bounds: Option<[f64; 2]>,
     pub(super) outside: bool,
     pub(super) projections: Option<&'a [ClipProjection]>,
@@ -76,6 +77,7 @@ pub(super) fn apply_clip_array(
         })?;
     let ClipOptions {
         zeros,
+        signed_zeros,
         bounds,
         outside,
         projections,
@@ -89,7 +91,7 @@ pub(super) fn apply_clip_array(
         }
     };
     let clip_scalar = |value: f64| {
-        is_casa_clip(value.abs(), zeros)
+        is_casa_clip(if signed_zeros { value } else { value.abs() }, zeros)
             || bounds.is_some_and(|bounds| matches_range(value, bounds))
     };
     match data {
