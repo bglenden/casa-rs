@@ -137,6 +137,11 @@ def test_numeric_zero_dimensional_arrays_are_one_element_origins(casa):
             cs.subimage(np.array([], dtype=np.float16))
         with pytest.raises(RuntimeError, match="originShift.nelements"):
             cs.subimage(np.array([], dtype=float))
+    if np.little_endian:
+        origin = np.array(1.5, dtype=">f8")
+        for api, pixel in ((tools, -1.5), (casa, 0.0)):
+            cs = api.coordsys().newcoordsys(linear=1)
+            np.testing.assert_array_equal(cs.subimage(origin)["linear0"]["crpix"], [pixel])
 
 
 def test_rejected_arguments_and_stokes_extents(casa):
