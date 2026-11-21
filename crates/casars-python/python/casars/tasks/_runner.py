@@ -228,6 +228,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_path(values, "vis", arguments["vis"])
+    if name in ("flagdata", "flagmanager"):
+        vis = arguments["vis"]
+        if vis is not None and not isinstance(vis, (list, tuple)):
+            _validate_required_path(values, "vis", vis)
     if name == "plotms":
         return _call_plotms(values, arguments)
     if name == "importfits":
@@ -329,7 +333,6 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         argument_text: dict[str, str] = {}
         correlation_vector, column_vector = _coerce_flagdata_options(values, argument_text)
         if values.get("savepars"):
-            _validate_required_path(values, "vis", arguments["vis"])
             argument_text.update(_flagdata_saved_argument_text(arguments))
         try:
             if argument_text:
@@ -378,6 +381,16 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 errors[parameter] = ["must be of cStr type"]
         if errors:
             raise AssertionError(str(dict(sorted(errors.items()))))
+        try:
+            return run(name, **values).value
+        except TaskParameterError as error:
+            if error.completion.parameter in ("versionname", "oldname"):
+                raise ValueError(error.completion.message) from error
+            raise
+        except TaskExecutionError as error:
+            if error.completion.parameter == "versionname":
+                raise RuntimeError(error.completion.message) from error
+            raise
     return run(name, **values).value
 
 
@@ -522,6 +535,8 @@ def _flagging_choices(surface: str) -> dict[str, frozenset[str]]:
 
 def _flagging_choice_errors(surface: str, values: dict[str, Any]) -> dict[str, list[str]]:
     errors = {}
+    if "vis" in values and values["vis"] is None:
+        errors["vis"] = ["null value not allowed"]
     for parameter, choices in _flagging_choices(surface).items():
         if parameter not in values:
             continue

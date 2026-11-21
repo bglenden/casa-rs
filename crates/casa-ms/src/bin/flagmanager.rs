@@ -91,7 +91,12 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
         "restore" => {
             let name = require_version("Illegal versionname: ''")?;
             initialize_flag_versions(&ms).map_err(failed)?;
-            restore_flag_version(&mut ms, &name, request.merge).map_err(failed)?;
+            restore_flag_version(&mut ms, &name, request.merge).map_err(|error| match error {
+                casa_ms::FlaggingError::MissingFlagVersion { .. } => {
+                    failed(error).at("versionname")
+                }
+                error => failed(error),
+            })?;
             ms.save_main_table_only()
                 .map_err(|error| TaskFailure::execution(error.to_string()))?;
             mutation("restore", Some(name), None)

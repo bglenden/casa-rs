@@ -36,13 +36,15 @@ def check_wrong_schema():
             {"action": None}, {"action": True, "mode": None}, {"mode": ""},
             {"mode": np.array("manual")}, {"flagbackup": 1}, {"savepars": None},
             {"overwrite": "true"}, {"outfile": None}, {"cmdreason": None},
-            {"datacolumn": None}, {"datacolumn": [1]},
+            {"datacolumn": None}, {"datacolumn": [1]}, {"vis": None},
+            {"vis": ""}, {"vis": "missing.ms"}, {"vis": False},
         ),
         "flagmanager": (
             {"mode": None}, {"mode": "BOGUS"}, {"mode": True},
             {"mode": "list", "merge": None}, {"mode": "list", "comment": np.int64(10)},
             {"mode": "save", "versionname": "science", "comment": None},
             {"mode": "save", "versionname": "science", "merge": True},
+            {"vis": None}, {"vis": ""}, {"vis": "missing.ms"}, {"vis": False},
         ),
     }
     before, sidecars = snapshot("source.ms"), auxiliary_content("source.ms")
@@ -51,7 +53,7 @@ def check_wrong_schema():
             failures = []
             for library in (casatasks, tasks):
                 failures.append(assert_failure(getattr(library, name), AssertionError,
-                                               dict(vis="source.ms", **arguments)))
+                                               {"vis": "source.ms", **arguments}))
                 assert_preserved("source.ms", before, sidecars)
             assert failures[0] == failures[1], (name, arguments, failures)
     return sum(map(len, cases.values()))

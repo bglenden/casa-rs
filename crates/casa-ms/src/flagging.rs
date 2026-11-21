@@ -380,6 +380,12 @@ pub enum FlaggingError {
         /// Error context.
         reason: String,
     },
+    /// The requested version table does not exist.
+    #[error("Flag version {version} does not exist")]
+    MissingFlagVersion {
+        /// Requested flag version name.
+        version: String,
+    },
     /// A public flagmanager rename cannot proceed with these names.
     #[error("{message}")]
     FlagVersionRenameArgument {
@@ -3002,6 +3008,11 @@ pub fn restore_flag_version(
     let version_path = flag_version_table_path(&path, versionname);
     // The version is read under its read lock, held until the restore ends.
     let table = open_flag_version_for_reading(&version_path).map_err(|source| {
+        if matches!(version_path.try_exists(), Ok(false)) {
+            return FlaggingError::MissingFlagVersion {
+                version: versionname.to_owned(),
+            };
+        }
         FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("open flag version {versionname:?}: {source}"),

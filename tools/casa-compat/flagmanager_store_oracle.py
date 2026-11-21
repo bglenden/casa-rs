@@ -20,7 +20,7 @@ def check_catalog(task, prefix):
         ("save", {}, ValueError, "Illegal empty versionname: ''", False),
         ("restore", {}, ValueError, "Illegal versionname: ''", False),
         ("delete", {}, ValueError, "Illegal versionname: ''", False),
-        ("restore", {"versionname": "missing"}, RuntimeError, None, True),
+        ("restore", {"versionname": "missing"}, RuntimeError, "Flag version missing does not exist", True),
         ("delete", {"versionname": "missing"}, None, None, True),
         ("rename", {"oldname": "missing", "versionname": "new"}, ValueError,
          "No such flagversions: missing", False),
@@ -34,10 +34,9 @@ def check_catalog(task, prefix):
         try:
             result = task(vis=str(vis), mode=mode, **options)
         except Exception as error:
-            assert expected_error and isinstance(error, expected_error), (mode, error)
+            assert type(error) is expected_error, (mode, error)
             if message:
-                completion = getattr(error, "completion", None)
-                assert (completion.message if completion else str(error)) == message, mode
+                assert str(error) == message, mode
         else:
             assert expected_error is None, mode
             if mode == "list":
