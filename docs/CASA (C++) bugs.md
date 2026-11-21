@@ -4498,6 +4498,35 @@ combination gives an independent reference. Native feathering of the original
 crop agrees with it to a normalized RMS of `1.93e-7`. CASA's direct regrid
 of the crop differs from that reference by `6.01e-4` (#977).
 
+## `feather` uses direction increments as radians
+
+In CASA 6.7.6.14, `StokesImageUtil::MakeGaussianPSF` uses the numeric
+direction increments as radians when sampling the restoring beam for
+`feather`. The increments still carry the coordinate's declared units.
+With a 64 × 64 × 1 × 4 cube, 1 arcminute pixels, and beam major axes of
+3 and 8 arcminutes, storing the direction units as arcminutes makes the
+crossover kernel an impulse. CASA returns the low-resolution image
+multiplied by the beam-area ratio `(3/8)^2`. Expressing the same grid in
+radians retains the high-resolution signal. The two CASA products differ
+by 0.476 normalized RMS relative to the radian result.
+
+casa-rs samples the beam using direction increments in radians. On those
+inputs its two products agreed within `7e-8` normalized RMS, and the native
+product agreed with the radian CASA result within `7e-7`. The
+`direction_units_do_not_change_the_fourier_combination` regression uses
+the pinned CASA radian reference with the same physical grid stored in
+arcminutes (#977).
+
+## `imregrid` can terminate after a direction pixel axis is removed
+
+In CASA 6.7.6.14, make the right-ascension axis degenerate and drop it with
+`imsubimage(dropdeg=True)`. Copy the product and shift the Declination
+reference pixel by 0.25 in the copy. With the recorded `dropdeg_ra.image`
+fixture, `imregrid(axes=[0], decimate=1)` from the original to the shifted
+template terminates CASA with a bus error after creating the output mask.
+casa-rs returns a recoverable error and leaves the output absent. The
+coordinate layer can still open and transform both input grids (#977).
+
 ## `tb.copyrows` adds the rows before it finds a cell it cannot convert, and wraps integers
 
 - Date noted: 2026-10-31
@@ -8041,6 +8070,15 @@ calibration-table behavior with its warning that transformations are ignored.
 Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
+
+## Calibration quack can flag the whole scan when times are out of order
+
+With CASA 6.7.6.14, two Tsys time blocks in the same scan stored in reverse
+order are both flagged by `quackinterval=1.0` with either `quackmode='beg'`
+or `quackmode='endb'`, even though their timestamps are ten seconds apart.
+The calibration handler uses the first and last eligible stored rows to
+derive the scan boundaries. Casa-rs uses the eligible timestamps and flags
+the chronological beginning or end as requested.
 
 ## Calibration flagdata ignores a channel stride
 

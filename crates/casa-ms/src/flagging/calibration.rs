@@ -32,6 +32,16 @@ pub(super) fn run(
             request.summary_options,
         );
     }
+    match request.mode {
+        FlagDataMode::Quack | FlagDataMode::Extend => {
+            return grouped_flags(table, request, selected, persist, backup_version);
+        }
+        FlagDataMode::Elevation => {
+            return Err(FlaggingError::UnsupportedCalibrationAgent("elevation"));
+        }
+        FlagDataMode::Shadow => return Err(FlaggingError::UnsupportedCalibrationAgent("shadow")),
+        _ => {}
+    }
     if !matches!(request.mode, FlagDataMode::Manual | FlagDataMode::Clip) {
         return Err(FlaggingError::MutateFlags {
             path,
@@ -88,6 +98,44 @@ pub(super) fn run(
     if persist && report.changed_rows > 0 {
         persist_changed_flags(table, &changes, &path)?;
     }
+    Ok(report)
+}
+
+fn grouped_flags(
+    table: &mut MeasurementSet,
+    request: &FlagDataRequest,
+    selected: SelectedFlagRows,
+    persist: bool,
+    backup_version: Option<String>,
+) -> Result<FlagDataReport, FlaggingError> {
+    let path = display_ms_path(table);
+    let channels = selected.channels.as_ref();
+    let changes = if request
+        .correlation
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+    {
+        ChangeSet::default()
+    } else if request.mode == FlagDataMode::Quack {
+        apply_quack_flags(table, &selected.rows, channels, None, request)?
+    } else {
+        extend::apply(table, &selected.rows, channels, None, request, &path)?
+    };
+    let mut report = summary::report(
+        table,
+        &selected.rows,
+        channels,
+        None,
+        FlagSummaryOptions::default(),
+    )?;
+    if persist && !changes.changed_row_indices.is_empty() {
+        persist_changed_flags(table, &changes, &path)?;
+    }
+    report.mode = request.mode;
+    report.changed_rows = changes.changed_rows;
+    report.changed_samples = changes.changed_samples;
+    report.backup_version = backup_version;
+    report.summary = None;
     Ok(report)
 }
 
