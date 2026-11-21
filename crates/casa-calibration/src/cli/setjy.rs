@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_components::ComponentList;
+use casa_components::{ComponentList, SkyComponent};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::{
@@ -17,12 +17,26 @@ use casa_provider_contracts::{
 };
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::ScalarValue;
+use casa_types::measures::direction::MDirection;
+use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{CasaFrequencyFrame, FrequencyRef, MFrequency};
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::attachment::OpenedMs;
-use crate::ft::setjy::ManualFlux;
+use crate::ft::setjy::standards::{CalibratorSpectrum, CatalogScale, FluxCatalog};
+use crate::ft::setjy::{ManualFlux, sampled_point};
 use crate::ft::write_model_scratch;
+use crate::interpolation::Curve;
+
+enum FluxParameters {
+    Manual(ManualFlux),
+    Standard {
+        catalog: Box<FluxCatalog>,
+        interpolation: Curve,
+    },
+}
+
+type FieldModels = BTreeMap<i32, Vec<VirtualModelEntry>>;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
@@ -51,7 +65,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
         return empty_selection(task);
     }
-    let Some(manual) = manual_parameters(task)? else {
+    let Some(flux) = flux_parameters(task)? else {
         return TaskSuccess::new(
             CasaValue::Dict {
                 entries: Vec::new(),
@@ -65,7 +79,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let (models, fluxes) = prepare(
         &opened.measurement_set,
         &selected,
-        &manual,
+        &flux,
         &spws,
         task.flag("scalebychan")?,
     )?;
@@ -73,10 +87,26 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         opened = opened
             .initialize(VisibilityDataColumn::ModelData)
             .map_err(execution)?;
+        // An unrecognized calibrator reports unit flux and leaves any
+        // existing scratch cells alone.
+        if models.values().any(Vec::is_empty) && models.values().any(|entries| !entries.is_empty())
+        {
+            selection.field = Some(
+                models
+                    .iter()
+                    .filter(|(_, entries)| !entries.is_empty())
+                    .map(|(field, _)| field.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            selected = opened.resolve(&selection).map_err(execution)?;
+            selected.channel_selections.clear();
+        }
+        let entries: Vec<_> = models.into_values().flatten().collect();
         write_model_scratch(
             &mut opened.measurement_set,
             &selected,
-            &models,
+            &entries,
             false,
             true,
             None,
@@ -85,15 +115,13 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .map_err(execution)?;
     } else {
         // Fields can place records in different tables, depending on SOURCE_ID.
-        for entries in
-            models.chunk_by(|a, b| a.index_combination[0][0] == b.index_combination[0][0])
-        {
+        for (field, entries) in models.into_iter().rev() {
             VirtualModelPublication::default()
                 .replace_windows_holding(
                     &mut opened.measurement_set,
-                    entries,
+                    &entries,
                     &mut opened.lock,
-                    entries[0].index_combination[0][0],
+                    field,
                     &spws,
                 )
                 .map_err(execution)?;
@@ -118,12 +146,16 @@ fn empty_selection(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure
     ))
 }
 
-fn manual_parameters(task: &TaskInvocation<'_>) -> Result<Option<ManualFlux>, TaskFailure> {
+fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, TaskFailure> {
     let pending =
         |name| TaskFailure::validation("this setjy model configuration is pending #1519").at(name);
-    if task.text("standard")?.as_deref() != Some("manual") {
-        return Err(pending("standard"));
-    }
+    let scale = match task.text("standard")?.as_deref() {
+        Some("manual") => None,
+        Some("Perley-Butler 2017") => Some(CatalogScale::PerleyButler2017),
+        Some("Perley-Butler 2013") => Some(CatalogScale::PerleyButler2013),
+        Some("Scaife-Heald 2012") => Some(CatalogScale::ScaifeHeald2012),
+        _ => return Err(pending("standard")),
+    };
     if task.flag("listmodels")? {
         return Err(pending("listmodels"));
     }
@@ -133,18 +165,6 @@ fn manual_parameters(task: &TaskInvocation<'_>) -> Result<Option<ManualFlux>, Ta
     if !matches!(task.value("fluxdict"), Some(ParameterValue::Table(_))) {
         return Err(TaskFailure::validation("fluxdict must be a dictionary").at("fluxdict"));
     }
-    let input = task.numbers("fluxdensity")?;
-    if input.is_empty() || input.len() > 4 {
-        return Err(
-            TaskFailure::validation("manual setjy needs one to four Stokes flux values")
-                .at("fluxdensity"),
-        );
-    }
-    if input[0] < 0. {
-        return Err(pending("fluxdensity"));
-    }
-    let mut flux = [0.; 4];
-    flux[..input.len()].copy_from_slice(&input);
     let mut index = task.numbers("spix")?;
     if index.is_empty() {
         index.push(0.);
@@ -164,6 +184,36 @@ fn manual_parameters(task: &TaskInvocation<'_>) -> Result<Option<ManualFlux>, Ta
     let Some(reference) = reference_frequency(&reference) else {
         return Ok(None);
     };
+    if let Some(scale) = scale {
+        let interpolation = if scale.time_interpolation() {
+            match task.text("interpolation")?.as_deref() {
+                Some("nearest") => Curve::Nearest,
+                Some("linear") => Curve::Linear,
+                Some("spline") => Curve::Spline,
+                Some("cubic") => Curve::Cubic,
+                _ => return Ok(None),
+            }
+        } else {
+            Curve::Nearest
+        };
+        let catalog = Box::new(FluxCatalog::open(scale).map_err(execution)?);
+        return Ok(Some(FluxParameters::Standard {
+            catalog,
+            interpolation,
+        }));
+    }
+    let input = task.numbers("fluxdensity")?;
+    if input.is_empty() || input.len() > 4 {
+        return Err(
+            TaskFailure::validation("manual setjy needs one to four Stokes flux values")
+                .at("fluxdensity"),
+        );
+    }
+    if input[0] < 0. {
+        return Err(pending("fluxdensity"));
+    }
+    let mut flux = [0.; 4];
+    flux[..input.len()].copy_from_slice(&input);
     ManualFlux::new(
         flux,
         reference,
@@ -172,7 +222,7 @@ fn manual_parameters(task: &TaskInvocation<'_>) -> Result<Option<ManualFlux>, Ta
         task.numbers("polangle")?,
         task.number("rotmeas")?,
     )
-    .map(Some)
+    .map(|flux| Some(FluxParameters::Manual(flux)))
     .map_err(execution)
 }
 
@@ -220,10 +270,10 @@ fn add_time_selection(
 fn prepare(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
-    manual: &ManualFlux,
+    flux: &FluxParameters,
     spws: &[i32],
     by_channel: bool,
-) -> Result<(Vec<VirtualModelEntry>, CasaValue), TaskFailure> {
+) -> Result<(FieldModels, CasaValue), TaskFailure> {
     let mut groups = BTreeMap::<i32, BTreeMap<i32, Vec<usize>>>::new();
     for row in &selected.selected_rows {
         groups
@@ -244,13 +294,27 @@ fn prepare(
         .antenna_frame(*epoch, selected.selected_rows[0].antenna1_id as usize)
         .map_err(execution)?
         .with_position(engine.observatory_position().clone());
-    let mut models = Vec::new();
+    let mut models = FieldModels::new();
     let mut returned = BTreeMap::new();
     for (field, windows_for_field) in groups.into_iter().rev() {
         let direction = engine
             .observation_direction_j2000(*epoch, field as usize)
             .map_err(execution)?;
         let frame = frame.clone().with_direction(direction.clone());
+        let name = field_table.name(field as usize).map_err(execution)?;
+        let spectrum = match flux {
+            FluxParameters::Standard {
+                catalog,
+                interpolation,
+            } => {
+                let midpoint = field_midpoint(&time, &windows_for_field)?;
+                catalog
+                    .spectrum(&name, &direction, midpoint, *interpolation)
+                    .map_err(execution)?
+            }
+            FluxParameters::Manual(_) => None,
+        };
+        let entries = models.entry(field).or_default();
         let mut field_flux = BTreeMap::new();
         for &spw in spws {
             let all_hz = windows.chan_freq(spw as usize).map_err(execution)?;
@@ -259,14 +323,13 @@ fn prepare(
                 .map_err(execution)?;
             let num_channels = i32::try_from(all_hz.len()).map_err(execution)?;
             let planned = selected_frequencies(all_hz, frequency_frame, by_channel)?;
-            let (component, [i, q, u, v]) = manual
-                .component(direction.clone(), &planned, &frame)
-                .map_err(execution)?;
-            if let Some(rows) = windows_for_field.get(&spw) {
+            let (component, stokes) =
+                point_model(flux, spectrum.as_ref(), &direction, &planned, &frame)?;
+            if let (Some(rows), Some(component)) = (windows_for_field.get(&spw), component) {
                 let container = ComponentList::from(vec![component])
                     .to_record()
                     .map_err(execution)?;
-                models.push(VirtualModelEntry {
+                entries.push(VirtualModelEntry {
                     kind: VirtualModelKind::ComponentList,
                     index_combination: selected_model_combinations(ms, rows)
                         .map_err(execution)?
@@ -283,18 +346,13 @@ fn prepare(
                         CasaValue::FloatArray {
                             dtype: FloatDtype::Float64,
                             shape: vec![4],
-                            data: [i, q, u, v].map(CasaFloat).to_vec(),
+                            data: stokes.map(CasaFloat).to_vec(),
                         },
                     )],
                 },
             );
         }
-        field_flux.insert(
-            "fieldName".into(),
-            CasaValue::String {
-                value: field_table.name(field as usize).map_err(execution)?,
-            },
-        );
+        field_flux.insert("fieldName".into(), CasaValue::String { value: name });
         returned.insert(
             field.to_string(),
             CasaValue::Dict {
@@ -314,6 +372,46 @@ fn prepare(
                 .collect(),
         ),
     ))
+}
+
+fn field_midpoint(
+    time: &casa_tables::TableColumn<'_>,
+    windows: &BTreeMap<i32, Vec<usize>>,
+) -> Result<f64, TaskFailure> {
+    let rows = windows.values().flatten().copied();
+    let first = rows.clone().min().expect("a selected field contains rows");
+    let last = rows.max().expect("a selected field contains rows");
+    let (ScalarValue::Float64(first), ScalarValue::Float64(last)) = (
+        time.scalar_cell(first).map_err(execution)?,
+        time.scalar_cell(last).map_err(execution)?,
+    ) else {
+        return Err(execution("expected double-precision visibility epochs"));
+    };
+    Ok((first + (last - first) * 0.5) / 86_400.)
+}
+
+fn point_model(
+    flux: &FluxParameters,
+    spectrum: Option<&CalibratorSpectrum<'_>>,
+    direction: &MDirection,
+    frequencies: &[MFrequency],
+    frame: &MeasFrame,
+) -> Result<(Option<SkyComponent>, [f64; 4]), TaskFailure> {
+    let (component, stokes) = match (flux, spectrum) {
+        (FluxParameters::Manual(manual), _) => {
+            manual.component(direction.clone(), frequencies, frame)
+        }
+        (_, Some(spectrum)) => {
+            let samples = frequencies
+                .iter()
+                .map(|frequency| [spectrum.flux(frequency.hz()), 0., 0., 0.])
+                .collect();
+            sampled_point(direction.clone(), frequencies, samples)
+        }
+        (_, None) => return Ok((None, [1., 0., 0., 0.])),
+    }
+    .map_err(execution)?;
+    Ok((Some(component), stokes))
 }
 
 fn requested_windows(ms: &MeasurementSet, spw: Option<&str>) -> Result<Vec<i32>, TaskFailure> {

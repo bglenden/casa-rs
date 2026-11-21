@@ -47,8 +47,39 @@ pub(crate) fn sample_polar(
         return Some((last.1, last.2));
     }
     let upper = points.partition_point(|point| point.0 < coordinate);
+    Some(sample_segment(
+        points,
+        coordinate,
+        mode,
+        descending,
+        derivatives,
+        upper,
+    ))
+}
+
+/// Sample the end segment when a calibration standard extrapolates in time.
+pub(crate) fn sample_extrapolating(
+    points: &[(f64, f32, f32)],
+    coordinate: f64,
+    mode: Curve,
+    derivatives: &[[f64; 2]],
+) -> (f32, f32) {
+    let upper = points
+        .partition_point(|point| point.0 < coordinate)
+        .clamp(1, points.len() - 1);
+    sample_segment(points, coordinate, mode, false, derivatives, upper)
+}
+
+fn sample_segment(
+    points: &[(f64, f32, f32)],
+    coordinate: f64,
+    mode: Curve,
+    descending: bool,
+    derivatives: &[[f64; 2]],
+    upper: usize,
+) -> (f32, f32) {
     let (low, high) = (points[upper - 1], points[upper]);
-    let (amplitude, phase) = if mode == Curve::Nearest {
+    if mode == Curve::Nearest {
         let nearest = if high.0 - coordinate < coordinate - low.0
             || (descending && high.0 - coordinate == coordinate - low.0)
         {
@@ -96,8 +127,7 @@ pub(crate) fn sample_polar(
         let fraction = (coordinate - low.0) / (high.0 - low.0);
         let interpolate = |a: f32, b: f32| (f64::from(a) + f64::from(b - a) * fraction) as f32;
         (interpolate(low.1, high.1), interpolate(low.2, high.2))
-    };
-    Some((amplitude, phase))
+    }
 }
 
 /// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
