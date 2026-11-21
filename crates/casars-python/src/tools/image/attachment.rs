@@ -9,9 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
-use casa_tables::publication::{
-    check_write_access, exchange_directories, rename_without_replacing,
-};
+use casa_tables::publication::check_write_access;
 use casa_tables::{Table, TableError, TableOptions, TableUseLock, TableWriteLock};
 use casa_types::RecordValue;
 use pyo3::prelude::*;
@@ -19,7 +17,8 @@ use pyo3::prelude::*;
 use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
-use super::handle::{ImageHandle, raised, same_file_identity};
+use super::handle::{ImageHandle, raised};
+use super::native_rename::move_native_table;
 use super::stub;
 
 pub(super) struct SharedImage {
@@ -378,14 +377,16 @@ impl AttachedImage {
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
             ));
         };
+        let source_changed = || {
+            raised(format!(
+                "Cannot rename image {} because the image at that path has changed",
+                source.display()
+            ))
+        };
         let old_name = {
             let image = self.lock();
-            self.check_bound_name(&image).map_err(|_| {
-                raised(format!(
-                    "Cannot rename image {} because the image at that path has changed",
-                    source.display()
-                ))
-            })?;
+            self.check_bound_name(&image)
+                .map_err(|_| source_changed())?;
             self.name_path(&image).unwrap_or(source).to_path_buf()
         };
         let absolute = std::path::absolute(name).map_err(raised)?;
@@ -440,10 +441,7 @@ impl AttachedImage {
                 .as_ref()
                 .is_some_and(|lease| !lease.matches_directory(source))
             {
-                return Err(raised(format!(
-                    "Cannot rename image {} because the image at that path has changed",
-                    source.display()
-                )));
+                return Err(source_changed());
             }
             log_rename(&mut self.lock())?;
             return Ok(Self {
@@ -487,12 +485,8 @@ impl AttachedImage {
         let mut locks = BTreeMap::new();
         {
             let mut image = self.lock();
-            self.check_bound_name(&image).map_err(|_| {
-                raised(format!(
-                    "Cannot rename image {} because the image at that path has changed",
-                    source.display()
-                ))
-            })?;
+            self.check_bound_name(&image)
+                .map_err(|_| source_changed())?;
             image.unlock_storage()?;
         }
         lock_table_tree(source, &mut locks)?;
@@ -501,35 +495,54 @@ impl AttachedImage {
         } else if replaces_link {
             lock_table_ancestors(&target, &mut locks)?;
         }
+        let source_metadata = source.symlink_metadata().map_err(raised)?;
         if self
             .image
             .use_lock
             .as_ref()
-            .is_some_and(|lease| !lease.matches_directory(source))
+            .is_some_and(|lease| !lease.matches_directory_metadata(&source_metadata))
         {
-            return Err(raised(format!(
-                "Cannot rename image {} because the image at that path has changed",
-                source.display()
-            )));
+            return Err(source_changed());
         }
-        let backup = move_native_table(source, &target, target_metadata.as_ref())?;
+        let open = |path: &Path| {
+            ImageHandle::open_native(path, self.image.shareable.then_some(1)).map_err(raised)
+        };
+        let moved = move_native_table(
+            source,
+            &source_metadata,
+            &target,
+            target_metadata.as_ref(),
+            |copied| {
+                if history {
+                    // Write only to the private copy. A competing rename of
+                    // the public destination must not redirect this history.
+                    log_rename(&mut open(copied)?)?;
+                }
+                Ok(())
+            },
+        )?;
+        let copied_lock = moved.use_lock();
         // Keep both root locks during reattachment, but release child
         // locks so the log-table writer can append the rename history.
         locks.retain(|path, _| path == source || path == &target);
         let reopen = || {
-            let mut image = ImageHandle::open_native(&target, self.image.shareable.then_some(1))
-                .map_err(raised)?;
-            log_rename(&mut image)?;
+            moved.check_target(&target)?;
+            let mut image = open(&target)?;
+            moved.check_target(&target)?;
+            if copied_lock.is_none() {
+                log_rename(&mut image)?;
+            }
             Ok::<_, PyErr>(image)
         };
         let handle = match reopen() {
             Ok(image) => image,
-            Err(error) => return restore_native_move(source, &target, backup, error),
+            Err(error) => return moved.restore(source, &target, error),
         };
+        moved.finish(&target)?;
         let beam_view = BeamView::from_image(&handle);
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
-            use_lock: self.image.use_lock.clone(),
+            use_lock: copied_lock.or_else(|| self.image.use_lock.clone()),
             shareable: self.image.shareable,
             coordinates_replaced: AtomicBool::new(
                 self.image.coordinates_replaced.load(Ordering::Relaxed),
@@ -742,84 +755,6 @@ fn lock_table_for_deletion(
     }
     leases.insert(directory.to_path_buf(), lease);
     Ok(())
-}
-
-fn move_error(error: std::io::Error) -> PyErr {
-    if error.kind() == std::io::ErrorKind::CrossesDevices {
-        stub("rename").unwrap_err()
-    } else {
-        raised(error)
-    }
-}
-
-fn move_native_table(
-    source: &Path,
-    target: &Path,
-    target_metadata: Option<&fs::Metadata>,
-) -> PyResult<Option<tempfile::TempDir>> {
-    let Some(expected) = target_metadata else {
-        rename_without_replacing(source, target).map_err(move_error)?;
-        return Ok(None);
-    };
-    let parent = source
-        .parent()
-        .ok_or_else(|| raised("Invalid source image path"))?;
-    let backup = tempfile::tempdir_in(parent).map_err(raised)?;
-    exchange_directories(source, target).map_err(move_error)?;
-    let previous = backup.path().join("previous");
-    if let Err(error) = rename_without_replacing(source, &previous) {
-        if let Err(restore) = exchange_directories(source, target) {
-            return Err(raised(format!(
-                "Could not complete image rename ({error}) or restore by exchanging {} and {} ({restore})",
-                source.display(),
-                target.display()
-            )));
-        }
-        return Err(move_error(error));
-    }
-    if !previous
-        .symlink_metadata()
-        .is_ok_and(|actual| same_file_identity(expected, &actual))
-    {
-        return restore_native_move(
-            source,
-            target,
-            Some(backup),
-            raised(format!(
-                "The destination image entry at {} has changed",
-                target.display()
-            )),
-        );
-    }
-    Ok(Some(backup))
-}
-
-fn restore_native_move<T>(
-    source: &Path,
-    target: &Path,
-    backup: Option<tempfile::TempDir>,
-    error: PyErr,
-) -> PyResult<T> {
-    let Some(backup) = backup else {
-        rename_without_replacing(target, source).map_err(|restore| {
-            raised(format!(
-                "{error}. Could not restore image {}: {restore}",
-                source.display()
-            ))
-        })?;
-        return Err(error);
-    };
-    let previous = backup.path().join("previous");
-    let restore = exchange_directories(target, &previous)
-        .and_then(|()| rename_without_replacing(&previous, source));
-    if let Err(restore) = restore {
-        let recovery = backup.keep();
-        return Err(raised(format!(
-            "{error}. Could not restore image names: {restore}. Inspect {}",
-            recovery.display()
-        )));
-    }
-    Err(error)
 }
 
 impl Drop for AttachedImage {
