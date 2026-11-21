@@ -10,6 +10,7 @@ mod decimate;
 mod insert;
 mod noise;
 mod pad;
+mod pbcor;
 mod pixel_edit;
 mod read_window;
 mod rebin;
@@ -30,6 +31,7 @@ pub use decimate::{DecimationMethod, DecimationPixel, ImageDecimation, ImageDeci
 pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
 pub use pad::{ImagePad, ImagePadOptions};
+pub use pbcor::{ImagePbcor, ImagePbcorBeam, ImagePbcorOptions};
 pub use pixel_edit::ImagePixelSelection;
 pub use rebin::{ImageRebin, ImageRebinOptions};
 pub use smoothing::{ImageSmoothing, SmoothingKernel, SmoothingOptions, SmoothingPixel};

@@ -726,6 +726,37 @@ def ft(
     """
     return _call_casa(ft, locals())
 
+def setjy(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    field: str = '',
+    spw: str = '',
+    selectdata: bool = False,
+    timerange: str | list[str] | tuple[str, ...] = '',
+    scan: str | list[str] | tuple[str, ...] = '',
+    intent: str = '',
+    observation: str | int = '',
+    scalebychan: bool = True,
+    standard: Literal['Perley-Taylor 95', 'Butler-JPL-Horizons 2010', 'Perley-Butler 2010', 'Stevens-Reynolds 2016', 'Perley-Taylor 99', 'Perley-Butler 2013', 'Perley 90', 'Scaife-Heald 2012', 'manual', 'Butler-JPL-Horizons 2012', 'Perley-Butler 2017', 'fluxscale', 'Baars'] = 'Perley-Butler 2017',
+    model: str = '',
+    listmodels: bool = False,
+    fluxdensity: float | list[float] | tuple[float, ...] = -1,
+    spix: float | list[float] | tuple[float, ...] = 0.0,
+    reffreq: str = '1GHz',
+    polindex: list[float] | tuple[float, ...] = [],
+    polangle: list[float] | tuple[float, ...] = [],
+    rotmeas: float = 0.0,
+    fluxdict: Mapping[str, ParameterData] = {},
+    useephemdir: bool = False,
+    interpolation: Literal['nearest', 'linear', 'spline', '', 'cubic'] = 'nearest',
+    usescratch: bool = True,
+    ismms: bool = False,
+) -> Any:
+    """Populate a calibrator visibility model with setjy.
+
+    CASA's ``setjy``: its parameters, defaults and return value.
+    """
+    return _call_casa(setjy, locals())
+
 def uvmodelfit(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     field: str = '',
@@ -1515,6 +1546,6 @@ def plotbandpass(
     """
     return _call_casa(plotbandpass, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass')
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass')
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass']
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass']

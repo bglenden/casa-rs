@@ -308,7 +308,7 @@ fn put_model(
     incremental: bool,
     lock: Option<&mut TableWriteLock>,
 ) -> MsResult<()> {
-    VirtualModelPublication::default().publish(ms, [(entry, incremental)], lock, None)
+    VirtualModelPublication::default().publish(ms, [(entry, incremental)], lock, None, None)
 }
 
 fn add_model(
@@ -411,35 +411,45 @@ fn clear(
     }
     with_model_locks(ms, lock, |ms, main, source| {
         let mut state = ModelState::read(ms)?;
-        let mut images = Vec::new();
-        for &field in fields {
-            let Some((key, source_row)) = state.defined_for_field(field) else {
-                tracing::info!(field, "no virtual model to clear");
-                continue;
-            };
-            let pointer = pointer(field);
-            if spws.is_empty() {
-                images.extend(record_images(&state.record(ms, &key)?));
-                state.remove_record_by_key(&key);
-                if source_row.is_some() {
-                    state.remove_source_keyword(&pointer);
-                }
-                state.remove_main_keyword(&pointer);
-                continue;
-            }
-            let mut record = state.record(ms, &key)?;
-            if remove_spw(&mut record, spws, fields) {
-                state.put_record_by_key(&key, record, source_row);
-            } else {
-                images.extend(record_images(&state.record(ms, &key)?));
-                state.remove_record_by_key(&key);
-                state.remove_source_keyword(&pointer);
-            }
-        }
+        let images = clear_model_selection(ms, &mut state, fields, spws)?;
         state.write_holding(ms, main, source)?;
         delete_images(ms, &images);
         Ok(())
     })
+}
+
+fn clear_model_selection(
+    ms: &MeasurementSet,
+    state: &mut ModelState,
+    fields: &[i32],
+    spws: &[i32],
+) -> MsResult<Vec<PathBuf>> {
+    let mut images = Vec::new();
+    for &field in fields {
+        let Some((key, source_row)) = state.defined_for_field(field) else {
+            tracing::info!(field, "no virtual model to clear");
+            continue;
+        };
+        let pointer = pointer(field);
+        if spws.is_empty() {
+            images.extend(record_images(&state.record(ms, &key)?));
+            state.remove_record_by_key(&key);
+            if source_row.is_some() {
+                state.remove_source_keyword(&pointer);
+            }
+            state.remove_main_keyword(&pointer);
+            continue;
+        }
+        let mut record = state.record(ms, &key)?;
+        if remove_spw(&mut record, spws, fields) {
+            state.put_record_by_key(&key, record, source_row);
+        } else {
+            images.extend(record_images(&state.record(ms, &key)?));
+            state.remove_record_by_key(&key);
+            state.remove_source_keyword(&pointer);
+        }
+    }
+    Ok(images)
 }
 
 /// The fields and spectral windows CASA's `MSSelection` finds for a

@@ -8,6 +8,7 @@ use casa_images::analysis::{
 use casa_images::image::image_history_rows;
 use casa_images::{ImageInterface, ImagePixel};
 use casa_types::{RecordValue, ScalarValue, Value};
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
@@ -73,6 +74,84 @@ impl Region {
             Self::Record(_) => "{...}".to_owned(),
         }
     }
+}
+
+/// Draw the same distinction CASA makes between its default record and an
+/// explicitly supplied empty text or array.
+pub(super) struct RegionArgument {
+    selection: Option<Region>,
+    record: bool,
+    empty_history: &'static str,
+}
+
+impl Default for RegionArgument {
+    fn default() -> Self {
+        Self {
+            selection: None,
+            record: true,
+            empty_history: "{...}",
+        }
+    }
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for RegionArgument {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let record = value.is_instance_of::<PyDict>();
+        let empty_history = if record {
+            "{...}"
+        } else if value.is_instance_of::<PyString>() {
+            r#""""#
+        } else {
+            "[]"
+        };
+        Ok(Self {
+            selection: Region::capture(value.py(), (!value.is_none()).then_some(&value))?,
+            record,
+            empty_history,
+        })
+    }
+}
+
+impl RegionArgument {
+    pub(super) fn selection(&self) -> Option<SubimageRegion<'_>> {
+        self.selection.as_ref().map(Region::as_region)
+    }
+
+    pub(super) fn validate_selectors(
+        &self,
+        spatial: &str,
+        chans: &str,
+        stokes: &str,
+    ) -> PyResult<()> {
+        if self.record || self.selection.is_some() {
+            if !spatial.is_empty() {
+                return Err(raised(
+                    "box and regionPtr cannot be simultaneously specified",
+                ));
+            }
+            if !chans.is_empty() || !stokes.is_empty() {
+                return Err(raised(
+                    "regionPtr and regionName, chans, and/or stokes cannot be simultaneously specified",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn history(&self) -> String {
+        self.selection
+            .as_ref()
+            .map_or_else(|| self.empty_history.into(), Region::history)
+    }
+}
+
+pub(super) fn require_bool(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    value
+        .cast::<PyBool>()
+        .map(|value| value.is_true())
+        .map_err(|_| PyTypeError::new_err("expected bool"))
 }
 
 fn empty_variant(value: &Bound<'_, PyAny>) -> PyResult<bool> {
