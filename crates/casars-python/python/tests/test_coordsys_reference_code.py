@@ -109,6 +109,12 @@ def test_adjustment_uses_live_reference_pixel_for_sampled_frequencies(casa, chan
 
 
 def test_adjustment_uses_native_values_when_a_display_frame_is_active(casa):
+    longitude, latitude = np.deg2rad([24., 32.])
+    obliquity = np.deg2rad(84381.448 / 3600.)
+    x, y, z = np.cos(latitude) * np.cos(longitude), np.cos(latitude) * np.sin(longitude), np.sin(latitude)
+    projected_y = y * np.cos(obliquity) + z * np.sin(obliquity)
+    projected_z = z * np.cos(obliquity) - y * np.sin(obliquity)
+    expected = [np.arctan2(projected_y, x), np.arctan2(projected_z, np.hypot(x, projected_y))]
     for api in (tools, casa):
         before = observed(api)
         cs = observed(api)
@@ -122,6 +128,7 @@ def test_adjustment_uses_native_values_when_a_display_frame_is_active(casa):
             assert coords.setreferencecode("ECLIPTIC")
         baseline = before.referencevalue()["numeric"]
         converted = cs.referencevalue()["numeric"]
+        np.testing.assert_allclose(baseline[:2], expected, rtol=0, atol=1.e-10)
         if api is tools:
             np.testing.assert_allclose(converted, baseline, rtol=0, atol=2.e-7)
         else:
@@ -162,6 +169,26 @@ def test_direction_adjustment_rejects_an_incompatible_celestial_pole(casa):
         with pytest.raises(RuntimeError, match="Ill-conditioned coordinate transformation"):
             coords.setreferencecode("GALACTIC")
         _assert_value(coords.torecord(), before)
+
+
+def test_adjusted_frame_preserves_signed_direction_axis_maps(casa):
+    source = observed(casa).torecord()
+    for domain in ("pixel", "world"):
+        source[f"{domain}map0"] = np.array([-1, 0], dtype=np.int32)
+        source[f"{domain}map1"] = np.array([1], dtype=np.int32)
+    source["pixelreplace0"] = np.array([0.75, 0.0])
+    source["worldreplace0"] = np.array([12.0, 0.0])
+    coordinates = []
+    for api in (tools, casa):
+        coords = api.coordsys()
+        assert coords.fromrecord(source)
+        assert coords.setreferencecode("GALACTIC")
+        result = coords.torecord()
+        np.testing.assert_array_equal(result["pixelmap0"], [-1, 0])
+        np.testing.assert_array_equal(result["worldmap0"], [-1, 0])
+        np.testing.assert_allclose(result["worldreplace0"], [np.deg2rad(12.0), 0.0])
+        coordinates.append(coords.toworld([1.25, 4.0])["numeric"])
+    np.testing.assert_allclose(*coordinates, rtol=1.e-12, atol=1.e-10)
 
 
 def test_native_frame_change_survives_all_image_writer_reader_pairs(casa, tmp_path):
