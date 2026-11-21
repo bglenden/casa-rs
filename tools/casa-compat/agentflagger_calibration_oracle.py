@@ -102,6 +102,9 @@ def agent_cases(source, column):
     cases = [
         ('manual-apply', 'parsemanualparameters', dict(antenna='A1', field='FLUX', spw='0:0~2'), True),
         ('manual-unflag', 'parsemanualparameters', dict(antenna='A0', apply=False), True),
+        ('manual-antenna-pair', 'parsemanualparameters', dict(antenna='A0&A1'), True),
+        ('manual-local-observation', 'parsemanualparameters', dict(
+            antenna='A1', observation='99'), True),
         ('manual-autocorr', 'parsemanualparameters', dict(autocorr=True, time=utc), False),
         ('manual-autocorr-range', 'parsemanualparameters', dict(
             autocorr=True, time='~'.join((time + timedelta(seconds=value)).strftime(
@@ -133,12 +136,20 @@ def agent_cases(source, column):
         ('tfcrop-empty-correlation-alone', 'parseagentparameters', dict(
             aparams=dict(tfcrop, mode='tfcrop', freqcutoff=0.25, correlation='')), True),
         ('tfcrop-no-column', 'parsetfcropparameters', {}, False),
+        ('tfcrop-bad-fit-alone', 'parsetfcropparameters', dict(
+            datacolumn=column, freqfit='wrong', extendflags=False), False),
+        ('tfcrop-bad-window-alone', 'parsetfcropparameters', dict(
+            datacolumn=column, halfwin=-1, extendflags=False), False),
         ('antint', 'parseantintparameters', dict(antint_ref_antenna='A1', minchanfrac=0.2,
                                               verbose=True, apply=False), False),
         ('extend-apply', 'parseextendparameters', dict(ntime=1., combinescans=True,
            extendpols=False, growtime=10.0, growfreq=15.0, growaround=True,
            flagneartime=True, flagnearfreq=True), True),
         ('extend-unflag', 'parseextendparameters', dict(growtime=0.0, growfreq=10.0, apply=False), True),
+        ('extend-unflag-unreached-threshold', 'parseextendparameters', dict(
+            extendpols=False, growtime=100.0, growfreq=100.0, apply=False), True),
+        ('extend-unflag-no-growth', 'parseextendparameters', dict(
+            extendpols=False, growtime=0.0, growfreq=0.0, apply=False), True),
         ('summary-dimensions', 'parsesummaryparameters', dict(
             spw='0:0~2', spwchan=True, spwcorr=True, basecnt=True, fieldcnt=True, name='axes'), False),
         ('summary-correlation', 'parsesummaryparameters', dict(correlation='Sol1'), False),
@@ -146,9 +157,17 @@ def agent_cases(source, column):
         ('summary-observation', 'parsesummaryparameters', dict(observation='99'), False),
         ('summary-array', 'parsesummaryparameters', dict(array='9'), False),
         ('summary-uvrange', 'parsesummaryparameters', dict(uvrange='>100km'), False),
+        ('summary-antenna-uvrange', 'parsesummaryparameters', dict(
+            antenna='A1', uvrange='>100km'), False),
+        ('summary-antenna-pair', 'parsesummaryparameters', dict(antenna='A0&A1'), False),
         ('summary-intent', 'parsesummaryparameters', dict(intent='NONE'), False),
         ('generic-empty', 'parseagentparameters', dict(aparams={}), False),
         ('generic-extra', 'parseagentparameters', dict(aparams={'mode': 'manual', 'extra': 9}), False),
+        ('generic-summary-alone', 'parseagentparameters', dict(aparams={'mode': 'summary'}), False),
+        ('generic-time-key', 'parseagentparameters', dict(
+            aparams={'mode': 'manual', 'antenna': 'A1', 'time': '>2100/01/01/00:00:00'}), True),
+        ('generic-timerange-key', 'parseagentparameters', dict(
+            aparams={'mode': 'manual', 'antenna': 'A1', 'timerange': '>2100/01/01/00:00:00'}), True),
         ('generic-numeric-unflag', 'parseagentparameters', dict(
             aparams={'mode': 'manual', 'antenna': 'A1', 'apply': 0}), True),
         ('generic-numpy-switch', 'parseagentparameters', dict(
@@ -171,6 +190,10 @@ def agent_cases(source, column):
             aparams=dict(rflag, writeflags=False, extendflags=False)), True),
         ('rflag-average', 'parseagentparameters', dict(
             aparams=dict(rflag, writeflags=False, extendflags=False, channelavg=True)), False),
+        ('rflag-malformed-thresholds-alone', 'parseagentparameters', dict(
+            aparams=dict(rflag, extendflags=False, timedev=[0.01], freqdev=[0.01])), True),
+        ('rflag-empty-thresholds-alone', 'parseagentparameters', dict(
+            aparams=dict(rflag, extendflags=False, timedev=[], freqdev=[])), True),
         ('rflag-threshold-apply', 'parseagentparameters', dict(aparams=dict(
             rflag, winsize=3, timedev=0.01, freqdev=0.1, timedevscale=2.0, freqdevscale=3.0,
             spectralmin=0.0, spectralmax=100000., extendflags=False)), True),
@@ -361,6 +384,26 @@ a.run(writeflags=False)
         assert tool.done()
 
 
+def preserve_supported_selector(root, engines, source, column):
+    with opened(source) as table:
+        antennas = table.getcol('ANTENNA1')
+    selected = flags(source)
+    selected[..., antennas == 2] = True
+    assert not np.all(selected)
+    for name, factory in engines.items():
+        path = root / f'{column}-conflicting-array-{name}.cal'
+        shutil.copytree(source, path)
+        before = original_columns(path)
+        parsed, initialized, _ = run_agent(factory, path, 'conflicting-array-alone',
+                                           'parseagentparameters',
+                                           dict(aparams=dict(mode='manual', antenna='A2',
+                                                             array='9')), True)
+        assert parsed and initialized
+        expected = np.ones_like(selected) if name == 'casa' else selected
+        assert_flags(path, expected)
+        preserved(path, before)
+
+
 def locked_snapshot(root, source):
     path = root / 'agent-writer-lock.caltable'
     shutil.copytree(source, path)
@@ -449,6 +492,7 @@ def main():
             agents += compare_agents(root, engines, source, column)
             selections += selection_cases(root, engines, source, column)
             version_workflows += versions(root, engines, source, column)
+            preserve_supported_selector(root, engines, source, column)
             if 'native' in engines:
                 safe_native_runs(root, engines['native'], source, column)
         if 'native' in engines:

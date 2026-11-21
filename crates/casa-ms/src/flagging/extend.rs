@@ -91,12 +91,18 @@ pub(super) fn apply(
 /// Flag mask for one baseline's selected samples in time order.
 fn grow(samples: &[Sample], request: &FlagDataRequest) -> Vec<bool> {
     let mut flags = samples.iter().map(|sample| sample.flag).collect::<Vec<_>>();
-    if request.growaround || request.flagneartime || request.flagnearfreq {
+    let value = request.action.value();
+    if value && (request.growaround || request.flagneartime || request.flagnearfreq) {
         grow_neighbors(samples, request, &mut flags);
     }
     grow_across_time_and_frequency(samples, request, &mut flags);
     if request.extendpols {
-        extend_across_correlations(samples, &mut flags);
+        extend_across_correlations(samples, &mut flags, value);
+    }
+    if !value {
+        for (flag, sample) in flags.iter_mut().zip(samples) {
+            *flag = sample.flag && !*flag;
+        }
     }
     flags
 }
@@ -174,20 +180,20 @@ fn grow_across_time_and_frequency(
         if reaches(by_timestep[&(sample.corr, sample.row)], request.growfreq)
             || reaches(by_channel[&(sample.corr, sample.chan)], request.growtime)
         {
-            flags[sample.index] = true;
+            flags[sample.index] = request.action.value();
         }
     }
 }
 
 /// Flag every correlation of a channel and timestep with any flagged correlation.
-fn extend_across_correlations(baseline: &[Sample], flags: &mut [bool]) {
+fn extend_across_correlations(baseline: &[Sample], flags: &mut [bool], value: bool) {
     let mut flagged = BTreeMap::<(usize, usize), bool>::new();
     for sample in baseline {
         *flagged.entry((sample.row, sample.chan)).or_default() |= flags[sample.index];
     }
     for sample in baseline {
         if flagged[&(sample.row, sample.chan)] {
-            flags[sample.index] = true;
+            flags[sample.index] = value;
         }
     }
 }

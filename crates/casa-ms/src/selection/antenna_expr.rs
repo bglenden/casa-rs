@@ -294,7 +294,7 @@ impl MeasurementSet {
     }
 
     /// A local calibration agent selects the solution antenna for a single
-    /// antenna list. Pair expressions still select an ordered baseline.
+    /// antenna list. A pair expression uses the resolved first antenna list.
     pub(crate) fn resolve_calibration_agent_antenna_selector(
         &self,
         text: &str,
@@ -468,8 +468,12 @@ fn condition(
             let (first, second) = (mask(first), mask(second));
             let autocorrelations = *autocorrelations;
             Box::new(move |a1, a2| {
-                (autocorrelations || a1 != a2)
-                    && ((first[a1] && second[a2]) || (second[a1] && first[a2]))
+                if solution_antenna {
+                    first[a1]
+                } else {
+                    (autocorrelations || a1 != a2)
+                        && ((first[a1] && second[a2]) || (second[a1] && first[a2]))
+                }
             })
         }
         Term::AutoOnly(ids) => {
