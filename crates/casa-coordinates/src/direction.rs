@@ -175,7 +175,7 @@ fn compute_native_pole(
     // phi_p alone.
     let (sin_dp, cos_dp) = delta_p.sin_cos();
     let z = cos_dp * cos_d0;
-    let alpha_p = if z.abs() < 1.0e-10 {
+    let mut alpha_p = if z.abs() < 1.0e-10 {
         if cos_d0.abs() < 1.0e-10 {
             // The celestial pole is the fiducial point.
             alpha_0
@@ -191,6 +191,16 @@ fn compute_native_pole(
         let y = sin_pp * cos_t0 / cos_d0;
         alpha_0 - y.atan2(x)
     };
+
+    // WCSLIB's celset gives the native pole the same longitude convention
+    // as the fiducial point. This determines the sign of off-centre RA in
+    // cylindrical and all-sky projections.
+    let full_circle = 2.0 * PI;
+    if (alpha_0 >= 0.0 && alpha_p < 0.0) || (alpha_0 < 0.0 && alpha_p < -full_circle) {
+        alpha_p += full_circle;
+    } else if (alpha_0 < 0.0 && alpha_p > 0.0) || (alpha_0 >= 0.0 && alpha_p > full_circle) {
+        alpha_p -= full_circle;
+    }
 
     [alpha_p, delta_p]
 }
