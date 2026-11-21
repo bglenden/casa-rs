@@ -8760,6 +8760,11 @@ and the equivalent `convertmany([[6.0], [7.0]], ...)` segfault. Casa-rs
 raises a Python error and leaves the coordinate record usable. Scalar and
 batched `toworld` and `topixel` continue to use the nested transform.
 
+The same CASA version can also segfault in `coordsys.summary(list=False)`
+when a nested Linear system retains two pixel axes but its inner
+`worldmap0` removes one world axis. Casa-rs reports the incompatible
+axis counts and leaves the coordinate tools usable for transformation.
+
 ## An empty nested list crashes `coordsys.convertmany`
 
 CASA 6.7.6.14 exits with a segmentation fault when a two-axis coordinate

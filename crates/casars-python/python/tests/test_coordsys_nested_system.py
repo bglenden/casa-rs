@@ -1,5 +1,7 @@
 """Native records preserve a CoordinateSystem as a coordinate inside another."""
 
+from copy import deepcopy
+
 import numpy as np
 import pytest
 
@@ -165,6 +167,29 @@ def test_direction_and_frequency_in_a_nested_system_use_declared_units(casa, hid
             np.testing.assert_allclose(cs.topixelmany(expected)["numeric"], points, atol=1e-8, rtol=0)
             np.testing.assert_allclose(cs.toworld(points[:, 1])["numeric"], expected[:, 1], atol=1e-8, rtol=0)
             np.testing.assert_allclose(cs.topixel(expected[:, 1])["numeric"], points[:, 1], atol=1e-8, rtol=0)
+            if not hide_longitude:
+                np.testing.assert_array_equal(cs.increment("s")["string"], [
+                    "-9.00000000e+02 arcsec", "4.50000000e+02 arcsec", "1.00000000e+03 Hz",
+                ])
+                rows = cs.summary(list=False)[0].splitlines()[-3:]
+                assert rows[0].endswith("20     4.00 -9.000000e+02 arcsec")
+                assert rows[1].endswith("30     5.00  4.500000e+02 arcsec")
+                assert cs.setreferencevalue([40.0, 50.0, 1.4e9])
+                assert cs.setincrement([-0.5, 0.25, 500.0])
+                np.testing.assert_allclose(cs.referencevalue()["numeric"], [40.0, 50.0, 1.4e9])
+                np.testing.assert_allclose(cs.increment()["numeric"], [-0.5, 0.25, 500.0])
+                assert cs.setreferencelocation(pixel=[6, 7, 8], world=[42.0, 52.0, 1.4e9])
+                np.testing.assert_allclose(cs.referencevalue()["numeric"], [42.0, 52.0, 1.4e9])
+                np.testing.assert_array_equal(cs.referencepixel()["numeric"], [6.0, 7.0, 8.0])
+                image = api.image()
+                try:
+                    assert image.fromshape(shape=[12, 13, 15], csys=cs.torecord())
+                    report = image.summary(list=False)
+                    assert list(report["axisunits"]) == ["deg", "deg", "Hz"]
+                    np.testing.assert_allclose(report["refval"], [42.0, 52.0, 1.4e9])
+                    np.testing.assert_allclose(report["incr"], [-0.5, 0.25, 500.0])
+                finally:
+                    image.done()
         finally:
             cs.done()
 
@@ -204,5 +229,70 @@ def test_mixed_conversion_of_a_nested_system_raises_a_python_error(system_record
         with pytest.raises(RuntimeError, match="nested coordinate system"):
             cs.convertmany([[6.0], [7.0]], unitsin=["pix", "pix"], unitsout=["cm", "ms"])
         np.testing.assert_array_equal(cs.toworld([6.0, 7.0])["numeric"], [102.0, 33.0])
+    finally:
+        cs.done()
+
+
+def test_replacing_a_coordinate_with_a_nested_system_retains_its_definition(casa, system_record):
+    for api in (casa, tools):
+        output = api.coordsys().newcoordsys(linear=2)
+        reopened = api.coordsys()
+        try:
+            assert output.replace(system_record, 0, 0)
+            assert list(output.coordinatetype()) == ["System"]
+            saved = output.torecord()
+            assert "coordsys0" in saved
+            assert "linear0" in saved["coordsys0"]
+            assert reopened.fromrecord(saved)
+            np.testing.assert_array_equal(reopened.toworld([6.0, 7.0])["numeric"], [102.0, 33.0])
+        finally:
+            reopened.done()
+            output.done()
+
+
+@pytest.mark.parametrize("field", ["pixelreplace0", "worldreplace0"])
+def test_rejected_nested_record_preserves_previous_state(casa, system_record, field):
+    malformed = deepcopy(system_record)
+    malformed["coordsys0"].pop(field)
+    for api in (casa, tools):
+        cs = api.coordsys()
+        try:
+            assert cs.fromrecord(system_record)
+            with pytest.raises(RuntimeError):
+                cs.fromrecord(malformed)
+            np.testing.assert_array_equal(cs.toworld([6.0, 7.0])["numeric"], [102.0, 33.0])
+        finally:
+            cs.done()
+
+
+def test_nested_stokes_labels_format_without_losing_the_system_type(casa):
+    seed = casa.coordsys().newcoordsys(stokes=["I", "Q", "U", "V"])
+    try:
+        record = nested_system_record(seed.torecord(), [1.0])
+    finally:
+        seed.done()
+    for api in (casa, tools):
+        cs = api.coordsys()
+        try:
+            assert cs.fromrecord(record)
+            assert list(cs.toworld([2.0], "s")["string"]) == ["U"]
+            assert list(cs.increment("s")["string"]) == ["I"]
+            assert cs.summary(list=False)[0].splitlines()[-1].split() == [
+                "0", "0", "System", "Stokes", "I", "0.00", "I",
+            ]
+        finally:
+            cs.done()
+
+
+def test_summary_rejects_a_nested_system_with_unequal_axis_counts_without_aborting(system_record):
+    system_record["coordsys0"]["worldmap0"] = np.array([-1, 0], dtype=np.int32)
+    system_record["worldmap0"] = np.array([0], dtype=np.int32)
+    system_record["worldreplace0"] = np.array([54.0])
+    cs = tools.coordsys()
+    try:
+        assert cs.fromrecord(system_record)
+        with pytest.raises(RuntimeError, match="unequal pixel and world axes"):
+            cs.summary(list=False)
+        np.testing.assert_array_equal(cs.toworld([6.0, 7.0])["numeric"], [33.0])
     finally:
         cs.done()

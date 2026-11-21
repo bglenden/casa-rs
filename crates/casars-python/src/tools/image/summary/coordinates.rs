@@ -16,7 +16,8 @@ use pyo3::PyResult;
 use crate::convert::value::CasaValue;
 pub(super) use crate::tools::coordsys::world_reference::scientific_with_precision as scientific;
 use crate::tools::coordsys::world_reference::{
-    format_direction, format_number, format_number_with_precision, spectral_text,
+    format_direction, format_number, format_number_with_precision, nested_axis_display,
+    spectral_text,
 };
 
 use super::super::beams::subrecord;
@@ -59,17 +60,16 @@ pub(super) fn fields(
     let mut descriptors = Vec::new();
     for coordinate in placements(record)? {
         let model = &coordinate.model;
+        if matches!(model, CoordinateModel::System(_))
+            && model.n_pixel_axes() != model.n_world_axes()
+        {
+            return Err(raised(
+                "Cannot summarize a nested coordinate system with unequal pixel and world axes",
+            ));
+        }
         let names = model.axis_names();
-        let (units, values, increments) = if let CoordinateModel::Direction(direction) = model {
-            let (values, increments) = direction.reference_and_increment_in_world_units();
-            (direction.visible_world_units(), values, increments)
-        } else {
-            (
-                model.axis_units(),
-                model.reference_value(),
-                model.increment(),
-            )
-        };
+        let units = model.declared_axis_units();
+        let (values, increments) = model.reference_and_increment_in_declared_units();
         let references = model.reference_pixel();
         for local in 0..model.n_world_axes() {
             let pixel = coordinate.pixels[local];
@@ -271,6 +271,17 @@ fn rows(
                         pixel.map(|_| display_pixel),
                         doppler,
                     )?;
+                }
+                CoordinateModel::System(_) => {
+                    if let Some((value, increment, units)) =
+                        nested_axis_display(model, local, reference, increments[local])?
+                    {
+                        row.fields[7] = value;
+                        if pixel.is_some() {
+                            row.fields[9] = increment;
+                        }
+                        row.fields[10] = format!(" {units}");
+                    }
                 }
                 _ => (),
             }

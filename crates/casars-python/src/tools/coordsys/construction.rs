@@ -111,11 +111,7 @@ pub(in crate::tools) fn append_coordinate(
         .to_world(&vec![0.0; n_pixel])
         .map_err(|error| raised(error.to_string()))?;
     let kind = coordinate.coordinate_type();
-    let name = if kind == CoordinateType::System {
-        "coordsys".to_owned()
-    } else {
-        kind.to_string().to_ascii_lowercase()
-    };
+    let name = kind.record_prefix();
     let mut axis_record = coordinate.to_record();
     match kind {
         CoordinateType::Spectral => {
@@ -207,9 +203,16 @@ fn normalize_stokes_records(record: &mut RecordValue) -> PyResult<()> {
         let Value::Record(subrecord) = &mut field.value else {
             continue;
         };
-        if kind == "coordsys" {
-            validate_coordinate_indices(subrecord)?;
-            normalize_stokes_records(subrecord)?;
+        let declared_system = matches!(subrecord.get("coordinate_type"),
+            Some(Value::Scalar(ScalarValue::String(kind))) if kind == "System");
+        if kind == "coordsys" || declared_system {
+            *subrecord = restore(std::mem::take(subrecord), "unknown".into())?.record;
+            if declared_system {
+                subrecord.upsert(
+                    "coordinate_type",
+                    Value::Scalar(ScalarValue::String("System".into())),
+                );
+            }
             continue;
         }
         if kind != "stokes"

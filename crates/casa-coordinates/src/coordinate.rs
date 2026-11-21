@@ -40,6 +40,21 @@ pub enum CoordinateType {
     System,
 }
 
+impl CoordinateType {
+    /// Prefix of this coordinate's numbered field in a native casacore record.
+    pub fn record_prefix(self) -> &'static str {
+        match self {
+            Self::Linear => "linear",
+            Self::Direction => "direction",
+            Self::Spectral => "spectral",
+            Self::Stokes => "stokes",
+            Self::Tabular => "tabular",
+            Self::Quality => "quality",
+            Self::System => "coordsys",
+        }
+    }
+}
+
 impl fmt::Display for CoordinateType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -127,6 +142,16 @@ impl CoordinateModel {
             Self::Direction(direction) => direction.visible_world_units(),
             Self::System(system) => system.world_axis_values(Self::declared_axis_units),
             _ => self.axis_units(),
+        }
+    }
+
+    /// Concrete coordinate and local axis for a world axis of this model.
+    pub fn world_axis_leaf(&self, axis: usize) -> Option<(&Self, usize)> {
+        if let Self::System(system) = self {
+            let (index, local) = system.world_axis_owner(axis)?;
+            system.coordinate(index).world_axis_leaf(local)
+        } else {
+            (axis < self.n_world_axes()).then_some((self, axis))
         }
     }
 

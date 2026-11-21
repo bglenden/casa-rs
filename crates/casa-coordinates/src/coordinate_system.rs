@@ -210,7 +210,11 @@ impl CoordinateSystem {
         for coord in &self.coordinates {
             let nw = coord.n_world_axes();
             let world_slice = &world[world_offset..world_offset + nw];
-            match coord.to_pixel(world_slice) {
+            let projected = match coord {
+                CoordinateModel::System(system) => system.project_pixels(world_slice, undefined),
+                _ => coord.to_pixel(world_slice),
+            };
+            match projected {
                 Ok(values) => pixel.extend(values),
                 Err(CoordinateError::SingularTransform(_)) if undefined => {
                     pixel.extend(std::iter::repeat_n(f64::NAN, coord.n_pixel_axes()));
@@ -267,39 +271,14 @@ impl CoordinateSystem {
         }
 
         let mut pixels = Array2::zeros((self.n_pixel_axes(), world.ncols()).f());
-        let mut input = Vec::new();
         let mut world_offset = 0;
         let mut pixel_offset = 0;
         for coord in &self.coordinates {
             let next_world = world_offset + coord.n_world_axes();
             let next_pixel = pixel_offset + coord.n_pixel_axes();
             let world = world.slice_axis(Axis(0), (world_offset..next_world).into());
-            let mut pixel = pixels.slice_axis_mut(Axis(0), (pixel_offset..next_pixel).into());
-            if let CoordinateModel::Linear(linear) = coord {
-                match linear.to_pixel_columns(world, pixel.view_mut()) {
-                    Ok(()) => (),
-                    Err(CoordinateError::SingularTransform(_)) if undefined => pixel.fill(f64::NAN),
-                    Err(error) => return Err(error),
-                }
-            } else {
-                for (column, mut output) in
-                    world.axis_iter(Axis(1)).zip(pixel.axis_iter_mut(Axis(1)))
-                {
-                    input.clear();
-                    input.extend(column.iter().copied());
-                    match coord.to_pixel(&input) {
-                        Ok(values) => {
-                            for (output, value) in output.iter_mut().zip(values) {
-                                *output = value;
-                            }
-                        }
-                        Err(CoordinateError::SingularTransform(_)) if undefined => {
-                            output.fill(f64::NAN)
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-            }
+            let pixel = pixels.slice_axis_mut(Axis(0), (pixel_offset..next_pixel).into());
+            mapped::project_coordinate_columns(coord, world, pixel, undefined)?;
             world_offset = next_world;
             pixel_offset = next_pixel;
         }
@@ -318,7 +297,7 @@ impl CoordinateSystem {
         let mut next_pixel_axis = 0i32;
 
         for (index, coord) in self.coordinates.iter().enumerate() {
-            let basename = record_basename(coord.coordinate_type());
+            let basename = coord.coordinate_type().record_prefix();
             rec.upsert(
                 format!("{basename}{index}"),
                 Value::Record(coord.to_record()),
@@ -368,10 +347,13 @@ impl CoordinateSystem {
                 format!("pixelreplace{index}"),
                 Value::Array(ArrayValue::from_f64_vec(vec![0.0; n_pixel as usize])),
             );
-            let zero_pixel = vec![0.0; n_pixel as usize];
-            let world_replace = coord
-                .to_world(&zero_pixel)
-                .unwrap_or_else(|_| vec![0.0; n_world as usize]);
+            let world_replace = if matches!(coord, CoordinateModel::System(_)) {
+                mapped::default_world_replacements(coord)
+            } else {
+                coord
+                    .to_world(&vec![0.0; n_pixel as usize])
+                    .unwrap_or_else(|_| vec![0.0; n_world as usize])
+            };
             rec.upsert(
                 format!("worldreplace{index}"),
                 Value::Array(ArrayValue::from_f64_vec(world_replace)),
@@ -510,18 +492,6 @@ impl Default for CoordinateSystem {
     }
 }
 
-fn record_basename(kind: CoordinateType) -> &'static str {
-    match kind {
-        CoordinateType::Linear => "linear",
-        CoordinateType::Direction => "direction",
-        CoordinateType::Spectral => "spectral",
-        CoordinateType::Stokes => "stokes",
-        CoordinateType::Tabular => "tabular",
-        CoordinateType::Quality => "quality",
-        CoordinateType::System => "coordsys",
-    }
-}
-
 fn coordinate_record_entries(rec: &RecordValue) -> Vec<(usize, String)> {
     let mut modern = rec
         .fields()
@@ -633,6 +603,28 @@ mod tests {
             [-1e-5, 1e-5],
             [10.0, 20.0],
         )
+    }
+
+    #[test]
+    fn removing_a_nested_world_axis_stores_its_replacement_in_declared_units() {
+        let mut inner = CoordinateSystem::new();
+        inner.add_coordinate(direction());
+        let mut record = inner.to_record();
+        CoordinateSystem::set_world_axis_unit_in_record(&mut record, 0, "deg").unwrap();
+        let inner = CoordinateSystem::set_world_axis_unit_in_record(&mut record, 1, "deg")
+            .unwrap()
+            .0;
+        let mut outer = CoordinateSystem::new();
+        outer.add_coordinate(inner);
+        let replacement = outer.reference_value()[0];
+        let latitude = outer.to_world(&[10.0, 24.0]).unwrap()[1];
+        outer.remove_world_axis(0, replacement).unwrap();
+        let record = outer.to_record();
+        let stored = crate::record_utils::get_required_vec_f64(&record, "worldreplace0").unwrap();
+        assert!((stored[0] - replacement.to_degrees()).abs() < 1e-12);
+        for system in [outer, CoordinateSystem::from_record(&record).unwrap()] {
+            assert!((system.to_pixel(&[latitude]).unwrap()[0] - 24.0).abs() < 1e-9);
+        }
     }
 
     #[test]

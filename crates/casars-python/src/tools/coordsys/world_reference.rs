@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::display::{
-    format_latitude_dms_with_precision, format_longitude_hours_with_precision,
+    format_latitude_dms_with_precision, format_longitude_hours_with_precision, format_stream_value,
     format_stream_value_with_precision,
 };
 use casa_coordinates::{CoordinateModel, CoordinateType, QualityType, StokesType};
@@ -203,6 +203,45 @@ fn direction_text(
     }
 }
 
+pub(in crate::tools) fn nested_axis_display(
+    model: &CoordinateModel,
+    axis: usize,
+    value: f64,
+    increment: f64,
+) -> PyResult<Option<(String, String, String)>> {
+    use casa_types::quanta::{Quantity, Unit};
+
+    if !matches!(model, CoordinateModel::System(_)) {
+        return Ok(None);
+    }
+    let Some((leaf, local)) = model.world_axis_leaf(axis) else {
+        return Ok(None);
+    };
+    Ok(match leaf {
+        CoordinateModel::Direction(direction) => {
+            let declared = model.declared_axis_units();
+            let angle = Quantity::new(value, "rad")
+                .and_then(|angle| angle.get_value_in(&Unit::new(&declared[axis])?))
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let local = if direction.longitude_axis().is_none() {
+                1
+            } else {
+                local
+            };
+            let (increment, units) =
+                format_direction(direction.direction_ref(), local, increment, false, true, 6);
+            Some((format_stream_value(angle), increment, units.into()))
+        }
+        CoordinateModel::Stokes(_) => Some((stokes(value), stokes(increment), String::new())),
+        CoordinateModel::Quality(_) => Some((
+            QualityType::from_world(value).name().into(),
+            QualityType::from_world(increment).name().into(),
+            String::new(),
+        )),
+        _ => None,
+    })
+}
+
 struct Values<'a> {
     coordinate: &'a CoordinateModel,
     record: Option<&'a RecordValue>,
@@ -314,6 +353,30 @@ impl<'a> Values<'a> {
     fn text(&self, axis: usize, absolute: bool, scientific_style: bool) -> PyResult<String> {
         let value = self.declared[axis];
         let unit = &self.units[axis];
+        if matches!(self.coordinate, CoordinateModel::System(_))
+            && let Some((leaf, local)) = self.coordinate.world_axis_leaf(self.visible_axes[axis])
+        {
+            match leaf {
+                CoordinateModel::Stokes(_) => return Ok(stokes(value)),
+                CoordinateModel::Quality(_) => {
+                    return Ok(QualityType::from_world(value).name().into());
+                }
+                CoordinateModel::Direction(direction) if !absolute => {
+                    return Ok(direction_text(
+                        direction.direction_ref(),
+                        if direction.longitude_axis().is_none() {
+                            1
+                        } else {
+                            local
+                        },
+                        self.native[axis],
+                        false,
+                        scientific_style,
+                    ));
+                }
+                _ => (),
+            }
+        }
         Ok(match self.coordinate {
             CoordinateModel::Stokes(_) => stokes(value),
             CoordinateModel::Quality(_) => QualityType::from_world(value).name().into(),
