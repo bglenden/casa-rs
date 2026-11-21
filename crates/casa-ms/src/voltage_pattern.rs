@@ -7,6 +7,7 @@ use casa_numerics::PrimaryBeam;
 use casa_tables::{Table, TableOptions};
 use casa_types::{
     RecordValue, ScalarValue, Value,
+    measures::direction_from_record,
     quanta::{Quantity, Unit},
 };
 
@@ -256,10 +257,11 @@ pub fn radial_squint(record: &RecordValue) -> Result<Option<([f64; 2], f64)>, Vo
             "squintdir must be a direction record",
         ));
     };
-    let offset = [
-        quantity(direction, "m0", "rad")?,
-        quantity(direction, "m1", "rad")?,
-    ];
+    let direction = direction_from_record(direction).map_err(VoltagePatternError::read)?;
+    // PBMath reads a signed tangent offset, even when the direction was
+    // serialized with its longitude in [0, 2π).
+    let [x, y, _] = direction.cosines();
+    let offset = [y.atan2(x), direction.latitude_rad()];
     if offset == [0.; 2] {
         return Ok(None);
     }

@@ -16,15 +16,17 @@ from imager_component_voltage_oracle import compare, predict, scratch_pair, sour
 from imager_legacy_pbw_oracle import corrected_or_data, data, make_input
 
 
-def radial_table(path, frequency):
+def radial_table(path, frequency, *, airy=False):
     me = measures()
-    direction = me.direction('J2000', '180arcsec', '72arcsec')
+    direction = me.direction('J2000', '-180arcsec' if airy else '180arcsec', '72arcsec')
     manager = vpmanager()
     manager.reset()
-    definition = manager.setpbgauss(
-        telescope='VLA', halfwidth='400arcsec', maxrad='1500arcsec', reffreq='1.4GHz',
-        squintdir=direction, squintreffreq=frequency, dosquint=True,
-    )
+    options = dict(telescope='VLA', maxrad='1500arcsec', reffreq='1.4GHz',
+                   squintdir=direction, squintreffreq=frequency, dosquint=True)
+    if airy:
+        definition = manager.setpbairy(dishdiam='25m', blockagediam='2.36m', **options)
+    else:
+        definition = manager.setpbgauss(halfwidth='400arcsec', **options)
     reported = definition['squintdir']
     assert reported['refer'] == direction['refer']
     for axis in ('m0', 'm1'):
@@ -32,10 +34,31 @@ def radial_table(path, frequency):
         np.testing.assert_allclose(reported[axis]['value'], direction[axis]['value'], atol=1.e-15)
     assert manager.saveastable(str(path))
     reader = table()
-    assert reader.open(str(path))
+    assert reader.open(str(path), nomodify=not airy)
     stored = reader.getcell('pbdescription', 0)
     assert stored['squintdir'] == reported and stored['squintreffreq'] == definition['squintreffreq']
+    if airy:
+        # CASA writes signed longitude. The native direction serializer uses [0, 2π).
+        stored['squintdir']['m0']['value'] += np.float64(2. * np.pi)
+        assert reader.putcell('pbdescription', 0, stored)
     assert reader.done()
+
+
+def check_other_gridder(root, seed, model, beam):
+    from casars.tools import imager as native_imager
+
+    target = root / 'unsupported-wproject.ms'
+    make_input(seed, target, scratch=True)
+    tool = native_imager()
+    assert tool.open(str(target), usescratch=True) and tool.selectvis(field=0, spw='0')
+    assert tool.setoptions(ftmachine='wproject', wprojplanes=8)
+    assert tool.setvp(dovp=True, usedefaultvp=False, vptable=str(beam), dosquint=True)
+    before = data(target, 'MODEL_DATA')
+    assert not tool.ft(model=str(model))
+    np.testing.assert_array_equal(data(target, 'MODEL_DATA'), before)
+    assert tool.setoptions(ftmachine='ft')
+    assert tool.ft(model=str(model)) and tool.done()
+    assert np.max(np.abs(data(target, 'MODEL_DATA') - before)) > .1
 
 
 def saved_exchange(root, seed, cases, beam, results):
@@ -88,6 +111,13 @@ def run(root, seed, model):
         scaled = scratch_pair(work, seed, component, results, 'reference-frequency',
                               squint=True, vptable=half)
         assert relative_rms(scaled, component_squint) > .1
+        airy = work / 'airy.tbl'
+        radial_table(airy, '0.7GHz', airy=True)
+        scratch_pair(work, seed, component, results, 'airy-component-wrapped', squint=True,
+                     vptable=airy)
+        scratch_pair(work, seed, None, results, 'airy-image-wrapped', model=model, squint=True,
+                     vptable=airy)
+        check_other_gridder(work, seed, model, beam)
         saved_exchange(work, seed, [
             ('component', component, None, unattenuated),
             ('image', None, model, image_squint),
