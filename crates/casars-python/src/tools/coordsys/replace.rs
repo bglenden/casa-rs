@@ -71,10 +71,7 @@ pub(super) fn replace_at(
             coordinates.replace_coordinate(index, (*live).clone());
         }
     }
-    let prefix = replacement
-        .coordinate_type()
-        .to_string()
-        .to_ascii_lowercase();
+    let prefix = replacement.coordinate_type().record_prefix();
     coordinates.replace_coordinate(output, replacement);
 
     let mut record = target.record.clone();

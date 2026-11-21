@@ -86,10 +86,7 @@ pub(super) fn axis_values<T>(
 }
 
 pub(super) fn units(coordinate: &CoordinateModel) -> Vec<String> {
-    match coordinate {
-        CoordinateModel::Direction(direction) => direction.visible_world_units(),
-        _ => coordinate.axis_units(),
-    }
+    coordinate.declared_axis_units()
 }
 
 fn ints(values: Vec<i64>) -> CasaValue {

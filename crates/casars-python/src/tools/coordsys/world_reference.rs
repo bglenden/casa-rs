@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::display::{
-    format_latitude_dms_with_precision, format_longitude_hours_with_precision,
+    format_latitude_dms_with_precision, format_longitude_hours_with_precision, format_stream_value,
     format_stream_value_with_precision,
 };
 use casa_coordinates::{CoordinateModel, CoordinateType, QualityType, StokesType};
@@ -203,6 +203,45 @@ fn direction_text(
     }
 }
 
+pub(in crate::tools) fn nested_axis_display(
+    model: &CoordinateModel,
+    axis: usize,
+    value: f64,
+    increment: f64,
+) -> PyResult<Option<(String, String, String)>> {
+    use casa_types::quanta::{Quantity, Unit};
+
+    if !matches!(model, CoordinateModel::System(_)) {
+        return Ok(None);
+    }
+    let Some((leaf, local)) = model.world_axis_leaf(axis) else {
+        return Ok(None);
+    };
+    Ok(match leaf {
+        CoordinateModel::Direction(direction) => {
+            let declared = model.declared_axis_units();
+            let angle = Quantity::new(value, "rad")
+                .and_then(|angle| angle.get_value_in(&Unit::new(&declared[axis])?))
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let local = if direction.longitude_axis().is_none() {
+                1
+            } else {
+                local
+            };
+            let (increment, units) =
+                format_direction(direction.direction_ref(), local, increment, false, true, 6);
+            Some((format_stream_value(angle), increment, units.into()))
+        }
+        CoordinateModel::Stokes(_) => Some((stokes(value), stokes(increment), String::new())),
+        CoordinateModel::Quality(_) => Some((
+            QualityType::from_world(value).name().into(),
+            QualityType::from_world(increment).name().into(),
+            String::new(),
+        )),
+        _ => None,
+    })
+}
+
 struct Values<'a> {
     coordinate: &'a CoordinateModel,
     record: Option<&'a RecordValue>,
@@ -229,16 +268,9 @@ impl<'a> Values<'a> {
         } else {
             coordinate.increment()
         };
-        let (declared, units) = match coordinate {
-            CoordinateModel::Direction(direction) => {
-                let (reference, increment) = direction.reference_and_increment_in_world_units();
-                (
-                    if absolute { reference } else { increment },
-                    direction.visible_world_units(),
-                )
-            }
-            _ => (native.clone(), coordinate.axis_units()),
-        };
+        let (reference, increment) = coordinate.reference_and_increment_in_declared_units();
+        let declared = if absolute { reference } else { increment };
+        let units = coordinate.declared_axis_units();
         let visible_axes: Vec<_> = axis_map
             .iter()
             .enumerate()
@@ -272,32 +304,32 @@ impl<'a> Values<'a> {
         full_coordinate: Option<CoordinateModel>,
         converted: bool,
     ) -> PyResult<Self> {
-        let units = match coordinate {
-            CoordinateModel::Direction(direction) => direction.visible_world_units(),
-            _ => coordinate.axis_units(),
+        use casa_types::quanta::{Quantity, Unit};
+        let visible = |units: Vec<String>| {
+            if units.len() == visible_axes.len() {
+                units
+            } else {
+                visible_axes
+                    .iter()
+                    .map(|&axis| units[axis].clone())
+                    .collect()
+            }
         };
-        let units = if units.len() == visible_axes.len() {
-            units
-        } else {
-            visible_axes
-                .iter()
-                .map(|&axis| units[axis].clone())
-                .collect()
-        };
-        let declared = if matches!(coordinate, CoordinateModel::Direction(_)) {
-            use casa_types::quanta::{Quantity, Unit};
-            native
-                .iter()
-                .zip(&units)
-                .map(|(&value, unit)| {
-                    Unit::new(unit)
-                        .and_then(|unit| Quantity::new(value, "rad")?.get_value_in(&unit))
-                        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
-                })
-                .collect::<PyResult<_>>()?
-        } else {
-            native.to_vec()
-        };
+        let units = visible(coordinate.declared_axis_units());
+        let native_units = visible(coordinate.axis_units());
+        let declared = native
+            .iter()
+            .zip(native_units)
+            .zip(&units)
+            .map(|((&value, native_unit), unit)| {
+                if native_unit == *unit {
+                    return Ok(value);
+                }
+                Unit::new(unit)
+                    .and_then(|unit| Quantity::new(value, &native_unit)?.get_value_in(&unit))
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+            })
+            .collect::<PyResult<_>>()?;
         let full_measure = full_coordinate.map(|full| {
             let mut components = full.reference_value();
             for (&axis, &value) in visible_axes.iter().zip(native) {
@@ -321,6 +353,30 @@ impl<'a> Values<'a> {
     fn text(&self, axis: usize, absolute: bool, scientific_style: bool) -> PyResult<String> {
         let value = self.declared[axis];
         let unit = &self.units[axis];
+        if matches!(self.coordinate, CoordinateModel::System(_))
+            && let Some((leaf, local)) = self.coordinate.world_axis_leaf(self.visible_axes[axis])
+        {
+            match leaf {
+                CoordinateModel::Stokes(_) => return Ok(stokes(value)),
+                CoordinateModel::Quality(_) => {
+                    return Ok(QualityType::from_world(value).name().into());
+                }
+                CoordinateModel::Direction(direction) if !absolute => {
+                    return Ok(direction_text(
+                        direction.direction_ref(),
+                        if direction.longitude_axis().is_none() {
+                            1
+                        } else {
+                            local
+                        },
+                        self.native[axis],
+                        false,
+                        scientific_style,
+                    ));
+                }
+                _ => (),
+            }
+        }
         Ok(match self.coordinate {
             CoordinateModel::Stokes(_) => stokes(value),
             CoordinateModel::Quality(_) => QualityType::from_world(value).name().into(),
@@ -457,6 +513,9 @@ impl<'a> Values<'a> {
             CoordinateModel::Stokes(_) => Err(invalid("Stokes")),
             CoordinateModel::Quality(_) => Err(PyRuntimeError::new_err(
                 "Cannot handle Coordinates of type Quality",
+            )),
+            CoordinateModel::System(_) => Err(PyRuntimeError::new_err(
+                "Cannot handle Coordinates of type System",
             )),
         }
     }

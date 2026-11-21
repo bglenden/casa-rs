@@ -24,7 +24,11 @@ pub(crate) fn mask_coordinate_axes(
                     direction.conversion_direction_ref().to_string()
                 }
                 CoordinateModel::Spectral(spectral) => spectral.world_frequency_ref().to_string(),
-                _ => coordinate.axis_names().remove(local),
+                _ => coordinate
+                    .axis_names()
+                    .get(local)
+                    .cloned()
+                    .unwrap_or_default(),
             };
             (coordinate.coordinate_type(), local, name)
         })

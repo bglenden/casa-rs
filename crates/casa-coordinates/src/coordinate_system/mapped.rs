@@ -4,10 +4,10 @@
 
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, Value};
-use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
+use ndarray::{Array2, ArrayView2, ArrayViewMut2, Axis, ShapeBuilder};
 
 use super::record_axes::{check_numbering, live_coordinate, read_models};
-use super::{CoordinateSystem, RecordCoordinate, coordinate_record_entries, record_basename};
+use super::{CoordinateSystem, RecordCoordinate, coordinate_record_entries};
 
 mod mixed;
 use crate::coordinate::CoordinateModel;
@@ -173,6 +173,21 @@ impl Placement {
                     )?;
                 }
             }
+        } else if matches!(model, CoordinateModel::System(_))
+            && self.world.indices.iter().any(|&axis| axis < 0)
+        {
+            let declared = model.declared_axis_units();
+            let native = model.axis_units();
+            for (local, (&axis, value)) in self.world.indices.iter().zip(&mut values).enumerate() {
+                if axis < 0 && declared[local] != native[local] {
+                    *value = convert_value_to_unit(
+                        *value,
+                        &declared[local],
+                        &native[local],
+                        "worldreplace",
+                    )?;
+                }
+            }
         }
         Ok(values)
     }
@@ -194,39 +209,79 @@ impl Placement {
             }
         }
         let mut pixels = Array2::zeros((model.n_pixel_axes(), input.ncols()).f());
-        if let CoordinateModel::Linear(linear) = model {
-            match linear.to_pixel_columns(worlds.view(), pixels.view_mut()) {
-                Ok(()) => (),
-                Err(CoordinateError::SingularTransform(_)) if undefined => pixels.fill(f64::NAN),
-                Err(error) => return Err(error),
-            }
-        } else {
-            for (world, mut pixel) in worlds.axis_iter(Axis(1)).zip(pixels.axis_iter_mut(Axis(1))) {
-                match model.to_pixel(world.as_slice().expect("contiguous world column")) {
-                    Ok(values) => pixel
-                        .iter_mut()
-                        .zip(values)
-                        .for_each(|(output, value)| *output = value),
-                    Err(CoordinateError::SingularTransform(_)) if undefined => pixel.fill(f64::NAN),
-                    Err(error) => return Err(error),
-                }
-            }
-        }
+        project_coordinate_columns(model, worlds.view(), pixels.view_mut(), undefined)?;
         Ok(pixels)
     }
 }
 
-fn default_world_replacements(coordinate: &CoordinateModel) -> Vec<f64> {
+pub(super) fn project_coordinate_columns(
+    model: &CoordinateModel,
+    world: ArrayView2<'_, f64>,
+    mut pixel: ArrayViewMut2<'_, f64>,
+    undefined: bool,
+) -> Result<(), CoordinateError> {
+    let projected = match model {
+        CoordinateModel::Linear(linear) => linear.to_pixel_columns(world, pixel.view_mut()),
+        CoordinateModel::System(system) if world.ncols() != 0 => system
+            .project_pixel_columns(world, undefined)
+            .map(|values| pixel.assign(&values)),
+        _ => {
+            let mut input = Vec::new();
+            for (column, mut output) in world.axis_iter(Axis(1)).zip(pixel.axis_iter_mut(Axis(1))) {
+                let values = match column.as_slice() {
+                    Some(values) => values,
+                    None => {
+                        input.clear();
+                        input.extend(column.iter().copied());
+                        &input
+                    }
+                };
+                match model.to_pixel(values) {
+                    Ok(values) => output
+                        .iter_mut()
+                        .zip(values)
+                        .for_each(|(output, value)| *output = value),
+                    Err(CoordinateError::SingularTransform(_)) if undefined => {
+                        output.fill(f64::NAN)
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            return Ok(());
+        }
+    };
+    match projected {
+        Err(CoordinateError::SingularTransform(_)) if undefined => {
+            pixel.fill(f64::NAN);
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+pub(super) fn default_world_replacements(coordinate: &CoordinateModel) -> Vec<f64> {
     let world = coordinate
         .to_world(&vec![0.0; coordinate.n_pixel_axes()])
         .unwrap_or_else(|_| vec![0.0; coordinate.n_world_axes()]);
-    if let CoordinateModel::Direction(direction) = coordinate {
+    if matches!(
+        coordinate,
+        CoordinateModel::Direction(_) | CoordinateModel::System(_)
+    ) {
         return world
             .into_iter()
-            .zip(direction.visible_world_units())
-            .map(|(value, unit)| {
-                convert_value_to_unit(value, "rad", &unit, "worldreplace")
-                    .expect("direction units are angles")
+            .zip(
+                coordinate
+                    .axis_units()
+                    .into_iter()
+                    .zip(coordinate.declared_axis_units()),
+            )
+            .map(|(value, (native, declared))| {
+                if native == declared {
+                    value
+                } else {
+                    convert_value_to_unit(value, &native, &declared, "worldreplace")
+                        .expect("direction units are angles")
+                }
             })
             .collect();
     }
@@ -268,7 +323,7 @@ impl AxisMaps {
 
     pub(super) fn write_record(&self, models: &[CoordinateModel], record: &mut RecordValue) {
         for (index, (model, placement)) in models.iter().zip(&self.placements).enumerate() {
-            let prefix = record_basename(model.coordinate_type());
+            let prefix = model.coordinate_type().record_prefix();
             record.upsert(format!("{prefix}{index}"), Value::Record(model.to_record()));
             placement.pixel.write(record, index, "pixel");
             placement.world.write(record, index, "world");
@@ -356,7 +411,11 @@ impl AxisMaps {
         for (model, placement) in models.iter().zip(&self.placements) {
             let hidden = placement.coordinate_world_replacements(model)?;
             let local = placement.world.gather(world, &hidden);
-            match model.to_pixel(&local) {
+            let projected = match model {
+                CoordinateModel::System(system) => system.project_pixels(&local, undefined),
+                _ => model.to_pixel(&local),
+            };
+            match projected {
                 Ok(values) => placement.pixel.scatter(&values, &mut pixel),
                 Err(CoordinateError::SingularTransform(_)) if undefined => {
                     placement.pixel.scatter_undefined(&mut pixel);
@@ -414,11 +473,7 @@ fn replace_world_values(world: &mut AxisMap, old: &CoordinateModel, new: &Coordi
             return;
         }
     }
-    let reference = if let CoordinateModel::Direction(direction) = new {
-        direction.reference_and_increment_in_world_units().0
-    } else {
-        new.reference_value()
-    };
+    let reference = new.reference_and_increment_in_declared_units().0;
     for ((&axis, value), reference) in world
         .indices
         .iter()
@@ -445,7 +500,7 @@ fn record_units(model: &CoordinateModel) -> Vec<String> {
     if let CoordinateModel::Direction(direction) = model {
         direction.world_units().to_vec()
     } else {
-        model.axis_units()
+        model.declared_axis_units()
     }
 }
 
@@ -489,6 +544,7 @@ fn convert_local_world_offsets(
     match model {
         CoordinateModel::Stokes(_) | CoordinateModel::Quality(_) => Ok(()),
         CoordinateModel::Direction(direction) => direction.convert_world_offset(values, absolute),
+        CoordinateModel::System(system) => system.convert_world_offsets(values, absolute),
         _ => {
             for (value, reference) in values.iter_mut().zip(model.reference_value()) {
                 if absolute {
@@ -547,18 +603,25 @@ impl CoordinateSystem {
 
     /// Units of the values returned by `to_world`, in public world-axis order.
     pub fn world_axis_units(&self) -> Vec<String> {
-        let mut units = vec![String::new(); self.n_world_axes()];
+        self.world_axis_values(CoordinateModel::axis_units)
+    }
+
+    pub(crate) fn world_axis_values<T: Default + Clone>(
+        &self,
+        values: impl Fn(&CoordinateModel) -> Vec<T>,
+    ) -> Vec<T> {
+        let mut result = vec![T::default(); self.n_world_axes()];
         for (index, model) in self.coordinates.iter().enumerate() {
             let world = self
                 .coordinate_world_axes(index)
                 .expect("existing coordinate");
-            for (axis, unit) in world.into_iter().zip(model.axis_units()) {
+            for (axis, value) in world.into_iter().zip(values(model)) {
                 if let Some(axis) = axis {
-                    units[axis] = unit;
+                    result[axis] = value;
                 }
             }
         }
-        units
+        result
     }
 
     fn reference_axes(&self, pixel: bool) -> Vec<f64> {
@@ -869,9 +932,23 @@ impl CoordinateSystem {
             })
             .transpose()?;
 
-        let replacement = if let CoordinateModel::Direction(direction) = &self.coordinates[index] {
-            let units = direction.visible_world_units();
-            convert_value_to_unit(replacement, "rad", &units[local], "worldreplace")?
+        let model = &self.coordinates[index];
+        let replacement = if matches!(
+            model,
+            CoordinateModel::Direction(_) | CoordinateModel::System(_)
+        ) {
+            let native = model.axis_units();
+            let declared = model.declared_axis_units();
+            if native[local] == declared[local] {
+                replacement
+            } else {
+                convert_value_to_unit(
+                    replacement,
+                    &native[local],
+                    &declared[local],
+                    "worldreplace",
+                )?
+            }
         } else {
             replacement
         };
@@ -984,6 +1061,37 @@ mod tests {
             key,
             Value::Array(ArrayValue::from_f64_vec(replacements.to_vec())),
         );
+    }
+
+    #[test]
+    fn nested_inverse_columns_keep_valid_axes_beside_a_singular_axis() {
+        let mut child = CoordinateSystem::new();
+        child.add_coordinate(
+            LinearCoordinate::new(1, vec!["Singular".into()], vec!["m".into()])
+                .with_pc_matrix(array![[0.0]]),
+        );
+        child.add_coordinate(
+            LinearCoordinate::new(1, vec!["Valid".into()], vec!["s".into()])
+                .with_reference_value(vec![5.0])
+                .with_increment(vec![2.0]),
+        );
+        let mut system = CoordinateSystem::new();
+        system.add_coordinate(child);
+        assert!(system.to_pixel(&[0.0, 7.0]).is_err());
+        let pixels = system.to_pixel_or_nan(&[0.0, 7.0]).unwrap();
+        assert!(pixels[0].is_nan());
+        assert_eq!(pixels[1], 1.0);
+        let original = system
+            .to_pixel_columns_or_nan(array![[0.0, 0.0], [7.0, 11.0]].view())
+            .unwrap();
+        assert!(original.row(0).iter().all(|value| value.is_nan()));
+        assert_eq!(original.row(1), array![1.0, 3.0]);
+        system.transpose_axes(&[1, 0], &[1, 0]).unwrap();
+        let mapped = system
+            .to_pixel_columns_or_nan(array![[7.0, 11.0], [0.0, 0.0]].view())
+            .unwrap();
+        assert_eq!(mapped.row(0), array![1.0, 3.0]);
+        assert!(mapped.row(1).iter().all(|value| value.is_nan()));
     }
 
     #[test]

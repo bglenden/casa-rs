@@ -109,20 +109,18 @@ pub(super) fn capture(
 }
 
 pub(super) fn world_scale(coordinates: &CoordinateSystem) -> PyResult<Vec<f64>> {
-    axis_values(coordinates, true, |coordinate| match coordinate {
-        CoordinateModel::Direction(direction) => direction
-            .visible_world_units()
-            .iter()
-            .map(|unit| {
-                Unit::new(unit)
-                    .map(|parsed| 1.0 / parsed.val().factor)
-                    .map_err(|error| raised(error.to_string()))
-            })
-            .collect(),
-        coordinate => (0..coordinate.n_world_axes()).map(|_| Ok(1.0)).collect(),
-    })
-    .into_iter()
-    .collect()
+    axis_values(coordinates, true, CoordinateModel::declared_axis_units)
+        .into_iter()
+        .zip(coordinates.world_axis_units())
+        .map(|(declared, native)| {
+            if declared == native {
+                return Ok(1.0);
+            }
+            let declared = Unit::new(&declared).map_err(|error| raised(error.to_string()))?;
+            let native = Unit::new(&native).map_err(|error| raised(error.to_string()))?;
+            Ok(native.val().factor / declared.val().factor)
+        })
+        .collect()
 }
 
 fn transform(

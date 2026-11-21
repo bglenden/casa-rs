@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_coordinates::tabular::TabularEdit;
-use casa_coordinates::{Coordinate, CoordinateModel, RecordCoordinate};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, RecordCoordinate};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError};
@@ -199,6 +199,18 @@ fn shift_coordinate(
                     .edit_live_reference(TabularEdit::ReferencePixel(reference))
                     .map_err(raised)?;
                 *stored = CoordinateModel::from(coordinate).to_record();
+            }
+        }
+        CoordinateModel::System(system) => {
+            let references = system.reference_pixel();
+            for (local, (axis, reference)) in
+                placement.pixel_axes.iter().zip(references).enumerate()
+            {
+                if let Some(axis) = axis {
+                    let shifted = reference - f64::from(origin[*axis]);
+                    CoordinateSystem::set_reference_pixel_in_record(stored, local, shifted)
+                        .map_err(raised)?;
+                }
             }
         }
         _ => shift_reference_pixel(stored, placement, origin)?,

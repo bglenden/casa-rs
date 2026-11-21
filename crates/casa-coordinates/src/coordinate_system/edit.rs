@@ -26,6 +26,23 @@ fn recorded_axis(
         .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })
 }
 
+fn edit_nested_axis<T>(
+    record: &mut RecordValue,
+    field: &str,
+    edit: impl FnOnce(&mut RecordValue) -> Result<(CoordinateSystem, T), CoordinateError>,
+) -> Result<(CoordinateSystem, T), CoordinateError> {
+    let mut updated = record.clone();
+    let Some(Value::Record(nested)) = updated.get_mut(field) else {
+        return Err(CoordinateError::InvalidRecord(
+            "missing nested coordinate record".into(),
+        ));
+    };
+    let (_, previous) = edit(nested)?;
+    let system = CoordinateSystem::from_record(&updated)?;
+    *record = updated;
+    Ok((system, previous))
+}
+
 /// Casacore's Projection constructor resizes a short vector without copying
 /// its original contents. Vectors already long enough retain all entries.
 fn apply_casa_projection_defaults(kind: ProjectionType, parameters: &mut Vec<f64>) {
@@ -717,13 +734,18 @@ impl CoordinateSystem {
             .and_then(|world| system.world_axis_owner(world))
             .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })?;
         let model = system.coordinate(index);
+        let coordinates = system.coordinates_in_record(record)?;
+        let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
+        if model.coordinate_type() == CoordinateType::System {
+            return edit_nested_axis(record, &coordinate.field, |nested| {
+                Self::set_axis_unit(nested, local_axis, unit, pixel)
+            });
+        }
         let old = match model {
             crate::CoordinateModel::Direction(direction) => direction.visible_world_units(),
             _ => model.axis_units(),
         }[local]
             .clone();
-        let coordinates = system.coordinates_in_record(record)?;
-        let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
         if matches!(
             model.coordinate_type(),
             CoordinateType::Stokes | CoordinateType::Quality
@@ -935,9 +957,14 @@ impl CoordinateSystem {
             .and_then(|world| system.world_axis_owner(world))
             .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })?;
         let model = system.coordinate(index);
-        let old = model.axis_names()[local].clone();
         let coordinates = system.coordinates_in_record(record)?;
         let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
+        if model.coordinate_type() == CoordinateType::System {
+            return edit_nested_axis(record, &coordinate.field, |nested| {
+                Self::set_axis_name(nested, local_axis, name, pixel)
+            });
+        }
+        let old = model.axis_names()[local].clone();
         let mut updated = record.clone();
         let Some(Value::Record(target)) = updated.get_mut(&coordinate.field) else {
             return Err(CoordinateError::InvalidRecord(
@@ -1086,6 +1113,11 @@ impl CoordinateSystem {
         };
         let (index, local) = owner.expect("validated public coordinate axis");
         let model = system.coordinate(index);
+        if model.coordinate_type() == CoordinateType::System {
+            return edit_nested_axis(record, &coordinate.field, |nested| {
+                Self::set_axis_scalar_in_record(nested, local_axis, field, value, pixel)
+            });
+        }
         if matches!(
             model.coordinate_type(),
             CoordinateType::Stokes | CoordinateType::Quality
