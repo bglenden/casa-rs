@@ -467,13 +467,19 @@ def test_copy_preserves_region_values_masks_and_native_geometry(tmp_path, oracle
     finally:
         reference.done()
 
+    dropdeg = kind == "polygon"
+    if dropdeg:
+        expected = expected.squeeze(axis=2)
+        mask = mask.squeeze(axis=2)
+        reference_origin = reference_origin[[0, 1, 3]]
+
     for factory, source in ((oracle, names[tools]), (tools, names[oracle])):
         destination = str(tmp_path / f"{factory.__name__}-result.im")
         parent = factory.image()
         assert parent.fromshape(shape=[1])
         result = _attach_copy(
             parent, method, infile=source, outfile=destination,
-            region=region, mask=f'"{source}" > 80',
+            region=region, mask=f'"{source}" > 80', dropdeg=dropdeg,
         )
         assert result.done()
         for reader in (oracle, tools):
@@ -485,7 +491,7 @@ def test_copy_preserves_region_values_masks_and_native_geometry(tmp_path, oracle
                 np.testing.assert_array_equal(product.getchunk(getmask=True), mask)
                 coords = product.coordsys()
                 np.testing.assert_allclose(
-                    coords.toworld([0.0, 0.0, 0.0, 0.0])["numeric"],
+                    coords.toworld([0.0] * expected.ndim)["numeric"],
                     reference_origin,
                     atol=2e-8,
                     rtol=1e-10,
