@@ -60,9 +60,13 @@ use crate::execution::{
     ParallelReadChunkConfig, PipelinedReadChunkConfig, ReadChunkExecutionStrategy, SourceResidency,
     plan_execution, try_reduce_read_chunks,
 };
-use crate::{Lattice, LatticeElement, LatticeError, TraversalCursorIter, TraversalSpec};
+use crate::{
+    Lattice, LatticeElement, LatticeError, TempStoragePolicy, TraversalCursorIter, TraversalSpec,
+};
 
+mod cache;
 mod order;
+use cache::{BasicStatsCache, OrderStatsCache};
 pub(crate) use order::{
     OrderStatsSummary, framework_order_summary, quartiles_and_median, selection_median,
 };
@@ -257,6 +261,7 @@ pub struct LatticeStatistics<'a, T> {
     mask: Option<ArrayD<bool>>,
     execution_policy: ExecutionPolicy,
     execution_resources: ExecutionResources,
+    cache_storage: TempStoragePolicy,
     basic_cache: RefCell<Option<BasicStatsCache>>,
     order_cache: RefCell<Option<OrderStatsCache>>,
 }
@@ -272,6 +277,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             mask: None,
             execution_policy: ExecutionPolicy::Auto,
             execution_resources: ExecutionResources::default(),
+            cache_storage: TempStoragePolicy::Memory,
             basic_cache: RefCell::new(None),
             order_cache: RefCell::new(None),
         }
@@ -347,11 +353,20 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         }
     }
 
+    /// Choose where completed statistic columns are kept between requests.
+    /// A paged cache writes these columns to temporary storage as each is
+    /// formed. Existing caches are discarded when the policy changes.
+    pub fn set_cache_storage(&mut self, storage: TempStoragePolicy) {
+        if self.cache_storage != storage {
+            self.cache_storage = storage;
+            self.invalidate_caches();
+        }
+    }
+
     /// Switch to a different lattice, resetting all data-selection state.
     ///
-    /// The current execution policy is preserved so callers can keep a
-    /// workload-specific performance preference while retargeting the
-    /// statistics object to a different lattice.
+    /// The execution and cache storage policies are preserved while
+    /// retargeting the statistics object to a different lattice.
     pub fn set_new_lattice(&mut self, lattice: &'a dyn Lattice<T>) {
         self.lattice = lattice;
         self.axes = None;
@@ -368,22 +383,18 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     pub fn get_statistic(&self, stat: Statistic) -> Result<ArrayD<f64>, LatticeError> {
         if stat.is_order_stat() {
             self.ensure_order_cache()?;
-            Ok(self
-                .order_cache
+            self.order_cache
                 .borrow()
                 .as_ref()
                 .expect("order cache initialized")
                 .get(stat)
-                .clone())
         } else {
             self.ensure_basic_cache()?;
-            Ok(self
-                .basic_cache
+            self.basic_cache
                 .borrow()
                 .as_ref()
                 .expect("basic cache initialized")
                 .get(stat)
-                .clone())
         }
     }
 
@@ -484,15 +495,16 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         )?;
 
         if partial.accum.npts == 0 {
-            return Ok(BasicStatsCache::empty_global());
+            return BasicStatsCache::from_accumulators(&[0], &[], None, None, &self.cache_storage);
         }
 
-        Ok(BasicStatsCache::from_accumulators(
+        BasicStatsCache::from_accumulators(
             &[1],
             &[partial.accum],
             partial.min_pos,
             partial.max_pos,
-        ))
+            &self.cache_storage,
+        )
     }
 
     fn build_axis_basic_cache(&self, layout: &AxisLayout) -> Result<BasicStatsCache, LatticeError> {
@@ -519,12 +531,13 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             },
         )?;
 
-        Ok(BasicStatsCache::from_accumulators(
+        BasicStatsCache::from_accumulators(
             &layout.out_shape,
             &accumulators,
             None,
             None,
-        ))
+            &self.cache_storage,
+        )
     }
 
     fn build_global_order_cache(&self) -> Result<OrderStatsCache, LatticeError> {
@@ -554,11 +567,11 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         )?;
 
         if values.is_empty() {
-            return Ok(OrderStatsCache::empty_global());
+            return OrderStatsCache::from_summaries(&[0], &[], &self.cache_storage);
         }
 
         let summary = compute_order_summary(&mut values);
-        Ok(OrderStatsCache::from_summaries(&[1], &[summary]))
+        OrderStatsCache::from_summaries(&[1], &[summary], &self.cache_storage)
     }
 
     fn build_axis_order_cache(&self, layout: &AxisLayout) -> Result<OrderStatsCache, LatticeError> {
@@ -605,10 +618,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             }
         }
 
-        Ok(OrderStatsCache::from_summaries(
-            &layout.out_shape,
-            &summaries,
-        ))
+        OrderStatsCache::from_summaries(&layout.out_shape, &summaries, &self.cache_storage)
     }
 
     fn execution_strategy(
@@ -916,123 +926,6 @@ fn axis_order_reserve(collapsed_size: usize, sparse: bool, n_out: usize) -> usiz
     }
 }
 
-#[derive(Clone)]
-struct BasicStatsCache {
-    npts: ArrayD<f64>,
-    sum: ArrayD<f64>,
-    sumsq: ArrayD<f64>,
-    min: ArrayD<f64>,
-    max: ArrayD<f64>,
-    mean: ArrayD<f64>,
-    rms: ArrayD<f64>,
-    variance: ArrayD<f64>,
-    sigma: ArrayD<f64>,
-    global_min_pos: Option<Vec<usize>>,
-    global_max_pos: Option<Vec<usize>>,
-}
-
-impl BasicStatsCache {
-    fn empty_global() -> Self {
-        let empty = empty_stat_array();
-        Self {
-            npts: empty.clone(),
-            sum: empty.clone(),
-            sumsq: empty.clone(),
-            min: empty.clone(),
-            max: empty.clone(),
-            mean: empty.clone(),
-            rms: empty.clone(),
-            variance: empty.clone(),
-            sigma: empty,
-            global_min_pos: None,
-            global_max_pos: None,
-        }
-    }
-
-    fn from_accumulators(
-        shape: &[usize],
-        accumulators: &[RunningStats],
-        global_min_pos: Option<Vec<usize>>,
-        global_max_pos: Option<Vec<usize>>,
-    ) -> Self {
-        Self {
-            npts: array_from_accumulators(shape, accumulators, Statistic::Npts),
-            sum: array_from_accumulators(shape, accumulators, Statistic::Sum),
-            sumsq: array_from_accumulators(shape, accumulators, Statistic::SumSq),
-            min: array_from_accumulators(shape, accumulators, Statistic::Min),
-            max: array_from_accumulators(shape, accumulators, Statistic::Max),
-            mean: array_from_accumulators(shape, accumulators, Statistic::Mean),
-            rms: array_from_accumulators(shape, accumulators, Statistic::Rms),
-            variance: array_from_accumulators(shape, accumulators, Statistic::Variance),
-            sigma: array_from_accumulators(shape, accumulators, Statistic::Sigma),
-            global_min_pos,
-            global_max_pos,
-        }
-    }
-
-    fn get(&self, stat: Statistic) -> &ArrayD<f64> {
-        match stat {
-            Statistic::Npts => &self.npts,
-            Statistic::Sum => &self.sum,
-            Statistic::SumSq => &self.sumsq,
-            Statistic::Min => &self.min,
-            Statistic::Max => &self.max,
-            Statistic::Mean => &self.mean,
-            Statistic::Rms => &self.rms,
-            Statistic::Variance => &self.variance,
-            Statistic::Sigma => &self.sigma,
-            _ => unreachable!("basic cache only stores basic statistics"),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct OrderStatsCache {
-    median: ArrayD<f64>,
-    q1: ArrayD<f64>,
-    q3: ArrayD<f64>,
-    quartile: ArrayD<f64>,
-    mad: ArrayD<f64>,
-}
-
-impl OrderStatsCache {
-    fn empty_global() -> Self {
-        let empty = empty_stat_array();
-        Self {
-            median: empty.clone(),
-            q1: empty.clone(),
-            q3: empty.clone(),
-            quartile: empty.clone(),
-            mad: empty,
-        }
-    }
-
-    fn from_summaries(shape: &[usize], summaries: &[OrderStatsSummary]) -> Self {
-        let mk = |f: fn(&OrderStatsSummary) -> f64| {
-            ArrayD::from_shape_vec(IxDyn(shape), summaries.iter().map(f).collect::<Vec<_>>())
-                .expect("shape/data length match")
-        };
-        Self {
-            median: mk(|summary| summary.median),
-            q1: mk(|summary| summary.q1),
-            q3: mk(|summary| summary.q3),
-            quartile: mk(|summary| summary.quartile),
-            mad: mk(|summary| summary.mad),
-        }
-    }
-
-    fn get(&self, stat: Statistic) -> &ArrayD<f64> {
-        match stat {
-            Statistic::Median => &self.median,
-            Statistic::Q1 => &self.q1,
-            Statistic::Q3 => &self.q3,
-            Statistic::Quartile => &self.quartile,
-            Statistic::MedAbsDevMed => &self.mad,
-            _ => unreachable!("order cache only stores order statistics"),
-        }
-    }
-}
-
 /// Classical sample moments and extrema accumulated without retaining data.
 #[derive(Clone, Copy, Debug)]
 pub struct RunningStats {
@@ -1206,31 +1099,6 @@ fn merge_order_buckets(buckets: &mut [Vec<f64>], other: Vec<Vec<f64>>) {
     }
 }
 
-fn array_from_accumulators(
-    shape: &[usize],
-    accumulators: &[RunningStats],
-    stat: Statistic,
-) -> ArrayD<f64> {
-    ArrayD::from_shape_vec(
-        IxDyn(shape),
-        accumulators
-            .iter()
-            .map(|accum| {
-                if accum.npts == 0 {
-                    f64::NAN
-                } else {
-                    accum.finish(stat)
-                }
-            })
-            .collect(),
-    )
-    .expect("shape/data length match")
-}
-
-fn empty_stat_array() -> ArrayD<f64> {
-    ArrayD::from_shape_vec(IxDyn(&[0]), vec![]).expect("empty array")
-}
-
 fn advance_position_in_axis_order(
     full_idx: &mut [usize],
     origin: &[usize],
@@ -1396,6 +1264,44 @@ mod tests {
 
     use super::*;
     use crate::{ArrayLattice, near_tol};
+
+    #[test]
+    fn paged_statistic_columns_match_memory_and_release_their_scratch() {
+        let data = ArrayD::from_shape_fn(IxDyn(&[8, 4, 3]), |index| {
+            (5 * index[0]) as f64 - (2 * index[1]) as f64 + index[2] as f64
+        });
+        let image = ArrayLattice::new(data);
+        let scratch = tempfile::tempdir().unwrap();
+        let mut memory = LatticeStatistics::new(&image);
+        let mut paged = LatticeStatistics::new(&image);
+        for stats in [&mut memory, &mut paged] {
+            stats.set_axes(vec![0]);
+            stats.set_include_range(0.0, 29.0);
+        }
+        paged.set_cache_storage(TempStoragePolicy::Paged {
+            scratch: crate::ScratchSpace::Directory(scratch.path().to_owned()),
+        });
+        for statistic in [
+            Statistic::Npts,
+            Statistic::Sum,
+            Statistic::Variance,
+            Statistic::Median,
+            Statistic::MedAbsDevMed,
+        ] {
+            assert_eq!(
+                paged.get_statistic(statistic).unwrap(),
+                memory.get_statistic(statistic).unwrap()
+            );
+        }
+        let caches = std::fs::read_dir(scratch.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path().join("TempLattice.table"))
+            .collect::<Vec<_>>();
+        assert_eq!(caches.len(), 2);
+        assert!(caches.iter().all(|path| path.is_dir()));
+        paged.clear_axes();
+        assert!(std::fs::read_dir(scratch.path()).unwrap().next().is_none());
+    }
 
     struct CountingLattice<T: LatticeElement> {
         inner: ArrayLattice<T>,

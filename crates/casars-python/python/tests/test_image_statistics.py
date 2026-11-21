@@ -89,6 +89,105 @@ def test_statistics_reads_persisted_masks_and_region(casa, tmp_path):
         assert image.done()
 
 
+@pytest.mark.parametrize("pixel_type", ["f", "d"])
+@pytest.mark.parametrize("options", [
+    {},
+    dict(axes=[0, 1], robust=True),
+    dict(axes=[0, 1], algorithm="hinges", fence=1.5, robust=True),
+    dict(axes=[0, 1], algorithm="fittohalf", center="median", lside=False, robust=True),
+    dict(axes=[0, 1], algorithm="chauvenet", zscore=3.0, maxiter=2, robust=True),
+    dict(axes=[0, 1], algorithm="biweight", niter=3),
+    dict(axes=[0, 1], includepix=[-300., 200.], robust=True),
+])
+def test_statistics_disk_matches_memory_and_casa(casa, pixel_type, options):
+    x, y, _, frequency = np.ogrid[:13, :15, :1, :7]
+    pixels = (x + 2*y + 11*frequency).astype(np.float32)
+    pixels[6, 7, 0, 3] = 500.
+    valid = pixels % 5 != 1
+    saved = []
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.fromshape(shape=list(pixels.shape), type=pixel_type)
+            assert image.putchunk(pixels)
+            assert image.putregion(pixelmask=valid)
+            memory = image.statistics(disk=False, **options)
+            disk = image.statistics(disk=True, **options)
+            _assert_value(disk, memory)
+            saved.append(disk)
+        finally:
+            image.done()
+    _assert_value(saved[1], saved[0])
+    if not options:
+        assert saved[1]["npts"].item() == np.count_nonzero(valid)
+        np.testing.assert_allclose(saved[1]["sum"], [pixels[valid].sum(dtype=np.float64)])
+
+
+def test_statistics_disk_tracks_a_rejected_edit_and_an_accepted_edit():
+    image = tools.image()
+    try:
+        values = np.arange(42, dtype=np.float32).reshape(6, 7)
+        assert image.fromarray(pixels=values)
+        expected = image.statistics(disk=True)["sum"]
+        with pytest.raises(RuntimeError):
+            image.statistics(disk=True, includepix=[0, 4], excludepix=[10, 20])
+        np.testing.assert_array_equal(image.statistics(disk=True)["sum"], expected)
+        assert image.putchunk(np.array([[100.]], dtype=np.float32), blc=[0, 0])
+        np.testing.assert_array_equal(image.statistics(disk=True, force=True)["sum"], expected + 100)
+        np.testing.assert_array_equal(image.statistics(disk=False)["sum"], expected + 100)
+    finally:
+        image.done()
+
+
+def test_statistics_disk_reads_columns_across_multiple_robust_result_blocks():
+    x, y = np.ogrid[:5, :537]
+    pixels = (x + 2*y).astype(np.float32)
+    image = tools.image()
+    try:
+        assert image.fromarray(pixels=pixels)
+        options = dict(axes=[0], algorithm="hinges", fence=1.5, robust=True)
+        actual = image.statistics(disk=True, **options)
+        _assert_value(actual, image.statistics(disk=False, **options))
+        np.testing.assert_array_equal(actual["npts"], np.full(537, 5.))
+        np.testing.assert_array_equal(actual["sum"], 10 + 10*np.arange(537))
+        np.testing.assert_array_equal(actual["median"], 2 + 2*np.arange(537))
+    finally:
+        image.done()
+
+
+def test_statistics_disk_reads_both_writers_with_both_readers(casa, tmp_path):
+    x, y, _, z = np.ogrid[:13, :15, :1, :4]
+    pixels = (x + 2*y + 100*z).astype(np.float32)
+    valid = pixels % 4 != 1
+    manager = casa.regionmanager()
+    region = manager.box([2,3,0,1], [11,12,0,3])
+    manager.done()
+    expected = []
+    for channel in range(1,4):
+        block = pixels[2:12, 3:13, 0, channel]
+        mask = valid[2:12, 3:13, 0, channel]
+        expected.append((mask.sum(), block[mask].sum(dtype=np.float64), np.median(block[mask])))
+    expected = np.asarray(expected).T
+    for writer in (casa, tools):
+        source = writer.image()
+        name = str(tmp_path/f"{writer.__name__}-disk-stats.im")
+        try:
+            assert source.fromarray(name, pixels=pixels)
+            assert source.putregion(pixelmask=valid)
+            assert source.setbrightnessunit("K")
+        finally:
+            source.done()
+        for reader in (casa, tools):
+            image = reader.image()
+            try:
+                assert image.open(name)
+                result = image.statistics(disk=True, axes=[0,1], region=region, robust=True)
+                for row, field in zip(expected, ("npts", "sum", "median")):
+                    np.testing.assert_array_equal(result[field], row)
+            finally:
+                image.done()
+
+
 @pytest.mark.parametrize("bitpix,blank", [(16, -999), (-32, np.nan)])
 def test_statistics_on_attached_fits_matches_casa_and_excludes_blanks(casa, tmp_path, bitpix, blank):
     path = tmp_path / "masked.fits"
