@@ -152,52 +152,15 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     let path = task.path("vis")?;
     let calibration = is_calibration_table(&path);
-    let mut threshold_inputs = rflag::ThresholdInputs::default();
-    let mut request = (|| {
-        if mode == "rflag" {
-            threshold_inputs = rflag::ThresholdInputs::read(task, calculate)?;
-        }
-        flagdata_request(
-            task,
-            column.unwrap_or_default(),
-            channel_bins,
-            calibration,
-            &threshold_inputs,
-        )
-    })()
-    .or_else(|error| {
-        let parameter = error.parameter.as_deref();
-        if matches!(parameter, Some("datacolumn" | "field" | "spw"))
-            || (matches!(
-                parameter,
-                Some(
-                    "channelavg"
-                        | "timeavg"
-                        | "rflag-threshold-file"
-                        | "rflag-threshold-path.is-directory"
-                        | "timedev"
-                        | "freqdev"
-                )
-            ) && error.kind == TaskFailureKind::Execution)
-        {
-            backup_before_failed_apply(task, &action)?;
-        }
-        Err(error)
-    })?;
-    request.time_chunk = time_chunk.filter(|seconds| *seconds > 0.0 && seconds.is_finite());
-    if calibration && !calculate && request.mode == FlagDataMode::Rflag {
-        for (name, threshold, scale) in [
-            ("timedevscale", request.timedev, request.timedevscale),
-            ("freqdevscale", request.freqdev, request.freqdevscale),
-        ] {
-            if threshold.is_some_and(|value| value > 0.0) && scale <= 0.0 {
-                return Err(TaskFailure::validation(format!(
-                    "{name} must be positive when its threshold is positive"
-                ))
-                .at(name));
-            }
-        }
-    }
+    let (mut request, threshold_inputs) = prepare_flagdata_request(
+        task,
+        &mode,
+        &action,
+        column.unwrap_or_default(),
+        channel_bins,
+        calibration,
+        time_chunk,
+    )?;
     if let Some(parameters) = &shadow {
         request.shadow = parameters.options.clone();
     }
@@ -293,6 +256,59 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         flagdata_empty_record()
     };
     ms_task_success(value, &Some(report))
+}
+
+fn prepare_flagdata_request(
+    task: &TaskInvocation<'_>,
+    mode: &str,
+    action: &str,
+    column: &str,
+    channel_bins: Vec<u32>,
+    calibration: bool,
+    time_chunk: Option<f64>,
+) -> Result<(FlagDataRequest, rflag::ThresholdInputs), TaskFailure> {
+    let calculate = action == "calculate";
+    let mut threshold_inputs = rflag::ThresholdInputs::default();
+    let mut request = (|| {
+        if mode == "rflag" {
+            threshold_inputs = rflag::ThresholdInputs::read(task, calculate)?;
+        }
+        flagdata_request(task, column, channel_bins, calibration, &threshold_inputs)
+    })()
+    .or_else(|error| {
+        let parameter = error.parameter.as_deref();
+        if matches!(parameter, Some("datacolumn" | "field" | "spw"))
+            || (matches!(
+                parameter,
+                Some(
+                    "channelavg"
+                        | "timeavg"
+                        | "rflag-threshold-file"
+                        | "rflag-threshold-path.is-directory"
+                        | "timedev"
+                        | "freqdev"
+                )
+            ) && error.kind == TaskFailureKind::Execution)
+        {
+            backup_before_failed_apply(task, action)?;
+        }
+        Err(error)
+    })?;
+    request.time_chunk = time_chunk.filter(|seconds| *seconds > 0.0 && seconds.is_finite());
+    if calibration && !calculate && request.mode == FlagDataMode::Rflag {
+        for (name, threshold, scale) in [
+            ("timedevscale", request.timedev, request.timedevscale),
+            ("freqdevscale", request.freqdev, request.freqdevscale),
+        ] {
+            if threshold.is_some_and(|value| value > 0.0) && scale <= 0.0 {
+                return Err(TaskFailure::validation(format!(
+                    "{name} must be positive when its threshold is positive"
+                ))
+                .at(name));
+            }
+        }
+    }
+    Ok((request, threshold_inputs))
 }
 
 fn rflag_result(time: &[[f64; 3]], frequency: &[[f64; 3]]) -> CasaValue {
@@ -417,24 +433,7 @@ fn save_flag_parameters(
             "timeavg",
             "timebin",
         ],
-        "rflag" => &[
-            "ntime",
-            "combinescans",
-            "datacolumn",
-            "winsize",
-            "timedevscale",
-            "freqdevscale",
-            "spectralmax",
-            "spectralmin",
-            "extendflags",
-            "timedev",
-            "freqdev",
-            "writeflags",
-            "channelavg",
-            "chanbin",
-            "timeavg",
-            "timebin",
-        ],
+        "rflag" => rflag::SAVED_FIELDS,
         _ => return Err(not_yet("savepars", mode)),
     };
     let (rflag_inputs, thresholds) = rflag_run.map_or((None, None), |(inputs, report)| {

@@ -10,6 +10,25 @@ use casa_ms::flagging::RFlagThresholdReport;
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
+pub(super) const SAVED_FIELDS: &[&str] = &[
+    "ntime",
+    "combinescans",
+    "datacolumn",
+    "winsize",
+    "timedevscale",
+    "freqdevscale",
+    "spectralmax",
+    "spectralmin",
+    "extendflags",
+    "timedev",
+    "freqdev",
+    "writeflags",
+    "channelavg",
+    "chanbin",
+    "timeavg",
+    "timebin",
+];
+
 #[derive(Default)]
 pub(super) struct ThresholdInput {
     pub(super) scalar: Option<f64>,
