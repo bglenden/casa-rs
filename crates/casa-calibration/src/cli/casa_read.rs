@@ -345,11 +345,12 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         "swpwts" => GencalType::Swpwts,
         "rq" => GencalType::Rq,
         "tecim" => GencalType::Tecim,
+        "eop" => GencalType::Eop,
         other => return Err(not_yet("caltype", other)),
     };
     let antenna = task.text("antenna")?.unwrap_or_default();
     let infile = if caltype.is_gain_curve()
-        || matches!(caltype, GencalType::Antpos | GencalType::Tecim)
+        || matches!(caltype, GencalType::Antpos | GencalType::Tecim | GencalType::Eop)
     {
         task.text("infile")?
             .filter(|path| !path.is_empty() && !(caltype == GencalType::Antpos && path == "None"))
@@ -375,7 +376,8 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         polarization: task.text("pol")?.unwrap_or_default(),
         gaincurve_infile: infile.clone().filter(|_| caltype.is_gain_curve()),
         antpos_infile: infile.clone().filter(|_| caltype == GencalType::Antpos),
-        tec_image: infile.filter(|_| caltype == GencalType::Tecim),
+        tec_image: infile.clone().filter(|_| caltype == GencalType::Tecim),
+        eop_infile: infile.filter(|_| caltype == GencalType::Eop),
         ant_pos_time_limit: (caltype == GencalType::Antpos)
             .then(|| task.integer("ant_pos_time_limit"))
             .transpose()?,

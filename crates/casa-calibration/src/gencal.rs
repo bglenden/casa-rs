@@ -3,6 +3,7 @@
 
 mod antpos_evla;
 mod antpos_file;
+mod eop;
 pub(crate) mod jyperk;
 mod power_curve;
 mod switched_power;
@@ -88,6 +89,8 @@ pub enum GencalType {
     Jyperk,
     /// Line-of-sight ionospheric total electron content (`F Jones`).
     Tecim,
+    /// Delay and phase corrections for updated Earth-orientation parameters.
+    Eop,
 }
 
 impl GencalType {
@@ -99,6 +102,7 @@ impl GencalType {
             Self::Gc | Self::Gceff | Self::Eff => "EGainCurve",
             Self::Tsys => "B TSYS",
             Self::Tecim => "F Jones",
+            Self::Eop => "Fringe Jones",
             Self::Opac => "TOpac",
             Self::Swpow | Self::Evlagain | Self::SwpOverRq | Self::Swpwts | Self::Rq => {
                 "G EVLASWPOW"
@@ -146,8 +150,9 @@ impl std::str::FromStr for GencalType {
             "rq" => Ok(Self::Rq),
             "jyperk" => Ok(Self::Jyperk),
             "tecim" => Ok(Self::Tecim),
+            "eop" => Ok(Self::Eop),
             other => Err(format!(
-                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, rq, jyperk, or tecim"
+                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, rq, jyperk, tecim, or eop"
             )),
         }
     }
@@ -252,6 +257,14 @@ pub enum GencalError {
     /// The MeasurementSet does not identify one observation for automatic lookup.
     #[error("{0}")]
     AutomaticPositionInput(String),
+    /// An explicitly supplied Earth-orientation file could not be read.
+    #[error("read Earth-orientation file {path}: {source}")]
+    EopFile {
+        /// File the caller selected.
+        path: PathBuf,
+        /// File-system error.
+        source: std::io::Error,
+    },
     /// A VLA archive request failed after the initial connection probe.
     #[error("{source} at {url}")]
     VlaArchive {
@@ -299,6 +312,9 @@ pub(crate) fn gencal_with_output_mode(
     uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
+    if request.caltype == GencalType::Eop {
+        return eop::generate(request, infile, mode);
+    }
     if request.caltype == GencalType::Tecim {
         return tecim::generate(request, infile, mode);
     }
@@ -397,6 +413,7 @@ pub(crate) fn gencal_with_output_mode(
         }
         GencalType::Jyperk => unreachable!("Jy/K has its own factor source"),
         GencalType::Tecim => unreachable!("TEC has its own image source"),
+        GencalType::Eop => unreachable!("EOP has its own measures source"),
     };
     let subtype = if embedded.is_some() {
         "EPowerCurve"
@@ -887,7 +904,7 @@ pub(crate) fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, GencalError> {
-    if matches!(request.caltype, GencalType::Antpos | GencalType::Tecim) {
+    if matches!(request.caltype, GencalType::Antpos | GencalType::Tecim | GencalType::Eop) {
         return Ok(infile.into_iter().map(Path::to_path_buf).collect());
     }
     if request.caltype == GencalType::Tsys {
@@ -1041,6 +1058,9 @@ fn write_prior_caltable(
                     record.upsert(column, value.clone());
                 }
             }
+            if request.caltype == GencalType::Eop && let Some(weight) = prior.get(COL_WEIGHT) {
+                record.upsert(COL_WEIGHT, weight.clone());
+            }
         }
         writer.append(record)?;
     }
@@ -1056,6 +1076,7 @@ fn write_prior_caltable(
         &writer.output_path().join("SPECTRAL_WINDOW"),
         rows,
         collapse_spw,
+        request.caltype == GencalType::Eop,
     )?;
     writer.save_main()?;
 
@@ -1137,6 +1158,7 @@ fn write_spectral_axis(
     path: &Path,
     solutions: &[PriorCalRow],
     collapse: bool,
+    center_channel: bool,
 ) -> Result<(), GencalError> {
     let mut table = Table::open(TableOptions::new(path))
         .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
@@ -1166,12 +1188,15 @@ fn write_spectral_axis(
                     "SPECTRAL_WINDOW row {row} has empty {column}"
                 )));
             }
-            let value = values.iter().sum::<f64>()
-                / if column == "CHAN_FREQ" {
+            let value = if center_channel && column == "CHAN_FREQ" {
+                *values.iter().nth(values.len() / 2).expect("nonempty channel axis")
+            } else {
+                values.iter().sum::<f64>() / if column == "CHAN_FREQ" {
                     values.len() as f64
                 } else {
                     1.
-                };
+                }
+            };
             if column == "CHAN_WIDTH" {
                 table
                     .cell_accessor_mut(row, "TOTAL_BANDWIDTH")

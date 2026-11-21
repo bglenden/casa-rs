@@ -86,6 +86,7 @@ impl TimeScope {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct TimeQuery {
     pub observation: i32,
     pub scan: i32,
@@ -95,28 +96,44 @@ pub(crate) struct TimeQuery {
     pub frequency_hz: Option<f64>,
 }
 
-impl CalibrationTableLookup {
-    pub(in crate::lookup) fn fringe_phases(
+impl TimePlan {
+    pub(crate) fn fringe_solution(
         &self,
-        observation: i32,
-        scan: i32,
-        window: i32,
-        antenna: i32,
-        time: f64,
+        path: &Path,
+        query: TimeQuery,
+        frequency_hz: f64,
+    ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
+        let Some(mut solution) = self.solution(path, query)? else {
+            return Ok(None);
+        };
+        if solution.receptors != 8
+            || solution.channels != 1
+            || !frequency_hz.is_finite()
+            || frequency_hz <= 0.
+        {
+            return Err(invalid(
+                path,
+                "invalid fringe parameters or reference frequency",
+            ));
+        }
+        let phases = self.fringe_phases(path, query, frequency_hz)?;
+        for (receptor, phase) in phases.into_iter().enumerate() {
+            solution.values[4 * receptor] = Complex32::new(phase, 0.);
+        }
+        Ok(Some(solution))
+    }
+
+    fn fringe_phases(
+        &self,
+        path: &Path,
+        query: TimeQuery,
         frequency: f64,
     ) -> Result<[f32; 2], ApplyExecutionError> {
-        let plan = self
-            .advanced_time
-            .as_ref()
-            .ok_or_else(|| invalid(&self.path, "fringe requires real time curves"))?;
-        let (observation, scan) = plan.scope.coordinates(observation, scan);
-        let rows = plan
-            .series
-            .get(&(observation, scan, window, antenna))
-            .or_else(|| plan.series.get(&(observation, scan, window, -1)))
-            .filter(|rows| !rows.is_empty())
-            .ok_or_else(|| invalid(&self.path, "fringe time series is missing"))?;
+        let (_, rows) = self
+            .candidates(&query)
+            .ok_or_else(|| invalid(path, "fringe time series is missing"))?;
         let reference = (rows[0].time_seconds - 1.).floor();
+        let time = query.time;
         let query = relative(time, reference);
         let at = |index: usize| relative(rows[index].time_seconds, reference);
         let upper = rows.partition_point(|row| relative(row.time_seconds, reference) < query);
@@ -124,15 +141,9 @@ impl CalibrationTableLookup {
         let mut output = [0.; 2];
         for (receptor, phase) in output.iter_mut().enumerate() {
             let advanced = |index| {
-                crate::lookup::fringe::advanced_phase(
-                    &rows[index],
-                    receptor,
-                    time,
-                    frequency,
-                    &self.path,
-                )
+                crate::lookup::fringe::advanced_phase(&rows[index], receptor, time, frequency, path)
             };
-            *phase = if exact || plan.mode == TimeInterpolation::Nearest {
+            *phase = if exact || self.mode == TimeInterpolation::Nearest {
                 let index = if exact {
                     upper.min(rows.len() - 1)
                 } else if at(upper) - query < query - at(upper - 1) {
@@ -151,7 +162,9 @@ impl CalibrationTableLookup {
         }
         Ok(output)
     }
+}
 
+impl CalibrationTableLookup {
     /// Inspect dimensions for simulator lookup, including a phase-delay
     /// reference frequency axis even for frequency-independent parameters.
     /// Callers first admit the ordinary metadata charge.

@@ -571,6 +571,7 @@ fn gencal_reads_casas_values() {
             gaincurve_infile: None,
             antpos_infile: None,
             tec_image: None,
+            eop_infile: None,
             ant_pos_time_limit: None,
             uniform: None,
         })

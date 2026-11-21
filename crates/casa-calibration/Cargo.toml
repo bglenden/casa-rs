@@ -35,6 +35,7 @@ num-complex.workspace = true
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sofars.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 ureq = "3"

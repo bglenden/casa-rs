@@ -676,6 +676,7 @@ fn calibrate_gencal_reads_every_parameter_it_emits() {
             gaincurve_infile: None,
             antpos_infile: None,
             tec_image: None,
+            eop_infile: None,
             ant_pos_time_limit: None,
             uniform: None,
         })

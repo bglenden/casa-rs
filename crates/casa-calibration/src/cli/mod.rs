@@ -194,6 +194,15 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             .map(CalibrationTaskResult::Gencal)
             .map_err(|error| match error {
                 crate::GencalError::PositionInput(error) => position_input_failure(error),
+                crate::GencalError::EopFile { path, source } => {
+                    let parameter = match source.kind() {
+                        std::io::ErrorKind::NotFound => "infile.missing",
+                        std::io::ErrorKind::PermissionDenied => "infile.permission",
+                        std::io::ErrorKind::IsADirectory => "infile.directory",
+                        _ => "infile.io",
+                    };
+                    TaskFailure::execution(format!("{}: {:?}", source, path)).at(parameter)
+                }
                 crate::GencalError::AutomaticPositionInput(reason) => {
                     TaskFailure::validation(reason).at("antenna")
                 }

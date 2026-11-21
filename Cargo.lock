@@ -269,6 +269,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sofars",
  "tar",
  "tempfile",
  "thiserror",
