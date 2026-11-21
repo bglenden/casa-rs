@@ -8268,3 +8268,12 @@ numeric edit accepts the visible components in local order or the full
 local vector. Edits from either representation update visible axes and
 retain the hidden value and its replacement. The mapped inspection and
 conversion tests exercise these cases. See #1002 and #1819.
+
+## Typed coordinate units with different pixel and world orders
+
+CASA 6.7.6.14 indexes the world-unit vector with pixel positions in
+`coordsys.units(type=...)`. In a record whose direction pixel axes are
+`[1,0]` and world axes are `[0,2]`, CASA reports direction units
+`["","rad"]` and Stokes units `["rad"]`. The empty unit belongs to Stokes.
+casa-rs uses the coordinate's world axes and reports `["rad","rad"]`
+for direction and `[""]` for Stokes. See #1002 and #1819.

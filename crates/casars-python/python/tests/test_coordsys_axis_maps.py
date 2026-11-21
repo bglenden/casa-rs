@@ -78,6 +78,10 @@ def test_mapped_record_queries_and_transforms(casa, tmp_path, fixture):
     if fixture == "independent":
         np.testing.assert_array_equal(left.axesmap(True), [2, 0, 1, 3])
         np.testing.assert_array_equal(left.axesmap(False), [1, 2, 0, 3])
+        assert left.units("direction") == ["rad", "rad"]
+        assert left.units("stokes") == [""]
+        assert right.units("direction") == ["", "rad"]
+        assert right.units("stokes") == ["rad"]
 
 
 def test_independent_axis_record_edits_and_cross_readback(casa, tmp_path):
