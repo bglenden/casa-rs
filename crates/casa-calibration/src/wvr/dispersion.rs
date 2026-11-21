@@ -1,27 +1,33 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Frequency interpolation of the supplied wet-path dispersion reference.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::WvrError;
 
 pub(super) struct DispersionTable(Vec<(f64, f64)>);
 
 impl DispersionTable {
-    pub fn load() -> Result<Self, WvrError> {
+    pub fn reference_path() -> Result<PathBuf, WvrError> {
         let filename = "libair-ddefault.csv";
-        let explicit = std::env::var_os("WVRGCAL_DISPDIR").map(PathBuf::from);
+        if let Some(directory) = std::env::var_os("WVRGCAL_DISPDIR") {
+            let explicit = PathBuf::from(directory).join(filename);
+            if explicit.is_file() {
+                return Ok(explicit);
+            }
+        }
         let roots = casa_measures_data::MeasuresRuntime::discover_candidates()
             .map_err(|error| WvrError::Invalid(error.to_string()))?;
-        let path = explicit.into_iter().chain(roots.into_iter().map(|root| root.path.join("alma/wvrgcal")))
-            .map(|directory| directory.join(filename))
+        roots.into_iter()
+            .map(|root| root.path.join("alma/wvrgcal").join(filename))
             .find(|path| path.is_file())
-            .ok_or_else(|| {
-                WvrError::Invalid(format!(
-                    "Could not find {filename} in WVRGCAL_DISPDIR or alma/wvrgcal in the CASA runtime data directories"
-                ))
-            })?;
-        let contents = std::fs::read_to_string(&path)?;
+            .ok_or_else(|| WvrError::Invalid(format!(
+                "Could not find {filename} in WVRGCAL_DISPDIR or alma/wvrgcal in the CASA runtime data directories"
+            )))
+    }
+
+    pub fn load(path: &Path) -> Result<Self, WvrError> {
+        let contents = std::fs::read_to_string(path)?;
         let mut entries: Vec<_> = contents
             .lines()
             .filter_map(|line| {

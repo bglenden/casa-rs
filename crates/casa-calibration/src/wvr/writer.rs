@@ -3,13 +3,17 @@
 
 use std::path::Path;
 
-use casa_ms::{MeasurementSet, schema::SubtableId};
+use casa_ms::{
+    MeasurementSet, MsError,
+    column_def::build_table_schema,
+    schema::{SubtableId, history},
+};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
-use super::WvrRequest;
 use super::paths::gain;
+use super::{WvrError, WvrRequest};
 use crate::CalibrationOutputMode;
 use crate::constants::{
     COL_ANTENNA1, COL_ANTENNA2, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_INTERVAL,
@@ -39,7 +43,18 @@ pub(super) fn publish(
     integrations: &[AntennaPaths],
     windows: &[PhaseWindow],
     mode: CalibrationOutputMode,
-) -> Result<(), CalibrationTableWriteError> {
+) -> Result<(), WvrError> {
+    let subtables = [
+        (SubtableId::Antenna, "ANTENNA"),
+        (SubtableId::Field, "FIELD"),
+        (SubtableId::Observation, "OBSERVATION"),
+        (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
+    ];
+    for &(id, name) in &subtables {
+        if ms.subtable(id).is_none() {
+            return Err(MsError::MissingSubtable(name.into()).into());
+        }
+    }
     let output = &request.output_table;
     let ms_name = ms
         .path()
@@ -75,19 +90,13 @@ pub(super) fn publish(
             }
         }
     }
-    writer.copy_subtables(&[
-        (SubtableId::Antenna, "ANTENNA"),
-        (SubtableId::Field, "FIELD"),
-        (SubtableId::History, "HISTORY"),
-        (SubtableId::Observation, "OBSERVATION"),
-        (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
-    ])?;
+    writer.copy_subtables(&subtables)?;
     make_windows_single_channel(
         &writer.output_path().join("SPECTRAL_WINDOW"),
         SingleChannelFrequency::MiddleChannel,
     )?;
     write_history(&writer.output_path().join("HISTORY"), request)?;
-    writer.save_main()
+    Ok(writer.save_main()?)
 }
 
 fn write_history(path: &Path, request: &WvrRequest) -> Result<(), CalibrationTableWriteError> {
@@ -96,7 +105,10 @@ fn write_history(path: &Path, request: &WvrRequest) -> Result<(), CalibrationTab
         path: path.display().to_string(),
         source: Box::new(source),
     };
-    let mut table = Table::open(options.clone()).map_err(failure)?;
+    let schema = build_table_schema(history::REQUIRED_COLUMNS).expect("valid WVR history schema");
+    let mut table = Table::with_schema(schema);
+    crate::writer::set_fixed_unit_keyword(&mut table, COL_TIME, &["s"]);
+    crate::writer::set_measinfo_keyword(&mut table, COL_TIME, "epoch", Some("UTC"));
     let mut row = RecordValue::new(Vec::new());
     let parameters = serde_json::to_string(request).expect("WVR requests are serializable");
     for (column, text) in [

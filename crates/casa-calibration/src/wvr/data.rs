@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Group the MeasurementSet's WVR data by time and antenna.
 
-use std::path::Path;
-
 use casa_ms::{MeasurementSet, MsError};
-use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
+use casa_tables::{RequiredScalarColumnValues, Table};
 use casa_types::{ArrayValue, ScalarValue};
 
 use crate::constants::{COL_ANTENNA1, COL_ANTENNA2, COL_FIELD_ID, COL_FLAG, COL_TIME};
@@ -24,7 +22,8 @@ pub(super) struct Observation {
     pub time_seconds: f64,
     pub field_id: i32,
     pub source_id: i32,
-    pub description_id: i32,
+    pub window_id: i32,
+    pub repeated: bool,
 }
 
 pub(super) struct RadiometerSeries {
@@ -33,14 +32,14 @@ pub(super) struct RadiometerSeries {
     pub valid_counts: Vec<usize>,
     pub fitted_antennas: Vec<bool>,
     pub observations: Vec<Observation>,
-    pub statistic_description: Option<i32>,
+    pub statistic_window: Option<i32>,
 }
 
 impl RadiometerSeries {
     pub fn read(
         ms: &MeasurementSet,
         wvr_windows: &[i32],
-        offsets_path: Option<&Path>,
+        offsets_table: Option<&Table>,
     ) -> Result<Self, MsError> {
         let main = ms.main_table();
         let antenna_count = ms.antenna()?.row_count();
@@ -48,8 +47,10 @@ impl RadiometerSeries {
         let data_descriptions = ms.data_description()?;
         // The loader follows the selected four-channel windows through DATA_DESCRIPTION.
         let mut descriptions = vec![None; windows.row_count()];
+        let mut window_of_description = Vec::with_capacity(data_descriptions.row_count());
         for desc in 0..data_descriptions.row_count() {
             let window = data_descriptions.spectral_window_id(desc)?;
+            window_of_description.push(window);
             let index = usize::try_from(window)
                 .ok()
                 .filter(|&index| index < windows.row_count())
@@ -57,14 +58,15 @@ impl RadiometerSeries {
             if windows.num_chan(index)? == 4
                 && (wvr_windows.is_empty() || wvr_windows.contains(&window))
             {
-                descriptions[index] = Some(desc as i32);
+                descriptions[index].get_or_insert(desc as i32);
             }
         }
-        let statistic_description = if let Some(&window) = wvr_windows.first() {
-            descriptions[window as usize]
-        } else {
-            descriptions.iter().copied().flatten().next()
-        };
+        let statistic_window = wvr_windows.first().copied().or_else(|| {
+            descriptions
+                .iter()
+                .position(Option::is_some)
+                .map(|id| id as i32)
+        });
         let descriptions: Vec<_> = descriptions.into_iter().flatten().collect();
         let primary = descriptions
             .iter()
@@ -95,13 +97,20 @@ impl RadiometerSeries {
             .filter(|&row| times[row].is_finite())
             .collect();
         sorted.sort_by(|&left, &right| times[left].total_cmp(&times[right]));
-        let (observations, rows) =
-            read_observations(ms, &sorted, times, fields, descs, &descriptions)?;
+        let (observations, rows) = read_observations(
+            ms,
+            &sorted,
+            times,
+            fields,
+            descs,
+            &descriptions,
+            &window_of_description,
+        )?;
         let fitted_antennas = wvr_antennas(ms, &rows, wvr_windows, antennas)?;
 
         let mut offsets = vec![None; rows.len()];
-        if let Some(path) = offsets_path {
-            let samples = read_offsets(path)?;
+        if let Some(table) = offsets_table {
+            let samples = read_offsets(table)?;
             let selected = rows
                 .iter()
                 .enumerate()
@@ -124,7 +133,7 @@ impl RadiometerSeries {
             valid_counts: vec![0; antenna_count],
             fitted_antennas,
             observations,
-            statistic_description,
+            statistic_window,
         };
         let rows: Vec<_> = rows.into_iter().zip(offsets).collect();
         for group in rows.chunk_by(|left, right| times[left.0] == times[right.0]) {
@@ -163,9 +172,6 @@ impl RadiometerSeries {
             }
             series.integrations.push(integration);
         }
-        if series.integrations.is_empty() {
-            return Err(invalid("Didn't find any WVR data points"));
-        }
         Ok(series)
     }
 }
@@ -177,6 +183,7 @@ fn read_observations(
     fields: &[i32],
     descriptions: &[i32],
     selected_descriptions: &[i32],
+    window_of_description: &[i32],
 ) -> Result<(Vec<Observation>, Vec<usize>), MsError> {
     let field_table = ms.field()?;
     let sources = (0..field_table.row_count())
@@ -190,20 +197,26 @@ fn read_observations(
             .get(field_id as usize)
             .ok_or_else(|| invalid("WVR observation has an unknown FIELD_ID"))?;
         let description_id = descriptions[row];
+        let window_id = *window_of_description
+            .get(description_id as usize)
+            .ok_or_else(|| invalid("WVR observation has an unknown DATA_DESC_ID"))?;
         if selected_descriptions.contains(&description_id) {
             selected.push(row);
         }
         let time_seconds = times[row];
-        if observations.last().is_none_or(|previous| {
-            previous.time_seconds != time_seconds
-                || previous.field_id != field_id
-                || previous.description_id != description_id
+        if let Some(previous) = observations.last_mut().filter(|previous| {
+            previous.time_seconds == time_seconds
+                && previous.field_id == field_id
+                && previous.window_id == window_id
         }) {
+            previous.repeated = true;
+        } else {
             observations.push(Observation {
                 time_seconds,
                 field_id,
                 source_id,
-                description_id,
+                window_id,
+                repeated: false,
             });
         }
     }
@@ -274,8 +287,7 @@ fn temperatures(
         .then_some(values))
 }
 
-fn read_offsets(path: &Path) -> Result<Vec<(f64, i32, Temperatures)>, MsError> {
-    let table = Table::open(TableOptions::new(path))?;
+fn read_offsets(table: &Table) -> Result<Vec<(f64, i32, Temperatures)>, MsError> {
     let mut offsets = Vec::with_capacity(table.row_count());
     for row in 0..table.row_count() {
         let ScalarValue::Float64(time) = table.cell_accessor(row, "TIME")?.scalar()? else {

@@ -120,9 +120,11 @@ impl PyWvr {
             Ok(status) => Ok(status),
             Err(WvrError::Invalid(message)) => warn(py, &message, -1),
             Err(WvrError::Input(error)) => warn(py, &error.to_string(), 1),
-            Err(error @ (WvrError::NoSolution(_) | WvrError::ZeroEvidence(_))) => {
-                warn(py, &error.to_string(), 1)
-            }
+            Err(
+                error @ (WvrError::NoSolution(_)
+                | WvrError::ZeroEvidence(_)
+                | WvrError::ReverseWindow(_)),
+            ) => warn(py, &error.to_string(), 1),
             Err(error @ WvrError::ReferenceUnavailable) => warn(py, &error.to_string(), -1),
             Err(error @ WvrError::RadiometerWindow(_)) => warn(py, &error.to_string(), -10),
             Err(error @ WvrError::OutputWindow(_)) => warn(py, &error.to_string(), -11),

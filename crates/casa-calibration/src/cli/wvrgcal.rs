@@ -71,11 +71,17 @@ fn request(
         TaskFailure::validation("rseed must be from 0 through 4294967295").at("rseed")
     })?;
     let offsets = task.path("offsetstable")?;
-    let count = if segment_sources {
-        1
-    } else {
-        task.integer("nsol")?.max(1) as usize
-    };
+    let count = task.integer("nsol")?.max(1) as usize;
+    if segment_sources && count > 1 {
+        return Err(TaskFailure::validation(
+            "In order to use nsol>1, segsource must be set to False.",
+        )
+        .at("nsol"));
+    }
+    let minimum_neighbors = task.integer("minnumants")?;
+    if !(1..=3).contains(&minimum_neighbors) {
+        return Err(TaskFailure::validation("minnumants must be 1, 2 or 3").at("minnumants"));
+    }
     Ok(WvrRequest {
         measurement_set: vis,
         output_table: output,
@@ -100,15 +106,21 @@ fn request(
         flagged_antennas: Vec::new(),
         reference_antennas: Vec::new(),
         max_distance_meters: task.number("maxdistm")?,
-        minimum_neighbors: usize::try_from(task.integer("minnumants")?).unwrap_or(usize::MAX),
+        minimum_neighbors: minimum_neighbors as usize,
         minimum_good_fraction: task.number("mingoodfrac")?,
     })
 }
 
 fn selectors(task: &TaskInvocation<'_>, segmented: bool) -> Result<WvrSelectors, TaskFailure> {
-    let flagged_sources = task.texts("sourceflag")?;
-    if !segmented && !flagged_sources.is_empty() {
-        return Err(TaskFailure::validation("sourceflag requires segsource").at("sourceflag"));
+    let flagged_sources = if segmented {
+        task.texts("sourceflag")?
+    } else {
+        Vec::new()
+    };
+    if flagged_sources.iter().any(String::is_empty) {
+        return Err(
+            TaskFailure::validation("sourceflag must contain non-empty names").at("sourceflag"),
+        );
     }
     let stat = |name| -> Result<Vec<String>, TaskFailure> {
         Ok(task

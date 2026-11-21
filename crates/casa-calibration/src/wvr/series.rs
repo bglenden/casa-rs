@@ -58,10 +58,17 @@ pub(super) fn replace_bad_antennas(
     let flagged_rows = (0..count)
         .map(|id| antennas.flag_row(id))
         .collect::<Result<Vec<_>, _>>()?;
+    if (0..count).all(|id| {
+        flagged_rows[id] || without_radiometer[id] || request.flagged_antennas.contains(&id)
+    }) {
+        return Err(WvrError::Invalid(
+            "No good antennas with WVR data found".into(),
+        ));
+    }
+    let minimum_fraction = request.minimum_good_fraction.clamp(0.0, 1.0);
     let low_fraction = |id: usize| {
         data.fitted_antennas[id]
-            && (data.valid_counts[id] == 0
-                || good_fraction(data, id) < request.minimum_good_fraction)
+            && (data.valid_counts[id] == 0 || good_fraction(data, id) < minimum_fraction)
     };
     let interpolate: Vec<_> = (0..count)
         .map(|id| {
@@ -229,7 +236,7 @@ pub(super) fn statistics_intervals(data: &RadiometerSeries, request: &WvrRequest
     let mut start = None;
     let mut previous = observations[0].time_seconds;
     for (index, point) in observations.iter().enumerate() {
-        if Some(point.description_id) != data.statistic_description {
+        if Some(point.window_id) != data.statistic_window {
             continue;
         }
         let selected = matches(point);
@@ -239,7 +246,12 @@ pub(super) fn statistics_intervals(data: &RadiometerSeries, request: &WvrRequest
         if (!selected || index == observations.len() - 1)
             && let Some(begin) = start.take()
         {
-            intervals.push([begin, previous]);
+            let end = if selected && point.repeated {
+                point.time_seconds
+            } else {
+                previous
+            };
+            intervals.push([begin, end]);
         }
         previous = point.time_seconds;
     }
@@ -417,8 +429,10 @@ pub(super) fn render_log(
     let coefficients = representative.temperature_per_path_k_per_meter;
     let thermal = thermal_error_meters(coefficients) * 1e6;
     let strongest = largest_baseline_meters * 1e6;
+    // CASA's diagnostic converts the second moment numerically from its fit's
+    // K/mm scale by 1e3. Our stored variance already uses K/m squared.
     let coefficient_error =
-        strongest * representative.coefficient_second_moment[1] / coefficients[1];
+        strongest * representative.coefficient_second_moment[1] / (1e3 * coefficients[1]);
     log.push_str("  Expected performance\n------------------------------------------------------------------\n");
     let _ = writeln!(
         log,

@@ -118,11 +118,16 @@ fn resolve_sources(
         .iter()
         .filter_map(|text| by_name(text))
         .collect();
-    request.statistic_sources = selectors
-        .statistic_sources
-        .first()
-        .map(|text| vec![by_name(text).unwrap_or(i32::MIN)])
-        .unwrap_or_default();
+    if let Some(text) = selectors.statistic_sources.first() {
+        request.statistic_sources = sources
+            .iter()
+            .filter(|(_, name)| *name == text)
+            .map(|(&id, _)| id)
+            .collect();
+        if request.statistic_sources.is_empty() {
+            request.statistic_sources.push(i32::MIN);
+        }
+    }
     for group in &selectors.tied_sources {
         request.tied_sources.push(
             group

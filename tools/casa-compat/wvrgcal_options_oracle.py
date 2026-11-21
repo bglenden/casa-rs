@@ -5,6 +5,8 @@
 import argparse
 import inspect
 import os
+import re
+import shutil
 from pathlib import Path
 import time
 
@@ -31,6 +33,10 @@ def extra_inputs(ms, offset_table):
                 tab.putcell(column, row, value)
             tab.putcell('NAME', row, name)
             tab.putcell('SOURCE_ID', row, 1)
+    with opened(ms / 'HISTORY', True) as tab:
+        row = tab.nrows()
+        tab.addrows(1)
+        tab.putcell('APPLICATION', row, 'input-only sentinel')
     with opened(ms / 'POINTING', True) as tab:
         for row in range(tab.nrows()):
             direction = tab.getcell('DIRECTION', row)
@@ -64,7 +70,7 @@ def compare_tables(reference, candidate):
     error = np.linalg.norm(actual - expected) / np.linalg.norm(expected)
     assert error <= 1e-3, (reference.name, error)
     with opened(candidate / 'HISTORY') as history:
-        assert history.nrows() and any('WVR' in item for item in history.getcol('APPLICATION'))
+        assert history.nrows() == 1 and 'WVR' in history.getcell('APPLICATION', 0)
     return float(error)
 
 
@@ -85,17 +91,20 @@ def run_cases(root, vis, native, native_wvr):
         ('time-offset', {'toffset': -1.}, {}),
         ('source-flag', {'sourceflag': ['FLUX']}, {}),
         ('tied-sources', {'tie': '0,1'}, {}),
+        ('unsegmented-source-flag', {'segsource': False, 'sourceflag': ['FLUX']}, {}),
         ('stat-field', {'statfield': '0'}, {}),
         ('stat-source', {'statsource': 'FLUX'}, {}),
+        ('stat-final-source', {'statsource': 'SCIENCE'}, {}),
         ('temperature-offsets', {'offsetstable': str(root / 'offsets')}, {}),
         ('dispersed-window', {'disperse': True, 'spw': 0, 'reversespw': '0'}, {}),
         ('smooth-scale', {'smooth': '7s', 'scale': .8}, {}),
         ('antenna-distance', {'wvrflag': ['0', 'DA02'], 'refant': ['DA02', '2'],
                               'maxdistm': 80., 'minnumants': 2, 'mingoodfrac': .5}, {}),
         ('good-fraction', {'mingoodfrac': .5, 'refant': '4'}, {}),
+        ('fraction-above-one', {'mingoodfrac': 1.1}, {}),
         ('continuum', {'segsource': False, 'cont': True, 'rseed': 79}, {}),
         ('tool-smooth-reverse', {}, {'reverse': True, 'smooth': 4, 'wvrspw': 1}),
-        ('tool-reverse-window', {}, {'reversespw': ['0'], 'spw': 0}),
+        ('tool-reverse-window', {}, {'reversespw': ['0'], 'spw': 0, 'segsource': True}),
     )
     for name, task_args, tool_args in cases:
         default = dict(wvrspw=[1], usefieldtab=True)
@@ -107,6 +116,12 @@ def run_cases(root, vis, native, native_wvr):
             for logfile in (log_casa, log_native):
                 text = logfile.read_text()
                 assert 'Disc (um)' in text and 'Expected performance' in text
+            if name == 'tool-reverse-window':
+                def estimate(path):
+                    return float(re.search(r'Rough estimate.*coefficient error.*: (\S+)', path.read_text())[1])
+                expected_error = estimate(log_casa)
+                assert expected_error > 0.0
+                np.testing.assert_allclose(estimate(log_native), expected_error, rtol=0.002)
         else:
             reference = casatasks.wvrgcal(str(vis), str(expected), **(default | task_args))
             candidate = native.wvrgcal(str(vis), str(actual), **(default | task_args))
@@ -128,6 +143,16 @@ def publication_controls(root, vis, native, native_wvr):
     compare_reports(expected, actual)
     assert actual['rval'] == -1 and not denied.exists()
 
+    for invalid in (dict(nsol=2), dict(minnumants=4)):
+        malformed = root / 'refused-argument.cal'
+        for api in (casatasks, native):
+            try:
+                api.wvrgcal(str(vis), str(malformed), usefieldtab=True, **invalid)
+            except Exception:
+                assert not malformed.exists()
+            else:
+                raise AssertionError(f'invalid arguments were accepted: {invalid}')
+
     defaults = dict(usefieldtab=True, wvrspw=[1], segsource=False)
     reference = root / 'replace-casa.cal'
     candidate = root / 'replace-native.cal'
@@ -147,6 +172,19 @@ def publication_controls(root, vis, native, native_wvr):
         pass
     else:
         raise AssertionError('the task replaced an existing table')
+    from casacore.tables import table
+    offsets = root / 'offsets'
+    offset_view = root / 'offset-view'
+    with table(str(offsets), ack=False) as backing, backing.selectrows(range(backing.nrows())) as view:
+        view.copy(str(offset_view), deep=False).close()
+    for scientific_input, options in (
+        (root / 'libair-ddefault.csv', dict(disperse=True)),
+        (offsets / 'table.dat', dict(offsets=str(offset_view))),
+    ):
+        original = scientific_input.read_bytes()
+        assert native_wvr().gcal(str(vis), str(candidate), logfile=str(scientific_input),
+                                 **(defaults | options)) == -1
+        assert scientific_input.read_bytes() == original
     compare_tables(reference, candidate)
 
 
@@ -161,7 +199,7 @@ def reference_retry(root, original, native_wvr):
     tool_args = dict(usefieldtab=True, wvrspw=[1], refant='0')
     for tool, path in zip((wvr(), native_wvr()), paths):
         assert tool.gcal(str(vis), str(path), logfile=str(path.with_suffix('.log')), **tool_args) == 0
-        for selection, code in (({'wvrspw': [0]}, -10), ({'spw': [99]}, -11)):
+        for selection, code in (({'wvrspw': [0]}, -10), ({'spw': [99]}, -11), ({'reversespw': [99]}, 1)):
             refused = root / f'{path.stem}-{code}.cal'
             assert tool.gcal(str(vis), str(refused), **(tool_args | selection)) == code
             assert not refused.exists()
@@ -170,8 +208,80 @@ def reference_retry(root, original, native_wvr):
     print(f'zero-evidence antenna replacement gain normalized RMS {error:.6g}', flush=True)
 
 
+def metadata_controls(root, vis, native, native_wvr):
+    mutated = root / 'metadata.ms'
+    copy_ms(vis, mutated)
+    with opened(mutated / 'DATA_DESCRIPTION', True) as dd:
+        row = dd.nrows()
+        dd.addrows(1)
+        for column in dd.colnames():
+            dd.putcell(column, row, dd.getcell(column, 1))
+    with opened(mutated / 'SOURCE', True) as source:
+        row = source.nrows() - 1
+        assert source.getcell('SOURCE_ID', row) == 1
+        source.putcell('NAME', row, 'FLUX')
+    reference = root / 'metadata-casa.cal'
+    candidate = root / 'metadata-native.cal'
+    options = dict(usefieldtab=True, statsource='FLUX')
+    expected = casatasks.wvrgcal(str(mutated), str(reference), **options)
+    actual = native.wvrgcal(str(mutated), str(candidate), **options)
+    assert expected['success']
+    compare_reports(expected, actual)
+    compare_tables(reference, candidate)
+
+    logfile = str(root / 'sparse-spw.log')
+    sparse = root / 'sparse-reverse-native.cal'
+    ordinary = root / 'sparse-ordinary-native.cal'
+    sparse_casa = root / 'sparse-reverse-casa.cal'
+    options = dict(usefieldtab=True, spw=[1], logfile=logfile)
+    assert native_wvr().gcal(str(mutated), str(ordinary), **options) == 0
+    assert native_wvr().gcal(str(mutated), str(sparse), reverse=True, **options) == 0
+    assert wvr().gcal(str(mutated), str(sparse_casa), reverse=True, **options) == 0
+    with opened(ordinary) as direct, opened(sparse) as reverse, opened(sparse_casa) as upstream:
+        np.testing.assert_allclose(reverse.getcol('CPARAM'), np.conj(direct.getcol('CPARAM')), atol=1e-6)
+        np.testing.assert_allclose(upstream.getcol('CPARAM'), direct.getcol('CPARAM'), atol=1e-6)
+        assert np.max(np.abs(direct.getcol('CPARAM').imag)) > 0.1
+
+    # Output history is independent when the source lacks its HISTORY subtable.
+    no_history = root / 'no-history.ms'
+    copy_ms(mutated, no_history)
+    with opened(no_history, True) as ms:
+        ms.removekeyword('HISTORY')
+    shutil.rmtree(no_history / 'HISTORY')
+    independent_history = root / 'independent-history.cal'
+    assert native_wvr().gcal(str(no_history), str(independent_history), **options) == 0
+    with opened(independent_history / 'HISTORY') as history:
+        assert history.nrows() == 1
+
+    with opened(mutated / 'SPECTRAL_WINDOW', True) as spw:
+        channels = spw.getcell('CHAN_FREQ', 0)
+        original_channels = channels.copy()
+        channels[len(channels) // 2] = np.nan
+        spw.putcell('CHAN_FREQ', 0, channels)
+    assert native_wvr().gcal(str(mutated), str(candidate), spw=[0], usefieldtab=True, logfile=logfile) == -1
+    compare_tables(reference, candidate)
+    with opened(mutated / 'SPECTRAL_WINDOW', True) as spw:
+        spw.putcell('CHAN_FREQ', 0, original_channels)
+
+    unavailable = root / 'all-antenna-flags.cal'
+    with opened(mutated / 'ANTENNA', True) as ant:
+        ant.putcol('FLAG_ROW', np.ones(ant.nrows(), bool))
+    for tool in (wvr(), native_wvr()):
+        assert tool.gcal(str(mutated), str(unavailable), **options) == -1
+        assert not unavailable.exists()
+    with opened(mutated / 'ANTENNA', True) as ant:
+        ant.putcol('FLAG_ROW', np.zeros(ant.nrows(), bool))
+    with opened(mutated, True) as ms:
+        for row in np.flatnonzero(ms.getcol('DATA_DESC_ID') == 1):
+            ms.putcell('FLAG', int(row), np.ones((1, 4), bool))
+    for api in (casatasks, native):
+        failed = api.wvrgcal(str(mutated), str(unavailable), usefieldtab=True)
+        assert failed['rval'] == 1 and not failed['success'] and not unavailable.exists()
+    print('WVR metadata, all-flagged inputs and sparse reversal controls passed.', flush=True)
+
+
 def recorded_cases(root, vis, native):
-    """Read the recorded MS directly so validation only creates solution products."""
+    """Compare recorded retrievals and apply the default tables to science data."""
     for name, args in (
         ('default', {}),
         ('time-offset', dict(segsource=False, toffset=-1.)),
@@ -185,11 +295,45 @@ def recorded_cases(root, vis, native):
             duration = time.monotonic() - start
             assert report['success'], (name, name_api, report)
             results.append((path, report, duration))
-        (path_casa, casa, casa_seconds), (path_native, native, native_seconds) = results
-        compare_reports(casa, native)
+        (path_casa, report_casa, casa_seconds), (path_native, report_native, native_seconds) = results
+        compare_reports(report_casa, report_native)
         error = compare_tables(path_casa, path_native)
         print(f'{name} recorded gain normalized RMS {error:.6g}, CASA {casa_seconds:.3f}s, '
               f'casa-rs {native_seconds:.3f}s', flush=True)
+
+
+def corrected_recorded_sample(root, vis, native):
+    with opened(vis / 'SPECTRAL_WINDOW') as table:
+        channels = table.getcol('NUM_CHAN')
+    with opened(vis / 'DATA_DESCRIPTION') as table:
+        windows = table.getcol('SPECTRAL_WINDOW_ID')
+    with opened(vis) as table:
+        present = np.unique(table.getcol('DATA_DESC_ID'))
+    science = next(int(windows[dd]) for dd in present if channels[windows[dd]] != 4)
+    descriptions = np.flatnonzero(windows == science).tolist()
+    samples = []
+    for engine, api in (('casa', casatasks), ('native', native)):
+        product = root / f'corrected-{engine}.ms'
+        copy_ms(vis, product)
+        api.applycal(str(product), spw=str(science), gaintable=[str(root / f'default-{engine}.cal')],
+                     flagbackup=False, calwt=False)
+        with opened(product) as table:
+            selected = table.query(f'DATA_DESC_ID IN {descriptions}')
+            try:
+                rows = np.linspace(0, selected.nrows() - 1, min(64, selected.nrows()), dtype=int)
+                data = [selected.getcell('CORRECTED_DATA', int(row)) for row in rows]
+                flags = [selected.getcell('FLAG', int(row)) for row in rows]
+                samples.append((np.stack(data), np.stack(flags)))
+            finally:
+                selected.close()
+    (reference, flags), (actual, actual_flags) = samples
+    np.testing.assert_array_equal(flags, actual_flags)
+    usable = ~flags
+    denominator = np.linalg.norm(reference[usable])
+    assert denominator > 0
+    error = np.linalg.norm(actual[usable] - reference[usable]) / denominator
+    assert error <= 1e-3, error
+    print(f'recorded science SPW {science} corrected visibility normalized RMS {error:.6g}', flush=True)
 
 
 def main():
@@ -210,7 +354,9 @@ def main():
     root = args.work.resolve()
     root.mkdir()
     if args.recorded_ms is not None:
-        recorded_cases(root, args.recorded_ms.resolve(strict=True), tasks)
+        recorded_ms = args.recorded_ms.resolve(strict=True)
+        recorded_cases(root, recorded_ms, tasks)
+        corrected_recorded_sample(root, recorded_ms, tasks)
         return
     os.chdir(root)
     vis = root / 'radiometer.ms'
@@ -222,6 +368,7 @@ def main():
     count = run_cases(root, vis, tasks, native_wvr)
     publication_controls(root, vis, tasks, native_wvr)
     reference_retry(root, vis, native_wvr)
+    metadata_controls(root, vis, tasks, native_wvr)
     print(f'{count} nondefault WVR scenarios and publication controls passed.')
 
 

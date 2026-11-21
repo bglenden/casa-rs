@@ -14,6 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use casa_ms::{MeasurementSet, MsError, derived::engine::MsCalEngine, schema::SubtableId};
+use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, ScalarValue};
 use serde::{Deserialize, Serialize};
 
@@ -134,6 +135,9 @@ pub enum WvrError {
     /// Requested output window does not exist in the MeasurementSet.
     #[error("Invalid output spectral window {0}")]
     OutputWindow(i32),
+    /// Requested reversal has no selected output spectral window.
+    #[error("Reversal requested for unselected spectral window {0}")]
+    ReverseWindow(i32),
     /// The on-disk dispersion reference could not be read.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -190,18 +194,24 @@ fn execute(
         )));
     }
     let ms = MeasurementSet::open(&request.measurement_set)?;
-    protect_inputs(
-        &ms,
-        &request.output_table,
-        request.temperature_offsets.as_deref(),
-    )?;
-    if let Some(logfile) = logfile {
-        protect_inputs(&ms, logfile, request.temperature_offsets.as_deref())?;
+    let offsets = request
+        .temperature_offsets
+        .as_ref()
+        .map(|path| Table::open(TableOptions::new(path)))
+        .transpose()
+        .map_err(MsError::from)?;
+    let dispersion_path = request
+        .disperse
+        .then(dispersion::DispersionTable::reference_path)
+        .transpose()?;
+    let products = std::iter::once(request.output_table.as_path()).chain(logfile);
+    for product in products {
+        protect_inputs(&ms, product, offsets.as_ref(), dispersion_path.as_deref())?;
     }
-    let windows = phase_windows(&ms, request)?;
-    let fitted = match fit_observations(&ms, request, None) {
+    let windows = phase_windows(&ms, request, dispersion_path.as_deref())?;
+    let fitted = match fit_observations(&ms, request, offsets.as_ref(), None) {
         Err(WvrError::ZeroEvidence(antenna)) if !request.continuum => {
-            fit_observations(&ms, request, Some(antenna))?
+            fit_observations(&ms, request, offsets.as_ref(), Some(antenna))?
         }
         other => other?,
     };
@@ -299,10 +309,14 @@ pub fn execute_wvr_with_log(request: &WvrRequest, logfile: &Path) -> Result<WvrR
     );
     match &outcome {
         Ok(report) => file.write_all(report.log.as_bytes())?,
-        Err(WvrError::Invalid(_) | WvrError::RadiometerWindow(_) | WvrError::OutputWindow(_)) => {
-            return outcome;
+        Err(
+            error @ (WvrError::NoSolution(_)
+            | WvrError::ZeroEvidence(_)
+            | WvrError::ReferenceUnavailable),
+        ) => {
+            writeln!(file, "WVR phase calibration\n{error}")?;
         }
-        Err(error) => writeln!(file, "WVR phase calibration\n{error}")?,
+        Err(_) => return outcome,
     }
     file.persist(target).map_err(|error| error.error)?;
     outcome
@@ -311,24 +325,30 @@ pub fn execute_wvr_with_log(request: &WvrRequest, logfile: &Path) -> Result<WvrR
 fn protect_inputs(
     ms: &MeasurementSet,
     product: &Path,
-    offsets: Option<&Path>,
+    offsets: Option<&Table>,
+    dispersion: Option<&Path>,
 ) -> Result<(), WvrError> {
-    let plain = ms
-        .main_table()
-        .cache_plain_table_paths()
-        .map_err(MsError::from)?;
+    let mut inputs = ms
+        .path()
+        .into_iter()
+        .chain(dispersion)
+        .map(Path::to_path_buf)
+        .collect::<Vec<_>>();
     let subtables = SubtableId::ALL_REQUIRED
         .iter()
         .chain(SubtableId::ALL_OPTIONAL)
-        .filter_map(|&subtable| ms.subtable(subtable).and_then(casa_tables::Table::path));
-    let inputs = ms
-        .path()
-        .into_iter()
+        .filter_map(|&subtable| ms.subtable(subtable));
+    for table in std::iter::once(ms.main_table())
+        .chain(subtables)
         .chain(offsets)
-        .chain(plain.iter().map(PathBuf::as_path))
-        .chain(subtables);
+    {
+        inputs.extend(table.path().map(Path::to_path_buf));
+        if table.is_reference_table().map_err(MsError::from)? {
+            inputs.extend(table.cache_plain_table_paths().map_err(MsError::from)?);
+        }
+    }
     for input in inputs {
-        if crate::paths::overlap(product, input)? {
+        if crate::paths::overlap(product, &input)? {
             return Err(WvrError::Invalid(format!(
                 "WVR product {} overlaps input {}",
                 product.display(),
@@ -363,7 +383,11 @@ fn sky_states(ms: &MeasurementSet) -> Result<Vec<i32>, WvrError> {
     Ok(ids)
 }
 
-fn phase_windows(ms: &MeasurementSet, request: &WvrRequest) -> Result<Vec<PhaseWindow>, WvrError> {
+fn phase_windows(
+    ms: &MeasurementSet,
+    request: &WvrRequest,
+    dispersion_path: Option<&Path>,
+) -> Result<Vec<PhaseWindow>, WvrError> {
     let windows = ms.spectral_window()?;
     for &window in &request.radiometer_windows {
         if window < 0
@@ -378,22 +402,34 @@ fn phase_windows(ms: &MeasurementSet, request: &WvrRequest) -> Result<Vec<PhaseW
             return Err(WvrError::OutputWindow(window));
         }
     }
-    let dispersion = request
-        .disperse
-        .then(dispersion::DispersionTable::load)
+    let dispersion = dispersion_path
+        .map(dispersion::DispersionTable::load)
         .transpose()?;
     let indices: Vec<_> = if request.output_windows.is_empty() {
         (0..windows.row_count() as i32).collect()
     } else {
         request.output_windows.clone()
     };
+    if !request.reverse {
+        for &id in &request.reversed_windows {
+            if !indices.contains(&id) {
+                return Err(WvrError::ReverseWindow(id));
+            }
+        }
+    }
     indices
         .into_iter()
         .map(|id| {
             let channels = windows.chan_freq(id as usize)?;
-            let frequency = channels.get(channels.len() / 2).copied().ok_or_else(|| {
-                WvrError::Invalid(format!("No channels in output spectral window {id}"))
-            })?;
+            let frequency = channels
+                .get(channels.len() / 2)
+                .copied()
+                .filter(|frequency| frequency.is_finite() && *frequency > 0.0)
+                .ok_or_else(|| {
+                    WvrError::Invalid(format!(
+                        "No valid middle-channel frequency in spectral window {id}"
+                    ))
+                })?;
             Ok(PhaseWindow {
                 id,
                 frequency_hz: frequency,
@@ -471,13 +507,10 @@ struct FittedObservations {
 fn fit_observations(
     ms: &MeasurementSet,
     request: &WvrRequest,
+    offsets: Option<&Table>,
     failed_reference: Option<usize>,
 ) -> Result<FittedObservations, WvrError> {
-    let mut data = RadiometerSeries::read(
-        ms,
-        &request.radiometer_windows,
-        request.temperature_offsets.as_deref(),
-    )?;
+    let mut data = RadiometerSeries::read(ms, &request.radiometer_windows, offsets)?;
     series::smooth(&mut data.integrations, request.smoothing_samples);
     let sky = sky_states(ms)?;
     data.integrations
