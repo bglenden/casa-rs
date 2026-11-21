@@ -22,8 +22,8 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
-    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, LinearCoordinate,
+    Projection, ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::{
     FeatherRequest, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType, ImpvRequest,
@@ -231,12 +231,17 @@ fn int_map(record: &casa_types::RecordValue, field: &str) -> Vec<i32> {
     }
 }
 
+fn mapped_rewrite_directory(scratch: &Path) -> PathBuf {
+    let output = std::env::var_os("CASA_RS_AXIS_MAP_REWRITE_OUT")
+        .map_or_else(|| scratch.join("rewrites"), PathBuf::from);
+    std::fs::create_dir_all(&output).unwrap();
+    output
+}
+
 #[test]
 fn complete_axis_maps_match_casa_and_round_trip_through_native_images() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let output = std::env::var_os("CASA_RS_AXIS_MAP_REWRITE_OUT")
-        .map_or_else(|| scratch.path().join("rewrites"), PathBuf::from);
-    std::fs::create_dir_all(&output).unwrap();
+    let output = mapped_rewrite_directory(scratch.path());
     for name in [
         "transposed.image",
         "spectral_first.image",
@@ -338,6 +343,46 @@ fn complete_axis_maps_match_casa_and_round_trip_through_native_images() {
         );
         let new_world = restored.to_world_columns(pixel_columns.view()).unwrap();
         assert_eq!(new_world, world_batch, "{name}");
+    }
+}
+
+#[test]
+fn a_legacy_direction_slice_can_be_added_or_replaced_in_a_native_output() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let output = mapped_rewrite_directory(scratch.path());
+    let source = copy_image("dropdeg_ra.image", scratch.path());
+    let legacy = CoordinateSystem::from_record(&coords_record(&source)).unwrap();
+    let slice = legacy.coordinate(legacy.find_coordinate(CoordinateType::Direction).unwrap());
+    for (name, append) in [
+        ("added-direction.image", true),
+        ("replaced-direction.image", false),
+    ] {
+        let mut coords = CoordinateSystem::new();
+        coords.add_coordinate(LinearCoordinate::new(1, Vec::new(), Vec::new()));
+        coords.transpose_axes(&[0], &[0]).unwrap();
+        let (shape, input) = if append {
+            coords.add_coordinate(slice.clone());
+            (vec![3, 3], vec![0.0, 1.0])
+        } else {
+            coords.replace_coordinate(0, slice.clone());
+            (vec![3], vec![1.0])
+        };
+        let world = coords.to_world(&input).unwrap();
+        let path = output.join(name);
+        let mut image = PagedImage::<f32>::create(shape, coords, &path).unwrap();
+        image.save().unwrap();
+        drop(image);
+        let record = coords_record(&path);
+        let slot = usize::from(append);
+        for kind in ["pixelmap", "worldmap"] {
+            assert_eq!(
+                int_map(&record, &format!("{kind}{slot}")),
+                [-(slot as i32) - 1, slot as i32],
+            );
+        }
+        let restored = CoordinateSystem::from_mapped_record(&record).unwrap();
+        let got = restored.to_world(&input).unwrap();
+        assert!((world[slot] - got[slot]).abs() < 1e-12);
     }
 }
 

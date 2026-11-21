@@ -423,6 +423,7 @@ fn replace_world_values(world: &mut AxisMap, old: &CoordinateModel, new: &Coordi
         .zip(&mut world.replacements)
         .zip(reference)
     {
+        // Keep an invalid reference from making the replacement vector unreadable.
         *value = if axis < 0 && reference.is_finite() {
             reference
         } else {
