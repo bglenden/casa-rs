@@ -73,14 +73,6 @@ pub struct DirectionCoordinate {
     world_units: [String; 2],
     /// Names supplied by the stored coordinate record, if any.
     world_names: Option<[String; 2]>,
-    removed_axis: Option<RemovedAxis>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct RemovedAxis {
-    pub index: usize,
-    pub pixel: f64,
-    pub world_rad: f64,
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
@@ -222,39 +214,6 @@ impl DirectionCoordinate {
             native_pole,
             world_units: ["rad".into(), "rad".into()],
             world_names: None,
-            removed_axis: None,
-        }
-    }
-
-    pub(crate) fn remove_record_axis(
-        &mut self,
-        axis: usize,
-        pixel: f64,
-        world: f64,
-    ) -> Result<(), CoordinateError> {
-        self.removed_axis = Some(RemovedAxis {
-            index: axis,
-            pixel,
-            world_rad: convert_value_to_unit(
-                world,
-                &self.world_units[axis],
-                "rad",
-                "worldreplace",
-            )?,
-        });
-        Ok(())
-    }
-
-    pub(crate) fn removed_axis(&self) -> Option<RemovedAxis> {
-        self.removed_axis
-    }
-
-    fn select_axis<T>(&self, values: [T; 2]) -> Vec<T> {
-        let [x, y] = values;
-        match self.removed_axis.map(|axis| axis.index) {
-            Some(0) => vec![y],
-            Some(_) => vec![x],
-            None => vec![x, y],
         }
     }
 
@@ -273,7 +232,7 @@ impl DirectionCoordinate {
 
     /// Convert between absolute directions and offsets from this coordinate's
     /// reference direction, in radians. Pass `absolute` to recover an absolute
-    /// direction. A removed axis uses its stored world replacement.
+    /// direction.
     ///
     /// # Errors
     /// Returns an error if `values` has the wrong number of visible axes.
@@ -282,16 +241,11 @@ impl DirectionCoordinate {
         values: &mut [f64],
         absolute: bool,
     ) -> Result<(), CoordinateError> {
-        let [lon, lat] = match (self.removed_axis, &*values) {
-            (Some(removed), [value]) if removed.index == 0 => [removed.world_rad, *value],
-            (Some(removed), [value]) => [*value, removed.world_rad],
-            (None, [longitude, latitude]) => [*longitude, *latitude],
-            _ => {
-                return Err(CoordinateError::DimensionMismatch {
-                    expected: self.n_world_axes(),
-                    got: values.len(),
-                });
-            }
+        let [lon, lat] = *values else {
+            return Err(CoordinateError::DimensionMismatch {
+                expected: 2,
+                got: values.len(),
+            });
         };
         let [ref_lon, ref_lat] = self.crval;
         let (sin_lon, cos_lon) = ref_lon.sin_cos();
@@ -327,24 +281,20 @@ impl DirectionCoordinate {
             },
             latitude,
         ];
-        if let Some(removed) = self.removed_axis {
-            values[0] = result[1 - removed.index];
-        } else {
-            values.copy_from_slice(&result);
-        }
+        values.copy_from_slice(&result);
         Ok(())
     }
 
     /// The stored unit of each visible world axis, in axis order.
     pub fn visible_world_units(&self) -> Vec<String> {
-        self.select_axis(self.world_units.clone())
+        self.world_units.to_vec()
     }
 
     /// The visible reference values and increments in their stored world units.
     pub fn reference_and_increment_in_world_units(&self) -> (Vec<f64>, Vec<f64>) {
         (
-            self.select_axis(self.in_world_units(self.crval)),
-            self.select_axis(self.in_world_units(self.cdelt)),
+            self.in_world_units(self.crval).to_vec(),
+            self.in_world_units(self.cdelt).to_vec(),
         )
     }
 
@@ -989,7 +939,7 @@ impl Coordinate for DirectionCoordinate {
     }
 
     fn n_pixel_axes(&self) -> usize {
-        2 - usize::from(self.removed_axis.is_some())
+        2
     }
 
     fn n_world_axes(&self) -> usize {
@@ -1004,14 +954,7 @@ impl Coordinate for DirectionCoordinate {
             });
         }
 
-        let full = if let Some(removed) = self.removed_axis {
-            let mut full = [pixel[0]; 2];
-            full[removed.index] = removed.pixel;
-            full
-        } else {
-            [pixel[0], pixel[1]]
-        };
-        Ok(self.select_axis(self.pixel_to_world(full)?))
+        Ok(self.pixel_to_world([pixel[0], pixel[1]])?.to_vec())
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
@@ -1022,30 +965,23 @@ impl Coordinate for DirectionCoordinate {
             });
         }
 
-        let full = if let Some(removed) = self.removed_axis {
-            let mut full = [world[0]; 2];
-            full[removed.index] = removed.world_rad;
-            full
-        } else {
-            [world[0], world[1]]
-        };
-        Ok(self.select_axis(self.world_to_pixel(full)?))
+        Ok(self.world_to_pixel([world[0], world[1]])?.to_vec())
     }
 
     fn reference_value(&self) -> Vec<f64> {
-        self.select_axis(self.crval)
+        self.crval.to_vec()
     }
 
     fn reference_pixel(&self) -> Vec<f64> {
-        self.select_axis(self.crpix)
+        self.crpix.to_vec()
     }
 
     fn increment(&self) -> Vec<f64> {
-        self.select_axis(self.cdelt)
+        self.cdelt.to_vec()
     }
 
     fn axis_names(&self) -> Vec<String> {
-        self.select_axis(self.full_axis_names())
+        self.full_axis_names().to_vec()
     }
 
     fn axis_units(&self) -> Vec<String> {

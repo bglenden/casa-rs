@@ -13,45 +13,30 @@ pub(super) fn format_position(
     position: &[usize],
     spectral_axis: Option<usize>,
 ) -> Result<String, ImageError> {
-    let mut fields = Vec::with_capacity(position.len());
-    let mut offset = 0;
-    for index in 0..coordinates.n_coordinates() {
+    let pixels: Vec<_> = position.iter().map(|&pixel| pixel as f64).collect();
+    let world = coordinates.to_world(&pixels)?;
+    let mut fields = Vec::with_capacity(world.len());
+    for (axis, &value) in world.iter().enumerate() {
+        let (index, local) = coordinates.world_axis(axis).expect("dense world axes");
         let coordinate = coordinates.coordinate(index);
-        let end = offset + coordinate.n_pixel_axes();
-        let pixels: Vec<f64> = position[offset..end]
-            .iter()
-            .map(|&value| value as f64)
-            .collect();
-        let world = coordinate.to_world(&pixels)?;
-        let increments = coordinate.increment();
-        match coordinate {
+        let text = match coordinate {
             CoordinateModel::Direction(direction) => {
-                fields.push(direction_value(direction.direction_ref(), 0, world[0]));
-                fields.push(direction_value(direction.direction_ref(), 1, world[1]));
+                direction_value(direction.direction_ref(), local, value)
             }
-            CoordinateModel::Stokes(_) => {
-                let code = world[0].round() as i32;
-                fields.push(
-                    StokesType::from_code(code)
-                        .map_or("Undefined", StokesType::name)
-                        .to_string(),
-                );
-            }
+            CoordinateModel::Stokes(_) => StokesType::from_code(value.round() as i32)
+                .map_or("Undefined", StokesType::name)
+                .to_string(),
             CoordinateModel::Spectral(_) => {
-                let unit = if spectral_axis == Some(offset) {
-                    coordinate.axis_units()[0].clone()
+                let unit = if coordinates.world_axis_to_pixel(axis) == spectral_axis {
+                    coordinate.axis_units().remove(local)
                 } else {
                     String::new()
                 };
-                fields.push(format!("{}{unit}", number(world[0], increments[0])));
+                format!("{}{unit}", number(value, coordinate.increment()[local]))
             }
-            _ => {
-                for value in world {
-                    fields.push(number(value, increments[0]));
-                }
-            }
-        }
-        offset = end;
+            _ => number(value, coordinate.increment()[0]),
+        };
+        fields.push(text);
     }
     Ok(fields.join(" "))
 }

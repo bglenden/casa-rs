@@ -71,7 +71,7 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
     decimate: i64,
 ) -> Result<(Regridded<T>, f64), ImageError> {
     let coordinates = image.coordinates();
-    let (index, axis) = super::super::direction_of(coordinates)
+    let (index, axes) = super::super::direction_of(coordinates)
         .ok_or_else(|| invalid("image must have two direction axes"))?;
     let direction = super::super::direction(coordinates, index);
     let original = direction.direction_ref();
@@ -104,7 +104,8 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
         return Err(invalid("direction rotation requires square pixels"));
     }
     let frame = observation_frame(coordinates);
-    let center = [(shape[axis] / 2) as f64, (shape[axis + 1] / 2) as f64];
+    let plane = axes.map(|axis| shape[axis]);
+    let center = plane.map(|length| (length / 2) as f64);
     let mut source = direction.clone().with_conversion_direction_ref(original);
     let at_center = source.pixel_to_world(center)?;
     source = source
@@ -112,8 +113,8 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
         .with_reference_value(at_center);
     let world = convert_angles(at_center, original, reference, &frame)?;
     let angle = rotation_angle(&source, world, reference, &frame)?;
-    let pad = padding(center, [shape[0], shape[1]], angle);
-    let dimensions = [shape[axis] + 2 * pad, shape[axis + 1] + 2 * pad];
+    let pad = padding(center, plane, angle);
+    let dimensions = plane.map(|length| length + 2 * pad);
     let center = center.map(|pixel| pixel + pad as f64);
     source = source.with_reference_pixel(center);
     let units = direction.axis_units();
@@ -126,13 +127,13 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
     )
     .with_world_units([&units[0], &units[1]])?;
     if pad > 0 {
-        result.data = pad_direction(&result.data, axis, pad, T::default_value());
-        result.mask = pad_direction(&result.mask, axis, pad, false);
+        result.data = pad_direction(&result.data, axes, pad, T::default_value());
+        result.mask = pad_direction(&result.mask, axes, pad, false);
     }
     validate_decimation(decimate, dimensions, &[true, true], false)?;
     apply_direction(
         &mut result,
-        axis,
+        axes,
         image.units(),
         (&source, &output),
         dimensions,
@@ -146,7 +147,7 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
         },
         &frame,
     )?;
-    let lower = crop_direction(&mut result, axis)?;
+    let lower = crop_direction(&mut result, axes)?;
     result.coordinates.replace_coordinate(
         index,
         output.with_reference_pixel([center[0] - lower[0] as f64, center[1] - lower[1] as f64]),
@@ -191,30 +192,32 @@ fn padding(center: [f64; 2], shape: [usize; 2], angle: f64) -> usize {
     (maximum[0] - shape[0] as f64 / 2.0).max(maximum[1] - shape[1] as f64 / 2.0) as usize
 }
 
-fn pad_direction<T: Copy>(data: &ArrayD<T>, axis: usize, pad: usize, zeros: T) -> ArrayD<T> {
+fn pad_direction<T: Copy>(data: &ArrayD<T>, axes: [usize; 2], pad: usize, zeros: T) -> ArrayD<T> {
     let old = data.shape();
     let mut shape = old.to_vec();
-    shape[axis] += 2 * pad;
-    shape[axis + 1] += 2 * pad;
+    for axis in axes {
+        shape[axis] += 2 * pad;
+    }
     let mut padded = ArrayD::from_elem(IxDyn(&shape).f(), zeros);
     let mut view = padded.view_mut();
-    view.slice_axis_inplace(Axis(axis), Slice::from(pad..pad + old[axis]));
-    view.slice_axis_inplace(Axis(axis + 1), Slice::from(pad..pad + old[axis + 1]));
+    for axis in axes {
+        view.slice_axis_inplace(Axis(axis), Slice::from(pad..pad + old[axis]));
+    }
     view.assign(data);
     padded
 }
 
 fn crop_direction<T: ImagePixel + Copy>(
     result: &mut Regridded<T>,
-    axis: usize,
+    axes: [usize; 2],
 ) -> Result<[usize; 2], ImageError> {
     let mut lower = [usize::MAX; 2];
     let mut upper = [0; 2];
     for (index, &valid) in result.mask.indexed_iter() {
         if valid {
             for i in 0..2 {
-                lower[i] = lower[i].min(index[axis + i]);
-                upper[i] = upper[i].max(index[axis + i]);
+                lower[i] = lower[i].min(index[axes[i]]);
+                upper[i] = upper[i].max(index[axes[i]]);
             }
         }
     }
@@ -223,8 +226,8 @@ fn crop_direction<T: ImagePixel + Copy>(
     }
     for i in 0..2 {
         let slice = Slice::from(lower[i]..=upper[i]);
-        result.data.slice_axis_inplace(Axis(axis + i), slice);
-        result.mask.slice_axis_inplace(Axis(axis + i), slice);
+        result.data.slice_axis_inplace(Axis(axes[i]), slice);
+        result.mask.slice_axis_inplace(Axis(axes[i]), slice);
     }
     Ok(lower)
 }

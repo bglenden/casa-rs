@@ -65,20 +65,27 @@ impl PyImageTool {
             }
             let (coordinates, _) = attachment.coordinate_view(&image);
             let mut result = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
-            let mut first = 0;
             let mut selected = Vec::new();
             for index in 0..coordinates.n_coordinates() {
-                let coordinate = coordinates.coordinate(index);
-                let end = first + coordinate.n_pixel_axes() as i64;
-                if (first..end).all(|axis| axes.contains(&axis)) {
-                    result.add_coordinate(coordinate.clone());
-                    selected.extend(first..end);
+                let pixel = coordinates.pixel_axes(index);
+                if pixel == coordinates.world_axes(index)
+                    && pixel
+                        .iter()
+                        .all(|axis| axis.is_some_and(|axis| axes.contains(&(axis as i64))))
+                {
+                    result.add_coordinate(coordinates.coordinate(index).clone());
+                    selected.extend(pixel.into_iter().flatten().map(|axis| axis as i64));
                 }
-                first = end;
             }
-            if selected != axes {
+            if selected.len() != axes.len() {
                 return Err(stub("coordsys").unwrap_err());
             }
+            let order: Option<Vec<_>> = axes
+                .iter()
+                .map(|axis| selected.iter().position(|candidate| candidate == axis))
+                .collect();
+            let order = order.ok_or_else(|| stub("coordsys").unwrap_err())?;
+            result.transpose_axes(&order, &order).map_err(raised)?;
             PyCoordsys::from_image_coordinates(&result, result.to_record())
         })?;
         Ok(Py::new(py, tool)?.into_any())

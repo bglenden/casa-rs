@@ -46,18 +46,16 @@ impl PyCoordsys {
                         "names vector must be of length nWorldAxes()",
                     ));
                 }
-                // The native reader requires matching visible world and
-                // pixel maps, even when whole coordinates are transposed.
                 (0..names.len()).map(Some).collect()
             } else {
                 let target = coordinate(&state, coordinate_type(r#type))?;
-                if names.len() != target.pixel_axes.len() {
+                if names.len() != target.world_axes.len() {
                     return Err(PyRuntimeError::new_err(format!(
                         "Supplied axis names vector must be of length {}",
-                        target.pixel_axes.len()
+                        target.world_axes.len()
                     )));
                 }
-                target.pixel_axes
+                target.world_axes
             };
             let mut record = state.editable_record()?;
             let mut updated = state.coordinates.clone();
@@ -65,8 +63,9 @@ impl PyCoordsys {
                 let axis = axis.ok_or_else(|| {
                     PyRuntimeError::new_err("Cannot set the name of a removed coordinate axis")
                 })?;
-                (updated, _) = CoordinateSystem::set_axis_name_in_record(&mut record, axis, &name)
-                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                (updated, _) =
+                    CoordinateSystem::set_world_axis_name_in_record(&mut record, axis, &name)
+                        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             }
             state.apply_edited_coordinates(record, updated)?;
             Ok(true)
@@ -138,10 +137,10 @@ impl PyCoordsys {
                             "No requested {kind} coordinate in this CoordinateSystem"
                         ))
                     })?;
-                if units.len() != coordinate.pixel_axes.len() {
+                if units.len() != coordinate.world_axes.len() {
                     return Err(PyRuntimeError::new_err(format!(
                         "Supplied axis units vector must be of length {}",
-                        coordinate.pixel_axes.len()
+                        coordinate.world_axes.len()
                     )));
                 }
                 if overwrite && matches!(kind, CoordinateType::Linear | CoordinateType::Tabular) {
@@ -164,11 +163,17 @@ impl PyCoordsys {
                     );
                     Vec::new()
                 } else {
-                    coordinate.pixel_axes
+                    coordinate.world_axes
                 }
             };
-            let existing = (0..state.coordinates.n_coordinates())
-                .flat_map(|index| displayed_units(state.coordinates.coordinate(index)))
+            let existing = (0..state.coordinates.n_world_axes())
+                .map(|axis| {
+                    let (index, local) = state
+                        .coordinates
+                        .world_axis(axis)
+                        .expect("dense world axes");
+                    displayed_units(state.coordinates.coordinate(index)).remove(local)
+                })
                 .collect::<Vec<_>>();
             for (axis, unit) in axes.into_iter().zip(units) {
                 let axis = axis.ok_or_else(|| {
@@ -177,7 +182,7 @@ impl PyCoordsys {
                 if existing.get(axis) == Some(&unit) {
                     continue;
                 }
-                CoordinateSystem::set_axis_unit_in_record(&mut record, axis, &unit)
+                CoordinateSystem::set_world_axis_unit_in_record(&mut record, axis, &unit)
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             }
             state.apply_edited_record(record)?;

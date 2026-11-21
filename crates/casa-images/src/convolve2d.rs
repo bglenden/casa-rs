@@ -48,27 +48,24 @@ pub struct Convolved {
     pub beam: GaussianBeam,
 }
 
-/// The direction coordinate and its first pixel axis.
+/// The direction coordinate and its longitude and latitude pixel axes.
 fn direction_axes(
     coordinates: &CoordinateSystem,
-) -> Result<(usize, &DirectionCoordinate), ImageError> {
+) -> Result<([usize; 2], &DirectionCoordinate), ImageError> {
     let index = coordinates
         .find_coordinate(CoordinateType::Direction)
         .ok_or_else(|| {
             ImageError::InvalidMetadata("convolve2d needs a direction coordinate".into())
         })?;
-    let first = (0..index)
-        .map(|k| coordinates.coordinate(k).n_pixel_axes())
-        .sum();
     let CoordinateModel::Direction(direction) = coordinates.coordinate(index) else {
         unreachable!("find_coordinate found a direction coordinate");
     };
-    if direction.n_pixel_axes() != 2 {
-        return Err(ImageError::InvalidMetadata(
+    match coordinates.pixel_axes(index).as_slice() {
+        [Some(x), Some(y)] => Ok(([*x, *y], direction)),
+        _ => Err(ImageError::InvalidMetadata(
             "convolve2d needs both direction axes".into(),
-        ));
+        )),
     }
-    Ok((first, direction))
 }
 
 fn require_square_pixels(direction: &DirectionCoordinate) -> Result<(), ImageError> {
@@ -249,7 +246,7 @@ pub fn convolve2d(
     input: &impl ImageInterface<f32>,
     beam: &GaussianBeam,
 ) -> Result<Convolved, ImageError> {
-    let (axis, direction) = direction_axes(input.coordinates())?;
+    let ([x, y], direction) = direction_axes(input.coordinates())?;
     require_square_pixels(direction)?;
     if !input.units().to_ascii_uppercase().contains("/PIXEL") {
         return Err(ImageError::InvalidMetadata(format!(
@@ -258,14 +255,12 @@ pub fn convolve2d(
         )));
     }
     let shape = input.shape().to_vec();
-    let plane = [shape[axis], shape[axis + 1]];
+    let plane = [shape[x], shape[y]];
     let (side, values) = kernel(beam, sky_per_pixel(direction)?);
     let mut convolver = PlaneConvolver::new(plane, side, &values)?;
     let mut data = input.get()?;
     let mask = input.default_mask()?;
-    let others: Vec<usize> = (0..shape.len())
-        .filter(|a| *a != axis && *a != axis + 1)
-        .collect();
+    let others: Vec<usize> = (0..shape.len()).filter(|a| *a != x && *a != y).collect();
     let planes: usize = others.iter().map(|a| shape[*a]).product();
     let mut index = vec![0usize; shape.len()];
     let mut values = vec![0.0f64; plane[0] * plane[1]];
@@ -277,8 +272,8 @@ pub fn convolve2d(
         }
         for j in 0..plane[1] {
             for i in 0..plane[0] {
-                index[axis] = i;
-                index[axis + 1] = j;
+                index[x] = i;
+                index[y] = j;
                 let good = mask
                     .as_ref()
                     .is_none_or(|mask| mask[ndarray::IxDyn(&index)]);
@@ -292,8 +287,8 @@ pub fn convolve2d(
         let convolved = convolver.convolve(&values)?;
         for j in 0..plane[1] {
             for i in 0..plane[0] {
-                index[axis] = i;
-                index[axis + 1] = j;
+                index[x] = i;
+                index[y] = j;
                 data[ndarray::IxDyn(&index)] = convolved[i + j * plane[0]] as f32;
             }
         }
@@ -323,23 +318,18 @@ where
     T: Into<f64> + From<f32> + Copy,
 {
     let target = beams.common_beam()?;
-    let (axis, direction) = direction_axes(coordinates)?;
+    let ([x, y], direction) = direction_axes(coordinates)?;
     require_square_pixels(direction)?;
     let sky = sky_per_pixel(direction)?;
     let shape = data.shape().to_vec();
-    let plane = [shape[axis], shape[axis + 1]];
+    let plane = [shape[x], shape[y]];
     let beam_axis = |kind| {
-        coordinates.find_coordinate(kind).map(|i| {
-            (0..i)
-                .map(|j| coordinates.coordinate(j).n_pixel_axes())
-                .sum::<usize>()
-        })
+        let index = coordinates.find_coordinate(kind)?;
+        coordinates.pixel_axes(index).into_iter().flatten().next()
     };
     let spectral = beam_axis(CoordinateType::Spectral);
     let stokes = beam_axis(CoordinateType::Stokes);
-    let others: Vec<_> = (0..shape.len())
-        .filter(|&i| i != axis && i != axis + 1)
-        .collect();
+    let others: Vec<_> = (0..shape.len()).filter(|&i| i != x && i != y).collect();
     let count = others.iter().map(|&i| shape[i]).product();
     let upper_units = units.to_ascii_uppercase();
     let per_pixel = upper_units.contains("/PIXEL");
@@ -385,9 +375,9 @@ where
         }
         let mut convolver = PlaneConvolver::new(plane, side, &weights)?;
         for j in 0..plane[1] {
-            index[axis + 1] = j;
+            index[y] = j;
             for i in 0..plane[0] {
-                index[axis] = i;
+                index[x] = i;
                 let at = ndarray::IxDyn(&index);
                 values[i + j * plane[0]] = if mask.is_none_or(|mask| mask[at.clone()]) {
                     data[at].into()
@@ -398,9 +388,9 @@ where
         }
         let convolved = convolver.convolve(&values)?;
         for j in 0..plane[1] {
-            index[axis + 1] = j;
+            index[y] = j;
             for i in 0..plane[0] {
-                index[axis] = i;
+                index[x] = i;
                 data[ndarray::IxDyn(&index)] = T::from(convolved[i + j * plane[0]] as f32);
             }
         }

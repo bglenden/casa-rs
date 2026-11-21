@@ -89,8 +89,14 @@ pub(super) fn apply(
 }
 
 fn axis_names(coordinates: &CoordinateSystem) -> Vec<String> {
-    (0..coordinates.n_coordinates())
-        .flat_map(|index| coordinates.coordinate(index).axis_names())
+    (0..coordinates.n_pixel_axes())
+        .map(|axis| {
+            let (coordinate, local) = coordinates.pixel_axis(axis).expect("dense pixel axes");
+            coordinates
+                .coordinate(coordinate)
+                .axis_names()
+                .remove(local)
+        })
         .collect()
 }
 
@@ -170,9 +176,16 @@ fn first_axis(coordinates: &CoordinateSystem, kind: CoordinateType) -> Result<us
     let index = coordinates
         .find_coordinate(kind)
         .ok_or_else(|| reject(format!("No {kind:?} coordinate in the selected FITS image")))?;
-    Ok((0..index)
-        .map(|i| coordinates.coordinate(i).n_pixel_axes())
-        .sum())
+    coordinates
+        .pixel_axes(index)
+        .into_iter()
+        .flatten()
+        .next()
+        .ok_or_else(|| {
+            reject(format!(
+                "No visible {kind:?} axis in the selected FITS image"
+            ))
+        })
 }
 
 fn order_standard(record: &mut RecordValue, names: &[String]) -> Result<Vec<usize>, ImageError> {

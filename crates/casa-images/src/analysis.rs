@@ -1868,7 +1868,6 @@ fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
 
 fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageAxisSummary> {
     let mut summaries = Vec::new();
-    let mut axis = 0usize;
     for coord_idx in 0..coordinates.n_coordinates() {
         let coord = coordinates.coordinate(coord_idx);
         let mut refs = coord.reference_value();
@@ -1882,7 +1881,10 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
             (refs, increments) = direction.reference_and_increment_in_world_units();
             units = direction.visible_world_units();
         }
-        for axis_in_coord in 0..coord.n_pixel_axes() {
+        for (axis_in_coord, axis) in coordinates.pixel_axes(coord_idx).into_iter().enumerate() {
+            let Some(axis) = axis else {
+                continue;
+            };
             summaries.push(ImageAxisSummary {
                 axis,
                 coordinate_type: format!("{:?}", coord.coordinate_type()),
@@ -1902,23 +1904,22 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
                     _ => Vec::new(),
                 },
             });
-            axis += 1;
         }
     }
-    while axis < shape.len() {
+    for (axis, &axis_length) in shape.iter().enumerate().skip(summaries.len()) {
         summaries.push(ImageAxisSummary {
             axis,
             coordinate_type: "Linear".to_string(),
             name: format!("Axis{axis}"),
-            shape: shape[axis],
+            shape: axis_length,
             reference_value: 0.0,
             reference_pixel: 0.0,
             increment: 1.0,
             unit: String::new(),
             stokes: Vec::new(),
         });
-        axis += 1;
     }
+    summaries.sort_unstable_by_key(|summary| summary.axis);
     summaries
 }
 
@@ -3136,14 +3137,15 @@ fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
         ));
     }
     let [x, y] = direction_plane_axes(image)?;
+    let [wx, wy] = imsubimage::region::world_axes_for_plane(coordinates, [x, y])?;
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let base_world = coordinates.to_world(&base_pixel)?;
     pairs
         .iter()
         .map(|pair| {
             let mut world = base_world.clone();
-            world[x] = parse_crtf_world_quantity(&pair[0])?;
-            world[y] = parse_crtf_world_quantity(&pair[1])?;
+            world[wx] = parse_crtf_world_quantity(&pair[0])?;
+            world[wy] = parse_crtf_world_quantity(&pair[1])?;
             let pixel = coordinates.to_pixel(&world)?;
             Ok([
                 rounded_nonnegative_pixel_value(pixel[x], "CRTF polygon world x")?,
@@ -3254,13 +3256,14 @@ fn crtf_world_box_pixels<T: ImagePixel>(
         ));
     }
     let [x, y] = direction_plane_axes(image)?;
+    let [wx, wy] = imsubimage::region::world_axes_for_plane(coordinates, [x, y])?;
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let mut first_world = coordinates.to_world(&base_pixel)?;
     let mut second_world = first_world.clone();
-    first_world[x] = world_box[0];
-    first_world[y] = world_box[1];
-    second_world[x] = world_box[2];
-    second_world[y] = world_box[3];
+    first_world[wx] = world_box[0];
+    first_world[wy] = world_box[1];
+    second_world[wx] = world_box[2];
+    second_world[wy] = world_box[3];
     let first_pixel = coordinates.to_pixel(&first_world)?;
     let second_pixel = coordinates.to_pixel(&second_world)?;
     let x0 = rounded_nonnegative_pixel_value(first_pixel[x], "first CRTF world x")?;
@@ -3764,16 +3767,9 @@ fn coordinate_for_axis(
     coords: &CoordinateSystem,
     axis: usize,
 ) -> Option<&casa_coordinates::CoordinateModel> {
-    let mut offset = 0;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        let next = offset + coord.n_pixel_axes();
-        if axis >= offset && axis < next {
-            return Some(coord);
-        }
-        offset = next;
-    }
-    None
+    coords
+        .pixel_axis(axis)
+        .map(|(index, _)| coords.coordinate(index))
 }
 
 fn spectral_rest_frequency(coords: &CoordinateSystem) -> Option<f64> {

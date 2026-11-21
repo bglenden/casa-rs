@@ -94,8 +94,9 @@ fn add_intensity<T: ImagePixel>(
 ) -> PyResult<CasaValue> {
     if requested.is_empty() {
         let coords = image.coordinates();
-        requested = (0..coords.n_coordinates())
-            .flat_map(|index| coords.coordinate(index).reference_pixel())
+        requested = coords
+            .reference_pixel()
+            .into_iter()
             .map(|pixel| pixel as i64)
             .collect();
     }

@@ -157,25 +157,26 @@ enum RegionAxis {
 }
 
 fn region_axes(coords: &CoordinateSystem) -> Vec<RegionAxis> {
-    (0..coords.n_coordinates())
-        .flat_map(|index| {
+    (0..coords.n_pixel_axes())
+        .map(|axis| {
+            let (index, local) = coords.pixel_axis(axis).expect("dense pixel axes");
             let coord = coords.coordinate(index);
-            coord
-                .axis_names()
-                .into_iter()
-                .enumerate()
-                .map(move |(axis, name)| match coord {
-                    CoordinateModel::Direction(direction) => {
-                        RegionAxis::Direction(axis, direction.conversion_direction_ref())
-                    }
-                    CoordinateModel::Spectral(spectral) => {
-                        let reference = spectral.conversion_frequency_ref().or_else(|| {
-                            (!spectral.has_undefined_frame()).then(|| spectral.frequency_ref())
-                        });
-                        RegionAxis::Spectral(reference)
-                    }
-                    _ => RegionAxis::Named(coord.coordinate_type(), axis, name),
-                })
+            match coord {
+                CoordinateModel::Direction(direction) => {
+                    RegionAxis::Direction(local, direction.conversion_direction_ref())
+                }
+                CoordinateModel::Spectral(spectral) => {
+                    let reference = spectral.conversion_frequency_ref().or_else(|| {
+                        (!spectral.has_undefined_frame()).then(|| spectral.frequency_ref())
+                    });
+                    RegionAxis::Spectral(reference)
+                }
+                _ => RegionAxis::Named(
+                    coord.coordinate_type(),
+                    local,
+                    coord.axis_names().remove(local),
+                ),
+            }
         })
         .collect()
 }

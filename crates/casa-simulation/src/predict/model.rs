@@ -228,6 +228,9 @@ impl SkyModel {
             || coordinates.find_coordinate(CoordinateType::Direction) != Some(0)
             || coordinates.find_coordinate(CoordinateType::Stokes) != Some(1)
             || coordinates.find_coordinate(CoordinateType::Spectral) != Some(2)
+            || coordinates.pixel_axes(0) != [Some(0), Some(1)]
+            || coordinates.pixel_axes(1) != [Some(2)]
+            || coordinates.pixel_axes(2) != [Some(3)]
         {
             return Err(PredictError::InvalidModel(
                 "axes must be direction, Stokes and spectral, in that order".into(),

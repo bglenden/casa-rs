@@ -155,3 +155,60 @@ def test_coordinate_order_follows_casa_record_creation_order(tmp_path: Path):
     assert_equal(actual.findaxis(False, 0), expected.findaxis(False, 0))
     assert_equal(actual.names(), expected.names())
     assert_equal(actual.units(), expected.units())
+
+
+def test_distinct_pixel_and_world_maps_match_casa():
+    casa = pytest.importorskip("casatools")
+    expected = casa.coordsys().newcoordsys(linear=2)
+    actual = tools.coordsys()
+    record = expected.torecord()
+    record["pixelmap0"] = [0, -2]
+    record["pixelreplace0"] = [0.0, 2.0]
+    record["worldmap0"] = [1, 0]
+    assert expected.fromrecord(record)
+    assert actual.fromrecord(record)
+    for method, args in [
+        ("axesmap", (True,)),
+        ("axesmap", (False,)),
+        ("naxes", (True,)),
+        ("naxes", (False,)),
+        ("findaxis", (True, 1)),
+        ("findaxis", (False, 0)),
+        ("findcoordinate", ("linear",)),
+        ("names", ()),
+        ("referencepixel", ()),
+        ("referencevalue", ()),
+    ]:
+        assert_equal(getattr(actual, method)(*args), getattr(expected, method)(*args))
+    pixel = [3.0]
+    world = expected.toworld(pixel, "n")["numeric"]
+    np.testing.assert_allclose(actual.toworld(pixel, "n")["numeric"], world)
+    np.testing.assert_allclose(actual.topixel(world)["numeric"], expected.topixel(world)["numeric"])
+    world_columns = np.column_stack((world, world + 1))
+    np.testing.assert_allclose(actual.topixelmany(world_columns)["numeric"], expected.topixelmany(world_columns)["numeric"])
+
+
+@pytest.mark.parametrize("order", ["1023", "0213"])
+def test_casa_image_with_mapped_direction_uses_public_axes(tmp_path, order):
+    casa = pytest.importorskip("casatools")
+    tasks = pytest.importorskip("casatasks")
+    source = str(tmp_path / "source.im")
+    mapped = str(tmp_path / "mapped.im")
+    writer = casa.image()
+    assert writer.fromshape(source, [4, 3, 2, 5])
+    assert writer.done()
+    tasks.imtrans(imagename=source, outfile=mapped, order=order)
+    native, oracle = tools.image(), casa.image()
+    try:
+        assert native.open(mapped)
+        assert oracle.open(mapped)
+        actual, expected = native.coordsys(), oracle.coordsys()
+        for method in ("axiscoordinatetypes", "names", "units", "findcoordinate", "referencepixel"):
+            assert_equal(getattr(actual, method)(), getattr(expected, method)())
+        pixel = [1.0, 1.0, 1.0, 2.0]
+        world = expected.toworld(pixel, "n")["numeric"]
+        np.testing.assert_allclose(actual.toworld(pixel, "n")["numeric"], world, rtol=1e-12)
+        np.testing.assert_allclose(actual.topixel(world)["numeric"], pixel, atol=1e-8)
+    finally:
+        native.done()
+        oracle.done()

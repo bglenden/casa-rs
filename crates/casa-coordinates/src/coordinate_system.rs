@@ -3,19 +3,14 @@
 //!
 //! [`CoordinateSystem`] is the top-level object that groups multiple
 //! [`Coordinate`](crate::Coordinate) objects into a single system describing a multi-dimensional
-//! data cube. Each coordinate owns a contiguous range of pixel and world
-//! axes.
-//!
-//! This corresponds to C++ `CoordinateSystem`. casacore instead records
-//! which axes each coordinate owns, so a transposed casacore system keeps
-//! its coordinates in creation order over permuted axes;
-//! [`CoordinateSystem::from_record`] reads it with its coordinates in the
-//! order of their axes.
+//! data cube. Each coordinate retains its own local axis order. Separate
+//! pixel and world maps place visible axes in the public vectors and supply
+//! replacement values for removed axes, as in casacore `CoordinateSystem`.
 
 mod edit;
-mod record_axes;
+mod layout;
 
-use casa_types::{ArrayValue, RecordValue, Value};
+use casa_types::{RecordValue, Value};
 use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
 
 use crate::coordinate::{CoordinateModel, CoordinateType};
@@ -28,16 +23,18 @@ use crate::spectral::SpectralCoordinate;
 use crate::stokes::StokesCoordinate;
 use crate::tabular::TabularCoordinate;
 
+use layout::{Layout, Placement, visible_indices};
+
 /// A collection of coordinates describing a multi-dimensional data cube.
 ///
-/// Each coordinate owns a contiguous set of pixel and world axes. The
-/// [`CoordinateSystem`] concatenates them in order: the first coordinate's
-/// axes come first, then the second's, and so on.
+/// Newly added coordinates append their axes. A system restored from a
+/// record can permute pixel and world axes independently or hide local axes.
 ///
 /// Corresponds to C++ `CoordinateSystem`.
 #[derive(Debug, Clone)]
 pub struct CoordinateSystem {
     coordinates: Vec<CoordinateModel>,
+    layout: Option<Box<Layout>>,
     obs_info: ObsInfo,
 }
 
@@ -46,6 +43,7 @@ impl CoordinateSystem {
     pub fn new() -> Self {
         Self {
             coordinates: Vec::new(),
+            layout: None,
             obs_info: ObsInfo::default(),
         }
     }
@@ -54,7 +52,15 @@ impl CoordinateSystem {
     ///
     /// The new coordinate's axes are appended after all existing axes.
     pub fn add_coordinate(&mut self, coord: impl Into<CoordinateModel>) {
-        self.coordinates.push(coord.into());
+        let model = coord.into();
+        if let Some(layout) = &mut self.layout {
+            layout
+                .placements
+                .push(Placement::nominal(&model, layout.n_pixel, layout.n_world));
+            layout.n_pixel += model.n_pixel_axes();
+            layout.n_world += model.n_world_axes();
+        }
+        self.coordinates.push(model);
     }
 
     /// Returns the number of coordinates in the system.
@@ -91,17 +97,26 @@ impl CoordinateSystem {
             (old.n_pixel_axes(), old.n_world_axes()),
             "a replacing coordinate has the same axes"
         );
+        if let Some(layout) = &mut self.layout {
+            layout.placements[index].replace_model(old, &coord);
+        }
         std::mem::replace(&mut self.coordinates[index], coord)
     }
 
     /// Returns the total number of pixel axes across all coordinates.
     pub fn n_pixel_axes(&self) -> usize {
-        self.coordinates.iter().map(|c| c.n_pixel_axes()).sum()
+        self.layout.as_ref().map_or_else(
+            || self.coordinates.iter().map(|c| c.n_pixel_axes()).sum(),
+            |layout| layout.n_pixel,
+        )
     }
 
     /// Returns the total number of world axes across all coordinates.
     pub fn n_world_axes(&self) -> usize {
-        self.coordinates.iter().map(|c| c.n_world_axes()).sum()
+        self.layout.as_ref().map_or_else(
+            || self.coordinates.iter().map(|c| c.n_world_axes()).sum(),
+            |layout| layout.n_world,
+        )
     }
 
     /// Finds the index of the first coordinate with the given type.
@@ -132,7 +147,7 @@ impl CoordinateSystem {
     /// Converts a full pixel coordinate vector to world coordinates.
     ///
     /// The pixel vector must have length [`n_pixel_axes`](Self::n_pixel_axes).
-    /// Each coordinate converts its own slice of the pixel vector.
+    /// Removed pixel axes use the replacements carried in the system.
     pub fn to_world(&self, pixel: &[f64]) -> Result<Vec<f64>, CoordinateError> {
         let n_pix = self.n_pixel_axes();
         if pixel.len() != n_pix {
@@ -142,6 +157,13 @@ impl CoordinateSystem {
             });
         }
 
+        if let Some(layout) = self.layout.as_ref().filter(|layout| !layout.contiguous) {
+            let mut world = vec![0.0; layout.n_world];
+            for (model, placement) in self.coordinates.iter().zip(&layout.placements) {
+                placement.to_world(model, pixel, &mut world)?;
+            }
+            return Ok(world);
+        }
         let mut world = Vec::with_capacity(self.n_world_axes());
         let mut pix_offset = 0;
 
@@ -181,6 +203,13 @@ impl CoordinateSystem {
             });
         }
 
+        if let Some(layout) = self.layout.as_ref().filter(|layout| !layout.contiguous) {
+            let mut pixel = vec![0.0; layout.n_pixel];
+            for (model, placement) in self.coordinates.iter().zip(&layout.placements) {
+                placement.to_pixel(model, world, &mut pixel, undefined)?;
+            }
+            return Ok(pixel);
+        }
         let mut pixel = Vec::with_capacity(self.n_pixel_axes());
         let mut world_offset = 0;
 
@@ -241,6 +270,12 @@ impl CoordinateSystem {
         }
 
         let mut pixels = Array2::zeros((self.n_pixel_axes(), world.ncols()).f());
+        if let Some(layout) = self.layout.as_ref().filter(|layout| !layout.contiguous) {
+            for (model, placement) in self.coordinates.iter().zip(&layout.placements) {
+                placement.to_pixel_columns(model, world, &mut pixels, undefined)?;
+            }
+            return Ok(pixels);
+        }
         let mut input = Vec::new();
         let mut world_offset = 0;
         let mut pixel_offset = 0;
@@ -284,8 +319,8 @@ impl CoordinateSystem {
     /// `CoordinateSystem::save()` layout.
     pub fn to_record(&self) -> RecordValue {
         let mut rec = self.obs_info.to_record();
-        let mut next_world_axis = 0i32;
-        let mut next_pixel_axis = 0i32;
+        let mut next_world_axis = 0;
+        let mut next_pixel_axis = 0;
 
         for (index, coord) in self.coordinates.iter().enumerate() {
             let basename = match coord.coordinate_type() {
@@ -300,61 +335,13 @@ impl CoordinateSystem {
                 Value::Record(coord.to_record()),
             );
 
-            let n_world = coord.n_world_axes() as i32;
-            let n_pixel = coord.n_pixel_axes() as i32;
-            if let CoordinateModel::Direction(direction) = coord
-                && let Some(removed) = direction.removed_axis()
-            {
-                for (kind, axis) in [("pixel", next_pixel_axis), ("world", next_world_axis)] {
-                    let mut map = vec![axis; 2];
-                    map[removed.index] = -(axis + removed.index as i32 + 1);
-                    rec.upsert(
-                        format!("{kind}map{index}"),
-                        Value::Array(ArrayValue::from_i32_vec(map)),
-                    );
-                }
-                let mut pixel = [0.0; 2];
-                pixel[removed.index] = removed.pixel;
-                let mut world = direction.pixel_to_world(pixel).unwrap_or([0.0; 2]);
-                world[removed.index] = removed.world_rad;
-                for (kind, values) in [("pixel", pixel), ("world", direction.in_world_units(world))]
-                {
-                    rec.upsert(
-                        format!("{kind}replace{index}"),
-                        Value::Array(ArrayValue::from_f64_vec(values.to_vec())),
-                    );
-                }
-                next_pixel_axis += 1;
-                next_world_axis += 1;
-                continue;
+            if let Some(layout) = &self.layout {
+                layout.placements[index].write(&mut rec, index);
+            } else {
+                Placement::nominal(coord, next_pixel_axis, next_world_axis).write(&mut rec, index);
+                next_world_axis += coord.n_world_axes();
+                next_pixel_axis += coord.n_pixel_axes();
             }
-            rec.upsert(
-                format!("worldmap{index}"),
-                Value::Array(ArrayValue::from_i32_vec(
-                    (next_world_axis..next_world_axis + n_world).collect(),
-                )),
-            );
-            rec.upsert(
-                format!("pixelmap{index}"),
-                Value::Array(ArrayValue::from_i32_vec(
-                    (next_pixel_axis..next_pixel_axis + n_pixel).collect(),
-                )),
-            );
-            rec.upsert(
-                format!("pixelreplace{index}"),
-                Value::Array(ArrayValue::from_f64_vec(vec![0.0; n_pixel as usize])),
-            );
-            let zero_pixel = vec![0.0; n_pixel as usize];
-            let world_replace = coord
-                .to_world(&zero_pixel)
-                .unwrap_or_else(|_| vec![0.0; n_world as usize]);
-            rec.upsert(
-                format!("worldreplace{index}"),
-                Value::Array(ArrayValue::from_f64_vec(world_replace)),
-            );
-
-            next_world_axis += n_world;
-            next_pixel_axis += n_pixel;
         }
 
         rec
@@ -365,57 +352,60 @@ impl CoordinateSystem {
     /// Unknown or malformed coordinate sub-records are rejected; callers never
     /// receive a silently truncated coordinate system.
     ///
-    /// casacore's `CoordinateSystem::restore` keeps the record's coordinates
-    /// in index order (`direction0`, `stokes1`, ...) and takes the axes each
-    /// owns from `pixelmap<i>` and `worldmap<i>`. A system transposed in
-    /// casacore (`imtrans`, `ia.transpose`, `coordsys.transpose`) keeps its
-    /// coordinates in creation order over permuted axes. This reads the
-    /// coordinates in the order of the axes they own, so that each owns
-    /// consecutive axes as a [`CoordinateSystem`] holds them. The system is
-    /// the same, but its coordinate numbers can differ from casacore's
-    /// (`coordsys.findcoordinate`), and [`to_record`](Self::to_record) numbers
-    /// them in this order. [`record_coordinates`](Self::record_coordinates)
-    /// says where in the record each coordinate came from.
-    ///
-    /// casacore keeps a removed axis in its coordinate, as `-(axis + 1)` in
-    /// the maps with a replacement value. A linear coordinate whose other axes
-    /// do not depend on its removed ones (the offset axis of an `impv`
-    /// position-velocity image) is read over its other axes only, which
-    /// converts as casacore does.
+    /// Coordinate creation order and signed axis maps are preserved. Both
+    /// public axis vectors are numbered independently from zero. A record
+    /// without axis maps uses the coordinate creation order for both.
     ///
     /// # Errors
-    ///
-    /// [`CoordinateError::UnsupportedAxisLayout`] for a valid casacore record
-    /// that no coordinate order represents: a coordinate whose axes are out
-    /// of its own order (`imtrans order='1023'`) or not adjacent
-    /// (`order='0213'`), world axes ordered unlike the pixel axes, or any
-    /// removed axis other than a direction slice or an independent linear axis.
-    /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
-    /// the system's axes, as for any other malformed record.
+    /// Returns an error for malformed records, inconsistent maps or invalid
+    /// replacements for removed axes.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         Self::restore_record(rec, false)
     }
 
-    /// The coordinates of `rec` as [`from_record`](Self::from_record) reads
-    /// them, in the order of the system's coordinates:
-    /// `record_coordinates(rec)?[i]` is coordinate `i`.
-    ///
-    /// Each names the record field that holds the coordinate and the system
-    /// pixel axis of each of the record coordinate's own axes. These can
-    /// differ from the system's: a transposed casacore system numbers its
-    /// coordinates in creation order, and a linear coordinate's removed axes
-    /// are in the record but not in the system. For a record whose
-    /// coordinates own consecutive axes in index order, as casa-rs writes
-    /// them, the fields come in index order over consecutive axes.
+    /// Restore a record from a live image operation, retaining sampled axes'
+    /// live references alongside the persisted public axis maps.
     ///
     /// # Errors
+    /// Returns an error for an invalid record or live sampled reference.
+    pub fn from_live_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        Self::restore_record(rec, true)
+    }
+
+    fn restore_record(rec: &RecordValue, live: bool) -> Result<Self, CoordinateError> {
+        let obs_info = match rec.get("obsinfo") {
+            Some(Value::Record(obs_rec)) => ObsInfo::from_record(obs_rec)?,
+            _ => ObsInfo::from_record(rec)?,
+        };
+        let (placed, layout) = read_coordinates(rec)?;
+        let mut coordinates = Vec::with_capacity(placed.len());
+        for (placement, mut coordinate) in placed {
+            if live && let Some(Value::Record(stored)) = rec.get(&placement.field) {
+                coordinate = match coordinate {
+                    CoordinateModel::Spectral(spectral) if !spectral.has_linear_mapping() => {
+                        spectral.with_live_reference(stored)?.into()
+                    }
+                    CoordinateModel::Tabular(table) => table.with_live_reference(stored)?.into(),
+                    other => other,
+                };
+            }
+            coordinates.push(coordinate);
+        }
+        Ok(Self {
+            coordinates,
+            layout: layout.map(Box::new),
+            obs_info,
+        })
+    }
+
+    /// Describes a record's coordinates and their local-to-public maps, in
+    /// the same creation order as [`Self::from_record`].
     ///
-    /// As [`from_record`](Self::from_record).
+    /// # Errors
+    /// Returns the same record and map errors as [`Self::from_record`].
     pub fn record_coordinates(rec: &RecordValue) -> Result<Vec<RecordCoordinate>, CoordinateError> {
-        Ok(read_coordinates(rec)?
-            .into_iter()
-            .map(|(placed, _)| placed)
-            .collect())
+        let (placed, _) = read_coordinates(rec)?;
+        Ok(placed.into_iter().map(|(entry, _)| entry).collect())
     }
 
     /// Return the first spectral coordinate in the record's creation order.
@@ -477,6 +467,8 @@ pub struct RecordCoordinate {
     /// For each of the record coordinate's own axes, in its order, the
     /// system pixel axis it lies on; `None` for an axis the record removed.
     pub pixel_axes: Vec<Option<usize>>,
+    /// The corresponding placement in the independently ordered world vector.
+    pub world_axes: Vec<Option<usize>>,
 }
 
 impl RecordCoordinate {
@@ -496,36 +488,57 @@ impl RecordCoordinate {
     }
 }
 
-/// `rec`'s coordinates with where they come from, in the order of their
-/// axes.
+type PlacedCoordinates = Vec<(RecordCoordinate, CoordinateModel)>;
+
 fn read_coordinates(
     rec: &RecordValue,
-) -> Result<Vec<(RecordCoordinate, CoordinateModel)>, CoordinateError> {
-    let mut parsed = Vec::new();
-    for (index, key) in coordinate_record_entries(rec) {
-        let Some(Value::Record(coord_rec)) = rec.get(&key) else {
+) -> Result<(PlacedCoordinates, Option<Layout>), CoordinateError> {
+    let entries = coordinate_record_entries(rec);
+    let explicit = entries.iter().any(|(index, _)| {
+        rec.get(&format!("pixelmap{index}")).is_some()
+            || rec.get(&format!("worldmap{index}")).is_some()
+    });
+    let mut coordinates = Vec::with_capacity(entries.len());
+    let mut placements = Vec::with_capacity(if explicit { entries.len() } else { 0 });
+    let (mut next_pixel, mut next_world) = (0, 0);
+    for (index, field) in entries {
+        let Some(Value::Record(coord_rec)) = rec.get(&field) else {
             return Err(CoordinateError::InvalidRecord(format!(
-                "coordinate field '{key}' is not a record"
+                "coordinate field '{field}' is not a record"
             )));
         };
-        let coordinate = parse_coordinate_record(&key, coord_rec)?;
-        parsed.push((index, key, coordinate));
-    }
-    let placements = record_axes::coordinate_order(rec, &mut parsed)?;
-    let mut parsed = parsed.into_iter().map(Some).collect::<Vec<_>>();
-    Ok(placements
-        .into_iter()
-        .map(|placement| {
-            let (_, field, coordinate) = parsed[placement.index]
-                .take()
-                .expect("an order names each coordinate once");
-            let placed = RecordCoordinate {
+        let model = parse_coordinate_record(&field, coord_rec)?;
+        let end_pixel = next_pixel + model.n_pixel_axes();
+        let end_world = next_world + model.n_world_axes();
+        let (pixel_axes, world_axes) = if explicit {
+            let placement = Placement::read(rec, index, &model)?;
+            let axes = (
+                visible_indices(&placement.pixel.indices),
+                visible_indices(&placement.world.indices),
+            );
+            placements.push(placement);
+            axes
+        } else {
+            (
+                (next_pixel..end_pixel).map(Some).collect(),
+                (next_world..end_world).map(Some).collect(),
+            )
+        };
+        coordinates.push((
+            RecordCoordinate {
                 field,
-                pixel_axes: placement.pixel_axes,
-            };
-            (placed, coordinate)
-        })
-        .collect())
+                pixel_axes,
+                world_axes,
+            },
+            model,
+        ));
+        next_pixel = end_pixel;
+        next_world = end_world;
+    }
+    let layout = explicit
+        .then(|| Layout::from_placements(placements))
+        .transpose()?;
+    Ok((coordinates, layout))
 }
 
 impl Default for CoordinateSystem {
@@ -612,876 +625,4 @@ fn parse_coordinate_record(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::direction::DirectionCoordinate;
-    use crate::linear::LinearCoordinate;
-    use crate::projection::{Projection, ProjectionType};
-    use crate::spectral::SpectralCoordinate;
-    use crate::stokes::{StokesCoordinate, StokesType};
-    use crate::tabular::TabularCoordinate;
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::epoch::MEpoch;
-    use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-    use casa_types::measures::position::MPosition;
-
-    fn direction() -> DirectionCoordinate {
-        DirectionCoordinate::new(
-            DirectionRef::J2000,
-            Projection::new(ProjectionType::SIN),
-            [1.0, 0.5],
-            [-1e-5, 1e-5],
-            [10.0, 20.0],
-        )
-    }
-
-    #[test]
-    fn a_replaced_direction_moves_its_reference_pixel_and_increments() {
-        let mut cs = CoordinateSystem::new();
-        cs.add_coordinate(direction());
-        cs.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
-        let before = cs.to_world(&[10.0, 20.0, 0.0]).unwrap();
-        let changed = direction()
-            .with_reference_pixel([30.0, 40.0])
-            .with_increment([-2.5e-6, 2.5e-6]);
-        let old = cs.replace_coordinate(0, changed);
-        assert_eq!(old.reference_pixel(), vec![10.0, 20.0]);
-        // The reference value now sits at the new reference pixel, and a
-        // pixel step is a quarter of what it was.
-        assert_eq!(cs.to_world(&[30.0, 40.0, 0.0]).unwrap(), before);
-        let step = cs.to_world(&[31.0, 40.0, 0.0]).unwrap();
-        let old_step = {
-            let mut old_cs = CoordinateSystem::new();
-            old_cs.add_coordinate(direction());
-            old_cs.to_world(&[10.25, 20.0]).unwrap()
-        };
-        assert!((step[0] - old_step[0]).abs() < 1e-12);
-    }
-
-    #[test]
-    #[should_panic(expected = "the same axes")]
-    fn a_replacing_coordinate_keeps_the_axes() {
-        let mut cs = CoordinateSystem::new();
-        cs.add_coordinate(direction());
-        cs.replace_coordinate(0, StokesCoordinate::new(vec![StokesType::I]));
-    }
-    use casa_types::measures::{EpochRef, MeasFrame, PositionRef};
-    use casa_types::{ArrayD, ArrayValue, RecordField, ScalarValue};
-    use ndarray::IxDyn;
-
-    fn quantity_record(value: f64, unit: &str) -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new("value", Value::Scalar(ScalarValue::Float64(value))),
-            RecordField::new("unit", Value::Scalar(ScalarValue::String(unit.into()))),
-        ])
-    }
-
-    fn measure_epoch_record(mjd: f64, refer: &str) -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new("type", Value::Scalar(ScalarValue::String("epoch".into()))),
-            RecordField::new("refer", Value::Scalar(ScalarValue::String(refer.into()))),
-            RecordField::new("m0", Value::Record(quantity_record(mjd, "d"))),
-        ])
-    }
-
-    fn measure_position_record(refer: &str, lon: f64, lat: f64, radius: f64) -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new(
-                "type",
-                Value::Scalar(ScalarValue::String("position".into())),
-            ),
-            RecordField::new("refer", Value::Scalar(ScalarValue::String(refer.into()))),
-            RecordField::new("m0", Value::Record(quantity_record(lon, "rad"))),
-            RecordField::new("m1", Value::Record(quantity_record(lat, "rad"))),
-            RecordField::new("m2", Value::Record(quantity_record(radius, "m"))),
-        ])
-    }
-
-    fn matrix_record(values: &[f64], shape: &[usize]) -> Value {
-        Value::Array(ArrayValue::Float64(
-            ArrayD::from_shape_vec(IxDyn(shape), values.to_vec()).unwrap(),
-        ))
-    }
-
-    fn casa_direction_record() -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new("system", Value::Scalar(ScalarValue::String("J2000".into()))),
-            RecordField::new(
-                "projection",
-                Value::Scalar(ScalarValue::String("SIN".into())),
-            ),
-            RecordField::new(
-                "projection_parameters",
-                Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])),
-            ),
-            RecordField::new(
-                "crval",
-                Value::Array(ArrayValue::from_f64_vec(vec![4.02298, 0.08843])),
-            ),
-            RecordField::new(
-                "crpix",
-                Value::Array(ArrayValue::from_f64_vec(vec![128.0, 128.0])),
-            ),
-            RecordField::new(
-                "cdelt",
-                Value::Array(ArrayValue::from_f64_vec(vec![-7.27221e-05, 7.27221e-05])),
-            ),
-            RecordField::new("pc", matrix_record(&[1.0, 0.0, 0.0, 1.0], &[2, 2])),
-            RecordField::new(
-                "axes",
-                Value::Array(ArrayValue::from_string_vec(vec![
-                    "Right Ascension".into(),
-                    "Declination".into(),
-                ])),
-            ),
-            RecordField::new(
-                "units",
-                Value::Array(ArrayValue::from_string_vec(vec![
-                    "rad".into(),
-                    "rad".into(),
-                ])),
-            ),
-            RecordField::new(
-                "conversionSystem",
-                Value::Scalar(ScalarValue::String("J2000".into())),
-            ),
-            RecordField::new("longpole", Value::Scalar(ScalarValue::Float64(180.0))),
-            RecordField::new("latpole", Value::Scalar(ScalarValue::Float64(5.06667))),
-        ])
-    }
-
-    fn casa_stokes_record() -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new(
-                "axes",
-                Value::Array(ArrayValue::from_string_vec(vec!["Stokes".into()])),
-            ),
-            RecordField::new(
-                "stokes",
-                Value::Array(ArrayValue::from_string_vec(vec!["I".into()])),
-            ),
-            RecordField::new("crval", Value::Array(ArrayValue::from_f64_vec(vec![1.0]))),
-            RecordField::new("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0]))),
-            RecordField::new("cdelt", Value::Array(ArrayValue::from_f64_vec(vec![1.0]))),
-            RecordField::new("pc", matrix_record(&[1.0], &[1, 1])),
-        ])
-    }
-
-    fn casa_spectral_wcs_record() -> RecordValue {
-        let wcs = RecordValue::new(vec![
-            RecordField::new("crval", Value::Scalar(ScalarValue::Float64(1.41279e9))),
-            RecordField::new("crpix", Value::Scalar(ScalarValue::Float64(0.0))),
-            RecordField::new("cdelt", Value::Scalar(ScalarValue::Float64(24_414.1))),
-            RecordField::new("pc", Value::Scalar(ScalarValue::Float64(1.0))),
-            RecordField::new("ctype", Value::Scalar(ScalarValue::String("FREQ".into()))),
-        ]);
-        RecordValue::new(vec![
-            RecordField::new("version", Value::Scalar(ScalarValue::Int32(2))),
-            RecordField::new("system", Value::Scalar(ScalarValue::String("LSRK".into()))),
-            RecordField::new("restfreq", Value::Scalar(ScalarValue::Float64(1.42041e9))),
-            RecordField::new(
-                "restfreqs",
-                Value::Array(ArrayValue::from_f64_vec(vec![1.42041e9])),
-            ),
-            RecordField::new("velType", Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new("nativeType", Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new("velUnit", Value::Scalar(ScalarValue::String("km/s".into()))),
-            RecordField::new("waveUnit", Value::Scalar(ScalarValue::String("mm".into()))),
-            RecordField::new(
-                "formatUnit",
-                Value::Scalar(ScalarValue::String(String::new())),
-            ),
-            RecordField::new("wcs", Value::Record(wcs)),
-            RecordField::new("unit", Value::Scalar(ScalarValue::String("Hz".into()))),
-            RecordField::new(
-                "name",
-                Value::Scalar(ScalarValue::String("Frequency".into())),
-            ),
-        ])
-    }
-
-    fn casa_spectral_tabular_record() -> RecordValue {
-        let tabular = RecordValue::new(vec![
-            RecordField::new(
-                "crval",
-                Value::Array(ArrayValue::from_f64_vec(vec![1.15022e11])),
-            ),
-            RecordField::new("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0]))),
-            RecordField::new(
-                "cdelt",
-                Value::Array(ArrayValue::from_f64_vec(vec![6.25005e6])),
-            ),
-            RecordField::new("pc", matrix_record(&[1.0], &[1, 1])),
-            RecordField::new(
-                "axes",
-                Value::Array(ArrayValue::from_string_vec(vec!["Frequency".into()])),
-            ),
-            RecordField::new(
-                "units",
-                Value::Array(ArrayValue::from_string_vec(vec!["Hz".into()])),
-            ),
-            RecordField::new(
-                "pixelvalues",
-                Value::Array(ArrayValue::from_f64_vec(Vec::new())),
-            ),
-            RecordField::new(
-                "worldvalues",
-                Value::Array(ArrayValue::from_f64_vec(Vec::new())),
-            ),
-        ]);
-        RecordValue::new(vec![
-            RecordField::new("system", Value::Scalar(ScalarValue::String("LSRD".into()))),
-            RecordField::new("restfreq", Value::Scalar(ScalarValue::Float64(1.15271e11))),
-            RecordField::new(
-                "restfreqs",
-                Value::Array(ArrayValue::from_f64_vec(vec![1.15271e11])),
-            ),
-            RecordField::new("velType", Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new("velUnit", Value::Scalar(ScalarValue::String("km/s".into()))),
-            RecordField::new(
-                "formatUnit",
-                Value::Scalar(ScalarValue::String(String::new())),
-            ),
-            RecordField::new("tabular", Value::Record(tabular)),
-        ])
-    }
-
-    fn casa_spectral_tabular_record_with_conversion() -> RecordValue {
-        let mut record = casa_spectral_tabular_record();
-        let conversion = RecordValue::new(vec![
-            RecordField::new(
-                "direction",
-                Value::Record(RecordValue::new(vec![
-                    RecordField::new(
-                        "type",
-                        Value::Scalar(ScalarValue::String("direction".into())),
-                    ),
-                    RecordField::new("refer", Value::Scalar(ScalarValue::String("J2000".into()))),
-                    RecordField::new(
-                        "m0",
-                        Value::Record(quantity_record(-2.8940293347227444, "rad")),
-                    ),
-                    RecordField::new(
-                        "m1",
-                        Value::Record(quantity_record(0.3784702849718404, "rad")),
-                    ),
-                ])),
-            ),
-            RecordField::new(
-                "position",
-                Value::Record(measure_position_record(
-                    "WGS84",
-                    -2.1200320498502676,
-                    0.7123949192959743,
-                    1021.0,
-                )),
-            ),
-            RecordField::new(
-                "epoch",
-                Value::Record(measure_epoch_record(50_919.14846423176, "UTC")),
-            ),
-            RecordField::new("system", Value::Scalar(ScalarValue::String("LSRK".into()))),
-        ]);
-        record.upsert("conversion", Value::Record(conversion));
-        record
-    }
-
-    fn casa_spectral_non_linear_tabular_record() -> RecordValue {
-        let tabular = RecordValue::new(vec![
-            RecordField::new(
-                "crval",
-                Value::Array(ArrayValue::from_f64_vec(vec![1.15022e11])),
-            ),
-            RecordField::new("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0]))),
-            RecordField::new(
-                "cdelt",
-                Value::Array(ArrayValue::from_f64_vec(vec![6.25005e6])),
-            ),
-            RecordField::new("pc", matrix_record(&[1.0], &[1, 1])),
-            RecordField::new(
-                "axes",
-                Value::Array(ArrayValue::from_string_vec(vec!["Frequency".into()])),
-            ),
-            RecordField::new(
-                "units",
-                Value::Array(ArrayValue::from_string_vec(vec!["Hz".into()])),
-            ),
-            RecordField::new(
-                "pixelvalues",
-                Value::Array(ArrayValue::from_f64_vec(vec![0.0, 1.0, 3.0, 4.0])),
-            ),
-            RecordField::new(
-                "worldvalues",
-                Value::Array(ArrayValue::from_f64_vec(vec![
-                    1.15022e11,
-                    1.1502825e11,
-                    1.1504075e11,
-                    1.15047e11,
-                ])),
-            ),
-        ]);
-        RecordValue::new(vec![
-            RecordField::new("system", Value::Scalar(ScalarValue::String("LSRD".into()))),
-            RecordField::new("restfreq", Value::Scalar(ScalarValue::Float64(1.15271e11))),
-            RecordField::new(
-                "restfreqs",
-                Value::Array(ArrayValue::from_f64_vec(vec![1.15271e11])),
-            ),
-            RecordField::new("velType", Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new("velUnit", Value::Scalar(ScalarValue::String("km/s".into()))),
-            RecordField::new(
-                "formatUnit",
-                Value::Scalar(ScalarValue::String(String::new())),
-            ),
-            RecordField::new("tabular", Value::Record(tabular)),
-        ])
-    }
-
-    fn casa_pointing_center_record(longitude_rad: f64, latitude_rad: f64) -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new(
-                "value",
-                Value::Array(ArrayValue::from_f64_vec(vec![longitude_rad, latitude_rad])),
-            ),
-            RecordField::new("initial", Value::Scalar(ScalarValue::Bool(false))),
-        ])
-    }
-
-    fn casa_style_coords_with_wcs_spectral() -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new(
-                "telescope",
-                Value::Scalar(ScalarValue::String("VLA".into())),
-            ),
-            RecordField::new(
-                "observer",
-                Value::Scalar(ScalarValue::String("TEST".into())),
-            ),
-            RecordField::new(
-                "obsdate",
-                Value::Record(measure_epoch_record(49_820.4, "TAI")),
-            ),
-            RecordField::new(
-                "telescopeposition",
-                Value::Record(measure_position_record(
-                    "ITRF", -1.87829, 0.591675, 6.37358e6,
-                )),
-            ),
-            RecordField::new(
-                "pointingcenter",
-                Value::Record(casa_pointing_center_record(4.02298, 0.08843)),
-            ),
-            RecordField::new("direction0", Value::Record(casa_direction_record())),
-            RecordField::new(
-                "worldmap0",
-                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
-            ),
-            RecordField::new(
-                "pixelmap0",
-                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
-            ),
-            RecordField::new("stokes1", Value::Record(casa_stokes_record())),
-            RecordField::new("worldmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
-            RecordField::new("pixelmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
-            RecordField::new("spectral2", Value::Record(casa_spectral_wcs_record())),
-            RecordField::new("worldmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
-            RecordField::new("pixelmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
-        ])
-    }
-
-    fn casa_style_coords_with_tabular_spectral() -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new(
-                "telescope",
-                Value::Scalar(ScalarValue::String("BIMA".into())),
-            ),
-            RecordField::new(
-                "observer",
-                Value::Scalar(ScalarValue::String(String::new())),
-            ),
-            RecordField::new(
-                "obsdate",
-                Value::Record(measure_epoch_record(50_919.1, "UTC")),
-            ),
-            RecordField::new(
-                "pointingcenter",
-                Value::Record(casa_pointing_center_record(
-                    -2.8940293347227444,
-                    0.3784702849718404,
-                )),
-            ),
-            RecordField::new("direction0", Value::Record(casa_direction_record())),
-            RecordField::new(
-                "worldmap0",
-                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
-            ),
-            RecordField::new(
-                "pixelmap0",
-                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
-            ),
-            RecordField::new("stokes1", Value::Record(casa_stokes_record())),
-            RecordField::new("worldmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
-            RecordField::new("pixelmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
-            RecordField::new("spectral2", Value::Record(casa_spectral_tabular_record())),
-            RecordField::new("worldmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
-            RecordField::new("pixelmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
-        ])
-    }
-
-    fn casa_style_coords_with_non_linear_tabular_spectral() -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new(
-                "telescope",
-                Value::Scalar(ScalarValue::String("BIMA".into())),
-            ),
-            RecordField::new(
-                "observer",
-                Value::Scalar(ScalarValue::String(String::new())),
-            ),
-            RecordField::new(
-                "obsdate",
-                Value::Record(measure_epoch_record(50_919.1, "UTC")),
-            ),
-            RecordField::new(
-                "pointingcenter",
-                Value::Record(casa_pointing_center_record(
-                    -2.8940293347227444,
-                    0.3784702849718404,
-                )),
-            ),
-            RecordField::new("direction0", Value::Record(casa_direction_record())),
-            RecordField::new(
-                "worldmap0",
-                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
-            ),
-            RecordField::new(
-                "pixelmap0",
-                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
-            ),
-            RecordField::new("stokes1", Value::Record(casa_stokes_record())),
-            RecordField::new("worldmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
-            RecordField::new("pixelmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
-            RecordField::new(
-                "spectral2",
-                Value::Record(casa_spectral_non_linear_tabular_record()),
-            ),
-            RecordField::new("worldmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
-            RecordField::new("pixelmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
-        ])
-    }
-
-    fn casa_style_coords_with_tabular_spectral_conversion() -> RecordValue {
-        RecordValue::new(vec![
-            RecordField::new(
-                "telescope",
-                Value::Scalar(ScalarValue::String("BIMA".into())),
-            ),
-            RecordField::new(
-                "observer",
-                Value::Scalar(ScalarValue::String(String::new())),
-            ),
-            RecordField::new(
-                "obsdate",
-                Value::Record(measure_epoch_record(50_919.14846423176, "UTC")),
-            ),
-            RecordField::new(
-                "pointingcenter",
-                Value::Record(casa_pointing_center_record(
-                    -2.8940293347227444,
-                    0.3784702849718404,
-                )),
-            ),
-            RecordField::new("direction0", Value::Record(casa_direction_record())),
-            RecordField::new(
-                "worldmap0",
-                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
-            ),
-            RecordField::new(
-                "pixelmap0",
-                Value::Array(ArrayValue::from_i32_vec(vec![0, 1])),
-            ),
-            RecordField::new("stokes1", Value::Record(casa_stokes_record())),
-            RecordField::new("worldmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
-            RecordField::new("pixelmap1", Value::Array(ArrayValue::from_i32_vec(vec![2]))),
-            RecordField::new(
-                "spectral2",
-                Value::Record(casa_spectral_tabular_record_with_conversion()),
-            ),
-            RecordField::new("worldmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
-            RecordField::new("pixelmap2", Value::Array(ArrayValue::from_i32_vec(vec![3]))),
-        ])
-    }
-
-    fn make_typical_system() -> CoordinateSystem {
-        let mut cs = CoordinateSystem::new();
-
-        // Direction-like: 2-axis linear as placeholder
-        let dir = LinearCoordinate::new(
-            2,
-            vec!["Right Ascension".into(), "Declination".into()],
-            vec!["rad".into(), "rad".into()],
-        );
-        cs.add_coordinate(dir);
-
-        // Spectral
-        let spec = SpectralCoordinate::new(FrequencyRef::LSRK, 1.42e9, 1e6, 0.0, 1.42e9);
-        cs.add_coordinate(spec);
-
-        // Stokes
-        let stokes = StokesCoordinate::new(vec![
-            StokesType::I,
-            StokesType::Q,
-            StokesType::U,
-            StokesType::V,
-        ]);
-        cs.add_coordinate(stokes);
-
-        cs
-    }
-
-    #[test]
-    fn axis_counts() {
-        let cs = make_typical_system();
-        assert_eq!(cs.n_coordinates(), 3);
-        assert_eq!(cs.n_pixel_axes(), 4); // 2 + 1 + 1
-        assert_eq!(cs.n_world_axes(), 4);
-    }
-
-    #[test]
-    fn find_coordinate() {
-        let cs = make_typical_system();
-        assert_eq!(cs.find_coordinate(CoordinateType::Linear), Some(0));
-        assert_eq!(cs.find_coordinate(CoordinateType::Spectral), Some(1));
-        assert_eq!(cs.find_coordinate(CoordinateType::Stokes), Some(2));
-        assert_eq!(cs.find_coordinate(CoordinateType::Direction), None);
-        assert_eq!(cs.find_coordinate(CoordinateType::Tabular), None);
-    }
-
-    #[test]
-    fn to_world_full() {
-        let cs = make_typical_system();
-        // pixel: [dir_x, dir_y, spec_chan, stokes_idx]
-        let pixel = vec![0.0, 0.0, 0.0, 0.0];
-        let world = cs.to_world(&pixel).unwrap();
-        assert_eq!(world.len(), 4);
-        // Linear: world = pixel (default)
-        assert!((world[0]).abs() < 1e-12);
-        assert!((world[1]).abs() < 1e-12);
-        // Spectral: crval at pixel 0
-        assert!((world[2] - 1.42e9).abs() < 1.0);
-        // Stokes: I = 1
-        assert!((world[3] - 1.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn roundtrip() {
-        let cs = make_typical_system();
-        let pixel = vec![10.0, 20.0, 50.0, 2.0];
-        let world = cs.to_world(&pixel).unwrap();
-        let back = cs.to_pixel(&world).unwrap();
-        for i in 0..4 {
-            assert!(
-                (back[i] - pixel[i]).abs() < 1e-8,
-                "axis {i}: {} vs {}",
-                back[i],
-                pixel[i]
-            );
-        }
-    }
-
-    #[test]
-    fn dimension_mismatch() {
-        let cs = make_typical_system();
-        assert!(cs.to_world(&[1.0, 2.0]).is_err());
-        assert!(cs.to_pixel(&[1.0]).is_err());
-    }
-
-    #[test]
-    fn empty_system() {
-        let cs = CoordinateSystem::new();
-        assert_eq!(cs.n_coordinates(), 0);
-        assert_eq!(cs.n_pixel_axes(), 0);
-        assert_eq!(cs.n_world_axes(), 0);
-        let world = cs.to_world(&[]).unwrap();
-        assert!(world.is_empty());
-    }
-
-    #[test]
-    fn obs_info_access() {
-        let obs = ObsInfo::new("ALMA").with_observer("Test");
-        let cs = CoordinateSystem::new().with_obs_info(obs);
-        assert_eq!(cs.obs_info().telescope, "ALMA");
-        assert_eq!(cs.obs_info().observer, "Test");
-    }
-
-    #[test]
-    fn obs_info_mut() {
-        let mut cs = CoordinateSystem::new();
-        cs.obs_info_mut().telescope = "VLA".into();
-        assert_eq!(cs.obs_info().telescope, "VLA");
-    }
-
-    #[test]
-    fn to_record_has_coordinates() {
-        let cs = make_typical_system();
-        let rec = cs.to_record();
-        assert!(rec.get("linear0").is_some());
-        assert!(rec.get("spectral1").is_some());
-        assert!(rec.get("stokes2").is_some());
-        assert!(rec.get("worldmap0").is_some());
-        assert!(rec.get("pixelmap2").is_some());
-    }
-
-    #[test]
-    fn from_record_empty() {
-        let rec = RecordValue::default();
-        let cs = CoordinateSystem::from_record(&rec).unwrap();
-        assert_eq!(cs.n_coordinates(), 0);
-    }
-
-    #[test]
-    fn from_record_with_obsinfo() {
-        let mut rec = RecordValue::default();
-        let mut obs_rec = RecordValue::default();
-        obs_rec.upsert(
-            "telescope",
-            Value::Scalar(ScalarValue::String("MeerKAT".into())),
-        );
-        rec.upsert("obsinfo", Value::Record(obs_rec));
-        let cs = CoordinateSystem::from_record(&rec).unwrap();
-        assert_eq!(cs.obs_info().telescope, "MeerKAT");
-    }
-
-    #[test]
-    fn coordinate_access() {
-        let cs = make_typical_system();
-        assert_eq!(cs.coordinate(0).coordinate_type(), CoordinateType::Linear);
-        assert_eq!(cs.coordinate(1).coordinate_type(), CoordinateType::Spectral);
-        assert_eq!(cs.coordinate(2).coordinate_type(), CoordinateType::Stokes);
-    }
-
-    #[test]
-    fn clone_preserves_coordinates() {
-        let cs = make_typical_system();
-        let cloned = cs.clone();
-        assert_eq!(cloned.n_coordinates(), 3);
-        assert_eq!(
-            cloned.coordinate(0).coordinate_type(),
-            CoordinateType::Linear,
-        );
-    }
-
-    #[test]
-    fn default_is_empty() {
-        let cs = CoordinateSystem::default();
-        assert_eq!(cs.n_coordinates(), 0);
-    }
-
-    #[test]
-    fn from_record_roundtrips_mixed_system() {
-        let mut cs = CoordinateSystem::new();
-        let dir = DirectionCoordinate::new(
-            DirectionRef::J2000,
-            Projection::new(ProjectionType::SIN),
-            [0.0, std::f64::consts::FRAC_PI_4],
-            [-1e-4, 1e-4],
-            [256.0, 256.0],
-        );
-        cs.add_coordinate(dir);
-        cs.add_coordinate(SpectralCoordinate::new(
-            FrequencyRef::LSRK,
-            1.42e9,
-            1.0e6,
-            0.0,
-            1.42040575e9,
-        ));
-        cs.add_coordinate(StokesCoordinate::new(vec![StokesType::I, StokesType::Q]));
-        cs.add_coordinate(TabularCoordinate::new(
-            vec![0.0, 1.0, 2.0],
-            vec![100.0, 200.0, 300.0],
-            "Velocity",
-            "km/s",
-        ));
-
-        let restored = CoordinateSystem::from_record(&cs.to_record()).unwrap();
-
-        assert_eq!(restored.n_coordinates(), 4);
-        assert_eq!(
-            restored.coordinate(0).coordinate_type(),
-            CoordinateType::Direction
-        );
-        assert_eq!(
-            restored.coordinate(1).coordinate_type(),
-            CoordinateType::Spectral
-        );
-        assert_eq!(
-            restored.coordinate(2).coordinate_type(),
-            CoordinateType::Stokes
-        );
-        assert_eq!(
-            restored.coordinate(3).coordinate_type(),
-            CoordinateType::Tabular
-        );
-        assert_eq!(restored.n_pixel_axes(), 5);
-
-        let pixel = vec![256.5, 255.5, 4.0, 1.0, 1.5];
-        let world = restored.to_world(&pixel).unwrap();
-        let back = restored.to_pixel(&world).unwrap();
-        assert_eq!(back.len(), pixel.len());
-        for (index, (restored_value, original)) in back.iter().zip(pixel.iter()).enumerate() {
-            assert!(
-                (restored_value - original).abs() < 1e-6,
-                "axis {index}: {} vs {}",
-                restored_value,
-                original
-            );
-        }
-    }
-
-    #[test]
-    fn from_record_rejects_unknown_coordinate_type() {
-        let mut rec = RecordValue::default();
-        rec.upsert("ncoordinates", Value::Scalar(ScalarValue::Int32(2)));
-        let mut unknown = RecordValue::default();
-        unknown.upsert(
-            "coordinate_type",
-            Value::Scalar(ScalarValue::String("Unknown".into())),
-        );
-        rec.upsert("coordinate0", Value::Record(unknown));
-        rec.upsert(
-            "coordinate1",
-            Value::Record(LinearCoordinate::new(1, vec!["X".into()], vec!["m".into()]).to_record()),
-        );
-
-        assert!(matches!(
-            CoordinateSystem::from_record(&rec),
-            Err(CoordinateError::InvalidRecord(_))
-        ));
-    }
-
-    #[test]
-    fn from_record_rejects_invalid_coordinate_record() {
-        let mut rec = RecordValue::default();
-        rec.upsert("ncoordinates", Value::Scalar(ScalarValue::Int32(2)));
-        let mut broken = RecordValue::default();
-        broken.upsert(
-            "coordinate_type",
-            Value::Scalar(ScalarValue::String("Spectral".into())),
-        );
-        rec.upsert("coordinate0", Value::Record(broken));
-        rec.upsert(
-            "coordinate1",
-            Value::Record(StokesCoordinate::new(vec![StokesType::I]).to_record()),
-        );
-
-        assert!(matches!(
-            CoordinateSystem::from_record(&rec),
-            Err(CoordinateError::InvalidRecord(_))
-        ));
-    }
-
-    #[test]
-    fn from_record_parses_casa_style_wcs_coords() {
-        let cs = CoordinateSystem::from_record(&casa_style_coords_with_wcs_spectral()).unwrap();
-
-        assert_eq!(cs.obs_info().telescope, "VLA");
-        assert_eq!(cs.obs_info().observer, "TEST");
-        assert_eq!(cs.obs_info().date.as_ref().unwrap().refer(), EpochRef::TAI);
-        assert_eq!(
-            cs.obs_info().telescope_position.as_ref().unwrap().refer(),
-            PositionRef::ITRF
-        );
-        assert_eq!(cs.obs_info().pointing_center_rad, [4.02298, 0.08843]);
-        assert!(!cs.obs_info().pointing_center_initial);
-        assert_eq!(cs.n_coordinates(), 3);
-        assert_eq!(
-            cs.coordinate(0).coordinate_type(),
-            CoordinateType::Direction
-        );
-        assert_eq!(cs.coordinate(1).coordinate_type(), CoordinateType::Stokes);
-        assert_eq!(cs.coordinate(2).coordinate_type(), CoordinateType::Spectral);
-
-        let world = cs.to_world(&[128.0, 128.0, 0.0, 0.0]).unwrap();
-        assert_eq!(world.len(), 4);
-        assert!((world[0] - 4.02298).abs() < 1e-8);
-        assert!((world[1] - 0.08843).abs() < 1e-8);
-        assert!((world[2] - 1.0).abs() < 1e-8);
-        assert!((world[3] - 1.41279e9).abs() < 1.0);
-    }
-
-    #[test]
-    fn from_record_parses_casa_style_tabular_spectral_coords() {
-        let cs = CoordinateSystem::from_record(&casa_style_coords_with_tabular_spectral()).unwrap();
-
-        assert_eq!(cs.obs_info().telescope, "BIMA");
-        assert_eq!(cs.obs_info().date.as_ref().unwrap().refer(), EpochRef::UTC);
-        assert_eq!(
-            cs.obs_info().pointing_center_rad,
-            [-2.8940293347227444, 0.3784702849718404]
-        );
-        assert!(!cs.obs_info().pointing_center_initial);
-        assert_eq!(cs.n_coordinates(), 3);
-        assert_eq!(
-            cs.coordinate(0).coordinate_type(),
-            CoordinateType::Direction
-        );
-        assert_eq!(cs.coordinate(1).coordinate_type(), CoordinateType::Stokes);
-        assert_eq!(cs.coordinate(2).coordinate_type(), CoordinateType::Spectral);
-
-        let world = cs.to_world(&[128.0, 128.0, 0.0, 0.0]).unwrap();
-        assert_eq!(world.len(), 4);
-        assert!((world[3] - 1.15022e11).abs() < 10.0);
-    }
-
-    #[test]
-    fn from_record_parses_non_linear_casa_style_tabular_spectral_coords() {
-        let cs =
-            CoordinateSystem::from_record(&casa_style_coords_with_non_linear_tabular_spectral())
-                .unwrap();
-
-        assert_eq!(cs.obs_info().telescope, "BIMA");
-        assert_eq!(cs.n_coordinates(), 3);
-        assert_eq!(cs.coordinate(2).coordinate_type(), CoordinateType::Spectral);
-
-        let world = cs.to_world(&[128.0, 128.0, 0.0, 2.0]).unwrap();
-        assert_eq!(world.len(), 4);
-        // Casacore reconstructs a spectral lookup on consecutive channels.
-        assert!((world[3] - 1.1504075e11).abs() < 10.0);
-
-        let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, 1.1504075e11]).unwrap();
-        assert!((pixel[3] - 2.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn from_record_applies_casa_style_spectral_conversion_state() {
-        let cs =
-            CoordinateSystem::from_record(&casa_style_coords_with_tabular_spectral_conversion())
-                .unwrap();
-
-        let expected = MFrequency::new(1.15022e11, FrequencyRef::LSRD)
-            .convert_to(
-                FrequencyRef::LSRK,
-                &MeasFrame::new()
-                    .with_direction(MDirection::from_angles(
-                        -2.8940293347227444,
-                        0.3784702849718404,
-                        DirectionRef::J2000,
-                    ))
-                    .with_position(MPosition::new_wgs84(
-                        -2.1200320498502676,
-                        0.7123949192959743,
-                        1021.0,
-                    ))
-                    .with_epoch(MEpoch::from_mjd(50_919.14846423176, EpochRef::UTC)),
-            )
-            .unwrap()
-            .hz();
-
-        let world = cs.to_world(&[128.0, 128.0, 0.0, 0.0]).unwrap();
-        assert_eq!(world.len(), 4);
-        assert!((world[3] - expected).abs() < 1.0);
-
-        let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, expected]).unwrap();
-        assert!((pixel[3] - 0.0).abs() < 1e-6);
-    }
-}
+mod tests;

@@ -451,13 +451,9 @@ impl ExportAxisPlan {
         tool_order: bool,
     ) -> Result<Self, ImageError> {
         let ndim = image_shape.len();
-        let mut orig_types = Vec::with_capacity(ndim);
-        for ci in 0..coordinates.n_coordinates() {
-            let coord = coordinates.coordinate(ci);
-            for _ in 0..coord.n_pixel_axes() {
-                orig_types.push(coord.coordinate_type());
-            }
-        }
+        let orig_types: Vec<_> = (0..coordinates.n_pixel_axes())
+            .map(|axis| coordinates.pixel_axis_type(axis).expect("dense pixel axes"))
+            .collect();
         if orig_types.len() != ndim {
             return Err(ImageError::InvalidMetadata(format!(
                 "coordinate system has {} axes for image shape {image_shape:?}",

@@ -242,12 +242,36 @@ impl CoordinateState {
         axis: usize,
         edit: TabularEdit,
     ) -> PyResult<()> {
+        self.edit_axis(record, axis, edit, false)
+    }
+
+    pub(super) fn edit_record_world_axis(
+        &self,
+        record: &mut RecordValue,
+        axis: usize,
+        edit: TabularEdit,
+    ) -> PyResult<()> {
+        self.edit_axis(record, axis, edit, true)
+    }
+
+    fn edit_axis(
+        &self,
+        record: &mut RecordValue,
+        axis: usize,
+        edit: TabularEdit,
+        world: bool,
+    ) -> PyResult<()> {
         if self.tabular_matrices().next().is_some() {
             let placements = CoordinateSystem::record_coordinates(record).map_err(raised)?;
-            if let Some((index, placement)) = placements
-                .iter()
-                .enumerate()
-                .find(|(_, placement)| placement.pixel_axes.contains(&Some(axis)))
+            if let Some((index, placement)) =
+                placements.iter().enumerate().find(|(_, placement)| {
+                    if world {
+                        &placement.world_axes
+                    } else {
+                        &placement.pixel_axes
+                    }
+                    .contains(&Some(axis))
+                })
                 && live_tabular_matrix(self.coordinates.coordinate(index)).is_some()
             {
                 let native = recorded_coordinate(record, &placement.field)?;
@@ -272,6 +296,12 @@ impl CoordinateState {
         match edit {
             TabularEdit::ReferencePixel(value) => {
                 CoordinateSystem::set_reference_pixel_in_record(record, axis, value)
+            }
+            TabularEdit::ReferenceValue(value) if world => {
+                CoordinateSystem::set_world_reference_value_in_record(record, axis, value)
+            }
+            TabularEdit::Increment(value) if world => {
+                CoordinateSystem::set_world_increment_in_record(record, axis, value)
             }
             TabularEdit::ReferenceValue(value) => {
                 CoordinateSystem::set_reference_value_in_record(record, axis, value)

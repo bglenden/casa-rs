@@ -68,19 +68,26 @@ fn axes(coordinates: &CoordinateSystem) -> Vec<Axis> {
         let increments = coordinate.increment();
         let pixels = coordinate.reference_pixel();
         let values = coordinate.reference_value();
-        for i in 0..coordinate.n_pixel_axes() {
-            output.push(Axis {
-                coordinate: index,
-                kind,
-                name: names[i].clone(),
-                unit: units[i].clone(),
-                reference_pixel: pixels[i],
-                reference_value: values[i],
-                increment: increments[i],
-            });
+        for (i, axis) in coordinates.pixel_axes(index).into_iter().enumerate() {
+            let Some(axis) = axis else {
+                continue;
+            };
+            output.push((
+                axis,
+                Axis {
+                    coordinate: index,
+                    kind,
+                    name: names[i].clone(),
+                    unit: units[i].clone(),
+                    reference_pixel: pixels[i],
+                    reference_value: values[i],
+                    increment: increments[i],
+                },
+            ));
         }
     }
-    output
+    output.sort_unstable_by_key(|(axis, _)| *axis);
+    output.into_iter().map(|(_, axis)| axis).collect()
 }
 
 fn world_at(
@@ -91,7 +98,12 @@ fn world_at(
 ) -> Result<f64, ImageError> {
     let mut at: Vec<_> = axes.iter().map(|axis| axis.reference_pixel).collect();
     at[axis] = pixel;
-    Ok(input.coordinates.to_world(&at)?[axis])
+    let world_axis = input.coordinates.pixel_axis_to_world(axis).ok_or_else(|| {
+        ImageError::InvalidMetadata(
+            "concatenation pixel axis has no visible world coordinate".into(),
+        )
+    })?;
+    Ok(input.coordinates.to_world(&at)?[world_axis])
 }
 
 fn near(lhs: f64, rhs: f64) -> bool {

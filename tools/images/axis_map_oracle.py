@@ -52,7 +52,8 @@ coordinates (`cs.toworld`) and the pixel value (`ia.getchunk`).
 
 opens an image another program rewrote from one of the fixtures and checks
 that CASA reads it as it read the fixture: the same shape, axis types, names
-and units, world coordinates and pixel values at the recorded pixels.
+and units, signed maps and replacement values, and both conversion directions
+at the recorded pixels.
 """
 
 from __future__ import annotations
@@ -76,6 +77,8 @@ CROPS = [
     ("dropdeg_linear.image", [2, 3], [4, 5]),
     ("dropdeg_linear_between.image", [2, 3], [4, 5]),
     ("tabular_spectral_first.image", [1, 0, 0, 0], [2, 2, 1, 0]),
+    ("swapped.image", [0, 1, 0, 0], [1, 2, 1, 4]),
+    ("interleaved.image", [1, 0, 0, 0], [2, 1, 1, 4]),
 ]
 
 
@@ -139,9 +142,11 @@ def describe(path):
     data = ia.getchunk()
     samples = []
     for pixel in sample_pixels(shape):
+        world = [float(v) for v in cs.toworld([float(p) for p in pixel], "n")["numeric"]]
         samples.append({
             "pixel": pixel,
-            "world": [float(v) for v in cs.toworld([float(p) for p in pixel], "n")["numeric"]],
+            "world": world,
+            "pixel_from_world": [float(v) for v in cs.topixel(world)["numeric"]],
             "value": float(data[tuple(pixel)]),
         })
     record = {
@@ -267,7 +272,7 @@ def readback(path, reference, name):
         expected = json.load(handle)["images"][name]
     got = describe(path)
     problems = []
-    for key in ("shape", "axis_types", "names", "units"):
+    for key in ("shape", "axis_types", "names", "units", "maps"):
         if got[key] != expected[key]:
             problems.append(f"{key}: CASA reads {got[key]}, the fixture has {expected[key]}")
     for ours, theirs in zip(got["samples"], expected["samples"]):
@@ -276,6 +281,8 @@ def readback(path, reference, name):
             problems.append(f"pixel {pixel}: value {ours['value']} against {theirs['value']}")
         if not np.allclose(ours["world"], theirs["world"], rtol=1e-12, atol=1e-12):
             problems.append(f"pixel {pixel}: world {ours['world']} against {theirs['world']}")
+        if not np.allclose(ours["pixel_from_world"], theirs["pixel_from_world"], rtol=1e-9, atol=1e-8):
+            problems.append(f"pixel {pixel}: inverse transform {ours['pixel_from_world']} against {theirs['pixel_from_world']}")
     print(json.dumps({"image": path, "reads_as": name, "maps": got["maps"], "problems": problems}, indent=1))
     return 1 if problems else 0
 

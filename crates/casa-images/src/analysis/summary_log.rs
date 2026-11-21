@@ -182,17 +182,11 @@ fn format_summary(
 }
 
 fn spectral_at_axis(coords: &CoordinateSystem, axis: usize) -> Option<&SpectralCoordinate> {
-    let mut offset = 0;
-    for index in 0..coords.n_coordinates() {
-        let coordinate = coords.coordinate(index);
-        if offset == axis
-            && let CoordinateModel::Spectral(spectral) = coordinate
-        {
-            return Some(spectral);
-        }
-        offset += coordinate.n_pixel_axes();
+    let (index, _) = coords.pixel_axis(axis)?;
+    match coords.coordinate(index) {
+        CoordinateModel::Spectral(spectral) => Some(spectral),
+        _ => None,
     }
-    None
 }
 
 fn beam_text(beam: &RestoringBeamSummary) -> String {

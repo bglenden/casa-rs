@@ -75,7 +75,8 @@ pub(super) struct MomentAxis<'a> {
     pub(super) index: usize,
     pub(super) unit: String,
     coordinate: &'a CoordinateModel,
-    offset: usize,
+    pixel_axes: Vec<Option<usize>>,
+    reference_pixel: Vec<f64>,
     local: usize,
     angle_scale: f64,
     rest: Option<f64>,
@@ -83,19 +84,15 @@ pub(super) struct MomentAxis<'a> {
 
 impl<'a> MomentAxis<'a> {
     pub(super) fn new(system: &'a CoordinateSystem, index: usize) -> Result<Self, ImageError> {
-        let mut offset = 0;
-        let mut coordinate = None;
-        for i in 0..system.n_coordinates() {
-            let model = system.coordinate(i);
-            if index < offset + model.n_pixel_axes() {
-                coordinate = Some(model);
-                break;
-            }
-            offset += model.n_pixel_axes();
-        }
-        let coordinate = coordinate
+        let (model, local) = system
+            .pixel_axis(index)
             .ok_or_else(|| ImageError::CasaSelection("No coordinate for moment axis".into()))?;
-        let local = index - offset;
+        if system.pixel_axis_to_world(index).is_none() {
+            return Err(ImageError::CasaSelection(
+                "Moment pixel axis has no visible world axis".into(),
+            ));
+        }
+        let coordinate = system.coordinate(model);
         let rest = match coordinate {
             CoordinateModel::Spectral(spectral) if spectral.rest_frequency() > 0.0 => {
                 Some(spectral.rest_frequency())
@@ -116,7 +113,8 @@ impl<'a> MomentAxis<'a> {
             index,
             unit,
             coordinate,
-            offset,
+            pixel_axes: system.pixel_axes(model),
+            reference_pixel: system.local_reference_pixel(model),
             local,
             angle_scale,
             rest,
@@ -142,18 +140,22 @@ impl<'a> MomentAxis<'a> {
     }
 
     pub(super) fn profiles(&self, shape: &[usize]) -> Result<ProfileCoordinates, ImageError> {
-        let rank = self.coordinate.n_pixel_axes();
-        let coupled: Vec<_> = (self.offset..self.offset + rank)
-            .filter(|&axis| axis != self.index)
-            .map(|axis| (axis, shape[axis]))
+        let coupled: Vec<_> = self
+            .pixel_axes
+            .iter()
+            .enumerate()
+            .filter_map(|(local, &axis)| {
+                axis.filter(|&axis| axis != self.index)
+                    .map(|axis| (local, axis, shape[axis]))
+            })
             .collect();
-        let mut pixels = vec![0.0; rank];
+        let mut pixels = self.reference_pixel.clone();
         let len = shape[self.index];
         let mut profiles = Vec::new();
-        for number in 0..coupled.iter().map(|&(_, len)| len).product() {
+        for number in 0..coupled.iter().map(|&(_, _, len)| len).product() {
             let mut offset = number;
-            for &(axis, length) in coupled.iter().rev() {
-                pixels[axis - self.offset] = (offset % length) as f64;
+            for &(local, _, length) in coupled.iter().rev() {
+                pixels[local] = (offset % length) as f64;
                 offset /= length;
             }
             let mut profile = Vec::with_capacity(len);
@@ -165,7 +167,7 @@ impl<'a> MomentAxis<'a> {
         }
         let axes = coupled
             .into_iter()
-            .map(|(axis, len)| (axis - usize::from(axis > self.index), len))
+            .map(|(_, axis, len)| (axis - usize::from(axis > self.index), len))
             .collect();
         Ok(ProfileCoordinates { profiles, axes })
     }

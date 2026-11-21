@@ -61,43 +61,32 @@ pub fn format_world_display(
     coords: &CoordinateSystem,
     pixel: &[f64],
 ) -> Result<String, CoordinateError> {
-    let n_pix = coords.n_pixel_axes();
-    if pixel.len() != n_pix {
-        return Err(CoordinateError::DimensionMismatch {
-            expected: n_pix,
-            got: pixel.len(),
-        });
-    }
-
-    let mut fields = Vec::with_capacity(coords.n_world_axes());
-    let mut pixel_offset = 0;
-    for index in 0..coords.n_coordinates() {
-        let coord: &CoordinateModel = coords.coordinate(index);
-        let n = coord.n_pixel_axes();
-        let world = coord.to_world(&pixel[pixel_offset..pixel_offset + n])?;
-        pixel_offset += n;
-        match coord {
+    let world = coords.to_world(pixel)?;
+    let mut fields = Vec::with_capacity(world.len());
+    for (axis, &value) in world.iter().enumerate() {
+        let (index, local) = coords.world_axis(axis).expect("dense world axes");
+        let coord = coords.coordinate(index);
+        let text = match coord {
             CoordinateModel::Direction(direction) => {
-                fields.extend(direction_fields(
-                    direction.direction_ref(),
-                    world[0],
-                    world[1],
-                ));
+                let mut pair = direction.projection_reference();
+                pair[local] = value;
+                let [longitude, latitude] =
+                    direction_fields(direction.direction_ref(), pair[0], pair[1]);
+                if local == 0 { longitude } else { latitude }
             }
             CoordinateModel::Stokes(_) => {
-                let code = world.first().copied().unwrap_or_default() as i32;
-                let name = crate::stokes::StokesType::from_code(code)
+                let code = value as i32;
+                crate::stokes::StokesType::from_code(code)
                     .map(|kind| kind.name().to_string())
-                    .unwrap_or_else(|| code.to_string());
-                fields.push(name);
+                    .unwrap_or_else(|| code.to_string())
             }
-            _ => {
-                let units = coord.axis_units();
-                for (axis, value) in world.iter().enumerate() {
-                    fields.push(format!("{}{}", format_stream_value(*value), units[axis]));
-                }
-            }
-        }
+            _ => format!(
+                "{}{}",
+                format_stream_value(value),
+                coord.axis_units()[local]
+            ),
+        };
+        fields.push(text);
     }
     Ok(fields.join(", "))
 }

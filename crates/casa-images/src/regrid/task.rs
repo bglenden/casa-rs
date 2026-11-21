@@ -46,11 +46,11 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     let ordered = index_coordinates(input.coordinates());
     let target_order = index_coordinates(&template.coordinates);
     let after_singleton = match options.axes {
-        [axis] if *axis >= 0 => ordered.iter().any(|&(first, coordinate)| {
-            first == *axis as usize
-                && input_shape[first] == 1
+        [axis] if *axis >= 0 => ordered.iter().any(|(_, axes, coordinate)| {
+            axes.as_slice() == [*axis as usize]
                 && coordinate.coordinate_type() == CoordinateType::Spectral
-                && shape[first] > 1
+                && input_shape[axes[0]] == 1
+                && shape[axes[0]] > 1
         }),
         _ => false,
     };
@@ -67,22 +67,24 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         return Err(invalid("All selected pixels are masked"));
     }
     let mut found = false;
-    for (index, &(first, ours)) in ordered.iter().enumerate() {
-        let n_axes = ours.n_pixel_axes();
-        let axes = first..first + n_axes;
-        let target = target_order.iter().find(|&&(_, model)| {
-            model.coordinate_type() == ours.coordinate_type() && model.n_pixel_axes() == n_axes
+    for (index, axes, ours) in ordered {
+        let first = axes[0];
+        let n_axes = axes.len();
+        let target = target_order.iter().find(|(_, target_axes, model)| {
+            model.coordinate_type() == ours.coordinate_type() && target_axes.len() == n_axes
         });
-        let Some(&(other, theirs)) = target else {
-            if shape[axes.clone()] != input_shape[axes] {
-                return Err(invalid(
-                    "an axis missing from the template must keep its input length",
-                ));
-            }
+        let input_lengths: Vec<_> = axes.iter().map(|&axis| input_shape[axis]).collect();
+        let Some((_, other, theirs)) = target else {
+            require_lengths(
+                &axes,
+                &shape,
+                input_shape,
+                "an axis missing from the template",
+            )?;
             continue;
         };
-        let input_lengths = &input_shape[axes.clone()];
-        let target_lengths = &template.shape[other..other + n_axes];
+        let theirs = *theirs;
+        let target_lengths: Vec<_> = other.iter().map(|&axis| template.shape[axis]).collect();
         if let (CoordinateModel::Stokes(ours), CoordinateModel::Stokes(theirs)) = (ours, theirs) {
             if (all_axes || chosen[first]) && ours.stokes().len() > 1 && theirs.stokes().len() > 1 {
                 select_stokes(
@@ -102,9 +104,9 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             continue;
         }
         let selected: Vec<_> = axes
-            .clone()
+            .iter()
             .enumerate()
-            .map(|(i, axis)| {
+            .map(|(i, &axis)| {
                 if all_axes
                     || (after_singleton && ours.coordinate_type() != CoordinateType::Spectral)
                 {
@@ -115,7 +117,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             })
             .collect();
         if resized.is_none() {
-            for (i, axis) in axes.clone().enumerate() {
+            for (i, &axis) in axes.iter().enumerate() {
                 if selected[i]
                     && !(ours.coordinate_type() == CoordinateType::Spectral
                         && target_lengths[i] == 1)
@@ -125,15 +127,16 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             }
         }
         if !selected.contains(&true) {
-            if shape[axes.clone()] != *input_lengths {
-                return Err(invalid(
-                    "an axis not being regridded must keep its input length",
-                ));
-            }
+            require_lengths(&axes, &shape, input_shape, "an axis not being regridded")?;
             continue;
         }
         found = true;
-        let lengths = &shape[axes];
+        if n_axes != ours.n_pixel_axes() || n_axes != theirs.n_pixel_axes() {
+            return Err(invalid(
+                "regridding a coordinate with a removed pixel axis requires all of its local axes",
+            ));
+        }
+        let lengths: Vec<_> = axes.iter().map(|&axis| shape[axis]).collect();
         let coordinate = match (ours, theirs) {
             (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
                 if n_axes == 2 =>
@@ -149,7 +152,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 if old_dimensions != dimensions || !same_direction_grid(ours, theirs) {
                     apply_direction(
                         &mut result,
-                        first,
+                        [axes[0], axes[1]],
                         input.units(),
                         (ours, theirs),
                         dimensions,
@@ -184,7 +187,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                         || !same_axes(
                             &CoordinateModel::Spectral(ours.clone()),
                             &coordinate,
-                            lengths,
+                            &lengths,
                         )
                         || ours.world_frequency_ref() != theirs.world_frequency_ref()
                     {
@@ -238,6 +241,19 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     Ok(result)
 }
 
+fn require_lengths(
+    axes: &[usize],
+    shape: &[usize],
+    input: &[usize],
+    which: &str,
+) -> Result<(), ImageError> {
+    if axes.iter().any(|&axis| shape[axis] != input[axis]) {
+        Err(invalid(format!("{which} must keep its input length")))
+    } else {
+        Ok(())
+    }
+}
+
 fn same_direction_grid(input: &DirectionCoordinate, output: &DirectionCoordinate) -> bool {
     input.direction_ref() == output.direction_ref()
         && input.conversion_direction_ref() == output.conversion_direction_ref()
@@ -252,16 +268,15 @@ fn same_direction_grid(input: &DirectionCoordinate, output: &DirectionCoordinate
 
 fn index_coordinates(
     system: &casa_coordinates::CoordinateSystem,
-) -> Vec<(usize, &CoordinateModel)> {
-    let mut first = 0;
-    (0..system.n_coordinates())
-        .map(|index| {
-            let coordinate = system.coordinate(index);
-            let axis = first;
-            first += coordinate.n_pixel_axes();
-            (axis, coordinate)
+) -> Vec<(usize, Vec<usize>, &CoordinateModel)> {
+    let mut ordered: Vec<_> = (0..system.n_coordinates())
+        .filter_map(|index| {
+            let axes: Vec<_> = system.pixel_axes(index).into_iter().flatten().collect();
+            (!axes.is_empty()).then(|| (index, axes, system.coordinate(index)))
         })
-        .collect()
+        .collect();
+    ordered.sort_by_key(|(_, axes, _)| axes.iter().min().copied());
+    ordered
 }
 
 fn requested_axes(axes: &[i64], all: bool, ndim: usize) -> Result<Vec<bool>, ImageError> {
@@ -493,7 +508,7 @@ fn replicated_position(output: usize, input_count: usize, output_count: usize) -
 
 fn apply_direction<T: RegridPixel>(
     result: &mut Regridded<T>,
-    axis: usize,
+    axes: [usize; 2],
     units: &str,
     (input, target): (&DirectionCoordinate, &DirectionCoordinate),
     shape: [usize; 2],
@@ -501,7 +516,7 @@ fn apply_direction<T: RegridPixel>(
     frame: &MeasFrame,
 ) -> Result<(), ImageError> {
     let scale = jy_per_pixel_scale(units, input, target);
-    let input_shape = [result.data.shape()[axis], result.data.shape()[axis + 1]];
+    let input_shape = axes.map(|axis| result.data.shape()[axis]);
     let grid = if options.replicate {
         (0..shape[1])
             .flat_map(|y| {
@@ -535,7 +550,7 @@ fn apply_direction<T: RegridPixel>(
         }
     };
     let sampling = DirectionSampling {
-        axes: [axis; 2],
+        axes: [axes; 2],
         shape,
         positions: &grid,
         method: options.method,

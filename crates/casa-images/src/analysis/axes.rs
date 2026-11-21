@@ -2,11 +2,6 @@
 //! Where the image tasks find an image's axes, and moving the reference
 //! pixels of a coordinate-system record with a subimage.
 //!
-//! casa-rs reads a CASA image whose coordinates own transposed axes with
-//! the coordinates in axis order, and drops a linear coordinate's removed
-//! axes (#1001), so its coordinates can differ from the record's: a
-//! record's coordinates are found where the record places them.
-
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
 };
@@ -56,11 +51,6 @@ impl StridedSection<'_> {
 /// its direction coordinate's wherever they are, or the first two axes of an
 /// image without one.
 ///
-/// A CASA image can hold its direction after other axes (`imtrans`); casa-rs
-/// reads a coordinate's axes adjacent and in its own order (#1001), so the
-/// latitude follows the longitude, and the world axes are numbered as the
-/// pixel axes are (#1002).
-///
 /// - Regions take their plane here, as CASA does.
 /// - `feather` does too, where CASA 6.7.6's `feather` fails on such an
 ///   image (`docs/CASA (C++) bugs.md`).
@@ -73,15 +63,12 @@ pub(super) fn direction_plane_axes<T: ImagePixel>(
     let Some(index) = coordinates.find_coordinate(CoordinateType::Direction) else {
         return Ok([0, 1]);
     };
-    if coordinates.coordinate(index).n_pixel_axes() != 2 {
-        return Err(ImageError::InvalidMetadata(
+    match coordinates.pixel_axes(index).as_slice() {
+        [Some(longitude), Some(latitude)] => Ok([*longitude, *latitude]),
+        _ => Err(ImageError::InvalidMetadata(
             "selecting a direction plane requires both direction axes".into(),
-        ));
+        )),
     }
-    let longitude = (0..index)
-        .map(|i| coordinates.coordinate(i).n_pixel_axes())
-        .sum();
-    Ok([longitude, longitude + 1])
 }
 
 /// The axes of a `rank`-axis image other than its plane's, in order.
@@ -124,16 +111,10 @@ pub(super) fn stokes_for_axis(
     coords: &CoordinateSystem,
     axis: usize,
 ) -> Result<Vec<StokesType>, ImageError> {
-    let mut offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        let next = offset + coord.n_pixel_axes();
-        if (offset..next).contains(&axis)
-            && let CoordinateModel::Stokes(stokes) = coord
-        {
-            return Ok(stokes.stokes().to_vec());
-        }
-        offset = next;
+    if let Some((index, _)) = coords.pixel_axis(axis)
+        && let CoordinateModel::Stokes(stokes) = coords.coordinate(index)
+    {
+        return Ok(stokes.stokes().to_vec());
     }
     Err(ImageError::InvalidMetadata(
         "Stokes selection requires a Stokes coordinate".into(),

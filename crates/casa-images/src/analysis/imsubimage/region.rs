@@ -671,7 +671,10 @@ fn parse_spectral_endpoint(
         .map_err(|e| ImageError::InvalidMetadata(format!("invalid CRTF range {text:?}: {e}")))?;
     let freq_hz = q.get_si_value();
     let mut world = coords.to_world(&vec![0.0; coords.n_pixel_axes()])?;
-    world[spec_axis] = freq_hz;
+    let world_axis = coords.pixel_axis_to_world(spec_axis).ok_or_else(|| {
+        ImageError::InvalidMetadata("spectral pixel axis has no world axis".into())
+    })?;
+    world[world_axis] = freq_hz;
     let pix = coords.to_pixel(&world)?;
     Ok(pix[spec_axis].round() as isize)
 }
@@ -835,8 +838,9 @@ fn crtf_point_to_pixel<T: ImagePixel>(
             let [ax, ay] = plane;
             let base = vec![0.0; coords.n_pixel_axes()];
             let mut world = coords.to_world(&base)?;
-            world[ax] = parse_world_angle(parts[0])?;
-            world[ay] = parse_world_angle(parts[1])?;
+            let [wx, wy] = world_axes_for_plane(coords, plane)?;
+            world[wx] = parse_world_angle(parts[0])?;
+            world[wy] = parse_world_angle(parts[1])?;
             let pix = coords.to_pixel(&world)?;
             Ok([pix[ax], pix[ay]])
         }
@@ -901,24 +905,30 @@ fn parse_extent_single(text: &str, scale_rad_per_px: Option<f64>) -> Result<f64,
     Ok(rad / scale)
 }
 
-fn direction_pixel_scales(coords: &CoordinateSystem, plane: [usize; 2]) -> Option<[f64; 2]> {
-    let mut offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        let np = coord.n_pixel_axes();
-        if coord.coordinate_type() == CoordinateType::Direction && np >= 2 {
-            let inc = coord.increment();
-            let sx = inc[0].abs();
-            let sy = inc[1].abs();
-            if sx > 0.0 && sy > 0.0 {
-                return Some([sx, sy]);
-            }
-        }
-        offset += np;
+pub(in crate::analysis) fn world_axes_for_plane(
+    coords: &CoordinateSystem,
+    plane: [usize; 2],
+) -> Result<[usize; 2], ImageError> {
+    match plane.map(|axis| coords.pixel_axis_to_world(axis)) {
+        [Some(x), Some(y)] => Ok([x, y]),
+        _ => Err(ImageError::InvalidMetadata(
+            "region pixel axes have no corresponding world plane".into(),
+        )),
     }
-    let _ = offset;
-    let _ = plane;
-    None
+}
+
+fn direction_pixel_scales(coords: &CoordinateSystem, [x, y]: [usize; 2]) -> Option<[f64; 2]> {
+    let (coordinate, x_local) = coords.pixel_axis(x)?;
+    let (other, y_local) = coords.pixel_axis(y)?;
+    let CoordinateModel::Direction(direction) = coords.coordinate(coordinate) else {
+        return None;
+    };
+    if coordinate != other {
+        return None;
+    }
+    let increments = direction.increment();
+    let scales = [increments[x_local].abs(), increments[y_local].abs()];
+    scales.iter().all(|scale| *scale > 0.0).then_some(scales)
 }
 
 fn parse_crtf_pix(text: &str) -> Result<Option<f64>, ImageError> {

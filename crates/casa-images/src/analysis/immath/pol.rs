@@ -828,16 +828,10 @@ fn stokes_types_on_axis(
     coords: &casa_coordinates::CoordinateSystem,
     axis: usize,
 ) -> Result<Vec<StokesType>, ImageError> {
-    let mut offset = 0usize;
-    for i in 0..coords.n_coordinates() {
-        let c = coords.coordinate(i);
-        let next = offset + c.n_pixel_axes();
-        if (offset..next).contains(&axis)
-            && let CoordinateModel::Stokes(stokes) = c
-        {
-            return Ok(stokes.stokes().to_vec());
-        }
-        offset = next;
+    if let Some((index, _)) = coords.pixel_axis(axis)
+        && let CoordinateModel::Stokes(stokes) = coords.coordinate(index)
+    {
+        return Ok(stokes.stokes().to_vec());
     }
     Err(ImageError::InvalidMetadata(
         "missing Stokes coordinate on Stokes axis".into(),

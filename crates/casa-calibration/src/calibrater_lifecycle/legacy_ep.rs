@@ -192,7 +192,11 @@ pub(crate) fn model_geometry(
         ));
     }
     let mut coordinates = image.coordinates().clone();
-    if coordinates.n_coordinates() != 3 {
+    if coordinates.n_coordinates() != 3
+        || coordinates.pixel_axes(0) != [Some(0), Some(1)]
+        || coordinates.pixel_axes(1) != [Some(2)]
+        || coordinates.pixel_axes(2) != [Some(3)]
+    {
         return Err(invalid(
             "legacy EP needs direction, IQUV and frequency coordinates",
         ));

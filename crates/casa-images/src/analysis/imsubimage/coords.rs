@@ -71,15 +71,10 @@ pub(super) fn reduce_coordinates_and_beams(
 }
 
 fn find_system_axis(coords: &CoordinateSystem, kind: CoordinateType) -> Option<usize> {
-    let mut offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        if coord.coordinate_type() == kind {
-            return Some(offset);
-        }
-        offset += coord.n_pixel_axes();
-    }
-    None
+    (0..coords.n_coordinates())
+        .filter(|&index| coords.coordinate(index).coordinate_type() == kind)
+        .flat_map(|index| coords.pixel_axes(index).into_iter().flatten())
+        .min()
 }
 
 pub(in crate::analysis) fn subset_beam_set(
@@ -164,8 +159,8 @@ pub(in crate::analysis) fn drop_axes_from_legacy_record(
         let pixelmap = read_i32_array(record.get(&format!("pixelmap{old_idx}"))?)?;
         let worldmap = read_i32_array(record.get(&format!("worldmap{old_idx}"))?)?;
         for (j, &pax) in pixelmap.iter().enumerate() {
-            if pax >= 0
-                && axis_remap.get(pax as usize).copied().flatten().is_some()
+            let retained = pax < 0 || axis_remap.get(pax as usize).copied().flatten().is_some();
+            if retained
                 && let Some(&wax) = worldmap.get(j)
                 && wax >= 0
             {
@@ -217,13 +212,21 @@ pub(in crate::analysis) fn drop_axes_from_legacy_record(
             let old_w = entry.worldmap.get(j).copied().unwrap_or(old_p);
             if old_p < 0 {
                 new_pmap.push(old_p);
-                new_wmap.push(old_w);
+                new_wmap.push(if old_w < 0 {
+                    old_w
+                } else {
+                    *world_remap.get(&old_w)?
+                });
             } else if let Some(new_p) = axis_remap.get(old_p as usize).copied().flatten() {
                 new_pmap.push(new_p as i32);
-                new_wmap.push(world_remap.get(&old_w).copied().unwrap_or(new_p as i32));
+                new_wmap.push(if old_w < 0 {
+                    old_w
+                } else {
+                    *world_remap.get(&old_w)?
+                });
             } else {
                 new_pmap.push(-(old_p + 1));
-                new_wmap.push(-(old_w + 1));
+                new_wmap.push(if old_w < 0 { old_w } else { -(old_w + 1) });
             }
         }
         out_fields.push(RecordField::new(
@@ -254,7 +257,14 @@ pub(in crate::analysis) fn drop_axes_from_legacy_record(
                 // Rebuilding the surviving direction coordinate uses its
                 // reference values for newly removed axes (dropRemovedAxes).
                 for (axis, &old) in map.iter().enumerate() {
-                    if old >= 0 && axis_remap[old as usize].is_none() {
+                    let retained = if kind == "pixel" {
+                        usize::try_from(old)
+                            .ok()
+                            .is_some_and(|axis| axis_remap.get(axis).copied().flatten().is_some())
+                    } else {
+                        world_remap.contains_key(&old)
+                    };
+                    if old >= 0 && !retained {
                         values[axis] = reference[axis];
                     }
                 }

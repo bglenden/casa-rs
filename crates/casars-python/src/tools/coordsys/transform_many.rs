@@ -109,19 +109,17 @@ pub(super) fn capture(
 }
 
 pub(super) fn world_scale(coordinates: &CoordinateSystem) -> PyResult<Vec<f64>> {
-    let mut result = Vec::with_capacity(coordinates.n_world_axes());
-    for index in 0..coordinates.n_coordinates() {
-        match coordinates.coordinate(index) {
-            CoordinateModel::Direction(direction) => {
-                for unit in direction.visible_world_units() {
-                    let unit = Unit::new(&unit).map_err(|error| raised(error.to_string()))?;
-                    result.push(1.0 / unit.val().factor);
-                }
+    (0..coordinates.n_world_axes())
+        .map(|axis| {
+            let (index, local) = coordinates.world_axis(axis).expect("dense world axes");
+            if let CoordinateModel::Direction(direction) = coordinates.coordinate(index) {
+                let unit = Unit::new(&direction.world_units()[local])
+                    .map_err(|error| raised(error.to_string()))?;
+                return Ok(1.0 / unit.val().factor);
             }
-            coordinate => result.extend(std::iter::repeat_n(1.0, coordinate.n_world_axes())),
-        }
-    }
-    Ok(result)
+            Ok(1.0)
+        })
+        .collect()
 }
 
 fn transform(

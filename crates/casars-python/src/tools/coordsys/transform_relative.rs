@@ -19,10 +19,6 @@ fn raised(message: impl Into<String>) -> PyErr {
     PyRuntimeError::new_err(message.into())
 }
 
-fn axes(coordinates: &CoordinateSystem) -> impl Iterator<Item = &CoordinateModel> {
-    (0..coordinates.n_coordinates()).map(move |index| coordinates.coordinate(index))
-}
-
 fn input_record(py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<RecordValue>> {
     value
         .and_then(|value| value.cast::<PyDict>().ok())
@@ -131,13 +127,9 @@ impl OutputFrame {
                 }
             ]
         } else if world {
-            axes(coordinates)
-                .flat_map(CoordinateModel::reference_value)
-                .collect()
+            coordinates.reference_value()
         } else {
-            axes(coordinates)
-                .flat_map(CoordinateModel::reference_pixel)
-                .collect()
+            coordinates.reference_pixel()
         }
     }
 
@@ -147,15 +139,13 @@ impl OutputFrame {
         values: &mut [f64],
         world: bool,
     ) -> PyResult<()> {
-        let mut offset = 0;
-        for model in axes(coordinates) {
-            let count = if world {
-                model.n_world_axes()
+        for index in 0..coordinates.n_coordinates() {
+            let model = coordinates.coordinate(index);
+            let map = if world {
+                coordinates.world_axes(index)
             } else {
-                model.n_pixel_axes()
+                coordinates.pixel_axes(index)
             };
-            let slice = &mut values[offset..offset + count];
-            offset += count;
             let reference = if world {
                 model.reference_value()
             } else {
@@ -163,17 +153,20 @@ impl OutputFrame {
             };
             match (world, model) {
                 (true, CoordinateModel::Stokes(_)) => continue,
-                (true, CoordinateModel::Direction(direction)) => {
-                    direction
-                        .convert_world_offset(slice, self.absolute())
+                (true, CoordinateModel::Direction(_)) => {
+                    coordinates
+                        .convert_direction_offset(index, values, self.absolute())
                         .map_err(|error| raised(error.to_string()))?;
                     continue;
                 }
                 (false, CoordinateModel::Stokes(stokes)) => {
+                    let Some(axis) = map[0] else {
+                        continue;
+                    };
                     let absolute = if self.absolute() {
-                        slice[0] + reference[0]
+                        values[axis] + reference[0]
                     } else {
-                        slice[0]
+                        values[axis]
                     };
                     let index = (absolute + 0.5).trunc();
                     let count = stokes.n_stokes();
@@ -186,8 +179,10 @@ impl OutputFrame {
                 }
                 _ => {}
             }
-            for (value, reference) in slice.iter_mut().zip(reference) {
-                *value = self.difference(*value, reference);
+            for (axis, reference) in map.into_iter().zip(reference) {
+                if let Some(axis) = axis {
+                    values[axis] = self.difference(values[axis], reference);
+                }
             }
         }
         Ok(())

@@ -233,14 +233,14 @@ impl WorldInput<'_> {
         }
         // CASA uses the full declared reference vector as a prefix for a
         // selected coordinate's string vector or unset argument.
-        let declared = models(&self.state.coordinates)
-            .flat_map(|coordinate| match coordinate {
-                CoordinateModel::Direction(direction) => {
-                    direction.reference_and_increment_in_world_units().0
-                }
-                _ => coordinate.reference_value(),
-            })
-            .collect();
+        let system = &self.state.coordinates;
+        let mut declared = system.reference_value();
+        for (value, scale) in declared
+            .iter_mut()
+            .zip(super::transform_many::world_scale(system)?)
+        {
+            *value *= scale;
+        }
         declared_to_native(declared, self.coordinates)
     }
 
@@ -257,21 +257,19 @@ impl WorldInput<'_> {
         let units = native_world_units(system);
         update_measures(record, self.state, &units, &mut values)?;
         if let Some(index) = self.selected {
-            let start: usize = models(system)
-                .take(index)
-                .map(CoordinateModel::n_world_axes)
-                .sum();
-            let end = start + system.coordinate(index).n_world_axes();
-            return Ok(values[start..end].to_vec());
+            return Ok(system
+                .world_axes(index)
+                .into_iter()
+                .flatten()
+                .map(|axis| values[axis])
+                .collect());
         }
         Ok(values)
     }
 }
 
 fn world_reference(coordinates: &CoordinateSystem) -> Vec<f64> {
-    models(coordinates)
-        .flat_map(CoordinateModel::reference_value)
-        .collect()
+    coordinates.reference_value()
 }
 
 fn models(coordinates: &CoordinateSystem) -> impl Iterator<Item = &CoordinateModel> {
@@ -280,35 +278,16 @@ fn models(coordinates: &CoordinateSystem) -> impl Iterator<Item = &CoordinateMod
 
 // Angles reach casa-coordinates in radians. Other coordinates already use their declared unit.
 fn native_world_units(coordinates: &CoordinateSystem) -> Vec<String> {
-    models(coordinates)
-        .flat_map(|coordinate| match coordinate {
-            CoordinateModel::Direction(direction) => {
-                vec!["rad".into(); direction.visible_world_units().len()]
-            }
-            _ => coordinate.axis_units(),
-        })
-        .collect()
+    coordinates.world_axis_units()
 }
 
 fn declared_to_native(values: Vec<f64>, coordinates: &CoordinateSystem) -> PyResult<Vec<f64>> {
-    let conversions = models(coordinates).flat_map(|coordinate| match coordinate {
-        CoordinateModel::Direction(direction) => direction
-            .visible_world_units()
-            .into_iter()
-            .map(Some)
-            .collect(),
-        _ => vec![None; coordinate.n_world_axes()],
-    });
-    values
+    let scales = super::transform_many::world_scale(coordinates)?;
+    Ok(values
         .into_iter()
-        .zip(conversions)
-        .map(|(value, unit)| match unit {
-            Some(unit) => Quantity::new(value, &unit)
-                .map(|quantity| quantity.get_si_value())
-                .map_err(raised),
-            None => Ok(value),
-        })
-        .collect()
+        .zip(scales)
+        .map(|(value, scale)| value / scale)
+        .collect())
 }
 
 fn read_quantity(text: &str, unit: &str) -> PyResult<f64> {
@@ -321,9 +300,10 @@ fn text_values<'a>(
     units: &[String],
     values: impl Iterator<Item = &'a str>,
 ) -> PyResult<Vec<f64>> {
-    let mut types = models(coordinates)
-        .flat_map(|coordinate| {
-            std::iter::repeat_n(coordinate.coordinate_type(), coordinate.n_world_axes())
+    let mut types = (0..coordinates.n_world_axes())
+        .map(|axis| {
+            let (index, _) = coordinates.world_axis(axis).expect("dense world axes");
+            coordinates.coordinate(index).coordinate_type()
         })
         .zip(units);
     values
@@ -456,16 +436,11 @@ fn update_measures(
     units: &[String],
     world: &mut [f64],
 ) -> PyResult<()> {
-    let placements = CoordinateSystem::record_coordinates(&state.record).map_err(raised)?;
     let mut seen = Vec::new();
-    let mut first = 0;
     for (index, coordinate) in models(&state.coordinates).enumerate() {
         let kind = coordinate.coordinate_type();
-        let end = first + coordinate.n_world_axes();
-        let axes = &mut world[first..end];
-        let axis_units = &units[first..end];
-        first = end;
-        if seen.contains(&kind) {
+        let mapping = state.coordinates.world_axes(index);
+        if seen.contains(&kind) || mapping.iter().all(Option::is_none) {
             continue;
         }
         seen.push(kind);
@@ -473,29 +448,15 @@ fn update_measures(
         let Some(value) = record.get(&key) else {
             continue;
         };
-        let sliced = placements
-            .get(index)
-            .filter(|placement| placement.pixel_axes.contains(&None));
-        let retained = |components: &[f64]| -> Vec<f64> {
-            sliced.map_or_else(
-                || components.to_vec(),
-                |placement| {
-                    components
-                        .iter()
-                        .zip(&placement.pixel_axes)
-                        .filter_map(|(&value, axis)| axis.is_some().then_some(value))
-                        .collect()
-                },
-            )
-        };
+        let mut axes = mapping
+            .iter()
+            .map(|axis| axis.map_or(0.0, |axis| world[axis]))
+            .collect::<Vec<_>>();
         match coordinate {
             CoordinateModel::Direction(_) => {
                 let angle =
                     direction_from_record(subrecord(value, "direction")?).map_err(raised)?;
-                overwrite_prefix(
-                    axes,
-                    retained(&[angle.longitude_rad(), angle.latitude_rad()]),
-                );
+                overwrite_prefix(&mut axes, [angle.longitude_rad(), angle.latitude_rad()]);
             }
             CoordinateModel::Spectral(spectral) => {
                 let measure = subrecord(value, "spectral")?
@@ -516,19 +477,18 @@ fn update_measures(
                 axes[0] = f64::from(polarization.code());
             }
             CoordinateModel::Linear(_) => {
-                let full = sliced
-                    .map(|placement| placement.model(&state.record))
-                    .transpose()
-                    .map_err(raised)?;
-                let full_units = full.as_ref().map(CoordinateModel::axis_units);
-                let values = quantity_vector(
-                    subrecord(value, "linear")?,
-                    full_units.as_deref().unwrap_or(axis_units),
-                )?;
-                axes.copy_from_slice(&retained(&values));
+                let values =
+                    quantity_vector(subrecord(value, "linear")?, &coordinate.axis_units())?;
+                axes.copy_from_slice(&values);
             }
             CoordinateModel::Tabular(_) => {
-                axes[0] = quantity_record(subrecord(value, "tabular")?, &axis_units[0])?;
+                let axis = mapping[0].expect("visible tabular axis");
+                axes[0] = quantity_record(subrecord(value, "tabular")?, &units[axis])?;
+            }
+        }
+        for (axis, value) in mapping.into_iter().zip(axes) {
+            if let Some(axis) = axis {
+                world[axis] = value;
             }
         }
     }
@@ -611,9 +571,7 @@ fn image_world_record(
     velocities: bool,
     coordinate_tags: bool,
 ) -> PyResult<CasaValue> {
-    let mut complete: Vec<_> = models(&state.coordinates)
-        .flat_map(CoordinateModel::reference_pixel)
-        .collect();
+    let mut complete = state.coordinates.reference_pixel();
     overwrite_prefix(&mut complete, pixel);
     let world = state.coordinates.to_world(&complete).map_err(|error| {
         raised(format!(

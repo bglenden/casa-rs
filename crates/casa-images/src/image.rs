@@ -464,43 +464,45 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
 
     /// Returns the coordinate type for each image axis.
     fn axis_types(&self) -> Vec<CoordinateType> {
-        let mut types = Vec::with_capacity(self.ndim());
-        for i in 0..self.coordinates().n_coordinates() {
-            let coord = self.coordinates().coordinate(i);
-            let coord_type = coord.coordinate_type();
-            for _ in 0..coord.n_pixel_axes() {
-                types.push(coord_type);
-            }
-        }
-        while types.len() < self.ndim() {
-            types.push(CoordinateType::Linear);
-        }
-        types
+        let coordinates = self.coordinates();
+        (0..self.ndim())
+            .map(|axis| {
+                coordinates
+                    .pixel_axis(axis)
+                    .map_or(CoordinateType::Linear, |(index, _)| {
+                        coordinates.coordinate(index).coordinate_type()
+                    })
+            })
+            .collect()
     }
 
-    /// Returns the axis names for the image.
+    /// Returns the axis names for the image, in public pixel order.
     fn axis_names(&self) -> Vec<String> {
-        let mut names = Vec::with_capacity(self.ndim());
-        for i in 0..self.coordinates().n_coordinates() {
-            names.extend(self.coordinates().coordinate(i).axis_names());
-        }
-        while names.len() < self.ndim() {
-            names.push(format!("Axis{}", names.len()));
-        }
-        names
+        let coordinates = self.coordinates();
+        (0..self.ndim())
+            .map(|axis| {
+                coordinates
+                    .pixel_axis(axis)
+                    .and_then(|(index, local)| {
+                        coordinates
+                            .coordinate(index)
+                            .axis_names()
+                            .into_iter()
+                            .nth(local)
+                    })
+                    .unwrap_or_else(|| format!("Axis{axis}"))
+            })
+            .collect()
     }
 
-    /// Finds the first axis belonging to a given coordinate type.
+    /// Finds the first public pixel axis belonging to a given coordinate type.
     fn find_axis(&self, coord_type: CoordinateType) -> Option<usize> {
-        let mut offset = 0;
-        for i in 0..self.coordinates().n_coordinates() {
-            let coord = self.coordinates().coordinate(i);
-            if coord.coordinate_type() == coord_type {
-                return Some(offset);
-            }
-            offset += coord.n_pixel_axes();
-        }
-        None
+        let coordinates = self.coordinates();
+        (0..coordinates.n_pixel_axes()).find(|&axis| {
+            coordinates.pixel_axis(axis).is_some_and(|(index, _)| {
+                coordinates.coordinate(index).coordinate_type() == coord_type
+            })
+        })
     }
 
     /// Finds an axis by case-insensitive name prefix.

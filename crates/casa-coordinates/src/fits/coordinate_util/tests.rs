@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::*;
+use crate::CoordinateType;
 use crate::fits::header::FitsHeader;
 
 /// Helper: build a typical 4-axis coordinate system (RA+Dec+Freq+Stokes).

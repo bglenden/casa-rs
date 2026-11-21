@@ -42,10 +42,6 @@ fn raised(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
-fn coordinates(system: &CoordinateSystem) -> impl Iterator<Item = &CoordinateModel> {
-    (0..system.n_coordinates()).map(|index| system.coordinate(index))
-}
-
 fn declared_value(value: f64, unit: Option<&str>) -> PyResult<f64> {
     if let Some(unit) = unit {
         let angle = Quantity::new(value, "rad").map_err(raised)?;
@@ -123,25 +119,31 @@ fn apply_location(
         .to_pixel(&world)
         .and_then(|pixels| coordinates.to_world(&pixels))
         .map_err(raised)?;
-    let units =
-        (0..coordinates.n_coordinates()).flat_map(|index| match coordinates.coordinate(index) {
-            CoordinateModel::Direction(direction) => direction
-                .visible_world_units()
-                .into_iter()
-                .map(Some)
-                .collect(),
-            model => vec![None; model.n_world_axes()],
-        });
     let mut updated = state.editable_record()?;
-    for (axis, ((pixel, value), unit)) in pixels.into_iter().zip(canonical).zip(units).enumerate() {
+    for (axis, pixel) in pixels.into_iter().enumerate() {
         if !(use_all || mask[axis])
             || coordinates.pixel_axis_type(axis) == Some(CoordinateType::Stokes)
         {
             continue;
         }
-        let value = declared_value(value, unit.as_deref())?;
         state.edit_record_axis(&mut updated, axis, TabularEdit::ReferencePixel(pixel))?;
-        state.edit_record_axis(&mut updated, axis, TabularEdit::ReferenceValue(value))?;
+        if let Some(world_axis) = coordinates.pixel_axis_to_world(axis) {
+            let (index, local) = coordinates
+                .world_axis(world_axis)
+                .expect("mapped world axis");
+            let unit = match coordinates.coordinate(index) {
+                CoordinateModel::Direction(direction) => {
+                    Some(direction.world_units()[local].as_str())
+                }
+                _ => None,
+            };
+            let value = declared_value(canonical[world_axis], unit)?;
+            state.edit_record_world_axis(
+                &mut updated,
+                world_axis,
+                TabularEdit::ReferenceValue(value),
+            )?;
+        }
     }
     state.apply_edited_record(updated)?;
     Ok(true)
@@ -176,42 +178,40 @@ fn apply_edit(
     } else {
         edit
     };
-    let defaults = coordinates(&input_coordinates.coordinates)
-        .flat_map(|coordinate| fallback.native(coordinate))
-        .collect();
-    let mut values = value
-        .values_with_defaults(state, selected.zip(one_coordinate.as_ref()), defaults)?
-        .into_iter();
+    let defaults = match fallback {
+        WorldEdit::Reference => input_coordinates.coordinates.reference_value(),
+        WorldEdit::Increment => input_coordinates.coordinates.increment(),
+    };
+    let values =
+        value.values_with_defaults(state, selected.zip(one_coordinate.as_ref()), defaults)?;
     let mut updated = state.editable_record()?;
-    for (index, placement) in CoordinateSystem::record_coordinates(&state.record)
-        .map_err(raised)?
-        .into_iter()
-        .enumerate()
-        .filter(|(index, _)| selected.is_none_or(|selected| selected == *index))
+    let coordinates = &state.coordinates;
+    for index in (0..coordinates.n_coordinates())
+        .filter(|&index| selected.is_none_or(|selected| selected == index))
     {
-        let model = state.coordinates.coordinate(index);
-        let angle_units = match model {
-            CoordinateModel::Direction(direction) => direction.visible_world_units(),
-            _ => Vec::new(),
-        };
-        let old_values = edit.declared(model);
-        for (local, axis) in placement.pixel_axes.into_iter().flatten().enumerate() {
-            let value = values
-                .next()
-                .ok_or_else(|| raised("World and pixel axes do not align"))?;
-            let value = declared_value(value, angle_units.get(local).map(String::as_str))?;
-            if old_values.get(local) == Some(&value) {
+        let model = coordinates.coordinate(index);
+        let old = edit.declared(model);
+        for (local, mapped) in coordinates.world_axes(index).into_iter().enumerate() {
+            let Some(axis) = mapped else {
+                continue;
+            };
+            let value = values[if selected.is_some() { local } else { axis }];
+            let unit = match model {
+                CoordinateModel::Direction(direction) => {
+                    Some(direction.world_units()[local].as_str())
+                }
+                _ => None,
+            };
+            let value = declared_value(value, unit)?;
+            if old[local] == value {
                 continue;
             }
             let parameter = match edit {
                 WorldEdit::Reference => TabularEdit::ReferenceValue(value),
                 WorldEdit::Increment => TabularEdit::Increment(value),
             };
-            state.edit_record_axis(&mut updated, axis, parameter)?;
+            state.edit_record_world_axis(&mut updated, axis, parameter)?;
         }
-    }
-    if values.next().is_some() {
-        return Err(raised("World and pixel axes do not align"));
     }
     state.apply_edited_record(updated)?;
     Ok(true)

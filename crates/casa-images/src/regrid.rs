@@ -136,16 +136,13 @@ pub struct Regridded<T> {
     pub scale: f64,
 }
 
-/// The direction coordinate of `coordinates`: its index and first pixel axis.
-fn direction_of(coordinates: &CoordinateSystem) -> Option<(usize, usize)> {
+/// The direction coordinate's index and its longitude and latitude pixel axes.
+fn direction_of(coordinates: &CoordinateSystem) -> Option<(usize, [usize; 2])> {
     let index = coordinates.find_coordinate(CoordinateType::Direction)?;
-    if coordinates.coordinate(index).n_pixel_axes() != 2 {
-        return None;
+    match coordinates.pixel_axes(index).as_slice() {
+        [Some(x), Some(y)] => Some((index, [*x, *y])),
+        _ => None,
     }
-    let first = (0..index)
-        .map(|k| coordinates.coordinate(k).n_pixel_axes())
-        .sum();
-    Some((index, first))
 }
 
 fn direction(coordinates: &CoordinateSystem, index: usize) -> &DirectionCoordinate {
@@ -192,11 +189,11 @@ fn same_axes(a: &CoordinateModel, b: &CoordinateModel, shape: &[usize]) -> bool 
     })
 }
 
-/// A direction coordinate and its first pixel axis.
-type DirectionAxes<'a> = (&'a DirectionCoordinate, usize);
+/// A direction coordinate and its two public pixel axes.
+type DirectionAxes<'a> = (&'a DirectionCoordinate, [usize; 2]);
 
 /// How an image is regridded onto a template: the two direction coordinates
-/// and their first pixel axes, the spectral pass when the spectral axes
+/// and their public pixel axes, the spectral pass when the spectral axes
 /// differ, and the output's coordinate system.
 struct AxesPlan<'a> {
     input: DirectionAxes<'a>,
@@ -230,33 +227,54 @@ fn plan_axes<'a>(
     else {
         return Err(refuse("both images need a direction coordinate".into()));
     };
-    if in_index != out_index {
+    if !in_axis.iter().all(|axis| out_axis.contains(axis)) {
         return Err(refuse(
-            "the direction coordinates are in different places".into(),
+            "the direction coordinates occupy different pixel axes".into(),
         ));
     }
     let mut coordinates = template.coordinates.clone();
     let mut template_coordinates = true;
     let mut spectral = None;
-    let mut first = 0;
     for k in 0..input.n_coordinates() {
-        let ours = input.coordinate(k);
-        let theirs = template.coordinates.coordinate(k);
-        let axes = first..first + ours.n_pixel_axes();
-        first = axes.end;
         if k == in_index {
             continue;
         }
-        let in_shape = &input_shape[axes.clone()];
-        let out_shape = &template.shape[axes.clone()];
-        let degenerate = in_shape.iter().chain(out_shape).all(|n| *n == 1);
+        let ours = input.coordinate(k);
+        let axes = input.pixel_axes(k);
+        let Some(first) = axes.iter().flatten().next().copied() else {
+            return Err(refuse(
+                "a non-direction coordinate has no pixel axes".into(),
+            ));
+        };
+        let Some((target, _)) = template.coordinates.pixel_axis(first) else {
+            return Err(refuse(
+                "a non-direction coordinate is missing from the template".into(),
+            ));
+        };
+        let theirs = template.coordinates.coordinate(target);
+        if axes != template.coordinates.pixel_axes(target) || axes.iter().any(Option::is_none) {
+            return Err(refuse(
+                "the non-direction coordinates occupy different or incomplete pixel axes".into(),
+            ));
+        }
+        let in_shape: Vec<_> = axes
+            .iter()
+            .flatten()
+            .map(|&axis| input_shape[axis])
+            .collect();
+        let out_shape: Vec<_> = axes
+            .iter()
+            .flatten()
+            .map(|&axis| template.shape[axis])
+            .collect();
+        let degenerate = in_shape.iter().chain(&out_shape).all(|n| *n == 1);
         if degenerate && ours.coordinate_type() == theirs.coordinate_type() {
             // Not regridded: the output keeps the input's coordinate.
-            if !same_axes(ours, theirs, in_shape) {
-                coordinates.replace_coordinate(k, ours.clone());
+            if !same_axes(ours, theirs, &in_shape) {
+                coordinates.replace_coordinate(target, ours.clone());
                 template_coordinates = false;
             }
-        } else if in_shape != out_shape || !same_axes(ours, theirs, in_shape) {
+        } else if in_shape != out_shape || !same_axes(ours, theirs, &in_shape) {
             if !along_frequency {
                 return Err(refuse(format!(
                     "the {} axes differ between the input and the template; casa-rs regrids the \
@@ -265,12 +283,8 @@ fn plan_axes<'a>(
                 )));
             }
             spectral = Some(
-                spectral::SpectralPlan::new(
-                    (ours, in_shape[0]),
-                    (theirs, out_shape[0]),
-                    axes.start,
-                )
-                .map_err(refuse)?,
+                spectral::SpectralPlan::new((ours, in_shape[0]), (theirs, out_shape[0]), first)
+                    .map_err(refuse)?,
             );
         }
     }
@@ -543,12 +557,13 @@ where
     let plan = plan_axes(along_frequency, input.coordinates(), &input_shape, template)?;
     let ((input_direction, in_axis), (output_direction, out_axis)) = (plan.input, plan.output);
     let scale = jy_per_pixel_scale(input.units(), input_direction, output_direction);
-    let in_plane = [input_shape[in_axis], input_shape[in_axis + 1]];
-    let out_plane = [template.shape[out_axis], template.shape[out_axis + 1]];
+    let in_plane = in_axis.map(|axis| input_shape[axis]);
+    let out_plane = out_axis.map(|axis| template.shape[axis]);
     // ImageRegrid::regrid skips interpolation when shape and coordinates
     // agree. Sampling an identical masked grid erodes valid edge pixels
     // unnecessarily, which also changes feather's Fourier coefficients.
     if !along_frequency
+        && in_axis == out_axis
         && input_shape == template.shape
         && plan.spectral.is_none()
         && same_axes(
@@ -612,7 +627,7 @@ where
 }
 
 struct DirectionSampling<'a> {
-    axes: [usize; 2],
+    axes: [[usize; 2]; 2],
     shape: [usize; 2],
     positions: &'a [Option<[f64; 2]>],
     method: RegridMethod,
@@ -638,9 +653,11 @@ where
         scale,
     } = sampling;
     let input_shape = data.shape();
-    let in_plane = [input_shape[in_axis], input_shape[in_axis + 1]];
+    let in_plane = in_axis.map(|axis| input_shape[axis]);
     let mut direction_shape = input_shape.to_vec();
-    direction_shape[out_axis..out_axis + 2].copy_from_slice(&out_plane);
+    for (axis, length) in out_axis.into_iter().zip(out_plane) {
+        direction_shape[axis] = length;
+    }
     let mut out_data = ArrayD::<T>::from_elem(IxDyn(&direction_shape).f(), T::default_value());
     let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&direction_shape).f(), false);
     let mut plane = vec![0.0f64; in_plane[0] * in_plane[1]];
@@ -726,38 +743,36 @@ fn clip_pointing_grid(
 }
 
 /// The direction planes of an array with its direction axes at
-/// `axis, axis + 1`, numbered by the other axes (the first fastest), read and
+/// in coordinate order, numbered by the other axes (the first fastest), read and
 /// written first axis fastest. A Fortran-ordered array with the direction
 /// axes first, as images are, holds each plane contiguously.
 struct PlaneIndex<'s> {
     shape: &'s [usize],
-    axis: usize,
+    axes: [usize; 2],
     others: Vec<usize>,
     count: usize,
 }
 
 impl<'s> PlaneIndex<'s> {
-    fn new(shape: &'s [usize], axis: usize) -> Self {
-        let others: Vec<usize> = (0..shape.len())
-            .filter(|a| *a != axis && *a != axis + 1)
-            .collect();
+    fn new(shape: &'s [usize], axes: [usize; 2]) -> Self {
+        let others: Vec<usize> = (0..shape.len()).filter(|a| !axes.contains(a)).collect();
         let count = others.iter().map(|a| shape[*a]).product();
         Self {
             shape,
-            axis,
+            axes,
             others,
             count,
         }
     }
 
     fn plane_len(&self) -> usize {
-        self.shape[self.axis] * self.shape[self.axis + 1]
+        self.shape[self.axes[0]] * self.shape[self.axes[1]]
     }
 
     /// The plane's elements in memory order, when they are contiguous there.
     fn contiguous<'a, A>(&self, plane: usize, array: &'a ArrayD<A>) -> Option<&'a [A]> {
         let len = self.plane_len();
-        (self.axis == 0)
+        (self.axes == [0, 1])
             .then(|| array.as_slice_memory_order())
             .flatten()
             .filter(|_| array.t().is_standard_layout())
@@ -782,10 +797,10 @@ impl<'s> PlaneIndex<'s> {
             return;
         }
         let mut index = self.index(plane);
-        let nx = self.shape[self.axis];
+        let nx = self.shape[self.axes[0]];
         for (k, out) in into.iter_mut().enumerate() {
-            index[self.axis] = k % nx;
-            index[self.axis + 1] = k / nx;
+            index[self.axes[0]] = k % nx;
+            index[self.axes[1]] = k / nx;
             *out = f(&array[IxDyn(&index)]);
         }
     }
@@ -798,7 +813,7 @@ impl<'s> PlaneIndex<'s> {
         f: impl Fn(A) -> B,
     ) {
         let len = self.plane_len();
-        if self.axis == 0 && array.t().is_standard_layout() {
+        if self.axes == [0, 1] && array.t().is_standard_layout() {
             let all = array
                 .as_slice_memory_order_mut()
                 .expect("a standard-layout array is contiguous");
@@ -808,10 +823,10 @@ impl<'s> PlaneIndex<'s> {
             return;
         }
         let mut index = self.index(plane);
-        let nx = self.shape[self.axis];
+        let nx = self.shape[self.axes[0]];
         for (k, value) in values.iter().enumerate() {
-            index[self.axis] = k % nx;
-            index[self.axis + 1] = k / nx;
+            index[self.axes[0]] = k % nx;
+            index[self.axes[1]] = k / nx;
             array[IxDyn(&index)] = f(*value);
         }
     }
