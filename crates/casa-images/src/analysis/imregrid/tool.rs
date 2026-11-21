@@ -167,17 +167,18 @@ pub fn regrid_image<T: RegridPixel>(
             }),
         },
     )?;
-    let coordinate_record = if regridded.coordinates == *source.coordinates() {
+    let calculated_record = regridded.coordinates.to_record();
+    let coordinate_record = if calculated_record == source.coordinates().to_record() {
         if let Some(selection) = &selection {
             selection
                 .coordinate_record
                 .clone()
-                .unwrap_or_else(|| regridded.coordinates.to_record())
+                .unwrap_or(calculated_record)
         } else {
             native
         }
     } else {
-        regridded.coordinates.to_record()
+        calculated_record
     };
     let (image_info, beam_planes) = output_beams(input, &regridded, info, selection.as_ref())?;
     Ok(ImageRegridProduct {
