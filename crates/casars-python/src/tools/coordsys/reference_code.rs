@@ -4,7 +4,7 @@ use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, DirectionCoo
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{MPosition, MeasFrame};
-use casa_types::{ScalarValue, Value};
+use casa_types::{ArrayValue, ScalarValue, Value};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -113,14 +113,9 @@ fn direction_code(state: &mut CoordinateState, name: &str, adjust: bool) -> PyRe
     if model.direction_ref() == frame {
         return Ok(());
     }
-    let reference = if adjust {
-        adjust_direction(&model, frame, state.coordinates.obs_info())?
-    } else {
-        model
-            .reference_value()
-            .try_into()
-            .map_err(|_| raised("Invalid direction reference value"))?
-    };
+    let reference = adjust
+        .then(|| adjust_direction(&model, frame, state.coordinates.obs_info()))
+        .transpose()?;
     let changed = CoordinateModel::from(
         model
             .with_reassigned_reference_frame(frame, reference)
@@ -214,12 +209,13 @@ fn spectral_code(
                 Value::Scalar(ScalarValue::Float64(changed.reference_value()[0])),
             );
         } else {
-            record.upsert(
-                "crval",
-                Value::Array(casa_types::ArrayValue::from_f64_vec(
-                    changed.reference_value(),
-                )),
-            );
+            let value = ArrayValue::from_f64_vec(changed.reference_value()).into();
+            // Version 1 stored even a linear spectral WCS in `tabular`.
+            if let Some(Value::Record(table)) = record.get_mut("tabular") {
+                table.upsert("crval", value);
+            } else {
+                record.upsert("crval", value);
+            }
         }
     }
     replace_at(state, index as i32, changed, Value::Record(record))

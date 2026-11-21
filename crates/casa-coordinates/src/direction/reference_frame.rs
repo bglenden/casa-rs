@@ -2,13 +2,14 @@
 
 use casa_types::measures::direction::DirectionRef;
 
-use crate::CoordinateError;
+use crate::{CoordinateError, ProjectionType};
 
 use super::{DirectionCoordinate, theta_0_for_projection};
 
 impl DirectionCoordinate {
-    /// Rebuild the projection in a native frame with the supplied reference
-    /// angles in radians, retaining the pixel origin, increments and PC.
+    /// Rebuild the projection in a native frame. When supplied, `reference`
+    /// gives the adjusted reference angles in radians. Increments and PC
+    /// are retained.
     ///
     /// # Errors
     /// Returns an error if the PC matrix cannot be normalized or the
@@ -16,19 +17,8 @@ impl DirectionCoordinate {
     pub fn with_reassigned_reference_frame(
         &self,
         frame: DirectionRef,
-        reference: [f64; 2],
+        reference: Option<[f64; 2]>,
     ) -> Result<Self, CoordinateError> {
-        // WCSLIB retains LONPOLE when casacore changes only CRVAL. A
-        // projection whose fiducial point is on the native equator cannot
-        // cross the celestial equator with the old pole longitude.
-        if theta_0_for_projection(&self.projection) == 0.0
-            && (self.crval[1] >= 0.0) != (reference[1] >= 0.0)
-            && reference[1].abs() > 1.0e-12
-        {
-            return Err(CoordinateError::InvalidRecord(
-                "wcs wcsset_error: Ill-conditioned coordinate transformation parameter".into(),
-            ));
-        }
         let mut coordinate = Self::new(
             frame,
             self.projection.clone(),
@@ -36,8 +26,29 @@ impl DirectionCoordinate {
             self.cdelt,
             self.crpix,
         )
-        .with_normalized_pc_matrix(self.pc.clone())?
-        .with_reference_value(reference);
+        .with_normalized_pc_matrix(self.pc.clone())?;
+        if let Some(mut reference) = reference {
+            if self.projection.projection_type() == ProjectionType::SFL
+                && coordinate.cdelt[1] != 0.0
+            {
+                // Casacore puts an adjusted SFL reference on the equator and
+                // shifts the reference pixel to preserve its latitude offset.
+                coordinate.crpix[1] -= reference[1] / coordinate.cdelt[1];
+                reference[1] = 0.0;
+            }
+            // WCSLIB retains LONPOLE when casacore changes only CRVAL. A
+            // projection whose fiducial point is on the native equator cannot
+            // cross the celestial equator with the old pole longitude.
+            if theta_0_for_projection(&self.projection) == 0.0
+                && (self.crval[1] >= 0.0) != (reference[1] >= 0.0)
+                && reference[1].abs() > 1.0e-12
+            {
+                return Err(CoordinateError::InvalidRecord(
+                    "wcs wcsset_error: Ill-conditioned coordinate transformation parameter".into(),
+                ));
+            }
+            coordinate = coordinate.with_reference_value(reference);
+        }
         coordinate.latpole = coordinate.native_pole[1];
         Ok(coordinate)
     }

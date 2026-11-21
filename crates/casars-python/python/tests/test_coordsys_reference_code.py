@@ -32,7 +32,7 @@ def barycentric(reference):
 
 
 @pytest.mark.parametrize("adjust", [True, False])
-@pytest.mark.parametrize("projection", ["SIN", "CAR"])
+@pytest.mark.parametrize("projection", ["SIN", "CAR", "SFL"])
 def test_native_direction_reassignment_preserves_projection_and_pc(casa, adjust, projection):
     oracle = observed(casa)
     assert oracle.setprojection(projection)
@@ -106,6 +106,31 @@ def test_adjustment_uses_live_reference_pixel_for_sampled_frequencies(casa, chan
         after = cs.torecord()["spectral1"]["tabular"]["worldvalues"]
         assert cs.referencevalue(type="spectral")["numeric"][0] == pytest.approx(adjusted, rel=0, abs=0.002)
         np.testing.assert_allclose(after, before + (adjusted - reference), rtol=0, atol=0.002)
+
+
+@pytest.mark.parametrize(("unit", "hz_per_unit"), [("Hz", 1.), ("MHz", 1.e6)])
+def test_adjusted_legacy_linear_spectral_record_reopens_with_its_new_frequency(casa, unit, hz_per_unit):
+    source = observed(casa)
+    assert source.setunits([unit], "spectral")
+    record = source.torecord()
+    spectral = record["spectral1"]
+    linear = spectral.pop("wcs")
+    spectral.pop("version")
+    spectral.pop("unit")
+    spectral["tabular"] = {
+        **{field: np.array([linear[field]], dtype=float) for field in ("crpix", "crval", "cdelt")},
+        "pc": np.eye(1), "axes": ["Frequency"], "units": [unit],
+        "pixelvalues": np.array([], dtype=float), "worldvalues": np.array([], dtype=float),
+    }
+    for api in (tools, casa):
+        cs = api.coordsys()
+        assert cs.fromrecord(record)
+        assert cs.setreferencecode("BARY", "spectral")
+        restored = api.coordsys()
+        assert restored.fromrecord(cs.torecord())
+        assert restored.getconversiontype("spectral", False) == "BARY"
+        reference = restored.referencevalue(type="spectral")["numeric"][0] * hz_per_unit
+        assert reference == pytest.approx(barycentric(1.415e9), rel=0, abs=0.002)
 
 
 def test_adjustment_uses_native_values_when_a_display_frame_is_active(casa):
