@@ -5,6 +5,7 @@ use std::path::Path;
 
 use casa_components::{ComponentList, ComponentListError, ComponentShape, SkyComponent};
 use casa_ms::{MsResult, open_measures_runtime};
+use casa_tables::publication::rename_without_replacing;
 use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -13,7 +14,9 @@ use casa_types::quanta::casacore::stream_double;
 use super::invalid;
 use super::setjy::sampled_shape;
 use super::setjy::solar2010::Solar2010;
-use super::setjy::standards::{CatalogMatch, FluxCatalog, FluxScale, canonical_tool_standard};
+use super::setjy::standards::{
+    CatalogMatch, FluxCatalog, FluxScale, canonical_tool_standard, source_direction,
+};
 use crate::interpolation::Curve;
 
 /// The standalone imager's component table. The filename is also the tool's return value.
@@ -65,14 +68,16 @@ pub fn predict_calibrator_component(
     } else {
         let scale = FluxScale::named(standard)
             .ok_or_else(|| invalid(format!("{standard} is not a recognized flux density scale")))?;
-        let catalog = FluxCatalog::open(scale)?;
-        let Some(direction) = catalog.source_direction(object)? else {
+        let Some(direction) = source_direction(object) else {
             return Ok(None);
         };
-        let CatalogMatch::Spectrum(spectrum) =
-            catalog.spectrum(object, &direction, mjd, Curve::Nearest)?
-        else {
-            return Ok(None);
+        let catalog = FluxCatalog::open(scale)?;
+        let spectrum = match catalog.spectrum(object, &direction, mjd, Curve::Nearest)? {
+            CatalogMatch::Spectrum(spectrum) => spectrum,
+            CatalogMatch::UnknownSource => return Ok(None),
+            CatalogMatch::MissingCoefficients(source) => {
+                return Err(catalog.missing_coefficients(source));
+            }
         };
         let stokes = frequency_hz
             .iter()
@@ -80,6 +85,12 @@ pub fn predict_calibrator_component(
             .collect();
         sampled_shape(ComponentShape::point(direction), &frequencies, stokes)?.0
     };
+    // CASA rejects a tabulation without a nonzero frequency range.
+    if frequency_hz.len() > 1 && frequency_hz.iter().all(|&hz| hz == first) {
+        return Err(invalid(
+            "Interpolate1D::operator() data has repeated x values",
+        ));
+    }
     // The underlying tabulation stays in REST. CASA writes the first input
     // frequency as the component's LSRK reference value.
     component
@@ -110,9 +121,21 @@ impl PredictedComponent {
         if path.is_dir() {
             return Ok(());
         }
-        match ComponentList::from(vec![self.component.clone()]).write_table(&path) {
+        let parent = path.parent().unwrap_or(workspace);
+        let staging = tempfile::tempdir_in(parent).map_err(invalid)?;
+        let staged = staging.path().join("model.cl");
+        ComponentList::from(vec![self.component.clone()])
+            .write_table(&staged)
+            .map_err(invalid)?;
+        match rename_without_replacing(&staged, &path) {
             Ok(()) => Ok(()),
-            Err(ComponentListError::Exists(_)) if path.is_dir() => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if path.is_dir() {
+                    Ok(())
+                } else {
+                    Err(invalid(ComponentListError::Exists(path)))
+                }
+            }
             Err(error) => Err(invalid(error)),
         }
     }

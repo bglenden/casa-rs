@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Compare direct imager.predictcomp tables with installed CASA and both readers."""
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import chdir
 import inspect
 from pathlib import Path
+from shutil import copytree
 from tempfile import TemporaryDirectory
+from threading import Barrier
 
 from casars.tools import componentlist as native_components, imager as native_imager
-from casatools import componentlist as casa_components, imager as casa_imager, measures
+from casatools import (componentlist as casa_components, ctsys, imager as casa_imager,
+                       measures, table)
 import numpy as np
 
 
@@ -53,6 +57,11 @@ def files_and_records(root):
         ('moving legacy alias', ('Mars', 'Butler-JPL-Horizons 2012', '55000.25d', [90e9]), {}),
         ('moving TAI', ('Uranus', 'JPL', epoch.epoch('TAI', '55000.25d'), [40e9, 100e9]), {}),
         ('fixed positional', ('3C286', 'Perley-Taylor 99', '58000.25d', [1e9, 2e9]), {}),
+        ('numeric epoch vector', ('3C286', 'Baars', [58000., 58001.]), {}),
+        ('numeric boolean epoch', ('3C286', 'Baars', True), {}),
+        ('repeated valid samples', ('3C48', CATALOGUE, 58000., [1e9, 2e9, 1e9]), {}),
+        ('fortran frequency grid', ('3C286', CATALOGUE, 58000.,
+                                    np.array([[1e9, 2e9], [3e9, 4e9]])), {}),
         ('fixed SH12', ('3C196', 'Scaife-Heald 2012', '58000.25d', [110e6, 145e6]), {}),
     ]
     for index, (case, args, kwargs) in enumerate(cases):
@@ -96,10 +105,14 @@ def lifecycle_and_errors(root):
         compare(read_component(casa_components, again), original_record, 'existing table')
         assert tool.predictcomp('unrecognized', CATALOGUE, 58000., [1e9], prefix) == ''
         assert tool.predictcomp('3C123', 'Perley-Taylor 99', 58000., [1e9], prefix) == ''
+        assert tool.predictcomp('3C286', 'Baars', '', [1e9], prefix) == ''
         for args, message in (
             ((), 'is not a recognized flux density scale'),
             (('3C286', 'undefined'), 'is not a recognized flux density scale'),
             (('Mars', SOLAR, 58000.), 'Unknown is not a supported component type'),
+            (('3C405', 'Perley-Butler 2013', 58000., [1e9]), 'CYGNUS_A does not appears'),
+            (('3C405', 'Scaife-Heald 2012', 58000., [1e9]), 'CYGNUS_A does not appears'),
+            (('3C48', CATALOGUE, 58000., [1e9, 1e9]), 'data has repeated x values'),
         ):
             try:
                 tool.predictcomp(*args, pfx=prefix)
@@ -107,7 +120,42 @@ def lifecycle_and_errors(root):
                 assert message in str(error), error
             else:
                 raise AssertionError((writer, args, 'expected RuntimeError'))
+        assert len(list(root.glob(f'collision-{i}_*.cl'))) == 1
         tool.done()
+
+
+def reference_positions(root):
+    lookup = root / 'fluxcalibrator.data'
+    copytree(ctsys.resolve('nrao/VLA/standards/fluxcalibrator.data'), lookup)
+    positions = table()
+    assert positions.open(str(lookup), nomodify=False)
+    names = positions.getcol('Name').tolist()
+    for name in ('3C286', 'CYGNUS_A'):
+        positions.putcell('RA_J2000', names.index(name), 0.33)
+    positions.close()
+    with chdir(root):
+        for object_name in ('3C286', '3C405'):
+            reference = casa_imager().predictcomp(object_name, CATALOGUE, 58000., [1e9], 'ref_')
+            actual = native_imager().predictcomp(object_name, CATALOGUE, 58000., [1e9], 'native_')
+            compare(read_component(casa_components, actual),
+                    read_component(casa_components, reference), object_name)
+
+
+def concurrent_reuse(root):
+    prefix = str(root / 'concurrent_')
+    barrier = Barrier(12)
+
+    def predict(_):
+        tool = native_imager()
+        barrier.wait()
+        return tool.predictcomp('3C286', 'Baars', 58000., [1e9, 1.4e9], prefix)
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        paths = set(pool.map(predict, range(12)))
+    assert len(paths) == 1
+    path = paths.pop()
+    for reader in READERS:
+        read_component(reader, path)
 
 
 def main():
@@ -116,6 +164,8 @@ def main():
         root = Path(tmp)
         files_and_records(root)
         lifecycle_and_errors(root)
+        reference_positions(root)
+        concurrent_reuse(root)
 
 
 if __name__ == '__main__':

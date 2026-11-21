@@ -267,37 +267,13 @@ fn named(field: &str) -> Option<&'static str> {
     })
 }
 
-/// The reference position catalog used by FluxStandard::computeCL.
-pub(super) fn source_direction(
-    field: &str,
-    cone_table: Option<&Path>,
-) -> MsResult<Option<MDirection>> {
+/// The reference positions compiled into CASA's FluxStdSrcs.
+pub(crate) fn source_direction(field: &str) -> Option<MDirection> {
     use casa_types::measures::direction::DirectionRef;
 
-    let Some(name) = named(field) else {
-        return Ok(None);
-    };
-    if let Some(path) = cone_table {
-        let table = Table::open(TableOptions::new(path))?;
-        let names = table.column_accessor("Name")?;
-        let ra = table.column_accessor("RA_J2000")?;
-        let dec = table.column_accessor("Dec_J2000")?;
-        for row in 0..table.row_count() {
-            if matches!(names.scalar_cell(row)?, ScalarValue::String(value) if value == name)
-                && let (ScalarValue::Float64(ra), ScalarValue::Float64(dec)) =
-                    (ra.scalar_cell(row)?, dec.scalar_cell(row)?)
-            {
-                return Ok(Some(MDirection::from_angles(
-                    *ra,
-                    *dec,
-                    DirectionRef::J2000,
-                )));
-            }
-        }
-    }
-    // CASA includes the original calibrator coordinates even when its
-    // optional position matching table is unavailable.
-    let [ra, dec] = match name {
+    // fluxcalibrator.data is used for positional source identification.
+    // The component still uses the calibrated source's fixed J2000 position.
+    let [ra, dec] = match named(field)? {
         "3C286" => [3.539257626070549, 0.5324850225220917],
         "3C48" => [0.4262457643630985, 0.5787463318245085],
         "3C147" => [1.4948817765383597, 0.8700805690768509],
@@ -307,7 +283,19 @@ pub(super) fn source_direction(
         "3C196" => [2.1537362969610023, 0.8415541320803659],
         "3C123" => [1.2089586878736391, 0.5178480078663621],
         "3C380" => [4.84123669, 0.85078092],
-        _ => return Ok(None),
+        "0133-3629" => [0.40998511349868466, -0.636928821694464],
+        "FORNAX_A" => [0.8844302540951193, -0.649405598740554],
+        "J0444-2809" => [1.2419253902826484, -0.49157683196101404],
+        "PICTOR_A" => [1.3955160370653494, -0.7989916117952379],
+        "TAURUS_A" => [1.4596748494230258, 0.3842250233666105],
+        "HYDRA_A" => [2.4351465533014114, -0.21110704143990625],
+        "VIRGO_A" => [-3.0070987886171765, 0.2162659001873615],
+        "HERCULES_A" => [-1.871273156204919, 0.08713711430959646],
+        "3C353" => [-1.7432823443920011, -0.017099960309150668],
+        "CYGNUS_A" => [-1.0494987241821205, 0.7109409485219165],
+        "3C444" => [-0.46063951349110815, -0.2971727999325764],
+        "CASSIOPEIA_A" => [-0.15969762655748126, 1.0265153995604648],
+        _ => return None,
     };
-    Ok(Some(MDirection::from_angles(ra, dec, DirectionRef::J2000)))
+    Some(MDirection::from_angles(ra, dec, DirectionRef::J2000))
 }

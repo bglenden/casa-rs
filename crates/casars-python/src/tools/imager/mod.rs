@@ -600,9 +600,19 @@ impl PyImager {
         use casa_calibration::predict_calibrator_component;
         use casa_types::measures::{EpochRef, MEpoch};
 
-        let epoch = crate::convert::measures::epoch(&epoch)?
-            .unwrap_or_else(|| MEpoch::from_mjd(0., EpochRef::UTC));
+        let epoch = match epoch {
+            Variant::Numbers(values) | Variant::Array { values, .. } => Some(MEpoch::from_mjd(
+                values.first().copied().unwrap_or_default(),
+                EpochRef::UTC,
+            )),
+            Variant::Bool(flag) => Some(MEpoch::from_mjd(f64::from(flag), EpochRef::UTC)),
+            _ => crate::convert::measures::epoch(&epoch)?,
+        };
+        let Some(epoch) = epoch else {
+            return Ok(String::new());
+        };
         let frequencies = match freqs {
+            Some(Variant::Array { values, .. }) => values,
             Some(freqs) => flux::coefficients(freqs, "freqs")?,
             None => vec![1e11],
         };
