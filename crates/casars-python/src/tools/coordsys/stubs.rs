@@ -113,16 +113,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (originshft = None, newshape = None), text_signature = "($self, originshft=[], newshape=[])")]
-    fn subimage(
-        &self,
-        originshft: Option<&Bound<'_, PyAny>>,
-        newshape: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("subimage")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (doppler = None, list = None), text_signature = "($self, doppler='RADIO', list=True)")]
     fn summary(
         &self,

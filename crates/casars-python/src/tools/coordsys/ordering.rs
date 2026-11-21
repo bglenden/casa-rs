@@ -39,7 +39,11 @@ fn integer(value: &Bound<'_, PyAny>) -> PyResult<i32> {
     })
 }
 
-fn ordering(value: &Bound<'_, PyAny>, method: &str) -> PyResult<Vec<i32>> {
+pub(super) fn integer_vector(
+    value: &Bound<'_, PyAny>,
+    method: &str,
+    argument: &str,
+) -> PyResult<Vec<i32>> {
     if value.is_none() {
         return Ok(Vec::new());
     }
@@ -49,7 +53,9 @@ fn ordering(value: &Bound<'_, PyAny>, method: &str) -> PyResult<Vec<i32>> {
         )));
     }
     if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytes>() {
-        return Err(PyTypeError::new_err("argument _order must not be a string"));
+        return Err(PyTypeError::new_err(format!(
+            "argument _{argument} must not be a string"
+        )));
     }
     if let Ok(list) = value.cast::<PyList>()
         && list
@@ -161,13 +167,13 @@ fn reorder(state: &mut CoordinateState, order: Vec<i32>) -> PyResult<bool> {
 impl PyCoordsys {
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn transpose(&self, py: Python<'_>, order: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let order = ordering(order, "transpose")?;
+        let order = integer_vector(order, "transpose", "order")?;
         py.detach(|| transpose(&mut self.state(), order))
     }
 
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn reorder(&self, py: Python<'_>, order: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let order = ordering(order, "reorder")?;
+        let order = integer_vector(order, "reorder", "order")?;
         py.detach(|| reorder(&mut self.state(), order))
     }
 }

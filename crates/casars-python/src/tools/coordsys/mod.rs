@@ -17,6 +17,7 @@ mod reference;
 mod replace;
 mod rest_frequency;
 mod stubs;
+mod subimage;
 pub(crate) mod surface;
 mod tabular;
 mod transform_many;
