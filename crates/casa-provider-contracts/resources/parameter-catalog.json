@@ -17826,6 +17826,44 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "polfromgain.paoffset",
+      "semantic_revision": 1,
+      "casa_name": "paoffset",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Manual feed position-angle offset (degrees)",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "polfromgain.minpacov",
+      "semantic_revision": 1,
+      "casa_name": "minpacov",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Minimum parallactic-angle coverage (degrees)",
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

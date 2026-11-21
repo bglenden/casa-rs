@@ -33,6 +33,7 @@
     "plotbandpass",
     "plotms",
     "plotweather",
+    "polfromgain",
     "predictcomp",
     "rerefant",
     "setjy",
