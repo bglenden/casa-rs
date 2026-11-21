@@ -6,7 +6,7 @@ use ndarray::{IxDyn, ShapeBuilder};
 
 use crate::analysis::axes::StridedSection;
 use crate::analysis::imsubimage::SubimageRegion;
-use crate::analysis::imsubimage::coords::subset_beam_section;
+use crate::analysis::imsubimage::coords::beam_section_indices;
 use crate::analysis::imsubimage::read_window::PixelSections;
 use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInfo, ImageInterface, ImpvRequest, TempImage};
@@ -22,6 +22,8 @@ pub struct ImagePvProduct {
     pub image: TempImage<f32>,
     /// Native axis maps for both temporary attachments and on-disk products.
     pub coordinate_record: RecordValue,
+    /// Channel and polarization indices for retaining the original beam records.
+    pub beam_planes: [Vec<usize>; 2],
 }
 
 /// Create a position-velocity image from an attached Float image.
@@ -65,14 +67,20 @@ pub fn generate_image_pv(
     )?;
     let mut info = image.image_info()?;
     let packed = selection.packed_shape();
-    info.beam_set = subset_beam_section(
-        &ImageInfo::from_record(beam_record)?.beam_set,
+    let beams = ImageInfo::from_record(beam_record)?.beam_set;
+    let beam_planes = beam_section_indices(
+        &beams,
         image.coordinates(),
         image.ndim(),
         &selection.start,
         &packed,
         selection.stride.as_deref(),
-    )?;
+    );
+    info.beam_set = if beams.is_multi() {
+        beams.subset(&beam_planes[0], &beam_planes[1])?
+    } else {
+        beams
+    };
     let mut misc = image.misc_info();
     misc.upsert("secondary_coordinates", Value::Record(secondary));
     let mut offsets = strip.input_offsets()?;
@@ -187,6 +195,7 @@ pub fn generate_image_pv(
     Ok(ImagePvProduct {
         image: result,
         coordinate_record,
+        beam_planes,
     })
 }
 

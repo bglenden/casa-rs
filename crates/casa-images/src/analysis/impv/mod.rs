@@ -274,7 +274,7 @@ fn output_coordinates<T: ImagePixel>(
     let mut selected_stokes = selection.selected_stokes.clone();
     if selected_stokes.is_none()
         && let Some(axis) = image.find_axis(CoordinateType::Stokes)
-        && selection.shape[axis] != image.shape()[axis]
+        && selection.packed_shape()[axis] != image.shape()[axis]
     {
         let stokes = stokes_for_axis(image.coordinates(), axis)?;
         let start = selection.start[axis];

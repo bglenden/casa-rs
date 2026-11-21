@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_images::{
-    ImageInterface, ImpvRequest, PvAmount, PvPosition,
+    ImpvRequest, PvAmount, PvPosition,
     analysis::{
         SubimageRegion, ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input,
         generate_image_pv,
@@ -19,6 +19,7 @@ use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
+use super::beams::subset_beam_record;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised};
 use super::subimage::{RegionArgument, require_bool};
@@ -52,19 +53,13 @@ impl PyImageTool {
             return Py::new(py, Self::new());
         }
         region.validate_selectors("", chans, stokes)?;
-        let source_args = [start, end, center, length, pa, width].map(representation);
-        let [
-            start_text,
-            end_text,
-            center_text,
-            length_text,
-            pa_text,
-            width_text,
-        ] = source_args
-            .into_iter()
-            .collect::<PyResult<Vec<_>>>()?
-            .try_into()
-            .expect("six PV arguments");
+        let [start_text, end_text, center_text, length_text, pa_text] =
+            [start, end, center, length, pa].map(representation);
+        let width_text = if width.is_some() {
+            representation(width)?
+        } else {
+            "1".into()
+        };
         let start = position(start, "start")?;
         let end = position(end, "end")?;
         let center = position(center, "center")?;
@@ -106,6 +101,11 @@ impl PyImageTool {
             region.history(),
             python_bool(stretch),
             python_bool(wantreturn),
+            start_text = start_text?,
+            end_text = end_text?,
+            center_text = center_text?,
+            length_text = length_text?,
+            pa_text = pa_text?,
         );
         let region = region.selection();
         let output = py.detach(|| {
@@ -160,12 +160,29 @@ fn build(
                 ensure_artifacts_do_not_overlap(&request.outfile, region).map_err(raised)?;
             }
         }
+        let view = input.beam_view();
         let mut result = storage.with_float_view(|image| {
             let mut beams = image.image_info().map_err(raised)?.to_record();
-            input.beam_view().apply_to(&mut beams);
+            view.apply_to(&mut beams);
             generate_image_pv(image, handle.coordinate_record(), &beams, request, region)
                 .map_err(raised)
         })?;
+        let source_beams = view.beam_set().map_err(raised)?;
+        let mut info = result.image.image_info().map_err(raised)?.to_record();
+        if source_beams.is_multi() {
+            let [channels, polarizations] = &result.beam_planes;
+            subset_beam_record(
+                &mut info,
+                Some(view.record()),
+                &source_beams,
+                channels,
+                polarizations,
+            )
+            .map_err(raised)?;
+        } else {
+            view.apply_to(&mut info);
+        }
+        result.image.set_image_info_record(info).map_err(raised)?;
         let entries = match storage {
             Storage::Paged(image) => {
                 image_history_rows(image.name().expect("persistent image")).map_err(raised)?
@@ -191,7 +208,7 @@ fn build(
         let record = result.coordinate_record;
         let output = if let Some(path) = stage {
             let mut image = result.image.save_as(path).map_err(raised)?;
-            image.set_coords_record_keyword(record);
+            image.set_coordinate_record(record).map_err(raised)?;
             image.save().map_err(raised)?;
             Storage::Paged(Box::new(image))
         } else {

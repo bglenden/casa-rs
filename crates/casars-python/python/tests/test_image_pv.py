@@ -147,6 +147,40 @@ def test_pv_strided_channel_region_retains_sampled_wcs(casa):
     _compare(results[1], results[0])
 
 
+def test_pv_strided_polarizations_and_per_plane_beam_units(casa, tmp_path):
+    data = _ramp()
+    region = casa.regionmanager().box([0, 0, 0, 0], [23, 25, 1, 4], [1, 1, 2, 2])
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            for channel in range(5):
+                for polarization in range(2):
+                    assert source.setrestoringbeam(
+                        major=f"{1. + channel + .15*polarization}arcmin", minor="15arcsec",
+                        pa="10deg", channel=channel, polarization=polarization,
+                    )
+            path = str(tmp_path / f"{api.__name__}-beams.im")
+            product = source.pv(path, [4, 7], [16, 7], region=region)
+            product.done()
+            for reader in (casa, tools):
+                product = reader.image()
+                assert product.open(path)
+                coords = product.coordsys()
+                try:
+                    assert coords.stokes() == ["I"]
+                    np.testing.assert_array_equal(product.getchunk(), data[4:17, 7, :1, ::2])
+                    for channel, major in enumerate((1., 3., 5.)):
+                        beam = product.restoringbeam(channel=channel, polarization=0)
+                        assert beam["major"] == {"unit": "arcmin", "value": major}
+                        assert beam["minor"] == {"unit": "arcsec", "value": 15.}
+                finally:
+                    coords.done()
+                    product.done()
+        finally:
+            source.done()
+
+
 def test_pv_returns_a_detached_tool_when_requested_and_preserves_existing_output(casa, tmp_path):
     for api in (casa, tools):
         source = api.image()
