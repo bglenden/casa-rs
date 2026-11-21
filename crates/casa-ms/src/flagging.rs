@@ -74,7 +74,7 @@ pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{
     save_next_casa_flag_backup, save_next_flag_backup, save_next_partition_flag_backup,
 };
-pub use version_storage::{restore_flag_version, save_flag_version};
+pub use version_storage::{restore_flag_version, save_disk_flag_version, save_flag_version};
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";

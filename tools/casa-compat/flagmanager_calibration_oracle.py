@@ -7,6 +7,9 @@ from contextlib import chdir
 import os
 from pathlib import Path
 import shutil
+import signal
+import subprocess
+import sys
 
 import casatasks as casa
 import numpy as np
@@ -14,6 +17,33 @@ import numpy as np
 from calibration_smoothcal_oracle import opened
 from flagmanager_rename_oracle import versions
 from record_casa_returns import make_cal_ms
+
+
+LOCKED_WRITER = """
+import sys
+from casacore.tables import table
+
+with table(sys.argv[1], readonly=False, ack=False, lockoptions='user') as storage:
+    storage.lock(write=True)
+    flags = storage.getcol('FLAG')
+    flags[:len(flags) // 2, ...] = True
+    storage.putcol('FLAG', flags)
+    storage.flush()
+    print('locked', flush=True)
+    assert sys.stdin.readline().strip() == 'finish'
+    flags[...] = True
+    storage.putcol('FLAG', flags)
+    storage.flush()
+    storage.unlock()
+"""
+
+NATIVE_SAVE = """
+import sys
+from casars.tasks import flagmanager
+
+print('saving', flush=True)
+flagmanager(sys.argv[1], 'save', versionname=sys.argv[2])
+"""
 
 
 def original_columns(path):
@@ -91,6 +121,55 @@ def exercise(path, writer, peer):
     preserved(path, before)
 
 
+def locked_snapshot(path):
+    sidecar = Path(f"{path}.flagversions")
+    with subprocess.Popen([sys.executable, "-c", LOCKED_WRITER, str(path)], text=True,
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE) as writer:
+        assert writer.stdout.readline().strip() == "locked"
+        with subprocess.Popen([sys.executable, "-c", NATIVE_SAVE, str(path), "locked"],
+                              text=True, stdout=subprocess.PIPE) as saver:
+            assert saver.stdout.readline().strip() == "saving"
+            try:
+                saver.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                pass
+            finally:
+                writer.stdin.write("finish\n")
+                writer.stdin.flush()
+            assert saver.returncode is None, saver.returncode
+            assert writer.wait(timeout=15) == 0
+            assert saver.wait(timeout=30) == 0
+    with opened(path) as table:
+        expected = table.getcol("FLAG")
+    assert np.all(expected)
+    assert_flags(sidecar / "flags.locked", expected, version=True)
+
+
+def staged_retry(path, native):
+    sidecar = Path(f"{path}.flagversions")
+    expected = set_flags(path, 0)
+    versions(native, path)
+    limit = """
+import resource
+import signal
+signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+resource.setrlimit(resource.RLIMIT_FSIZE, (384, 384))
+"""
+    failed = subprocess.run([sys.executable, "-c", limit + NATIVE_SAVE, str(path), "retry"],
+                            capture_output=True, text=True, timeout=30)
+    assert failed.returncode != 0, failed.stderr
+    assert ("save flag version" in failed.stderr
+            or f"ended by signal {signal.SIGXFSZ.value}" in failed.stderr), failed.stderr
+    if "ended by signal" in failed.stderr:
+        [interrupted] = sidecar.glob(".flag-version-*/flags")
+        assert any(file.stat().st_size > 0 for file in interrupted.iterdir())
+    assert not (sidecar / "flags.retry").exists()
+    assert (sidecar / "FLAG_VERSION_LIST").read_bytes() == b""
+    assert native(str(path), "save", versionname="retry") is None
+    assert versions(native, path) == {0: {"name": "retry", "comment": ""}}
+    assert_flags(sidecar / "flags.retry", expected, version=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -112,8 +191,14 @@ def main():
                 path = Path(f"{label}-{name}.cal")
                 shutil.copytree(f"{name}.cal", path)
                 exercise(path.resolve(), writer, reader)
+        for name in ("locked", "staged"):
+            path = root / f"{name}.cal"
+            shutil.copytree("bandpass.cal", path)
+        locked_snapshot(root / "locked.cal")
+        staged_retry(root / "staged.cal", native)
     print("Four calibration version workflows, 24 merge restores and four renamed restores. "
-          "Both directions read FLAG-only versions and preserved all other calibration columns.")
+          "Both directions read FLAG-only versions and preserved all other calibration columns. "
+          "A live CASA writer and a failed staged first save verified lock consistency and retry.")
 
 
 if __name__ == "__main__":
