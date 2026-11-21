@@ -32,7 +32,9 @@ fn coordinate_index(placement: &RecordCoordinate) -> usize {
 pub(super) fn numbered_coordinates(
     state: &CoordinateState,
 ) -> PyResult<Vec<(usize, &CoordinateModel, RecordCoordinate)>> {
-    let placements = CoordinateSystem::record_coordinates(&state.record)
+    let placements = state
+        .coordinates
+        .coordinates_in_record(&state.record)
         .map_err(|error| raised(error.to_string()))?;
     let mut numbered = placements
         .into_iter()
@@ -50,8 +52,36 @@ pub(super) fn numbered_coordinates(
 }
 
 fn axis_names(coordinates: &CoordinateSystem) -> Vec<String> {
-    (0..coordinates.n_coordinates())
-        .flat_map(|index| coordinates.coordinate(index).axis_names())
+    axis_values(coordinates, true, CoordinateModel::axis_names)
+}
+
+pub(super) fn axis_values<T>(
+    system: &CoordinateSystem,
+    world: bool,
+    local_values: impl Fn(&CoordinateModel) -> Vec<T>,
+) -> Vec<T> {
+    let rank = if world {
+        system.n_world_axes()
+    } else {
+        system.n_pixel_axes()
+    };
+    let mut values: Vec<Option<T>> = (0..rank).map(|_| None).collect();
+    for index in 0..system.n_coordinates() {
+        let axes = if world {
+            system.coordinate_world_axes(index)
+        } else {
+            system.coordinate_pixel_axes(index)
+        };
+        let axes = axes.expect("existing coordinate");
+        for (axis, value) in axes.into_iter().zip(local_values(system.coordinate(index))) {
+            if let Some(axis) = axis {
+                values[axis] = Some(value);
+            }
+        }
+    }
+    values
+        .into_iter()
+        .map(|value| value.expect("values cover public coordinate axes"))
         .collect()
 }
 
@@ -88,9 +118,21 @@ impl PyCoordsys {
             } else {
                 state.coordinates.n_world_axes()
             };
-            // The native reader currently accepts matching visible maps.
-            ints((0..count as i64).collect())
-        });
+            let mut axes = vec![-1; count];
+            for (_, _, placement) in numbered_coordinates(&state)? {
+                let (source, target) = if toworld {
+                    (placement.pixel_axes, placement.world_axes)
+                } else {
+                    (placement.world_axes, placement.pixel_axes)
+                };
+                for (source, target) in source.into_iter().zip(target) {
+                    if let (Some(source), Some(target)) = (source, target) {
+                        axes[source] = target as i64;
+                    }
+                }
+            }
+            Ok::<_, PyErr>(ints(axes))
+        })?;
         value.into_python(py)
     }
 
@@ -98,17 +140,14 @@ impl PyCoordsys {
     fn axiscoordinatetypes(&self, py: Python<'_>, world: bool) -> Vec<String> {
         py.detach(|| {
             let state = self.state();
-            (0..state.coordinates.n_coordinates())
-                .flat_map(|index| {
-                    let coordinate = state.coordinates.coordinate(index);
-                    let count = if world {
-                        coordinate.n_world_axes()
-                    } else {
-                        coordinate.n_pixel_axes()
-                    };
-                    std::iter::repeat_n(coordinate.coordinate_type().to_string(), count)
-                })
-                .collect()
+            axis_values(&state.coordinates, world, |coordinate| {
+                let count = if world {
+                    coordinate.n_world_axes()
+                } else {
+                    coordinate.n_pixel_axes()
+                };
+                vec![coordinate.coordinate_type().to_string(); count]
+            })
         })
     }
 
@@ -160,9 +199,12 @@ impl PyCoordsys {
             numbered_coordinates(&state)?
                 .into_iter()
                 .find_map(|(index, _, placement)| {
-                    placement
-                        .pixel_axes
-                        .iter()
+                    let axes = if world {
+                        placement.world_axes
+                    } else {
+                        placement.pixel_axes
+                    };
+                    axes.iter()
                         .position(|entry| *entry == Some(axis as usize))
                         .map(|local| (index, local))
                 })
@@ -230,17 +272,21 @@ impl PyCoordsys {
                 .nth(which.max(0) as usize)
                 .map(|(_, _, placement)| placement);
             let found = placement.is_some();
-            let axes = placement.map_or_else(Vec::new, |placement| {
-                placement
-                    .pixel_axes
-                    .into_iter()
-                    .map(|axis| axis.map_or(-1, |axis| axis as i64))
-                    .collect()
-            });
+            let convert = |axes: Vec<Option<usize>>| {
+                ints(
+                    axes.into_iter()
+                        .map(|axis| axis.map_or(-1, |axis| axis as i64))
+                        .collect(),
+                )
+            };
+            let (pixel, world) = placement.map_or_else(
+                || (ints(Vec::new()), ints(Vec::new())),
+                |placement| (convert(placement.pixel_axes), convert(placement.world_axes)),
+            );
             Ok::<_, PyErr>(CasaValue::record([
-                ("pixel", ints(axes.clone())),
+                ("pixel", pixel),
                 ("return", CasaValue::Bool(found)),
-                ("world", ints(axes)),
+                ("world", world),
             ]))
         })?;
         value.into_python(py)
@@ -257,7 +303,15 @@ impl PyCoordsys {
             Ok(numbered_coordinates(&state)?
                 .into_iter()
                 .find(|(_, coordinate, _)| coordinate.coordinate_type() == kind)
-                .and_then(|(_, coordinate, _)| coordinate.axis_names().into_iter().next())
+                .and_then(|(_, coordinate, placement)| {
+                    let names = coordinate.axis_names();
+                    let first = if names.len() == placement.world_axes.len() {
+                        placement.world_axes.iter().position(Option::is_some)?
+                    } else {
+                        0
+                    };
+                    names.into_iter().nth(first)
+                })
                 .into_iter()
                 .collect())
         })
@@ -320,15 +374,23 @@ impl PyCoordsys {
         py.detach(|| {
             let state = self.state();
             if r#type.is_empty() {
-                return Ok((0..state.coordinates.n_coordinates())
-                    .flat_map(|index| units(state.coordinates.coordinate(index)))
-                    .collect());
+                return Ok(axis_values(&state.coordinates, true, units));
             }
             let kind = coordinate_type(r#type);
             Ok(numbered_coordinates(&state)?
                 .into_iter()
                 .find(|(_, coordinate, _)| coordinate.coordinate_type() == kind)
-                .map_or_else(Vec::new, |(_, coordinate, _)| units(coordinate)))
+                .map_or_else(Vec::new, |(_, coordinate, placement)| {
+                    let values = units(coordinate);
+                    if values.len() != placement.world_axes.len() {
+                        return values;
+                    }
+                    values
+                        .into_iter()
+                        .zip(placement.world_axes)
+                        .filter_map(|(value, axis)| axis.map(|_| value))
+                        .collect()
+                }))
         })
     }
 }
