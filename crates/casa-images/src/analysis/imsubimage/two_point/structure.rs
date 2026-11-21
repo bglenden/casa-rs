@@ -31,14 +31,8 @@ impl StructureFunction {
     ) -> Result<(Array2<T>, Array2<bool>), ImageError> {
         let valid = |pixel| mask.as_ref().is_none_or(|bits| bits[pixel]);
         match self {
-            Self::Fourier(plan)
-                if data
-                    .indexed_iter()
-                    .all(|(pixel, value)| !valid(pixel) || value.as_complex64().is_finite()) =>
-            {
-                plan.measure(data, valid)
-            }
-            _ => Ok(pairwise(data, valid)),
+            Self::Fourier(plan) => plan.measure(data, valid),
+            Self::Pairwise => Ok(pairwise(data, valid)),
         }
     }
 }
@@ -118,39 +112,64 @@ impl FourierPlanes {
         for values in [&mut self.signal, &mut self.squares, &mut self.mask] {
             values.fill(Complex64::default());
         }
-        let center = data
-            .indexed_iter()
-            .find(|(pixel, _)| valid(*pixel))
-            .map_or_else(Complex64::default, |(_, value)| value.as_complex64());
+        let (center, typical) = typical_scale(data, &valid);
         let [width, height] = self.shape;
+        let mut nonfinite = Vec::new();
+        let mut energy = 0.0;
+        let mut nonzero = 0;
         for ((x, y), value) in data.indexed_iter() {
             if valid((x, y)) {
-                let index = x * height + y;
                 let value = value.as_complex64() - center;
+                if !value.is_finite() {
+                    nonfinite.push((x, y));
+                    continue;
+                }
+                let index = x * height + y;
                 self.signal[index] = value;
                 self.squares[index] = value * value;
                 self.mask[index].re = 1.0;
+                energy += value.norm_sqr();
+                nonzero += usize::from(value != Complex64::default());
             }
         }
         self.correlate()?;
         let [nx, ny] = self.output;
         let origin = [(nx - 1) / 2, (ny - 1) / 2];
         let mut result = Array2::from_elem((nx, ny), T::from_complex64(Complex64::default()));
-        let mut valid = Array2::from_elem((nx, ny), false);
+        let mut result_mask = Array2::from_elem((nx, ny), false);
         let fft_area = (width * height) as f64;
+        // Compare transform roundoff with ordinary sample contrast so a
+        // bright feature cannot hide a quiet lag it does not contribute to.
+        let error = energy * f64::EPSILON * (fft_area.log2() + 1.0) * 8.0;
+        let contrast = if typical > 0.0 {
+            typical
+        } else {
+            energy / nonzero.max(1) as f64
+        };
+        let repair = error > f64::from(f32::EPSILON) * contrast;
         for ((x, y), item) in result.indexed_iter_mut() {
             let x_index = (width + x - origin[0]) % width;
             let y_index = (height + y - origin[1]) % height;
             let index = x_index * height + y_index;
             let count = (self.mask[index].re / fft_area).round();
             if count > 0.0 {
-                valid[(x, y)] = true;
+                result_mask[(x, y)] = true;
                 if [x, y] != origin {
-                    *item = T::from_fft_estimate(self.squares[index] / (count * fft_area));
+                    let total = self.squares[index] / fft_area;
+                    *item = if repair && total.norm() <= error * 1000.0 {
+                        let lag = [
+                            x as isize - origin[0] as isize,
+                            y as isize - origin[1] as isize,
+                        ];
+                        T::from_complex64(exact_lag(data, &valid, lag) / count)
+                    } else {
+                        T::from_fft_estimate(total / count)
+                    };
                 }
             }
         }
-        Ok((result, valid))
+        include_nonfinite(data, valid, &nonfinite, &mut result, &mut result_mask);
+        Ok((result, result_mask))
     }
 
     fn correlate(&mut self) -> Result<(), ImageError> {
@@ -181,6 +200,91 @@ impl FourierPlanes {
             self.transform.transform(values, true).map_err(fft_error)?;
         }
         Ok(())
+    }
+}
+
+fn typical_scale<T: StructurePixel>(
+    data: ArrayView2<'_, T>,
+    valid: &impl Fn((usize, usize)) -> bool,
+) -> (Complex64, f64) {
+    let stride = data.len().div_ceil(31).max(1);
+    let mut sample = data
+        .indexed_iter()
+        .filter_map(|(index, value)| {
+            let value = value.as_complex64();
+            (valid(index) && value.is_finite()).then_some(value)
+        })
+        .step_by(stride)
+        .collect::<Vec<_>>();
+    if sample.is_empty() {
+        return (Complex64::default(), 0.0);
+    }
+    let median = sample.len() / 2;
+    sample.sort_unstable_by(|a, b| a.norm_sqr().total_cmp(&b.norm_sqr()));
+    let center = sample[median];
+    sample.sort_unstable_by(|a, b| {
+        (*a - center)
+            .norm_sqr()
+            .total_cmp(&(*b - center).norm_sqr())
+    });
+    (center, (sample[median] - center).norm_sqr())
+}
+
+fn exact_lag<T: StructurePixel>(
+    data: ArrayView2<'_, T>,
+    valid: &impl Fn((usize, usize)) -> bool,
+    [dx, dy]: [isize; 2],
+) -> Complex64 {
+    let (nx, ny) = data.dim();
+    let x = (-dx).max(0) as usize..nx - dx.max(0) as usize;
+    let y = (-dy).max(0) as usize..ny - dy.max(0) as usize;
+    let mut sum = Complex64::default();
+    for i in x {
+        for j in y.clone() {
+            let first = (i, j);
+            let second = (i.wrapping_add_signed(dx), j.wrapping_add_signed(dy));
+            if valid(first) && valid(second) {
+                let a = data[first].as_complex64();
+                let b = data[second].as_complex64();
+                if a.is_finite() && b.is_finite() {
+                    let difference = a - b;
+                    sum += difference * difference;
+                }
+            }
+        }
+    }
+    sum
+}
+
+fn include_nonfinite<T: StructurePixel>(
+    data: ArrayView2<'_, T>,
+    valid: impl Fn((usize, usize)) -> bool,
+    nonfinite: &[(usize, usize)],
+    output: &mut Array2<T>,
+    mask: &mut Array2<bool>,
+) {
+    let (nx, ny) = data.dim();
+    for &(x, y) in nonfinite {
+        let first = (x, y);
+        let a = data[first].as_complex64();
+        for (second @ (p, q), value) in data.indexed_iter() {
+            let b = value.as_complex64();
+            if !valid(second) || (!b.is_finite() && second < first) {
+                continue;
+            }
+            let difference = a - b;
+            let power = difference * difference;
+            // An exceptional pair makes each reported component nonfinite.
+            // A positive pair count does not alter that value or its sign.
+            let lag = (nx - 1 + p - x, ny - 1 + q - y);
+            output[lag] = T::from_complex64(output[lag].as_complex64() + power);
+            mask[lag] = true;
+            if first != second {
+                let opposite = (nx - 1 + x - p, ny - 1 + y - q);
+                output[opposite] = T::from_complex64(output[opposite].as_complex64() + power);
+                mask[opposite] = true;
+            }
+        }
     }
 }
 

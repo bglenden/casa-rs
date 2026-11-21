@@ -9321,3 +9321,13 @@ For a `[5, 7]` Float image, CASA 6.7.6.14 can fault when a selected
 axis is negative, such as `axes=[-2, 1]`. It can also abort on
 `axes=[0, 0]` for a linear image. Casa-rs validates that the axes are
 in range and strictly increasing before creating or replacing an output.
+
+### `image.twopointcorrelation` can ignore a selected mask or region
+
+On an unmasked `[11, 11]` Float image whose value is its first pixel
+index, an external mask selecting values below 5 leaves 189 lags with
+at least one valid pair. CASA 6.7.6.14 reports all 441 lags as valid. Its
+correlation loop only checks the combined mask when the selected image
+has a physical pixel mask. Adding an all-true pixel mask makes CASA
+honor the selection. The same behavior occurs for a polygon region.
+Casa-rs applies the combined validity to both endpoints of every pair.

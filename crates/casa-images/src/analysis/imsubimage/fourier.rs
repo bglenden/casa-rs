@@ -174,22 +174,7 @@ impl<'a> ImageFourier<'a> {
                 ));
             }
         }
-        let mut coordinate_record = coordinates.to_record();
-        if let Some(native) = &section.coordinate_record {
-            let originals = section.coordinates.coordinates_in_record(native)?;
-            let transformed = coordinates.coordinates_in_record(&coordinate_record)?;
-            for (source, destination) in originals.iter().zip(transformed) {
-                if !source
-                    .pixel_axes
-                    .iter()
-                    .flatten()
-                    .any(|axis| axes.contains(axis))
-                    && let Some(value) = native.get(&source.field)
-                {
-                    coordinate_record.upsert(destination.field, value.clone());
-                }
-            }
-        }
+        let coordinate_record = section.transformed_coordinate_record(&coordinates, &axes)?;
         Ok(Self {
             section,
             axes,

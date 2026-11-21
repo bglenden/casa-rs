@@ -159,7 +159,7 @@ impl<'a> ImageTwoPoint<'a> {
                 .with_increment(increments)
                 .with_reference_pixel(pivot.to_vec());
             coordinates.replace_coordinate(index, linear);
-            coordinates.to_record()
+            source.transformed_coordinate_record(&coordinates, &sky_axes)?
         } else {
             source
                 .coordinate_record

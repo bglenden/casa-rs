@@ -294,6 +294,30 @@ impl SubimagePlan {
         &self.image_info
     }
 
+    fn transformed_coordinate_record(
+        &self,
+        coordinates: &casa_coordinates::CoordinateSystem,
+        axes: &[usize],
+    ) -> Result<RecordValue, ImageError> {
+        let mut output = coordinates.to_record();
+        if let Some(native) = &self.coordinate_record {
+            let originals = self.coordinates.coordinates_in_record(native)?;
+            let transformed = coordinates.coordinates_in_record(&output)?;
+            for (source, destination) in originals.iter().zip(transformed) {
+                if !source
+                    .pixel_axes
+                    .iter()
+                    .flatten()
+                    .any(|axis| axes.contains(axis))
+                    && let Some(value) = native.get(&source.field)
+                {
+                    output.upsert(destination.field, value.clone());
+                }
+            }
+        }
+        Ok(output)
+    }
+
     /// Whether the resolved selection consists of multiple regions or
     /// nonconsecutive spectral or polarization intervals.
     pub fn has_multiple_regions(&self) -> bool {

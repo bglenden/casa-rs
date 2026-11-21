@@ -282,3 +282,103 @@ def test_two_point_fourier_estimate_preserves_small_differences_on_a_large_offse
     finally:
         output.done()
         source.done()
+
+
+@pytest.mark.parametrize("bright", [1e7, 1e8])
+def test_two_point_preserves_quiet_lags_beside_a_bright_outlier(casa, tmp_path, bright):
+    data = np.indices((9, 9))[0].astype(np.float32)
+    data[0, 0] = bright
+    for api in (casa, tools):
+        source, output = api.image(), api.image()
+        path = str(tmp_path/f"{api.__name__}-bright.im")
+        try:
+            assert source.fromarray(pixels=data)
+            assert source.twopointcorrelation(path)
+            assert output.open(path)
+            assert output.getchunk(getmask=True)[7, 16]
+            # At lag (-1, 8), none of the eight pairs contains [0, 0].
+            assert output.getchunk()[7, 16] == pytest.approx(1., abs=1e-7)
+        finally:
+            output.done()
+            source.done()
+
+
+def test_two_point_nonfinite_sample_affects_only_its_own_pairs(casa, tmp_path):
+    data = _ramp((64,64))
+    data[32, 32] = np.nan
+    x, y = np.ogrid[-63:64, -63:64]
+    positive = ((32+x >= 0) & (32+x < 64) & (32+y >= 0) & (32+y < 64))
+    negative = ((32-x >= 0) & (32-x < 64) & (32-y >= 0) & (32-y < 64))
+    contaminated = positive | negative
+    expected = _expected_ramp(data.shape, 1)
+    for api in (casa, tools):
+        source, output = api.image(), api.image()
+        path = str(tmp_path/f"{api.__name__}-nan.im")
+        try:
+            assert source.fromarray(pixels=data)
+            assert source.twopointcorrelation(path)
+            assert output.open(path)
+            actual = output.getchunk()
+            assert output.getchunk(getmask=True).all()
+            np.testing.assert_array_equal(np.isnan(actual), contaminated)
+            np.testing.assert_allclose(actual[~contaminated], expected[~contaminated], rtol=5e-7, atol=2e-8)
+        finally:
+            output.done()
+            source.done()
+
+
+def test_two_point_preserves_the_untouched_native_spectral_record(casa, tmp_path):
+    path = str(tmp_path/"with-velocity-units.im")
+    image, table = casa.image(), casa.table()
+    pixels = _ramp((3,4))[..., None, None] + np.arange(3, dtype=np.float32)
+    try:
+        assert image.fromarray(path, pixels=pixels)
+        image.done()
+        assert table.open(path, nomodify=False)
+        record = table.getkeyword("coords")
+        field = next(field for field in record if field.startswith("spectral"))
+        record[field]["formatUnit"] = "GHz"
+        record[field]["velUnit"] = "m/s"
+        table.putkeyword("coords", record)
+        table.done()
+        for api in (casa, tools):
+            source = api.image()
+            output = str(tmp_path/f"{api.__name__}-velocity.im")
+            try:
+                assert source.open(path)
+                assert source.twopointcorrelation(output)
+            finally:
+                source.done()
+            assert table.open(output)
+            spectral = table.getkeyword("coords")[field]
+            assert spectral["formatUnit"] == "GHz"
+            assert spectral["velUnit"] == "m/s"
+            table.done()
+    finally:
+        table.done()
+        image.done()
+
+
+def test_two_point_applies_the_expression_without_an_inherited_pixel_mask(casa, tmp_path):
+    x, _ = np.ogrid[:11,:11]
+    data = np.broadcast_to(x, (11,11)).astype(np.float32)
+    valid = data < 5
+    expected, expected_mask = _all_pairs(data, valid)
+    assert expected_mask.sum() == 189
+    for api in (casa, tools):
+        source, output = api.image(), api.image()
+        input_path = str(tmp_path/f"{api.__name__}-input.im")
+        result_path = str(tmp_path/f"{api.__name__}-mask.im")
+        try:
+            assert source.fromarray(input_path, pixels=data)
+            assert source.twopointcorrelation(result_path, mask=f'"{input_path}" < 5')
+            assert output.open(result_path)
+            selected = output.getchunk(getmask=True)
+            if api is casa:
+                assert selected.all()
+            else:
+                np.testing.assert_array_equal(selected, expected_mask)
+                np.testing.assert_allclose(output.getchunk()[selected], expected[selected], atol=2e-8)
+        finally:
+            output.done()
+            source.done()
