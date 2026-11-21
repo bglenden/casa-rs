@@ -162,7 +162,7 @@ pub fn decompose_image(
             trc.extend(upper.into_iter().map(|i| i as i64));
             regions += 1;
             if options.fit {
-                let estimates = gaussian::peak_estimates(&pixels, island);
+                let estimates = gaussian::peak_estimates(&pixels, island, &reader, &plan)?;
                 params.extend(gaussian::fit(&pixels, island, estimates, &settings));
             }
         }
@@ -185,15 +185,17 @@ pub fn decompose_image(
                 &mut visited,
             );
             let mut estimates = Vec::with_capacity(components.len());
-            for component in components {
-                let (lower, upper) = pixels.bounds(&component);
+            for component in &components {
+                let (lower, upper) = pixels.bounds(component);
                 blc.extend(lower.into_iter().map(|i| i as i64));
                 trc.extend(upper.into_iter().map(|i| i as i64));
                 regions += 1;
-                estimates.push(gaussian::estimate(&pixels, &component));
+                estimates.push(gaussian::estimate(&pixels, component));
             }
             if options.fit {
-                params.extend(gaussian::fit(&pixels, &island, estimates, &settings));
+                let mut assigned: Vec<_> = components.into_iter().flatten().collect();
+                assigned.sort_unstable();
+                params.extend(gaussian::fit(&pixels, &assigned, estimates, &settings));
             } else {
                 params.extend(estimates);
             }

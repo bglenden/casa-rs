@@ -76,7 +76,7 @@ def test_decompose_fits_analytic_gaussians(casa, simple):
         source = api.image()
         assert source.fromarray(pixels=values, linear=True)
         try:
-            result = source.decompose(threshold=.7, simple=simple, fit=True)
+            result = source.decompose(threshold=.7, simple=simple, fit=True, maxrms=1e-4, maxretry=0)
             components = result["components"]
             np.testing.assert_allclose(components[:, :5], expected, rtol=2e-4, atol=2e-4)
             np.testing.assert_allclose(np.cos(2 * components[:, 5]), [-1., 1.], atol=2e-6)
@@ -110,7 +110,7 @@ def test_decompose_cube_moments_and_world_widths(casa, fit):
         source = api.image()
         assert source.fromarray(pixels=values, linear=True)
         try:
-            result = source.decompose(threshold=.7, fit=fit)
+            result = source.decompose(threshold=.7, fit=fit, maxrms=1e-4, maxretry=0)
             np.testing.assert_array_equal(result["blc"], [[3, 3, 2]])
             np.testing.assert_array_equal(result["trc"], [[12, 10, 8]])
             np.testing.assert_allclose(result["components"][0], expected, rtol=3e-4, atol=3e-4)
@@ -209,10 +209,118 @@ def test_decompose_reports_fitted_sky_centers_in_the_stored_units(casa):
         expected = coords.toworld([11.3, 13.1])["numeric"]
         coords.done()
         try:
-            result = source.decompose(threshold=.7, fit=True)["components"][0]
+            result = source.decompose(threshold=.7, fit=True, maxrms=1e-4, maxretry=0)["components"][0]
             assert result[0] == pytest.approx(6., rel=2e-4)
             np.testing.assert_allclose(result[1:3], expected, rtol=1e-6)
             assert result[3] == pytest.approx(2.47745776, abs=6e-5)
             assert result[4] == pytest.approx(np.sqrt(3 / 11), rel=2e-4)
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("simple", [False, True])
+def test_decompose_fits_a_tilted_gaussian_with_casa_position_angle(casa, simple):
+    x, y = np.indices((31, 33), dtype=float)
+    x -= 13.3
+    y -= 14.6
+    angle = .43
+    along = -np.sin(angle) * x + np.cos(angle) * y
+    across = np.cos(angle) * x + np.sin(angle) * y
+    values = (8 * np.exp(-4 * np.log(2) * ((along / 5.)**2 + (across / 3.)**2))).astype(np.float32)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, linear=True)
+        try:
+            row = source.decompose(threshold=.5, simple=simple, fit=True, maxrms=1e-5, maxretry=0)["components"][0]
+            np.testing.assert_allclose(row, [8., -1.7, -1.4, -10., .6, angle], rtol=3e-4, atol=3e-4)
+        finally:
+            source.done()
+
+
+def test_decompose_simple_width_uses_valid_wings_below_the_detection_threshold(casa):
+    values = np.zeros((13, 15), dtype=np.float32)
+    values[7, 7] = 8.
+    values[7, [6, 8]] = 4.
+    values[7, [5, 9]] = 1.
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, linear=True)
+        try:
+            result = source.decompose(threshold=6., simple=True, maxrms=1e-4, maxretry=0)
+            np.testing.assert_array_equal(result["blc"], [[7, 7]])
+            np.testing.assert_array_equal(result["trc"], [[8, 8]])
+            np.testing.assert_allclose(result["components"], [[8., 1., 0., 5/3 - 6, .45, 0.]], atol=5e-6)
+        finally:
+            source.done()
+
+
+def test_decompose_brightness_units_do_not_change_fitted_geometry():
+    x, y = np.indices((31, 33), dtype=float)
+    values = (7 * np.exp(-((x - 10.3)**2 / 10 + (y - 14.7)**2 / 5))).astype(np.float32)
+    source = tools.image()
+    try:
+        for scale in (1., 1e-6, 1e6):
+            assert source.fromarray(pixels=values * np.float32(scale), linear=True)
+            result = source.decompose(threshold=.7 * scale, simple=True, maxrms=1e-5 * scale, maxretry=0)
+            row = result["components"][0]
+            row[0] /= scale
+            np.testing.assert_allclose(row, [7., -4.7, -1.3, 2 * np.sqrt(10 * np.log(2)) - 15,
+                                             np.sqrt(.5), np.pi / 2], rtol=2e-4, atol=2e-4)
+    finally:
+        source.done()
+
+
+def test_decompose_extended_contour_stops_at_the_casa_search_radius(casa):
+    values = np.zeros((552, 5), dtype=np.float32)
+    values[1:551, 1:4] = 1.
+    values[5, 2], values[7, 2] = 7., 6.
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, linear=True)
+        try:
+            result = source.decompose(threshold=1., ncontour=2, fit=False)
+            np.testing.assert_array_equal(result["blc"], [[1, 1], [7, 1]])
+            np.testing.assert_array_equal(result["trc"], [[7, 4], [257, 4]])
+        finally:
+            source.done()
+
+
+def test_decompose_fits_crowded_islands_together(casa):
+    x, y = np.indices((211, 23), dtype=float)
+    index = np.arange(33, dtype=float)
+    center_x = 8.3 + 6 * index
+    center_x[-1] -= .6
+    center_y = 10.3 + .1 * (index % 3)
+    peaks = 7. + .25 * (index % 4)
+    fwhm_x = 4.1 + .25 * (index % 3)
+    fwhm_y = 2.8 + .1 * (index % 4)
+    values = sum(peak * np.exp(-4 * np.log(2) * (((x - cx) / wx)**2 + ((y - cy) / wy)**2))
+                 for peak, cx, cy, wx, wy in zip(peaks, center_x, center_y, fwhm_x, fwhm_y))
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values.astype(np.float32), linear=True)
+        try:
+            result = source.decompose(threshold=.3, simple=True, maxrms=1e-4, maxretry=0)
+            assert result["blc"].shape == (1, 2)
+            expected = np.column_stack((peaks, center_x - 105, center_y - 11, fwhm_x - 105, fwhm_y / fwhm_x))
+            np.testing.assert_allclose(result["components"][:, :5], expected, rtol=3e-4, atol=3e-4)
+            np.testing.assert_allclose(result["components"][:, 5], np.pi / 2, atol=3e-4)
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("simple", [False, True])
+def test_decompose_retains_starting_estimates_after_one_iteration(casa, simple):
+    values = np.zeros((13, 15), dtype=np.float32)
+    values[7, 7], values[8, 7], values[8, 8] = 9, 3, 1
+    expected = [9., 1., 0., -5.25, 4/3, 0.] if simple else [
+        9., 1.30769253, .07692289, -5., np.sqrt(3), .32175052,
+    ]
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, linear=True)
+        try:
+            result = source.decompose(threshold=.7, simple=simple, maxiter=1, maxretry=0)
+            np.testing.assert_allclose(result["components"][0], expected, rtol=5e-5, atol=5e-6)
         finally:
             source.done()

@@ -68,9 +68,9 @@ pub(super) fn deblend(
         }
 
         order.clear();
-        for (group, children) in merging {
-            if min_range > 1 {
-                for &child in &children {
+        if min_range > 1 {
+            for (group, children) in &merging {
+                for &child in children {
                     if seeds[child].level - level >= min_range {
                         continue;
                     }
@@ -82,7 +82,7 @@ pub(super) fn deblend(
                             distance(&seeds[child].position, &seeds[other].position)
                         });
                     let Some(closest) = closest else { break };
-                    for &point in &group {
+                    for &point in group {
                         if labels[point] == child {
                             labels[point] = closest;
                         }
@@ -90,23 +90,38 @@ pub(super) fn deblend(
                     seeds[child].live = false;
                 }
             }
+        }
 
-            // Use the assignments from the previous contour. Two equal
-            // nearest sources leave the pixel for the final seed-distance pass.
-            let earlier = group
+        if !merging.is_empty() {
+            let mut earlier = labels
                 .iter()
-                .copied()
-                .filter_map(|point| {
-                    let label = labels[point];
-                    (label < AMBIGUOUS).then(|| (label, pixels.position(island[point])))
+                .enumerate()
+                .filter(|&(_, label)| *label < AMBIGUOUS)
+                .map(|(point, &label)| LabeledPixel {
+                    position: position(pixels, island[point]),
+                    label,
+                    split_axis: 0,
                 })
                 .collect::<Vec<_>>();
-            for &point in &group {
-                if labels[point] == UNASSIGNED {
-                    labels[point] = nearest(&pixels.position(island[point]), &earlier);
+            partition(&mut earlier, pixels.rank());
+            for (group, children) in merging {
+                // Search the previous contour's map. Ties between components
+                // are resolved by seed distance after the final contour.
+                for point in group {
+                    if labels[point] == UNASSIGNED {
+                        let mut nearest = Nearest {
+                            key: (249, pixels.rank() + 1),
+                            first: UNASSIGNED,
+                            label: UNASSIGNED,
+                        };
+                        nearest.search(position(pixels, island[point]), &earlier);
+                        if nearest.label == AMBIGUOUS || children.contains(&nearest.label) {
+                            labels[point] = nearest.label;
+                        }
+                    }
                 }
+                order.extend(children.into_iter().filter(|&seed| seeds[seed].live));
             }
-            order.extend(children.into_iter().filter(|&seed| seeds[seed].live));
         }
 
         for (group, label) in existing {
@@ -137,7 +152,7 @@ pub(super) fn deblend(
     }
 
     for (point, label) in labels.iter_mut().enumerate() {
-        if *label >= AMBIGUOUS {
+        if *label == AMBIGUOUS {
             let pos = pixels.position(island[point]);
             if let Some(seed) = seeds
                 .iter()
@@ -163,27 +178,82 @@ pub(super) fn deblend(
         .collect()
 }
 
-fn nearest(position: &[usize], earlier: &[(usize, Vec<usize>)]) -> usize {
-    let mut best = (usize::MAX, usize::MAX);
-    let mut first = UNASSIGNED;
-    let mut result = UNASSIGNED;
-    for (label, other) in earlier {
-        let mut radius = 0;
-        let mut axes = 0;
-        for (&a, &b) in position.iter().zip(other) {
-            radius = radius.max(a.abs_diff(b));
-            axes += usize::from(a != b);
+fn position(pixels: &Pixels, point: usize) -> [usize; 3] {
+    let index = pixels.samples[point].index;
+    std::array::from_fn(|axis| {
+        if axis < pixels.rank() {
+            pixels.coordinate(index, axis)
+        } else {
+            0
         }
-        let candidate = (radius, axes);
-        if candidate < best {
-            best = candidate;
-            first = *label;
-            result = *label;
-        } else if candidate == best && first != *label {
-            result = AMBIGUOUS;
+    })
+}
+
+struct LabeledPixel {
+    position: [usize; 3],
+    label: usize,
+    split_axis: usize,
+}
+
+// Store a balanced spatial tree in place. Splitting on the widest axis also
+// prunes distant pixels on narrow strips and planar plateaus.
+fn partition(points: &mut [LabeledPixel], rank: usize) {
+    if points.len() < 2 {
+        return;
+    }
+    let mut lower = [usize::MAX; 3];
+    let mut upper = [0; 3];
+    for point in points.iter() {
+        for axis in 0..rank {
+            lower[axis] = lower[axis].min(point.position[axis]);
+            upper[axis] = upper[axis].max(point.position[axis]);
         }
     }
-    result
+    let axis = (0..rank)
+        .max_by_key(|&axis| upper[axis] - lower[axis])
+        .expect("spatial decomposition has at least two axes");
+    let (left, median, right) =
+        points.select_nth_unstable_by_key(points.len() / 2, |point| point.position[axis]);
+    median.split_axis = axis;
+    partition(left, rank);
+    partition(right, rank);
+}
+
+struct Nearest {
+    key: (usize, usize),
+    first: usize,
+    label: usize,
+}
+
+impl Nearest {
+    fn search(&mut self, position: [usize; 3], points: &[LabeledPixel]) {
+        let (left, rest) = points.split_at(points.len() / 2);
+        let Some((point, right)) = rest.split_first() else {
+            return;
+        };
+        let delta =
+            std::array::from_fn::<_, 3, _>(|axis| position[axis].abs_diff(point.position[axis]));
+        let radius = delta[0].max(delta[1]).max(delta[2]);
+        let axes = delta.into_iter().filter(|&distance| distance != 0).count();
+        let candidate = (radius, axes);
+        if candidate < self.key {
+            self.key = candidate;
+            self.first = point.label;
+            self.label = point.label;
+        } else if candidate == self.key && self.first != point.label {
+            self.label = AMBIGUOUS;
+        }
+        let axis = point.split_axis;
+        let (near, far) = if position[axis] < point.position[axis] {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        self.search(position, near);
+        if delta[axis] <= self.key.0 {
+            self.search(position, far);
+        }
+    }
 }
 
 fn distance(a: &[usize], b: &[usize]) -> u128 {

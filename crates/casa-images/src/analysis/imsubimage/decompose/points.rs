@@ -53,10 +53,6 @@ impl Pixels {
         })
     }
 
-    pub(super) fn axis_len(&self, axis: usize) -> usize {
-        self.shape[axis]
-    }
-
     pub(super) fn rank(&self) -> usize {
         self.shape.len()
     }
@@ -70,20 +66,6 @@ impl Pixels {
         (0..self.rank())
             .map(|axis| self.coordinate(index, axis))
             .collect()
-    }
-
-    pub(super) fn index_of(&self, at: &[usize]) -> Option<usize> {
-        if at.len() != self.shape.len() || at.iter().zip(&self.shape).any(|(&at, &len)| at >= len) {
-            return None;
-        }
-        let index = at
-            .iter()
-            .zip(&self.strides)
-            .map(|(at, stride)| at * stride)
-            .sum::<usize>();
-        self.samples
-            .binary_search_by_key(&index, |sample| sample.index)
-            .ok()
     }
 
     pub(super) fn neighbors<'a>(
@@ -125,11 +107,6 @@ impl Pixels {
             }
         }
         (start, stop)
-    }
-
-    pub(super) fn position_value(&self, at: &[usize]) -> f32 {
-        self.index_of(at)
-            .map_or(0., |point| self.samples[point].value)
     }
 }
 

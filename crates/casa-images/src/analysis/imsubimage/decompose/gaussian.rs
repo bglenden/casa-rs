@@ -5,6 +5,7 @@ use std::f64::consts::{LN_2, PI};
 use casa_numerics::solve_symmetric_positive_definite;
 
 use super::points::{Pixels, neighborhood};
+use super::{ImageError, PixelSections, SubimagePlan};
 
 pub(super) type Parameters = [f64; 9];
 
@@ -83,7 +84,12 @@ pub(super) fn estimate(pixels: &Pixels, points: &[usize]) -> Parameters {
     parameters
 }
 
-pub(super) fn peak_estimates(pixels: &Pixels, group: &[usize]) -> Vec<Parameters> {
+pub(super) fn peak_estimates(
+    pixels: &Pixels,
+    group: &[usize],
+    reader: &PixelSections<'_, f32>,
+    plan: &SubimagePlan,
+) -> Result<Vec<Parameters>, ImageError> {
     let rank = pixels.rank();
     let offsets = neighborhood(rank, 2);
     group
@@ -97,13 +103,10 @@ pub(super) fn peak_estimates(pixels: &Pixels, group: &[usize]) -> Vec<Parameters
         .map(|point| {
             let value = pixels.samples[point].value;
             let center = pixels.position(point);
-            let width: [f64; 3] = std::array::from_fn(|axis| {
-                if axis < rank {
-                    width_at_peak(pixels, &center, axis, value)
-                } else {
-                    1.
-                }
-            });
+            let mut width = [1.; 3];
+            for (axis, entry) in width.iter_mut().enumerate().take(rank) {
+                *entry = width_at_peak(reader, plan, &center, axis, value)?;
+            }
             let mut parameters: Parameters = [0.; 9];
             parameters[0] = f64::from(value);
             for axis in 0..rank {
@@ -115,44 +118,85 @@ pub(super) fn peak_estimates(pixels: &Pixels, group: &[usize]) -> Vec<Parameters
             } else {
                 parameters[4..7].copy_from_slice(&width);
             }
-            parameters
+            Ok(parameters)
         })
         .collect()
 }
 
-fn width_at_peak(pixels: &Pixels, center: &[usize], axis: usize, peak: f32) -> f64 {
+fn width_at_peak(
+    reader: &PixelSections<'_, f32>,
+    plan: &SubimagePlan,
+    center: &[usize],
+    axis: usize,
+    peak: f32,
+) -> Result<f64, ImageError> {
+    let extent = plan.shape[axis];
+    let source_axis = plan.kept_axes[axis];
+    let rank = plan.selection.start.len();
+    let unit = vec![1; rank];
+    let stride = plan.selection.stride.as_deref().unwrap_or(&unit);
+    let mut start = plan.selection.start.clone();
+    for (&axis, &index) in plan.kept_axes.iter().zip(center) {
+        start[axis] += index * stride[axis];
+    }
+    let mut shape = unit.clone();
     let threshold = peak * 0.25;
-    let side = |direction| {
-        let mut point = center.to_vec();
+    let mut side = |forward: bool| {
+        let limit = if forward {
+            extent - 1 - center[axis]
+        } else {
+            center[axis]
+        };
         let mut last = peak;
-        let mut count = 0usize;
-        while let Some(next) = point[axis]
-            .checked_add_signed(direction)
-            .filter(|&next| next < pixels.axis_len(axis))
-        {
-            count += 1;
-            point[axis] = next;
-            let value = pixels.position_value(&point);
-            if value < threshold {
-                return Some(count as f64 - f64::from((threshold - value) / (last - value)));
+        let block = (128 / stride[source_axis]).max(1);
+        for offset in (1..=limit).step_by(block) {
+            let length = (limit + 1 - offset).min(block);
+            let first = if forward {
+                center[axis] + offset
+            } else {
+                center[axis] + 1 - offset - length
+            };
+            shape[source_axis] = length;
+            start[source_axis] = plan.selection.start[source_axis] + first * stride[source_axis];
+            let (line, mask) = reader.read(&start, &shape, stride)?;
+            let values = line.as_slice_memory_order().expect("contiguous line");
+            let valid = mask
+                .as_ref()
+                .map(|m| m.as_slice_memory_order().expect("contiguous mask"));
+            for step in 0..length {
+                let index = if forward { step } else { length - 1 - step };
+                let value = if valid.is_none_or(|mask| mask[index]) {
+                    values[index]
+                } else {
+                    0.
+                };
+                let distance = (offset + step) as f32;
+                if value < threshold {
+                    return Ok::<_, ImageError>((
+                        Some(distance - (threshold - value) / (last - value)),
+                        value,
+                    ));
+                }
+                if value > last {
+                    return Ok((Some(distance), value));
+                }
+                last = value;
             }
-            if value > last {
-                return Some(count as f64);
-            }
-            last = value;
         }
-        None
+        Ok((None, last))
     };
-    let width = match (side(-1), side(1)) {
+    let (left, _) = side(false)?;
+    let (right, last) = side(true)?;
+    let width = match (left, right) {
         (Some(a), Some(b)) => (a + b) / 2.,
         (Some(a), None) | (None, Some(a)) => a,
-        (None, None) => pixels.axis_len(axis) as f64,
+        (None, None) => (extent - 1 - center[axis]) as f32 * (peak - threshold) / (peak - last),
     };
-    if width.is_finite() && width > 0. {
-        width
+    Ok(if width.is_finite() && width > 0. {
+        f64::from(width)
     } else {
-        1.
-    }
+        extent as f64
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -170,6 +214,13 @@ pub(super) fn fit(
     if estimates.is_empty() || points.is_empty() {
         return estimates;
     }
+    let scale = points
+        .iter()
+        .map(|&point| f64::from(pixels.samples[point].value))
+        .fold(0., f64::max);
+    if scale == 0. || !scale.is_finite() {
+        return estimates;
+    }
     let rank = pixels.rank();
     let sample = points
         .iter()
@@ -184,38 +235,18 @@ pub(super) fn fit(
             });
             Observation {
                 position,
-                value: f64::from(pixels.samples[point].value),
+                value: f64::from(pixels.samples[point].value) / scale,
             }
         })
         .collect::<Vec<_>>();
-    if estimates.len() <= 32 {
-        let mut solution = optimize(&sample, &estimates, rank, options);
-        if solution.is_empty() {
-            solution = estimates;
-        }
-        return solution;
+    for component in &mut estimates {
+        component[0] /= scale;
     }
-
-    // Fit a crowded island in bounded blocks. Subtract the frozen components
-    // before fitting each block against the active samples.
-    for first in (0..estimates.len()).step_by(32) {
-        let last = estimates.len().min(first + 32);
-        let residual = sample
-            .iter()
-            .copied()
-            .map(|mut row| {
-                for component in estimates[..first].iter().chain(&estimates[last..]) {
-                    row.value -= gaussian(component, rank, row.position);
-                }
-                row
-            })
-            .collect::<Vec<_>>();
-        let values = optimize(&residual, &estimates[first..last], rank, options);
-        if !values.is_empty() {
-            estimates[first..last].copy_from_slice(&values);
-        }
+    let mut solution = optimize(&sample, &estimates, rank, options, scale);
+    for component in &mut solution {
+        component[0] *= scale;
     }
-    estimates
+    solution
 }
 
 fn optimize(
@@ -223,6 +254,7 @@ fn optimize(
     seeds: &[Parameters],
     rank: usize,
     options: &FitOptions,
+    scale: f64,
 ) -> Vec<Parameters> {
     let count = rank * 3;
     let mut variables = (0..seeds.len())
@@ -246,6 +278,8 @@ fn optimize(
     };
     let mut best = seeds.to_vec();
     let mut best_cost = f64::INFINITY;
+    let fit_precision = f64::EPSILON * observations.len() as f64;
+    let criterion = options.criterion.powi(2);
     let retries = if options.retries < 0 {
         rank * seeds.len()
     } else {
@@ -262,42 +296,27 @@ fn optimize(
             }
         }
         let mut score = error(&model);
-        let mut converged = score <= options.criterion.powi(2).max(1e-16);
+        let mut converged = score <= fit_precision;
         let mut damping = 0.001;
         let mut candidate = model.clone();
-        let mut slope = vec![0.; variables.len()];
         for _ in 0..options.iterations {
             if converged {
                 break;
             }
-            let size = variables.len();
-            let mut gram = vec![0.; size * size];
-            let mut rhs = vec![0.; size];
-            for &row in observations {
-                let residual = row.value - evaluate(&model, row);
-                for (column, &(i, j)) in variables.iter().enumerate() {
+            let linearize = |row: Observation, slope: &mut [f64]| {
+                for (entry, &(i, j)) in slope.iter_mut().zip(&variables) {
                     let mut p = model[i];
                     let delta = p[j].abs().max(1.) * 1e-5;
                     p[j] += delta;
                     let plus = gaussian(&p, rank, row.position);
                     p[j] -= 2. * delta;
-                    slope[column] = (plus - gaussian(&p, rank, row.position)) / (2. * delta);
+                    *entry = (plus - gaussian(&p, rank, row.position)) / (2. * delta);
                 }
-                for i in 0..size {
-                    rhs[i] += slope[i] * residual;
-                    for j in i..size {
-                        gram[i * size + j] += slope[i] * slope[j];
-                    }
-                }
-            }
-            for i in 0..size {
-                gram[i * size + i] *= 1. + damping;
-                gram[i * size + i] += 1e-18;
-                for j in i + 1..size {
-                    gram[j * size + i] = gram[i * size + j];
-                }
-            }
-            let Some(step) = solve_symmetric_positive_definite(&gram, &rhs) else {
+            };
+            let residual = |row: Observation| row.value - evaluate(&model, row);
+            let Some(step) =
+                damped_step(observations, variables.len(), damping, linearize, residual)
+            else {
                 break;
             };
             candidate.copy_from_slice(&model);
@@ -315,12 +334,14 @@ fn optimize(
             let cost = error(&candidate);
             if cost < score {
                 model.copy_from_slice(&candidate);
-                converged = (score - cost) <= options.criterion.powi(2).max(1e-16) * score.max(1.);
+                converged = cost <= fit_precision || score - cost <= criterion * score;
                 score = cost;
                 damping *= 0.25;
                 if converged {
                     break;
                 }
+            } else if damping <= 0.001 && (score - cost).abs() <= criterion * score {
+                converged = true;
             } else {
                 damping *= 10.;
                 if damping > 1e12 {
@@ -332,7 +353,9 @@ fn optimize(
             best_cost = score;
             best = model;
         }
-        if (best_cost / observations.len() as f64).sqrt() <= options.maximum_rms.max(1e-6) {
+        if scale * (best_cost / observations.len() as f64).sqrt() <= options.maximum_rms
+            || best_cost <= fit_precision
+        {
             break;
         }
     }
@@ -365,13 +388,101 @@ fn optimize(
     best
 }
 
+fn damped_step(
+    observations: &[Observation],
+    size: usize,
+    damping: f64,
+    linearize: impl Fn(Observation, &mut [f64]),
+    residual: impl Fn(Observation) -> f64,
+) -> Option<Vec<f64>> {
+    const DENSE_LIMIT: usize = 512;
+    let mut rhs = vec![0.; size];
+    let mut slope = vec![0.; size];
+    let mut diagonal = vec![0.; size];
+    let mut gram = (size <= DENSE_LIMIT).then(|| vec![0.; size * size]);
+    for &row in observations {
+        linearize(row, &mut slope);
+        let residual = residual(row);
+        for (i, &entry) in slope.iter().enumerate() {
+            rhs[i] += entry * residual;
+            diagonal[i] += entry * entry;
+            if let Some(gram) = &mut gram {
+                for (output, &other) in gram[i * size + i + 1..(i + 1) * size]
+                    .iter_mut()
+                    .zip(&slope[i + 1..])
+                {
+                    *output += entry * other;
+                }
+            }
+        }
+    }
+    let regularization = diagonal
+        .iter()
+        .map(|&entry| entry * damping + 1e-18)
+        .collect::<Vec<_>>();
+    if let Some(mut gram) = gram {
+        for i in 0..size {
+            gram[i * size + i] = diagonal[i] + regularization[i];
+            for j in i + 1..size {
+                gram[j * size + i] = gram[i * size + j];
+            }
+        }
+        return solve_symmetric_positive_definite(&gram, &rhs);
+    }
+
+    // Apply the full JᵀJ across all components, streaming the Jacobian rows
+    // to keep solver storage linear for crowded islands.
+    let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
+    for (entry, extra) in diagonal.iter_mut().zip(&regularization) {
+        *entry += extra;
+    }
+    let mut direction = rhs
+        .iter()
+        .zip(&diagonal)
+        .map(|(r, d)| r / d)
+        .collect::<Vec<_>>();
+    let mut rho = dot(&rhs, &direction);
+    let tolerance = rho * 1e-12;
+    let mut solution = vec![0.; size];
+    let mut product = vec![0.; size];
+    for _ in 0..size.min(128) {
+        if rho <= tolerance {
+            break;
+        }
+        for ((out, &lambda), &step) in product.iter_mut().zip(&regularization).zip(&direction) {
+            *out = lambda * step;
+        }
+        for &row in observations {
+            linearize(row, &mut slope);
+            let projection = dot(&slope, &direction);
+            for (entry, derivative) in product.iter_mut().zip(&slope) {
+                *entry += projection * derivative;
+            }
+        }
+        let step = rho / dot(&direction, &product);
+        if !step.is_finite() || step <= 0. {
+            return None;
+        }
+        for i in 0..size {
+            solution[i] += step * direction[i];
+            rhs[i] -= step * product[i];
+        }
+        let next = rhs.iter().zip(&diagonal).map(|(r, d)| r * r / d).sum();
+        for i in 0..size {
+            direction[i] = rhs[i] / diagonal[i] + (next / rho) * direction[i];
+        }
+        rho = next;
+    }
+    Some(solution)
+}
+
 fn gaussian(p: &Parameters, rank: usize, position: [f64; 3]) -> f64 {
     let x = position[0] - p[1];
     let y = position[1] - p[2];
     let shape = if rank == 2 {
         let (sin, cos) = p[5].sin_cos();
-        let long = (sin * x + cos * y) / p[3];
-        let short = (cos * x - sin * y) / (p[3] * p[4]);
+        let long = (-sin * x + cos * y) / p[3];
+        let short = (cos * x + sin * y) / (p[3] * p[4]);
         long * long + short * short
     } else {
         let z = position[2] - p[3];
@@ -383,4 +494,37 @@ fn gaussian(p: &Parameters, rank: usize, position: [f64; 3]) -> f64 {
         first * first + second * second + third * third
     };
     p[0] * (-4. * LN_2 * shape).exp()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Observation, damped_step};
+
+    #[test]
+    fn large_fit_solves_the_coupled_damped_system() {
+        const SIZE: usize = 513;
+        let rows = (0..SIZE)
+            .map(|i| Observation {
+                position: [i as f64, 0., 0.],
+                value: 1. + (i as f64).sin(),
+            })
+            .collect::<Vec<_>>();
+        let damping = 0.01;
+        let linearize = |row: Observation, slope: &mut [f64]| {
+            let index = row.position[0] as usize;
+            slope.fill(0.);
+            slope[index] = 1.;
+            slope[(index + 1) % SIZE] = 0.25;
+        };
+        let result = damped_step(&rows, SIZE, damping, linearize, |row| row.value).unwrap();
+        let residual = (0..SIZE)
+            .map(|i| result[i] + 0.25 * result[(i + 1) % SIZE] - rows[i].value)
+            .collect::<Vec<_>>();
+        for i in 0..SIZE {
+            let error = residual[i]
+                + 0.25 * residual[(i + SIZE - 1) % SIZE]
+                + damping * (1. + 0.25_f64.powi(2)) * result[i];
+            assert!(error.abs() < 5e-6, "normal equation {i}: {error}");
+        }
+    }
 }
