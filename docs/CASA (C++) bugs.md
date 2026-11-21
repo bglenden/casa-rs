@@ -9161,3 +9161,17 @@ allocating or publishing an output.
 On an entirely masked Float direction image, default `image.maxfit`
 can dereference an absent maximum and terminate the CASA Python
 process. Casa-rs raises a Python error and preserves the image.
+
+### `image.pv` can reject a strip with reversed endpoints
+
+In a `[24, 26, 2, 5]` Float cube with the default sky coordinate,
+CASA 6.7.6.14 accepts `start=[4, 7], end=[16, 7]`. Interchanging the
+endpoints enters the 180-degree rotation path and raises a no-overlap
+error even though the strip lies entirely inside the image. Casa-rs
+samples the strip in the specified order, yielding the same values
+in reverse along the offset axis.
+
+With the same input axes transposed to `[Spectral, Dec, RA, Stokes]`,
+CASA raises a coordinate assertion at output creation. Casa-rs writes a
+readable result with axes `[Spectral, Offset, Stokes]` and the same
+sampled values projected into that order.

@@ -641,6 +641,8 @@ impl<T: ImagePixel> TempImage<T> {
             if expression.has_mask {
                 paged.set_default_mask("mask0")?;
             }
+        } else if self.is_paged() {
+            paged.copy_data(&self.lattice)?;
         } else {
             let data = self.get()?;
             paged.put_slice(&data, &vec![0; self.ndim()])?;
@@ -1244,6 +1246,27 @@ mod tests {
 
         // Verify original TempImage is still valid.
         assert_eq!(img.get_at(&[0, 0]).unwrap(), 2.5);
+    }
+
+    #[test]
+    fn save_as_materializes_a_paged_temporary_image_and_mask() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut img = TempImage::<f32>::new(
+            vec![5, 7],
+            cs(),
+            TempStoragePolicy::Paged {
+                scratch: ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
+        let values = ArrayD::from_shape_fn(IxDyn(&[5, 7]), |p| (p[0] + 10 * p[1]) as f32);
+        let valid = values.mapv(|value| value >= 13.);
+        img.put_slice(&values, &[0, 0]).unwrap();
+        img.make_mask("mymask", true, true).unwrap();
+        img.put_mask_slice("mymask", &valid, &[0, 0]).unwrap();
+        let paged = img.save_as(dir.path().join("materialized.im")).unwrap();
+        assert_eq!(paged.get().unwrap(), values);
+        assert_eq!(paged.get_mask().unwrap(), Some(valid));
     }
 
     #[test]

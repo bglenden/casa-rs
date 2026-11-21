@@ -263,3 +263,63 @@ def test_pv_reverses_the_offset_pixels_when_the_endpoints_are_reversed():
             result.done()
     finally:
         image.done()
+
+
+def test_pv_preserves_mapped_spectral_and_polarization_axes(casa, tmp_path):
+    source = tools.image()
+    path = str(tmp_path / "mapped-pv.im")
+    try:
+        data = _ramp()
+        assert source.fromarray(pixels=data)
+        mapped = source.transpose(order="3102")
+        try:
+            product = mapped.pv(path, [4, 7], [16, 7])
+            product.done()
+        finally:
+            mapped.done()
+    finally:
+        source.done()
+    for api in (casa, tools):
+        product = api.image()
+        try:
+            assert product.open(path)
+            coords = product.coordsys()
+            try:
+                assert coords.axiscoordinatetypes() == ["Spectral", "Linear", "Stokes"]
+                assert coords.stokes() == ["I", "Q"]
+                assert coords.increment()["numeric"][0] == pytest.approx(1000.)
+                assert "secondary_coordinates" in product.miscinfo()
+                np.testing.assert_array_equal(product.getchunk(), data[4:17, 7].transpose(2, 0, 1))
+            finally:
+                coords.done()
+        finally:
+            product.done()
+
+
+def test_pv_stretches_expression_masks_and_refuses_an_empty_strip(casa, tmp_path):
+    data = _ramp()
+    mask = np.broadcast_to(np.arange(24)[:, None, None, None] >= 9, (24, 26, 1, 1))
+    for api in (casa, tools):
+        source = api.image()
+        mask_image = api.image()
+        path = tmp_path / f"{api.__name__}-mask.im"
+        try:
+            assert source.fromarray(pixels=data)
+            assert mask_image.fromarray(str(path), mask.astype(np.float32))
+            mask_image.done()
+            expression = f'"{path}" > 0'
+            with pytest.raises(RuntimeError):
+                source.pv(start=[4, 7], end=[16, 7], mask=expression)
+            product = source.pv(start=[4, 7], end=[16, 7], mask=expression, stretch=True)
+            try:
+                valid = np.broadcast_to(mask[4:17, 7], (13, 2, 5))
+                np.testing.assert_array_equal(product.getchunk(getmask=True), valid)
+                np.testing.assert_array_equal(product.getchunk(), np.where(valid, data[4:17, 7], 0))
+            finally:
+                product.done()
+            assert source.isopen()
+            with pytest.raises(RuntimeError, match="masked"):
+                source.pv(start=[4, 7], end=[8, 7], mask=expression, stretch=True)
+        finally:
+            mask_image.done()
+            source.done()
