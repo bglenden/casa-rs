@@ -47,12 +47,12 @@ def radial_table(path, frequency, *, airy=False, wrap_longitude=False):
 def check_other_gridder(root, seed, model, beam):
     from casars.tools import imager as native_imager
 
-    target = root / 'unsupported-wproject.ms'
+    target = root / 'unsupported-mosaic.ms'
     make_input(seed, target, scratch=True)
     tool = native_imager()
     assert tool.open(str(target), usescratch=True) and tool.selectvis(field=0, spw='0')
     assert tool.defineimage(nx=64, ny=64, cellx='64arcsec', celly='64arcsec')
-    assert tool.setoptions(ftmachine='wproject', padding=1.4, wprojplanes=8)
+    assert tool.setoptions(ftmachine='mosaic', padding=1.4)
     assert tool.setvp(dovp=True, usedefaultvp=False, vptable=str(beam), dosquint=True)
     before = data(target, 'MODEL_DATA')
     assert not tool.ft(model=str(model))
