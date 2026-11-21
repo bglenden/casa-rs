@@ -164,12 +164,51 @@ def compare_cold_evla(root, dataset, model):
         work = Path(temporary)
         evla = work / 'evla.ms'
         telescope_input(dataset, evla, 'EVLA')
+        editor = table()
+        assert editor.open(str(evla / 'OBSERVATION'), nomodify=False)
+        assert editor.nrows() == 1
+        assert editor.addrows(1)
+        for column in editor.colnames():
+            if editor.iscelldefined(column, 0):
+                assert editor.putcell(column, 1, editor.getcell(column, 0))
+        assert editor.done()
+        assert editor.open(str(evla), nomodify=False)
+        ids = editor.getcol('OBSERVATION_ID')
+        ids[len(ids) // 2:] = 1
+        assert editor.putcol('OBSERVATION_ID', ids) and editor.done()
+        setup = casa_imager()
+        assert setup.open(str(evla), usescratch=True) and setup.done()
+        factories = (('casa', casa_imager), ('native', imager))
+        for name, factory in factories:
+            mixed, cache = work / f'{name}-mixed.ms', work / f'{name}-mixed-cache'
+            make_input(evla, mixed, scratch=True)
+            assert editor.open(str(mixed / 'OBSERVATION'), nomodify=False)
+            assert editor.putcell('TELESCOPE_NAME', 1, 'VLA') and editor.done()
+            before = data(mixed, 'MODEL_DATA')
+            predict(mixed, model, cache, 'awproject', False, accepts=False,
+                    factory=factory, wbawp=True)
+            assert not list(cache.glob('*CFS_*.im'))
+            np.testing.assert_array_equal(data(mixed, 'MODEL_DATA'), before)
+        print('Mixed EVLA and VLA observations refused before writing cells or model data', flush=True)
         for machine in ('awproject', 'mawproject'):
             case = work / machine
             case.mkdir()
             results[machine] = cold_case(case, evla, model, machine, {'wbawp': True})
             print('EVLA', machine, results[machine], flush=True)
-            assert max(results[machine].values()) < 1.e-3
+            assert all(np.isfinite(error) and error < 1.e-3 for error in results[machine].values())
+        warm_cache = work / 'awproject' / 'casa-cache'
+        before = cache_contents(warm_cache)
+        outputs = {}
+        for name, factory in factories:
+            mixed = work / f'{name}-mixed.ms'
+            predict(mixed, model, warm_cache, 'awproject', False, factory=factory, wbawp=True)
+            outputs[name] = data(mixed, 'MODEL_DATA')
+        assert cache_contents(warm_cache) == before
+        np.testing.assert_array_equal(outputs['native'][:, 1:, :], outputs['casa'][:, 1:, :])
+        error = relative_rms(outputs['native'][:, 0, :], outputs['casa'][:, 0, :])
+        assert np.isfinite(error) and error < 1.e-3
+        results['mixed-warm'] = error
+        print('Mixed EVLA and VLA observations reused CASA cells', error, flush=True)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
 

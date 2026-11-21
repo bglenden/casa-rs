@@ -59,7 +59,8 @@ pub(super) fn prepare_model(
     if options.cache_directory.as_os_str().is_empty() {
         return Err(invalid("legacy AW requires a convolution cache directory"));
     }
-    let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
+    let observations = ms.observation()?;
+    let telescope = observations.string(0, "TELESCOPE_NAME")?;
     if !matches!(telescope.as_str(), "VLA" | "EVLA") {
         return Err(invalid(
             "legacy AW currently needs a VLA or EVLA L-band telescope (#1520)",
@@ -128,6 +129,13 @@ pub(super) fn prepare_model(
         spectral,
         telescope == "VLA",
         || {
+            for row in 1..observations.row_count() {
+                if observations.string(row, "TELESCOPE_NAME")? != telescope {
+                    return Err(invalid(
+                        "cold legacy AW cannot use multiple telescopes in the same MeasurementSet",
+                    ));
+                }
+            }
             if !options.wideband || !switches[1] {
                 return Err(invalid(
                     "this cold legacy AW term configuration is pending #1520",
