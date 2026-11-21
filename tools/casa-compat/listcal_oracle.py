@@ -65,19 +65,33 @@ def files(root, vis, multi_vis, products, native):
     return len(cases) + 1
 
 
-def terminals(vis, caltable, multi_vis, multi_cal):
+def terminals(vis, caltable, multi_vis, multi_cal, *, direct=False):
     code = """
 import sys
-if sys.argv[1]=='casa':
-    from casatasks import listcal
+native = sys.argv[1] == 'native'
+kwargs = dict(field='FLUX', antenna='A0', spw=sys.argv[5], pagerows=int(sys.argv[4]))
+if sys.argv[6] == 'tool':
+    if native:
+        from casars.tools import calibrater
+    else:
+        from casatools import calibrater
+    cb = calibrater()
+    assert cb.open(sys.argv[2], addcorr=False, addmodel=False)
+    try:
+        assert cb.listcal(sys.argv[3], **kwargs) is True
+    finally:
+        cb.done()
 else:
-    from casars.tasks import listcal
-assert listcal(sys.argv[2],sys.argv[3],field='FLUX',antenna='A0',
-               spw=sys.argv[5],pagerows=int(sys.argv[4])) is None
+    if native:
+        from casars.tasks import listcal
+    else:
+        from casatasks import listcal
+    assert listcal(sys.argv[2], sys.argv[3], **kwargs) is None
 """
     def execute(engine, source, table, size, spw, response):
         return subprocess.run([sys.executable, '-c', code, engine, str(source), str(table),
-                               str(size), spw], input=response, text=True,
+                               str(size), spw, 'tool' if direct else 'task'],
+                              input=response, text=True,
                               capture_output=True, timeout=40)
 
     cases = [(0, ''), (-2, ''), (5, 'a\n'), (5, '\nq\n'), (5, 'q\n'), (5, '')]
@@ -100,6 +114,47 @@ assert listcal(sys.argv[2],sys.argv[3],field='FLUX',antenna='A0',
         assert 'Listed ' not in result.stdout
     return len(cases) + 2
 
+
+def direct_files_and_errors(root, vis, products):
+    from casatools import calibrater as reference
+    from casars.tools import calibrater as native
+
+    assert inspect.signature(reference().listcal) == inspect.signature(native().listcal)
+    files = {}
+    for create in (reference, native):
+        cb = create()
+        for path in (products['gain'], root / 'missing.cal'):
+            try:
+                cb.listcal(str(path), listfile=str(root / 'detached.txt'))
+            except RuntimeError as error:
+                assert str(error) == 'Error in Calibrater::listCal.'
+            else:
+                raise AssertionError('an unattached tool produced a listing')
+        assert not (root / 'detached.txt').exists()
+        for old in (False, True):
+            assert cb.setvi(old=old, quiet=True)
+            assert cb.open(str(vis), addcorr=False, addmodel=False)
+            for tag, name, values in (
+                ('all', 'gain', dict(pagerows=0)),
+                ('ids', 'gain', dict(field=[0], antenna=[0, 2], spw=[0], pagerows=1)),
+                ('selector', 'bandpass', dict(field='FLUX', antenna=['A0', 'A2'], spw='0:1~5^2')),
+                ('delay', 'delay', dict(antenna='A1,A3', pagerows=-1)),
+            ):
+                path = root / f'tool-{create.__module__}-{old}-{tag}.txt'
+                assert cb.listcal(str(products[name]), listfile=str(path), **values) is True
+                actual = path.read_text()
+                key = old, tag
+                same_text(actual, files.setdefault(key, actual))
+                try:
+                    cb.listcal(str(products[name]), listfile=str(path), **values)
+                except RuntimeError as error:
+                    assert str(error) == 'Error in Calibrater::listCal.'
+                else:
+                    raise AssertionError('an existing listing file was overwritten')
+                assert path.read_text() == actual
+            assert cb.close()
+        assert cb.done()
+    return len(files)
 
 def errors(root, vis, caltable, native, bad_tables):
     existing = root/'existing.txt'
@@ -216,7 +271,10 @@ def main():
     file_cases = files(root, vis, multi_vis, products, native)
     terminal_cases = terminals(vis, products['bandpass'], multi_vis, products['multi'])
     failures = errors(root, vis, products['gain'], native, [baseline, unknown]) + 1
-    print(f'{file_cases} file listings, {terminal_cases} terminal cases and {failures} error cases passed')
+    print(f'{file_cases} task file listings, {terminal_cases} task terminal cases and {failures} task error cases passed')
+    direct_file_cases = direct_files_and_errors(root, vis, products)
+    direct_terminal_cases = terminals(vis, products['bandpass'], multi_vis, products['multi'], direct=True)
+    print(f'{direct_file_cases} direct file comparisons and {direct_terminal_cases} direct terminal cases passed')
 
 
 if __name__ == '__main__':

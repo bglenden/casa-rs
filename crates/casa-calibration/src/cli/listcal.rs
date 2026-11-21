@@ -1,22 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's terminal and file listings of calibration solution values.
 
-use std::io::Write;
 use std::path::Path;
 
 use casa_ms::MeasurementSet;
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
-use serde::Serialize;
-use tempfile::NamedTempFile;
 
-use crate::listing::{CalibrationListing, list_calibration};
-
-#[derive(Serialize)]
-struct Report {
-    listing: Option<CalibrationListing>,
-    listfile: Option<String>,
-}
+use crate::listing::{CalibrationListingReport, list_calibration, publish_listing};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let vis = task.input_path("vis")?;
@@ -41,11 +32,12 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     let text = listing.lines();
     if let Some(path) = listfile {
-        publish_listing(Path::new(&path), &text)?;
+        publish_listing(Path::new(&path), &text)
+            .map_err(|error| TaskFailure::execution(error).at("listfile"))?;
         let message = format!("Writing output to file: {path}\n");
         return Ok(TaskSuccess::new(
             CasaValue::None,
-            &Report {
+            &CalibrationListingReport {
                 listing: None,
                 listfile: Some(path),
             },
@@ -54,30 +46,10 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     Ok(TaskSuccess::new(
         CasaValue::None,
-        &Report {
+        &CalibrationListingReport {
             listing: Some(listing),
             listfile: None,
         },
     )?
     .with_text(text))
-}
-
-fn publish_listing(path: &Path, text: &str) -> Result<(), TaskFailure> {
-    let fail = |error: std::io::Error| {
-        TaskFailure::execution(format!(
-            "could not create listing file {}: {error}",
-            path.display()
-        ))
-        .at("listfile")
-    };
-    let directory = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let mut stage = NamedTempFile::new_in(directory).map_err(fail)?;
-    stage.write_all(text.as_bytes()).map_err(fail)?;
-    stage
-        .persist_noclobber(path)
-        .map_err(|error| fail(error.error))?;
-    Ok(())
 }

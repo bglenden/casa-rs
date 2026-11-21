@@ -128,8 +128,8 @@ const METHODS: &[Method] = &[
             param("listfile", K::Text, D::Text("")),
             param("pagerows", K::Int, D::Int(50)),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Implemented,
     ),
     Method {
         mutating: true,

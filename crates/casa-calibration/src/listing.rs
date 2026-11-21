@@ -4,6 +4,7 @@
 mod format;
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::Path;
 
 use casa_ms::MeasurementSet;
@@ -12,6 +13,7 @@ use casa_ms::subtables::{MsAntenna, MsField, MsSpectralWindow};
 use casa_tables::{Table, TableOptions, add_directory};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Serialize;
+use tempfile::NamedTempFile;
 
 use crate::constants::{
     COL_ANTENNA1, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM, COL_SPECTRAL_WINDOW_ID, COL_TIME,
@@ -35,6 +37,30 @@ pub(crate) struct CalibrationListing {
     pub(crate) parts: Vec<ListingPart>,
     pub(crate) solutions: usize,
     pub(crate) error: Option<String>,
+}
+
+/// Text listing prepared for the Python task or tool, including its terminal
+/// page boundaries or the output file already published.
+#[derive(Serialize)]
+pub struct CalibrationListingReport {
+    pub(crate) listing: Option<CalibrationListing>,
+    pub(crate) listfile: Option<String>,
+}
+
+pub(crate) fn publish_listing(path: &Path, text: &str) -> Result<(), String> {
+    let fail = |error: std::io::Error| {
+        format!("could not create listing file {}: {error}", path.display(),)
+    };
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut stage = NamedTempFile::new_in(directory).map_err(fail)?;
+    stage.write_all(text.as_bytes()).map_err(fail)?;
+    stage
+        .persist_noclobber(path)
+        .map_err(|error| fail(error.error))?;
+    Ok(())
 }
 
 impl CalibrationListing {

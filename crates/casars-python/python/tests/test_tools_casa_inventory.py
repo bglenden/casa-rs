@@ -28,9 +28,6 @@ from _casa_tools import (
 #: Each tool, and the issue its refused methods name.
 ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030,
           "calibrater": 1528}
-CALIBRATER_OWNERS = {
-    "listcal": 1526,
-}
 
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
@@ -38,7 +35,7 @@ IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit", "initweights",
-    "accumulate", "createcaltable", "updatecaltable", "smooth", "rerefant", "plotcal",
+    "accumulate", "createcaltable", "updatecaltable", "smooth", "rerefant", "listcal", "plotcal",
 }
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve"},
@@ -146,7 +143,7 @@ def test_a_method_casa_rs_lacks_names_its_issue(tool: str) -> None:
             for parameter in inspect.signature(getattr(cls, name)).parameters.values()
             if parameter.name != "self" and parameter.default is inspect.Parameter.empty
         ]
-        issue = CALIBRATER_OWNERS.get(name, ISSUES[tool]) if tool == "calibrater" else ISSUES[tool]
+        issue = ISSUES[tool]
         with pytest.raises(NotImplementedError, match=rf"^{tool}\.{name} .*\(#{issue}\)$"):
             getattr(instance, name)(**{parameter: None for parameter in required})
 

@@ -66,19 +66,6 @@ impl PyCalibrater {
         not_yet_implemented_in("calibrater", "linpolcor", 1528)
     }
 
-    #[pyo3(signature = (caltable, field = None, antenna = None, spw = None, listfile = None, pagerows = None), text_signature = "($self, caltable, field=[], antenna=[], spw=[], listfile='', pagerows=50)")]
-    fn listcal(
-        &self,
-        caltable: &Bound<'_, PyAny>,
-        field: Option<&Bound<'_, PyAny>>,
-        antenna: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        listfile: Option<&Bound<'_, PyAny>>,
-        pagerows: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "listcal", 1526)
-    }
-
     #[pyo3(signature = (filein), text_signature = "($self, filein)")]
     fn parsecallibfile(&self, filein: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "parsecallibfile", 1528)

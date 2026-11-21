@@ -193,6 +193,45 @@ impl PyCalibrater {
         Ok(result)
     }
 
+    #[pyo3(signature = (caltable, field = Variant::Empty, antenna = Variant::Empty, spw = Variant::Empty, listfile = "", pagerows = 50), text_signature = "($self, caltable, field=[], antenna=[], spw=[], listfile='', pagerows=50)")]
+    #[allow(clippy::too_many_arguments)]
+    fn listcal(
+        &self,
+        py: Python<'_>,
+        caltable: &str,
+        field: Variant,
+        antenna: Variant,
+        spw: Variant,
+        listfile: &str,
+        pagerows: i64,
+    ) -> PyResult<bool> {
+        let report = self.with_lifecycle(py, |state| {
+            Ok(state.list_calibration(
+                Path::new(caltable),
+                &selector(&field).unwrap_or_default(),
+                &selector(&antenna).unwrap_or_default(),
+                &selector(&spw).unwrap_or_default(),
+                listfile,
+                pagerows as i32,
+            ))
+        })?;
+        let report = match report {
+            Ok(report) => report,
+            Err(error) => return listcal_error(py, &error),
+        };
+        let presenter = py
+            .import("casars.tasks._runner")?
+            .getattr("_present_listcal")?;
+        let report = crate::parameters::to_python(py, &report)?;
+        match presenter.call1((report,)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.is_instance_of::<PyRuntimeError>(py) => {
+                listcal_error(py, &error.value(py).to_string())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// CASA's retired plotcal entry point still validates its arguments
     /// and reports the current attachment state.
     #[pyo3(signature = (antennas, fields, spwids, plottype = "AMP", tablename = "", polarization = 1, multiplot = false, nx = 1, ny = 1, psfile = ""), text_signature = "($self, antennas, fields, spwids, plottype='AMP', tablename='', polarization=1, multiplot=False, nx=1, ny=1, psfile='')")]
@@ -374,6 +413,15 @@ pub(super) fn selector(value: &Variant) -> Option<String> {
         ),
         value => Some(value.describe()),
     }
+}
+
+fn listcal_error(py: Python<'_>, error: &str) -> PyResult<bool> {
+    emit(
+        py,
+        LOGGER,
+        &[LogLine::error(format!("Caught Exception: {error}"))],
+    )?;
+    Err(runtime_error("Error in Calibrater::listCal."))
 }
 
 fn plot_flag(value: &Bound<'_, PyAny>) -> PyResult<bool> {

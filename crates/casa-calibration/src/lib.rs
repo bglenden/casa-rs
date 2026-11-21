@@ -103,6 +103,7 @@ pub use attachment::{
 };
 pub use calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
 pub use cli::{ImagerSetJyRequest, imager_setjy};
+pub use listing::CalibrationListingReport;
 pub use output::CalibrationOutputMode;
 pub use table_maintenance::{create_calibration_table, update_calibration_table};
 
