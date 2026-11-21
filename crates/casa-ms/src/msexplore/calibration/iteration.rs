@@ -202,30 +202,12 @@ impl PlotPanels {
         let Some(axis) = self.axis_name() else {
             return destination.to_owned();
         };
-        let labels = panels
-            .iter()
-            .map(|panel| panel.label.replace(" & ", "_with_").replace('/', "-"))
-            .collect::<Vec<_>>()
-            .join(",");
-        let suffix = if page == 0 {
-            String::new()
-        } else {
-            format!("_{}", page + 1)
-        };
-        let mut output = destination.with_file_name(format!(
-            "{}_{axis}{labels}{suffix}",
-            destination
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-        ));
-        if let Some(extension) = destination.extension() {
-            let mut name = output.file_name().unwrap_or_default().to_os_string();
-            name.push(".");
-            name.push(extension);
-            output.set_file_name(name);
-        }
-        output
+        crate::msexplore::plotms_figure::iteration_filename(
+            destination,
+            axis,
+            page,
+            panels.iter().map(|panel| panel.label.as_str()),
+        )
     }
 }
 

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "5ed8020023334573ace4f40e2edc12494a9f8b03",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "CASA 6.7.6.14 with casaplotms 2.9.1 on the same MeasurementSets and calibration tables, including measured weather, water vapour, receiver sidebands, averaging, scan iteration and read-only callibrary correction.",
+  "result": "passed",
+  "text_exports": 17,
+  "points": 4540,
+  "figures": 6,
+  "rendered_coordinates": 400,
+  "maximum_overlay_nrms": 9.15099e-05,
+  "source_preserved": true,
+  "pointwise_relative_tolerance": {
+    "ordinary_coordinates": 1.2e-05,
+    "overlay": 0.0002
+  }
+}

@@ -15,20 +15,22 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::super::atmosphere::{AtmosphericConditions, Overlay};
 use super::PlotSeries;
-use super::axis::{Axis, SampleCoordinates};
+use super::axis::Axis;
 use super::iteration::PlotPanels;
 use super::samples::Point;
 use super::selection::{Expressions, Selection};
 use super::table_data::{CalibrationTable, array, integer, number, subtable, text};
 use crate::{MeasurementSet, MsSelection, SubtableId};
 
-pub(super) struct Options {
-    kind: Overlay,
-    image: bool,
+pub(in crate::msexplore) struct Options {
+    pub(in crate::msexplore) kind: Overlay,
+    pub(in crate::msexplore) image: bool,
 }
 
 impl Options {
-    pub(super) fn from_task(task: &TaskInvocation<'_>) -> Result<Option<Self>, TaskFailure> {
+    pub(in crate::msexplore) fn from_task(
+        task: &TaskInvocation<'_>,
+    ) -> Result<Option<Self>, TaskFailure> {
         let kind = if task.flag("showatm")? {
             Overlay::Transmission
         } else if task.flag("showtsky")? {
@@ -50,7 +52,7 @@ impl Options {
         }))
     }
 
-    fn axis(&self) -> Axis {
+    pub(in crate::msexplore) fn axis(&self) -> Axis {
         match self.kind {
             Overlay::Transmission => Axis::AtmosphericTransmission,
             Overlay::SkyTemperature => Axis::SkyTemperature,
@@ -58,7 +60,7 @@ impl Options {
     }
 }
 
-type Chunk = (i32, i32);
+pub(in crate::msexplore) type Chunk = (i32, i32);
 
 pub(super) fn append_overlays(
     table: &CalibrationTable,
@@ -209,13 +211,13 @@ fn group_channels(points: &[Point]) -> Vec<(Chunk, Vec<Point>, Vec<i32>)> {
         .collect()
 }
 
-struct Context {
+pub(in crate::msexplore) struct Context {
     telescope: String,
     measures: Arc<MeasuresRuntime>,
     position: Option<MPosition>,
     field: Table,
     pointing: Option<Table>,
-    cal_rows: BTreeMap<Chunk, Vec<SampleCoordinates>>,
+    directions: BTreeMap<Chunk, Vec<(f64, i32)>>,
     ms_times: BTreeMap<Chunk, [f64; 2]>,
     weather: Weather,
     water: Vec<(f64, f64)>,
@@ -244,42 +246,69 @@ impl Context {
         let ms = ms_path
             .as_deref()
             .and_then(|path| MeasurementSet::open(path).ok());
+        let mut directions = BTreeMap::<_, Vec<_>>::new();
+        for row in 0..source.rows() {
+            let coordinates = source.coordinates(row)?;
+            if selection.includes(&coordinates) {
+                directions
+                    .entry((coordinates.window, coordinates.scan))
+                    .or_default()
+                    .push((coordinates.time, coordinates.field));
+            }
+        }
+        let mut context = Self::new(telescope, field, ms.as_ref(), directions, image)?;
+        if !context.weather.samples.is_empty()
+            && let Some(ms) = &ms
+        {
+            context.ms_times = measurement_times(ms, expressions)?;
+        }
+        Ok(context)
+    }
+
+    pub(in crate::msexplore) fn open_ms(
+        ms: &MeasurementSet,
+        selection: &MsSelection,
+        image: bool,
+    ) -> Result<Self, String> {
+        let path = ms
+            .path()
+            .ok_or("PlotMS atmosphere requires an on-disk MeasurementSet")?;
+        let field = subtable(ms.main_table(), path, "FIELD")?;
+        let observation = ms
+            .subtable(SubtableId::Observation)
+            .ok_or("missing OBSERVATION table")?;
+        let telescope = text(observation, 0, "TELESCOPE_NAME")
+            .unwrap_or("")
+            .to_owned();
+        let samples = selected_observation_samples(ms, selection)?;
+        let times = samples
+            .iter()
+            .map(|(&chunk, rows)| (chunk, time_bounds(rows)))
+            .collect();
+        let mut context = Self::new(telescope, field, Some(ms), samples, image)?;
+        context.ms_times = times;
+        Ok(context)
+    }
+
+    fn new(
+        telescope: String,
+        field: Table,
+        ms: Option<&MeasurementSet>,
+        directions: BTreeMap<Chunk, Vec<(f64, i32)>>,
+        image: bool,
+    ) -> Result<Self, String> {
         let measures = Arc::new(
             MeasuresRuntime::open_discovered(RuntimePolicy::default())
                 .map_err(|error| error.to_string())?,
         );
         let position = MPosition::casa_observatory(&telescope, measures.as_ref());
         let weather = ms
-            .as_ref()
             .map(|ms| Weather::read(ms, &telescope))
             .unwrap_or_default();
-        let mut cal_rows = BTreeMap::<_, Vec<_>>::new();
-        for row in 0..source.rows() {
-            let coordinates = source.coordinates(row)?;
-            if selection.includes(&coordinates) {
-                cal_rows
-                    .entry((coordinates.window, coordinates.scan))
-                    .or_default()
-                    .push(coordinates);
-            }
-        }
-        let ms_times = if weather.samples.is_empty() {
-            BTreeMap::new()
-        } else {
-            ms.as_ref()
-                .map(|ms| measurement_times(ms, expressions))
-                .transpose()?
-                .unwrap_or_default()
-        };
-        let pointing = match (ms.as_ref(), ms_path.as_deref()) {
-            (Some(ms), Some(path)) if ms.subtable(SubtableId::Pointing).is_some() => {
-                subtable(ms.main_table(), path, "POINTING").ok()
-            }
-            _ => None,
-        };
-        let water = ms.as_ref().map(read_water).unwrap_or_default();
+        let pointing = ms.and_then(|ms| attached(ms, "POINTING"));
+        let water = ms.map(read_water).unwrap_or_default();
         let oscillators = if image {
-            ms.as_ref().map(read_oscillators).unwrap_or_default()
+            ms.map(read_oscillators).unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -289,22 +318,17 @@ impl Context {
             position,
             field,
             pointing,
-            cal_rows,
-            ms_times,
+            directions,
+            ms_times: BTreeMap::new(),
             weather,
             water,
             oscillators,
         })
     }
 
-    fn conditions(&self, chunk: Chunk) -> AtmosphericConditions {
-        let rows = self.cal_rows.get(&chunk).map_or(&[][..], Vec::as_slice);
-        let bounds = rows
-            .iter()
-            .map(|row| row.time)
-            .fold([f64::INFINITY, f64::NEG_INFINITY], |[min, max], time| {
-                [min.min(time), max.max(time)]
-            });
+    pub(in crate::msexplore) fn conditions(&self, chunk: Chunk) -> AtmosphericConditions {
+        let rows = self.directions.get(&chunk).map_or(&[][..], Vec::as_slice);
+        let bounds = time_bounds(rows);
         let pointing = self.pointing.as_ref().and_then(|table| {
             mean((0..table.row_count()).filter_map(|row| {
                 let time = number(table, row, "TIME")?;
@@ -319,8 +343,11 @@ impl Context {
         let airmass = if let Some(elevation) = pointing.filter(|elevation| *elevation != 0.0) {
             angle(elevation)
         } else {
-            let epoch = mean(rows.iter().map(|row| row.time)).unwrap_or_default();
-            let fields = rows.iter().map(|row| row.field).collect::<BTreeSet<_>>();
+            let epoch = mean(rows.iter().map(|&(time, _)| time)).unwrap_or_default();
+            let fields = rows
+                .iter()
+                .map(|&(_, field)| field)
+                .collect::<BTreeSet<_>>();
             mean(fields.into_iter().map(|field| {
                 let elevation = usize::try_from(field)
                     .ok()
@@ -389,7 +416,7 @@ impl Context {
             .map(|direction| direction.latitude_rad())
     }
 
-    fn image_curve(
+    pub(in crate::msexplore) fn image_curve(
         &self,
         window: i32,
         frequencies: &[f64],
@@ -402,6 +429,47 @@ impl Context {
             .copied();
         conditions.image_curve(frequencies, lo, overlay)
     }
+}
+
+fn selected_observation_samples(
+    ms: &MeasurementSet,
+    selection: &MsSelection,
+) -> Result<BTreeMap<Chunk, Vec<(f64, i32)>>, String> {
+    use super::super::{selected_f64_values, selected_i32_values};
+
+    let rows = crate::selection::resolve_casa_row_indices(ms, selection)
+        .map_err(|error| error.to_string())?;
+    let data_descriptions = ms.data_description().map_err(|error| error.to_string())?;
+    let windows = (0..data_descriptions.row_count())
+        .map(|row| data_descriptions.spectral_window_id(row))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let main = ms.main_table();
+    let times = selected_f64_values(main, "TIME", &rows)?;
+    let fields = selected_i32_values(main, "FIELD_ID", &rows)?;
+    let scans = selected_i32_values(main, "SCAN_NUMBER", &rows)?;
+    let descriptions = selected_i32_values(main, "DATA_DESC_ID", &rows)?;
+    let mut samples = BTreeMap::<_, Vec<_>>::new();
+    for (((time, field), scan), description) in
+        times.into_iter().zip(fields).zip(scans).zip(descriptions)
+    {
+        let window = *windows
+            .get(description as usize)
+            .ok_or("invalid DATA_DESC_ID")?;
+        samples
+            .entry((window, scan))
+            .or_default()
+            .push((time, field));
+    }
+    Ok(samples)
+}
+
+fn time_bounds(rows: &[(f64, i32)]) -> [f64; 2] {
+    rows.iter()
+        .map(|&(time, _)| time)
+        .fold([f64::INFINITY, f64::NEG_INFINITY], |[min, max], time| {
+            [min.min(time), max.max(time)]
+        })
 }
 
 fn angular_radians(value: f64, unit: &str) -> f64 {

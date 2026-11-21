@@ -46,7 +46,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 32 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
-| plotms | plotms | yes | 102 | 102 | 0 | 13 | 0 | 0 |
+| plotms | plotms | yes | 102 | 102 | 0 | 12 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -1552,7 +1552,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
 - Accepted only at CASA's default until #1032: `rowindex`, `colindex`, `plotindex`, `xframe`, `xinterp`, `yframe`, `yinterp`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
-- Accepted only at CASA's default until #1526: `colorizeoverlay`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 102, in CASA's order: yes
 - Defaults that differ: none
@@ -1561,7 +1560,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 13, Implemented: 24, Not implemented: 2, Partial: 63, Unassessed: 0.
+Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 12, Implemented: 28, Not implemented: 2, Partial: 60, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1665,10 +1664,10 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `clearplots` | `True` | `True`; `clearplots` → `clearplots` | Default only | Remove any existing plots so new ones can replace them. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `callib` | `[]` | `[]`; `callib` → `callib` | Partial | Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated scalar or spectral weights. Iterated figures and additional calibration plotting controls remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [callibrary](#plotms-evidence-callibrary), [remaining](#plotms-evidence-remaining) |
 | `headeritems` | `''` | `''`; `headeritems` → `headeritems` | Not implemented | Comma-separated list of pre-defined page header items. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
-| `showatm` | `False` | `False`; `showatm` → `showatm` | Partial | Overlay atmospheric transmission on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
-| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Partial | Overlay sky temperature on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
-| `showimage` | `False` | `False`; `showimage` → `showimage` | Partial | Overlay a receiver image sideband on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
-| `colorizeoverlay` | `False` | `False`; `colorizeoverlay` → `colorizeoverlay` | Default only | Colorize the curve overlay using coloraxis [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+| `showatm` | `False` | `False`; `showatm` → `showatm` | Implemented | Overlay atmospheric transmission on MeasurementSets and current calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere) |
+| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Implemented | Overlay sky temperature on MeasurementSets and current calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere) |
+| `showimage` | `False` | `False`; `showimage` → `showimage` | Implemented | Overlay a receiver image sideband on MeasurementSets and current calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere) |
+| `colorizeoverlay` | `False` | `False`; `colorizeoverlay` → `colorizeoverlay` | Implemented | Color atmospheric overlays by the selected metadata axis in MeasurementSet and calibration-table figures. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [ms-atmosphere](#plotms-evidence-ms-atmosphere) |
 
 #### plotms interacting modes and task behavior
 
@@ -1729,7 +1728,7 @@ Evidence: [paired](#plotms-evidence-paired).
 <a id="plotms-behavior-export"></a>
 ##### Save and publish selected plot products
 
-**Partial** — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and single-panel figures.
+**Partial** — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.
 
 More export, multi-plot state and interactive display forms remain open.
 
@@ -1738,11 +1737,11 @@ Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-calli
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
 
-**Partial** — Apply calibration libraries to MeasurementSet plots in memory and compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.
+**Partial** — Apply calibration libraries to MeasurementSet plots in memory. Compute transmission, sky temperature and receiver sidebands for MeasurementSets and calibration tables, including selected channels and requested overlay color groups.
 
 The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.
 
-Evidence: [atmosphere](#plotms-evidence-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining), [callibrary](#plotms-evidence-callibrary).
+Evidence: [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining), [callibrary](#plotms-evidence-callibrary).
 
 #### plotms deviations and unfinished work
 
@@ -1796,6 +1795,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `12d08ef332634591a6ad4611408f4cc178f601c5`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-atmosphere-20261119.json`.
+
+<a id="plotms-evidence-ms-atmosphere"></a>
+##### ms-atmosphere
+
+**Same-input MeasurementSet PlotMS atmospheric overlays — passed.** Matched 17 exports and 4,540 printed coordinates and metadata. Six figure names and 400 rendered coordinates matched. Default visibility and atmosphere markers remained visible, and the scan and correlation colors had the expected group membership. Maximum overlay normalized RMS was 9.15099e-5. The input MeasurementSet data, weights and flags were preserved. CASA 6.7.6.14 with casaplotms 2.9.1 on the same MeasurementSets and calibration tables, including measured weather, water vapour, receiver sidebands, averaging, scan iteration and read-only callibrary correction.
+
+- [tools/casa-compat/plotms_ms_atmosphere_oracle.py](https://github.com/bglenden/casa-rs/blob/5ed8020023334573ace4f40e2edc12494a9f8b03/tools/casa-compat/plotms_ms_atmosphere_oracle.py)
+- Revision: `5ed8020023334573ace4f40e2edc12494a9f8b03`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-atmosphere-20261121.json`.
 
 <a id="plotms-evidence-selectors"></a>
 ##### selectors

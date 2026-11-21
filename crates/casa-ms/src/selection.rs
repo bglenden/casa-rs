@@ -685,6 +685,13 @@ pub(crate) fn resolve_row_indices_with_system_budget(
     resolve_row_indices_with_grammar(ms, request, RowGrammar::Standard)
 }
 
+pub(crate) fn resolve_casa_row_indices(
+    ms: &MeasurementSet,
+    request: &MsSelection,
+) -> MsResult<Vec<usize>> {
+    resolve_row_indices_with_grammar(ms, request, RowGrammar::Casa)
+}
+
 pub(crate) fn resolve_flagdata_selection_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,

@@ -4,7 +4,7 @@
 use num_complex::Complex64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Axis {
+pub(in crate::msexplore) enum Axis {
     Channel,
     Frequency,
     Time,
@@ -78,7 +78,7 @@ impl Axis {
         Ok(axis)
     }
 
-    pub(super) fn label(self) -> &'static str {
+    pub(in crate::msexplore) fn label(self) -> &'static str {
         use Axis::*;
         match self {
             Channel => "Channel",
@@ -116,7 +116,7 @@ impl Axis {
         }
     }
 
-    pub(super) fn unit(self) -> &'static str {
+    pub(in crate::msexplore) fn unit(self) -> &'static str {
         match self {
             Self::Frequency => "GHz",
             Self::Time => "MJD seconds",
