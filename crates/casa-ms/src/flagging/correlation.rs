@@ -554,6 +554,178 @@ impl TfcropCorrelations {
     }
 }
 
+pub(super) struct RflagCorrelations {
+    pub(super) admitted: bool,
+    by_description: Vec<Option<Vec<ClipProjection>>>,
+    unknown_product: Option<String>,
+}
+
+impl RflagCorrelations {
+    pub(super) fn read(
+        ms: &MeasurementSet,
+        expression: Option<&str>,
+        column: FlagDataColumn,
+    ) -> Result<Self, FlaggingError> {
+        let text = expression
+            .unwrap_or_default()
+            .split('\0')
+            .next()
+            .unwrap_or_default()
+            .to_uppercase();
+        let failed = |source: MsError| FlaggingError::MutateFlags {
+            path: display_ms_path(ms),
+            reason: format!("resolve stored RFlag correlations: {source}"),
+        };
+        let modes = stored_correlation_modes(ms).map_err(failed)?;
+        let descriptions = ms.data_description().map_err(failed)?;
+        let windows = ms.spectral_window().map_err(failed)?;
+        let mut active = BTreeSet::new();
+        for row in 0..descriptions.row_count() {
+            let spw = descriptions.spectral_window_id(row).map_err(failed)?;
+            if !descriptions.flag_row(row).map_err(failed)?
+                && !windows.flag_row(spw as usize).map_err(failed)?
+            {
+                active.insert(descriptions.polarization_id(row).map_err(failed)?);
+            }
+        }
+        let has_operator = CLIP_OPERATORS.iter().any(|(name, _)| text.contains(*name));
+        let bare_matched = (!text.is_empty() && !has_operator).then(|| {
+            RECEPTOR_PRODUCTS
+                .into_iter()
+                .chain(["I"])
+                .filter(|name| text.contains(*name))
+                .collect::<Vec<_>>()
+        });
+        if let Some(matched) = &bare_matched
+            && (matched.is_empty()
+                || !active.iter().any(|&id| {
+                    modes
+                        .get(id as usize)
+                        .is_some_and(|names| matched.iter().all(|name| names.contains(name)))
+                }))
+        {
+            tracing::warn!(
+                "Cannot create agent Rflag: None of the requested correlation products ({text}) is available"
+            );
+            return Ok(Self {
+                admitted: false,
+                by_description: Vec::new(),
+                unknown_product: None,
+            });
+        }
+        let normalized = if text.is_empty() {
+            if column.is_real() {
+                "REAL ALL".to_string()
+            } else {
+                "ABS ALL".to_string()
+            }
+        } else if let Some(matched) = &bare_matched {
+            let prefix = if column.is_real() { "REAL" } else { "ABS" };
+            if text.contains("ALL") {
+                format!("{prefix} ALL")
+            } else if text.contains("WVR") {
+                format!("{prefix} WVR,{}", matched.join(","))
+            } else {
+                format!("{prefix} {}", matched.join(","))
+            }
+        } else if column.is_real()
+            && CLIP_OPERATORS[1..]
+                .iter()
+                .any(|(name, _)| text.contains(*name))
+        {
+            tracing::warn!("Unsupported visibility expression: {text}; selecting REAL by default");
+            let suffix = text
+                .split_once('_')
+                .or_else(|| text.split_once(' '))
+                .map_or("", |(_, suffix)| suffix);
+            format!("REAL {suffix}")
+        } else {
+            text
+        };
+        let all = normalized.contains("ALL");
+        let expanded = if all {
+            let replacement = modes
+                .iter()
+                .flatten()
+                .copied()
+                .filter(|name| RECEPTOR_PRODUCTS.contains(name) || ["Q", "U", "V"].contains(name))
+                .collect::<Vec<_>>()
+                .join(",");
+            normalized.replace("ALL", &replacement)
+        } else {
+            normalized.clone()
+        };
+        let wvr = !all && expanded.contains("WVR");
+        let vis_tokens: Vec<&str> = if wvr {
+            Vec::new()
+        } else {
+            RECEPTOR_PRODUCTS
+                .into_iter()
+                .chain(STOKES_PRODUCTS)
+                .filter(|name| expanded.contains(*name))
+                .collect()
+        };
+        let has_cal_token = ["SOL1", "SOL2", "SOL3", "SOL4"]
+            .into_iter()
+            .any(|name| expanded.contains(name));
+        let unknown_product =
+            (!all && !wvr && vis_tokens.is_empty() && !has_cal_token).then_some(normalized);
+        let mut by_description = Vec::with_capacity(descriptions.row_count());
+        for row in 0..descriptions.row_count() {
+            let id = descriptions.polarization_id(row).map_err(failed)?;
+            let names = modes
+                .get(id as usize)
+                .ok_or_else(|| FlaggingError::MutateFlags {
+                    path: display_ms_path(ms),
+                    reason: format!("DATA_DESCRIPTION row {row} has no polarization {id}"),
+                })?;
+            if let Some(matched) = &bare_matched
+                && (!active.contains(&id) || !matched.iter().all(|name| names.contains(name)))
+            {
+                by_description.push(None);
+                continue;
+            }
+            if names.contains(&"I") != wvr {
+                by_description.push(None);
+                continue;
+            }
+            let projections = if wvr {
+                clip_projection("I", names).into_iter().collect()
+            } else if vis_tokens
+                .first()
+                .is_some_and(|first| clip_projection(first, names).is_none())
+            {
+                Vec::new()
+            } else {
+                vis_tokens
+                    .iter()
+                    .filter(|name| !all || **name == "I" || names.contains(name))
+                    .filter_map(|name| clip_projection(name, names))
+                    .collect()
+            };
+            by_description.push(Some(projections));
+        }
+        Ok(Self {
+            admitted: true,
+            by_description,
+            unknown_product,
+        })
+    }
+
+    pub(super) fn for_description(&self, ddid: i32) -> Result<&[ClipProjection], FlaggingError> {
+        let products = self
+            .by_description
+            .get(ddid as usize)
+            .and_then(Option::as_ref);
+        if products.is_some()
+            && let Some(text) = &self.unknown_product
+        {
+            return Err(FlaggingError::UnknownTfcropProduct(text.clone()));
+        }
+        Ok(products.map_or(&[], Vec::as_slice))
+    }
+}
+
 fn clip_projections(products: &[&str], stored: &[&str], wvr: bool) -> Vec<ClipProjection> {
     let Some(first) = products.first() else {
         return Vec::new();

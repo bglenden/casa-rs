@@ -76,8 +76,8 @@ impl ClipTimedRow {
         self.group[2] = 0;
     }
 
-    pub(super) fn baseline_key(&self) -> ([i32; GROUP_COLUMNS.len()], usize) {
-        (self.group, self.chunk)
+    pub(super) fn baseline_key(&self) -> (([i32; 5], usize), [i32; 2]) {
+        (self.chunk_key(), self.antennas())
     }
 
     pub(super) fn chunk_key(&self) -> ([i32; 5], usize) {

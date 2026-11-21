@@ -3978,9 +3978,12 @@ RR = 4 and LL = 0. The corresponding Stokes V is 2.
 
 casa-rs uses `(XY + YX) / 2`, `(RL + LR) / 2`, and `(RR - LL) / 2`
 for these three products and flags their contributing planes when the
-result meets the clipping criterion. The paired Stokes clip oracle
-reproduces the CASA flags and compares the native flags with independently
-calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+result meets the clipping criterion. MeasurementSet RFlag uses the same
+corrected linear Stokes U equation `(XY + YX) / 2`, verified with an
+equal-cross-hand (`XY = YX`) control in [MS RFlag
+oracle](../tools/casa-compat/flagdata_rflag_ms_oracle.py). The paired Stokes
+clip oracle reproduces the CASA flags and compares the native flags with
+independently calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
 ## Manual flagging and extension can flag channels between requested stride steps
 
@@ -4009,9 +4012,12 @@ the input samples and from CASA with the equivalent explicit selection.
 TFCrop reproduces the same abort with `flagdimension="time"`,
 `channelavg=True`, `chanbin=2` and `spw="0:8~23^2"` on a 32-channel
 window. The independently injected broadband impulse flags just channels
-8, 10, 12, 14, 16, 18, 20 and 22 on that integration. The native strided
-selection and CASA's equivalent explicit channel list produce the same
-physical mask. [TFCrop channel averaging oracle](../tools/casa-compat/flagdata_tfcrop_channelavg_oracle.py)
+8, 10, 12, 14, 16, 18, 20 and 22 on that integration. RFlag also reproduces the
+`ArraySlicerError` abort with `channelavg=True`, `chanbin=2` and
+`spw="0:0~30^2"`, while its native strided selection and CASA's explicit
+`0:0;2;...;30` selection produce the same physical mask.
+[TFCrop channel averaging oracle](../tools/casa-compat/flagdata_tfcrop_channelavg_oracle.py)
+· [MS RFlag oracle](../tools/casa-compat/flagdata_rflag_ms_oracle.py)
 
 ## Clip channel averaging can flag nonzero data as zero
 
@@ -4036,12 +4042,13 @@ larger than the window, for both scalar and per-window forms.
 ## Time-averaged clipping and TFCrop can substitute zeros for defined inputs
 
 In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping or
-fitting TFCrop over `RESIDUAL_DATA`, `FLOAT_DATA`, `WEIGHT` or `WEIGHT_SPECTRUM`
-on the paired fixtures. Both modes share `FlagDataHandler::setTimeAverageIter`,
-which leaves those averaged buffers zeroed, so CASA misses nonzero averaged
-values and flags the selected samples when clipping inside a narrow range
-around zero. The time clip and TFCrop time-averaging oracles check both effects
-against the same physical visibilities and statistics.
+fitting TFCrop or RFlag over `RESIDUAL_DATA`, `FLOAT_DATA`, `WEIGHT` or
+`WEIGHT_SPECTRUM` on the paired fixtures. Those modes share
+`FlagDataHandler::setTimeAverageIter`, which leaves those averaged buffers
+zeroed, so CASA misses nonzero averaged values and flags the selected samples
+when clipping inside a narrow range around zero. The time clip, TFCrop
+time-averaging, and MS RFlag oracles check those effects against the same
+physical visibilities and statistics.
 
 Native flagdata averages observed visibilities with inverse variance,
 uses the same weights for the model when deriving an observed residual,
@@ -4050,6 +4057,7 @@ integrations. The test calculates the expected masks from the stored values,
 then compares flags and data using both CASA and casacore readback.
 [Time clip oracle](../tools/casa-compat/flagdata_clip_timeavg_oracle.py)
 · [TFCrop time averaging oracle](../tools/casa-compat/flagdata_tfcrop_timeavg_oracle.py)
+· [MS RFlag oracle](../tools/casa-compat/flagdata_rflag_ms_oracle.py)
 
 ## Decorated flag selections can alter unnamed correlations
 
@@ -8135,17 +8143,18 @@ channels 2 and 4. The calibration flagdata oracle checks both outcomes.
 In CASA 6.7.6.14, `flagdata(mode='rflag', spw='0:3~7')` with automatic
 extension can flag channel 0 in both CPARAM bandpass and FPARAM Tsys
 tables. The corresponding selected channels agree with casa-rs, which
-preserves every flag outside the requested slice.
+preserves every flag outside the requested slice on both calibration tables
+and MeasurementSets.
 
-On a calibration table with a single antenna and ten integrations,
-`winsize=0` and `winsize=-1` abort the CASA process with an
-out-of-range vector access. Casa-rs rejects nonpositive window lengths
-before running the agent.
+On a calibration table or MeasurementSet, `winsize=0` and `winsize=-1`
+abort the CASA process with an out-of-range vector access. Casa-rs rejects
+nonpositive window lengths before running the agent.
 
 Using a positive explicit time or frequency threshold with a zero or
-negative scale can also crash CASA while applying flags. Casa-rs rejects
-these combinations before writing flags. Calculate mode ignores the
-scale factors and reports the unscaled calculated thresholds.
+negative scale can also crash CASA while applying flags on either a
+calibration table or a MeasurementSet. Casa-rs rejects these combinations
+before writing flags. Calculate mode ignores the scale factors and reports
+the unscaled calculated thresholds.
 
 ## Calibration flagdata summary can crash on a wildcard field
 

@@ -110,26 +110,43 @@ def main():
                         assert_flags(actual, changed)
                         preserved(actual, metadata)
                         checked += 1
-        ms = root / 'ms-controls.ms'
-        shutil.copytree(root / 'source.ms', ms)
-        original = flags(ms)
-        for mode, settings, issue in [
-            ('rflag', {'channelavg': True}, 978),
-            ('rflag', {'timeavg': True}, 978),
-            ('rflag', {'ntime': '2s'}, 1616),
-            ('rflag', {'combinescans': True}, 1616),
-            ('rflag', {'ntime': -1, 'flagbackup': True}, 1616),
-            ('rflag', {'ntime': 'bogus', 'flagbackup': True}, 1616),
+        ms_source = root / 'source.ms'
+        original = flags(ms_source)
+        for index, (mode, settings) in enumerate([
+            ('rflag', {'channelavg': True}),
+            ('rflag', {'timeavg': True}),
+            ('rflag', {'ntime': '2s'}),
+            ('rflag', {'combinescans': True}),
+            ('rflag', {'ntime': -1, 'flagbackup': True}),
+            ('rflag', {'ntime': 'bogus', 'flagbackup': True}),
             ('rflag', {'ntime': '2s', 'action': 'none', 'savepars': True,
-                       'outfile': 'should-not-exist.txt'}, 1616),
-        ]:
-            result = outcome(native, ms, mode=mode, **{'flagbackup': False, **settings})
-            assert result[0] == 'TaskParameterError' and f'#{issue}' in result[1], result
-            np.testing.assert_array_equal(flags(ms), original)
-            assert not ms.with_name('ms-controls.ms.flagversions').exists()
-            assert not Path('should-not-exist.txt').exists()
-    print(f'{checked} paired automatic calibration control cases, three typed-provider refusals '
-          'and seven MeasurementSet refusals.')
+                       'outfile': 'saved-ms-rflag.txt'}),
+        ]):
+            expected, actual = [root / f'{engine}-ms-control-{index}.ms'
+                                for engine in ('casa', 'native')]
+            for path in (expected, actual):
+                shutil.copytree(ms_source, path)
+            run_settings = {'flagbackup': False, **settings}
+            if 'outfile' in run_settings:
+                casa_out = root / 'casa-saved-ms-rflag.txt'
+                native_out = root / 'native-saved-ms-rflag.txt'
+                want = outcome(casa.flagdata, expected, mode=mode, **{**run_settings, 'outfile': str(casa_out)})
+                have = outcome(native, actual, mode=mode, **{**run_settings, 'outfile': str(native_out)})
+                assert casa_out.read_text() == native_out.read_text()
+            else:
+                want = outcome(casa.flagdata, expected, mode=mode, **run_settings)
+                have = outcome(native, actual, mode=mode, **run_settings)
+            compare_report(want, have)
+            np.testing.assert_array_equal(flags(actual), flags(expected))
+            assert (
+                actual.with_name(f'{actual.name}.flagversions').exists()
+                == expected.with_name(f'{expected.name}.flagversions').exists()
+            )
+            if isinstance(want, tuple):
+                np.testing.assert_array_equal(flags(actual), original)
+            checked += 1
+    print(f'{checked} paired automatic calibration and MeasurementSet control cases '
+          'and three typed-provider refusals.')
 
 
 if __name__ == '__main__':

@@ -12,8 +12,16 @@ pub(super) fn validate_types(task: &TaskInvocation<'_>) -> Result<(), TaskFailur
     Ok(())
 }
 
-pub(super) fn validate_agent_record(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
-    for name in ["maxnpieces", "halfwin"] {
+pub(super) fn validate_agent_record(
+    task: &TaskInvocation<'_>,
+    mode: &str,
+) -> Result<(), TaskFailure> {
+    let names: &[&str] = if mode == "rflag" {
+        &["winsize"]
+    } else {
+        &["maxnpieces", "halfwin"]
+    };
+    for &name in names {
         if let Some(text) = task.argument_text(name)
             && text.parse::<i64>().is_err_and(|error| {
                 matches!(

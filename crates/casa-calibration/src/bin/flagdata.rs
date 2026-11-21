@@ -157,8 +157,8 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             TaskFailure::execution(format!("argument _{selector} must be a string")).at(selector),
         );
     }
-    if mode == "tfcrop" {
-        tfcrop::validate_agent_record(task).or_else(|error| {
+    if matches!(mode.as_str(), "tfcrop" | "rflag") {
+        tfcrop::validate_agent_record(task, &mode).or_else(|error| {
             backup_before_failed_apply(task, &action)?;
             Err(error)
         })?;
@@ -186,23 +186,6 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     // The CASA task derives persistence from action, including when the
     // caller supplied its hidden writeflags argument explicitly.
-    if calculate
-        && !(calibration && request.mode == FlagDataMode::Rflag)
-        && !matches!(
-            request.mode,
-            FlagDataMode::Manual
-                | FlagDataMode::Clip
-                | FlagDataMode::Quack
-                | FlagDataMode::Summary
-                | FlagDataMode::Elevation
-                | FlagDataMode::Extend
-                | FlagDataMode::Shadow
-                | FlagDataMode::Antint
-                | FlagDataMode::Tfcrop
-        )
-    {
-        return Err(not_yet("action", &action));
-    }
     let report = flagdata_path_with_model(
         &path,
         &request,
@@ -219,7 +202,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         FlaggingError::UnsupportedCalibrationAgent(_) | FlaggingError::CalibrationAntint => {
             TaskFailure::execution(error.to_string()).at("calibration-agent")
         }
-        FlaggingError::MissingClipColumn | FlaggingError::MissingTfcropColumn => {
+        FlaggingError::MissingClipColumn
+        | FlaggingError::MissingTfcropColumn
+        | FlaggingError::MissingRflagColumn => {
             TaskFailure::validation(error.to_string()).at("datacolumn")
         }
         FlaggingError::InvalidRFlagScale(parameter) => {
@@ -263,10 +248,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     let value = if let Some(summary) = &report.summary {
         flagdata_named_summary_record(summary, &task.required_text("name")?)
-    } else if calculate
-        && (request.rflag_window.is_some() || request.extendflags)
-        && let Some(report) = &report.rflag_report
-    {
+    } else if calculate && let Some(report) = &report.rflag_report {
         rflag_result(&report.timedev, &report.freqdev)
     } else {
         flagdata_empty_record()
@@ -311,7 +293,7 @@ fn prepare_flagdata_request(
         Err(error)
     })?;
     request.time_chunk = time_chunk.filter(|seconds| *seconds > 0.0 && seconds.is_finite());
-    if calibration && !calculate && request.mode == FlagDataMode::Rflag {
+    if !calculate && request.mode == FlagDataMode::Rflag {
         for (name, threshold, scale) in [
             ("timedevscale", request.timedev, request.timedevscale),
             ("freqdevscale", request.freqdev, request.freqdevscale),
@@ -645,7 +627,7 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                 ("addantenna", ParameterValue::Table(_)) => task
                     .argument_text("addantenna")
                     .map_or_else(|| python_repr(value), str::to_owned),
-                ("maxnpieces" | "halfwin", _) => task
+                ("maxnpieces" | "halfwin" | "winsize", _) => task
                     .argument_text(name)
                     .map_or_else(|| python_repr(value), str::to_owned),
                 ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
@@ -961,7 +943,10 @@ fn time_averaging_bin(
     task: &TaskInvocation<'_>,
     mode: FlagDataMode,
 ) -> Result<Option<String>, TaskFailure> {
-    if !matches!(mode, FlagDataMode::Clip | FlagDataMode::Tfcrop) {
+    if !matches!(
+        mode,
+        FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
+    ) {
         return Ok(None);
     }
     match automatic::average_switch(task, "timeavg")? {
@@ -978,7 +963,10 @@ fn channel_averaging_bins(
     mode: FlagDataMode,
     channel_bins: Vec<u32>,
 ) -> Result<Option<Vec<u32>>, TaskFailure> {
-    if !matches!(mode, FlagDataMode::Clip | FlagDataMode::Tfcrop) {
+    if !matches!(
+        mode,
+        FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
+    ) {
         return Ok(None);
     }
     match automatic::average_switch(task, "channelavg")? {
@@ -1125,9 +1113,9 @@ fn data_column(
     ) {
         return Ok(FlagDataColumn::Data);
     }
-    let tfcrop_ms = mode == FlagDataMode::Tfcrop && !calibration;
-    let accepts_ms_sources = mode == FlagDataMode::Clip || tfcrop_ms;
-    let source = if tfcrop_ms {
+    let auto_ms = matches!(mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag) && !calibration;
+    let accepts_ms_sources = mode == FlagDataMode::Clip || auto_ms;
+    let source = if auto_ms {
         text.split_once('\0').map_or(text, |(head, _)| head)
     } else {
         text
@@ -1135,7 +1123,7 @@ fn data_column(
     match source.to_ascii_uppercase().as_str() {
         "DATA" => Ok(FlagDataColumn::Data),
         "CORRECTED" => Ok(FlagDataColumn::CorrectedData),
-        "CORRECTED_DATA" if !tfcrop_ms => Ok(FlagDataColumn::CorrectedData),
+        "CORRECTED_DATA" if !auto_ms => Ok(FlagDataColumn::CorrectedData),
         "FLOAT_DATA" if accepts_ms_sources => Ok(FlagDataColumn::FloatData),
         "MODEL" if accepts_ms_sources => Ok(FlagDataColumn::ModelData),
         "RESIDUAL" if accepts_ms_sources => Ok(FlagDataColumn::Residual),
@@ -1146,8 +1134,12 @@ fn data_column(
         "FPARAM" if calibration => Ok(FlagDataColumn::Fparam),
         "PARAMERR" if calibration => Ok(FlagDataColumn::ParamErr),
         "SNR" if calibration => Ok(FlagDataColumn::Snr),
-        _ if tfcrop_ms => Err(TaskFailure::validation(
+        _ if mode == FlagDataMode::Tfcrop && !calibration => Err(TaskFailure::validation(
             "Failed to parse parameters for mode tfcrop",
+        )
+        .at("datacolumn")),
+        _ if mode == FlagDataMode::Rflag && !calibration => Err(TaskFailure::validation(
+            "Failed to parse parameters for mode rflag",
         )
         .at("datacolumn")),
         "MODEL" | "RESIDUAL" | "RESIDUAL_DATA" | "FLOAT_DATA" | "WEIGHT_SPECTRUM" | "WEIGHT"
@@ -1435,16 +1427,37 @@ mod tests {
         let error = request_for(&["--vis", "in.ms", "--mode", "list"]).unwrap_err();
         assert!(error.message.contains("#978"), "{error:?}");
         assert_eq!(error.parameter.as_deref(), Some("mode"));
-        let error = request_for(&["--vis", "in.ms", "--mode", "rflag", "--datacolumn", "MODEL"])
-            .unwrap_err();
-        assert!(error.message.contains("#978"));
-        assert_eq!(error.parameter.as_deref(), Some("datacolumn"));
-        let error = read(
-            &["--vis", "in.ms", "--mode", "rflag", "--action", "calculate"],
-            |task| run(task).map(|_| ()),
+        let request =
+            request_for(&["--vis", "in.ms", "--mode", "rflag", "--datacolumn", "MODEL"]).unwrap();
+        assert_eq!(request.data_column, FlagDataColumn::ModelData);
+    }
+
+    #[test]
+    fn flagdata_history_preserves_winsize_text() {
+        let default_history = read(&["--vis", "in.ms", "--mode", "rflag"], |task| {
+            Ok(flagdata_history(task, Path::new("in.ms"), ""))
+        })
+        .unwrap();
+        assert!(
+            default_history
+                .parameters
+                .contains(&("winsize".to_string(), "3".to_string())),
+            "{:?}",
+            default_history.parameters
+        );
+
+        let updated_history = read(
+            &["--vis", "in.ms", "--mode", "rflag", "--winsize", "5"],
+            |task| Ok(flagdata_history(task, Path::new("in.ms"), "")),
         )
-        .unwrap_err();
-        assert!(error.message.contains("#978"), "{error:?}");
+        .unwrap();
+        assert!(
+            updated_history
+                .parameters
+                .contains(&("winsize".to_string(), "5".to_string())),
+            "{:?}",
+            updated_history.parameters
+        );
     }
 
     #[test]
