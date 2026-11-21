@@ -23,7 +23,7 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 use self::axis::Axis;
-use self::iteration::PlotPanels;
+use self::iteration::{IterationAxis, PlotPanels};
 use self::samples::{Point, SeriesRequest};
 use self::selection::{Expressions, Selection};
 use self::table_data::CalibrationTable;
@@ -134,11 +134,8 @@ pub(super) fn run(
     } else {
         &polarization
     };
-    let spline_selection = Expressions {
-        timerange: "",
-        taql: "",
-        ..expressions
-    };
+    // Legacy GSPLINE selection applies to the source solution rows.
+    let spline_selection = Expressions::default();
     let selection = Selection::resolve(
         &table,
         if spline.is_some() {
@@ -160,6 +157,7 @@ pub(super) fn run(
         legacy::check_spline_axes(std::iter::once(x).chain(ys.iter().copied()))
             .map_err(TaskFailure::validation)?;
     }
+    let iteration = IterationAxis::from_task(task)?;
     let series = ys
         .into_iter()
         .map(|y| {
@@ -169,6 +167,7 @@ pub(super) fn run(
                 polarization: receptor_selection,
                 averaging: &averaging,
                 spline,
+                iteration,
             };
             let points =
                 samples::points(&table, &selection, &request).map_err(TaskFailure::validation)?;
@@ -176,7 +175,7 @@ pub(super) fn run(
         })
         .collect::<Result<Vec<_>, TaskFailure>>()?;
     let samples = series.iter().map(|line| line.points.len()).sum();
-    let mut panels = PlotPanels::prepare(task, &table, series)?;
+    let mut panels = PlotPanels::prepare(task, &table, series, iteration)?;
     if let Some(options) = atmosphere::Options::from_task(task)? {
         atmosphere::append_overlays(
             &table,

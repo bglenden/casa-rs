@@ -99,7 +99,7 @@ pub(super) fn check_spline_axes(axes: impl IntoIterator<Item = Axis>) -> Result<
 struct LegacySource {
     ms: MeasurementSet,
     path: PathBuf,
-    windows: Vec<i32>,
+    windows: Vec<Vec<i32>>,
 }
 
 impl LegacySource {
@@ -115,11 +115,10 @@ impl LegacySource {
         let windows = (0..description.row_count())
             .map(
                 |row| match array(&description, row, "SPECTRAL_WINDOW_ID")? {
-                    ArrayValue::Int32(values) => values
-                        .iter()
-                        .copied()
-                        .next()
-                        .ok_or_else(|| "CAL_DESC has no spectral window".into()),
+                    ArrayValue::Int32(values) if !values.is_empty() => {
+                        Ok(values.iter().copied().collect())
+                    }
+                    ArrayValue::Int32(_) => Err("CAL_DESC has no spectral window".into()),
                     _ => Err("CAL_DESC spectral-window IDs must be integers".into()),
                 },
             )
@@ -190,7 +189,8 @@ impl LegacySource {
         for row in 0..source.row_count() {
             let description = integer(source, row, "CAL_DESC_ID")
                 .and_then(|id| usize::try_from(id).ok())
-                .and_then(|id| self.windows.get(id).copied())
+                .and_then(|id| self.windows.get(id))
+                .map(|ids| ids[0])
                 .ok_or("invalid legacy CAL_DESC_ID")?;
             let frequencies = usize::try_from(description)
                 .ok()
@@ -237,12 +237,11 @@ impl LegacySource {
         Ok(())
     }
 
-    fn spline(
+    fn selected_spline_rows(
         &self,
         source: &Table,
         selection: &Expressions<'_>,
-        output: &mut Table,
-    ) -> Result<SplineDisplay, String> {
+    ) -> Result<Vec<(usize, RowMetadata)>, String> {
         if !selection.timerange.is_empty() {
             tracing::warn!("Time selection not supported for GSPLINE calibration tables");
         }
@@ -250,9 +249,17 @@ impl LegacySource {
             .ms
             .resolve_field_selector(selection.field)
             .map_err(display)?;
-        let antennas = self
+        let mut antennas = BTreeSet::new();
+        let mut excluded = BTreeSet::new();
+        for clause in selection.antenna.split(';').map(str::trim) {
+            let (set, expr) = clause
+                .strip_prefix('!')
+                .map_or_else(|| (&mut antennas, clause), |expr| (&mut excluded, expr));
+            set.extend(self.ms.resolve_reference_antennas(expr).map_err(display)?);
+        }
+        let windows = self
             .ms
-            .resolve_specified_antennas(selection.antenna)
+            .resolve_spw_selector(selection.spw)
             .map_err(display)?;
         let scans = parse_numeric_id_selector(selection.scan, "scan").map_err(display)?;
         let observations =
@@ -271,17 +278,24 @@ impl LegacySource {
             let index = integer(source, row, "CAL_DESC_ID")
                 .and_then(|id| usize::try_from(id).ok())
                 .ok_or("invalid GSPLINE CAL_DESC_ID")?;
-            let window = self
+            let description = self
                 .windows
                 .get(index)
-                .copied()
                 .ok_or("missing GSPLINE CAL_DESC row")?;
-            let metadata = RowMetadata::read(source, row, window)?;
+            if !windows.selects_all()
+                && !description
+                    .iter()
+                    .any(|&id| usize::try_from(id).is_ok_and(|id| windows.spw_ids().contains(&id)))
+            {
+                continue;
+            }
+            let metadata = RowMetadata::read(source, row, description[0])?;
+            let antenna = metadata.antenna1 as usize;
             if (fields.is_empty() || fields.contains(&metadata.field))
                 && (scans.is_empty() || scans.contains(&metadata.scan))
                 && (observations.is_empty() || observations.contains(&metadata.observation))
-                && (antennas.is_empty()
-                    || usize::try_from(metadata.antenna1).is_ok_and(|id| antennas.contains(&id)))
+                && (antennas.is_empty() || antennas.contains(&antenna))
+                && !excluded.contains(&antenna)
             {
                 matched.push((row, metadata));
             }
@@ -289,26 +303,23 @@ impl LegacySource {
         if matched.is_empty() {
             return Err("calibration selection contains no rows".into());
         }
+        Ok(matched)
+    }
+
+    fn spline(
+        &self,
+        source: &Table,
+        selection: &Expressions<'_>,
+        output: &mut Table,
+    ) -> Result<SplineDisplay, String> {
+        let matched = self.selected_spline_rows(source, selection)?;
         let selected_fields: BTreeSet<_> =
             matched.iter().map(|(_, metadata)| metadata.field).collect();
-        let selected_windows: BTreeSet<_> = matched
-            .iter()
-            .map(|(_, metadata)| metadata.window)
-            .collect();
         let field = *selected_fields.first().expect("matched rows");
-        let window = *selected_windows.first().expect("matched rows");
+        let window = matched[0].1.window;
+        let display_window = common_value(self.windows.iter().flatten().copied(), -1);
         let scan = common_value(matched.iter().map(|(_, meta)| meta.scan), -1);
         let interval = common_value(matched.iter().map(|(_, meta)| meta.interval), -1.0);
-        if !selection.spw.is_empty()
-            && !self
-                .ms
-                .resolve_spw_selector(selection.spw)
-                .map_err(display)?
-                .selects_all()
-            && window < 0
-        {
-            return Err("GSPLINE selection contains no matching spectral window".into());
-        }
         let mut signals = BTreeMap::new();
         for (row, meta) in matched
             .into_iter()
@@ -351,11 +362,7 @@ impl LegacySource {
             } else {
                 -1
             },
-            window: if selected_windows.len() == 1 {
-                window
-            } else {
-                -1
-            },
+            window: display_window,
             scan,
             interval,
         })

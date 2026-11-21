@@ -191,6 +191,10 @@ impl Axis {
                 | Flag
         )
     }
+
+    pub(super) fn uses_spline_antenna(self) -> bool {
+        self == Self::Antenna1 || (self != Self::Receptor && self.uses_receptor())
+    }
 }
 
 #[derive(Clone, Copy)]
