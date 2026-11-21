@@ -340,6 +340,15 @@ impl DirectionCoordinate {
         self.select_axis(self.world_units.clone())
     }
 
+    /// The local longitude axis, or `None` in a latitude-only slice.
+    pub fn longitude_axis(&self) -> Option<usize> {
+        if self.removed_axis.is_some_and(|removed| removed.index == 0) {
+            None
+        } else {
+            Some(0)
+        }
+    }
+
     /// The visible reference values and increments in their stored world units.
     pub fn reference_and_increment_in_world_units(&self) -> (Vec<f64>, Vec<f64>) {
         (

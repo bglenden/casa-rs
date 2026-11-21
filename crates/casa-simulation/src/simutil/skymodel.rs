@@ -148,16 +148,13 @@ pub(crate) fn pixel_axes(
     coordinates: &CoordinateSystem,
     kind: CoordinateType,
 ) -> Option<(usize, Vec<usize>)> {
-    let mut first = 0;
-    for index in 0..coordinates.n_coordinates() {
-        let coordinate = coordinates.coordinate(index);
-        let count = coordinate.n_pixel_axes();
-        if coordinate.coordinate_type() == kind {
-            return Some((index, (first..first + count).collect()));
-        }
-        first += count;
-    }
-    None
+    let index = coordinates.find_coordinate(kind)?;
+    let axes = coordinates
+        .coordinate_pixel_axes(index)?
+        .into_iter()
+        .flatten()
+        .collect();
+    Some((index, axes))
 }
 
 fn require_native_direction_frame(

@@ -13,53 +13,50 @@ pub(super) fn format_position(
     position: &[usize],
     spectral_axis: Option<usize>,
 ) -> Result<String, ImageError> {
-    let mut fields = Vec::with_capacity(position.len());
-    let mut offset = 0;
-    for index in 0..coordinates.n_coordinates() {
+    let pixels: Vec<f64> = position
+        .iter()
+        .take(coordinates.n_pixel_axes())
+        .map(|&value| value as f64)
+        .collect();
+    let world = coordinates.to_world(&pixels)?;
+    let mut fields = Vec::with_capacity(world.len());
+    for (axis, value) in world.into_iter().enumerate() {
+        let (index, local) = coordinates
+            .world_axis_owner(axis)
+            .expect("existing world axis");
         let coordinate = coordinates.coordinate(index);
-        let end = offset + coordinate.n_pixel_axes();
-        let pixels: Vec<f64> = position[offset..end]
-            .iter()
-            .map(|&value| value as f64)
-            .collect();
-        let world = coordinate.to_world(&pixels)?;
         let increments = coordinate.increment();
-        match coordinate {
-            CoordinateModel::Direction(direction) => {
-                fields.push(direction_value(direction.direction_ref(), 0, world[0]));
-                fields.push(direction_value(direction.direction_ref(), 1, world[1]));
-            }
-            CoordinateModel::Stokes(_) => {
-                let code = world[0].round() as i32;
-                fields.push(
-                    StokesType::from_code(code)
-                        .map_or("Undefined", StokesType::name)
-                        .to_string(),
-                );
-            }
+        let text = match coordinate {
+            CoordinateModel::Direction(direction) => direction_value(
+                direction.direction_ref(),
+                direction.longitude_axis() == Some(local),
+                value,
+            ),
+            CoordinateModel::Stokes(_) => StokesType::from_code(value.round() as i32)
+                .map_or("Undefined", StokesType::name)
+                .to_owned(),
             CoordinateModel::Spectral(_) => {
-                let unit = if spectral_axis == Some(offset) {
+                let pixel = coordinates
+                    .coordinate_pixel_axes(index)
+                    .and_then(|axes| axes.get(local).copied().flatten());
+                let unit = if pixel.is_some() && spectral_axis == pixel {
                     coordinate.axis_units()[0].clone()
                 } else {
                     String::new()
                 };
-                fields.push(format!("{}{unit}", number(world[0], increments[0])));
+                format!("{}{unit}", number(value, increments[0]))
             }
-            _ => {
-                for value in world {
-                    fields.push(number(value, increments[0]));
-                }
-            }
-        }
-        offset = end;
+            _ => number(value, increments[0]),
+        };
+        fields.push(text);
     }
     Ok(fields.join(" "))
 }
 
-fn direction_value(frame: DirectionRef, axis: usize, radians: f64) -> String {
+fn direction_value(frame: DirectionRef, longitude: bool, radians: f64) -> String {
     match frame {
         DirectionRef::HADEC => {
-            if axis == 0 {
+            if longitude {
                 let angle = (radians + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
                     - std::f64::consts::PI;
                 if angle == -std::f64::consts::PI {
@@ -81,7 +78,7 @@ fn direction_value(frame: DirectionRef, axis: usize, radians: f64) -> String {
         | DirectionRef::AZELGEO
         | DirectionRef::AZELSWGEO => {
             let mut degrees = radians.to_degrees();
-            if axis == 0 {
+            if longitude {
                 degrees = degrees.rem_euclid(360.0);
                 if matches!(
                     frame,
@@ -94,7 +91,7 @@ fn direction_value(frame: DirectionRef, axis: usize, radians: f64) -> String {
             format!("{degrees:.6}")
         }
         _ => {
-            if axis == 0 {
+            if longitude {
                 format_angle(radians, TIME, 9)
             } else {
                 format_angle(radians, ANGLE | DIG2, 9)
@@ -135,4 +132,56 @@ fn number(value: f64, increment: f64) -> String {
         }
     }
     cpp_number_precision(value, precision)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use casa_tables::{Table, TableOptions};
+    use casa_types::Value;
+
+    use super::{CoordinateSystem, format_position};
+
+    #[test]
+    fn extrema_labels_match_casa_world_order_and_sliced_latitude() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/casa-6.7.6/axis_maps");
+        for (name, position, expected) in [
+            (
+                "swapped.image",
+                &[2, 3, 1, 4][..],
+                "-22.55.03.860 04:35:00.961 Q 1.419e+09Hz",
+            ),
+            (
+                "interleaved.image",
+                &[3, 1, 2, 4][..],
+                "04:35:00.961 Q -22.55.03.860 1.419e+09Hz",
+            ),
+            (
+                "dropdeg_ra.image",
+                &[2, 1, 4][..],
+                "-08.44.33.971 Q 1.419e+09Hz",
+            ),
+        ] {
+            let table = Table::open_metadata_only(TableOptions::new(root.join(name))).unwrap();
+            let Some(Value::Record(record)) = table.keywords().get("coords") else {
+                panic!("{name}: no coordinate record");
+            };
+            let mapped = CoordinateSystem::from_mapped_record(record).unwrap();
+            let last = Some(position.len() - 1);
+            assert_eq!(
+                format_position(&mapped, position, last).unwrap(),
+                expected,
+                "{name}"
+            );
+            if name == "dropdeg_ra.image" {
+                let legacy = CoordinateSystem::from_record(record).unwrap();
+                assert_eq!(
+                    format_position(&legacy, position, last).unwrap(),
+                    expected,
+                    "{name}"
+                );
+            }
+        }
+    }
 }

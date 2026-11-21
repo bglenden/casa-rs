@@ -1726,17 +1726,22 @@ fn summarize_beam_set(
     }
     let channels = beam_set.n_channels();
     let stokes = beam_set.n_stokes();
-    let mut axis = 0;
     let mut image_channels = 1;
     let mut image_stokes = 1;
     for index in 0..coordinates.n_coordinates() {
         let coordinate = coordinates.coordinate(index);
+        let extent = || {
+            coordinates
+                .coordinate_pixel_axes(index)
+                .and_then(|axes| axes.into_iter().flatten().next())
+                .and_then(|axis| shape.get(axis).copied())
+                .unwrap_or(1)
+        };
         match coordinate.coordinate_type() {
-            CoordinateType::Spectral => image_channels = shape.get(axis).copied().unwrap_or(1),
-            CoordinateType::Stokes => image_stokes = shape.get(axis).copied().unwrap_or(1),
+            CoordinateType::Spectral => image_channels = extent(),
+            CoordinateType::Stokes => image_stokes = extent(),
             _ => {}
         }
-        axis += coordinate.n_pixel_axes();
     }
     if channels != 1 && channels != image_channels {
         return Err(ImageError::InvalidMetadata(
@@ -1868,7 +1873,6 @@ fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
 
 fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageAxisSummary> {
     let mut summaries = Vec::new();
-    let mut axis = 0usize;
     for coord_idx in 0..coordinates.n_coordinates() {
         let coord = coordinates.coordinate(coord_idx);
         let mut refs = coord.reference_value();
@@ -1882,7 +1886,13 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
             (refs, increments) = direction.reference_and_increment_in_world_units();
             units = direction.visible_world_units();
         }
-        for axis_in_coord in 0..coord.n_pixel_axes() {
+        let axes = coordinates
+            .coordinate_pixel_axes(coord_idx)
+            .unwrap_or_default();
+        for (axis_in_coord, axis) in axes.into_iter().enumerate() {
+            let Some(axis) = axis else {
+                continue;
+            };
             summaries.push(ImageAxisSummary {
                 axis,
                 coordinate_type: format!("{:?}", coord.coordinate_type()),
@@ -1902,22 +1912,21 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
                     _ => Vec::new(),
                 },
             });
-            axis += 1;
         }
     }
-    while axis < shape.len() {
+    summaries.sort_unstable_by_key(|axis| axis.axis);
+    for (axis, &extent) in shape.iter().enumerate().skip(summaries.len()) {
         summaries.push(ImageAxisSummary {
             axis,
             coordinate_type: "Linear".to_string(),
             name: format!("Axis{axis}"),
-            shape: shape[axis],
+            shape: extent,
             reference_value: 0.0,
             reference_pixel: 0.0,
             increment: 1.0,
             unit: String::new(),
             stokes: Vec::new(),
         });
-        axis += 1;
     }
     summaries
 }
@@ -3764,16 +3773,9 @@ fn coordinate_for_axis(
     coords: &CoordinateSystem,
     axis: usize,
 ) -> Option<&casa_coordinates::CoordinateModel> {
-    let mut offset = 0;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        let next = offset + coord.n_pixel_axes();
-        if axis >= offset && axis < next {
-            return Some(coord);
-        }
-        offset = next;
-    }
-    None
+    coords
+        .pixel_axis_owner(axis)
+        .map(|(index, _)| coords.coordinate(index))
 }
 
 fn spectral_rest_frequency(coords: &CoordinateSystem) -> Option<f64> {

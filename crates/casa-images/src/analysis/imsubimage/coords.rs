@@ -71,15 +71,11 @@ pub(super) fn reduce_coordinates_and_beams(
 }
 
 fn find_system_axis(coords: &CoordinateSystem, kind: CoordinateType) -> Option<usize> {
-    let mut offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        if coord.coordinate_type() == kind {
-            return Some(offset);
-        }
-        offset += coord.n_pixel_axes();
-    }
-    None
+    coords
+        .coordinate_pixel_axes(coords.find_coordinate(kind)?)?
+        .into_iter()
+        .flatten()
+        .next()
 }
 
 pub(in crate::analysis) fn subset_beam_set(

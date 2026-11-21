@@ -56,10 +56,7 @@ impl StridedSection<'_> {
 /// its direction coordinate's wherever they are, or the first two axes of an
 /// image without one.
 ///
-/// A CASA image can hold its direction after other axes (`imtrans`); casa-rs
-/// reads a coordinate's axes adjacent and in its own order (#1001), so the
-/// latitude follows the longitude, and the world axes are numbered as the
-/// pixel axes are (#1002).
+/// The direction axes can be swapped or separated by other coordinates.
 ///
 /// - Regions take their plane here, as CASA does.
 /// - `feather` does too, where CASA 6.7.6's `feather` fails on such an
@@ -73,15 +70,13 @@ pub(super) fn direction_plane_axes<T: ImagePixel>(
     let Some(index) = coordinates.find_coordinate(CoordinateType::Direction) else {
         return Ok([0, 1]);
     };
-    if coordinates.coordinate(index).n_pixel_axes() != 2 {
+    let axes = coordinates.coordinate_pixel_axes(index).unwrap_or_default();
+    let [Some(longitude), Some(latitude)] = axes.as_slice() else {
         return Err(ImageError::InvalidMetadata(
             "selecting a direction plane requires both direction axes".into(),
         ));
-    }
-    let longitude = (0..index)
-        .map(|i| coordinates.coordinate(i).n_pixel_axes())
-        .sum();
-    Ok([longitude, longitude + 1])
+    };
+    Ok([*longitude, *latitude])
 }
 
 /// The axes of a `rank`-axis image other than its plane's, in order.
@@ -124,16 +119,10 @@ pub(super) fn stokes_for_axis(
     coords: &CoordinateSystem,
     axis: usize,
 ) -> Result<Vec<StokesType>, ImageError> {
-    let mut offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        let next = offset + coord.n_pixel_axes();
-        if (offset..next).contains(&axis)
-            && let CoordinateModel::Stokes(stokes) = coord
-        {
-            return Ok(stokes.stokes().to_vec());
-        }
-        offset = next;
+    if let Some((index, _)) = coords.pixel_axis_owner(axis)
+        && let CoordinateModel::Stokes(stokes) = coords.coordinate(index)
+    {
+        return Ok(stokes.stokes().to_vec());
     }
     Err(ImageError::InvalidMetadata(
         "Stokes selection requires a Stokes coordinate".into(),
@@ -337,7 +326,61 @@ fn map_numeric_values(array: &mut ArrayValue, transform: impl Fn(usize, f64) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::StridedSection;
+    use casa_coordinates::defaults::coordinate_system_for_shape;
+    use casa_lattices::TempStoragePolicy;
+
+    use crate::TempImage;
+
+    use super::{CoordinateType, StridedSection, direction_plane_axes, stokes_for_axis};
+
+    #[test]
+    fn image_axes_follow_pixels_but_the_direction_plane_follows_local_order() {
+        let mut coordinates = coordinate_system_for_shape(&[4, 3, 2, 5], false);
+        coordinates
+            .transpose_axes(&[1, 2, 0, 3], &[1, 2, 0, 3])
+            .unwrap();
+        let image = TempImage::<f32>::new(
+            vec![3, 2, 4, 5],
+            coordinates.clone(),
+            TempStoragePolicy::Memory,
+        )
+        .unwrap();
+        assert_eq!(
+            image.axis_names(),
+            ["Declination", "Stokes", "Right Ascension", "Frequency"],
+        );
+        assert_eq!(
+            image.axis_types(),
+            [
+                CoordinateType::Direction,
+                CoordinateType::Stokes,
+                CoordinateType::Direction,
+                CoordinateType::Spectral
+            ],
+        );
+        assert_eq!(image.find_axis(CoordinateType::Direction), Some(0));
+        assert_eq!(image.find_axis(CoordinateType::Stokes), Some(1));
+        assert_eq!(image.find_axis_by_name("right asc"), Some(2));
+        assert_eq!(direction_plane_axes(&image).unwrap(), [2, 0]);
+        assert_eq!(stokes_for_axis(&coordinates, 1).unwrap().len(), 2);
+        let summaries = super::super::axis_summaries(&coordinates, &[3, 2, 4, 5]);
+        assert_eq!(
+            summaries
+                .iter()
+                .map(|axis| (axis.axis, axis.name.as_str(), axis.shape))
+                .collect::<Vec<_>>(),
+            [
+                (0, "Declination", 3),
+                (1, "Stokes", 2),
+                (2, "Right Ascension", 4),
+                (3, "Frequency", 5)
+            ],
+        );
+        coordinates.remove_pixel_axis(2, 0.0).unwrap();
+        let sliced =
+            TempImage::<f32>::new(vec![3, 2, 5], coordinates, TempStoragePolicy::Memory).unwrap();
+        assert!(direction_plane_axes(&sliced).is_err());
+    }
 
     #[test]
     fn sparse_source_windows_never_exceed_a_dense_cursor() {
