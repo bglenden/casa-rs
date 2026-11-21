@@ -10,6 +10,13 @@ pub(super) struct Peak {
     pub(super) height: f64,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum PeakRanking {
+    Positive,
+    Signed,
+    Maximum { signed: bool },
+}
+
 struct Row {
     pixels: Vec<f32>,
     done: Vec<bool>,
@@ -45,22 +52,31 @@ fn read_row(
     Ok(Row { pixels, done })
 }
 
+pub(super) fn admits_shape(width: usize, height: usize) -> Result<bool, ImageError> {
+    if height < 4 {
+        return Err(invalid(format!(
+            "Need at least 4 rows in image. Found only {height}"
+        )));
+    }
+    Ok(width >= 3 && height > 4)
+}
+
 pub(super) fn search(
     reader: &PixelSections<'_, f32>,
     plan: &SubimagePlan,
     section: &StridedSection<'_>,
     nmax: usize,
     cutoff: f64,
-    signed: bool,
+    ranking: PeakRanking,
 ) -> Result<Vec<Peak>, ImageError> {
+    let signed = matches!(
+        ranking,
+        PeakRanking::Signed | PeakRanking::Maximum { signed: true }
+    );
+    let maximum = matches!(ranking, PeakRanking::Maximum { .. });
     let width = plan.shape[0];
     let height = plan.shape[1];
-    if height < 4 {
-        return Err(invalid(format!(
-            "Need at least 4 rows in image. Found only {height}"
-        )));
-    }
-    if nmax == 0 || width < 3 || height == 4 {
+    if !admits_shape(width, height)? || nmax == 0 {
         return Ok(Vec::new());
     }
     let axes = [plan.kept_axes[0], plan.kept_axes[1]];
@@ -72,6 +88,7 @@ pub(super) fn search(
         read_row(reader, section, axes, 4, width)?,
     ];
     let mut peaks: Vec<Peak> = Vec::new();
+    let mut strongest_sample = 0.;
     for y in 3..height - 1 {
         if y > 3 {
             active.rotate_left(1);
@@ -80,14 +97,15 @@ pub(super) fn search(
         for x in 1..width - 1 {
             let start = x - 1;
             let center = f64::from(active[1].pixels[x]);
-            let magnitude = if signed { center.abs() } else { center };
-            if magnitude <= 0. {
+            let sample_magnitude = if signed { center.abs() } else { center };
+            if sample_magnitude <= 0. || (maximum && sample_magnitude < strongest_sample) {
                 continue;
             }
             let brightest = peaks.first().map_or(0., |peak| peak.height.abs());
             let weakest = peaks.get(nmax - 1).map_or(0., |peak| peak.height.abs());
-            if magnitude < 0.8 * cutoff * brightest
-                || magnitude < 0.8 * weakest
+            if (!maximum
+                && (sample_magnitude < 0.8 * cutoff * brightest
+                    || sample_magnitude < 0.8 * weakest))
                 || [
                     active[0].pixels[x],
                     active[1].pixels[x - 1],
@@ -95,7 +113,14 @@ pub(super) fn search(
                     active[2].pixels[x],
                 ]
                 .into_iter()
-                .any(|other| magnitude <= f64::from(other).abs())
+                .any(|other| {
+                    let other = f64::from(other);
+                    if maximum {
+                        sample_magnitude < if signed { other.abs() } else { other }
+                    } else {
+                        sample_magnitude <= other.abs()
+                    }
+                })
             {
                 continue;
             }
@@ -109,17 +134,25 @@ pub(super) fn search(
             let sample = std::array::from_fn(|row| {
                 std::array::from_fn(|column| sign * f64::from(active[row].pixels[start + column]))
             });
-            let Some((height, [ox, oy])) = quadratic(sample) else {
+            let Some((height, [ox, oy])) = quadratic(sample, maximum) else {
                 continue;
             };
             let magnitude = if signed { height.abs() } else { height };
-            if magnitude < cutoff * brightest {
+            if !maximum && magnitude < cutoff * brightest {
                 continue;
             }
-            let position = peaks
-                .iter()
-                .position(|peak| magnitude >= peak.height)
-                .unwrap_or(peaks.len());
+            let position = if maximum {
+                if height <= 0. || (sample_magnitude == strongest_sample && magnitude < brightest) {
+                    continue;
+                }
+                strongest_sample = sample_magnitude;
+                0
+            } else {
+                peaks
+                    .iter()
+                    .position(|peak| magnitude >= peak.height)
+                    .unwrap_or(peaks.len())
+            };
             if position >= nmax {
                 continue;
             }
@@ -131,8 +164,10 @@ pub(super) fn search(
                 },
             );
             peaks.truncate(nmax);
-            for row in &mut active {
-                row.done[start..=x + 1].fill(true);
+            if !maximum {
+                for row in &mut active {
+                    row.done[start..=x + 1].fill(true);
+                }
             }
         }
     }
@@ -145,7 +180,7 @@ pub(super) fn search(
     Ok(peaks)
 }
 
-fn quadratic(sample: [[f64; 3]; 3]) -> Option<(f64, [f64; 2])> {
+fn quadratic(sample: [[f64; 3]; 3], require_maximum: bool) -> Option<(f64, [f64; 2])> {
     // Weighted normal matrix for [1, y, x, y², x², yx] on a 3×3 window.
     // The center, face and corner weights are 1, 1/2 and 1/4.
     const NORMAL: [[f64; 6]; 6] = [
@@ -167,6 +202,9 @@ fn quadratic(sample: [[f64; 3]; 3]) -> Option<(f64, [f64; 2])> {
     }
     let [a, b, c, d, e, f] = solve_symmetric_ldlt_casacore(NORMAL, rhs)?.map(|value| value as f32);
     let determinant = f * f - 4. * d * e;
+    if require_maximum && (d >= 0. || e >= 0. || determinant >= 0.) {
+        return None;
+    }
     let x = f64::from(2. * c * d - b * f) / f64::from(determinant);
     let y = f64::from(2. * b * e - c * f) / f64::from(determinant);
     if x.abs() > 1. || y.abs() > 1. || !x.is_finite() || !y.is_finite() {

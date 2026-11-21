@@ -711,7 +711,7 @@ const METHODS: &[Method] = &[
             param("list", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("miscinfo", &[], R::Any, Yes),
     method(

@@ -57,6 +57,7 @@ pub use imsubimage::{FindSourcesOptions, find_image_sources};
 pub use imsubimage::{FourierOptions, FourierPixel, ImageFourier};
 pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
 pub use imsubimage::{HistogramOptions, HistogramPixel, image_histogram};
+pub use imsubimage::{ImageMaxFit, MaxFitOptions, fit_image_maximum};
 pub use imsubimage::{
     ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
     ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
