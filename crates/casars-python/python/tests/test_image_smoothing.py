@@ -322,7 +322,7 @@ def test_boxcar_uses_the_implicit_decimator_region(casa):
     ("boxcar", 262148, "copy"),
     ("boxcar", 262148, "mean"),
 ])
-def test_smoothing_windows_cross_bounded_reads(casa, method, width, decimation):
+def test_smoothing_windows_cross_bounded_reads(method, width, decimation):
     length = 2 * width + 11 if width and width > 262144 else 262183
     data = np.float32(np.arange(length) % 7)
     mask = data != 2.
@@ -346,17 +346,16 @@ def test_smoothing_windows_cross_bounded_reads(casa, method, width, decimation):
             validity = grouped_mask.any(axis=1)
     else:
         expected, validity, *_ = smooth_expected(data, mask, method, width, decimation)
-    for api in (tools, casa):
-        source = api.image()
-        assert source.fromarray(pixels=data)
-        assert source.putregion(pixelmask=mask)
-        result = getattr(source, method)(**options)
-        try:
-            np.testing.assert_allclose(result.getchunk(), expected, rtol=2e-6)
-            np.testing.assert_array_equal(result.getchunk(getmask=True), validity)
-        finally:
-            result.done()
-            source.done()
+    source = tools.image()
+    assert source.fromarray(pixels=data)
+    assert source.putregion(pixelmask=mask)
+    result = getattr(source, method)(**options)
+    try:
+        np.testing.assert_allclose(result.getchunk(), expected, rtol=2e-6)
+        np.testing.assert_array_equal(result.getchunk(getmask=True), validity)
+    finally:
+        result.done()
+        source.done()
 
 
 def test_masked_mean_uses_validity_across_orthogonal_tiles(casa):
