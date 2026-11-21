@@ -79,7 +79,10 @@ mod position_angle;
 
 // Re-exports for convenience.
 pub use baseline::UvwFrame;
-pub use earth_magnetic::{EarthMagneticRef, IgrfSample, MEarthMagnetic, calculate_igrf};
+pub use earth_magnetic::{
+    EarthMagneticRef, IgrfSample, MEarthMagnetic, calculate_igrf, calculate_igrf_at_shell_offset,
+    ionospheric_pierce_point,
+};
 pub use epoch::{EpochRef, MEpoch, MjdHighPrec};
 pub use error::MeasureError;
 pub use frame::{IauModel, MeasFrame};

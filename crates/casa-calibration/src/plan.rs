@@ -923,20 +923,14 @@ fn build_table_plan(
     } else {
         fields::selected_spectral_windows(&summary, &resolved_gainfields)?
     };
-    let effective_spec;
-    let spec_for_spw_mapping = if summary.table_subtype == "KAntPos Jones" {
-        effective_spec = k_antpos_spwmap_spec(spec, &applicable_data_spw_ids);
-        &effective_spec
-    } else {
-        spec
-    };
     let calibration_window_count = if is_bpoly {
         windows
     } else {
         open_summary_subtable(&summary, "SPECTRAL_WINDOW")?.row_count()
     };
-    let spw_mapping = resolve_spw_mapping(
-        spec_for_spw_mapping,
+    let spw_mapping = windows::resolve_calibration_spw_mapping(
+        spec,
+        &summary.table_subtype,
         &available_calibration_spw_ids,
         calibration_window_count,
         &applicable_data_spw_ids,
@@ -978,21 +972,6 @@ fn build_table_plan(
     };
     let keys = library::arrange_contexts(ms, &mut plan, selected_rows)?;
     Ok((plan, keys))
-}
-
-fn k_antpos_spwmap_spec(
-    spec: &ApplyCalibrationTableSpec,
-    applicable_data_spw_ids: &[i32],
-) -> ApplyCalibrationTableSpec {
-    let mut spec = spec.clone();
-    let len = applicable_data_spw_ids
-        .iter()
-        .filter_map(|spw| usize::try_from(*spw).ok())
-        .max()
-        .map(|spw| spw + 1)
-        .unwrap_or_default();
-    spec.spwmap = vec![0; len];
-    spec
 }
 
 fn load_bpoly_spectral_window_ids(path: &Path) -> Result<Vec<i32>, ApplyPlanError> {

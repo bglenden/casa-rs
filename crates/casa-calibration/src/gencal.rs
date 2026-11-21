@@ -6,6 +6,7 @@ mod antpos_file;
 pub(crate) mod jyperk;
 mod power_curve;
 mod switched_power;
+pub(crate) mod tecim;
 mod tsys;
 
 pub use antpos_file::AntposInputError;
@@ -85,6 +86,8 @@ pub enum GencalType {
     Rq,
     /// Convert an ALMA power scale from kelvins to Jy (`G Jones`).
     Jyperk,
+    /// Line-of-sight ionospheric total electron content (`F Jones`).
+    Tecim,
 }
 
 impl GencalType {
@@ -95,6 +98,7 @@ impl GencalType {
             Self::Antpos | Self::AntposVla => "KAntPos Jones",
             Self::Gc | Self::Gceff | Self::Eff => "EGainCurve",
             Self::Tsys => "B TSYS",
+            Self::Tecim => "F Jones",
             Self::Opac => "TOpac",
             Self::Swpow | Self::Evlagain | Self::SwpOverRq | Self::Swpwts | Self::Rq => {
                 "G EVLASWPOW"
@@ -141,8 +145,9 @@ impl std::str::FromStr for GencalType {
             "swpwts" => Ok(Self::Swpwts),
             "rq" => Ok(Self::Rq),
             "jyperk" => Ok(Self::Jyperk),
+            "tecim" => Ok(Self::Tecim),
             other => Err(format!(
-                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, rq, or jyperk"
+                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, rq, jyperk, or tecim"
             )),
         }
     }
@@ -294,6 +299,9 @@ pub(crate) fn gencal_with_output_mode(
     uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
+    if request.caltype == GencalType::Tecim {
+        return tecim::generate(request, infile, mode);
+    }
     if request.caltype == GencalType::Jyperk {
         return jyperk::calibrate(
             request,
@@ -388,6 +396,7 @@ pub(crate) fn gencal_with_output_mode(
             switched_power::rows(&ms, &power, &noise_cal, request.caltype)?
         }
         GencalType::Jyperk => unreachable!("Jy/K has its own factor source"),
+        GencalType::Tecim => unreachable!("TEC has its own image source"),
     };
     let subtype = if embedded.is_some() {
         "EPowerCurve"
@@ -878,7 +887,7 @@ pub(crate) fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, GencalError> {
-    if request.caltype == GencalType::Antpos {
+    if matches!(request.caltype, GencalType::Antpos | GencalType::Tecim) {
         return Ok(infile.into_iter().map(Path::to_path_buf).collect());
     }
     if request.caltype == GencalType::Tsys {
@@ -970,6 +979,12 @@ fn write_prior_caltable(
             .table_mut()
             .keywords_mut()
             .upsert(crate::antpos_vla::TROPO_KEYWORD, value);
+    }
+    if request.caltype == GencalType::Tecim {
+        writer.table_mut().keywords_mut().upsert(
+            tecim::HEIGHT_KEYWORD,
+            Value::Scalar(ScalarValue::Float64(tecim::height_km(&request.parameter))),
+        );
     }
 
     for row in rows {

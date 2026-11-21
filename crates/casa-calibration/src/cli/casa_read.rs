@@ -344,16 +344,24 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         "swp/rq" => GencalType::SwpOverRq,
         "swpwts" => GencalType::Swpwts,
         "rq" => GencalType::Rq,
+        "tecim" => GencalType::Tecim,
         other => return Err(not_yet("caltype", other)),
     };
     let antenna = task.text("antenna")?.unwrap_or_default();
-    let infile = if caltype.is_gain_curve() || caltype == GencalType::Antpos {
+    let infile = if caltype.is_gain_curve()
+        || matches!(caltype, GencalType::Antpos | GencalType::Tecim)
+    {
         task.text("infile")?
             .filter(|path| !path.is_empty() && !(caltype == GencalType::Antpos && path == "None"))
             .map(PathBuf::from)
     } else {
         None
     };
+    if caltype == GencalType::Tecim && !infile.as_ref().is_some_and(|path| path.exists()) {
+        return Err(
+            TaskFailure::validation("An existing tec map must be specified in infile").at("infile"),
+        );
+    }
     Ok(GencalTaskRequest {
         prior: GencalRequest {
             measurement_set: task.path("vis")?,
@@ -366,7 +374,8 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         },
         polarization: task.text("pol")?.unwrap_or_default(),
         gaincurve_infile: infile.clone().filter(|_| caltype.is_gain_curve()),
-        antpos_infile: infile.filter(|_| caltype == GencalType::Antpos),
+        antpos_infile: infile.clone().filter(|_| caltype == GencalType::Antpos),
+        tec_image: infile.filter(|_| caltype == GencalType::Tecim),
         ant_pos_time_limit: (caltype == GencalType::Antpos)
             .then(|| task.integer("ant_pos_time_limit"))
             .transpose()?,

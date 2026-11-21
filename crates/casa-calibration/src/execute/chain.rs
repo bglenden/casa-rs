@@ -61,7 +61,8 @@ impl ApplyChain {
 pub(crate) fn has_polarization_matrix(plan: &ApplyPlan) -> bool {
     plan.calibration_tables.iter().any(|table| {
         let subtype = table.summary.table_subtype.as_str();
-        subtype == "PosAng Jones" || polarization::Leakage::from_subtype(subtype).is_some()
+        matches!(subtype, "PosAng Jones" | "F Jones")
+            || polarization::Leakage::from_subtype(subtype).is_some()
     })
 }
 
@@ -80,6 +81,7 @@ pub(super) fn viscal_order(subtype: &str) -> u8 {
         "P Jones" => 11,
         "EGainCurve" | "EPowerCurve" => 12,
         "T Jones" | "Tf Jones" | "TOpac" | "TfOpac" => 13,
+        "F Jones" => 14,
         _ => 6,
     }
 }

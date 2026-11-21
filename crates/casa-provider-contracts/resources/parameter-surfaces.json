@@ -19318,10 +19318,7 @@
             "python": {"name": "infile"},
             "presentation": {"label": "Input File", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tecim"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eop"}}
-          ]}}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eop"}}}
         },
         {
           "name": "endpoint",
@@ -19452,7 +19449,8 @@
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swp/rq"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swpwts"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "rq"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tecim"}}
           ]}}}
         },
         {

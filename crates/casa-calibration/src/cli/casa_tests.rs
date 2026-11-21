@@ -570,6 +570,7 @@ fn gencal_reads_casas_values() {
             polarization: String::new(),
             gaincurve_infile: None,
             antpos_infile: None,
+            tec_image: None,
             ant_pos_time_limit: None,
             uniform: None,
         })

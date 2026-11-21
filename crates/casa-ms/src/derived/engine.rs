@@ -489,6 +489,31 @@ impl MsCalEngine {
         Ok(self.direction_at(time_mjd_sec, field_id)?.into_owned())
     }
 
+    /// Return the phase centre evaluated without a row epoch, retaining its
+    /// recorded reference. A moving field is read at FIELD.TIME or, when
+    /// unavailable, its first observation time.
+    ///
+    /// # Errors
+    /// An unknown field or a moving phase centre that cannot be evaluated.
+    pub fn reference_phase_direction(
+        &self,
+        field_id: usize,
+        first_time_mjd_sec: f64,
+    ) -> MsResult<MDirection> {
+        match self.moving_field_reference_direction(field_id, first_time_mjd_sec)? {
+            Some(direction) => Ok(direction),
+            None => {
+                self.field_dir(field_id)?;
+                let [longitude, latitude] = self.field_phase_offsets[field_id];
+                Ok(MDirection::from_angles(
+                    longitude,
+                    latitude,
+                    self.field_phase_references[field_id],
+                ))
+            }
+        }
+    }
+
     /// [`Self::observation_direction_j2000`], borrowed for a fixed field.
     fn direction_at(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<Cow<'_, MDirection>> {
         let Some((ephemeris, offset)) = self.field_series(field_id)? else {
@@ -915,14 +940,7 @@ impl MsCalEngine {
         if offset_m == [0.0; 3] {
             return Ok([0.0; 3]);
         }
-        let direction = match self.moving_field_reference_direction(field_id, time_mjd_sec)? {
-            Some(direction) => direction,
-            None => {
-                self.field_dir(field_id)?;
-                let [longitude, latitude] = self.field_phase_offsets[field_id];
-                MDirection::from_angles(longitude, latitude, self.field_phase_references[field_id])
-            }
-        };
+        let direction = self.reference_phase_direction(field_id, time_mjd_sec)?;
         // KAntPosJones sets its correction frame to UTC, including for a
         // MeasurementSet whose TIME column is labeled TAI.
         let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
