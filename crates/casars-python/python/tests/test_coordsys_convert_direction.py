@@ -54,7 +54,11 @@ def test_custom_native_grid_matches_pinned_casa(casa, projection, frame):
     actual = tools.coordsys()
     assert actual.fromrecord(record)
     expected = native.convertdirection(frame)
-    _assert_value(actual.convertdirection(frame), expected)
+    rotated = actual.convertdirection(frame)
+    assert rotated["unit"] == expected["unit"] == "rad"
+    # The finite latitude offset involves two spherical conversions through
+    # a rounded frame matrix. A nanoradian is about 0.2 milliarcseconds.
+    assert rotated["value"] == pytest.approx(expected["value"], abs=1.e-9, rel=0.0)
     _assert_value(actual.torecord()["direction0"], native.torecord()["direction0"])
     np.testing.assert_array_equal(actual.torecord()["pixelmap0"], [2, 0])
     _assert_value(actual.torecord()["worldreplace0"], native.torecord()["worldreplace0"])

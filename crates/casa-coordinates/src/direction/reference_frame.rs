@@ -30,13 +30,15 @@ impl DirectionCoordinate {
         }
         let mut old = self.clone().with_conversion_direction_ref(frame);
         let world = old.pixel_to_world(self.crpix)?;
-        let converted = Self::new(
+        let mut converted = Self::new(
             frame,
             self.projection.clone(),
             world,
             self.cdelt,
             self.crpix,
         );
+        // CASA saves the native pole selected by the WCS constructor.
+        converted.latpole = converted.native_pole[1];
 
         // Measure the new frame's positive latitude direction on the old
         // projection. A one-degree offset toward the equator avoids crossing
