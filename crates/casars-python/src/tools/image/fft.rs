@@ -33,6 +33,8 @@ trait ProductPixel: ImagePixel {
     fn wrap(image: Storage<Self>) -> ImageHandle;
 }
 
+type ExtractComponent<T> = fn(Complex<T>) -> T;
+
 macro_rules! product_pixels {
     ($($pixel:ty => $kind:ident),+ $(,)?) => {
         $(impl ProductPixel for $pixel {
@@ -120,7 +122,7 @@ impl Request<'_> {
         )
         .map_err(raised)?;
         let scratch = plan.transform(input).map_err(raised)?;
-        let components: [fn(Complex<T::Scalar>) -> T::Scalar; 4] =
+        let components: [ExtractComponent<T::Scalar>; 4] =
             [|value| value.re, |value| value.im, T::amplitude, T::phase];
         let history = source.history_entries()?;
         let call = self.history.then(|| self.history_call());
