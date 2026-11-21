@@ -415,8 +415,9 @@
       "status": "Partial"
     },
     "freqframe": {
-      "scope": "Ignore the requested frequency frame when transform is false. Active frequency conversion remains open for calibration tables.",
+      "scope": "Calibration-table PlotMS retains the table’s stored spectral coordinates and warns when an active frame is requested. MeasurementSet transform coverage is tracked separately.",
       "evidence": [
+        "calibration-controls",
         "selectors",
         "remaining"
       ],
@@ -973,14 +974,15 @@
       "status": "Partial"
     },
     "headeritems": {
-      "scope": "Comma-separated list of pre-defined page header items.",
+      "scope": "Render requested page headers and metadata on current calibration tables and supported MeasurementSet figures. Shared MeasurementSet figure coverage is tracked separately.",
       "evidence": [
+        "calibration-controls",
         "remaining"
       ],
       "behaviors": [
         "presentation"
       ],
-      "status": "Not implemented"
+      "status": "Partial"
     },
     "showatm": {
       "scope": "Overlay atmospheric transmission on MeasurementSets and current calibration tables.",
@@ -1084,11 +1086,12 @@
       "id": "presentation",
       "title": "Render the shared plot document",
       "status": "Partial",
-      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend and export sizing.",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing.",
       "evidence": [
-        "paired"
+        "paired",
+        "calibration-controls"
       ],
-      "gap": "Renderer-specific marker fill patterns, page headers and interactive editing remain open."
+      "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
     },
     {
       "id": "export",
@@ -1191,6 +1194,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-atmosphere-20261121.json",
       "links": [
         "tools/casa-compat/plotms_ms_atmosphere_oracle.py"
+      ]
+    },
+    "calibration-controls": {
+      "kind": "Same-input calibration-table PlotMS headers and transform controls",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on the same current bandpass table and selected calibration solutions. Public page headers and spectral transform settings.",
+      "result": "Three text exports matched byte for byte. CASA rendered the requested page header labels. Native verified stored table values, independent field pages, absent wildcard metadata, a polynomial direction and row-specific frame, and non-overlapping 1000 by 400 pixel headers at 100 and 300 DPI. Two native active transform calls preserved the reference coordinates after a warning. The pinned renderer failed to complete active frame requests on the test table.",
+      "casa_version": "6.7.6.14",
+      "revision": "95ca3bf47f2fa98411cf9fea7d72ba95eac47c44",
+      "source_revision": "95ca3bf47f2fa98411cf9fea7d72ba95eac47c44",
+      "command": "casa-python tools/casa-compat/plotms_calibration_controls_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-calibration-controls-20261121.json",
+      "links": [
+        "tools/casa-compat/plotms_calibration_controls_oracle.py"
       ]
     },
     "selectors": {

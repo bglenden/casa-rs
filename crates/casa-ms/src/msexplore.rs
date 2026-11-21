@@ -942,6 +942,15 @@ pub enum MsPageHeaderItem {
 }
 
 impl MsPageHeaderItem {
+    fn parse(token: &str) -> Option<Self> {
+        use MsPageHeaderItem::*;
+        [
+            Filename, YColumn, ObsDate, ObsTime, Observer, ProjId, Telescope, TargName, TargDir,
+        ]
+        .into_iter()
+        .find(|item| item.as_str() == token)
+    }
+
     /// Stable string form matching CASA `plotms`.
     pub const fn as_str(self) -> &'static str {
         match self {

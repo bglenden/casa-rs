@@ -935,22 +935,9 @@ fn parse_header_items(value: Option<&str>) -> Result<Vec<MsPageHeaderItem>, Stri
         if token.is_empty() {
             continue;
         }
-        let item = match token {
-            "filename" => MsPageHeaderItem::Filename,
-            "ycolumn" => MsPageHeaderItem::YColumn,
-            "obsdate" => MsPageHeaderItem::ObsDate,
-            "obstime" => MsPageHeaderItem::ObsTime,
-            "observer" => MsPageHeaderItem::Observer,
-            "projid" => MsPageHeaderItem::ProjId,
-            "telescope" => MsPageHeaderItem::Telescope,
-            "targname" => MsPageHeaderItem::TargName,
-            "targdir" => MsPageHeaderItem::TargDir,
-            other => {
-                return Err(format!(
-                    "unsupported --headeritems value {other:?}; expected a comma-separated subset of: filename, ycolumn, obsdate, obstime, observer, projid, telescope, targname, targdir"
-                ));
-            }
-        };
+        let item = MsPageHeaderItem::parse(token).ok_or_else(|| format!(
+            "unsupported --headeritems value {token:?}; expected a comma-separated subset of: filename, ycolumn, obsdate, obstime, observer, projid, telescope, targname, targdir"
+        ))?;
         if !items.contains(&item) {
             items.push(item);
         }
