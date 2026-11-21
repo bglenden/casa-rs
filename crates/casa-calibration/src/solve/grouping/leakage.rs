@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use interval::IntervalFits;
 use joint::SourceFitMode;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LeakageSolveKind {
     D,
     Df,
@@ -36,6 +36,7 @@ pub(crate) enum LeakageSolveKind {
     Dflls,
     Xj,
     Xf,
+    PosAng,
 }
 
 impl LeakageSolveKind {
@@ -49,6 +50,7 @@ impl LeakageSolveKind {
             Self::Dflls => "DfLLS Jones",
             Self::Xj => "X Jones",
             Self::Xf => "Xf Jones",
+            Self::PosAng => "PosAng Jones",
         }
     }
 
@@ -63,15 +65,16 @@ impl LeakageSolveKind {
                 | Self::DfGenX
                 | Self::Dflls
                 | Self::Xf
+                | Self::PosAng
         )
     }
 
     fn iterative(self) -> bool {
-        !matches!(self, Self::Dlls | Self::Dflls | Self::Xj | Self::Xf)
+        !matches!(self, Self::Dlls | Self::Dflls) && !self.cross_hand()
     }
 
     pub(crate) fn cross_hand(self) -> bool {
-        matches!(self, Self::Xj | Self::Xf)
+        matches!(self, Self::Xj | Self::Xf | Self::PosAng)
     }
 
     fn source(self) -> Option<SourceFitMode> {
@@ -144,10 +147,10 @@ pub(crate) fn solve_polarization(
         &request.priors,
         true,
         true,
-        if request.kind.cross_hand() {
-            PriorCalibrationMode::CrossHand
-        } else {
-            PriorCalibrationMode::Leakage
+        match request.kind {
+            LeakageSolveKind::PosAng => PriorCalibrationMode::PositionAngle,
+            LeakageSolveKind::Xj | LeakageSolveKind::Xf => PriorCalibrationMode::CrossHand,
+            _ => PriorCalibrationMode::Leakage,
         },
     )
     .map_err(error)?;
@@ -290,18 +293,19 @@ struct BaselineAverages {
     start: f64,
     bins: Vec<CoherencyMean>,
     centroid: WeightedTime,
-    spectral_weight: f64,
 }
 
 impl BaselineAverages {
     fn finish_time(&mut self, solution_time: &mut WeightedTime) {
+        // SDBList reduces each baseline's Float weight spectrum before
+        // converting its aggregate weight to Double.
+        let weight = f64::from(self.bins.iter().flat_map(|bin| bin.weights).sum::<f32>());
         if self.centroid.mean().is_some() {
-            solution_time.observe_mean(self.centroid, self.spectral_weight);
-        } else if self.spectral_weight > 0.0 {
-            solution_time.observe(self.start, self.spectral_weight);
+            solution_time.observe_mean(self.centroid, weight);
+        } else if weight > 0.0 {
+            solution_time.observe(self.start, weight);
         }
         self.centroid = WeightedTime::default();
-        self.spectral_weight = 0.0;
     }
 }
 
@@ -323,14 +327,21 @@ impl LeakageInputs<'_> {
         let first = rows[0].0;
         let spectral_window = interval_window(rows);
         let count = self.windows[&spectral_window].count();
+        let kind = self.request.kind;
         let requested = if self.request.preaverage_seconds < 0.0 {
-            300.0
+            if kind == LeakageSolveKind::PosAng {
+                30.0
+            } else {
+                300.0
+            }
         } else {
             self.request.preaverage_seconds
         };
         // For preavg=0 CASA averages throughout the enclosing solint.
         let span = (requested > f64::from(f32::EPSILON)).then_some(0.999 * requested);
-        let mut fits = IntervalFits::new(count, antennas, self.request.kind);
+        let circular = kind == LeakageSolveKind::PosAng
+            && correlation_types_for_ddid(self.ms, first.data_desc_id)?.contains(&5);
+        let mut fits = IntervalFits::new(count, antennas, kind, circular);
         let mut averages = BTreeMap::new();
         let mut time = WeightedTime::default();
         for batch in rows.chunks(256) {
@@ -364,11 +375,12 @@ impl LeakageInputs<'_> {
                         start: row.time_seconds,
                         bins: vec![CoherencyMean::default(); count],
                         centroid: WeightedTime::default(),
-                        spectral_weight: 0.0,
                     });
                 if span.is_some_and(|span| row.time_seconds - active.start > span) {
+                    if kind.cross_hand() {
+                        active.finish_time(&mut time);
+                    }
                     fits.accumulate(pair, &mut active.bins, antennas)?;
-                    active.finish_time(&mut time);
                     active.start = row.time_seconds;
                 }
                 let (spectral_weight, scalar_weight) = self.average_row(
@@ -381,15 +393,16 @@ impl LeakageInputs<'_> {
                     active
                         .centroid
                         .observe(row.time_centroid_seconds, scalar_weight);
-                    active.spectral_weight += spectral_weight;
                 } else {
                     time.observe(row.time_centroid_seconds, spectral_weight);
                 }
             }
         }
         for ((_, _, pair), mut active) in averages {
+            if kind.cross_hand() {
+                active.finish_time(&mut time);
+            }
             fits.accumulate(pair, &mut active.bins, antennas)?;
-            active.finish_time(&mut time);
         }
         Ok(fits
             .finish(
@@ -486,12 +499,12 @@ impl LeakageInputs<'_> {
             .map_err(prior_error)?;
         let flags = flags.as_ref().unwrap_or(input.flags.as_ref());
         let samples = input.samples();
+        let stokes_i = |channel| (model[[order[0], channel]] + model[[order[3], channel]]) * 0.5;
         // The X solve time combines baseline centroids using spectral
         // weights, while time averaging each baseline uses scalar weights.
         let scalar_weight = self.request.kind.cross_hand().then(|| {
             let normalized = SolveSamples {
                 flags: samples::two_dimensional(flags),
-                model: Some(samples::two_dimensional(&model)),
                 ..samples
             };
             let shared_flags = samples::channel_flags(&normalized);
@@ -510,7 +523,13 @@ impl LeakageInputs<'_> {
                         corr,
                         channels,
                         Some(&shared_flags),
-                        Complex32::ONE,
+                        |channel| {
+                            if self.request.kind == LeakageSolveKind::PosAng {
+                                stokes_i(channel)
+                            } else {
+                                model[[corr, channel]]
+                            }
+                        },
                         true,
                     )
                 })
@@ -530,7 +549,7 @@ impl LeakageInputs<'_> {
             let slot = position / window.bin_width;
             let mut data = order.map(|corr| samples.data[[corr, channel]]);
             let mut weights = order.map(|corr| samples.weights[[corr, channel]]);
-            let model = order.map(|corr| model[[corr, channel]]);
+            let mut model = order.map(|corr| model[[corr, channel]]);
             if let Some(intensity) = &intensity {
                 let scale = intensity[channel];
                 if scale == Complex32::ZERO || !scale.is_finite() {
@@ -543,6 +562,14 @@ impl LeakageInputs<'_> {
                 };
                 let amplitude = scale.norm();
                 weights = weights.map(|weight| weight * (amplitude * amplitude));
+            } else if self.request.kind == LeakageSolveKind::PosAng {
+                let scale = (model[0] + model[3]) * 0.5;
+                let power = scale.norm_sqr();
+                if power > 0.0 {
+                    data = data.map(|value| value / scale);
+                    model = model.map(|value| value / scale);
+                    weights = weights.map(|weight| weight * power);
+                }
             } else if self.request.kind.cross_hand() {
                 for (corr, model) in model.into_iter().enumerate() {
                     let amplitude = model.norm();

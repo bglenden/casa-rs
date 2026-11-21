@@ -12,7 +12,7 @@ fn resample(
     output: &[f64],
     mode: crate::FrequencyInterpolation,
     relative: bool,
-    system_temperature: bool,
+    parameter_family: Option<TimeParameterFamily>,
 ) -> Result<GainGrid, ApplyExecutionError> {
     let (relative_input, relative_output);
     let (input, output) = if relative {
@@ -23,7 +23,10 @@ fn resample(
         (input, output)
     };
     let solution = crate::ComplexSolution::of(grid);
-    if !system_temperature {
+    if !matches!(
+        parameter_family,
+        Some(TimeParameterFamily::Tsys | TimeParameterFamily::PositionAngle)
+    ) {
         return solution
             .resample_frequency(input, output, mode)
             .map(crate::ComplexSolution::into_gain_grid);
@@ -32,6 +35,9 @@ fn resample(
     let mut sampled = solution
         .resample_real_frequency(input, output, mode)?
         .into_gain_grid();
+    if matches!(parameter_family, Some(TimeParameterFamily::PositionAngle)) {
+        return Ok(sampled);
+    }
     // StandardTsys evaluates sqrt(Tsys) and reverses the Jones inversion.
     for (gain, flagged) in sampled.values.iter_mut().zip(&mut sampled.flags) {
         let tsys = gain.re;
@@ -92,7 +98,7 @@ pub(super) fn prepare(
                 ..
             }
         ),
-        matches!(table.time_parameter_family, Some(TimeParameterFamily::Tsys)),
+        table.time_parameter_family,
     )?));
     if let Some(cache) = cache {
         cache.insert(key, prepared.clone());
@@ -323,7 +329,7 @@ mod tests {
                 &[0., 1., 2., 3., 4.],
                 crate::FrequencyInterpolation::Linear,
                 false,
-                false,
+                None,
             )
             .unwrap();
             let expected = [
@@ -356,7 +362,7 @@ mod tests {
                 &[2.],
                 crate::FrequencyInterpolation::Linear,
                 false,
-                false,
+                None,
             )
             .unwrap();
             assert!(missing.flags.iter().all(|flag| *flag));
@@ -388,7 +394,7 @@ mod tests {
             &[2.],
             crate::FrequencyInterpolation::Linear,
             false,
-            false,
+            None,
         )
         .unwrap();
         assert!((result.values[[0, 0]] - Complex32::new(-1., 0.)).norm() < 1e-6);

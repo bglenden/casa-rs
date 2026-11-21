@@ -26,7 +26,7 @@ use super::{
 use crate::ApplyCalibrationTableSpec;
 use crate::execute::{
     EvaluatedApplyRow, PreappliedRows, PriorSolveBoundary, evaluate_apply_rows,
-    evaluate_solve_priors, has_leakage,
+    evaluate_solve_priors, has_polarization_matrix,
 };
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
@@ -59,6 +59,7 @@ pub(crate) enum PriorCalibrationMode {
     },
     Leakage,
     CrossHand,
+    PositionAngle,
 }
 
 pub(crate) fn load_preapplied_rows(
@@ -89,7 +90,7 @@ pub(crate) fn load_preapplied_rows(
     .map_err(|source| GainSolveError::PriorCalibrationPlan {
         source: Box::new(source),
     })?;
-    if legacy_rotate && !has_leakage(&plan) {
+    if legacy_rotate && !has_polarization_matrix(&plan) {
         plan.parang = false;
     }
     let preapplied = match mode {
@@ -117,6 +118,9 @@ pub(crate) fn load_preapplied_rows(
         }
         PriorCalibrationMode::CrossHand => {
             evaluate_solve_priors(ms, plan, PriorSolveBoundary::CrossHand, true)
+        }
+        PriorCalibrationMode::PositionAngle => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::PositionAngle, true)
         }
     };
     preapplied
@@ -1008,13 +1012,18 @@ impl SolveAccumulator {
                     correlation_types[0],
                 )
             };
+            let normalization = |channel| {
+                samples
+                    .model
+                    .map_or(point, |model| model[[corr_index, channel]])
+            };
             if delay {
                 row_weight += samples::centroid_weight(
                     samples,
                     corr_index,
                     channels,
                     shared_flags.as_deref(),
-                    point,
+                    normalization,
                     true,
                 );
             }
@@ -1027,7 +1036,7 @@ impl SolveAccumulator {
                         corr_index,
                         channels,
                         shared_flags.as_deref(),
-                        point,
+                        normalization,
                         options.channelized,
                     );
                 }

@@ -143,7 +143,7 @@ impl CalibrationTableSummary {
     /// - complex `CPARAM` antenna-based tables, or
     /// - float `FPARAM` support for `K Jones`, `Kcross Jones` and the VLA prior families
     ///   `KAntPos Jones`, `EGainCurve`, `EPowerCurve`, `G EVLASWPOW`, and
-    ///   `TOpac`, plus `B TSYS`
+    ///   `TOpac`, plus `B TSYS` and `PosAng Jones`
     /// - legacy `BPOLY` bandpass tables
     ///
     /// and carries no error-level validation issues.
@@ -171,5 +171,6 @@ pub(crate) fn supports_float_apply_subtype(subtype: &str) -> bool {
             | "TOpac"
             | "B TSYS"
             | "G EVLASWPOW"
+            | "PosAng Jones"
     )
 }

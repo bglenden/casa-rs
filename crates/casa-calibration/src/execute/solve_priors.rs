@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 use ndarray::{ArrayD, IxDyn};
 
-use super::chain::{ApplyChain, has_leakage, viscal_order};
+use super::chain::{ApplyChain, has_polarization_matrix, viscal_order};
 use super::{
     ApplyExecutionError, ApplyPlan, ArrayValue, Complex32, EvaluatedApplyRow, ExecutionRowInputs,
     HashMap, MeasurementSet, PreviewWeightSource, RowGeometryCache, applies_preview_weights,
@@ -20,6 +20,7 @@ pub(crate) enum PriorSolveBoundary {
     ScalarGain,
     Leakage,
     CrossHand,
+    PositionAngle,
 }
 
 impl PriorSolveBoundary {
@@ -31,6 +32,7 @@ impl PriorSolveBoundary {
             Self::ScalarGain => "T Jones",
             Self::Leakage => "D Jones",
             Self::CrossHand => "X Jones",
+            Self::PositionAngle => "PosAng Jones",
         })
     }
 }
@@ -187,9 +189,11 @@ pub(crate) fn evaluate_solve_priors(
 ) -> Result<PreappliedRows, ApplyExecutionError> {
     let deferred_data = matches!(
         boundary,
-        PriorSolveBoundary::Leakage | PriorSolveBoundary::CrossHand
+        PriorSolveBoundary::Leakage
+            | PriorSolveBoundary::CrossHand
+            | PriorSolveBoundary::PositionAngle
     );
-    let polarized = deferred_data || has_leakage(&plan);
+    let polarized = deferred_data || has_polarization_matrix(&plan);
     if !polarized
         && matches!(
             boundary,

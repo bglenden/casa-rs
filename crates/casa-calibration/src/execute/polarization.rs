@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Leakage Jones terms on four-product visibility matrices.
+//! Polarization calibration on visibility coherencies.
 
 use super::*;
 
@@ -61,6 +61,83 @@ impl Leakage {
         }
         Ok(())
     }
+}
+
+pub(super) fn apply_position_angle(
+    row: &ApplyRowPlan,
+    grids: [&CalibrationGrid; 2],
+    sampling: &CalibrationSamplingContext<'_>,
+    output: &mut ApplyBuffer<'_>,
+    forward: bool,
+) -> Result<(), ApplyExecutionError> {
+    let correlations = output.correlation_types;
+    let circular = correlations.iter().all(|code| matches!(code, 5..=8));
+    let linear_order = (!circular)
+        .then(|| coherency_order(row.data_desc_id, correlations))
+        .transpose()?;
+    let direction = if forward { 1.0 } else { -1.0 };
+    let propagate = output.apply_mode.writes_flags();
+    for channel in 0..output.corrected.shape()[1] {
+        let sample = |side: usize| {
+            grids[side].sample(
+                0,
+                channel,
+                row.field_id,
+                [row.antenna1, row.antenna2][side],
+                row.time_seconds,
+                sampling,
+            )
+        };
+        let [left, right] = [sample(0)?, sample(1)?];
+        let angles = [left, right].map(|sample| {
+            if sample.flagged {
+                0.0
+            } else {
+                direction * sample.value.re
+            }
+        });
+        let invalid = left.flagged || right.flagged;
+        let input_flagged = propagate
+            && linear_order.is_some_and(|indices| {
+                indices
+                    .into_iter()
+                    .any(|index| output.flags[[index, channel]])
+            });
+        let mut flag = |index: usize| {
+            if propagate && !output.flags[[index, channel]] {
+                output.flags[[index, channel]] = true;
+                *output.newly_flagged_samples += 1;
+            }
+        };
+        if let Some(indices) = linear_order {
+            let data = indices.map(|index| output.corrected[[index, channel]]);
+            let rotated = parang::rotate_linear(data, angles.map(f32::sin_cos));
+            for (index, value) in indices.into_iter().zip(rotated) {
+                output.corrected[[index, channel]] = value;
+                if invalid || input_flagged {
+                    flag(index);
+                }
+            }
+        } else {
+            let diagonal = angles.map(|angle| {
+                let phase = Complex32::from_polar(1.0, angle);
+                [phase, phase.conj()]
+            });
+            for (index, &code) in correlations.iter().enumerate() {
+                let (first, second) = if correlations.len() == 1 {
+                    (0, 0)
+                } else {
+                    correlation_receptors(code).expect("circular correlation")
+                };
+                output.corrected[[index, channel]] *=
+                    diagonal[0][first] * diagonal[1][second].conj();
+                if invalid {
+                    flag(index);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn coherency_order(

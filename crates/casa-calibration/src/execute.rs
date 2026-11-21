@@ -76,7 +76,7 @@ mod solve_priors;
 mod switched_power;
 pub(crate) mod tsys_weights;
 mod weights;
-pub(crate) use chain::has_leakage;
+pub(crate) use chain::has_polarization_matrix;
 use chain::{ApplyChain, ApplyStep};
 use channels::{DataChannelGrid, apply_row};
 pub(crate) use solve_priors::{
@@ -2196,8 +2196,10 @@ fn apply_row_all_channels(
         let subtype = table_plan.summary.table_subtype.as_str();
         let is_tsys = subtype == "B TSYS";
         let is_switched_power = subtype == "G EVLASWPOW";
-        let channelized_polarization =
-            polarization::Leakage::is_channelized(subtype) || subtype == "Xf Jones";
+        let position_angle = subtype == "PosAng Jones";
+        let channelized_polarization = polarization::Leakage::is_channelized(subtype)
+            || subtype == "Xf Jones"
+            || position_angle;
         let bounded_frequency_cache = is_tsys || channelized_polarization;
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
@@ -2316,6 +2318,21 @@ fn apply_row_all_channels(
                 compute_profile.as_deref_mut(),
             )?;
             leakage.apply(
+                row,
+                [&ant1, &ant2],
+                &sampling_context,
+                &mut output,
+                forward_model,
+            )?;
+            continue;
+        }
+        if position_angle {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            polarization::apply_position_angle(
                 row,
                 [&ant1, &ant2],
                 &sampling_context,
@@ -3638,6 +3655,7 @@ enum TimeParameterFamily {
     GainCurve { power: bool },
     Opacity,
     Tsys,
+    PositionAngle,
     SwitchedPower,
 }
 
@@ -3650,6 +3668,7 @@ impl TimeParameterFamily {
             "EPowerCurve" => Some(Self::GainCurve { power: true }),
             "TOpac" => Some(Self::Opacity),
             "B TSYS" => Some(Self::Tsys),
+            "PosAng Jones" => Some(Self::PositionAngle),
             "G EVLASWPOW" => Some(Self::SwitchedPower),
             _ => None,
         }
@@ -4520,11 +4539,16 @@ fn load_parameters(
                         path: table_plan.spec.path.display().to_string(),
                         source: MsError::from(source),
                     })?;
-                CalibrationGrid::Complex(GainGrid::from_real_arrays(
-                    &table_plan.spec.path,
-                    values,
-                    flags,
-                )?)
+                let path = &table_plan.spec.path;
+                if table_plan.summary.table_subtype == "PosAng Jones"
+                    && values.shape().first() != Some(&1)
+                {
+                    return Err(ApplyExecutionError::UnsupportedParameterShape {
+                        path: path.display().to_string(),
+                        shape: values.shape().to_vec(),
+                    });
+                }
+                CalibrationGrid::Complex(GainGrid::from_real_arrays(path, values, flags)?)
             }
             CalibrationParameterFamily::Float
                 if matches!(
