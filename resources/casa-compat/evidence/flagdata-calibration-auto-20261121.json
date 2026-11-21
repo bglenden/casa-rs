@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "499ddb3e87c47253099bb10b8f8401c01bdc79ec",
+  "casa_version": "6.7.6.14",
+  "scope": "TFCrop and scalar-threshold RFlag on current CPARAM and FPARAM calibration tables, with SNR and solution-plane selectors.",
+  "command": "casa-python tools/casa-compat/flagdata_calibration_rfi_oracle.py --work <new-dir> --native-bin <flagdata>",
+  "result": "passed",
+  "paired_workflows": 90,
+  "exact_changed_cells": 1002,
+  "safe_refusal_controls": 8,
+  "per_buffer_diagnostic_controls": 2,
+  "typed_unscaled_threshold_reports_and_calculate_preservation_checked": true,
+  "per_window_flags_and_non_flag_cells_preserved": true
+}
