@@ -24810,10 +24810,7 @@
             "python": {"name": "savepars"},
             "presentation": {"label": "Save Parameters", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}
-          ]}}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}}
         },
         {
           "name": "cmdreason",
@@ -25563,7 +25560,7 @@
           "name": "timedev",
           "concept": {
             "id": "parameter.timedev",
-            "semantic_revision": 2
+            "semantic_revision": 3
           },
           "order": 44,
           "default": {
@@ -25581,8 +25578,7 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": "One threshold for every field and window, scaled by timedevscale; '', 'none' or [] lets rflag compute it.",
-          "unimplemented_forms": {"issue": 978, "forms": "per-field and per-window thresholds ([[field, spw, threshold], ...]) and threshold files"},
+          "surface_note": "Set a scalar, field/SPW/threshold rows or a CASA threshold file. Calculate mode can write the fitted values to a file.",
           "projections": {
             "cli": {
               "positional": null,
@@ -25613,7 +25609,7 @@
           "name": "freqdev",
           "concept": {
             "id": "parameter.freqdev",
-            "semantic_revision": 2
+            "semantic_revision": 3
           },
           "order": 45,
           "default": {
@@ -25631,8 +25627,7 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": "One threshold for every field and window, scaled by freqdevscale; '', 'none' or [] lets rflag compute it.",
-          "unimplemented_forms": {"issue": 978, "forms": "per-field and per-window thresholds ([[field, spw, threshold], ...]) and threshold files"},
+          "surface_note": "Set a scalar, field/SPW/threshold rows or a CASA threshold file. Calculate mode can write the fitted values to a file.",
           "projections": {
             "cli": {
               "positional": null,

@@ -8,7 +8,9 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use casa_ms::flagging::{AntennaIntegrationOptions, ShadowOptions, flagdata_path_with_model};
+use casa_ms::flagging::{
+    AntennaIntegrationOptions, RFlagThresholdReport, ShadowOptions, flagdata_path_with_model,
+};
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
@@ -25,6 +27,8 @@ use casa_task_runtime::{
 };
 use casa_types::quanta::Quantity;
 
+#[path = "flagdata/rflag.rs"]
+mod rflag;
 #[path = "flagdata/shadow.rs"]
 mod shadow;
 #[path = "flagdata/tfcrop.rs"]
@@ -112,7 +116,15 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                     ))
                     .at("vis")
                 })?;
-                save_flag_parameters(task, &path, &mode, &action, time_chunk, shadow_command)?;
+                save_flag_parameters(
+                    task,
+                    &path,
+                    &mode,
+                    &action,
+                    time_chunk,
+                    shadow_command,
+                    None,
+                )?;
             } else {
                 tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
             }
@@ -213,6 +225,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         FlaggingError::MissingClipColumn | FlaggingError::MissingTfcropColumn => {
             TaskFailure::validation(error.to_string()).at("datacolumn")
         }
+        FlaggingError::InvalidRFlagScale(parameter) => {
+            TaskFailure::validation(error.to_string()).at(parameter)
+        }
         FlaggingError::DisplayColumnVector => {
             TaskFailure::execution(error.to_string()).at("datacolumn")
         }
@@ -221,8 +236,19 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
+    if calculate && let Some(report) = &report.rflag_report {
+        rflag::write_files(task, report)?;
+    }
     if save_parameters && display_option.is_empty() {
-        save_flag_parameters(task, &path, &mode, &action, time_chunk, shadow_command)?;
+        save_flag_parameters(
+            task,
+            &path,
+            &mode,
+            &action,
+            time_chunk,
+            shadow_command,
+            Some((&request, report.rflag_report.as_ref())),
+        )?;
     }
     if !calculate
         && !calibration
@@ -276,6 +302,7 @@ fn save_flag_parameters(
     action: &str,
     time_chunk: Option<f64>,
     shadow_command: Option<&str>,
+    rflag_run: Option<(&FlagDataRequest, Option<&RFlagThresholdReport>)>,
 ) -> Result<(), TaskFailure> {
     let outfile = task.required_text("outfile")?;
     if outfile.is_empty() && is_calibration_table(vis) {
@@ -363,10 +390,55 @@ fn save_flag_parameters(
             "timeavg",
             "timebin",
         ],
+        "rflag" => &[
+            "ntime",
+            "combinescans",
+            "datacolumn",
+            "winsize",
+            "timedevscale",
+            "freqdevscale",
+            "spectralmax",
+            "spectralmin",
+            "extendflags",
+            "timedev",
+            "freqdev",
+            "writeflags",
+            "channelavg",
+            "chanbin",
+            "timeavg",
+            "timebin",
+        ],
         _ => return Err(not_yet("savepars", mode)),
     };
+    let (rflag_request, thresholds) = rflag_run.map_or((None, None), |(request, report)| {
+        (
+            Some(request),
+            report.filter(|report| !report.timedev.is_empty() || !report.freqdev.is_empty()),
+        )
+    });
+    let mut append_thresholds = Vec::new();
     for &field in fields {
-        if field == "addantenna" {
+        if mode == "rflag" && matches!(field, "timedev" | "freqdev") {
+            if let Some((value, append)) =
+                rflag::saved_threshold(task.value(field), field, action, rflag_request, thresholds)
+            {
+                if append {
+                    push_command_argument(&mut append_thresholds, field, &value);
+                } else {
+                    push_command_argument(&mut arguments, field, &value);
+                }
+            }
+        } else if field == "writeflags" {
+            if thresholds.is_none() {
+                push_command_argument(
+                    &mut arguments,
+                    field,
+                    &ParameterValue::Bool(action == "apply"),
+                );
+            }
+        } else if mode == "rflag" && field == "ntime" && time_chunk.unwrap_or_default() == 0.0 {
+            continue;
+        } else if field == "addantenna" {
             if let Some(text) = shadow_command {
                 arguments.push(format!("addantenna={text}"));
             }
@@ -422,6 +494,7 @@ fn save_flag_parameters(
         "correlation",
         &ParameterValue::String(correlation),
     );
+    arguments.extend(append_thresholds);
 
     let reason = task.required_text("cmdreason")?;
     if outfile.is_empty() {
@@ -759,6 +832,18 @@ fn flagdata_request(
         Some(ParameterValue::Bool(value)) => Some(*value),
         _ => None,
     };
+    let (timedev, freqdev) = if mode == FlagDataMode::Rflag {
+        let calculate = task.required_text("action")? == "calculate";
+        (
+            rflag::threshold_input(task, "timedev", calculate)?,
+            rflag::threshold_input(task, "freqdev", calculate)?,
+        )
+    } else {
+        (
+            rflag::ThresholdInput::default(),
+            rflag::ThresholdInput::default(),
+        )
+    };
     Ok(FlagDataRequest {
         selection: selection(task, &spw)?,
         casa_row_selection: true,
@@ -808,7 +893,9 @@ fn flagdata_request(
         freqdevscale: task.number("freqdevscale")?,
         spectralmax: task.number("spectralmax")?,
         spectralmin: task.number("spectralmin")?,
-        rflag_window: if mode == FlagDataMode::Rflag {
+        rflag_window: if timedev.invalid || freqdev.invalid {
+            None
+        } else if mode == FlagDataMode::Rflag {
             let width = match task.value("winsize") {
                 // The task's agent record uses its default for NumPy integers.
                 Some(ParameterValue::NumpyScalar {
@@ -830,8 +917,10 @@ fn flagdata_request(
         } else {
             Some(3)
         },
-        timedev: task.optional_number("timedev")?,
-        freqdev: task.optional_number("freqdev")?,
+        timedev: timedev.scalar,
+        freqdev: freqdev.scalar,
+        timedev_by_field_spw: timedev.by_field_spw,
+        freqdev_by_field_spw: freqdev.by_field_spw,
         extendflags: task.flag("extendflags")?,
         extendpols: extendpols.unwrap_or(false),
         extension_enabled: extendpols.is_some(),
