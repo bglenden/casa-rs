@@ -90,6 +90,22 @@ def test_first_interval_can_change_direction(casa):
         np.testing.assert_allclose(cs.torecord()["tabular0"]["worldvalues"], [2.4, 2.0, 3.0])
 
 
+def test_replace_samples_on_a_hidden_pixel_axis(casa):
+    for api in (tools, casa):
+        original = api.coordsys().newcoordsys(linear=1, tabular=True)
+        assert original.settabular([0, 2, 5], [10, 14, 30])
+        record = original.torecord()
+        record["pixelmap1"] = np.array([-2], dtype=np.int32)
+        record["pixelreplace1"] = np.array([1.5])
+        cs = api.coordsys()
+        assert cs.fromrecord(record)
+        assert cs.settabular(world=[16, 30, 76])
+        changed = cs.torecord()
+        np.testing.assert_equal(changed["pixelmap1"], [-2])
+        np.testing.assert_equal(changed["pixelreplace1"], [1.5])
+        np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [1.0, 26.5])
+
+
 def test_default_and_bad_arguments_leave_original_coordinate(casa):
     for api in (tools, casa):
         cs = api.coordsys().newcoordsys(linear=1)
