@@ -142,6 +142,7 @@ impl CorrelationSelection {
                 | FlagDataMode::Quack
                 | FlagDataMode::Elevation
                 | FlagDataMode::Extend
+                | FlagDataMode::Shadow
         );
         if match mode {
             FlagDataMode::Summary => false,

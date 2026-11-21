@@ -271,7 +271,7 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
     let workspace = tempfile::tempdir().unwrap();
     let vis = create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
     for (binary, surface, values, parameter) in [
-        (FLAGDATA, "flagdata", json!({"mode": "shadow"}), "mode"),
+        (FLAGDATA, "flagdata", json!({"mode": "antint"}), "mode"),
         // Routine previews now run. RFlag's calculated thresholds still
         // need their CASA return and output behavior.
         (

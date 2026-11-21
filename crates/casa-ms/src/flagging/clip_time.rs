@@ -65,6 +65,10 @@ impl ClipTimedRow {
     pub(super) fn baseline_key(&self) -> ([i32; GROUP_COLUMNS.len()], usize) {
         (self.group, self.chunk)
     }
+
+    pub(super) fn shares_integration(&self, other: &Self) -> bool {
+        self.group[..5] == other.group[..5] && self.seconds == other.seconds
+    }
 }
 
 pub(super) fn time_bin_seconds(text: &str) -> Option<f64> {
@@ -131,7 +135,26 @@ pub(super) fn sort_iterator_rows(rows: &mut [ClipTimedRow]) {
         left.group[..5]
             .cmp(&right.group[..5])
             .then_with(|| left.seconds.total_cmp(&right.seconds))
+            .then_with(|| left.row.cmp(&right.row))
     });
+}
+
+pub(super) fn integration_blocks(
+    mut rows: &[ClipTimedRow],
+    block_rows: usize,
+) -> impl Iterator<Item = &[ClipTimedRow]> {
+    std::iter::from_fn(move || {
+        if rows.is_empty() {
+            return None;
+        }
+        let mut end = rows.len().min(block_rows.max(1));
+        while end < rows.len() && rows[end - 1].shares_integration(&rows[end]) {
+            end += 1;
+        }
+        let (block, rest) = rows.split_at(end);
+        rows = rest;
+        Some(block)
+    })
 }
 
 pub(super) fn clip_time_groups(
@@ -626,4 +649,42 @@ where
             *data /= convert(weight);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integration_blocks_keep_physical_order_across_reads() {
+        let mut rows: Vec<_> = [
+            (7, 20.0),
+            (2, 10.0),
+            (3, 20.0),
+            (1, 30.0),
+            (0, 10.0),
+            (6, 20.0),
+        ]
+        .into_iter()
+        .map(|(row, seconds)| ClipTimedRow {
+            row,
+            seconds,
+            group: [0; GROUP_COLUMNS.len()],
+            chunk: 0,
+        })
+        .collect();
+        sort_iterator_rows(&mut rows);
+        let physical_reads: Vec<_> = integration_blocks(&rows, 2)
+            .map(|block| {
+                block
+                    .chunks(2)
+                    .map(|batch| batch.iter().map(|row| row.row).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(
+            physical_reads,
+            [vec![vec![0, 2]], vec![vec![3, 6], vec![7]], vec![vec![1]]]
+        );
+    }
 }

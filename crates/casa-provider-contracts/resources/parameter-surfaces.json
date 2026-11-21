@@ -23371,7 +23371,7 @@
         },
         {
           "name": "tolerance",
-          "concept": {"id": "flagdata.tolerance", "semantic_revision": 1},
+          "concept": {"id": "flagdata.tolerance", "semantic_revision": 2},
           "order": 28,
           "default": {"kind": "literal", "value": {"kind": "float", "value": 0.0}},
           "required_when": {"kind": "never"},
@@ -23379,14 +23379,13 @@
           "projections": {
             "cli": {"flags": ["--tolerance"], "metavar": "METRES"},
             "provider": {"field": "tolerance"},
-            "python": {"name": "tolerance"},
+            "python": {"name": "tolerance", "type_hint": "float"},
             "presentation": {"label": "Tolerance", "group": "Shadow", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}}}
+          }
         },
         {
           "name": "addantenna",
-          "concept": {"id": "flagdata.addantenna", "semantic_revision": 1},
+          "concept": {"id": "flagdata.addantenna", "semantic_revision": 2},
           "order": 29,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -23394,10 +23393,9 @@
           "projections": {
             "cli": {"flags": ["--addantenna"], "metavar": "PATH"},
             "provider": {"field": "addantenna"},
-            "python": {"name": "addantenna"},
+            "python": {"name": "addantenna", "type_hint": "str | dict[str, ParameterData]"},
             "presentation": {"label": "Add Antenna", "group": "Shadow", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}}}
+          }
         },
         {
           "name": "lowerlimit",
@@ -23898,7 +23896,6 @@
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}
           ]}}
         },
