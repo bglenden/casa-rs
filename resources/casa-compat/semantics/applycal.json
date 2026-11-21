@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "applycal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "f1688b90405d89c94fc7a1c03a32420351e47d3b",
+  "audit_revision": "45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e",
   "parameters": {
     "vis": {
       "scope": "Single ordinary or Multi-MS input; required path, partition mutations, backups, HISTORY and returns are compared.",
@@ -31,10 +31,12 @@
       "scope": "CASA window and channel grammar serves applycal, including wildcard selection, channels, strides, descending and compressed windows. Whole-window selections stay implicit.",
       "evidence": [
         "oracle",
-        "source"
+        "source",
+        "leakage-application"
       ],
       "behaviors": [
-        "common-application"
+        "common-application",
+        "leakage-application"
       ],
       "status": "Partial"
     },
@@ -149,13 +151,15 @@
       "status": "Partial"
     },
     "gaintable": {
-      "scope": "Traditional and library paths exercise supported Jones families. G/T/B/BPOLY/K, Antpos, opacity and gain-curve tables retain their coefficient, flag and weight behavior.",
+      "scope": "Traditional and library paths exercise supported Jones families. G/T/B/BPOLY/K, Antpos, opacity and gain-curve tables retain their coefficient, flag and weight behavior. Leakage Jones tables use four-product calibration and leave leakage weights unchanged.",
       "evidence": [
         "oracle",
-        "source"
+        "source",
+        "leakage-application"
       ],
       "behaviors": [
-        "common-application"
+        "common-application",
+        "leakage-application"
       ],
       "status": "Partial"
     },
@@ -207,10 +211,12 @@
       "scope": "Standalone circular and full four-correlation linear feed rotation, selected channels, input-flag propagation, trial/flag-only modes and invalid two-linear-correlation error/state match CASA. Full chain/geometry/domain combinations remain.",
       "evidence": [
         "oracle",
-        "source"
+        "source",
+        "leakage-application"
       ],
       "behaviors": [
-        "common-application"
+        "common-application",
+        "leakage-application"
       ],
       "status": "Partial"
     },
@@ -218,10 +224,12 @@
       "scope": "All six modes are implemented and CASA-compared, including unavailable SPWs, flag-only preservation, selected channels, new/existing corrected data and trial validation. Empty selections error in every native mode. Full remaining parameter/error combinations stay open.",
       "evidence": [
         "oracle",
-        "source"
+        "source",
+        "leakage-application"
       ],
       "behaviors": [
-        "common-application"
+        "common-application",
+        "leakage-application"
       ],
       "status": "Partial"
     },
@@ -249,9 +257,44 @@
         "mms-oracle",
         "performance"
       ]
+    },
+    {
+      "id": "leakage-application",
+      "title": "Apply linearized and full-matrix leakage to four polarization products",
+      "status": "Implemented",
+      "scope": "Linear and circular four-product data with D, Df, Dgen, Dfgen, DLLS and DfLLS tables. Includes variable time and channel solutions, G/D/P order, flags, missing antennas, subselected channels, and unequal scalar and spectral weights.",
+      "gap": "The permuted-correlation and malformed-table differences are documented below. Cross-hand phase families continue under #1522.",
+      "evidence": [
+        "leakage-application"
+      ]
     }
   ],
-  "decisions": [],
+  "decisions": [
+    {
+      "id": "honor-leakage-correlation-metadata",
+      "state": "Proposed",
+      "inputs": "A consistent linear-feed CORR_TYPE order of XX, YY, XY, YX.",
+      "casa": "Applies the correction to fixed slots and modifies a parallel hand.",
+      "ours": "Applies the leakage correction and flags to the products named by the MeasurementSet.",
+      "rationale": "The four-product layout is valid in casacore. Applying a cross-hand formula to a parallel hand changes the observed data incorrectly.",
+      "impact": "The native output equals permuting the canonical-order result.",
+      "evidence": [
+        "leakage-application"
+      ]
+    },
+    {
+      "id": "reject-underspecified-leakage-shape",
+      "state": "Proposed",
+      "inputs": "A D Jones calibration table with one complex receptor per solution.",
+      "casa": "Aborts with ArrayShapeError.",
+      "ours": "Raises a catchable invalid calibration shape error.",
+      "rationale": "Two coefficients are required for a four-product leakage correction.",
+      "impact": "The caller can handle the malformed caltable without losing the process.",
+      "evidence": [
+        "leakage-application"
+      ]
+    }
+  ],
   "evidence": {
     "oracle": {
       "kind": "Same-input public-Python MAIN/API/state comparison with explicit CASA-bug control",
@@ -363,6 +406,19 @@
         "tools/casa-compat/applycal_mms_oracle.py",
         "crates/casa-calibration/src/cli/multi_ms.rs",
         "crates/casa-ms/src/flagging/version_backup.rs"
+      ]
+    },
+    "leakage-application": {
+      "kind": "Same-input public-Python and casacore readback",
+      "state": "passed",
+      "scope": "Linear and circular four-product data with D, Df, Dgen, Dfgen, DLLS and DfLLS tables. Includes variable time and channel solutions, G/D/P order, flags, missing antennas, subselected channels, and unequal scalar and spectral weights.",
+      "result": "56 direct visibility comparisons and eight polarized MODEL_DATA gain solves passed. Maximum visibility normalized RMS was 1.45e-7 and maximum gain normalized RMS was 1.03e-7.",
+      "casa_version": "6.7.6.14",
+      "revision": "45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/calibration_leakage_apply_oracle.py --work <new-directory>",
+      "receipt": "resources/casa-compat/evidence/leakage-application-20261121.json",
+      "links": [
+        "tools/casa-compat/calibration_leakage_apply_oracle.py"
       ]
     }
   }

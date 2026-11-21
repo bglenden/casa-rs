@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e",
+  "casa_version": "6.7.6.14",
+  "result": "passed",
+  "scope": "Linear and circular four-product data with D, Df, Dgen, Dfgen, DLLS and DfLLS tables. Includes variable time and channel solutions, G/D/P order, flags, missing antennas, subselected channels, and unequal scalar and spectral weights.",
+  "commands": [
+    "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/calibration_leakage_apply_oracle.py --work <new-directory>"
+  ],
+  "apply_case_count": 56,
+  "solve_case_count": 8,
+  "max_visibility_normalized_rms": 1.44591e-07,
+  "max_gain_normalized_rms": 1.02451e-07,
+  "controls": [
+    "Nonfinite full leakage matrix flags all products and substitutes identity for the bad antenna.",
+    "Missing cross-hand products return an application error.",
+    "Permuted stored products follow CORR_TYPE.",
+    "One-receptor D table returns a catchable shape error."
+  ]
+}
