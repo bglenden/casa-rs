@@ -8330,3 +8330,15 @@ keep the FITS array order and the native record retains the original
 world order. The regression reads files written by CASA and by casa-rs
 and independently checks which pixel step moves each world coordinate.
 See #1002 and #1823.
+
+## Coordinate subimage with a sampled frequency axis in units other than Hz
+
+CASA 6.7.6.14 resamples a tabulated spectral axis in the input coordinate's
+display units, then uses those values to construct a coordinate in Hz. For
+example, a sample at `1020 MHz` becomes `1020 Hz` in the returned record.
+The rest frequency also loses its unit scale. casa-rs converts the samples
+and rest frequency to Hz before building the subimage record.
+
+An explicit negative length for a sampled spectral axis can abort CASA
+when the signed length is used for an unsigned allocation. casa-rs raises
+`RuntimeError` before allocating sample storage.

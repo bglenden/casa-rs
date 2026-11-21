@@ -239,6 +239,78 @@ impl SpectralCoordinate {
         self.value_in_hz(self.to_world(&[pixel])?[0])
     }
 
+    /// Resample a nonlinear spectral axis for a coordinate subimage.
+    ///
+    /// Origins and source channel indices use casacore's single-precision
+    /// pixel arithmetic. The new table is in the native frame and in Hz.
+    /// Linear axes retain their WCS and return `None`.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid shape, allocation, or conversion.
+    pub fn subimage_samples(
+        &self,
+        origin: f32,
+        length: Option<i32>,
+    ) -> Result<Option<Self>, CoordinateError> {
+        let SpectralMapping::Tabular {
+            pixel_values,
+            world_values,
+            crval,
+            ..
+        } = &self.mapping
+        else {
+            return Ok(None);
+        };
+        let length = length.map_or(world_values.len() as i64, i64::from);
+        if length <= 0 {
+            return Err(CoordinateError::InvalidRecord(
+                "TabularCoordinate::TabularCoordinate - illegal table (length 0 or n(pixelvalues) != n(worldvalues)".into(),
+            ));
+        }
+        if length > (1_i64 << f32::MANTISSA_DIGITS) + 1 {
+            return Err(CoordinateError::InvalidRecord(
+                "spectral subimage pixel indices are indistinguishable at single precision".into(),
+            ));
+        }
+        let count = length as usize;
+        let allocate = || -> Result<Vec<f64>, CoordinateError> {
+            let mut samples = Vec::new();
+            samples.try_reserve_exact(count).map_err(|_| {
+                CoordinateError::InvalidRecord(
+                    "cannot allocate the spectral subimage samples".into(),
+                )
+            })?;
+            Ok(samples)
+        };
+        let mut pixels = allocate()?;
+        let mut worlds = allocate()?;
+        for channel in 0..count {
+            let pixel = f64::from(origin + channel as f32);
+            let world = interpolate(pixel_values, world_values, pixel)?;
+            let frequency = self.value_in_hz(scaled_world(world, *crval, self.linear_transform))?;
+            if !frequency.is_finite() || worlds.last().is_some_and(|&value| value == frequency) {
+                return Err(CoordinateError::ConversionFailed(
+                    "spectral subimage samples must have distinct finite frequencies".into(),
+                ));
+            }
+            pixels.push(channel as f64);
+            worlds.push(frequency);
+        }
+        let first = worlds[0];
+        let increment = (worlds[count - 1] - first) / (count - 1).max(1) as f64;
+        let mut result = Self::from_tabular(
+            self.frequency_ref,
+            pixels,
+            worlds,
+            first,
+            increment,
+            0.0,
+            self.rest_frequency_hz()?,
+        )?;
+        result.conversion = self.conversion.clone();
+        Ok(Some(result))
+    }
+
     /// Rebuild a tabular spectral record for a unit-stride image section.
     ///
     /// # Errors

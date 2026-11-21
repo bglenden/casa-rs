@@ -16,6 +16,7 @@ mod ordering;
 mod reference;
 mod rest_frequency;
 mod stubs;
+mod subimage;
 pub(crate) mod surface;
 mod transform_many;
 mod transform_relative;
