@@ -4,6 +4,8 @@
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
 mod bounding_box;
+mod continuum;
+pub use continuum::{ContinuumSummary, ImageContinuum};
 pub(super) mod coords;
 mod crop;
 mod decimate;

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
+use casa_tables::TableWriteLock;
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
@@ -195,88 +196,191 @@ impl Create {
     }
 }
 
+struct StagedImage {
+    requested: String,
+    target: PathBuf,
+    directory: tempfile::TempDir,
+    product: PathBuf,
+}
+
+impl StagedImage {
+    fn allocate(name: &str) -> PyResult<Option<Self>> {
+        if name.is_empty() {
+            return Ok(None);
+        }
+        let target = std::path::absolute(name).map_err(raised)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| raised("Invalid output image path"))?;
+        let directory = tempfile::tempdir_in(parent).map_err(raised)?;
+        let product = directory.path().join("image");
+        Ok(Some(Self {
+            requested: name.to_owned(),
+            target,
+            directory,
+            product,
+        }))
+    }
+
+    fn key(&self) -> PyResult<PathBuf> {
+        if self.target.symlink_metadata().is_ok() {
+            return attachment::key(&self.target);
+        }
+        let parent = self
+            .target
+            .parent()
+            .and_then(|parent| parent.canonicalize().ok());
+        let name = self.target.file_name();
+        parent
+            .zip(name)
+            .map(|(parent, name)| parent.join(name))
+            .ok_or_else(|| raised("Invalid output image path"))
+    }
+
+    fn check(
+        &self,
+        overwrite: bool,
+        registry: &attachment::OpenImages,
+        locks: &mut BTreeMap<PathBuf, TableWriteLock>,
+    ) -> PyResult<bool> {
+        let path = &self.target;
+        match path.symlink_metadata() {
+            Ok(_) if !overwrite => Err(raised(format!(
+                "Exception: File {} exists, and the user does not want to remove it..",
+                self.requested
+            ))),
+            Ok(_) => {
+                let key = attachment::key(path)?;
+                if attachment::conflicting_images(registry, &key, 0)
+                    || key
+                        .ancestors()
+                        .filter(|parent| parent.join("table.dat").is_file())
+                        .any(crate::tools::table::path_is_in_use)
+                {
+                    return Err(raised(format!(
+                        "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
+                        path.display()
+                    )));
+                }
+                let empty = path
+                    .read_dir()
+                    .is_ok_and(|mut entries| entries.next().is_none());
+                if !empty
+                    && casa_tables::Table::open_metadata_only(casa_tables::TableOptions::new(path))
+                        .is_err()
+                {
+                    return Err(raised(format!(
+                        "Table {} already exists (and is not a true table directory)",
+                        path.display()
+                    )));
+                }
+                attachment::lock_table_tree(&key, locks)?;
+                Ok(true)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(raised(error)),
+        }
+    }
+
+    fn install(&self, existed: bool) -> std::io::Result<()> {
+        if existed {
+            exchange_directories(&self.product, &self.target)
+        } else {
+            rename_without_replacing(&self.product, &self.target)
+        }
+    }
+
+    fn restore(self, existed: bool, original: PyErr) -> PyErr {
+        let restored = if existed {
+            exchange_directories(&self.product, &self.target)
+        } else {
+            rename_without_replacing(&self.target, &self.product)
+        };
+        match restored {
+            Ok(()) => original,
+            Err(error) => {
+                let recovery = self.directory.keep();
+                raised(format!(
+                    "{original}. Image publication could not be rolled back. Inspect {} ({error})",
+                    recovery.display()
+                ))
+            }
+        }
+    }
+}
+
 pub(super) fn publish_image(
     outfile: &str,
     overwrite: bool,
     build: impl FnOnce(Option<&Path>) -> PyResult<ImageHandle>,
 ) -> PyResult<AttachedImage> {
-    if outfile.is_empty() {
-        return build(None).map(AttachedImage::temporary);
+    publish_image_pair(outfile, "", overwrite, |target, _| {
+        Ok((build(target)?, None))
+    })
+}
+
+pub(super) fn publish_image_pair(
+    outfile: &str,
+    companion: &str,
+    overwrite: bool,
+    build: impl FnOnce(Option<&Path>, Option<&Path>) -> PyResult<(ImageHandle, Option<ImageHandle>)>,
+) -> PyResult<AttachedImage> {
+    let primary = StagedImage::allocate(outfile)?;
+    let companion = StagedImage::allocate(companion)?;
+    if let (Some(primary), Some(companion)) = (&primary, &companion) {
+        let first = primary.key()?;
+        let second = companion.key()?;
+        if first.starts_with(&second) || second.starts_with(&first) {
+            return Err(raised("Output images must have separate destinations"));
+        }
     }
-    let path = std::path::absolute(outfile).map_err(raised)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| raised("Invalid output image path"))?;
-    let stage = tempfile::tempdir_in(parent).map_err(raised)?;
-    let product = stage.path().join("image");
-    drop(build(Some(&product))?);
-    let mut registry = attachment::registry();
-    let mut replacement_locks = BTreeMap::new();
-    let existed = match path.symlink_metadata() {
-        Ok(_) if !overwrite => {
-            return Err(raised(format!(
-                "Exception: File {} exists, and the user does not want to remove it..",
-                outfile
-            )));
-        }
-        Ok(_) => {
-            let key = attachment::key(&path)?;
-            if attachment::conflicting_images(&registry, &key, 0)
-                || key
-                    .ancestors()
-                    .filter(|parent| parent.join("table.dat").is_file())
-                    .any(crate::tools::table::path_is_in_use)
-            {
-                return Err(raised(format!(
-                    "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
-                    path.display()
-                )));
-            }
-            let empty = path
-                .read_dir()
-                .is_ok_and(|mut entries| entries.next().is_none());
-            if !empty
-                && casa_tables::Table::open_metadata_only(casa_tables::TableOptions::new(&path))
-                    .is_err()
-            {
-                return Err(raised(format!(
-                    "Table {} already exists (and is not a true table directory)",
-                    path.display()
-                )));
-            }
-            attachment::lock_table_tree(&key, &mut replacement_locks)?;
-            true
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => return Err(raised(error)),
-    };
-    if existed {
-        exchange_directories(&product, &path).map_err(raised)?;
+    let (image, secondary) = build(
+        primary.as_ref().map(|stage| stage.product.as_path()),
+        companion.as_ref().map(|stage| stage.product.as_path()),
+    )?;
+    drop(secondary);
+    let temporary = if primary.is_none() {
+        Some(AttachedImage::temporary(image))
     } else {
-        rename_without_replacing(&product, &path).map_err(raised)?;
+        drop(image);
+        None
+    };
+    if primary.is_none() && companion.is_none() {
+        return Ok(temporary.expect("temporary result"));
     }
-    match AttachedImage::open_created(&mut registry, &path) {
-        Ok(image) => {
-            // The old table is inside the private staging directory after an exchange.
-            drop(stage);
-            drop(replacement_locks);
-            Ok(image)
+    let target = primary.as_ref().map(|stage| stage.target.clone());
+    let mut registry = attachment::registry();
+    let mut locks = BTreeMap::new();
+    let mut prepared = Vec::new();
+    for stage in [companion, primary].into_iter().flatten() {
+        let existed = stage.check(overwrite, &registry, &mut locks)?;
+        prepared.push((stage, existed));
+    }
+    let mut installed: Vec<(StagedImage, bool)> = Vec::new();
+    for (stage, existed) in prepared {
+        if let Err(error) = stage.install(existed) {
+            let error = installed
+                .into_iter()
+                .rev()
+                .fold(raised(error), |error, (stage, existed)| {
+                    stage.restore(existed, error)
+                });
+            return Err(error);
         }
-        Err(error) => {
-            let restore = if existed {
-                exchange_directories(&product, &path)
-            } else {
-                rename_without_replacing(&path, &product)
-            };
-            if let Err(restore) = restore {
-                let backup_dir = stage.keep();
-                return Err(raised(format!(
-                    "{error}. Image publication could not be rolled back; inspect {}: {restore}",
-                    backup_dir.display()
-                )));
-            }
-            Err(error)
-        }
+        installed.push((stage, existed));
+    }
+    match target
+        .as_deref()
+        .map(|path| AttachedImage::open_created(&mut registry, path))
+        .transpose()
+    {
+        Ok(native) => Ok(native.or(temporary).expect("image result")),
+        Err(error) => Err(installed
+            .into_iter()
+            .rev()
+            .fold(error, |error, (stage, existed)| {
+                stage.restore(existed, error)
+            })),
     }
 }
 

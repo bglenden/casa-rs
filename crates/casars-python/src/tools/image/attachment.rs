@@ -27,7 +27,7 @@ pub(super) struct SharedImage {
     coordinates_replaced: AtomicBool,
 }
 
-type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
+pub(super) type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
 
 static ATTACHED: Mutex<OpenImages> = Mutex::new(BTreeMap::new());
 

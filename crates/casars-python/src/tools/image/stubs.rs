@@ -33,21 +33,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outline = None, outcont = None, region = None, channels = None, pol = None, fitorder = None, overwrite = None), text_signature = "($self, outline='', outcont='continuumsub.im', region={}, channels=[-1], pol='', fitorder=0, overwrite=False)")]
-    fn continuumsub(
-        &self,
-        outline: Option<&Bound<'_, PyAny>>,
-        outcont: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        channels: Option<&Bound<'_, PyAny>>,
-        pol: Option<&Bound<'_, PyAny>>,
-        fitorder: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("continuumsub")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, kernel = None, scale = None, region = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', kernel=[], scale=-1.0, region={}, mask='', overwrite=False, stretch=False)")]
     fn convolve(
         &self,
