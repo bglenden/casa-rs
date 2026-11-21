@@ -2,6 +2,7 @@
 
 //! Share each open native image's pixels and table metadata across Python tools.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -19,7 +20,7 @@ use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
 use super::handle::{ImageHandle, raised};
-use super::native_rename::{check_path_relationship, move_native_table};
+use super::native_rename::{check_path_relationship, move_native_table, native_destination};
 
 pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
@@ -386,7 +387,13 @@ impl AttachedImage {
         Ok(())
     }
 
-    pub(super) fn rename(&self, name: &str, overwrite: bool, history: bool) -> PyResult<Self> {
+    pub(super) fn rename(
+        &self,
+        name: &str,
+        expanded: PyResult<Cow<'_, str>>,
+        overwrite: bool,
+        history: bool,
+    ) -> PyResult<Self> {
         if name.is_empty() {
             return Err(raised("Exception: new file name must be specified."));
         }
@@ -399,7 +406,13 @@ impl AttachedImage {
                     .map(Path::to_path_buf)
             };
             if let Some(old_name) = fits_path {
-                return super::fits_rename::rename(&old_name, name, overwrite, history);
+                return super::fits_rename::rename(
+                    &old_name,
+                    name,
+                    expanded?.as_ref(),
+                    overwrite,
+                    history,
+                );
             }
             return Err(raised(
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
@@ -417,22 +430,7 @@ impl AttachedImage {
                 .map_err(|_| source_changed())?;
             self.name_path(&image).unwrap_or(source).to_path_buf()
         };
-        let absolute = std::path::absolute(name).map_err(raised)?;
-        let parent = absolute
-            .parent()
-            .ok_or_else(|| raised("Invalid output image path"))?;
-        let directory = parent.canonicalize().map_err(|_| {
-            let argument = Path::new(name).parent().unwrap_or(Path::new("."));
-            raised(format!(
-                "RegularFile::copy/move: target directory {} is not writable",
-                argument.display()
-            ))
-        })?;
-        let target = directory.join(
-            absolute
-                .file_name()
-                .ok_or_else(|| raised("Invalid output image name"))?,
-        );
+        let target = native_destination(expanded?.as_ref(), name)?;
         let mut registry = registry();
         let target_metadata = match target.symlink_metadata() {
             Ok(metadata) if overwrite => Some(metadata),

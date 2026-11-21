@@ -10,7 +10,7 @@ use super::PyImageTool;
 use super::attachment::AttachedImage;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
-use super::lifecycle::input_path;
+use super::lifecycle::resolve_image_path;
 
 struct ImportFits<'a> {
     outfile: &'a str,
@@ -129,7 +129,7 @@ impl PyImageTool {
         zeroblanks: bool,
         overwrite: bool,
     ) -> PyResult<bool> {
-        let expanded = input_path(py, infile);
+        let expanded = resolve_image_path(py, infile);
         py.detach(|| {
             let mut state = self.state();
             let request = ImportFits {
@@ -160,7 +160,7 @@ impl PyImageTool {
         zeroblanks: bool,
         overwrite: bool,
     ) -> PyResult<Py<Self>> {
-        let expanded = input_path(py, infile);
+        let expanded = resolve_image_path(py, infile);
         let image = py.detach(|| {
             ImportFits {
                 outfile,

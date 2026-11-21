@@ -24,7 +24,7 @@ use super::beams::{axis_length, image_info, image_info_record, plane_axes, subse
 use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
-use super::lifecycle::{input_path, open_image};
+use super::lifecycle::{open_image, resolve_image_path};
 use super::pixels::and_mask;
 use super::region_read::{is_boolean_sequence, resolve_region_section};
 
@@ -498,7 +498,7 @@ impl PyImageTool {
         let method = "fromimage";
         let (region, region_history) = copy_region_argument(py, region, "[]")?;
         let (mask, mask_history) = mask_argument(mask)?;
-        let expanded = input_path(py, infile);
+        let expanded = resolve_image_path(py, infile);
         let request = CopyImage {
             method,
             infile,
@@ -531,7 +531,7 @@ impl PyImageTool {
         let method = "newimagefromimage";
         let (region, region_history) = copy_region_argument(py, region, "{...}")?;
         let (mask, mask_history) = mask_argument(mask)?;
-        let expanded = input_path(py, infile);
+        let expanded = resolve_image_path(py, infile);
         let request = CopyImage {
             method,
             infile,

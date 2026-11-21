@@ -4,7 +4,7 @@
 
 use std::fs::Metadata;
 use std::io::{self, ErrorKind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_tables::publication::{
@@ -15,6 +15,26 @@ use pyo3::prelude::*;
 use tempfile::TempDir;
 
 use super::handle::{raised, same_file_identity};
+use super::lifecycle::rename_destination;
+
+pub(super) fn native_destination(expanded: &str, name: &str) -> PyResult<PathBuf> {
+    let absolute = rename_destination(expanded, name)?;
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| raised("Invalid output image path"))?;
+    let directory = parent.canonicalize().map_err(|_| {
+        let argument = Path::new(expanded).parent().unwrap_or(Path::new("."));
+        raised(format!(
+            "RegularFile::copy/move: target directory {} is not writable",
+            argument.display()
+        ))
+    })?;
+    Ok(directory.join(
+        absolute
+            .file_name()
+            .ok_or_else(|| raised("Invalid output image name"))?,
+    ))
+}
 
 pub(super) fn check_path_relationship(source: &Path, target: &Path, name: &str) -> PyResult<()> {
     if target.starts_with(source) {

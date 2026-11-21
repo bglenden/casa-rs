@@ -8196,6 +8196,15 @@ loss occurs when `parent` is itself a native image table. casa-rs rejects
 the relationship before deleting either path. The failed call closes the
 attachment as CASA does. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+When a rename destination contains a symbolic link followed by `..`,
+CASA 6.7.6.14 can move a native table or FITS file into the directory
+reached through the link, then remove `..` lexically and fail to reopen
+the image from a different directory. casa-rs refuses the destination
+before moving the source when the two directory paths resolve differently.
+It also refuses a destination ending in `..` because the argument does
+not identify a named replacement entry.
+See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values
