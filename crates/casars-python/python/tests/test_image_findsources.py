@@ -218,3 +218,22 @@ def test_findsources_refuses_non_float_images(casa, kind):
                 source.findsources()
         finally:
             source.done()
+
+
+def test_findsources_refuses_multiple_beams_even_with_plane_selected(casa):
+    values = _sources((21, 23), [(6., 9.1, 12.3, 3., 3.)])
+    cube = np.broadcast_to(values[..., None, None], (21, 23, 1, 2)).copy()
+    manager = casa.regionmanager()
+    region = manager.box([0, 0, 0, 1], [20, 22, 0, 1])
+    manager.done()
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=cube)
+        try:
+            assert source.setrestoringbeam(major="90arcsec", minor="55arcsec", pa="20deg", channel=0)
+            assert source.setrestoringbeam(major="80arcsec", minor="60arcsec", pa="10deg", channel=1)
+            with pytest.raises(RuntimeError, match="does not support images with multiple beams"):
+                source.findsources(region=region)
+            np.testing.assert_array_equal(source.getchunk(), cube)
+        finally:
+            source.done()

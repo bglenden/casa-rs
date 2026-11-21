@@ -52,6 +52,11 @@ pub fn find_image_sources(
     coordinate_record: RecordValue,
     options: FindSourcesOptions<'_>,
 ) -> Result<RecordValue, ImageError> {
+    if image.image_info()?.beam_set.has_multi_beam() {
+        return Err(invalid(
+            "This application does not support images with multiple beams",
+        ));
+    }
     let plan = SubimagePlan::new(
         image,
         Some(coordinate_record),
