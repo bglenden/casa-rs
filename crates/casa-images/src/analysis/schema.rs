@@ -832,6 +832,9 @@ pub struct ImageMathSummary {
     pub units: String,
     /// Valid output pixels after intersecting input masks and finite results.
     pub valid_pixels: usize,
+    /// Restoring beam diagnostics for the task logger.
+    #[serde(skip)]
+    pub beam_warnings: Vec<String>,
 }
 
 /// Summary returned after writing an `impbcor` product.

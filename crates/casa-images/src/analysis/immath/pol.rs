@@ -910,5 +910,6 @@ fn save_pol_output(
         shape: inputs.out_shape.clone(),
         units: bunit.to_string(),
         valid_pixels,
+        beam_warnings: Vec::new(),
     })
 }

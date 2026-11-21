@@ -10,8 +10,9 @@ use std::sync::Arc;
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
 use casa_lattices::{Lattice, LatticeError};
 use casa_types::{ArrayD, RecordValue, Value};
-use ndarray::{Axis, IxDyn, SliceInfoElem, Zip};
+use ndarray::{Axis, IxDyn, Slice, SliceInfoElem, Zip};
 
+use crate::expr_parser::referenced_images;
 use crate::expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr};
 use crate::image_expr::{ImageExprValue, MemorySnapshotImage};
 use crate::image_expr_lel::can_broadcast_to;
@@ -23,9 +24,10 @@ use crate::{
 use super::super::axes::{
     legacy_subimage_coordinates_with_stokes, stokes_for_axis, subimage_coordinates_with_stokes,
 };
+use super::super::imsubimage::{SubimagePlan, SubimageRegion, region::SubimageSelection};
 use super::super::{
     PixelRegion, direction_plane_axes, mask_error_wording, parse_image_channel_selection,
-    parse_stokes_selection, quoted_expression_names, region_pixels,
+    parse_stokes_selection, region_pixels,
 };
 use crate::ImmathRequest;
 
@@ -228,13 +230,15 @@ pub(super) fn parse_chans_extended(text: &str, axis_len: usize) -> Result<Vec<us
     Ok(indices)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct ImmathSelection {
     pub(super) start: Vec<usize>,
     pub(super) shape: Vec<usize>,
     pub(super) plane: [usize; 2],
     pub(super) box_spec: Option<BoxSpec>,
     pub(super) region: Option<PixelRegion>,
+    saved_mask: Option<ArrayD<bool>>,
+    strided_plan: Option<(Arc<SubimagePlan>, Vec<usize>)>,
     pub(super) channel_axis: Option<usize>,
     pub(super) channel_indices: Option<Vec<usize>>,
     pub(super) stokes_axis: Option<usize>,
@@ -248,6 +252,76 @@ impl ImmathSelection {
         request: &ImmathRequest,
         ignore_stokes: bool,
     ) -> Result<Self, ImageError> {
+        if let Some(path) = request
+            .region
+            .as_deref()
+            .map(Path::new)
+            .filter(|path| path.is_file())
+            && let Ok(record) = casa_tables::read_table_record_file(path)
+        {
+            let saved = SubimageSelection::resolve_section(
+                image.as_interface(),
+                request.box_pixels.as_deref(),
+                Some(SubimageRegion::Record(&record)),
+                request.chans.as_deref(),
+                if ignore_stokes {
+                    None
+                } else {
+                    request.stokes.as_deref()
+                },
+            )?;
+            if let Some(stride) = &saved.stride
+                && stride.iter().any(|&step| step > 1)
+            {
+                if ignore_stokes {
+                    return Err(ImageError::CasaSelection(
+                        "strided saved region is unsupported for polarization modes".into(),
+                    ));
+                }
+                let start = saved.start.clone();
+                let shape = saved.shape.clone();
+                let plane = saved.plane;
+                let stride = stride.clone();
+                let plan = SubimagePlan::from_selection(
+                    image.as_interface(),
+                    image.legacy_coords().cloned(),
+                    saved,
+                    false,
+                    &[],
+                    None,
+                )?;
+                return Ok(Self {
+                    start,
+                    shape,
+                    plane,
+                    box_spec: None,
+                    region: None,
+                    saved_mask: None,
+                    strided_plan: Some((Arc::new(plan), stride)),
+                    channel_axis: None,
+                    channel_indices: None,
+                    stokes_axis: None,
+                    stokes_indices: None,
+                    selected_stokes: None,
+                });
+            }
+            let mut saved_mask = None;
+            saved.apply_selection_masks(&mut saved_mask);
+            return Ok(Self {
+                start: saved.start,
+                shape: saved.shape,
+                plane: saved.plane,
+                box_spec: None,
+                region: None,
+                saved_mask,
+                strided_plan: None,
+                channel_axis: saved.channel_axis,
+                channel_indices: saved.channel_indices,
+                stokes_axis: saved.stokes_axis,
+                stokes_indices: saved.stokes_indices,
+                selected_stokes: saved.selected_stokes,
+            });
+        }
         let ndim = image.ndim();
         let full_shape = image.shape();
         let mut start = vec![0usize; ndim];
@@ -318,6 +392,8 @@ impl ImmathSelection {
             plane,
             box_spec,
             region,
+            saved_mask: None,
+            strided_plan: None,
             channel_axis,
             channel_indices,
             stokes_axis,
@@ -329,6 +405,8 @@ impl ImmathSelection {
     pub(super) fn is_full_contiguous(&self, full_shape: &[usize]) -> bool {
         self.start.iter().all(|&s| s == 0)
             && self.shape == full_shape
+            && self.saved_mask.is_none()
+            && self.strided_plan.is_none()
             && self.box_spec.as_ref().is_none_or(|b| b.boxes.len() <= 1)
             && !matches!(self.region, Some(PixelRegion::Polygon(_)))
             && !matches!(self.region, Some(PixelRegion::Boxes(ref boxes)) if boxes.len() > 1)
@@ -449,6 +527,9 @@ pub(super) fn selection_and_mask<T: RealMathPixel>(
 
     if let Some(native_mask) = image.get_mask_slice(&sel.start, &sel.shape, &stride)? {
         and_mask(&mut mask, &native_mask);
+    }
+    if let Some(saved_mask) = &sel.saved_mask {
+        and_mask(&mut mask, saved_mask);
     }
 
     if let Some(ref b) = sel.box_spec
@@ -604,9 +685,14 @@ pub(super) fn evaluate_immath_mask<T: RealMathPixel>(
     };
     let alias_keys: Vec<String> = aliases.iter().map(|(k, _)| k.clone()).collect();
     let expr = quote_var_aliases(raw_expr, &alias_keys);
-    let quoted = quoted_expression_names(&expr);
+    let names = referenced_images(&expr).map_err(|error| {
+        ImageError::CasaSelection(format!(
+            "Input mask specification is incorrect: {}",
+            mask_error_wording(error)
+        ))
+    })?;
     let mut extra_images: Vec<(String, RawImage<T>)> = Vec::new();
-    for name in &quoted {
+    for name in &names {
         if aliases.iter().any(|(k, _)| k == name) {
             continue;
         }
@@ -833,6 +919,8 @@ pub(super) fn apply_selection_to_raw<T: RealMathPixel>(
                 });
             }
             default_sel = ImmathSelection {
+                saved_mask: None,
+                strided_plan: None,
                 start: vec![0; full_shape.len()],
                 shape: full_shape.clone(),
                 plane: [0, 1],
@@ -895,6 +983,33 @@ fn materialize_subimage<T: RealMathPixel>(
     window_mask_override: Option<ArrayD<bool>>,
 ) -> Result<PreparedInput<T>, ImageError> {
     let img = raw.as_interface();
+    if let Some((plan, stride)) = &sel.strided_plan {
+        let mut output = TempImage::new(
+            plan.shape.clone(),
+            plan.coordinates.clone(),
+            TempStoragePolicy::Memory,
+        )?;
+        plan.copy_to(img, &mut output, None, false)?;
+        let mut mask = output.default_mask()?;
+        if let Some(override_mask) = window_mask_override {
+            let sampled = override_mask
+                .slice_each_axis(|axis| Slice::new(0, None, stride[axis.axis.index()] as isize));
+            and_mask(&mut mask, &sampled.to_owned());
+        }
+        let snapshot = MemorySnapshotImage {
+            data: Arc::new(output.get()?),
+            mask: mask.map(Arc::new),
+            coordinates: plan.coordinates.clone(),
+            units: output.units().into(),
+            image_info: plan.image_info().clone(),
+            misc_info: output.misc_info(),
+            legacy_coords: plan.coordinate_record.clone(),
+        };
+        return Ok(PreparedInput {
+            raw,
+            subimaged: Some(snapshot),
+        });
+    }
     let stride = vec![1; img.ndim()];
     let data = img.get_slice(&sel.start, &sel.shape, &stride)?;
     let mask = selection_and_mask(img, sel, window_mask_override)?;
