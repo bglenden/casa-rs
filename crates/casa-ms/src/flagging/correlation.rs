@@ -368,6 +368,192 @@ impl CorrelationSelection {
     }
 }
 
+pub(super) struct TfcropCorrelations {
+    pub(super) metric: ClipMetric,
+    pub(super) restrict_extension: bool,
+    by_description: Vec<Option<TfcropProducts>>,
+    unknown_product: Option<String>,
+}
+
+struct TfcropProducts {
+    fits: Vec<ClipProjection>,
+    extension_planes: Vec<usize>,
+}
+
+impl TfcropCorrelations {
+    pub(super) fn read(
+        ms: &MeasurementSet,
+        expression: Option<&str>,
+        column: FlagDataColumn,
+    ) -> Result<Self, FlaggingError> {
+        let text = expression
+            .unwrap_or_default()
+            .split('\0')
+            .next()
+            .unwrap_or_default()
+            .to_uppercase();
+        let all = text.is_empty() || text.contains("ALL");
+        let operator = CLIP_OPERATORS
+            .iter()
+            .find_map(|(name, metric)| text.contains(*name).then_some(*metric));
+        let metric = if column.is_real() {
+            ClipMetric::Real
+        } else {
+            operator.unwrap_or(ClipMetric::Amplitude)
+        };
+        let bare_all = all && !text.is_empty() && operator.is_none();
+        let expression = if !all
+            && column.is_real()
+            && CLIP_OPERATORS[1..]
+                .iter()
+                .any(|(name, _)| text.contains(*name))
+        {
+            tracing::warn!("Unsupported visibility expression: {text}; selecting REAL by default");
+            let suffix = text
+                .split_once('_')
+                .or_else(|| text.split_once(' '))
+                .map_or("", |(_, suffix)| suffix);
+            format!("REAL {suffix}")
+        } else {
+            text
+        };
+        let wvr = expression.contains("WVR");
+        let failed = |source: MsError| FlaggingError::MutateFlags {
+            path: display_ms_path(ms),
+            reason: format!("resolve stored TFCrop correlations: {source}"),
+        };
+        let modes = stored_correlation_modes(ms).map_err(failed)?;
+        // Each ALL agent is generated from the full polarization table
+        // before a selected data description resolves its available operands.
+        let mut known = BTreeSet::new();
+        let global_products = modes
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|name| {
+                (RECEPTOR_PRODUCTS.contains(name) || STOKES_PRODUCTS.contains(name))
+                    && (known.insert(*name) || *name == "I")
+            })
+            .collect::<Vec<_>>();
+        let operands = CLIP_OPERATORS
+            .iter()
+            .fold(expression.clone(), |expression, (name, _)| {
+                expression.replace(*name, " ")
+            });
+        let requested = if operator.is_some() && wvr {
+            vec!["I"]
+        } else if operator.is_some() {
+            RECEPTOR_PRODUCTS
+                .into_iter()
+                .chain(STOKES_PRODUCTS)
+                .filter(|name| operands.contains(*name))
+                .collect()
+        } else {
+            RECEPTOR_PRODUCTS
+                .into_iter()
+                .chain(["I"])
+                .filter(|name| expression.contains(*name) && known.contains(name))
+                .collect()
+        };
+        let unknown_product =
+            (!all && operator.is_some() && requested.is_empty()).then_some(expression);
+        let descriptions = ms.data_description().map_err(failed)?;
+        let mut active = BTreeSet::new();
+        if operator.is_none() {
+            let windows = ms.spectral_window().map_err(failed)?;
+            for row in 0..descriptions.row_count() {
+                let spw = descriptions.spectral_window_id(row).map_err(failed)?;
+                if !descriptions.flag_row(row).map_err(failed)?
+                    && !windows.flag_row(spw as usize).map_err(failed)?
+                {
+                    active.insert(descriptions.polarization_id(row).map_err(failed)?);
+                }
+            }
+        }
+        let mut by_description = Vec::with_capacity(descriptions.row_count());
+        for row in 0..descriptions.row_count() {
+            let id = descriptions.polarization_id(row).map_err(failed)?;
+            let names = modes
+                .get(id as usize)
+                .ok_or_else(|| FlaggingError::MutateFlags {
+                    path: display_ms_path(ms),
+                    reason: format!("DATA_DESCRIPTION row {row} has no polarization {id}"),
+                })?;
+            if names.contains(&"I") != wvr {
+                by_description.push(None);
+                continue;
+            }
+            let fits = if all {
+                global_products
+                    .iter()
+                    .filter(|name| {
+                        !bare_all || (active.contains(&id) && RECEPTOR_PRODUCTS.contains(name))
+                    })
+                    .filter_map(|name| clip_projection(name, names))
+                    .collect()
+            } else if operator.is_some()
+                || (!requested.is_empty()
+                    && active.contains(&id)
+                    && requested.iter().all(|name| names.contains(name)))
+            {
+                requested
+                    .first()
+                    .and_then(|name| clip_projection(name, names))
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let mut extension_planes = Vec::new();
+            if !all {
+                for projection in requested
+                    .iter()
+                    .filter_map(|name| clip_projection(name, names))
+                {
+                    match projection {
+                        ClipProjection::Stored(plane) => extension_planes.push(plane),
+                        ClipProjection::Stokes(first, second, _) => {
+                            extension_planes.extend([first, second])
+                        }
+                    }
+                }
+                extension_planes.sort_unstable();
+                extension_planes.dedup();
+            }
+            by_description.push(Some(TfcropProducts {
+                fits,
+                extension_planes,
+            }));
+        }
+        Ok(Self {
+            metric,
+            restrict_extension: !all,
+            by_description,
+            unknown_product,
+        })
+    }
+
+    pub(super) fn for_description(&self, ddid: i32) -> Result<&[ClipProjection], FlaggingError> {
+        let products = self
+            .by_description
+            .get(ddid as usize)
+            .and_then(Option::as_ref);
+        if products.is_some()
+            && let Some(text) = &self.unknown_product
+        {
+            return Err(FlaggingError::UnknownTfcropProduct(text.clone()));
+        }
+        Ok(products.map_or(&[], |products| products.fits.as_slice()))
+    }
+
+    pub(super) fn extension_planes(&self, ddid: i32) -> &[usize] {
+        self.by_description
+            .get(ddid as usize)
+            .and_then(Option::as_ref)
+            .map_or(&[], |products| products.extension_planes.as_slice())
+    }
+}
+
 fn clip_projections(products: &[&str], stored: &[&str], wvr: bool) -> Vec<ClipProjection> {
     let Some(first) = products.first() else {
         return Vec::new();

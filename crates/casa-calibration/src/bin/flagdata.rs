@@ -249,6 +249,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         FlaggingError::InvalidRFlagScale(parameter) => {
             TaskFailure::validation(error.to_string()).at(parameter)
         }
+        FlaggingError::UnknownTfcropProduct(_) => {
+            TaskFailure::execution(error.to_string()).at("correlation")
+        }
         FlaggingError::DisplayColumnVector => {
             TaskFailure::execution(error.to_string()).at("datacolumn")
         }

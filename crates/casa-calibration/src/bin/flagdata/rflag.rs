@@ -156,11 +156,15 @@ fn threshold_json(line: &str) -> String {
     while let Some(character) = chars.next() {
         if let Some(delimiter) = quote {
             match character {
-                '\\' if let Some(escaped) = chars.next() => {
-                    if escaped != '\'' {
+                '\\' => {
+                    if let Some(escaped) = chars.next() {
+                        if escaped != '\'' {
+                            output.push('\\');
+                        }
+                        output.push(escaped);
+                    } else {
                         output.push('\\');
                     }
-                    output.push(escaped);
                 }
                 character if character == delimiter => {
                     quote = None;

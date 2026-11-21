@@ -47,9 +47,11 @@ use casa_coordinates::{
     ProjectionType,
 };
 use casa_types::ArrayD;
+
 use ndarray::{IxDyn, ShapeBuilder};
 use num_complex::Complex32;
 
+use crate::plane::PlaneIndex;
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 mod pixel;
@@ -690,7 +692,7 @@ where
     let mut out_valid = vec![false; out_values.len()];
     let planes = PlaneIndex::new(input_shape, in_axis);
     let out_planes = PlaneIndex::new(&direction_shape, out_axis);
-    for plane_number in 0..planes.count {
+    for plane_number in 0..planes.count() {
         if let (Some(values), Some(mask)) = (plane_mask.as_mut(), mask) {
             planes.read(plane_number, mask, values, |v| *v);
         }
@@ -708,8 +710,8 @@ where
                 out_valid[k] = sampled.is_some();
             }
         }
-        out_planes.write(plane_number, &out_values, &mut out_data, |v| v);
-        out_planes.write(plane_number, &out_valid, &mut out_mask, |v| v);
+        out_planes.write(plane_number, &out_values, &mut out_data);
+        out_planes.write(plane_number, &out_valid, &mut out_mask);
     }
     (out_data, out_mask)
 }
@@ -764,95 +766,6 @@ fn clip_pointing_grid(
             ),
             &input_shape,
         )
-}
-
-/// Array planes indexed by the remaining axes (the first fastest), read and
-/// written in local coordinate order. When the first two axes are the plane
-/// axes in that order, a Fortran array holds each plane contiguously.
-struct PlaneIndex<'s> {
-    shape: &'s [usize],
-    axes: [usize; 2],
-    others: Vec<usize>,
-    count: usize,
-}
-
-impl<'s> PlaneIndex<'s> {
-    fn new(shape: &'s [usize], axes: [usize; 2]) -> Self {
-        let others: Vec<usize> = (0..shape.len()).filter(|a| !axes.contains(a)).collect();
-        let count = others.iter().map(|a| shape[*a]).product();
-        Self {
-            shape,
-            axes,
-            others,
-            count,
-        }
-    }
-
-    fn plane_len(&self) -> usize {
-        self.shape[self.axes[0]] * self.shape[self.axes[1]]
-    }
-
-    /// The plane's elements in memory order, when they are contiguous there.
-    fn contiguous<'a, A>(&self, plane: usize, array: &'a ArrayD<A>) -> Option<&'a [A]> {
-        let len = self.plane_len();
-        (self.axes == [0, 1])
-            .then(|| array.as_slice_memory_order())
-            .flatten()
-            .filter(|_| array.t().is_standard_layout())
-            .map(|all| &all[plane * len..(plane + 1) * len])
-    }
-
-    fn index(&self, plane: usize) -> Vec<usize> {
-        let mut index = vec![0usize; self.shape.len()];
-        let mut rest = plane;
-        for a in &self.others {
-            index[*a] = rest % self.shape[*a];
-            rest /= self.shape[*a];
-        }
-        index
-    }
-
-    fn read<A, B>(&self, plane: usize, array: &ArrayD<A>, into: &mut [B], f: impl Fn(&A) -> B) {
-        if let Some(values) = self.contiguous(plane, array) {
-            for (out, value) in into.iter_mut().zip(values) {
-                *out = f(value);
-            }
-            return;
-        }
-        let mut index = self.index(plane);
-        let nx = self.shape[self.axes[0]];
-        for (k, out) in into.iter_mut().enumerate() {
-            index[self.axes[0]] = k % nx;
-            index[self.axes[1]] = k / nx;
-            *out = f(&array[IxDyn(&index)]);
-        }
-    }
-
-    fn write<A: Copy, B>(
-        &self,
-        plane: usize,
-        values: &[A],
-        array: &mut ArrayD<B>,
-        f: impl Fn(A) -> B,
-    ) {
-        let len = self.plane_len();
-        if self.axes == [0, 1] && array.t().is_standard_layout() {
-            let all = array
-                .as_slice_memory_order_mut()
-                .expect("a standard-layout array is contiguous");
-            for (out, value) in all[plane * len..(plane + 1) * len].iter_mut().zip(values) {
-                *out = f(*value);
-            }
-            return;
-        }
-        let mut index = self.index(plane);
-        let nx = self.shape[self.axes[0]];
-        for (k, value) in values.iter().enumerate() {
-            index[self.axes[0]] = k % nx;
-            index[self.axes[1]] = k / nx;
-            array[IxDyn(&index)] = f(*value);
-        }
-    }
 }
 
 /// Regrid a complex AW convolution plane around its integer centre pixel,

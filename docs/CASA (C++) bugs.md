@@ -3955,6 +3955,12 @@ fixture puts the XX imaginary value outside the range and its derived
 Stokes I value inside it. CASA flags both contributing planes at that
 channel. casa-rs evaluates the explicit XX product.
 
+TFCrop also matches the I in `IMAG_Q`. Its paired control adds the same
+imaginary spike to XX and YY. The derived Q remains flat, while CASA fits
+I and flags both planes. Native TFCrop evaluates Q and returns the usual
+unknown-polarization error for a bare `IMAG` operator. It uses the same
+native Stokes equations as clip. [TFCrop correlation oracle](../tools/casa-compat/flagdata_tfcrop_correlations_oracle.py)
+
 With `correlation="REAL_XX", clipzeros=True`, CASA compares the signed
 real value to the zero tolerance. A finite value of −3 is flagged.
 casa-rs compares the magnitude to the zero tolerance and uses the
@@ -4142,6 +4148,12 @@ within the selected range. The paired fixture also verifies that seven
 existing flags in an eight-channel selection do not meet the 80 percent
 frequency threshold for the 32-channel window.
 [TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
+
+The same extension can copy an XX flag to YY when the caller selects only
+XX. Native TFCrop grows flags into the requested physical planes. An input
+flag on YY still contributes to extension in selected XX. A derived Stokes
+fit writes its contributing planes as requested.
+[TFCrop correlation oracle](../tools/casa-compat/flagdata_tfcrop_correlations_oracle.py)
 
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 
@@ -9105,3 +9117,21 @@ inside the lattice collapse. It checks each axis in isolation and
 passes a duplicated axis to the tile iterator. Casa-rs raises a Python
 error for duplicate axes and keeps the image attached and its pixels
 intact.
+
+### `image.maxfit` can select the wrong channel or crash on an all-masked image
+
+On a direction cube with peaks of +6 in one channel and +2 and −12 in
+another, CASA 6.7.6.14 returns the weaker positive source with
+`negfind=False` and the +6 source with `negfind=True`. The
+plane-selection branch applies the opposite sign policy to the one
+documented, and the subsequent source search can miss a negative peak.
+Casa-rs ranks positive peaks by value by default and ranks both signs
+by magnitude with `negfind=True`, retaining the fitted peak's sign.
+It ranks fit-eligible peaks by their sampled pixel values. A broad
+source with a larger fitted height cannot replace a sharper source
+whose sampled peak is stronger. The fit can resolve an extremum
+between two equally bright adjacent pixels.
+
+On an entirely masked Float direction image, default `image.maxfit`
+can dereference an absent maximum and terminate the CASA Python
+process. Casa-rs raises a Python error and preserves the image.

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 pub(super) mod components;
+mod maxfit;
 mod peaks;
 
-use casa_components::ComponentList;
+pub use maxfit::{ImageMaxFit, MaxFitOptions, fit_image_maximum};
+
+use casa_components::{ComponentList, SkyComponent};
 use casa_coordinates::{CoordinateModel, CoordinateType};
 use casa_types::{RecordValue, Value};
 
@@ -11,7 +14,7 @@ use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInterface};
 
 use self::components::{PixelEllipse, SkyPlane};
-use self::peaks::Peak;
+use self::peaks::{Peak, PeakRanking};
 use super::decompose::{WindowFit, fit_window};
 use super::read_window::PixelSections;
 use super::{StridedSection, SubimageOptions, SubimagePlan, SubimageRegion};
@@ -66,6 +69,41 @@ pub fn find_image_sources(
             keepaxes: &[],
         },
     )?;
+    let sky = sky_plane(&plan, image.units())?;
+    let unit = vec![1; image.ndim()];
+    let selection = &plan.selection;
+    let section = StridedSection {
+        start: &selection.start,
+        shape: &selection.shape,
+        stride: selection.stride.as_deref().unwrap_or(&unit),
+    };
+    let reader = PixelSections {
+        image,
+        selection,
+        mask: PreparedMask::new(options.mask, image.shape(), image.coordinates(), false)?,
+    };
+    let candidates = peaks::search(
+        &reader,
+        &plan,
+        &section,
+        options.maximum,
+        options.cutoff,
+        if options.find_negative {
+            PeakRanking::Signed
+        } else {
+            PeakRanking::Positive
+        },
+    )?;
+    let mut components = ComponentList::new();
+    let width = if options.point { 0 } else { options.fit_width };
+    for peak in candidates {
+        let (component, _) = fit_component(&reader, &section, &plan, &sky, peak, width)?;
+        components.push(component);
+    }
+    components_record(components)
+}
+
+fn sky_plane<'a>(plan: &'a SubimagePlan, brightness: &'a str) -> Result<SkyPlane<'a>, ImageError> {
     let Some(index) = plan.coordinates.find_coordinate(CoordinateType::Direction) else {
         return Err(invalid("The image must contain a direction coordinate"));
     };
@@ -86,46 +124,15 @@ pub fn find_image_sources(
     let CoordinateModel::Direction(direction) = plan.coordinates.coordinate(index) else {
         unreachable!("direction coordinate selected by its type");
     };
-    let unit = vec![1; image.ndim()];
-    let selection = &plan.selection;
-    let section = StridedSection {
-        start: &selection.start,
-        shape: &selection.shape,
-        stride: selection.stride.as_deref().unwrap_or(&unit),
-    };
-    let reader = PixelSections {
-        image,
-        selection,
-        mask: PreparedMask::new(options.mask, image.shape(), image.coordinates(), false)?,
-    };
-    let candidates = peaks::search(
-        &reader,
-        &plan,
-        &section,
-        options.maximum,
-        options.cutoff,
-        options.find_negative,
-    )?;
-    let shape = [plan.shape[0], plan.shape[1]];
-    let sky = SkyPlane {
+    Ok(SkyPlane {
         direction,
         sky_order: [*lon, *lat],
-        brightness: image.units(),
+        brightness,
         beam: plan.image_info.beam_set.single_beam(),
-    };
-    let mut components = ComponentList::new();
-    for peak in candidates {
-        let mut model = None;
-        if !options.point && options.fit_width != 0 {
-            model = fit_source(&reader, &section, &plan, shape, peak, options.fit_width)?
-                .and_then(|(fitted, ellipse)| sky.component(fitted, Some(ellipse)).ok());
-        }
-        let component = match model {
-            Some(component) => component,
-            None => sky.component(peak, None)?,
-        };
-        components.push(component);
-    }
+    })
+}
+
+fn components_record(components: ComponentList) -> Result<RecordValue, ImageError> {
     let mut record = components
         .to_record()
         .map_err(|err| invalid(err.to_string()))?;
@@ -135,6 +142,24 @@ pub fn find_image_sources(
         }
     }
     Ok(record)
+}
+
+fn fit_component(
+    reader: &PixelSections<'_, f32>,
+    section: &StridedSection<'_>,
+    plan: &SubimagePlan,
+    sky: &SkyPlane<'_>,
+    peak: Peak,
+    width: i64,
+) -> Result<(SkyComponent, Peak), ImageError> {
+    let shape = [plan.shape[0], plan.shape[1]];
+    if width != 0
+        && let Some((fitted, ellipse)) = fit_source(reader, section, plan, shape, peak, width)?
+        && let Ok(component) = sky.component(fitted, Some(ellipse))
+    {
+        return Ok((component, fitted));
+    }
+    Ok((sky.component(peak, None)?, peak))
 }
 
 fn fit_source(

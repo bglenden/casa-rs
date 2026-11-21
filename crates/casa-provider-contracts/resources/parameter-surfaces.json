@@ -24127,7 +24127,7 @@
             "python": {"name": "correlation", "type_hint": "str"},
             "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
           },
-          "surface_note": "Selects stored correlation planes for manual, unflag, quack, summary and clip. Clip supports ABS, REAL, IMAG, ARG and NORM on receptor labels and WVR. Its default skips stored-I buffers. Summary counts stored flags for an operator expression. Derived Stokes and other mode combinations remain on #978.",
+          "surface_note": "Selects stored correlation planes for manual, unflag, quack and summary. Clip and unaveraged TFCrop support ABS, REAL, IMAG, ARG and NORM on receptor labels, derived Stokes and WVR. Their defaults skip stored-I buffers. Summary counts stored flags for an operator expression. Automatic averaging and remaining mode combinations are tracked by #1616.",
           "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata selects stored correlation planes inside its agents using literal expressions."}
         },
         {

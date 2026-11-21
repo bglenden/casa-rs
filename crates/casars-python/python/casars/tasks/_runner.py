@@ -369,6 +369,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
                 if completion.message == "no flagdata summary report for the selected correlations":
                     raise KeyError("nreport") from error
+                if (completion.message or "").startswith("Unknown polarization requested,"):
+                    raise RuntimeError(completion.message) from error
             if completion.parameter == "calibration-selection":
                 raise RuntimeError(completion.message) from error
             if completion.parameter == "calibration-agent":

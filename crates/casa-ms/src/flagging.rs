@@ -67,7 +67,7 @@ use clip_average::{ChannelBins, check_channel_bins};
 use clip_columns::ClipColumns;
 use clip_time::{TimeClip, time_bin_seconds};
 pub use command::append_flag_command;
-use correlation::{ClipProjection, CorrelationSelection};
+use correlation::{ClipMetric, ClipProjection, CorrelationSelection, TfcropCorrelations};
 pub use shadow::{ShadowAntenna, ShadowOptions};
 mod version_backup;
 mod version_storage;
@@ -476,6 +476,11 @@ pub enum FlaggingError {
     /// An active explicit RFlag cutoff has a zero or negative scale.
     #[error("{0} must be positive when its threshold is positive")]
     InvalidRFlagScale(&'static str),
+    /// The automatic visibility operator did not name a polarization product.
+    #[error(
+        "Unknown polarization requested, ({0}) supported types are: XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
+    )]
+    UnknownTfcropProduct(String),
     /// A display was requested with a vector of data-column names.
     #[error("'list' object has no attribute 'upper'")]
     DisplayColumnVector,
@@ -576,7 +581,8 @@ fn flagdata_with_persistence(
         .as_deref()
         .filter(|expression| !expression.is_empty() && !expression.starts_with('\0'))
         .or_else(|| (request.mode == FlagDataMode::Clip).then_some(""));
-    let correlations = match correlation {
+    let tfcrop_correlations = request.mode == FlagDataMode::Tfcrop && request.casa_row_selection;
+    let correlations = match correlation.filter(|_| !tfcrop_correlations) {
         Some(expression) => {
             CorrelationSelection::read(ms, request.mode, request.data_column, expression)?
         }
@@ -1405,6 +1411,9 @@ fn apply_tfcrop_flags(
     if options.is_none() && !request.extendflags {
         return Ok(ChangeSet::default());
     }
+    let correlations = (request.casa_row_selection && !calibration)
+        .then(|| TfcropCorrelations::read(ms, request.correlation.as_deref(), column))
+        .transpose()?;
     let loaded = load_samples(
         ms,
         selected_rows,
@@ -1420,69 +1429,99 @@ fn apply_tfcrop_flags(
         false,
     )?;
     let mut samples = loaded.samples;
-    let projection = calibration
+    let calibration_projection = calibration
         .then(|| calibration::automatic_projection(request, &samples))
         .transpose()?;
-    if let Some(projection) = &projection {
+    if let Some(projection) = &calibration_projection {
         for sample in &mut samples {
             sample.amp = projection.scalar(sample);
-        }
-    } else if request.casa_row_selection && column.is_real() {
-        for sample in &mut samples {
-            sample.amp = sample.real;
         }
     }
     let loaded_ms = started.elapsed().as_millis();
     let mut modified = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
     let mut time_flags = vec![false; samples.len()];
-    let groups: Vec<_> = if request.casa_row_selection || projection.is_some() {
+    let groups: Vec<_> = if request.casa_row_selection || calibration_projection.is_some() {
         ordered_autoflag_groups(ms, selected_rows, &samples, request)?
             .into_iter()
-            .map(|(_, samples)| samples)
+            .map(|(([_, _, _, _, description], _), group)| (Some(description), group))
             .collect()
     } else {
-        group_samples(&samples).into_values().collect()
+        group_samples(&samples)
+            .into_values()
+            .map(|group| (None, group))
+            .collect()
     };
     if let Some(options) = &options {
-        let arithmetic = TfcropArithmetic {
-            casa_arithmetic: request.casa_row_selection,
-            model_roundoff: &loaded.model_roundoff,
+        let mut roundoff = if loaded.model_roundoff.is_empty() {
+            Vec::new()
+        } else {
+            vec![0.0; samples.len()]
         };
-        for group in &groups {
-            for by_corr in samples_by_corr(group) {
-                if !projection
-                    .as_ref()
-                    .is_none_or(|p| p.includes(by_corr[0].corr))
-                {
+        for (description, group) in &groups {
+            let planes = samples_by_corr(group);
+            let selection = correlations.as_ref().zip(*description);
+            let default_projections;
+            let (projections, metric) = if let Some((selection, ddid)) = selection {
+                (selection.for_description(ddid)?, Some(selection.metric))
+            } else {
+                default_projections = planes
+                    .iter()
+                    .filter(|plane| {
+                        calibration_projection
+                            .as_ref()
+                            .is_none_or(|p| p.includes(plane[0].corr))
+                    })
+                    .map(|plane| ClipProjection::Stored(plane[0].corr))
+                    .collect::<Vec<_>>();
+                (default_projections.as_slice(), None)
+            };
+            for &projection in projections {
+                let Some(series) = tfcrop_series(
+                    &planes,
+                    projection,
+                    metric,
+                    &modified,
+                    &loaded.model_roundoff,
+                    &mut roundoff,
+                ) else {
                     continue;
-                }
+                };
                 for &direction in options.passes.directions() {
                     let (cutoff, candidates) = match direction {
                         TfcropDirection::Freq => (request.freqcutoff, &mut freq_flags),
                         TfcropDirection::Time => (request.timecutoff, &mut time_flags),
                     };
                     tfcrop_fit_base_and_flag(
-                        &by_corr,
+                        &series.samples,
                         direction,
                         cutoff,
                         options,
-                        arithmetic,
+                        TfcropArithmetic {
+                            casa_arithmetic: request.casa_row_selection,
+                            model_roundoff: &roundoff,
+                        },
                         &mut modified,
                         candidates,
                     );
+                }
+                for (first, second) in series.pairs {
+                    modified[second] |= modified[first];
+                    freq_flags[second] |= freq_flags[first];
+                    time_flags[second] |= time_flags[first];
                 }
             }
         }
     }
     if request.extendflags {
-        if request.casa_row_selection && channel_selections.is_some() {
-            for group in &groups {
-                extend_tfcrop_selected_channels(group, &loaded.flags_by_row, &mut modified);
-            }
-        } else {
-            extend_autoflag_grouped(groups.iter().map(Vec::as_slice), &samples, &mut modified);
-        }
+        extend_tfcrop_groups(
+            &groups,
+            &samples,
+            &loaded.flags_by_row,
+            request.casa_row_selection && channel_selections.is_some(),
+            correlations.as_ref(),
+            &mut modified,
+        );
     }
     let union_candidates = count_mask(&modified);
     let planned_ms = started.elapsed().as_millis();
@@ -1525,6 +1564,116 @@ fn apply_tfcrop_flags(
         })
     });
     Ok(changes)
+}
+
+fn extend_tfcrop_groups(
+    groups: &[(Option<i32>, Vec<Sample>)],
+    samples: &[Sample],
+    flags: &BTreeMap<usize, ArrayD<bool>>,
+    selected_channels: bool,
+    correlations: Option<&TfcropCorrelations>,
+    modified: &mut [bool],
+) {
+    let mut restricted_mask = correlations
+        .filter(|selection| selection.restrict_extension)
+        .map(|_| modified.to_vec());
+    let mask = restricted_mask.as_deref_mut().unwrap_or(modified);
+    if selected_channels {
+        for (_, group) in groups {
+            extend_tfcrop_selected_channels(group, flags, mask);
+        }
+    } else {
+        extend_autoflag_grouped(
+            groups.iter().map(|(_, group)| group.as_slice()),
+            samples,
+            mask,
+        );
+    }
+    if let Some((selection, extended)) = correlations.zip(restricted_mask) {
+        for (description, group) in groups {
+            let planes = selection
+                .extension_planes(description.expect("public TFCrop group has a data description"));
+            for sample in group {
+                if planes.binary_search(&sample.corr).is_ok() {
+                    modified[sample.index] = extended[sample.index];
+                }
+            }
+        }
+    }
+}
+
+struct TfcropSeries {
+    samples: Vec<Sample>,
+    pairs: Vec<(usize, usize)>,
+}
+
+fn tfcrop_series(
+    planes: &[Vec<Sample>],
+    projection: ClipProjection,
+    metric: Option<ClipMetric>,
+    modified: &[bool],
+    model_roundoff: &[f32],
+    roundoff: &mut [f32],
+) -> Option<TfcropSeries> {
+    let plane = |plane| planes.iter().find(|samples| samples[0].corr == plane);
+    let (first, second) = match projection {
+        ClipProjection::Stored(first) => (plane(first)?, None),
+        ClipProjection::Stokes(first, second, combine) => {
+            (plane(first)?, Some((plane(second)?, combine)))
+        }
+    };
+    let mut series = TfcropSeries {
+        samples: Vec::with_capacity(first.len()),
+        pairs: Vec::new(),
+    };
+    let second = second.map(|(samples, combine)| {
+        let lookup = samples
+            .iter()
+            .map(|sample| ((sample.row, sample.chan), sample))
+            .collect::<HashMap<_, _>>();
+        (lookup, combine)
+    });
+    for original in first {
+        let mut sample = *original;
+        let mut value = Complex64::new(sample.real, sample.imag);
+        let mut uncertainty = model_roundoff.get(sample.index).copied().unwrap_or(0.0);
+        if let Some((lookup, combine)) = &second {
+            let Some(other) = lookup.get(&(sample.row, sample.chan)) else {
+                continue;
+            };
+            value = combine.apply64(value, Complex64::new(other.real, other.imag));
+            sample.flag |= sample_is_modified(other, modified);
+            uncertainty =
+                (uncertainty + model_roundoff.get(other.index).copied().unwrap_or(0.0)) * 0.5;
+            series.pairs.push((sample.index, other.index));
+        }
+        if let Some(metric) = metric {
+            sample.amp = metric.apply64(value);
+            if let Some(bound) = roundoff.get_mut(sample.index) {
+                *bound = tfcrop_metric_roundoff(metric, value, uncertainty);
+            }
+        }
+        series.samples.push(sample);
+    }
+    Some(series)
+}
+
+fn tfcrop_metric_roundoff(metric: ClipMetric, value: Complex64, uncertainty: f32) -> f32 {
+    if uncertainty == 0.0 {
+        return 0.0;
+    }
+    let radius = f64::from(uncertainty);
+    match metric {
+        ClipMetric::SquaredMagnitude => (radius * (2.0 * value.norm() + radius)) as f32,
+        ClipMetric::Phase
+            if radius < value.norm() && (value.re >= 0.0 || radius < value.im.abs()) =>
+        {
+            (radius / value.norm()).asin() as f32
+        }
+        // The fit compares principal arguments on either side of ±π.
+        ClipMetric::Phase => std::f32::consts::TAU,
+        _ => uncertainty,
+    }
 }
 
 fn tfcrop_columns(
@@ -4327,6 +4476,17 @@ mod tests {
 
     use super::*;
     use ndarray::array;
+
+    #[test]
+    fn tfcrop_angle_roundoff_covers_the_principal_phase_branch_cut() {
+        let above = Complex64::new(-1.0, 1.0e-8);
+        let below = Complex64::new(-1.0, -1.0e-8);
+        let bound = tfcrop_metric_roundoff(ClipMetric::Phase, above, 1.0e-6);
+        assert!(f64::from(bound) >= (above.arg() - below.arg()).abs());
+        let away_from_cut =
+            tfcrop_metric_roundoff(ClipMetric::Phase, Complex64::new(1.0, 0.0), 1.0e-6);
+        assert!((1.0e-6..=1.1e-6).contains(&away_from_cut));
+    }
 
     fn sample(index: usize, row: usize, corr: usize, chan: usize, real: f64, flag: bool) -> Sample {
         Sample {
