@@ -209,23 +209,22 @@ impl StatisticsReport<'_> {
         if let Some(index) = self.coordinates.find_coordinate(CoordinateType::Spectral)
             && let CoordinateModel::Spectral(spectral) = self.coordinates.coordinate(index)
             && let [Some(axis)] = self.coordinates.pixel_axes(index).as_slice()
+            && self.chunk.size[*axis] > 1
         {
-            if self.chunk.size[*axis] > 1 {
-                unit.push('.');
-                if spectral.rest_frequency() > 0.0 {
-                    unit.push_str(
-                        self.spectral_velocity
-                            .map_or("km/s", |velocity| velocity.unit.name()),
-                    );
-                } else {
-                    unit.push_str(&self.coordinates.coordinate(index).axis_units()[0]);
-                }
-                return summary_number(
-                    "         -- flux [flux]:                            ",
-                    flux,
-                    Some(&unit),
+            unit.push('.');
+            if spectral.rest_frequency() > 0.0 {
+                unit.push_str(
+                    self.spectral_velocity
+                        .map_or("km/s", |velocity| velocity.unit.name()),
                 );
+            } else {
+                unit.push_str(&self.coordinates.coordinate(index).axis_units()[0]);
             }
+            return summary_number(
+                "         -- flux [flux]:                            ",
+                flux,
+                Some(&unit),
+            );
         }
         let integrated = Unit::new(&unit).is_ok_and(|actual| {
             ["Jy.km/s", "Jy.Hz", "K.arcsec2.km/s", "K.arcsec2.Hz"]
