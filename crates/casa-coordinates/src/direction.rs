@@ -86,7 +86,7 @@ pub(crate) struct RemovedAxis {
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
-fn theta_0_for_projection(proj: &Projection) -> f64 {
+fn fiducial_latitude_degrees(proj: &Projection) -> f64 {
     use crate::projection::ProjectionType;
     match proj.projection_type() {
         ProjectionType::CAR
@@ -104,14 +104,14 @@ fn theta_0_for_projection(proj: &Projection) -> f64 {
         | ProjectionType::CSC
         | ProjectionType::QSC => 0.0,
         ProjectionType::COP | ProjectionType::COD | ProjectionType::COE | ProjectionType::COO => {
-            proj.parameters()
-                .first()
-                .copied()
-                .unwrap_or_default()
-                .to_radians()
+            proj.parameters().first().copied().unwrap_or_default()
         }
-        _ => FRAC_PI_2, // zenithal projections
+        _ => 90.0, // zenithal projections
     }
+}
+
+fn theta_0_for_projection(proj: &Projection) -> f64 {
+    fiducial_latitude_degrees(proj).to_radians()
 }
 
 /// Computes the celestial coordinates of the native pole (alpha_p, delta_p)
@@ -224,10 +224,16 @@ impl DirectionCoordinate {
         cdelt: [f64; 2],
         crpix: [f64; 2],
     ) -> Self {
-        let theta_0 = theta_0_for_projection(&projection);
+        let fiducial = fiducial_latitude_degrees(&projection);
+        let theta_0 = fiducial.to_radians();
 
-        // longpole (phi_p) defaults: if delta_0 >= theta_0, phi_p = 0, else phi_p = pi
-        let longpole = if crval[1] >= theta_0 { 0.0 } else { PI };
+        // WCSLIB compares the reference and fiducial latitudes in degrees
+        // before picking the default native longitude of the celestial pole.
+        let longpole = if crval[1].to_degrees() >= fiducial {
+            0.0
+        } else {
+            PI
+        };
         let latpole = FRAC_PI_2;
 
         let native_pole = compute_native_pole(crval[0], crval[1], longpole, latpole, theta_0);
