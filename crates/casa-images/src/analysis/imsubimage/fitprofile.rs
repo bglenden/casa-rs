@@ -8,7 +8,7 @@ mod estimates;
 mod models;
 mod products;
 mod results;
-mod selection;
+pub(in crate::analysis) mod selection;
 mod sigma;
 mod solver;
 
@@ -25,13 +25,42 @@ use crate::{ImageError, ImageInterface};
 use super::SubimageRegion;
 use axis::{ProfileAxis, automatic_divisor};
 use curve::Curve;
-use models::{LineKind, PeakLists, PolynomialEstimate, ProfileModels, SpectralPolynomial};
+use models::{
+    LineEstimate, LineKind, PeakLists, PolynomialEstimate, ProfileModels, SpectralPolynomial,
+};
 use products::{Product, ProfileProducts};
 use results::ProfileResults;
 use selection::{Lane, MeanLane, ProfileLaneReader, ProfileSelection};
 pub use sigma::ProfileSigma;
 use sigma::Sigma;
 use solver::{Sample, Solution};
+
+pub(in crate::analysis) fn fit_gaussian_profile(
+    samples: impl IntoIterator<Item = (f64, f64)>,
+    estimates: [f64; 3],
+    baseline: Option<f64>,
+) -> Option<[f64; 4]> {
+    let mut curve = Curve::new(
+        &ProfileModels::default(),
+        &[LineEstimate {
+            kind: LineKind::Gaussian,
+            values: estimates,
+            fixed: [false; 3],
+        }],
+        baseline.map(|_| 0),
+    );
+    if let Some(baseline) = baseline {
+        curve.parameters[3] = baseline;
+    }
+    let samples = samples
+        .into_iter()
+        .map(|(x, y)| Sample { x, y, weight: 1. })
+        .collect::<Vec<_>>();
+    let values = solver::solve_moment_gaussian(&curve, &samples)?;
+    let mut fit = std::array::from_fn(|index| values.get(index).copied().unwrap_or(0.));
+    fit[2] = fit[2].abs();
+    (fit[2] > 0.).then_some(fit)
+}
 
 /// Pixel selection and fit controls for a set of image profiles.
 pub struct ProfileFitOptions<'a> {

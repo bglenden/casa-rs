@@ -12,7 +12,7 @@ use casa_tables::{Table, TableOptions};
 use super::PixelClip;
 use crate::{ImageError, ImmomentsRequest};
 
-const SUFFIXES: [&str; 13] = [
+pub(super) const SUFFIXES: [&str; 13] = [
     ".average",
     ".integrated",
     ".weighted_coord",

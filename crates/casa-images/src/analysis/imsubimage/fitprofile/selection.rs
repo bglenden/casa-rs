@@ -16,12 +16,12 @@ use super::super::read_window::PixelSections;
 use super::super::region::SubimageSelection;
 use super::ProfileRegion;
 
-pub(super) struct ProfileSelection {
-    pub(super) plan: SubimagePlan,
+pub(in crate::analysis) struct ProfileSelection {
+    pub(in crate::analysis) plan: SubimagePlan,
     pub(super) axis: usize,
     pub(super) row_shape: Vec<usize>,
     pub(super) stride: Vec<usize>,
-    pub(super) lanes: usize,
+    pub(in crate::analysis) lanes: usize,
 }
 
 impl ProfileSelection {
@@ -73,11 +73,18 @@ impl ProfileSelection {
             &[],
             beam_record,
         )?;
+        Self::from_plan(plan, axis)
+    }
+
+    pub(in crate::analysis) fn from_plan(
+        plan: SubimagePlan,
+        axis: usize,
+    ) -> Result<Self, ImageError> {
         let stride = plan
             .selection
             .stride
             .clone()
-            .unwrap_or_else(|| vec![1; input.ndim()]);
+            .unwrap_or_else(|| vec![1; plan.shape.len()]);
         let mut row_shape = plan.shape.clone();
         row_shape[axis] = 1;
         let lanes = row_shape
@@ -93,7 +100,7 @@ impl ProfileSelection {
         })
     }
 
-    pub(super) fn reader<'a>(
+    pub(in crate::analysis) fn reader<'a>(
         &'a self,
         input: &'a dyn ImageInterface<f32>,
         mask: Option<&str>,
@@ -131,7 +138,7 @@ impl ProfileSelection {
         })
     }
 
-    pub(super) fn position(&self, mut lane: usize) -> Vec<usize> {
+    pub(in crate::analysis) fn position(&self, mut lane: usize) -> Vec<usize> {
         self.row_shape
             .iter()
             .map(|&length| {
@@ -172,7 +179,7 @@ impl ProfileSelection {
     }
 }
 
-pub(super) struct ProfileLaneReader<'a> {
+pub(in crate::analysis) struct ProfileLaneReader<'a> {
     selection: &'a ProfileSelection,
     windows: PixelSections<'a, f32>,
     geometry: Vec<usize>,
@@ -186,7 +193,7 @@ struct ProfileBlock {
 }
 
 impl ProfileLaneReader<'_> {
-    pub(super) fn read(&mut self, position: &[usize]) -> Result<Lane, ImageError> {
+    pub(in crate::analysis) fn read(&mut self, position: &[usize]) -> Result<Lane, ImageError> {
         let load = self.cached.as_ref().is_none_or(|block| {
             position
                 .iter()
@@ -272,9 +279,9 @@ impl ProfileLaneReader<'_> {
     }
 }
 
-pub(super) struct Lane {
-    pub(super) values: Vec<f32>,
-    pub(super) valid: Vec<bool>,
+pub(in crate::analysis) struct Lane {
+    pub(in crate::analysis) values: Vec<f32>,
+    pub(in crate::analysis) valid: Vec<bool>,
     pub(super) has_mask: bool,
 }
 

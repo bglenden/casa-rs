@@ -21,6 +21,83 @@ pub(super) struct Solution {
     pub(super) converged: bool,
 }
 
+// MomentCalcBase uses casacore's Float NonLinearFitLM. Its iteration limit
+// and final undamped correction affect whether low-SNR profiles are masked.
+pub(super) fn solve_moment_gaussian(curve: &Curve, samples: &[Sample]) -> Option<Vec<f64>> {
+    const ITERATIONS: usize = 50;
+    const EPSILON: f64 = 1e-6;
+    let count = curve.parameters.len();
+    if samples.len() < count {
+        return None;
+    }
+    let free = (0..count).collect::<Vec<_>>();
+    let norm = |values: &[f64]| values.iter().map(|value| value * value).sum::<f64>().sqrt();
+    let add = |base: &[f64], step: &[f64]| {
+        base.iter()
+            .zip(step)
+            .map(|(&value, &step)| f64::from((value + step) as f32))
+            .collect::<Vec<_>>()
+    };
+    let mut best = curve.parameters.clone();
+    let mut score = cost(curve, &best, samples);
+    let mut equations = normal_equations(curve, &best, &free, samples);
+    let mut damping = 0.001;
+    let mut increase = 2.;
+    for iteration in 0..ITERATIONS - 1 {
+        let (normal, gradient) = &equations;
+        if gradient.iter().all(|value| value.abs() <= EPSILON) {
+            return Some(moment_correction(curve, samples, &free, best));
+        }
+        let mut damped = normal.clone();
+        for index in 0..count {
+            damped[index * (count + 1)] *= 1. + damping;
+        }
+        let step = solve_symmetric_positive_definite(&damped, gradient)?;
+        let trial = add(&best, &step);
+        if norm(&step) <= EPSILON * (norm(&best) + EPSILON) {
+            return Some(moment_correction(curve, samples, &free, trial));
+        }
+        let next = cost(curve, &trial, samples);
+        let candidate = normal_equations(curve, &trial, &free, samples);
+        let predicted = step
+            .iter()
+            .enumerate()
+            .map(|(index, &step)| {
+                step * (damping * step * candidate.0[index * (count + 1)] + candidate.1[index])
+            })
+            .sum::<f64>();
+        if next < score && predicted > 0. {
+            best = trial;
+            score = next;
+            equations = candidate;
+            damping *= 0.3;
+            increase = 2.;
+        } else {
+            damping *= increase;
+            increase *= 2.;
+            if increase > 1e10 && iteration + 2 < ITERATIONS {
+                return Some(moment_correction(curve, samples, &free, best));
+            }
+        }
+    }
+    None
+}
+
+fn moment_correction(
+    curve: &Curve,
+    samples: &[Sample],
+    free: &[usize],
+    mut values: Vec<f64>,
+) -> Vec<f64> {
+    let (normal, gradient) = normal_equations(curve, &values, free, samples);
+    if let Some(correction) = solve_symmetric_positive_definite(&normal, &gradient) {
+        for (value, step) in values.iter_mut().zip(correction) {
+            *value = f64::from((*value + step) as f32);
+        }
+    }
+    values
+}
+
 pub(super) fn solve(curve: &Curve, samples: &[Sample]) -> Option<Solution> {
     let free: Vec<_> = curve
         .fixed
