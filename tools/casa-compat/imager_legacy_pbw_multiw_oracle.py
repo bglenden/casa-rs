@@ -40,7 +40,7 @@ def warm_cache(seed, cache):
         assert editor.putchunk(cells) and editor.done()
 
 
-def probe_rows(seed, target):
+def probe_rows(seed, target, *, cold=False):
     make_input(seed, target, scratch=True)
     times = data(target, 'TIME')
     eligible = ((times == times.min()) & (data(target, 'ANTENNA1') != data(target, 'ANTENNA2'))
@@ -48,7 +48,8 @@ def probe_rows(seed, target):
     selected = np.flatnonzero(eligible)
     frequency = data(target / 'SPECTRAL_WINDOW', 'CHAN_FREQ')[0, 0]
     cell = np.radians(15. / 3600.)
-    boundaries = (np.arange(W_PLANES) + .5)**2 * 299792458. / (frequency * W_PLANES * cell)
+    scale = (W_PLANES - 1)**2 / (.25 / cell) if cold else W_PLANES * cell
+    boundaries = (np.arange(W_PLANES) + .5)**2 * 299792458. / (frequency * scale)
     positive = np.r_[0., (boundaries[:, None] * np.asarray([.9999, 1.0001])).ravel()]
     w_values = np.r_[positive, -positive[1:]]
     rows = selected[:len(w_values)]
@@ -138,15 +139,100 @@ def validate_cache(root, source, model, cache, rows):
     return {'disabled_plane_nrms': error, 'missing_plane_preserves_model': True}
 
 
+def compare_cold(root, dataset, model):
+    from casars.tools import imager as native
+
+    source = root / 'seed.ms'
+    rows, positives = probe_rows(dataset, source, cold=True)
+    selected = data(source, 'FIELD_ID') == 0
+    outputs = {}
+    for machine, record in (('pbwproject', 'nPBWProjectFT'), ('pbmosaic', 'PBMosaicFT')):
+        work = root / machine
+        work.mkdir()
+        options = {'spw': '0:0', 'w_planes': W_PLANES, 'machine': machine}
+        pinned_cache = work / 'pinned-cache'
+        native_cache = work / 'native-cache'
+        pinned, actual, saved, reopen, imported = (
+            work / f'{name}.ms' for name in ('pinned', 'native', 'saved', 'reopen', 'imported')
+        )
+        for target in (pinned, actual, saved, reopen, imported):
+            make_input(source, target, scratch=target != saved)
+        ft(imager, pinned, model, pinned_cache, scratch=True, **options)
+        expected = data(pinned, 'MODEL_DATA')[:, 0, :]
+        boundaries = expected[:, rows]
+        assert len(np.unique(boundaries[0, [0, 2, 4, 6]].round(4))) == W_PLANES
+        np.testing.assert_array_equal(boundaries[:, 1:positives], boundaries[:, positives:])
+        np.testing.assert_array_equal(boundaries[:, positives - 1], 0.)
+
+        # Simulate a writer interrupted after promoting a high W plane.
+        abandoned = native_cache / '.ep-cache-interrupted'
+        abandoned.mkdir(parents=True)
+        (abandoned / 'pending-slot').write_text(f'0 {W_PLANES}')
+        (native_cache / f'CF{W_PLANES - 1}_0').mkdir()
+        (abandoned / f'CFWT{W_PLANES - 1}_0').mkdir()
+        ft(native, actual, model, native_cache, scratch=True, **options)
+        assert not abandoned.exists()
+        np.testing.assert_allclose(
+            np.loadtxt(pinned_cache / 'aux.dat', skiprows=1),
+            np.loadtxt(native_cache / 'aux.dat', skiprows=1), atol=5e-5,
+        )
+        cache_errors = compare_cache_images(pinned_cache, native_cache)
+        unchanged = cache_contents(native_cache)
+
+        replay_cache = work / 'saved-cache'
+        ft(native, saved, model, replay_cache, scratch=False, **options)
+        assert 'casars_legacy_pbw_w_scale' in recipe(saved)
+        replay_cache.rename(work / 'moved-cache')
+        cold = data(actual, 'MODEL_DATA')[:, 0, :]
+        replayed = read_virtual(saved, name=record)[:, 0, :]
+        np.testing.assert_array_equal(cold[:, rows[positives - 1]], 0.)
+
+        ft(native, reopen, model, native_cache, scratch=True, **options)
+        ft(imager, imported, model, native_cache, scratch=True, **options)
+        assert cache_contents(native_cache) == unchanged
+        warm = data(reopen, 'MODEL_DATA')[:, 0, :]
+        warm_pinned = data(imported, 'MODEL_DATA')[:, 0, :]
+        assert relative_rms(expected[:, rows], warm_pinned[:, rows]) > .05
+        errors = {
+            'cold_scratch': relative_rms(cold[:, selected], expected[:, selected]),
+            'cold_saved': relative_rms(replayed[:, selected], expected[:, selected]),
+            'warm_reopen': relative_rms(warm[:, selected], warm_pinned[:, selected]),
+            **cache_errors,
+        }
+        print(machine, 'cold and warm NRMS', errors, flush=True)
+        assert max(errors.values()) < 1.e-3
+        outputs[machine] = errors
+    return outputs
+
+
+def compare_cache_images(reference, actual):
+    def pixels(path):
+        tool = image()
+        assert tool.open(str(path))
+        cells = tool.getchunk()
+        assert tool.done()
+        return cells
+
+    names = ['avgPB']
+    names.extend(f'{prefix}{plane}_0' for plane in range(W_PLANES) for prefix in ('CF', 'CFWT'))
+    return {name: relative_rms(pixels(actual / name), pixels(reference / name)) for name in names}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--dataset', type=Path, required=True)
     parser.add_argument('--model', type=Path, required=True)
-    parser.add_argument('--cache', type=Path, required=True)
+    parser.add_argument('--cache', type=Path)
+    parser.add_argument('--cold', action='store_true')
     args = parser.parse_args()
+    if not args.cold and args.cache is None:
+        parser.error('--cache is required for the warm-cache comparison')
     assert casatasks.version_string() == '6.7.6.14'
     args.work.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=args.work) as scratch:
-        evidence = compare(Path(scratch), args.dataset, args.model, args.cache)
+        if args.cold:
+            evidence = compare_cold(Path(scratch), args.dataset, args.model)
+        else:
+            evidence = compare(Path(scratch), args.dataset, args.model, args.cache)
     (args.work / 'results.json').write_text(json.dumps(evidence, indent=2) + '\n')

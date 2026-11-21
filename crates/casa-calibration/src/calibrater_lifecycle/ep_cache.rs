@@ -31,6 +31,7 @@ pub(crate) struct EpCacheProducts {
     pub weights: ArrayD<Complex32>,
     pub support: Vec<usize>,
     pub sampling: usize,
+    pub w_scale: Option<f64>,
     _memory: Reservation,
 }
 
@@ -158,6 +159,7 @@ impl EpCache {
             weights,
             support: support.to_vec(),
             sampling: slot.sampling,
+            w_scale: None,
             _memory: memory,
         }))
     }
@@ -230,21 +232,22 @@ impl EpCache {
 
     pub(super) fn publish(
         &self,
-        angle_rad: f64,
-        cell_rad: [f64; 2],
+        host: &HostResources,
+        (angle_rad, cell_rad): (f64, [f64; 2]),
         beam_coordinates: &CoordinateSystem,
         shape: [usize; 4],
         correlations: &[StokesType],
         products: &LegacyEpConvolution,
     ) -> MsResult<()> {
         let mut slots = self.slots()?;
-        if slots.iter().any(|slot| slot.support.len() != 1) {
+        let planes = products.support.len();
+        if slots.iter().any(|slot| slot.support.len() != planes) {
             return Err(invalid(
-                "appending to a multi-plane legacy EP cache is pending #1520",
+                "the new legacy EP slot has a different W-plane count from the cache",
             ));
         }
         let index = slots.len();
-        let names = product_names(index);
+        let names = product_names(index, planes);
         let staged = tempfile::Builder::new()
             .prefix(STAGE_PREFIX)
             .tempdir_in(&self.root)
@@ -266,17 +269,24 @@ impl EpCache {
             .find_coordinate(CoordinateType::Stokes)
             .ok_or_else(|| invalid("legacy EP model is missing the polarization axis"))?;
         kernel_coordinates.replace_coordinate(pol, StokesCoordinate::new(correlations.to_vec()));
-        for (name, kernel) in names[..2].iter().zip(&products.kernels) {
+        for (name, kernel) in names.iter().zip(products.kernels.iter().flatten()) {
             let side = products.kernel_side;
-            let shape = [side, side, correlations.len(), 1];
-            let pixels = ArrayD::from_shape_fn(IxDyn(&shape).f(), |i| kernel[i[0] + side * i[1]]);
-            save_image(staged.path().join(name), kernel_coordinates.clone(), pixels)?;
+            save_image(
+                host,
+                staged.path().join(name),
+                kernel_coordinates.clone(),
+                [side, side, correlations.len(), 1],
+                |x, y| kernel[x + side * y],
+            )?;
         }
         if index == 0 {
-            let pixels = ArrayD::from_shape_fn(IxDyn(&shape).f(), |i| {
-                products.average_beam[i[0] + shape[0] * i[1]]
-            });
-            save_image(staged.path().join(BEAM), beam_coordinates.clone(), pixels)?;
+            save_image(
+                host,
+                staged.path().join(BEAM),
+                beam_coordinates.clone(),
+                shape,
+                |x, y| products.average_beam[x + shape[0] * y],
+            )?;
         } else {
             let beam = PagedImage::<f32>::open(self.root.join(BEAM)).map_err(invalid)?;
             if beam.shape() != shape {
@@ -288,20 +298,19 @@ impl EpCache {
         let angle = format!("{:.4}", angle_rad.to_degrees());
         slots.push(Slot {
             angle_deg: angle.parse().map_err(invalid)?,
-            support: vec![products.support],
+            support: products.support.clone(),
             sampling: products.sampling,
         });
-        let mut manifest = format!("{} 1\n", slots.len());
+        let mut manifest = format!("{} {planes}\n", slots.len());
         for slot in slots {
-            writeln!(
-                manifest,
-                "{} {} {}  {}",
-                slot.angle_deg, slot.support[0], slot.support[0], slot.sampling
-            )
-            .expect("writing to a String cannot fail");
+            write!(manifest, "{}", slot.angle_deg).unwrap();
+            for width in slot.support {
+                write!(manifest, " {width} {width}").unwrap();
+            }
+            writeln!(manifest, "  {}", slot.sampling).unwrap();
         }
         std::fs::write(staged.path().join(AUX), manifest).map_err(invalid)?;
-        self.publish_files(staged.path(), index, &names)
+        self.publish_files(staged.path(), [index, planes], &names)
     }
 
     /// Clean up a previously abandoned publication while holding the cache's
@@ -325,9 +334,14 @@ impl EpCache {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(invalid(error)),
             };
-            let index: usize = document.parse().map_err(invalid)?;
+            let mut fields = document.split_whitespace();
+            let index: usize = parse(&mut fields)?;
+            let planes = fields.next().map_or(Ok(1), str::parse).map_err(invalid)?;
+            if !(1..=usize::from(u16::MAX)).contains(&planes) || fields.next().is_some() {
+                return Err(invalid("invalid legacy EP cache publication journal"));
+            }
             if committed == index {
-                self.rollback(&stage, &product_names(index))?;
+                self.rollback(&stage, &product_names(index, planes))?;
             } else if committed < index {
                 return Err(invalid(
                     "legacy EP cache manifest predates its publication journal",
@@ -349,7 +363,12 @@ impl EpCache {
         Ok(())
     }
 
-    fn publish_files(&self, staged: &Path, index: usize, names: &[String]) -> MsResult<()> {
+    fn publish_files(
+        &self,
+        staged: &Path,
+        [index, planes]: [usize; 2],
+        names: &[String],
+    ) -> MsResult<()> {
         for name in names {
             let target = self.root.join(name);
             if target.exists() {
@@ -359,7 +378,7 @@ impl EpCache {
                 )));
             }
         }
-        std::fs::write(staged.join(JOURNAL), index.to_string()).map_err(invalid)?;
+        std::fs::write(staged.join(JOURNAL), format!("{index} {planes}")).map_err(invalid)?;
         let published = (|| -> std::io::Result<()> {
             for name in names {
                 std::fs::rename(staged.join(name), self.root.join(name))?;
@@ -413,8 +432,10 @@ fn read_kernel(
     Ok(kernels)
 }
 
-fn product_names(index: usize) -> Vec<String> {
-    let mut names = vec![format!("CF0_{index}"), format!("CFWT0_{index}")];
+fn product_names(index: usize, planes: usize) -> Vec<String> {
+    let mut names = (0..planes)
+        .flat_map(|plane| [format!("CF{plane}_{index}"), format!("CFWT{plane}_{index}")])
+        .collect::<Vec<_>>();
     if index == 0 {
         names.push(BEAM.to_owned());
     }
@@ -422,13 +443,45 @@ fn product_names(index: usize) -> Vec<String> {
 }
 
 fn save_image<T: ImagePixel>(
+    host: &HostResources,
     path: PathBuf,
     coordinates: CoordinateSystem,
-    pixels: ArrayD<T>,
+    shape: [usize; 4],
+    sample: impl Fn(usize, usize) -> T,
 ) -> MsResult<()> {
-    let mut image =
-        PagedImage::create(pixels.shape().to_vec(), coordinates, path).map_err(invalid)?;
-    image.put_slice(&pixels, &[0; 4]).map_err(invalid)?;
+    let [nx, ny, pols, _] = shape;
+    let tile = [nx.min(64), ny.min(64), 1, 1];
+    let tile_bytes = (tile[0] * tile[1] * size_of::<T>()) as u64;
+    let tiles = (nx.div_ceil(tile[0]) * ny.div_ceil(tile[1]) * pols) as u64;
+    let plane_bytes = (nx as u64)
+        .saturating_mul(ny as u64)
+        .saturating_mul(size_of::<T>() as u64);
+    let _memory = admit(
+        host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy EP cache publication",
+            memory: plane_bytes
+                .saturating_mul(2)
+                .saturating_add(3 * tile_bytes)
+                .saturating_add(32 * tiles),
+        },
+    )
+    .map_err(invalid)?;
+    let mut image = PagedImage::create_with_tile_shape_and_cache(
+        shape.to_vec(),
+        tile.to_vec(),
+        coordinates,
+        path,
+        1,
+    )
+    .map_err(invalid)?;
+    let pixels = ArrayD::from_shape_fn(IxDyn(&[nx, ny, 1, 1]).f(), |i| sample(i[0], i[1]));
+    for pol in 0..pols {
+        image
+            .put_slice_view(pixels.view(), &[0, 0, pol, 0])
+            .map_err(invalid)?;
+    }
     image.save().map_err(invalid)
 }
 

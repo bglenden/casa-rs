@@ -8,7 +8,9 @@ use casa_coordinates::{
 };
 use casa_images::PagedImage;
 use casa_imaging_model::EvlaDishSurface;
-use casa_imaging_operator::{EvlaApertureModel, LegacyEpConvolution, NativeCacheLock};
+use casa_imaging_operator::{
+    EvlaApertureModel, LegacyEpConvolution, LegacyEpWPlanePlan, NativeCacheLock,
+};
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
@@ -120,44 +122,64 @@ pub(crate) fn convolution(
             return Ok(products);
         }
     }
-    if w_planes > 1 {
-        return Err(invalid(
-            "legacy PB/W cold multi-plane cache generation is pending #1520",
-        ));
-    }
     let _lock = NativeCacheLock::exclusive(cache.path()).map_err(invalid)?;
     cache.recover()?;
     if let Some(products) = read()? {
         return Ok(products);
     }
-    let _screen_memory = admit(
+    let screen_memory = admit(
         host,
         &ResourcePolicy::Balanced,
         &Demand {
             phase: "legacy EP convolution screen",
-            memory: 256 << 20,
+            memory: LegacyEpConvolution::SCREEN_WORKSPACE_BYTES,
         },
     )
     .map_err(invalid)?;
     let aperture = legacy_aperture()?;
-    let products = LegacyEpConvolution::vla_l_band(
-        &aperture,
-        shape[0],
-        cell_rad[0],
-        buffer.frequency_hz,
-        buffer.angle_rad,
-    )
-    .map_err(invalid)?;
+    let (products, kernel_memory, w_scale) = if w_planes == 1 {
+        let products = LegacyEpConvolution::vla_l_band(
+            &aperture,
+            shape[0],
+            cell_rad[0],
+            buffer.frequency_hz,
+            buffer.angle_rad,
+        )
+        .map_err(invalid)?;
+        (products, None, None)
+    } else {
+        let plan = LegacyEpWPlanePlan::new(
+            &aperture,
+            shape[0],
+            cell_rad,
+            buffer.frequency_hz,
+            buffer.angle_rad,
+            w_planes,
+        )
+        .map_err(invalid)?;
+        let memory = admit(
+            host,
+            &ResourcePolicy::Balanced,
+            &Demand {
+                phase: "legacy EP cold convolution cells",
+                memory: plan.retained_kernel_bytes(),
+            },
+        )
+        .map_err(invalid)?;
+        let w_scale = plan.w_scale();
+        (plan.build().map_err(invalid)?, Some(memory), Some(w_scale))
+    };
     cache.publish(
-        buffer.angle_rad,
-        cell_rad,
+        host,
+        (buffer.angle_rad, cell_rad),
         beam_coordinates,
         shape,
         &buffer.correlations,
         &products,
     )?;
+    drop((products, kernel_memory, screen_memory));
     // The persisted angle is single precision and written as decimal.
-    cache
+    let mut products = cache
         .read(
             host,
             buffer.angle_rad,
@@ -166,7 +188,9 @@ pub(crate) fn convolution(
             &buffer.correlations,
             w_planes,
         )?
-        .ok_or_else(|| invalid("legacy EP generated an unusable convolution cache"))
+        .ok_or_else(|| invalid("legacy EP generated an unusable convolution cache"))?;
+    products.w_scale = w_scale;
+    Ok(products)
 }
 
 pub(crate) fn reserve_model(host: &HostResources, side: usize) -> MsResult<Reservation> {

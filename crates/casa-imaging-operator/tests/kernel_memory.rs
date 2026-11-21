@@ -21,10 +21,10 @@ use casa_imaging_model::{
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, AwIndexing, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend,
-    GridBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator, Mode,
-    ModeSet, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, Placement, PlaneRange,
-    PolarizationRouting, RowContext, SampleBuffer, Spheroidal, TapLayout, WPlaneCount, WPlanes,
-    Work,
+    EvlaApertureModel, GridBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
+    LegacyEpConvolution, LegacyEpWPlanePlan, MeasurementOperator, Mode, ModeSet, MosaicPb,
+    MosaicRules, MosaicWindow, PaddingFactor, Placement, PlaneRange, PolarizationRouting,
+    RowContext, SampleBuffer, Spheroidal, TapLayout, WPlaneCount, WPlanes, Work,
 };
 use casa_numerics::PrimaryBeam;
 use casa_types::Correlation;
@@ -246,6 +246,25 @@ fn w_projection_stages_hold_at_most_what_they_state() {
             "{label}: the set holds what it says once its screens are freed"
         );
     }
+}
+
+#[test]
+fn legacy_pbw_generation_fits_the_screen_and_kernel_charges() {
+    if !alone("legacy_pbw_generation_fits_the_screen_and_kernel_charges") {
+        return;
+    }
+    let aperture = EvlaApertureModel::new(aw_request(256).surface);
+    let cell = 15.0_f64.to_radians() / 3600.;
+    let model_charge = 128 * 256 * 256;
+    let screen_charge = LegacyEpConvolution::SCREEN_WORKSPACE_BYTES + model_charge;
+    let (screen_peak, screens, plan) =
+        measure(|| LegacyEpWPlanePlan::new(&aperture, 256, [-cell, cell], 1.4e9, 1.3, 4).unwrap());
+    assert!(screen_peak <= screen_charge, "screens held {screen_peak}");
+    let kernel_charge = plan.retained_kernel_bytes();
+    let (output_peak, output, kernels) = measure(|| plan.build().unwrap());
+    assert!(screens as u64 + output_peak <= screen_charge + kernel_charge);
+    assert!(screens + output <= (model_charge + kernel_charge) as i64);
+    assert_eq!(kernels.kernels.len(), 4);
 }
 
 #[test]
