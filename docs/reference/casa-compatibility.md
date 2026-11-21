@@ -48,6 +48,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | yes | 102 | 102 | 0 | 12 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
+| polcal | polcal | yes | 27 | 27 | 0 | 0 | 0 | 0 |
 | polfromgain | polfromgain | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -2035,6 +2036,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `3b459173040b1758f761ba68e95d59e2d5d60214`; CASA: `6.7.6.14`.
 - Command: `MPLBACKEND=Agg PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotweather_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotweather-20261119.json`.
+
+### polcal
+
+- CASA source: `casatasks/polcal.py`, 27 parameters
+- Implementation: `casatasks/private/task_polcal.py`, `polcal` (line 8): 1 return statements, 1 raise statements
+  - returns at line 128: `actrec['fStokes']`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 27, in CASA's order: yes
+- Defaults that differ: none
 
 ### polfromgain
 

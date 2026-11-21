@@ -7,6 +7,9 @@
 
 mod bpoly;
 mod metadata;
+pub(crate) use metadata::{
+    bin_widths as solution_frequency_bin_widths, write as write_solution_spectral_windows,
+};
 mod postprocess;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -949,7 +952,7 @@ fn write_bandpass_caltable(
     ])?;
     metadata::write(
         &writer.output_path().join("SPECTRAL_WINDOW"),
-        rows,
+        &rows.iter().map(|row| row.spw_id).collect(),
         channel_bin_widths,
         selected_rows,
         request.combine.spectral_windows,

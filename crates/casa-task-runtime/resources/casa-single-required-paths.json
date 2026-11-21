@@ -23,6 +23,7 @@
   "mstransform": "vis",
   "plotbandpass": "caltable",
   "plotweather": "vis",
+  "polcal": "vis",
   "split": "vis",
   "statwt": "vis",
   "uvmodelfit": "vis",

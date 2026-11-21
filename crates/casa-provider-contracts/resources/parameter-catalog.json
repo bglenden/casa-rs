@@ -17828,6 +17828,52 @@
       "persistence_class": "profile"
     },
     {
+      "id": "polcal.poltype",
+      "semantic_revision": 1,
+      "casa_name": "poltype",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "Dflls",
+          "D",
+          "Dlls",
+          "D+QU",
+          "D+X",
+          "PosAng",
+          "X",
+          "Dfgen",
+          "Dfgen+X",
+          "Df+X",
+          "Df",
+          "Dgen+X",
+          "Dgen+QU",
+          "Df+QU",
+          "Dgen",
+          "Xfparang+QU",
+          "Xf",
+          "Dfgen+QU",
+          "Xj",
+          "Xparang+QU"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Polarization calibration solution type.",
+        "details": null,
+        "examples": [
+          "'D+QU'",
+          "'Dlls'",
+          "'Dflls'"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "polfromgain.paoffset",
       "semantic_revision": 1,
       "casa_name": "paoffset",

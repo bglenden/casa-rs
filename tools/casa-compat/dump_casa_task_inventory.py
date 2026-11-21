@@ -96,6 +96,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("ft", "casatasks"),
     ("uvmodelfit", "casatasks"),
     ("wvrgcal", "casatasks"),
+    ("polcal", "casatasks"),
     ("polfromgain", "casatasks"),
 )
 

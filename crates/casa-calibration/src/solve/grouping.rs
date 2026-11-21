@@ -2,6 +2,7 @@
 //! Selection, bucketing, and accumulation for `gaincal` and `bandpass`.
 
 mod inputs;
+pub(crate) mod leakage;
 pub(crate) mod polynomial;
 mod samples;
 mod time;
@@ -56,6 +57,7 @@ pub(crate) enum PriorCalibrationMode {
         share_input_flags: bool,
         rotate_model: bool,
     },
+    Leakage,
 }
 
 pub(crate) fn load_preapplied_rows(
@@ -109,6 +111,9 @@ pub(crate) fn load_preapplied_rows(
         PriorCalibrationMode::Delay {
             share_input_flags, ..
         } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags),
+        PriorCalibrationMode::Leakage => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Leakage, true)
+        }
     };
     preapplied
         .map(Some)

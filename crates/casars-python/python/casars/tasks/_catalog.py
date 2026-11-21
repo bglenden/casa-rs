@@ -1608,6 +1608,41 @@ def wvrgcal(
     """
     return _call_casa(wvrgcal, locals())
 
+def polcal(
+    vis: StrPath = '',
+    caltable: StrPath = '',
+    field: str = '',
+    spw: str = '',
+    intent: str = '',
+    selectdata: bool = True,
+    timerange: str = '',
+    uvrange: str | int | float | list[str] = '',
+    antenna: str = '',
+    scan: str = '',
+    observation: str | int = '',
+    msselect: str = '',
+    solint: str | int | float = 'inf',
+    combine: str = 'obs,scan',
+    preavg: float = 300.0,
+    refant: str = '',
+    minblperant: int = 4,
+    minsnr: float = 3.0,
+    poltype: Literal['Dflls', 'D', 'Dlls', 'D+QU', 'D+X', 'PosAng', 'X', 'Dfgen', 'Dfgen+X', 'Df+X', 'Df', 'Dgen+X', 'Dgen+QU', 'Df+QU', 'Dgen', 'Xfparang+QU', 'Xf', 'Dfgen+QU', 'Xj', 'Xparang+QU'] = 'D+QU',
+    smodel: float | list[float] | tuple[float, ...] = [],
+    append: bool = False,
+    docallib: bool = False,
+    callib: StrPath = '',
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    gainfield: str | list[str] | tuple[str, ...] = [],
+    interp: str | list[str] | tuple[str, ...] = [],
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = [],
+) -> Any:
+    """Solve polarization leakage and cross-hand calibration.
+
+    CASA's ``polcal``: its parameters, defaults and return value.
+    """
+    return _call_casa(polcal, locals())
+
 def polfromgain(
     vis: StrPath = '',
     tablein: StrPath = '',
@@ -1621,6 +1656,6 @@ def polfromgain(
     """
     return _call_casa(polfromgain, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polfromgain')
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain')
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polfromgain']
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain']

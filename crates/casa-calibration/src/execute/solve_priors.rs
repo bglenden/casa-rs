@@ -3,13 +3,13 @@
 
 use std::cell::RefCell;
 
-use ndarray::ArrayD;
+use ndarray::{ArrayD, IxDyn};
 
 use super::chain::{ApplyChain, has_leakage, viscal_order};
 use super::{
     ApplyExecutionError, ApplyPlan, ArrayValue, Complex32, EvaluatedApplyRow, ExecutionRowInputs,
-    HashMap, MeasurementSet, PreviewWeightSource, RowGeometryCache, apply_row, evaluate_apply_rows,
-    for_each_apply_row,
+    HashMap, MeasurementSet, PreviewWeightSource, RowGeometryCache, applies_preview_weights,
+    apply_row, evaluate_apply_rows, for_each_apply_row, shared_channel_flags,
 };
 
 #[derive(Clone, Copy)]
@@ -18,6 +18,7 @@ pub(crate) enum PriorSolveBoundary {
     Delay,
     Gain,
     ScalarGain,
+    Leakage,
 }
 
 impl PriorSolveBoundary {
@@ -27,13 +28,15 @@ impl PriorSolveBoundary {
             Self::Delay => "K Jones",
             Self::Gain => "G Jones",
             Self::ScalarGain => "T Jones",
+            Self::Leakage => "D Jones",
         })
     }
 }
 
 pub(crate) struct PreappliedRows {
     pub(crate) data: HashMap<usize, EvaluatedApplyRow>,
-    pub(crate) model: Option<ForwardModelApply>,
+    pub(crate) data_prior: Option<SolvePriorApply>,
+    pub(crate) model: Option<SolvePriorApply>,
     pub(crate) polarized: bool,
 }
 
@@ -41,35 +44,59 @@ impl From<HashMap<usize, EvaluatedApplyRow>> for PreappliedRows {
     fn from(data: HashMap<usize, EvaluatedApplyRow>) -> Self {
         Self {
             data,
+            data_prior: None,
             model: None,
             polarized: false,
         }
     }
 }
 
-/// Deferred non-diagonal application consumes the solver's actual sky model.
-pub(crate) struct ForwardModelApply {
+/// Apply priors as the solve reads each selected row.
+pub(crate) struct SolvePriorApply {
     plan: ApplyPlan,
     chain: ApplyChain,
     rows: HashMap<usize, usize>,
     geometry: RefCell<RowGeometryCache>,
+    forward: bool,
+    calwt: bool,
 }
 
-impl ForwardModelApply {
-    fn new(ms: &MeasurementSet, plan: ApplyPlan) -> Result<Self, ApplyExecutionError> {
+impl SolvePriorApply {
+    fn new(
+        ms: &MeasurementSet,
+        plan: ApplyPlan,
+        forward: bool,
+    ) -> Result<Self, ApplyExecutionError> {
         let rows = plan
             .selected_rows
             .iter()
             .enumerate()
             .map(|(position, row)| (row.row_index, position))
             .collect();
-        let chain = ApplyChain::load(ms, &plan, true)?;
+        let chain = ApplyChain::load(ms, &plan, forward)?;
+        let calwt = !forward && applies_preview_weights(&plan, &chain);
         Ok(Self {
             plan,
             chain,
             rows,
             geometry: RefCell::default(),
+            forward,
+            calwt,
         })
+    }
+
+    pub(crate) fn correct(
+        &self,
+        row: usize,
+        correlations: &[i32],
+        data: &ArrayValue,
+        flags: &ArrayValue,
+    ) -> Result<Option<EvaluatedApplyRow>, ApplyExecutionError> {
+        let Some(&position) = self.rows.get(&row) else {
+            return Ok(None);
+        };
+        let flags = shared_channel_flags(flags).unwrap_or_else(|| flags.clone());
+        self.apply(position, correlations, data, flags).map(Some)
     }
 
     pub(crate) fn corrupt(
@@ -82,37 +109,71 @@ impl ForwardModelApply {
         let Some(&position) = self.rows.get(&row) else {
             return Ok((model, None));
         };
+        let applied = self.apply(
+            position,
+            correlations,
+            &ArrayValue::Complex32(model),
+            ArrayValue::Bool(flags.clone()),
+        )?;
+        let ArrayValue::Complex32(model) = applied.corrected_data else {
+            unreachable!("forward application returns complex visibility data")
+        };
+        let ArrayValue::Bool(flags) = applied.flags else {
+            unreachable!("apply flags are boolean")
+        };
+        Ok((model, Some(flags)))
+    }
+
+    fn apply(
+        &self,
+        position: usize,
+        correlations: &[i32],
+        data: &ArrayValue,
+        flags: ArrayValue,
+    ) -> Result<EvaluatedApplyRow, ApplyExecutionError> {
         let row = &self.plan.selected_rows[position];
         if !super::availability::available(row, &self.plan) {
-            return Ok((model, Some(ArrayD::from_elem(flags.raw_dim(), true))));
+            let shape = IxDyn(data.shape());
+            return Ok(EvaluatedApplyRow {
+                corrected_data: data.clone(),
+                flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), true)),
+                model_gains: None,
+                weight_factors: (!self.forward).then(|| ArrayD::zeros(shape)),
+                plot_weights: None,
+            });
         }
+        let unit_weights = self
+            .calwt
+            .then(|| ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[correlations.len()]), 1.0)));
         let result = apply_row(
             row,
             ExecutionRowInputs {
                 correlation_types: correlations,
-                data: &ArrayValue::Complex32(model),
-                original_flags: Some(&ArrayValue::Bool(flags.clone())),
-                original_weight: None,
+                data,
+                original_flags: Some(&flags),
+                original_weight: unit_weights.as_ref(),
                 original_weight_spectrum: None,
-                has_weight_spectrum: false,
+                has_weight_spectrum: self.calwt,
                 preserved_corrected_data: None,
                 preserved_weight_spectrum: None,
                 channel_grid: None,
-                forward_model: true,
+                forward_model: self.forward,
             },
             &self.plan,
             &self.chain,
             Some(&mut self.geometry.borrow_mut()),
             None,
         )?;
-        let ArrayValue::Complex32(model) = result.corrected_data else {
-            unreachable!("forward application returns complex visibility data")
-        };
-        let flags = result.updated_flags.map(|value| match value {
-            ArrayValue::Bool(flags) => flags,
-            _ => unreachable!("apply flags are boolean"),
-        });
-        Ok((model, flags))
+        Ok(EvaluatedApplyRow {
+            corrected_data: result.corrected_data,
+            flags: result.updated_flags.unwrap_or(flags),
+            model_gains: None,
+            weight_factors: match result.updated_weight_spectrum {
+                Some(ArrayValue::Float32(factors)) => Some(factors),
+                _ => None,
+            },
+            plot_weights: None,
+        })
     }
 }
 
@@ -122,7 +183,7 @@ pub(crate) fn evaluate_solve_priors(
     boundary: PriorSolveBoundary,
     share_input_flags: bool,
 ) -> Result<PreappliedRows, ApplyExecutionError> {
-    let polarized = has_leakage(&plan);
+    let polarized = matches!(boundary, PriorSolveBoundary::Leakage) || has_leakage(&plan);
     if !polarized
         && matches!(
             boundary,
@@ -152,10 +213,19 @@ pub(crate) fn evaluate_solve_priors(
         polarized && plan.parang && viscal_order("P Jones") >= boundary.viscal_order();
     plan.parang &= !forward_parang;
     plan.calibration_tables = data_tables;
-    let mut rows = evaluate_apply_rows(ms, &plan, share_input_flags)?;
+    let leakage = matches!(boundary, PriorSolveBoundary::Leakage);
+    let data_prior = (leakage && (!plan.calibration_tables.is_empty() || plan.parang))
+        .then(|| SolvePriorApply::new(ms, plan.clone(), false))
+        .transpose()?;
+    let mut rows = if leakage {
+        HashMap::new()
+    } else {
+        evaluate_apply_rows(ms, &plan, share_input_flags)?
+    };
     if model_tables.is_empty() && !forward_parang {
         return Ok(PreappliedRows {
             data: rows,
+            data_prior,
             model: None,
             polarized,
         });
@@ -168,7 +238,8 @@ pub(crate) fn evaluate_solve_priors(
     if polarized {
         return Ok(PreappliedRows {
             data: rows,
-            model: Some(ForwardModelApply::new(ms, plan)?),
+            data_prior,
+            model: Some(SolvePriorApply::new(ms, plan, true)?),
             polarized,
         });
     }

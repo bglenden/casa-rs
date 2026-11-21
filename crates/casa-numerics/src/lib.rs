@@ -81,6 +81,59 @@ pub fn solve_least_squares<const N: usize>(rows: &[([f64; N], f64)]) -> Option<[
     fit.as_slice().try_into().ok()
 }
 
+/// Solve Hermitian normal equations and report the number of independent pivots.
+/// Dependent coefficients are set to zero unless the caller supplies a constraint.
+#[must_use]
+pub fn solve_complex_normal_equations(
+    mut coefficients: Vec<num_complex::Complex64>,
+    mut observations: Vec<num_complex::Complex64>,
+) -> Option<(Vec<num_complex::Complex64>, usize)> {
+    use num_complex::Complex64;
+
+    let size = observations.len();
+    if size == 0 || coefficients.len() != size.checked_mul(size)? {
+        return None;
+    }
+    let diagonal = (0..size)
+        .map(|index| coefficients[index * size + index].re)
+        .collect::<Vec<_>>();
+    let mut independent = Vec::new();
+    for (index, &original) in diagonal.iter().enumerate() {
+        let (_, remaining) = coefficients.split_at_mut(index * size);
+        let (row, trailing) = remaining.split_at_mut(size);
+        let pivot = row[index].re;
+        // LSQFit compares a squared pivot to its own original diagonal.
+        // A smaller visibility weight need not make a coefficient dependent.
+        if !pivot.is_finite() || !original.is_finite() {
+            return None;
+        }
+        if pivot <= original.sqrt() * 1.0e-6 {
+            continue;
+        }
+        independent.push(index);
+        let rhs = observations[index];
+        for (offset, current) in trailing.chunks_exact_mut(size).enumerate() {
+            let factor = current[index] / pivot;
+            observations[index + offset + 1] -= factor * rhs;
+            for (value, &source) in current[index + 1..].iter_mut().zip(&row[index + 1..]) {
+                *value -= factor * source;
+            }
+        }
+    }
+    let mut solution = vec![Complex64::ZERO; size];
+    for &index in independent.iter().rev() {
+        let row = &coefficients[index * size..(index + 1) * size];
+        let residual = observations[index]
+            - row[index + 1..]
+                .iter()
+                .zip(&solution[index + 1..])
+                .map(|(coefficient, value)| coefficient * value)
+                .sum::<Complex64>();
+        solution[index] = residual / row[index].re;
+    }
+    Some((solution, independent.len()))
+}
+
 /// Solve a symmetric system with casacore `LSQFit` ordering.
 ///
 /// The input matrix must contain the symmetric system in its upper triangle.

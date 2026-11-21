@@ -33,6 +33,7 @@ mod model_columns;
 mod multi_ms;
 mod plotbandpass;
 mod plotweather;
+mod polcal;
 mod polfromgain;
 mod read;
 mod render;
@@ -72,6 +73,9 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if task.surface() == "polcal" {
+        return polcal::run(task);
+    }
     if task.surface() == "polfromgain" {
         return polfromgain::run(task);
     }

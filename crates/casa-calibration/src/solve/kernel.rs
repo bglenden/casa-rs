@@ -1075,7 +1075,7 @@ fn rereference_complex64(gains: &mut HashMap<i32, Complex64>, refant_id: i32, ph
     }
 }
 
-fn complex32_to_64(value: Complex32) -> Complex64 {
+pub(super) fn complex32_to_64(value: Complex32) -> Complex64 {
     Complex64::new(f64::from(value.re), f64::from(value.im))
 }
 

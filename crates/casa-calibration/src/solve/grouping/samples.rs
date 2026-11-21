@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use crate::execute::{ForwardModelApply, ParallacticAngleState};
+use crate::execute::{ParallacticAngleState, SolvePriorApply};
 use crate::solve::model::ModelInputs;
 
 use super::{
@@ -62,7 +62,7 @@ pub(super) struct SolveRowLayouts<'a> {
     pub(super) models: &'a ModelInputs,
     pub(super) by_ddid: HashMap<i32, SolveRowLayout>,
     pub(super) rotation: Option<ParallacticAngleState>,
-    pub(super) forward_model: Option<&'a ForwardModelApply>,
+    pub(super) forward_model: Option<&'a SolvePriorApply>,
     pub(super) channel_bin_widths: &'a BTreeMap<i32, usize>,
 }
 

@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 886
-- Surfaces: 50 (50 task, 0 session)
-- Surface bindings: 1164
+- Concepts: 887
+- Surfaces: 51 (51 task, 0 session)
+- Surface bindings: 1191
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -65,6 +65,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Get VLA Calibrator Model](#surface-getcalmodvla)<br><code>getcalmodvla</code> | task | 1 | <code>calibration</code> | 8 | Retrieve a calibrator brightness model from the VLA service. |
 | [Predict Calibrator Component](#surface-predictcomp)<br><code>predictcomp</code> | task | 1 | <code>simulation</code> | 15 | Write a flux calibrator component list and optionally plot its visibility amplitudes. |
 | [Water-vapour Radiometer Calibration](#surface-wvrgcal)<br><code>wvrgcal</code> | task | 1 | <code>calibration</code> | 24 | Use ALMA radiometer measurements to calibrate atmospheric phase. |
+| [Polarization Calibration](#surface-polcal)<br><code>polcal</code> | task | 1 | <code>calibration</code> | 27 | Solve polarization leakage and cross-hand calibration. |
 | [Polarization from Gains](#surface-polfromgain)<br><code>polfromgain</code> | task | 1 | <code>calibration</code> | 5 | Estimate fractional linear polarization from receptor gain amplitude ratios. |
 
 <a id="surface-msexplore"></a>
@@ -1862,6 +1863,46 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>refant</code> | <code>wvr.refant@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Solve | Preferred reference antenna names or IDs in order. |
 | <code>offsetstable</code> | <code>wvr.offsetstable@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Solve | Subtract temperatures from this matching radiometer offsets table. |
 | <code>rseed</code> | <code>wvr.rseed@r1</code> | <code>integer</code> | <code>0</code>; optional | Solve | Seed the atmospheric fit. Zero selects CASA’s default seed. |
+
+<a id="surface-polcal"></a>
+
+## Polarization Calibration (<code>polcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Solve polarization leakage and cross-hand calibration.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Solve | Calibration table the task writes. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
+| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>solint</code> | <code>parameter.solint@r2</code> | <code>variant</code> | <code>"inf"</code>; optional | Solve | Gain solution interval specified as inf, int, a time such as 30s, or seconds as a number. |
+| <code>combine</code> | <code>setsolve.combine@r1</code> | <code>string</code> | <code>"obs,scan"</code>; optional | Solve | Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none. |
+| <code>preavg</code> | <code>setsolve.preavg@r1</code> | <code>float</code> | <code>300.0</code>; optional | Solve | Pre-averaging interval in seconds within a solution interval; -1 for none. |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Reference antenna name or id for solve workflows |
+| <code>minblperant</code> | <code>parameter.minblperant@r2</code> | <code>integer</code> | <code>4</code>; optional | Solve | Minimum unflagged baselines an antenna needs to be solved for |
+| <code>minsnr</code> | <code>setsolve.minsnr@r1</code> | <code>float</code> | <code>3.0</code>; optional | Solve | Solutions below this SNR are flagged. |
+| <code>poltype</code> | <code>polcal.poltype@r1</code> | <code>choice (20 values)</code> | <code>"D+QU"</code>; optional | Solve | Polarization calibration solution type. |
+| <code>smodel</code> | <code>setsolve.smodel@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Solve | Point-source Stokes model [I, Q, U, V] in Jy; empty for the MODEL_DATA column. |
+| <code>append</code> | <code>setsolve.append@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Append the solutions to an existing calibration table. |
+| <code>docallib</code> | <code>mstransform.docallib@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibration | Apply calibration from callib on the fly. |
+| <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
+| <code>gaintable</code> | <code>setapply.gaintable@r1</code> | <code>array&lt;path (calibration_table)&gt;</code> | <code>[]</code>; optional | Input | Calibration tables to apply. |
+| <code>gainfield</code> | <code>setapply.gainfield@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Field selection of the solutions to apply from each gain table; empty for all. |
+| <code>interp</code> | <code>setapply.interp@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Interpolation in time (and frequency) for each gain table; empty for 'linear'. |
+| <code>spwmap</code> | <code>setapply.spwmap@r1</code> | <code>array&lt;array&lt;integer&gt;&gt;</code> | <code>[]</code>; optional | Apply | Spectral-window map for each gain table: the window whose solutions each data window takes. |
 
 <a id="surface-polfromgain"></a>
 

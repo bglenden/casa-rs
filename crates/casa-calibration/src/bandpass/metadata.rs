@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selected B-table channelization, including CASA's persisted width defects.
-use super::{BandpassFrequencyInterval, BandpassSolutionRow, BandpassSolveError};
+use super::{BandpassFrequencyInterval, BandpassSolveError};
 use crate::solve::grouping::SelectedSolveRow;
 use casa_ms::{ChannelSelection, ms::MeasurementSet};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, ScalarValue, Value};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
-pub(super) fn bin_widths(
+pub(crate) fn bin_widths(
     ms: &MeasurementSet,
     rows: &[SelectedSolveRow],
     interval: Option<BandpassFrequencyInterval>,
@@ -49,9 +52,9 @@ fn bandwidth_bin_widths(
     Ok(widths)
 }
 
-pub(super) fn write(
+pub(crate) fn write(
     path: &Path,
-    rows: &[BandpassSolutionRow],
+    solution_windows: &BTreeSet<i32>,
     channel_bin_widths: &BTreeMap<i32, usize>,
     selected_rows: &[SelectedSolveRow],
     combine_windows: bool,
@@ -102,7 +105,7 @@ pub(super) fn write(
     };
     for row in 0..table.row_count() {
         let spw = row as i32;
-        let present = rows.iter().any(|r| r.spw_id == spw);
+        let present = solution_windows.contains(&spw);
         table
             .cell_accessor_mut(row, "FLAG_ROW")
             .and_then(|mut c| c.set(Value::Scalar(ScalarValue::Bool(!present))))
