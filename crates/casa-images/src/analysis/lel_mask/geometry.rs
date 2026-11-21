@@ -10,13 +10,56 @@ use casa_types::{ArrayD, Complex64, RecordValue};
 
 use crate::expr_parser::{HashMapResolver, referenced_images, subimage_mask_builder};
 use crate::fits_read::FitsToolImport;
-use crate::image_expr_lel::broadcast_shapes;
+use crate::image_expr_lel::{broadcast_shapes, mask_coordinate_axes};
 use crate::{AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage};
 
 use super::{
     mask_expression, mask_parse_error, open_mask_image, resolve_named_operand, stretch_axes,
     validate_mask_name,
 };
+
+pub(super) fn image_tool_mask_axes(
+    source_coordinates: Option<&CoordinateSystem>,
+    source_shape: &[usize],
+    target_coordinates: &CoordinateSystem,
+    target_shape: &[usize],
+) -> Result<Vec<usize>, ImageError> {
+    let target_axes = mask_coordinate_axes(target_coordinates);
+    let incompatible = || {
+        ImageError::CasaSelection(if source_shape == target_shape {
+            "WCRegion::toLCRegion - a region axis is unknown or inconsistent in target coordinate system".into()
+        } else {
+            "Unable to extend mask: ExtendImage - new csys or shape incompatible with old ones"
+                .into()
+        })
+    };
+    let axes = if let Some(coordinates) = source_coordinates {
+        let mapping = mask_coordinate_axes(coordinates)
+            .iter()
+            .map(|axis| target_axes.iter().position(|candidate| candidate == axis))
+            .collect::<Option<Vec<_>>>()
+            .filter(|map| map.len() == source_shape.len())
+            .ok_or_else(incompatible)?;
+        if mapping.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(ImageError::CasaSelection(
+                "WCLELMask::toLCRegion - the order of the mask axes cannot be changed".into(),
+            ));
+        }
+        mapping
+    } else {
+        (0..source_shape.len()).collect()
+    };
+    if axes.iter().zip(source_shape).any(|(&axis, &length)| {
+        target_shape
+            .get(axis)
+            .is_none_or(|&target_length| length != 1 && length != target_length)
+    }) {
+        return Err(ImageError::CasaSelection(
+            "Unable to extend mask: ExtendSpecifier - lengths of old axis mismatch".into(),
+        ));
+    }
+    Ok(axes)
+}
 
 struct MaskGeometry {
     path: PathBuf,

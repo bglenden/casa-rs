@@ -8447,6 +8447,16 @@ process. casa-rs raises an error for the duplicate axis.
 The pinned biweight algorithm can also terminate when every selected
 pixel is masked. casa-rs returns a recoverable error for the empty sample.
 
+## Image statistics can fail after dropping one direction axis
+
+In CASA 6.7.6.14, create a Float image with shape `[9, 1, 1, 5]`, fill it
+with `x + 10 * channel`, and call `subimage(dropdeg=True)` to retain one
+direction axis and the frequency axis. `statistics` on an `LCSlicer` from
+`[1, 1]` through `[7, 4]` with stride `[2, 2]` raises a WCSLIB `wcsp2s`
+error while formatting the selected coordinates. The same region is
+readable with `getregion`. Casa-rs returns the pixel statistics, including
+the analytic sample count of 8 and sum of 192.
+
 ## Image statistics can use the wrong beam for a selected channel
 
 On a direction, Stokes and spectral cube with distinct beams for I and Q,

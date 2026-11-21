@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::ImageRegionSection;
+use casa_images::analysis::{ImageRegionSection, evaluate_image_tool_mask_section};
 use casa_types::{ArrayD, RecordValue};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
@@ -11,7 +11,6 @@ use crate::tools::{LogLine, emit, table::casa_record};
 
 use super::attachment::read_locked;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
-use super::mask_expression::{MaskTarget, evaluate_mask};
 use super::pixels::{Chunk, ChunkRead, and_mask, collapse_axes};
 use super::subimage::Region;
 use super::{PyImageTool, stub};
@@ -149,15 +148,16 @@ impl PyImageTool {
                 let expression = if mask.is_empty() {
                     None
                 } else {
-                    Some(evaluate_mask(
-                        &mask,
-                        MaskTarget {
+                    Some(
+                        evaluate_image_tool_mask_section(
+                            &mask,
                             shape,
-                            section: Some((&chunk, image.coordinates())),
+                            image.coordinates(),
+                            (&chunk.start, &chunk.size, &chunk.stride),
                             stretch,
-                            method: "getregion",
-                        },
-                    )?)
+                        )
+                        .map_err(raised)?,
+                    )
                 };
                 let data = chunk.read_from(
                     image,
