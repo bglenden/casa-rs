@@ -62,6 +62,7 @@ IMPLEMENTED["coordsys"] = {
 IMPLEMENTED["image"] = {
     "crop",
     "decimate",
+    "rebin",
     "boundingbox",
     "insert",
     "addnoise",

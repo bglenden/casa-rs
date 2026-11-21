@@ -444,22 +444,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile, bin, region = None, mask = None, dropdeg = None, overwrite = None, stretch = None, crop = None), text_signature = "($self, outfile, bin, region='', mask='', dropdeg=False, overwrite=False, stretch=False, crop=False)")]
-    fn rebin(
-        &self,
-        outfile: &Bound<'_, PyAny>,
-        bin: &Bound<'_, PyAny>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        crop: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("rebin")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, shape = None, csys = None, axes = None, region = None, mask = None, method = None, decimate = None, replicate = None, doref = None, dropdeg = None, overwrite = None, force = None, asvelocity = None, stretch = None), text_signature = "($self, outfile='', shape=[-1], csys={}, axes=[-1], region={}, mask='', method='linear', decimate=10, replicate=False, doref=True, dropdeg=False, overwrite=False, force=False, asvelocity=False, stretch=False)")]
     fn regrid(
         &self,

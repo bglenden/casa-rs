@@ -236,6 +236,10 @@ finding the crop bounds. Pass `region=[]` when using `box`, `chans`, or
 Use `ia.decimate(axis=..., factor=..., method="copy")` to keep every nth
 plane. With `method="mean"`, it averages valid samples in each complete
 group and drops the trailing partial group.
+Use `ia.rebin(outfile="", bin=[...])` to average valid pixels over bins on
+several axes. Trailing partial bins are included unless `crop=True`. A bin
+with no valid pixels is masked. Binning supports real and complex
+single-precision images.
 
 `ia.statistics()` returns statistics over a real native CASA image, an
 attached FITS image, or a temporary image. Pass `axes` for per-plane results,

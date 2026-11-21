@@ -8227,3 +8227,10 @@ the file contents, then call `ia.statistics(append=False)` on the same
 image tool. The second call truncates the previously selected file even
 though `logfile` was omitted. casa-rs uses a logfile only on calls that
 explicitly supply its path.
+
+## `image.rebin` can raise after writing an output with tuple factors
+
+CASA 6.7.6.14 writes the named output of `ia.rebin("output.im", (2, 2))`
+and then raises a Python `SystemError`. A list with the same values succeeds.
+casa-rs reads the factors as integers and returns the rebinned image for
+either sequence.

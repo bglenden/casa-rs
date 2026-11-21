@@ -10,6 +10,8 @@ mod decimate;
 mod insert;
 mod noise;
 mod pixel_edit;
+mod read_window;
+mod rebin;
 pub(super) mod region;
 mod region_write;
 pub use region_write::{put_image_region, validate_put_region_shapes};
@@ -26,6 +28,7 @@ pub use decimate::{DecimationMethod, DecimationPixel, ImageDecimation, ImageDeci
 pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
 pub use pixel_edit::ImagePixelSelection;
+pub use rebin::{ImageRebin, ImageRebinOptions};
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -440,6 +443,18 @@ impl SubimagePlan {
             output.remove_mask("mask0")?;
         }
         Ok(())
+    }
+
+    fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
+        let Some(axis) = axis.filter(|_| planes > 1) else {
+            return vec![0];
+        };
+        let selected = &self.selection;
+        let start = selected.start[axis];
+        let step = selected.stride.as_ref().map_or(1, |stride| stride[axis]);
+        (0..selected.shape[axis].div_ceil(step))
+            .map(|index| start + index * step)
+            .collect()
     }
 
     fn copy_metadata<T: ImagePixel, U: ImagePixel>(

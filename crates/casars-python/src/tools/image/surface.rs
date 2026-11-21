@@ -939,7 +939,7 @@ const METHODS: &[Method] = &[
             param("crop", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "regrid",

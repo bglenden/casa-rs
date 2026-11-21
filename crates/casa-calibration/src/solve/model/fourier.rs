@@ -465,10 +465,14 @@ impl PreparedFourierModel {
             ),
         };
         let projection = projection.map_err(model_error)?;
-        let (uvw_m, phase_shift_m) = match &mut self.refocus {
+        let (uvw_m, mut phase_shift_m) = match &mut self.refocus {
             Some(focus) => focus.apply(&row, &projection)?,
             None => projection.apply(row.uvw),
         };
+        if self.legacy_pbw_angle.is_some() {
+            // nPBWProjectFT reverses dphase after rotating and refocusing.
+            phase_shift_m = -phase_shift_m;
+        }
         if row.raw_flags.shape() != [row.correlations.len(), row.frequencies.len()] {
             return Err(model_error(
                 "virtual Fourier prediction flags do not match the visibility layout",
