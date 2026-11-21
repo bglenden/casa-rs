@@ -10,7 +10,7 @@ use crate::convert::{IntList, Variant, value::CasaValue};
 use crate::tools::{LogLine, emit, table::casa_record};
 
 use super::attachment::read_locked;
-use super::handle::{ImageHandle, raised, with_pixels, with_storage};
+use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::mask_expression::{MaskTarget, evaluate_mask};
 use super::pixels::{Chunk, ChunkRead, and_mask, collapse_axes};
 use super::subimage::Region;
