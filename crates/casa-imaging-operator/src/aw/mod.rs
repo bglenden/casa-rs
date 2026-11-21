@@ -974,11 +974,17 @@ impl AwCatalog {
         nearest(&self.frequencies_hz, target).0
     }
 
-    /// The w-plane of `w_lambda` (`CFBuffer::nearestWNdx`, CAS-13191).
+    /// The w-plane of `w_lambda` from the CASA resampler's cache layout.
     #[must_use]
     pub fn w_cell(&self, w_lambda: f64) -> usize {
-        let index = (self.w_increment * w_lambda.abs()).sqrt().round() as usize;
-        index.min(self.w_values.len() - 1)
+        let plane = (self.w_increment * w_lambda.abs()).sqrt();
+        if self.legacy_prediction_origin {
+            // The legacy AWVisResampler uses the original CFBuffer truncation
+            // and offset. The synthesis resampler rounds after CAS-13191.
+            (plane as usize).min(self.w_values.len()).saturating_sub(1)
+        } else {
+            (plane.round() as usize).min(self.w_values.len() - 1)
+        }
     }
 
     /// The group of a (PA, frequency, w) cell triple.

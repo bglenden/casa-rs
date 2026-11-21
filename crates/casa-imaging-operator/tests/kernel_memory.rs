@@ -495,9 +495,13 @@ fn aw_request_with(size: usize, frequencies: usize, w_planes: usize) -> NativeAw
                 }
             })
             .collect(),
-        w_values: (0..w_planes)
-            .map(|index| (index * index) as f64 / w_increment)
-            .collect(),
+        w_values: if w_planes == 1 {
+            vec![0.]
+        } else {
+            (0..w_planes)
+                .map(|index| (index * index) as f64 / w_increment)
+                .collect()
+        },
         w_increment,
         pa_values: vec![0.31],
         mueller_elements: vec![0, 15],
@@ -509,7 +513,7 @@ fn aw_request_with(size: usize, frequencies: usize, w_planes: usize) -> NativeAw
         },
         terms: NativeAwTerms {
             aperture: true,
-            w_term: true,
+            w_term: w_planes > 1,
             prolate_spheroidal: false,
             wideband: true,
             conjugate_beams: false,
@@ -546,13 +550,6 @@ fn legacy_aw_generation_holds_at_most_its_charge() {
     if !alone("legacy_aw_generation_holds_at_most_its_charge") {
         return;
     }
-    let mut request = aw_request(256);
-    request.frequencies.truncate(1);
-    request.w_values = vec![0.];
-    request.w_increment = 0.;
-    request.terms.w_term = false;
-    request.maximum_cells = 2;
-    let root = tempfile::tempdir().unwrap();
     let workers = 2;
     let spectral = casa_coordinates::SpectralCoordinate::new(
         casa_types::measures::frequency::FrequencyRef::TOPO,
@@ -561,12 +558,17 @@ fn legacy_aw_generation_holds_at_most_its_charge() {
         0.,
         1.42e9,
     );
-    let (peak, _, result) = measure(|| {
-        AwCatalog::generate_legacy_vla(root.path(), &request, "test", &spectral, workers)
-    });
-    result.unwrap();
-    let charge = AwCatalog::generation_bytes(&request, workers);
-    assert!(peak <= charge, "legacy A/W held {peak}, charged {charge}");
+    for w_planes in [1, 4] {
+        let request = aw_request_with(256, 1, w_planes);
+        let root = tempfile::tempdir().unwrap();
+        let (peak, _, result) = measure(|| {
+            AwCatalog::generate_legacy_vla(root.path(), &request, "test", &spectral, workers)
+        });
+        result.unwrap();
+        let charge = AwCatalog::generation_bytes(&request, workers);
+        eprintln!("legacy A/W with {w_planes} W planes: held {peak}, charged {charge}");
+        assert!(peak <= charge);
+    }
 }
 
 /// #747 review: generation's bookkeeping grows with the request, and is
