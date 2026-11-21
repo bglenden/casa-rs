@@ -535,6 +535,25 @@
     "refantmode": "cStr",
     "refant": "cStr"
   },
+  "setjy": {
+    "vis": "cStr",
+    "field": "cStr",
+    "spw": "cStr",
+    "selectdata": "cBool",
+    "intent": "cStr",
+    "scalebychan": "cBool",
+    "standard": "cStr",
+    "model": "cStr",
+    "listmodels": "cBool",
+    "reffreq": "cStr",
+    "polindex": "cFloatVec",
+    "polangle": "cFloatVec",
+    "rotmeas": "cFloat",
+    "useephemdir": "cBool",
+    "interpolation": "cStr",
+    "usescratch": "cBool",
+    "ismms": "cBool"
+  },
   "simalma": {
     "project": "cStr",
     "dryrun": "cBool",
