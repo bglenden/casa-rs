@@ -29,6 +29,16 @@ def test_frequency_table_uses_physical_channel_values():
     np.testing.assert_allclose(cs.topixel([61.0])["numeric"], [0.0])
 
 
+def test_sampled_spectral_inverse_uses_corrected_pixel_units(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(spectral=True)
+        assert cs.setspectral(frequencies=samples([0.0, 1.e-301], "Hz"))
+        np.testing.assert_allclose(cs.topixel([5.e-302])["numeric"], [0.5])
+        assert cs.setspectral(frequencies=samples([0.0, 1.e-15, 1.0], "Hz"))
+        with pytest.raises(RuntimeError, match="repeated x values"):
+            cs.topixel([5.e-16])
+
+
 @pytest.mark.parametrize(("convention", "spec_type", "doppler_code"), [("RADIO", 1, 0), ("OPTICAL", 2, 1), ("BETA", 1, 3)])
 def test_sampled_velocity_matches_independent_relations(casa, convention, spec_type, doppler_code):
     velocity = np.array([0.0, 10000.0, 30000.0])

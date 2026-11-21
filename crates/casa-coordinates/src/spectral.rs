@@ -30,8 +30,8 @@ use crate::record_utils::{
     get_optional_vec_string, get_required_f64, get_required_vec_f64,
 };
 use crate::tabular::{
-    TabularEdit, edit_table, sample_reference, scaled_world, validate_live_edit,
-    validate_transform_samples,
+    TabularEdit, edit_table, interpolate_samples as interpolate, inverse_sampled_axis,
+    sample_reference, scaled_world, validate_live_edit, validate_transform_samples,
 };
 
 #[derive(Debug, Clone)]
@@ -736,14 +736,13 @@ impl Coordinate for SpectralCoordinate {
                 world_values,
                 crval,
                 ..
-            } => {
-                let unscaled = if self.linear_transform == 1.0 {
-                    native_world
-                } else {
-                    crval + (native_world - crval) / self.linear_transform
-                };
-                interpolate(world_values, pixel_values, unscaled)?
-            }
+            } => inverse_sampled_axis(
+                pixel_values,
+                world_values,
+                *crval,
+                self.linear_transform,
+                native_world,
+            )?,
         };
         Ok(vec![pixel])
     }
@@ -996,44 +995,6 @@ fn parse_conversion(rec: &RecordValue) -> Option<SpectralConversion> {
             .with_position(position)
             .with_epoch(epoch),
     })
-}
-
-fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
-    let n = xs.len();
-    if n == 0 || ys.len() != n {
-        return Err(CoordinateError::ConversionFailed(
-            "tabular interpolation requires matching lookup tables with at least one entry".into(),
-        ));
-    }
-
-    if n == 1 {
-        // Casacore uses a constant nearest-neighbour table in both directions.
-        return Ok(ys[0]);
-    }
-    let increasing = xs[n - 1] > xs[0];
-    let idx = if increasing {
-        match xs.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
-            Ok(i) => return Ok(ys[i]),
-            Err(i) => i,
-        }
-    } else {
-        let rev: Vec<f64> = xs.iter().rev().copied().collect();
-        match rev.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
-            Ok(i) => return Ok(ys[n - 1 - i]),
-            Err(i) => n - i,
-        }
-    };
-
-    let lo = if idx == 0 { 0 } else { (idx - 1).min(n - 2) };
-    let hi = lo + 1;
-    let dx = xs[hi] - xs[lo];
-    if dx.abs() < 1e-300 {
-        return Err(CoordinateError::ConversionFailed(
-            "duplicate values in tabular spectral coordinate".into(),
-        ));
-    }
-    let t = (x - xs[lo]) / dx;
-    Ok(ys[lo] + t * (ys[hi] - ys[lo]))
 }
 
 #[cfg(test)]
