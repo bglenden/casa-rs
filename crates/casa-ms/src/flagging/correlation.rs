@@ -128,7 +128,10 @@ impl CorrelationSelection {
         if mode != FlagDataMode::Summary
             && (!matches!(
                 mode,
-                FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Clip
+                FlagDataMode::Manual
+                    | FlagDataMode::Quack
+                    | FlagDataMode::Clip
+                    | FlagDataMode::Elevation
             ) || (mode == FlagDataMode::Clip && has_operator && clip_operator.is_none()))
         {
             return Err(unsupported());
