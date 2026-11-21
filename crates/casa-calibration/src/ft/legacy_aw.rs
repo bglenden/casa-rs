@@ -49,8 +49,7 @@ pub(super) fn prepare_model(
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
-    if options.w_planes > 1
-        || options.apply_pointing_offsets
+    if options.apply_pointing_offsets
         || options.pa_step_deg != 360.
         || options.rotation_step_deg != 5.
     {
@@ -158,13 +157,7 @@ pub(super) fn prepare_model(
                 row.spectral_window_id,
                 &grid,
                 (reference_hz, f64::from(*pa)),
-                NativeAwTerms {
-                    aperture: switches[1],
-                    w_term: false,
-                    prolate_spheroidal: switches[0],
-                    wideband: options.wideband,
-                    conjugate_beams: options.conjugate_beams,
-                },
+                (options, *switches),
                 &host,
             )
         },
@@ -364,7 +357,7 @@ fn cold_request(
     spw: i32,
     grid: &GridGeometry,
     (reference_frequency_hz, pa): (f64, f64),
-    terms: NativeAwTerms,
+    (options, switches): (&ImagerLegacyAwOptions, [bool; 2]),
     host: &HostResources,
 ) -> MsResult<(NativeAwRequestInput, String, Reservation)> {
     let window = ms.spectral_window()?;
@@ -387,30 +380,44 @@ fn cold_request(
         .map_or(std::slice::from_ref(&entire), |selection| {
             selection.segments.as_slice()
         });
-    check_range_count(segments.len())?;
+    let w_planes = options.w_planes.max(1) as usize;
+    let group_count = segments
+        .len()
+        .checked_mul(w_planes)
+        .filter(|&count| (1..=usize::from(u16::MAX) + 1).contains(&count))
+        .ok_or_else(|| invalid("legacy A/W frequency and W groups exceed the cache index range"))?;
     let memory = admit(
         host,
         &ResourcePolicy::Balanced,
         &Demand {
-            phase: "legacy A/W channel range planning",
+            phase: "legacy A/W frequency and W planning",
             // Each group retains one sample. Include the temporary endpoint index.
-            memory: (segments.len() as u64).saturating_mul(
-                (size_of::<NativeAwFrequencyGroup>() + size_of::<f64>() + 32) as u64,
-            ),
+            memory: (segments.len() * (size_of::<NativeAwFrequencyGroup>() + size_of::<f64>() + 32)
+                + w_planes * size_of::<f64>()) as u64,
         },
     )
     .map_err(invalid)?;
     let spectral_window = spw.try_into().map_err(invalid)?;
     let groups = legacy_frequency_groups(segments, &frequencies, spectral_window)?;
-    let maximum_cells = groups.len() * 2;
     let (fft_side, oversampling) = (2048, 20);
     let image = grid.image();
+    // AWConvFunc spaces W planes quadratically out to the largest W
+    // representable at the image cell size, independently of sampled baselines.
+    let max_w = 0.25 / image.increment_rad[0].abs();
+    let w_increment = f64::from(((w_planes - 1) as f64).powi(2) as f32) / max_w;
+    let w_values = if w_planes == 1 {
+        vec![0.]
+    } else {
+        (0..w_planes)
+            .map(|plane| (plane as f64).powi(2) / w_increment)
+            .collect()
+    };
     let input = NativeAwRequestInput {
         surface: legacy_vla_surface()?,
         antenna_diameter_m: 25.,
         frequencies: groups,
-        w_values: vec![0.],
-        w_increment: 0.,
+        w_values,
+        w_increment,
         pa_values: vec![pa],
         mueller_elements: vec![0, 15],
         reference_frequency_hz,
@@ -421,8 +428,14 @@ fn cold_request(
                 .map(|cell| cell * (oversampling * image.shape[0]) as f64 / fft_side as f64),
             oversampling,
         },
-        terms,
-        maximum_cells,
+        terms: NativeAwTerms {
+            aperture: switches[1],
+            w_term: w_planes > 1,
+            prolate_spheroidal: switches[0],
+            wideband: options.wideband,
+            conjugate_beams: options.conjugate_beams,
+        },
+        maximum_cells: group_count * 2,
     };
     Ok((input, band, memory))
 }
@@ -772,7 +785,7 @@ pub(crate) fn open_catalog(
     };
     let terms =
         AwCatalog::open_legacy_casa(path, index, grid, routing, 16 << 20).map_err(invalid)?;
-    if terms.parallactic_angles_deg().len() != 1 || terms.w_values().len() != 1 {
+    if terms.parallactic_angles_deg().len() != 1 {
         return Err(invalid("this legacy AW cache geometry is pending #1520"));
     }
     let host = HostResources::detect().map_err(invalid)?;
