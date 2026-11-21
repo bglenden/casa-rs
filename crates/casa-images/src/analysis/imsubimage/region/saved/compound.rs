@@ -65,6 +65,7 @@ pub(super) fn decode(
     });
     Ok(ParsedRegion {
         is_compound: true,
+        is_crtf: false,
         shapes: Vec::new(),
         saved_bounds: Some((region.start, shape)),
         saved_mask: Some(SavedRegionMask::Cropped(mask)),

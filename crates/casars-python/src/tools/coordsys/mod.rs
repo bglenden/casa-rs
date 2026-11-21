@@ -15,6 +15,7 @@ mod linear_transform;
 mod observation;
 mod ordering;
 mod reference;
+mod replace;
 mod rest_frequency;
 mod stubs;
 mod subimage;
@@ -35,7 +36,7 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MPosition};
 use casa_types::measures::{direction_to_record, epoch_to_record, position_to_record};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 
 use crate::tools::not_yet_implemented_in;
@@ -46,6 +47,19 @@ const ISSUE: u32 = 1027;
 /// A method casa-rs does not implement yet.
 fn stub(method: &str) -> PyResult<Py<PyAny>> {
     not_yet_implemented_in("coordsys", method, ISSUE)
+}
+
+fn index_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i32> {
+    if value.is_none() {
+        return Ok(-1);
+    }
+    match value.extract::<i64>() {
+        Ok(value) => Ok(value as i32),
+        Err(error) if error.is_instance_of::<PyOverflowError>(value.py()) => Ok(-1),
+        Err(_) => Err(PyTypeError::new_err(format!(
+            "argument _{name} must be an integer"
+        ))),
+    }
 }
 
 /// CASA's `coordsys` tool.
