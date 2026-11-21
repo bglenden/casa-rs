@@ -40,6 +40,7 @@ use crate::solve::grouping::VisibilityModels;
 mod fluxdict;
 mod model_files;
 mod resolved;
+mod solar2012;
 
 enum FluxParameters {
     Manual(ManualFlux),
@@ -132,6 +133,7 @@ fn run_ms(
     partition: bool,
 ) -> Result<CasaValue, TaskFailure> {
     let standard = task.text("standard")?;
+    let solar_2012 = standard.as_deref() == Some("Butler-JPL-Horizons 2012");
     if !scratch
         && standard
             .as_ref()
@@ -170,10 +172,18 @@ fn run_ms(
     add_time_selection(task, &mut selection)?;
     let mut selected = opened.resolve(&selection).map_err(execution)?;
     if selected.selected_rows.is_empty() {
+        if solar_2012 {
+            return Ok(CasaValue::Dict {
+                entries: Vec::new(),
+            });
+        }
         if !scratch && time_filtered {
             return Ok(flux_dictionary(Vec::new()));
         }
         return empty_selection(task, partition);
+    }
+    if solar_2012 {
+        return solar2012::run(task, path, opened, &selection, &selected, partition);
     }
     let Some(flux) = flux_parameters(task)? else {
         if scratch {
