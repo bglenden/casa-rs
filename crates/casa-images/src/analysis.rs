@@ -45,6 +45,8 @@ mod quantity_input;
 mod schema;
 mod summary_log;
 mod task_contract;
+mod transpose;
+pub use transpose::copy_transposed_image;
 mod world_header;
 
 mod immoments;

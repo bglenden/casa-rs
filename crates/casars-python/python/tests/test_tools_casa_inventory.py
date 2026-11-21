@@ -63,6 +63,7 @@ IMPLEMENTED["coordsys"] = {
     "torelmany", "toworld", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
+    "transpose",
     "getslice",
     "crop",
     "decimate",
