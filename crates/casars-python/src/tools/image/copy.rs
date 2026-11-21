@@ -3,9 +3,13 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
-use casa_images::{ImageInterface, ImagePixel, image::image_history_rows};
+use casa_images::analysis::{ImageRegionSection, SubimageRegion};
+use casa_images::{
+    ImageInterface, ImagePixel, MutableImageInterface, PagedImage, image::image_history_rows,
+};
+use casa_lattices::TiledShape;
 use casa_types::RecordValue;
-use ndarray::{ArrayD, IxDyn, SliceInfoElem, Zip};
+use ndarray::{ArrayD, SliceInfoElem, Zip};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
@@ -17,6 +21,8 @@ use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::lifecycle::open_image;
+use super::pixels::and_mask;
+use super::region_read::resolve_region_section;
 use super::{PyImageTool, stub};
 
 struct CopyImage<'a> {
@@ -95,13 +101,28 @@ impl CopyImage<'_> {
         coordinates: CoordinateSystem,
         path: Option<&Path>,
         expression_mask: Option<&ArrayD<bool>>,
+        region: &ImageRegionSection,
         mut read: impl FnMut(&[usize], &[usize], &[usize]) -> PyResult<PixelSection<T>>,
     ) -> PyResult<Storage<T>> {
         let shape = &selection.shape;
         let output_shape = selection.projected(shape);
-        let unit_stride = vec![1; output_shape.len()];
-        let mut storage =
-            Storage::create(output_shape.clone(), coordinates, path, None).map_err(raised)?;
+        let mut storage = if let Some(path) = path {
+            let tiled = TiledShape::new(output_shape.clone(), T::ELEM_SIZE).map_err(raised)?;
+            let tile = tiled.tile_shape().to_vec();
+            let bytes = 2 * tile.iter().product::<usize>() * T::ELEM_SIZE;
+            Storage::Paged(Box::new(
+                PagedImage::create_with_tile_shape_and_cache(
+                    output_shape,
+                    tile,
+                    coordinates,
+                    path,
+                    bytes,
+                )
+                .map_err(raised)?,
+            ))
+        } else {
+            Storage::create(output_shape, coordinates, None, None).map_err(raised)?
+        };
         let total = shape
             .iter()
             .try_fold(1usize, |size, &axis| size.checked_mul(axis))
@@ -116,7 +137,7 @@ impl CopyImage<'_> {
         let mut block_shape = vec![1; shape.len()];
         block_shape[..axis].copy_from_slice(&shape[..axis]);
         let mut offset = 0;
-        let mut output_mask: Option<ArrayD<bool>> = None;
+        let mut wrote_mask = false;
         while offset < total {
             let mut position = offset;
             let start = shape
@@ -135,36 +156,40 @@ impl CopyImage<'_> {
                 .map(|((&index, &base), &step)| base + index * step)
                 .collect::<Vec<_>>();
             let (pixels, mask) = read(&source, &block_shape, &selection.stride)?;
+            let mut mask = and_mask(
+                mask,
+                region.mask_window(&start, &block_shape).map_err(raised)?,
+            );
             let output_start = selection.projected(&start);
             let pixels = selection.squeeze(pixels);
             with_storage!(&mut storage, image => image.put_slice(&pixels, &output_start))
                 .map_err(raised)?;
             let expression = expression_mask
                 .map(|mask| mask.slice(slice(&source, &block_shape, &selection.stride).as_slice()));
-            let mask = match (mask, expression) {
-                (Some(mut pixels_valid), Some(passes)) => {
-                    Zip::from(&mut pixels_valid)
+            if let Some(passes) = expression {
+                if let Some(pixels_valid) = mask.as_mut() {
+                    Zip::from(pixels_valid)
                         .and(passes)
                         .for_each(|pixel, passes| *pixel &= *passes);
-                    Some(pixels_valid)
+                } else {
+                    mask = Some(passes.to_owned());
                 }
-                (None, Some(passes)) => Some(passes.to_owned()),
-                (pixels_valid, None) => pixels_valid,
-            };
+            }
             if let Some(mask) = mask
                 && mask.iter().any(|value| !value)
             {
                 let mask = selection.squeeze(mask);
-                let output = output_mask
-                    .get_or_insert_with(|| ArrayD::from_elem(IxDyn(&output_shape), true));
-                output
-                    .slice_mut(slice(&output_start, mask.shape(), &unit_stride).as_slice())
-                    .assign(&mask);
+                if !wrote_mask {
+                    with_storage!(&mut storage, image => image.create_filled_mask("mask0", true))
+                        .map_err(raised)?;
+                    wrote_mask = true;
+                }
+                with_storage!(&mut storage, image => image.put_mask_slice("mask0", &mask, &output_start))
+                    .map_err(raised)?;
             }
             offset += block_shape[axis] * prefix;
         }
-        if let Some(mask) = output_mask {
-            with_storage!(&mut storage, image => image.put_mask("mask0", &mask)).map_err(raised)?;
+        if wrote_mask {
             with_storage!(&mut storage, image => image.set_default_mask("mask0"))
                 .map_err(raised)?;
         }
@@ -177,7 +202,9 @@ impl CopyImage<'_> {
         path: Option<&Path>,
         add_history: bool,
     ) -> PyResult<ImageHandle> {
-        let mut selection = Selection::new(original.shape(), &self.region, self.method)?;
+        let region = (!self.region.is_empty()).then_some(SubimageRegion::Record(&self.region));
+        let section = resolve_region_section(original, region, false)?;
+        let mut selection = Selection::new(&section);
         if self.dropdeg {
             selection.drop_degenerate()?;
         }
@@ -201,7 +228,7 @@ impl CopyImage<'_> {
         macro_rules! copy_native {
             ($storage:expr, $variant:ident) => {
                 ImageHandle::$variant(with_storage!($storage, image => {
-                    Self::copy_pixels(&selection, coordinates, path, mask.as_ref(), |start, shape, stride| {
+                    Self::copy_pixels(&selection, coordinates, path, mask.as_ref(), &section, |start, shape, stride| {
                         let pixels = image.get_slice_with_stride(start, shape, stride).map_err(raised)?;
                         let mask = ImageInterface::get_mask_slice(image.as_ref(), start, shape, stride).map_err(raised)?;
                         Ok((pixels, mask))
@@ -215,6 +242,7 @@ impl CopyImage<'_> {
                 coordinates,
                 path,
                 mask.as_ref(),
+                &section,
                 |start, shape, stride| {
                     let pixels = fits.read(start, shape, stride)?;
                     let mask = pixels.mapv(|value| !value.is_nan());

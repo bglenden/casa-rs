@@ -398,3 +398,149 @@ def test_copy_preserves_units_from_a_legacy_native_beam_grid(tmp_path, oracle):
         assert reader.open(path)
         _assert_value(reader.restoringbeam(), expected)
         assert reader.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("kind", ["worldbox", "polygon", "difference", "fractional", "relative", "latticebox"])
+def test_copy_preserves_region_values_masks_and_native_geometry(tmp_path, oracle, method, kind):
+    shape = (21, 23, 1, 3)
+    x, y, _, channel = np.ogrid[:21, :23, :1, :3]
+    pixels = (x + 10 * y + 100 * channel).astype(np.float32)
+    names = {}
+    record = None
+    for api in (oracle, tools):
+        name = str(tmp_path / f"{api.__name__}-source.im")
+        image = api.image()
+        coords = None
+        try:
+            assert image.fromarray(name, pixels)
+            assert image.calcmask(f'"{name}" < 290', "valid")
+            if record is None:
+                coords = image.coordsys()
+                record = coords.torecord()
+        finally:
+            if coords is not None:
+                coords.done()
+            image.done()
+        names[api] = name
+
+    lower, upper = {
+        "fractional": ((4, 6), (12, 15)),
+        "relative": ((8, 9), (13, 15)),
+    }.get(kind, ((4, 5), (10, 12)))
+    x, y = np.ogrid[lower[0]:upper[0] + 1, lower[1]:upper[1] + 1]
+    manager = oracle.regionmanager()
+    try:
+        outer = manager.wbox(["4pix", "5pix"], ["10pix", "12pix"], [0, 1], record)
+        inner = manager.wbox(["6pix", "7pix"], ["9pix", "10pix"], [0, 1], record)
+        if kind == "fractional":
+            region = manager.box([0.2, 0.25], [0.6, 0.7], frac=True)
+        elif kind == "relative":
+            region = manager.box([-2, -2], [3, 4], absrel="relref")
+        elif kind == "polygon":
+            region = manager.fromtext("poly[[4pix,5pix],[10pix,5pix],[4pix,12pix]]", list(shape), record)
+        elif kind == "difference":
+            region = manager.difference(outer, inner)
+        elif kind == "latticebox":
+            region = {
+                "name": "LCBox", "isRegion": 1, "comment": "", "oneRel": True,
+                "blc": np.array([5, 6, 1, 1], dtype=np.float32),
+                "trc": np.array([11, 13, 1, 3], dtype=np.float32),
+                "shape": np.array(shape, dtype=np.int32),
+            }
+        else:
+            region = outer
+    finally:
+        manager.done()
+    if kind == "polygon":
+        membership = 7 * (x - 4) + 6 * (y - 5) <= 42
+    elif kind == "difference":
+        membership = (x < 6) | (x > 9) | (y < 7) | (y > 10)
+    else:
+        membership = np.ones(np.broadcast_shapes(x.shape, y.shape), dtype=bool)
+    expected = pixels[lower[0]:upper[0] + 1, lower[1]:upper[1] + 1]
+    mask = membership[..., None, None] & (expected > 80) & (expected < 290)
+    reference = oracle.coordsys()
+    try:
+        assert reference.fromrecord(record)
+        reference_origin = reference.toworld([*lower, 0, 0])["numeric"]
+    finally:
+        reference.done()
+
+    dropdeg = kind == "polygon"
+    if dropdeg:
+        expected = expected.squeeze(axis=2)
+        mask = mask.squeeze(axis=2)
+        reference_origin = reference_origin[[0, 1, 3]]
+
+    for factory, source in ((oracle, names[tools]), (tools, names[oracle])):
+        destination = str(tmp_path / f"{factory.__name__}-result.im")
+        parent = factory.image()
+        assert parent.fromshape(shape=[1])
+        result = _attach_copy(
+            parent, method, infile=source, outfile=destination,
+            region=region, mask=f'"{source}" > 80', dropdeg=dropdeg,
+        )
+        assert result.done()
+        for reader in (oracle, tools):
+            product = reader.image()
+            coords = None
+            try:
+                assert product.open(destination)
+                np.testing.assert_array_equal(product.getchunk(), expected)
+                np.testing.assert_array_equal(product.getchunk(getmask=True), mask)
+                coords = product.coordsys()
+                np.testing.assert_allclose(
+                    coords.toworld([0.0] * expected.ndim)["numeric"],
+                    reference_origin,
+                    atol=2e-8,
+                    rtol=1e-10,
+                )
+            finally:
+                if coords is not None:
+                    coords.done()
+                product.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("field, replacement, message", [
+    ("fracblc", None, "field fracblc is unknown"),
+    ("fractrc", np.array([0.0, 0.0]), "incorrect data type used for field fractrc"),
+    ("fracinc", np.array([False]), "inc and fracInc have unequal lengths"),
+])
+def test_copy_rejects_malformed_slicer_before_replacing_images(
+    tmp_path, oracle, method, field, replacement, message,
+):
+    source = str(tmp_path / "source.im")
+    manager = oracle.regionmanager()
+    region = manager.box([0.2, 0.25], [0.6, 0.7], frac=True)
+    manager.done()
+    if replacement is None:
+        del region[field]
+    else:
+        region[field] = replacement
+
+    source_tool = oracle.image()
+    assert source_tool.fromshape(source, [21, 23])
+    source_tool.done()
+
+    for backend in (oracle, tools):
+        target = str(tmp_path / f"{backend.__name__}-target.im")
+        active = backend.image()
+        reader = backend.image()
+        previous = np.array([[1.0, 3.0], [7.0, 8.0]], dtype=np.float32)
+        attached = np.array([[0.25, 0.5], [1.0, 2.0]], dtype=np.float32)
+        try:
+            assert reader.fromarray(target, previous)
+            assert reader.done()
+            assert active.fromarray(pixels=attached)
+            with pytest.raises(RuntimeError, match=message):
+                getattr(active, method)(
+                    infile=source, outfile=target, region=region, overwrite=True,
+                )
+            np.testing.assert_array_equal(active.getchunk(), attached)
+            assert reader.open(target)
+            np.testing.assert_array_equal(reader.getchunk(), previous)
+        finally:
+            reader.done()
+            active.done()
