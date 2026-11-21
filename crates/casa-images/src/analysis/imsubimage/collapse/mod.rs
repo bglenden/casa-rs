@@ -199,7 +199,7 @@ impl<'a> ImageCollapse<'a> {
             4096
         };
         let cursor = bounded_cursor(&self.section.shape, stride, outer_budget);
-        let mut mask = None;
+        let mut has_mask = false;
         let mut has_data = false;
         for tile in
             TraversalCursorIter::new(self.section.shape.clone(), cursor, TraversalSpec::tiles())
@@ -210,14 +210,12 @@ impl<'a> ImageCollapse<'a> {
             has_data |= present;
             output.put_slice(&values, &tile.position)?;
             if valid.iter().any(|&present| !present) {
-                if mask.is_none() {
-                    mask = Some(output.create_filled_pixel_mask(true)?);
+                if !has_mask {
+                    output.create_filled_mask("mask0", true)?;
+                    output.set_default_mask("mask0")?;
+                    has_mask = true;
                 }
-                output.put_mask_slice(
-                    mask.as_deref().expect("active mask"),
-                    &valid,
-                    &tile.position,
-                )?;
+                output.put_mask_slice("mask0", &valid, &tile.position)?;
             }
         }
         if !has_data {
@@ -251,6 +249,7 @@ impl<'a> ImageCollapse<'a> {
                 let mut by_group = vec![vec![None; group_size]; size];
                 groups.for_each(start, shape, |index, position, sample| {
                     by_group[index][position] = Some(sample);
+                    Ok(())
                 })?;
                 let values: Vec<_> = by_group
                     .into_iter()
@@ -268,6 +267,7 @@ impl<'a> ImageCollapse<'a> {
             let mut cells = (0..size).map(|_| Summary::default()).collect::<Vec<_>>();
             groups.for_each(start, shape, |index, position, sample| {
                 cells[index].add(function, sample, position);
+                Ok(())
             })?;
             let has_data = cells.iter().any(|cell| cell.count != 0);
             let (values, validity) = cells
@@ -356,6 +356,7 @@ fn collapse_coordinates(section: &mut SubimagePlan, axes: &[usize]) -> Result<()
         .map(|&length| (length - 1) as f64)
         .collect::<Vec<_>>();
     let last = coordinates.to_world(&end)?;
+    let mut interior = None;
     let mut record = section
         .coordinate_record
         .take()
@@ -372,8 +373,13 @@ fn collapse_coordinates(section: &mut SubimagePlan, axes: &[usize]) -> Result<()
             let midpoint = if direction.longitude_axis() == Some(local) {
                 let circle = std::f64::consts::TAU;
                 let half = std::f64::consts::PI;
-                let span = (last[world] - first[world] + half).rem_euclid(circle) - half;
-                (first[world] + 0.5 * span).rem_euclid(circle)
+                if interior.is_none() {
+                    let center = end.iter().map(|&length| length * 0.5).collect::<Vec<_>>();
+                    interior = Some(coordinates.to_world(&center)?);
+                }
+                let center = interior.as_ref().expect("interior longitude")[world];
+                let offset = |longitude: f64| (longitude - center + half).rem_euclid(circle) - half;
+                (center + 0.5 * (offset(first[world]) + offset(last[world]))).rem_euclid(circle)
             } else {
                 0.5 * (first[world] + last[world])
             };
@@ -414,7 +420,7 @@ impl<T: CollapsePixel> Groups<'_, T> {
         &self,
         start: &[usize],
         shape: &[usize],
-        mut visit: impl FnMut(usize, usize, T),
+        mut visit: impl FnMut(usize, usize, T) -> Result<(), ImageError>,
     ) -> Result<(), ImageError> {
         let full = self.section.shape;
         let stride = self.section.stride;
@@ -441,7 +447,11 @@ impl<T: CollapsePixel> Groups<'_, T> {
             .map(|(axis, &reduce)| {
                 if reduce {
                     let width = budget.div_ceil(stride[axis]).min(full[axis]);
-                    budget = (budget / ((width - 1) * stride[axis] + 1)).max(1);
+                    budget = if width < full[axis] {
+                        1
+                    } else {
+                        (budget / ((width - 1) * stride[axis] + 1)).max(1)
+                    };
                     width
                 } else {
                     shape[axis]
@@ -481,7 +491,16 @@ impl<T: CollapsePixel> Groups<'_, T> {
                 .map(|(&offset, &origin)| offset + origin)
                 .collect();
             let source = self.section.source_start(&packed);
+            if !self
+                .reader
+                .selection
+                .overlaps_window(&source, &self.section.dense_shape(&tile.shape))
+            {
+                continue;
+            }
             let (pixels, valid) = self.reader.read(&source, &tile.shape, stride)?;
+            let pixels = pixels.reversed_axes();
+            let valid = valid.map(ArrayD::reversed_axes);
             for (index, &pixel) in pixels.indexed_iter() {
                 if valid.as_ref().is_some_and(|valid| !valid[&index]) {
                     continue;
@@ -489,7 +508,7 @@ impl<T: CollapsePixel> Groups<'_, T> {
                 let mut group = 0;
                 let mut position = 0;
                 for (axis, (&local, &tile_start)) in
-                    index.slice().iter().zip(&tile.position).enumerate()
+                    index.slice().iter().rev().zip(&tile.position).enumerate()
                 {
                     if self.reduced[axis] {
                         position += (tile_start + local) * collapse_weights[axis];
@@ -497,7 +516,7 @@ impl<T: CollapsePixel> Groups<'_, T> {
                         group += local * group_weights[shape.len() - 1 - axis];
                     }
                 }
-                visit(group, position, pixel);
+                visit(group, position, pixel)?;
             }
         }
         Ok(())

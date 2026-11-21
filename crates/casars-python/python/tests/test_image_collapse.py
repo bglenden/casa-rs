@@ -1,5 +1,9 @@
 """CASA image collapse statistics, coordinate grids, masks, and native products."""
 
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -40,12 +44,14 @@ def test_collapse_masked_real_statistics(casa, function, expected, valid):
         source = api.image()
         assert source.fromarray(pixels=data, linear=True)
         assert source.putregion(pixelmask=mask)
-        region = api.regionmanager().box([0, 0, 0], [1, 2, 1])
+        region = casa.regionmanager().box([0, 0, 0], [1, 2, 1])
         result = source.collapse(function, [0, 2], region=region)
         try:
             assert result.shape().tolist() == [1, 3, 1]
             np.testing.assert_allclose(result.getchunk().reshape(-1), expected, rtol=2e-6)
             np.testing.assert_array_equal(result.getchunk(getmask=True).reshape(-1), valid)
+            if not all(valid):
+                assert result.maskhandler("default") == ["mask0"]
             np.testing.assert_array_equal(source.getchunk(), data)
             np.testing.assert_array_equal(source.getchunk(getmask=True), mask)
         finally:
@@ -91,7 +97,7 @@ def test_native_collapse_values_mask_coordinates_and_history(casa, tmp_path, com
         assert source.setbrightnessunit("K")
         assert source.setmiscinfo({"observer_note": "collapse"})
         path = str(tmp_path / f"product-{writer.__name__}.im")
-        region = writer.regionmanager().box([0, 0, 0], [1, 2, 1])
+        region = casa.regionmanager().box([0, 0, 0], [1, 2, 1])
         result = source.collapse("sum", [0, 2], outfile=path, region=region)
         result.done()
         source.done()
@@ -307,3 +313,144 @@ def test_collapse_flux_uses_each_selected_beam(casa):
             flux.done()
             channels.done()
             source.done()
+
+@pytest.mark.parametrize("function", ["sqrtsum", "rms", "stddev"])
+def test_collapse_keeps_nan_values_and_mask(casa, function):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=np.float32([np.nan, 1.]))
+        product = source.collapse(function, 0)
+        try:
+            assert np.isnan(product.getchunk().item())
+            assert product.getchunk(getmask=True).item() is True
+        finally:
+            product.done()
+            source.done()
+
+
+def test_collapse_preserves_existing_output_when_all_input_is_masked(tmp_path):
+    source = tools.image()
+    assert source.fromarray(pixels=np.float32([1., 5.]))
+    assert source.putregion(pixelmask=np.zeros(2, dtype=bool))
+    path = str(tmp_path / "existing.im")
+    existing = tools.image()
+    assert existing.fromarray(path, np.float32([11., 13.]))
+    existing.done()
+    before = set(tmp_path.iterdir())
+    try:
+        with pytest.raises(RuntimeError, match="All selected pixels are masked"):
+            source.collapse("mean", 0, outfile=path, overwrite=True)
+        assert set(tmp_path.iterdir()) == before
+        assert existing.open(path)
+        np.testing.assert_array_equal(existing.getchunk(), [11., 13.])
+    finally:
+        existing.done()
+        source.done()
+
+
+def test_collapse_named_axis_uses_independent_maps(casa):
+    coords = casa.coordsys().newcoordsys(stokes="I,Q", spectral=True)
+    assert coords.setreferencepixel([0., 0.])
+    assert coords.setreferencevalue([1., 1.4e9])
+    assert coords.setincrement([1., 2e6])
+    record = coords.torecord()
+    coords.done()
+    record["worldmap0"] = np.array([1], dtype=np.int32)
+    record["worldmap1"] = np.array([0], dtype=np.int32)
+    source = tools.image()
+    assert source.fromarray(pixels=np.float32([[1., 2., 3.], [10., 20., 30.]]), csys=record)
+    result = source.collapse("sum", "Frequency")
+    try:
+        np.testing.assert_array_equal(result.getchunk(), [[6.], [60.]])
+        np.testing.assert_allclose(result.toworld([1, 0])["numeric"], [1.402e9, 2.], rtol=0., atol=1e-6)
+    finally:
+        result.done()
+        source.done()
+
+
+def test_collapse_retains_center_of_longitude_field_over_half_a_turn(casa):
+    coords = casa.coordsys().newcoordsys(direction=True)
+    assert coords.setdirection(
+        proj="CAR", refpix=[135., 0.], refval=["140deg", "0deg"], incr=["1deg", "1deg"],
+    )
+    assert coords.setunits(["deg", "deg"])
+    record = coords.torecord()
+    coords.done()
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=np.ones((271, 1), dtype=np.float32), csys=record)
+        product = source.collapse("sum", 0)
+        coordinates = product.coordsys()
+        try:
+            np.testing.assert_array_equal(product.getchunk(), [[271.]])
+            np.testing.assert_allclose(coordinates.referencevalue()["numeric"], [140., 0.], atol=1e-6)
+        finally:
+            coordinates.done()
+            product.done()
+            source.done()
+
+
+@pytest.mark.parametrize("sparse", [False, True])
+def test_collapse_complex_tied_median_preserves_casa_partition_order(casa, sparse):
+    length = 262_147
+    if sparse:
+        data = np.zeros(length, dtype=np.complex64)
+        data[:4] = [1. + 2.j, 2. + 1.j, -1. - 2.j, 6.j]
+        valid = np.arange(length) < 4
+        expected = .5 - .5j
+    else:
+        data = np.resize(np.complex64([1. + 2.j, 2. + 1.j, -1. - 2.j, -2. - 1.j]), length)
+        valid = None
+        expected = -1. - 2.j
+    if not sparse:
+        # CASA's parallel collector can vary the order of equal-magnitude samples.
+        subprocess.run(
+            [sys.executable, "-c", """
+from casatools import image
+import numpy as np
+source = image()
+assert source.fromarray(pixels=np.resize(np.complex64([1+2j, 2+1j, -1-2j, -2-1j]), 262147))
+product = source.collapse("median", 0)
+assert product.getchunk().item() == -1-2j
+product.done()
+source.done()
+"""],
+            env=dict(os.environ, OMP_NUM_THREADS="1"), check=True, capture_output=True,
+        )
+    for api in ((casa, tools) if sparse else (tools,)):
+        source = api.image()
+        assert source.fromarray(pixels=data)
+        if valid is not None:
+            assert source.putregion(pixelmask=valid)
+        product = source.collapse("median", 0)
+        try:
+            np.testing.assert_array_equal(product.getchunk(), [expected])
+        finally:
+            product.done()
+            source.done()
+
+def test_collapse_disjoint_spatial_selections(casa):
+    manager = casa.regionmanager()
+    orig = casa.image()
+    assert orig.fromshape(shape=[4, 5])
+    coordinates = orig.coordsys()
+    record = coordinates.torecord()
+    coordinates.done()
+    orig.done()
+    members = {
+        str(index): manager.fromtext(f"box [[{x}pix,{y}pix],[{x}pix,{y}pix]]", [4, 5], record)
+        for index, (x, y) in enumerate(((0, 0), (3, 4)))
+    }
+    union = manager.makeunion(members)
+    manager.done()
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=np.arange(20, dtype=np.float32).reshape(4, 5), csys=record)
+        for options in ({"box": "0,0,0,0,3,4,3,4"}, {"region": union}):
+            product = source.collapse("sum", [0, 1], **options)
+            try:
+                np.testing.assert_array_equal(product.getchunk(), [[19.]])
+                assert product.getchunk(getmask=True).item() is True
+            finally:
+                product.done()
+        source.done()

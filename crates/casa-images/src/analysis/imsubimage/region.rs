@@ -9,13 +9,13 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate, StokesType,
 };
-use casa_types::ArrayD;
 use casa_types::quanta::Quantity;
 use casa_types::quanta::casacore::mvangle_radians;
-use ndarray::Array2;
+
+use crate::saved_region::PolygonPixelPlane;
 
 use crate::analysis::axes::{direction_plane_axes, stokes_for_axis};
-use crate::analysis::{PixelRegion, parse_box_region, parse_stokes_selection};
+use crate::analysis::{ChannelSpan, PixelRegion, parse_box_region, parse_stokes_selection};
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::SubimageRegion;
@@ -96,13 +96,12 @@ pub(in crate::analysis) struct SubimageSelection {
     pub(in crate::analysis) shape: Vec<usize>,
     pub(in crate::analysis) stride: Option<Vec<usize>>,
     pub(in crate::analysis) plane: [usize; 2],
-    /// Precomputed spatial mask (shape `[shape[plane[0]], shape[plane[1]]]`) if
-    /// the selection is non-rectangular or a union of multiple shapes.
-    pub(in crate::analysis) spatial_mask: Option<Array2<bool>>,
+    // Spatial shapes whose membership must be evaluated for a pixel window.
+    spatial_shapes: Vec<SpatialShape>,
     qualified_shapes: Vec<QualifiedShape>,
     saved_mask: Option<SavedRegionMask>,
     pub(in crate::analysis) channel_axis: Option<usize>,
-    pub(in crate::analysis) channel_indices: Option<Vec<usize>>,
+    pub(in crate::analysis) channel_spans: Vec<ChannelSpan>,
     pub(in crate::analysis) stokes_axis: Option<usize>,
     pub(in crate::analysis) stokes_indices: Option<Vec<usize>>,
     pub(in crate::analysis) selected_stokes: Option<Vec<StokesType>>,
@@ -269,7 +268,7 @@ impl SubimageSelection {
         let SpatialResolution {
             mut start,
             mut shape,
-            spatial_mask,
+            spatial_shapes,
         } = resolve_spatial_and_saved_bounds(
             &full_shape,
             ndim,
@@ -279,7 +278,7 @@ impl SubimageSelection {
             saved_mask.is_some(),
         )?;
 
-        let (channel_axis, channel_indices) = resolve_channels(
+        let (channel_axis, channel_spans) = resolve_channels(
             image,
             &full_shape,
             chans_arg,
@@ -303,9 +302,7 @@ impl SubimageSelection {
 
         let has_multiple_regions = is_compound
             || regions.len() > 1
-            || channel_axis
-                .zip(channel_indices.as_ref())
-                .is_some_and(|(a, v)| v.len() != shape[a])
+            || !channel_spans.is_empty()
             || stokes_axis
                 .zip(stokes_indices.as_ref())
                 .is_some_and(|(a, v)| v.len() != shape[a]);
@@ -314,7 +311,7 @@ impl SubimageSelection {
             shape,
             stride,
             plane,
-            spatial_mask,
+            spatial_shapes,
             qualified_shapes: if regions
                 .iter()
                 .any(|r| r.planes.channels.is_some() || r.planes.stokes.is_some())
@@ -325,7 +322,7 @@ impl SubimageSelection {
             },
             saved_mask,
             channel_axis: channel_axis.or_else(|| image.find_axis(CoordinateType::Spectral)),
-            channel_indices,
+            channel_spans,
             stokes_axis: stokes_axis.or_else(|| image.find_axis(CoordinateType::Stokes)),
             stokes_indices,
             selected_stokes,
@@ -349,10 +346,11 @@ fn union_planes(
 }
 
 enum SavedRegionMask {
-    Whole(ArrayD<bool>),
-    // The compound mask starts at its saved bounds, which cannot be combined
-    // with a separate box, channel, or Stokes selection.
-    Cropped(ArrayD<bool>),
+    Polygon {
+        axes: [usize; 2],
+        plane: PolygonPixelPlane,
+    },
+    Compound(saved::CompoundRegion),
 }
 
 struct ParsedRegion {
@@ -1082,7 +1080,7 @@ fn split_top_level(text: &str, sep: char) -> Vec<&str> {
 struct SpatialResolution {
     start: Vec<usize>,
     shape: Vec<usize>,
-    spatial_mask: Option<Array2<bool>>,
+    spatial_shapes: Vec<SpatialShape>,
 }
 
 fn resolve_spatial_and_saved_bounds(
@@ -1105,7 +1103,7 @@ fn resolve_spatial_and_saved_bounds(
         return Ok(SpatialResolution {
             start,
             shape,
-            spatial_mask: None,
+            spatial_shapes: Vec::new(),
         });
     }
 
@@ -1136,15 +1134,14 @@ fn resolve_spatial_and_saved_bounds(
         return Ok(SpatialResolution {
             start,
             shape,
-            spatial_mask: None,
+            spatial_shapes: Vec::new(),
         });
     }
     if saved_bounds.is_some() && !has_saved_mask {
-        let spatial_mask = rasterize_shapes(shapes, [start[px], start[py]], [shape[px], shape[py]]);
         return Ok(SpatialResolution {
             start,
             shape,
-            spatial_mask,
+            spatial_shapes: shapes.iter().copied().cloned().collect(),
         });
     }
 
@@ -1157,6 +1154,16 @@ fn resolve_spatial_and_saved_bounds(
 
     for s in shapes {
         let (x0, y0, x1, y1) = shape_candidate_bounds(s, nx, ny);
+        if let SpatialShape::Box(_) = s {
+            if x0 <= x1 && y0 <= y1 && shape_contains(s, x0, y0) {
+                min_x = min_x.min(x0);
+                min_y = min_y.min(y0);
+                max_x = max_x.max(x1);
+                max_y = max_y.max(y1);
+                any_pixel = true;
+            }
+            continue;
+        }
         let mut has_pixels = false;
         for x in x0..=x1 {
             for y in y0..=y1 {
@@ -1212,23 +1219,11 @@ fn resolve_spatial_and_saved_bounds(
     shape[px] = max_x - min_x + 1;
     shape[py] = max_y - min_y + 1;
 
-    let spatial_mask = rasterize_shapes(shapes, [min_x, min_y], [shape[px], shape[py]]);
     Ok(SpatialResolution {
         start,
         shape,
-        spatial_mask,
+        spatial_shapes: shapes.iter().copied().cloned().collect(),
     })
-}
-
-fn rasterize_shapes(
-    shapes: &[&SpatialShape],
-    [x0, y0]: [usize; 2],
-    [nx, ny]: [usize; 2],
-) -> Option<Array2<bool>> {
-    let spatial = Array2::from_shape_fn((nx, ny), |(x, y)| {
-        shapes.iter().any(|s| shape_contains(s, x0 + x, y0 + y))
-    });
-    (!spatial.iter().all(|&inside| inside)).then_some(spatial)
 }
 
 fn shape_candidate_bounds(

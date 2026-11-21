@@ -103,7 +103,7 @@ impl CollapseFunction {
 
 /// Single-precision pixels for CASA image collapse. Complex statistics carry
 /// the algebraic complex sum and variance in double precision.
-pub trait CollapsePixel: ImagePixel {
+pub trait CollapsePixel: ImagePixel + PartialEq {
     /// Whether variance, RMS and square roots are complex-valued.
     const COMPLEX: bool;
 
@@ -212,7 +212,7 @@ impl<T: CollapsePixel> Summary<T> {
             if T::COMPLEX {
                 value.sqrt()
             } else {
-                Complex64::new(value.re.max(0.0).sqrt(), 0.0)
+                Complex64::new((if value.re < 0.0 { 0.0 } else { value.re }).sqrt(), 0.0)
             }
         };
         let variance = || {

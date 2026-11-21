@@ -137,7 +137,11 @@ impl Axes {
                             .filter(|(_, axis)| axis.starts_with(&name))
                             .collect();
                         match matches.as_slice() {
-                            [(axis, _)] => Ok(*axis),
+                            [(axis, _)] => {
+                                coordinates.world_axis_to_pixel_axis(*axis).ok_or_else(|| {
+                                    raised(format!("World axis {name} has no image pixel axis"))
+                                })
+                            }
                             [] => Err(raised(format!(
                                 "No axis matches requested axis {name}. Image axis names are [{}]",
                                 available.join(", ")

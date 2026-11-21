@@ -6,13 +6,13 @@ use std::path::Path;
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::Dimension;
 
 use crate::analysis::world_axes_for_plane;
 use crate::saved_region::map_world_region_axes;
 use crate::{AnyPagedImage, ImageError, PolygonRegion};
 
 mod compound;
+pub(super) use compound::Region as CompoundRegion;
 mod relative;
 
 use super::{ParsedRegion, SavedRegionMask, SpatialShape, StridedSection};
@@ -153,35 +153,21 @@ fn polygon_region(
     full_shape: &[usize],
     is_compound: bool,
 ) -> Result<ParsedRegion, ImageError> {
-    let mask = poly.mask(target_coords, full_shape)?;
-    let mut min_pt = full_shape.to_vec();
-    let mut max_pt = vec![0usize; full_shape.len()];
-    let mut any_true = false;
-    for (idx, &valid) in mask.indexed_iter() {
-        if valid {
-            any_true = true;
-            for (ax, &pos) in idx.slice().iter().enumerate() {
-                min_pt[ax] = min_pt[ax].min(pos);
-                max_pt[ax] = max_pt[ax].max(pos);
-            }
-        }
-    }
-    if !any_true {
-        return Err(ImageError::CasaSelection(format!(
-            "saved region '{region_name}' selects no pixels in image"
-        )));
-    }
-    let shape: Vec<usize> = min_pt
-        .iter()
-        .zip(max_pt.iter())
-        .map(|(lo, hi)| hi - lo + 1)
-        .collect();
+    let plane = poly
+        .lattice_plane(target_coords, full_shape)?
+        .ok_or_else(|| {
+            ImageError::CasaSelection(format!(
+                "saved region '{region_name}' selects no pixels in image"
+            ))
+        })?;
+    let axes = poly.pixel_axes;
+    let bounds = plane.section(full_shape, axes);
     Ok(ParsedRegion {
         is_compound,
         is_crtf: false,
         shapes: Vec::new(),
-        saved_mask: Some(SavedRegionMask::Whole(mask)),
-        saved_bounds: Some((min_pt, shape)),
+        saved_mask: Some(SavedRegionMask::Polygon { axes, plane }),
+        saved_bounds: Some(bounds),
         stride: None,
     })
 }

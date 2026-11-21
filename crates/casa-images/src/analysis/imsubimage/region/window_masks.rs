@@ -1,11 +1,35 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_types::ArrayD;
-use ndarray::{Axis, IxDyn, Slice, Zip};
+use ndarray::{Axis, Dimension, IxDyn, Zip};
 
-use super::{SavedRegionMask, SubimageSelection, shape_contains};
+use super::{SavedRegionMask, SubimageSelection, shape_candidate_bounds, shape_contains};
 
 impl SubimageSelection {
+    pub(in crate::analysis::imsubimage) fn overlaps_window(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+    ) -> bool {
+        if self.spatial_shapes.is_empty() && self.saved_mask.is_none() {
+            return true;
+        }
+        let [x, y] = self.plane;
+        let overlaps_spatial = self.spatial_shapes.iter().any(|candidate| {
+            let (x0, y0, x1, y1) = shape_candidate_bounds(
+                candidate,
+                self.start[x] + self.shape[x],
+                self.start[y] + self.shape[y],
+            );
+            start[x] <= x1 && start[x] + shape[x] > x0 && start[y] <= y1 && start[y] + shape[y] > y0
+        });
+        overlaps_spatial
+            || self.saved_mask.as_ref().is_some_and(|saved| match saved {
+                SavedRegionMask::Compound(compound) => compound.overlaps(start, shape),
+                SavedRegionMask::Polygon { .. } => true,
+            })
+    }
+
     pub(in crate::analysis) fn apply_selection_masks(&self, mask: &mut Option<ArrayD<bool>>) {
         self.apply_window_masks(mask, &self.start, &self.shape);
     }
@@ -17,27 +41,29 @@ impl SubimageSelection {
         shape: &[usize],
     ) {
         let [px, py] = self.plane;
-        let box_mask = self.spatial_mask.as_ref().map(|spatial| {
-            let x = start[px] - self.start[px];
-            let y = start[py] - self.start[py];
-            ArrayD::from_shape_fn(IxDyn(shape), |idx| spatial[[x + idx[px], y + idx[py]]])
-        });
-        let region_mask = self.saved_mask.as_ref().map(|saved| {
-            let (pixels, cropped) = match saved {
-                SavedRegionMask::Whole(pixels) => (pixels, false),
-                SavedRegionMask::Cropped(pixels) => (pixels, true),
-            };
-            pixels
-                .slice_each_axis(|axis| {
-                    let index = axis.axis.index();
-                    let offset = if cropped {
-                        start[index] - self.start[index]
-                    } else {
-                        start[index]
-                    };
-                    Slice::from(offset..offset + shape[index])
+        let box_mask = (!self.spatial_shapes.is_empty()).then(|| {
+            ArrayD::from_shape_fn(IxDyn(shape), |idx| {
+                self.spatial_shapes.iter().any(|spatial| {
+                    shape_contains(spatial, start[px] + idx[px], start[py] + idx[py])
                 })
-                .to_owned()
+            })
+        });
+        let region_mask = self.saved_mask.as_ref().map(|saved| match saved {
+            SavedRegionMask::Polygon {
+                axes: [x, y],
+                plane,
+            } => ArrayD::from_shape_fn(IxDyn(shape), |idx| {
+                plane.contains(start[*x] + idx[*x], start[*y] + idx[*y])
+            }),
+            SavedRegionMask::Compound(region) => {
+                let mut pixel = start.to_vec();
+                ArrayD::from_shape_fn(IxDyn(shape), |idx| {
+                    for ((pixel, &start), &offset) in pixel.iter_mut().zip(start).zip(idx.slice()) {
+                        *pixel = start + offset;
+                    }
+                    region.contains(&mut pixel)
+                })
+            }
         });
 
         match (box_mask, region_mask) {
@@ -48,7 +74,11 @@ impl SubimageSelection {
                     and_mask(mask, &bm);
                 }
             }
-            (Some(bm), None) => and_mask(mask, &bm),
+            (Some(bm), None) => {
+                if !bm.iter().all(|&v| v) {
+                    and_mask(mask, &bm);
+                }
+            }
             (None, Some(pm)) => {
                 if !pm.iter().all(|&v| v) {
                     and_mask(mask, &pm);
@@ -77,16 +107,18 @@ impl SubimageSelection {
             }
         }
 
-        if let (Some(ax), Some(indices)) = (self.channel_axis, &self.channel_indices)
-            && indices.len() != self.shape[ax]
+        if let Some(ax) = self.channel_axis
+            && !self.channel_spans.is_empty()
         {
-            mask_skipped_axis(mask, shape, ax, start[ax], indices);
+            mask_skipped_axis(mask, shape, ax, start[ax], |channel| {
+                self.channel_spans.iter().any(|span| span.contains(channel))
+            });
         }
 
         if let (Some(ax), Some(indices)) = (self.stokes_axis, &self.stokes_indices)
             && indices.len() != self.shape[ax]
         {
-            mask_skipped_axis(mask, shape, ax, start[ax], indices);
+            mask_skipped_axis(mask, shape, ax, start[ax], |index| indices.contains(&index));
         }
     }
 }
@@ -106,13 +138,13 @@ fn mask_skipped_axis(
     shape: &[usize],
     axis: usize,
     start: usize,
-    kept: &[usize],
+    kept: impl Fn(usize) -> bool,
 ) {
     let mut m = mask
         .take()
         .unwrap_or_else(|| ArrayD::from_elem(IxDyn(shape), true));
     for (local, mut slice) in m.axis_iter_mut(Axis(axis)).enumerate() {
-        if !kept.contains(&(start + local)) {
+        if !kept(start + local) {
             slice.fill(false);
         }
     }
