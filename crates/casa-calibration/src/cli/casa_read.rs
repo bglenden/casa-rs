@@ -184,6 +184,42 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
     })
 }
 
+pub(super) fn leakage_request(
+    task: &TaskInvocation<'_>,
+    vis: &Path,
+) -> Result<crate::solve::grouping::leakage::LeakageSolveRequest, TaskFailure> {
+    use crate::solve::grouping::leakage::{LeakageSolveKind, LeakageSolveRequest};
+
+    let poltype = task.required_text("poltype")?;
+    let kind = match poltype.as_str() {
+        "Dlls" => LeakageSolveKind::Dlls,
+        "Dflls" => LeakageSolveKind::Dflls,
+        _ => {
+            return Err(TaskFailure::validation(format!(
+                "poltype={poltype:?} is under implementation in #1522"
+            ))
+            .at("poltype"));
+        }
+    };
+    let (model_source, stokes) = model(task, vis, true)?;
+    let interval = selector_text(task.value("solint")).unwrap_or_default();
+    let (time, frequency) = interval.split_once(',').unwrap_or((&interval, ""));
+    Ok(LeakageSolveRequest {
+        output: PathBuf::from(task.required_text("caltable")?),
+        selection: selection(task)?,
+        kind,
+        model_source,
+        stokes,
+        priors: chain(task, Chain::Solve)?,
+        interval: parse_time_solint(time)?,
+        frequency_interval: parse_frequency_solint(frequency)?,
+        combine: combine(task)?,
+        preaverage_seconds: task.number("preavg")?,
+        refant: bandpass_refant(&task.required_text("refant")?),
+        append: task.flag("append")?,
+    })
+}
+
 /// `minsnr`, which CASA takes as any number; casa-rs takes it finite and
 /// not negative.
 fn min_snr(task: &TaskInvocation<'_>) -> Result<f32, TaskFailure> {

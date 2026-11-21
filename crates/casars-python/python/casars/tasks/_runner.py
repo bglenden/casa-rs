@@ -267,6 +267,14 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_applycal(values)
     if name == "polfromgain":
         return _call_polfromgain(values, arguments)
+    if name == "polcal":
+        _validate_required_path(values, "vis", arguments["vis"], search_data=True)
+        try:
+            return run(name, **values).value
+        except TaskParameterError as error:
+            if error.completion.parameter == "solint":
+                raise RuntimeError("Error in Calibrater::setsolve.") from error
+            raise
     if name == "gencal":
         return _call_gencal(values)
     if name == "getantposalma":

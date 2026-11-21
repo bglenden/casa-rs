@@ -7290,6 +7290,21 @@ CASA to abort with `ArrayShapeError`. Casa-rs returns a catchable error with
 the offending calibration row and shape.
 [Paired oracle](../tools/casa-compat/calibration_leakage_apply_oracle.py)
 
+## `polcal` can change the measured cross-hands when referencing a singular leakage fit
+
+CASA 6.7.6.14's `Dlls` solver calls `LSQFit::invert` with rank-deficient
+factorization disabled and continues to solve if the factorization fails.
+It then subtracts the reference antenna's first leakage term and adds its
+conjugate to the second receptor. This offset can change the fitted visibilities
+when the parallel-hand model amplitudes differ.
+
+For the paired linear-feed `solint='int'` fixture, the CASA table gives a
+cross-hand normalized RMS residual of 0.209 against the planted measurements.
+Casa-rs resolves the rank deficiency with the requested first-receptor
+reference constraint in the fit and gives a residual of 8.60e-7. Both fits
+preserve the requested zero first receptor on the reference antenna.
+[Paired oracle](../tools/casa-compat/polcal_leakage_solve_oracle.py)
+
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
 In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet

@@ -63,7 +63,10 @@ impl Leakage {
     }
 }
 
-fn coherency_order(ddid: i32, correlations: &[i32]) -> Result<[usize; 4], ApplyExecutionError> {
+pub(crate) fn coherency_order(
+    ddid: i32,
+    correlations: &[i32],
+) -> Result<[usize; 4], ApplyExecutionError> {
     for codes in [[5, 6, 7, 8], [9, 10, 11, 12]] {
         let indices = codes.map(|code| correlations.iter().position(|&value| value == code));
         if correlations.len() == 4

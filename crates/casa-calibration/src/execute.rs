@@ -71,6 +71,7 @@ mod chain;
 mod channels;
 pub(crate) mod parang;
 mod polarization;
+pub(crate) use polarization::coherency_order;
 mod solve_priors;
 mod switched_power;
 pub(crate) mod tsys_weights;

@@ -18,6 +18,7 @@ pub(crate) enum PriorSolveBoundary {
     Delay,
     Gain,
     ScalarGain,
+    Leakage,
 }
 
 impl PriorSolveBoundary {
@@ -27,6 +28,7 @@ impl PriorSolveBoundary {
             Self::Delay => "K Jones",
             Self::Gain => "G Jones",
             Self::ScalarGain => "T Jones",
+            Self::Leakage => "D Jones",
         })
     }
 }
@@ -122,7 +124,7 @@ pub(crate) fn evaluate_solve_priors(
     boundary: PriorSolveBoundary,
     share_input_flags: bool,
 ) -> Result<PreappliedRows, ApplyExecutionError> {
-    let polarized = has_leakage(&plan);
+    let polarized = matches!(boundary, PriorSolveBoundary::Leakage) || has_leakage(&plan);
     if !polarized
         && matches!(
             boundary,
@@ -152,7 +154,16 @@ pub(crate) fn evaluate_solve_priors(
         polarized && plan.parang && viscal_order("P Jones") >= boundary.viscal_order();
     plan.parang &= !forward_parang;
     plan.calibration_tables = data_tables;
-    let mut rows = evaluate_apply_rows(ms, &plan, share_input_flags)?;
+    let mut rows = if matches!(boundary, PriorSolveBoundary::Leakage)
+        && plan.calibration_tables.is_empty()
+        && !plan.parang
+    {
+        // The leakage solver reads uncorrected DATA with its regular batch of
+        // model and weight cells when all terms apply on the model side.
+        HashMap::new()
+    } else {
+        evaluate_apply_rows(ms, &plan, share_input_flags)?
+    };
     if model_tables.is_empty() && !forward_parang {
         return Ok(PreappliedRows {
             data: rows,

@@ -81,6 +81,35 @@ pub fn solve_least_squares<const N: usize>(rows: &[([f64; N], f64)]) -> Option<[
     fit.as_slice().try_into().ok()
 }
 
+/// Solve complex normal equations from a row-major square matrix and right-hand side.
+/// Apply the casacore normal-equation collinearity scale and return the
+/// minimum-norm solution and numerical rank when coefficients are underdetermined.
+#[must_use]
+pub fn solve_complex_normal_equations(
+    coefficients: &[num_complex::Complex64],
+    observations: &[num_complex::Complex64],
+) -> Option<(Vec<num_complex::Complex64>, usize)> {
+    let size = observations.len();
+    if size == 0 || coefficients.len() != size.checked_mul(size)? {
+        return None;
+    }
+    let normal = DMatrix::from_row_slice(size, size, coefficients);
+    let vector = DVector::from_column_slice(observations);
+    let decomposition = normal.svd(true, true);
+    let largest = decomposition.singular_values.max();
+    // LSQFit compares a squared normal-equation pivot divided by the
+    // original diagonal against 1e-12. Normal-equation singular values
+    // below this scale are not supported by the measured coherencies.
+    let tolerance = (largest * size as f64 * f64::EPSILON).max(largest.sqrt() * 1.0e-6);
+    let rank = decomposition
+        .singular_values
+        .iter()
+        .filter(|&&value| value > tolerance)
+        .count();
+    let solution = decomposition.solve(&vector, tolerance).ok()?;
+    Some((solution.as_slice().to_vec(), rank))
+}
+
 /// Solve a symmetric system with casacore `LSQFit` ordering.
 ///
 /// The input matrix must contain the symmetric system in its upper triangle.

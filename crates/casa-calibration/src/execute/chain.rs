@@ -39,7 +39,7 @@ impl ApplyChain {
             .map(ApplyStep::Table)
             .chain(parang.as_ref().map(|_| ApplyStep::ParallacticAngle))
             .collect::<Vec<_>>();
-        if has_leakage(plan) {
+        if has_leakage(plan) || (forward_model && plan.parang) {
             steps.sort_by_key(|step| match step {
                 ApplyStep::Table(index) => {
                     viscal_order(&plan.calibration_tables[*index].summary.table_subtype)
