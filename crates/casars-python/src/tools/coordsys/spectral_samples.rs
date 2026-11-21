@@ -52,7 +52,7 @@ fn record_samples(record: &RecordValue) -> Result<Samples, String> {
     };
     Ok(Samples {
         values,
-        unit: casacore::casacore_unit(unit)?,
+        unit: casacore::casacore_unit(unit).map_err(|error| error.to_string())?,
     })
 }
 
@@ -195,7 +195,7 @@ fn sampled_coordinate(
                 .resolve(doppler)
                 .and_then(|code| doppler_ref(code).ok())
                 .ok_or_else(|| raised(format!("Invalid doppler '{doppler}'")))?;
-            let native = if convention == DopplerRef::OPTICAL {
+            let native = if convention == DopplerRef::Z {
                 SpectralNativeType::OpticalVelocity
             } else {
                 SpectralNativeType::RadioVelocity
