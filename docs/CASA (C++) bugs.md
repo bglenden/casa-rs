@@ -8587,3 +8587,11 @@ removing that intercept and can raise `IndexError`. casa-rs uses zero
 spectral index for this constant fit. The local oracle compares the
 corrected cases with equivalent CASA manual models and checks preservation
 of the input model. [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## Listing the Butler–JPL Horizons 2010 objects in setjy raises before displaying them
+
+With `listmodels=True` and `standard="Butler-JPL-Horizons 2010"`, CASA
+6.7.6.14 calls an unavailable `logsink.posta` method and raises
+`AttributeError`. The object names are already defined in the task.
+casa-rs displays that list and returns the empty listing result without
+opening a MeasurementSet. [#1519](https://github.com/bglenden/casa-rs/issues/1519)

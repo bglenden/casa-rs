@@ -28,17 +28,10 @@ pub(super) fn run(
     selected: &ResolvedMsSelection,
     scratch: bool,
 ) -> Result<CasaValue, TaskFailure> {
-    for parameter in ["model", "listmodels"] {
-        let specified = match parameter {
-            "model" => task.text(parameter)?.is_some_and(|model| !model.is_empty()),
-            _ => task.flag(parameter)?,
-        };
-        if specified {
-            return Err(
-                TaskFailure::validation("this setjy model configuration is pending #1519")
-                    .at(parameter),
-            );
-        }
+    if task.text("model")?.is_some_and(|model| !model.is_empty()) {
+        return Err(
+            TaskFailure::validation("this setjy model configuration is pending #1519").at("model"),
+        );
     }
     let dictionary = FluxDictionary::new(task.value("fluxdict"))?;
     let selected_fields = selected

@@ -32,6 +32,7 @@ use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
 
 mod fluxdict;
+mod model_files;
 
 enum FluxParameters {
     Manual(ManualFlux),
@@ -44,6 +45,9 @@ enum FluxParameters {
 type FieldModels = BTreeMap<i32, Vec<VirtualModelEntry>>;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if task.flag("listmodels")? {
+        return model_files::list(task);
+    }
     let path = task.input_path("vis")?;
     if super::multi_ms::partition_paths(&path)?.is_some() {
         return Err(TaskFailure::validation("setjy on a Multi-MS is pending #1519").at("vis"));
@@ -209,9 +213,6 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
         Some("Stevens-Reynolds 2016") => Some(FluxScale::Fixed(FixedScale::StevensReynolds2016)),
         _ => return Err(pending("standard")),
     };
-    if task.flag("listmodels")? {
-        return Err(pending("listmodels"));
-    }
     if task.text("model")?.is_some_and(|model| !model.is_empty()) {
         return Err(pending("model"));
     }
