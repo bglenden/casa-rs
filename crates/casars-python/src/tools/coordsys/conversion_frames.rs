@@ -18,6 +18,10 @@ use super::{CoordinateState, PyCoordsys};
 pub(super) struct FrameName(Option<String>);
 
 impl FrameName {
+    pub(super) fn direction_default() -> Self {
+        Self(Some("direction".into()))
+    }
+
     pub(super) fn into_name(self, argument: &str) -> PyResult<String> {
         self.0
             .ok_or_else(|| PyTypeError::new_err(format!("argument _{argument} must be a string")))

@@ -4,9 +4,44 @@ use casa_types::measures::direction::DirectionRef;
 
 use crate::CoordinateError;
 
-use super::DirectionCoordinate;
+use super::{DirectionCoordinate, theta_0_for_projection};
 
 impl DirectionCoordinate {
+    /// Rebuild the projection in a native frame with the supplied reference
+    /// angles in radians, retaining the pixel origin, increments and PC.
+    ///
+    /// # Errors
+    /// Returns an error if the PC matrix cannot be normalized or the
+    /// reference angles cannot be represented with the projection's pole.
+    pub fn with_reassigned_reference_frame(
+        &self,
+        frame: DirectionRef,
+        reference: [f64; 2],
+    ) -> Result<Self, CoordinateError> {
+        // WCSLIB retains LONPOLE when casacore changes only CRVAL. A
+        // projection whose fiducial point is on the native equator cannot
+        // cross the celestial equator with the old pole longitude.
+        if theta_0_for_projection(&self.projection) == 0.0
+            && (self.crval[1] >= 0.0) != (reference[1] >= 0.0)
+            && reference[1].abs() > 1.0e-12
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "wcs wcsset_error: Ill-conditioned coordinate transformation parameter".into(),
+            ));
+        }
+        let mut coordinate = Self::new(
+            frame,
+            self.projection.clone(),
+            self.crval,
+            self.cdelt,
+            self.crpix,
+        )
+        .with_normalized_pc_matrix(self.pc.clone())?
+        .with_reference_value(reference);
+        coordinate.latpole = coordinate.native_pole[1];
+        Ok(coordinate)
+    }
+
     /// Rebuild the direction coordinate in a new native reference frame.
     ///
     /// Keep the projection, pixel origin, and angular increments. The new
