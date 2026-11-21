@@ -7,7 +7,7 @@
 //! on the one-relative `pixelAxes`, and a union holds its members as `*1`,
 //! `*2`, … under `regions`, with their count in `regions.nr`.
 
-use casa_coordinates::{CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -251,13 +251,7 @@ fn parse_wc_polygon_record(
             "saved region '{saved_name}' is missing coordinates"
         )));
     };
-    let saved_coords = match CoordinateSystem::from_record(coords_record) {
-        Err(CoordinateError::UnsupportedAxisLayout(_)) => {
-            CoordinateSystem::from_mapped_record(coords_record)
-        }
-        result => result,
-    }
-    .map_err(|error| {
+    let saved_coords = CoordinateSystem::from_record(coords_record).map_err(|error| {
         ImageError::InvalidMetadata(format!(
             "saved region '{saved_name}' has unreadable coordinates: {error}"
         ))

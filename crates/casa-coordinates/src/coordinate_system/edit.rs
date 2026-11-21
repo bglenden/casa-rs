@@ -6,15 +6,6 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use super::{CoordinateSystem, RecordCoordinate};
 use crate::{Coordinate, CoordinateError, CoordinateType, ProjectionType};
 
-fn read_edit_layout(record: &RecordValue) -> Result<CoordinateSystem, CoordinateError> {
-    match CoordinateSystem::from_record(record) {
-        Err(CoordinateError::UnsupportedAxisLayout(_)) => {
-            CoordinateSystem::from_mapped_record(record)
-        }
-        result => result,
-    }
-}
-
 fn recorded_axis(
     coordinates: &[RecordCoordinate],
     axis: usize,
@@ -397,7 +388,7 @@ impl CoordinateSystem {
             DirectionRef, MDirection, casa_direction_frame_name,
         };
         use std::str::FromStr;
-        let system = read_edit_layout(record)?;
+        let system = Self::from_record(record)?;
         if system
             .coordinates_in_record(record)?
             .iter()
@@ -457,7 +448,7 @@ impl CoordinateSystem {
                 Value::Scalar(ScalarValue::String(conversion.as_str().into())),
             );
         }
-        let system = read_edit_layout(&updated)?;
+        let system = Self::from_record(&updated)?;
         *record = updated;
         Ok((system, Some(old.as_str().to_string())))
     }
@@ -475,7 +466,7 @@ impl CoordinateSystem {
         pixel_axis: usize,
         names: &[String],
     ) -> Result<(Self, Vec<String>), CoordinateError> {
-        let system = read_edit_layout(record)?;
+        let system = Self::from_record(record)?;
         let coordinates = system.coordinates_in_record(record)?;
         if coordinates
             .iter()
@@ -537,7 +528,7 @@ impl CoordinateSystem {
             &coordinate.field,
             Value::Record(crate::StokesCoordinate::new(types).to_record()),
         );
-        let system = read_edit_layout(&updated)?;
+        let system = Self::from_record(&updated)?;
         *record = updated;
         Ok((system, old_names))
     }
@@ -556,7 +547,7 @@ impl CoordinateSystem {
         record: &mut RecordValue,
         projection: &str,
     ) -> Result<(Self, Option<String>), CoordinateError> {
-        let system = read_edit_layout(record)?;
+        let system = Self::from_record(record)?;
         if system
             .coordinates_in_record(record)?
             .iter()
@@ -601,7 +592,7 @@ impl CoordinateSystem {
             Value::Array(ArrayValue::from_f64_vec(parameters)),
         );
         refresh_direction_pole(direction)?;
-        let system = read_edit_layout(&updated)?;
+        let system = Self::from_record(&updated)?;
         *record = updated;
         Ok((system, Some(old)))
     }
@@ -621,7 +612,7 @@ impl CoordinateSystem {
     ) -> Result<(Self, Option<String>), CoordinateError> {
         use casa_types::measures::frequency::CasaFrequencyFrame;
         use std::str::FromStr;
-        let system = read_edit_layout(record)?;
+        let system = Self::from_record(record)?;
         let (field, spectral) = Self::first_spectral_in_record(record)?
             .ok_or_else(|| CoordinateError::InvalidRecord("no spectral coordinate".into()))?;
         let old = if spectral.has_undefined_frame() {
@@ -666,7 +657,7 @@ impl CoordinateSystem {
                 Value::Scalar(ScalarValue::String(canonical.into())),
             );
         }
-        let system = read_edit_layout(&updated)?;
+        let system = Self::from_record(&updated)?;
         *record = updated;
         Ok((system, Some(old)))
     }
@@ -707,7 +698,7 @@ impl CoordinateSystem {
         pixel: bool,
     ) -> Result<(Self, String), CoordinateError> {
         use casa_types::quanta::casacore::casacore_unit;
-        let system = read_edit_layout(record)?;
+        let system = Self::from_record(record)?;
         let naxes = if pixel {
             system.n_pixel_axes()
         } else {
@@ -831,7 +822,7 @@ impl CoordinateSystem {
             })?;
             *axis_unit = unit.into();
         }
-        let system = read_edit_layout(&updated)?;
+        let system = Self::from_record(&updated)?;
         for index in 0..system.n_coordinates() {
             if let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
                 && direction.increment().iter().any(|value| !value.is_normal())
@@ -883,7 +874,7 @@ impl CoordinateSystem {
                 .expect("selected frequency exists") = value;
         }
         spectral.upsert("restfreq", Value::Scalar(ScalarValue::Float64(value)));
-        let system = read_edit_layout(&updated)?;
+        let system = Self::from_record(&updated)?;
         *record = updated;
         Ok((system, old))
     }
@@ -922,7 +913,7 @@ impl CoordinateSystem {
         name: &str,
         pixel: bool,
     ) -> Result<(Self, String), CoordinateError> {
-        let system = read_edit_layout(record)?;
+        let system = Self::from_record(record)?;
         let naxes = if pixel {
             system.n_pixel_axes()
         } else {
@@ -972,7 +963,7 @@ impl CoordinateSystem {
             })?;
             *axis_name = name.into();
         }
-        let system = read_edit_layout(&updated)?;
+        let system = Self::from_record(&updated)?;
         *record = updated;
         Ok((system, old))
     }
@@ -1068,7 +1059,7 @@ impl CoordinateSystem {
                 "coordinate value must be finite".into(),
             ));
         }
-        let system = read_edit_layout(record)?;
+        let system = Self::from_record(record)?;
         let coordinates = system.coordinates_in_record(record)?;
         let naxes = if pixel {
             system.n_pixel_axes()
@@ -1139,7 +1130,7 @@ impl CoordinateSystem {
             if field == "crval" {
                 rebuild_directions(&mut updated, &direction_fields)?;
             }
-            let system = read_edit_layout(&updated)?;
+            let system = Self::from_record(&updated)?;
             *record = updated;
             return Ok((system, old));
         }
@@ -1152,7 +1143,7 @@ impl CoordinateSystem {
             if field == "crval" {
                 rebuild_directions(&mut updated, &direction_fields)?;
             }
-            let system = read_edit_layout(&updated)?;
+            let system = Self::from_record(&updated)?;
             *record = updated;
             return Ok((system, old));
         }
@@ -1204,7 +1195,7 @@ impl CoordinateSystem {
         if field == "crval" {
             rebuild_directions(&mut updated, &direction_fields)?;
         }
-        let system = read_edit_layout(&updated)?;
+        let system = Self::from_record(&updated)?;
         for index in 0..system.n_coordinates() {
             // WCSLIB accepts latitudes up to 1e-10 degrees beyond a pole.
             let pole_limit =

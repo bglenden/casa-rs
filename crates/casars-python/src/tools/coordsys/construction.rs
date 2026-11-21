@@ -260,13 +260,9 @@ fn replacement(value: &Value, key: &str) -> PyResult<Value> {
 fn restore(mut record: RecordValue, parent_name: String) -> PyResult<CoordinateState> {
     validate_coordinate_indices(&record)?;
     normalize_stokes_records(&mut record)?;
-    let mut coordinates = match CoordinateSystem::from_record(&record) {
-        Err(casa_coordinates::CoordinateError::UnsupportedAxisLayout(_)) => {
-            CoordinateSystem::from_mapped_record(&record)
-        }
-        result => result,
-    }
-    .map_err(|error| raised(error.to_string()))?;
+
+    let mut coordinates =
+        CoordinateSystem::from_record(&record).map_err(|error| raised(error.to_string()))?;
     let info = coordinates.obs_info_mut();
     if record.get("observer").is_none() && info.observer.is_empty() {
         info.observer = "UNKNOWN".into();
