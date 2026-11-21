@@ -79,6 +79,15 @@ pub(crate) fn prepare_empty_calibration_table<'a>(
         CalibrationOutputMode::Replace,
     )
     .map_err(error_text)?;
+    write_standard_calibration_subtables(measurement_set, writer.output_path(), single_channel)?;
+    Ok(writer)
+}
+
+pub(crate) fn write_standard_calibration_subtables(
+    measurement_set: &MeasurementSet,
+    staging: &Path,
+    single_channel: Option<SingleChannelFrequency>,
+) -> Result<(), String> {
     let mut template =
         MeasurementSet::create_memory(MeasurementSetBuilder::new()).map_err(error_text)?;
     for id in [
@@ -99,14 +108,14 @@ pub(crate) fn prepare_empty_calibration_table<'a>(
             }
         }
         table
-            .save(TableOptions::new(writer.output_path().join(id.name())))
+            .save(TableOptions::new(staging.join(id.name())))
             .map_err(error_text)?;
     }
     if let Some(frequency) = single_channel {
-        make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"), frequency)
+        make_windows_single_channel(&staging.join("SPECTRAL_WINDOW"), frequency)
             .map_err(error_text)?;
     }
-    Ok(writer)
+    Ok(())
 }
 
 fn overlaps_measurement_set(ms: &MeasurementSet, destination: &Path) -> Result<bool, String> {

@@ -904,10 +904,10 @@ pub(crate) fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, GencalError> {
-    if matches!(
-        request.caltype,
-        GencalType::Antpos | GencalType::Tecim | GencalType::Eop
-    ) {
+    if request.caltype == GencalType::Eop {
+        return Ok(eop::input_paths(&request.measurement_set, infile));
+    }
+    if matches!(request.caltype, GencalType::Antpos | GencalType::Tecim) {
         return Ok(infile.into_iter().map(Path::to_path_buf).collect());
     }
     if request.caltype == GencalType::Tsys {
@@ -1074,19 +1074,27 @@ fn write_prior_caltable(
         writer.append(record)?;
     }
 
-    writer.copy_subtables(&[
-        (SubtableId::Observation, "OBSERVATION"),
-        (SubtableId::Antenna, "ANTENNA"),
-        (SubtableId::Field, "FIELD"),
-        (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
-        (SubtableId::History, "HISTORY"),
-    ])?;
-    write_spectral_axis(
-        &writer.output_path().join("SPECTRAL_WINDOW"),
-        rows,
-        collapse_spw,
-        request.caltype == GencalType::Eop,
-    )?;
+    if request.caltype == GencalType::Eop {
+        crate::table_maintenance::write_standard_calibration_subtables(
+            ms,
+            writer.output_path(),
+            Some(crate::writer::SingleChannelFrequency::MiddleChannel),
+        )
+        .map_err(GencalError::InvalidRequest)?;
+    } else {
+        writer.copy_subtables(&[
+            (SubtableId::Observation, "OBSERVATION"),
+            (SubtableId::Antenna, "ANTENNA"),
+            (SubtableId::Field, "FIELD"),
+            (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
+            (SubtableId::History, "HISTORY"),
+        ])?;
+        write_spectral_axis(
+            &writer.output_path().join("SPECTRAL_WINDOW"),
+            rows,
+            collapse_spw,
+        )?;
+    }
     writer.save_main()?;
 
     let spectral_window_ids = rows
@@ -1167,7 +1175,6 @@ fn write_spectral_axis(
     path: &Path,
     solutions: &[PriorCalRow],
     collapse: bool,
-    center_channel: bool,
 ) -> Result<(), GencalError> {
     let mut table = Table::open(TableOptions::new(path))
         .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
@@ -1197,19 +1204,12 @@ fn write_spectral_axis(
                     "SPECTRAL_WINDOW row {row} has empty {column}"
                 )));
             }
-            let value = if center_channel && column == "CHAN_FREQ" {
-                *values
-                    .iter()
-                    .nth(values.len() / 2)
-                    .expect("nonempty channel axis")
-            } else {
-                values.iter().sum::<f64>()
-                    / if column == "CHAN_FREQ" {
-                        values.len() as f64
-                    } else {
-                        1.
-                    }
-            };
+            let value = values.iter().sum::<f64>()
+                / if column == "CHAN_FREQ" {
+                    values.len() as f64
+                } else {
+                    1.
+                };
             if column == "CHAN_WIDTH" {
                 table
                     .cell_accessor_mut(row, "TOTAL_BANDWIDTH")

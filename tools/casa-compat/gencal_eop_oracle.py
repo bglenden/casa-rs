@@ -8,6 +8,7 @@ from pathlib import Path
 
 import casatasks as casa
 from casacore.tables import makearrcoldesc, makescacoldesc, maketabdesc, table
+import erfa
 import numpy as np
 
 from applycal_oracle import copy_ms
@@ -46,7 +47,7 @@ def inputs(work, day):
               for row in range(3)]
     c04 = work/'iers-c04.txt'
     c04.write_text('# Revised IERS rows\n' + ''.join(
-        f'2020 01 01  {date:7d} {x:10.6f} {y:10.6f} {ut1:11.7f}\n'
+        f'2020 01 01  {date:7d} {x:10.6f} {y:10.6f} {ut1:.4f}\n'
         for date, x, y, ut1 in values))
     products = {'c04': c04, 'installed': None}
     for label, (width, seconds) in (('2.0', (7, 9)), ('2.1', (8, 11))):
@@ -181,6 +182,115 @@ def check_publication(work, vis, engines, calibration):
                 assert not product.exists()
 
 
+def check_observation_isolation(work, vis, engines, source):
+    ms = work/'bad-observation.ms'
+    copy_ms(vis, ms)
+    with opened(ms/'OBSERVATION', True) as observations:
+        observations.addrows(1)
+        for name in observations.colnames():
+            if observations.iscelldefined(name, 0):
+                observations.putcell(name, 1, observations.getcell(name, 0))
+    with opened(ms, True) as main:
+        scan = main.getcol('SCAN_NUMBER')
+        main.putcol('OBSERVATION_ID', (scan == scan.max()).astype(np.int32))
+    with opened(ms/'EARTH_ORIENTATION', True) as recorded:
+        index = recorded.nrows()
+        recorded.addrows(1)
+        recorded.putcell('TIME', index, recorded.getcell('TIME', 0))
+        recorded.putcell('OBSERVATION_ID', index, 1)
+        recorded.putcell('PM', index, np.array([.001]))
+        recorded.putcell('UT1_UTC', index, -.16)
+    products = {label: work/f'{label}-bad-observation.cal' for label in engines}
+    for label, api in engines.items():
+        assert api.gencal(str(ms), str(products[label]), 'eop', str(source)) is None
+        with opened(products[label]) as result:
+            assert result.nrows() > 0
+            np.testing.assert_array_equal(result.getcol('OBSERVATION_ID'), 0)
+    compare_mapping(columns(products['native']), columns(products['casa']), False)
+
+
+def check_late_epochs(work, vis, day, engines):
+    ms = work/'late-epoch.ms'
+    copy_ms(vis, ms)
+    days = np.arange(day - 5, day + 2)
+    old = np.array([.11, .12, .13, .14, .15, .16, .17])
+    updated = old + np.array([.02, .03, .03, .04, .07, .17, .19])
+    source = work/'late-epoch.c04'
+    source.write_text('# Revised IERS rows\n' + ''.join(
+        f'2020 01 01  {date:7d} {x:10.6f} {.32:10.6f} {-.16:11.7f}\n'
+        for date, x in zip(days, updated)))
+    arcsec = np.deg2rad(1./3600.)
+    with opened(ms/'EARTH_ORIENTATION', True) as recorded:
+        recorded.addrows(len(days) - recorded.nrows())
+        for row, (date, x) in enumerate(zip(days, old)):
+            recorded.putcell('TIME', row, date * 86400.)
+            recorded.putcell('OBSERVATION_ID', row, 0)
+            recorded.putcell('PM', row, np.array([x, .32])*arcsec)
+            recorded.putcell('UT1_UTC', row, -.16)
+    delays = {}
+    for label, api in engines.items():
+        out = work/f'{label}-late-epoch.cal'
+        assert api.gencal(str(ms), str(out), 'eop', str(source)) is None
+        with opened(out) as result:
+            when = result.getcell('TIME', 0)/86400.
+            antenna = result.getcell('ANTENNA1', 0)
+            field = result.getcell('FIELD_ID', 0)
+            delays[label] = result.getcell('FPARAM', 0).ravel()[1]
+    assert day <= when < day + 1
+    with opened(ms/'FIELD') as fields, opened(ms/'ANTENNA') as antennas:
+        lon, lat = fields.getcell('PHASE_DIR', field).ravel()
+        pos = antennas.getcell('POSITION', antenna)
+    direction = erfa.s2c(lon, lat)
+    tt = erfa.taitt(*erfa.utctai(2400000.5, when))
+    def matrix(x):
+        return erfa.c2t00a(*tt, 2400000.5 + when, -.16/86400., x*arcsec, .32*arcsec)
+    expected = pos @ (
+        matrix(np.interp(when, days, updated)) - matrix(np.interp(when, days, old))
+    ) @ direction * (1e9 / 299792458.)
+    np.testing.assert_allclose(delays['native'], expected, rtol=2e-6)
+    assert abs(delays['casa'] - expected) > .2 * abs(expected)
+
+
+def check_moving_field_and_spectral_metadata(work, vis, engines, source):
+    from casaconfig import config
+    from casatools import ms as ms_tool
+
+    dataset = work/'moving-field.ms'
+    copy_ms(vis, dataset)
+    with opened(dataset) as main, opened(dataset/'FIELD', True) as fields:
+        fields.putcell('TIME', 0, main.getcol('TIME').min())
+        for column in ('DELAY_DIR', 'PHASE_DIR', 'REFERENCE_DIR'):
+            fields.putcell(column, 0, np.array([[1e-6], [-2e-6]]))
+    ephemeris = (Path(config.measurespath)/'ephemerides'/'JPL-Horizons'
+                 /'Uranus_55197-59214dUTC_J2000.tab')
+    tool = ms_tool()
+    assert tool.open(str(dataset), nomodify=False)
+    try:
+        assert tool.addephemeris(0, str(ephemeris), 'Uranus', [0])
+    finally:
+        tool.done()
+    with opened(dataset/'SPECTRAL_WINDOW', True) as spectral:
+        spectral.putcell('CHAN_FREQ', 0, spectral.getcell('CHAN_FREQ', 0)[::-1])
+        spectral.putcell('CHAN_WIDTH', 0, np.full(4, -2e6))
+        spectral.putcell('EFFECTIVE_BW', 0, np.full(4, 1e6))
+        spectral.putcell('RESOLUTION', 0, np.full(4, 3e6))
+        spectral.putcell('TOTAL_BANDWIDTH', 0, 8e6)
+    with opened(dataset/'HISTORY', True) as history:
+        row = history.nrows()
+        history.addrows(1)
+        history.putcell('MESSAGE', row, 'The source history is not part of the calibration table.')
+    products = {label: work/f'{label}-moving-field.cal' for label in engines}
+    for label, api in engines.items():
+        assert api.gencal(str(dataset), str(products[label]), 'eop', str(source)) is None
+    compare_calibration(products['native'], products['casa'])
+    for name, expected in [('PHASE_DIR', 'FIELD'), ('EFFECTIVE_BW', 'SPECTRAL_WINDOW'),
+                           ('RESOLUTION', 'SPECTRAL_WINDOW')]:
+        with opened(products['native']/expected) as actual, opened(products['casa']/expected) as oracle:
+            np.testing.assert_allclose(actual.getcell(name, 0), oracle.getcell(name, 0), rtol=2e-6)
+    with opened(products['native']/'HISTORY') as actual, opened(products['casa']/'HISTORY') as oracle:
+        assert actual.nrows() == oracle.nrows() == 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -192,10 +302,14 @@ def main():
     vis = root/'seed.ms'
     day = seed(vis)
     engines = {'casa':casa, 'native':native}
-    products = generate(root, vis, engines, inputs(root, day))
+    files = inputs(root, day)
+    products = generate(root, vis, engines, files)
     apply_and_solve(root, vis, engines, products['c04'])
     check_rate(root, vis, engines, products['c04']['casa'])
     check_publication(root, vis, engines, products['c04']['casa'])
+    check_observation_isolation(root, vis, engines, files['c04'])
+    check_late_epochs(root, vis, day, engines)
+    check_moving_field_and_spectral_metadata(root, vis, engines, files['c04'])
 
 
 if __name__ == '__main__':

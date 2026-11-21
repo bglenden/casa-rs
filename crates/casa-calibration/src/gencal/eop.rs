@@ -2,14 +2,16 @@
 //! Calibrate a MeasurementSet from the change between recorded and updated EOPs.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_ms::MeasurementSet;
+use casa_ms::derived::engine::MsCalEngine;
 use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use sofars::{
-    pnp::c2t00a,
+    erst::era00,
+    pnp::{c2i00a, c2tcio, pom00, sp00},
     ts::{taitt, taiutc, utctai},
 };
 
@@ -39,24 +41,22 @@ pub(super) fn generate(
     mode: CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
     let ms = open_measurement_set(&request.measurement_set)?;
-    let source = source.filter(|path| *path != Path::new("None"));
-    if let Some(path) = source {
-        refuse_prior_input_overlap(request, path)?;
-    }
-    let default_runtime = if source.is_none() {
-        casa_measures_data::MeasuresRuntime::open_discovered(Default::default()).ok()
+    let source = explicit_source(source);
+    let installed = if source.is_none() {
+        installed_source()
     } else {
         None
     };
+    if let Some(path) = source.or(installed.as_deref()) {
+        refuse_prior_input_overlap(request, path)?;
+    }
+    let recorded = request.measurement_set.join("EARTH_ORIENTATION");
+    refuse_prior_input_overlap(request, &recorded)?;
     let old = recorded_eop(&request.measurement_set);
     let rows = if let Some(old) = old {
-        build_rows(
-            &ms,
-            &old,
-            source,
-            default_runtime.as_ref().map(|runtime| runtime.root()),
-        )?
+        build_rows(&ms, &old, source, installed.as_deref())?
     } else {
+        tracing::warn!(vis = %request.measurement_set.display(), "No recorded Earth orientation");
         Vec::new()
     };
     if rows.is_empty() {
@@ -78,6 +78,25 @@ pub(super) fn generate(
     write_prior_caltable(&ms, request, "Fringe Jones", &rows, output, mode, true)
 }
 
+fn explicit_source(source: Option<&Path>) -> Option<&Path> {
+    source.filter(|path| !path.as_os_str().is_empty() && *path != Path::new("None"))
+}
+
+fn installed_source() -> Option<PathBuf> {
+    let runtime = casa_measures_data::MeasuresRuntime::open_discovered(Default::default()).ok()?;
+    Some(runtime.root().join("geodetic/IERSeop2000"))
+}
+
+pub(super) fn input_paths(ms: &Path, source: Option<&Path>) -> Vec<PathBuf> {
+    let mut paths = vec![ms.join("EARTH_ORIENTATION")];
+    paths.extend(
+        explicit_source(source)
+            .map(Path::to_path_buf)
+            .or_else(installed_source),
+    );
+    paths
+}
+
 fn recorded_eop(path: &Path) -> Option<BTreeMap<i32, Vec<Eop>>> {
     let table = Table::open(TableOptions::new(path.join("EARTH_ORIENTATION"))).ok()?;
     let scalars = table
@@ -91,18 +110,21 @@ fn recorded_eop(path: &Path) -> Option<BTreeMap<i32, Vec<Eop>>> {
         return None;
     };
     let mut result = BTreeMap::<i32, Vec<Eop>>::new();
+    let mut invalid_observations = BTreeSet::new();
     for (index, &time) in times.iter().enumerate() {
-        let cell = table.cell_accessor(index, "PM").ok()?.array().ok()?;
-        let ArrayValue::Float64(values) = cell else {
-            return None;
-        };
-        let row = Eop {
-            mjd: time / DAY,
-            xp_radians: *values.get(ndarray::IxDyn(&[0]))?,
-            yp_radians: *values.get(ndarray::IxDyn(&[1]))?,
-            ut1_utc: dut1[index],
-        };
-        result.entry(observations[index]).or_default().push(row);
+        let observation = observations[index];
+        if let Some(row) = recorded_sample(&table, index, time, dut1[index]) {
+            result.entry(observation).or_default().push(row);
+        } else {
+            invalid_observations.insert(observation);
+        }
+    }
+    for observation in invalid_observations {
+        result.remove(&observation);
+        tracing::warn!(
+            observation,
+            "Invalid recorded Earth orientation for observation"
+        );
     }
     for rows in result.values_mut() {
         sort_epochs(rows);
@@ -110,9 +132,26 @@ fn recorded_eop(path: &Path) -> Option<BTreeMap<i32, Vec<Eop>>> {
     Some(result)
 }
 
+fn recorded_sample(table: &Table, row: usize, time: f64, ut1_utc: f64) -> Option<Eop> {
+    let ArrayValue::Float64(pm) = table.cell_accessor(row, "PM").ok()?.array().ok()? else {
+        return None;
+    };
+    let xp_radians = *pm.get(ndarray::IxDyn(&[0]))?;
+    let yp_radians = *pm.get(ndarray::IxDyn(&[1]))?;
+    [time, ut1_utc, xp_radians, yp_radians]
+        .into_iter()
+        .all(f64::is_finite)
+        .then_some(Eop {
+            mjd: time / DAY,
+            xp_radians,
+            yp_radians,
+            ut1_utc,
+        })
+}
+
 fn updated_eop(
     source: Option<&Path>,
-    runtime_root: Option<&Path>,
+    installed: Option<&Path>,
     start: f64,
     end: f64,
 ) -> Result<Vec<Eop>, GencalError> {
@@ -122,8 +161,8 @@ fn updated_eop(
             source,
         })?;
         parse_file(&text, start, end).unwrap_or_default()
-    } else if let Some(root) = runtime_root {
-        read_runtime(&root.join("geodetic/IERSeop2000"), start, end).unwrap_or_default()
+    } else if let Some(path) = installed {
+        read_runtime(path, start, end).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -174,7 +213,12 @@ fn parse_file(text: &str, start: f64, end: f64) -> Option<Vec<Eop>> {
         {
             continue;
         }
-        let read = |range: std::ops::Range<usize>| line.get(range)?.trim().parse::<f64>().ok();
+        let read = |range: std::ops::Range<usize>| {
+            line.get(range.start..range.end.min(line.len()))?
+                .trim()
+                .parse::<f64>()
+                .ok()
+        };
         let mjd = if usno.is_some() {
             read(0..9)? - JD_AT_MJD_ZERO
         } else {
@@ -296,11 +340,47 @@ fn sample_times(scan: &Scan) -> Vec<f64> {
     knots
 }
 
+fn phase_directions(ms: &MeasurementSet) -> Result<Vec<[f64; 3]>, GencalError> {
+    let fields = ms.field().map_err(invalid)?;
+    let mut engine = None;
+    (0..fields.row_count())
+        .map(|row| {
+            let (lon, lat) = if fields
+                .ephemeris_id(row)
+                .map_err(invalid)?
+                .is_some_and(|id| id >= 0)
+            {
+                let engine = match &mut engine {
+                    Some(engine) => engine,
+                    empty => empty.insert(MsCalEngine::for_calibration(ms).map_err(invalid)?),
+                };
+                let time = fields.time(row).map_err(invalid)?;
+                engine
+                    .reference_phase_direction(row, time)
+                    .map_err(invalid)?
+                    .as_angles()
+            } else {
+                let ArrayValue::Float64(array) = fields.phase_dir(row).map_err(invalid)? else {
+                    return Err(invalid("invalid PHASE_DIR"));
+                };
+                let lon = *array
+                    .get(ndarray::IxDyn(&[0, 0]))
+                    .ok_or_else(|| invalid("invalid PHASE_DIR"))?;
+                let lat = *array
+                    .get(ndarray::IxDyn(&[1, 0]))
+                    .ok_or_else(|| invalid("invalid PHASE_DIR"))?;
+                (lon, lat)
+            };
+            Ok([lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()])
+        })
+        .collect()
+}
+
 fn build_rows(
     ms: &MeasurementSet,
     recorded: &BTreeMap<i32, Vec<Eop>>,
     source: Option<&Path>,
-    runtime_root: Option<&Path>,
+    installed: Option<&Path>,
 ) -> Result<Vec<PriorCalRow>, GencalError> {
     let scans = scans(ms)?;
     let antennas = ms.antenna().map_err(invalid)?;
@@ -308,21 +388,7 @@ fn build_rows(
         .map(|row| antennas.position(row))
         .collect::<Result<Vec<_>, _>>()
         .map_err(invalid)?;
-    let field_table = ms.field().map_err(invalid)?;
-    let directions = (0..field_table.row_count())
-        .map(|row| {
-            let ArrayValue::Float64(array) = field_table.phase_dir(row).map_err(invalid)? else {
-                return Err(invalid("invalid PHASE_DIR"));
-            };
-            let lon = *array
-                .get(ndarray::IxDyn(&[0, 0]))
-                .ok_or_else(|| invalid("invalid PHASE_DIR"))?;
-            let lat = *array
-                .get(ndarray::IxDyn(&[1, 0]))
-                .ok_or_else(|| invalid("invalid PHASE_DIR"))?;
-            Ok([lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()])
-        })
-        .collect::<Result<Vec<_>, GencalError>>()?;
+    let directions = phase_directions(ms)?;
     let spectral = ms.spectral_window().map_err(invalid)?;
     let frequency = (0..spectral.row_count())
         .map(|row| super::spw_center_frequency_hz(&spectral, row))
@@ -332,8 +398,14 @@ fn build_rows(
         let Some((first, last)) = old.first().zip(old.last()) else {
             continue;
         };
-        let updated = updated_eop(source, runtime_root, first.mjd, last.mjd)?;
+        let updated = updated_eop(source, installed, first.mjd, last.mjd)?;
         if old.len() < 2 || updated.len() < 2 {
+            tracing::warn!(
+                observation,
+                start_mjd = first.mjd,
+                end_mjd = last.mjd,
+                "Insufficient Earth orientation samples for observation"
+            );
             continue;
         }
         for (_, scan) in scans.range((observation, i32::MIN)..=(observation, i32::MAX)) {
@@ -383,6 +455,9 @@ fn difference(old: &[Eop], updated: &[Eop], time: f64) -> Result<Matrix, GencalE
     let mjd = time / DAY;
     let tai = utctai(JD_AT_MJD_ZERO, mjd).map_err(|_| invalid("invalid UTC epoch"))?;
     let (tt1, tt2) = taitt(tai.0, tai.1).map_err(|_| invalid("invalid TAI epoch"))?;
+    // The precession-nutation matrix and TIO locator depend only on TT.
+    let rc2i = c2i00a(tt1, tt2);
+    let sp = sp00(tt1, tt2);
     let transform = |samples: &[Eop]| {
         let end = samples
             .partition_point(|sample| sample.mjd <= mjd)
@@ -393,7 +468,8 @@ fn difference(old: &[Eop], updated: &[Eop], time: f64) -> Result<Matrix, GencalE
         let ut1 = a.ut1_utc + alpha * (delta_ut1 - delta_ut1.round_ties_even());
         let xp = a.xp_radians + alpha * (b.xp_radians - a.xp_radians);
         let yp = a.yp_radians + alpha * (b.yp_radians - a.yp_radians);
-        c2t00a(tt1, tt2, JD_AT_MJD_ZERO + mjd, ut1 / DAY, xp, yp)
+        let era = era00(JD_AT_MJD_ZERO + mjd, ut1 / DAY);
+        c2tcio(&rc2i, era, &pom00(xp, yp, sp))
     };
     let a = transform(old);
     let b = transform(updated);
