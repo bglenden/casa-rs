@@ -191,6 +191,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         FlaggingError::CalibrationSelection(_) => {
             TaskFailure::execution(error.to_string()).at("calibration-selection")
         }
+        FlaggingError::UnsupportedCalibrationAgent(_) => {
+            TaskFailure::execution(error.to_string()).at("calibration-agent")
+        }
         FlaggingError::MissingClipColumn | FlaggingError::MissingTfcropColumn => {
             TaskFailure::validation(error.to_string()).at("datacolumn")
         }
