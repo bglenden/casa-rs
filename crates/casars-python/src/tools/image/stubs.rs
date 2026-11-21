@@ -297,20 +297,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (x, y, axes = None, coord = None, npts = None, method = None), text_signature = "($self, x, y, axes=[0, 1], coord=[-1], npts=0, method='linear')")]
-    fn getslice(
-        &self,
-        x: &Bound<'_, PyAny>,
-        y: &Bound<'_, PyAny>,
-        axes: Option<&Bound<'_, PyAny>>,
-        coord: Option<&Bound<'_, PyAny>>,
-        npts: Option<&Bound<'_, PyAny>>,
-        method: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getslice")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, region = None, mask = None, axis = None, drop = None, overwrite = None, stretch = None, dmethod = None), text_signature = "($self, outfile='', region={}, mask='', axis=-10, drop=True, overwrite=False, stretch=False, dmethod='copy')")]
     fn hanning(
         &self,

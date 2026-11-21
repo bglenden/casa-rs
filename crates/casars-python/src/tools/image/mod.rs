@@ -48,6 +48,7 @@ mod records;
 mod region_read;
 mod replace_masked;
 mod serialization;
+mod slice;
 mod statistics;
 mod stubs;
 mod subimage;

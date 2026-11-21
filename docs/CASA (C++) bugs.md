@@ -8501,3 +8501,12 @@ The same setter accepts a positive rest quantity with incompatible units,
 such as `21cm`, and records it as `0.21 Hz`. It can also store an infinite
 rest frequency. casa-rs rejects these inputs while preserving the prior
 spectral coordinate.
+
+## Invalid slice indices can terminate `image.getslice`
+
+On a `[7, 8, 3]` image, CASA 6.7.6.14 aborts on `getslice([0, 2],
+[0, 2], coord=[0, 0, 100])`. Its axis-vector reader also accesses the
+second entry when an explicit list contains only the first axis. casa-rs
+raises a Python error for an out-of-range fixed coordinate or a missing
+second axis and preserves the attached image. An explicit `npts=None` also
+aborts CASA. casa-rs raises a type error for that argument.
