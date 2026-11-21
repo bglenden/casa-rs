@@ -57,10 +57,7 @@ fn centred_placements(
             phase: rng.signed() * std::f64::consts::PI,
             plane: 0,
             spectral: 0.0,
-            cf: CfKey {
-                group: 0,
-                cube: (rng.next_u64() % 2) as u16,
-            },
+            cf: CfKey::new(0, (rng.next_u64() % 2) as u16),
             gradient: [0.1 * rng.signed() as f32, 0.1 * rng.signed() as f32],
         });
     }

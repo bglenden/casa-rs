@@ -299,16 +299,10 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
     assert_eq!(pair_plane([1, 0], 2), 1);
     assert_eq!(
         set.key(&context([0, 0], 0), FREQUENCY_HZ, 3.0),
-        CfKey { group: 0, cube: 0 }
+        CfKey::new(0, 0)
     );
-    assert_eq!(
-        set.key(&context([1, 0], 1), 98.9e9, -3.0),
-        CfKey { group: 1, cube: 2 }
-    );
-    assert_eq!(
-        set.key(&context([1, 1], 1), 100.1e9, 0.0),
-        CfKey { group: 2, cube: 3 }
-    );
+    assert_eq!(set.key(&context([1, 0], 1), 98.9e9, -3.0), CfKey::new(1, 2));
+    assert_eq!(set.key(&context([1, 1], 1), 100.1e9, 0.0), CfKey::new(2, 3));
     // Every cell has ten fine offsets, at least five taps each side, and
     // weight taps of the same support; every pair of a cell's window grids
     // with the same support, the widest pair's (`MosaicFT` takes
@@ -319,7 +313,7 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
     let mut cube_half = [None; 4];
     for group in 0..3 {
         for cube in 0..4 {
-            let key = CfKey { group, cube };
+            let key = CfKey::new(group, cube);
             let taps = set.taps(key, &mut hold);
             assert_eq!(taps.oversampling(), MOSAIC_OVERSAMPLING);
             assert_eq!(taps.mueller_planes(), 1);
@@ -360,7 +354,7 @@ fn pair_supports(
     let set = MosaicPb::new(rules, geometry, &routing(), frequency_hz, dishes, &windows)
         .expect("mosaic set");
     (0..(dishes.len() * (dishes.len() + 1) / 2) as u16)
-        .map(|group| set.half_support(CfKey { group, cube: 0 }))
+        .map(|group| set.half_support(CfKey::new(group, 0)))
         .collect()
 }
 
@@ -815,7 +809,7 @@ fn conjugate_beams_grid_with_the_conjugate_cell_and_predict_with_the_beam() {
                 .all(|(a, b)| (a - b).norm() <= 1.0e-6 * peak)
     };
     let mut hold = CellHold::new();
-    let key = CfKey { group: 0, cube: 0 };
+    let key = CfKey::new(0, 0);
     let plain = set(MosaicRules::Tclean, FREQUENCY_HZ);
     let own = set(MosaicRules::TcleanConjugateBeams, FREQUENCY_HZ);
     assert!(close(

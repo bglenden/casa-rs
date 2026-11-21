@@ -8,12 +8,12 @@ use std::path::Path;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, DirectionCoordinate, StokesType};
 use casa_images::PagedImage;
 use casa_imaging_operator::{LegacyEpConvolution, LegacyPbWConvolution};
-use casa_imaging_runtime::HostResources;
+use casa_imaging_runtime::{Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral};
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
 use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
-use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
 
 use crate::calibrater_lifecycle::{
     ep_cache::EpCache,
@@ -38,11 +38,7 @@ pub(super) fn prepare_model(
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
     let (options, pointing) = options;
-    if options.w_planes > 1 {
-        return Err(invalid(
-            "this legacy pbwproject configuration is pending #1520",
-        ));
-    }
+    let w_planes = usize::try_from(options.w_planes.max(1)).map_err(invalid)?;
     let (shape, increment, coordinates) = model_geometry(model)?;
     let [side, _, _, _] = shape;
     let host = HostResources::detect().map_err(invalid)?;
@@ -56,13 +52,27 @@ pub(super) fn prepare_model(
     let nonzero = data.iter().any(|&sample| sample != 0.);
     let cache = EpCache::open(&options.cache_directory)?;
     let buffer = first_buffer(ms, selected)?;
-    let products = convolution(&cache, 360., &host, &buffer, shape, increment, &coordinates)?;
-    let support = u16::try_from(products.support).map_err(invalid)?;
+    let products = convolution(
+        &cache,
+        (360., w_planes),
+        &host,
+        &buffer,
+        shape,
+        increment,
+        &coordinates,
+    )?;
+    let support = products
+        .support
+        .iter()
+        .copied()
+        .map(u16::try_from)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(invalid)?;
     let sampling = u16::try_from(products.sampling).map_err(invalid)?;
     LegacyPbWConvolution::validate_shape(
         products.convolution.shape(),
         sampling,
-        support,
+        &support,
         buffer.correlations.len(),
     )
     .map_err(invalid)?;
@@ -92,26 +102,27 @@ pub(super) fn prepare_model(
         keep_zero,
         scratch,
         |path, record| {
-            let mut kernel = PagedImage::<Complex32>::create(
-                products.convolution.shape().to_vec(),
+            write_kernel(
+                &host,
+                &path.join(KERNEL_IMAGE),
                 products.convolution_coordinates,
-                path.join(KERNEL_IMAGE),
-            )
-            .map_err(invalid)?;
-            kernel
-                .put_slice(&products.convolution, &[0; 4])
-                .map_err(invalid)?;
-            kernel.save().map_err(invalid)?;
+                &products.convolution,
+            )?;
             let machine = if options.mosaic {
                 "PBMosaicFT"
             } else {
                 "nPBWProjectFT"
             };
             record.upsert("name", Value::Scalar(ScalarValue::String(machine.into())));
-            record.upsert(
-                "casars_legacy_pbw_support",
-                Value::Scalar(ScalarValue::Int32(i32::from(support))),
-            );
+            let support = if let [single] = support.as_slice() {
+                Value::Scalar(ScalarValue::Int32(i32::from(*single)))
+            } else {
+                let widths = support.iter().copied().map(i32::from).collect();
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(IxDyn(&[support.len()]), widths).map_err(invalid)?,
+                ))
+            };
+            record.upsert("casars_legacy_pbw_support", support);
             record.upsert(
                 "casars_legacy_pbw_sampling",
                 Value::Scalar(ScalarValue::Int32(i32::from(sampling))),
@@ -126,6 +137,55 @@ pub(super) fn prepare_model(
             Ok(())
         },
     )
+}
+
+fn write_kernel(
+    host: &HostResources,
+    path: &Path,
+    coordinates: CoordinateSystem,
+    samples: &ArrayD<Complex32>,
+) -> MsResult<()> {
+    let [nx, ny, pols, planes] = *samples.shape() else {
+        return Err(invalid("the legacy PB/W kernel must have four axes"));
+    };
+    let tile = [nx.min(64), ny.min(64), 1, 1];
+    let pixel_bytes = size_of::<Complex32>() as u64;
+    let tile_bytes = (tile[0] * tile[1]) as u64 * pixel_bytes;
+    let plane_bytes = (nx as u64)
+        .saturating_mul(ny as u64)
+        .saturating_mul(pols as u64)
+        .saturating_mul(pixel_bytes);
+    let tiles = (nx.div_ceil(tile[0]) as u64)
+        .saturating_mul(ny.div_ceil(tile[1]) as u64)
+        .saturating_mul(pols as u64)
+        .saturating_mul(planes as u64);
+    let _memory = admit(
+        host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy PB/W kernel publication",
+            memory: plane_bytes
+                .saturating_add(3 * tile_bytes)
+                .saturating_add(32_u64.saturating_mul(tiles)),
+        },
+    )
+    .map_err(invalid)?;
+    let mut kernel = PagedImage::<Complex32>::create_with_tile_shape_and_cache(
+        samples.shape().to_vec(),
+        tile.to_vec(),
+        coordinates,
+        path,
+        1,
+    )
+    .map_err(invalid)?;
+    for plane in 0..planes {
+        let pixels = samples.slice_axis(Axis(3), Slice::from(plane..plane + 1));
+        kernel
+            .put_slice_view(pixels, &[0, 0, 0, plane])
+            .map_err(invalid)?;
+    }
+    kernel.save().map_err(invalid)?;
+    Ok(())
 }
 
 pub(super) struct LegacyFourierImage {

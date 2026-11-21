@@ -32,7 +32,7 @@ fn changing_apply_boundaries_preserves_the_compensated_sum() {
                     phase: 0.0,
                     plane: 0,
                     spectral: 0.0,
-                    cf: CfKey { group: 0, cube: 0 },
+                    cf: CfKey::new(0, 0),
                     gradient: [0.0; 2],
                     prediction_w_positive: false,
                 },
@@ -91,7 +91,7 @@ fn compact_contributions_match_f64_across_applies_and_reset() {
         phase: 0.0,
         plane: 0,
         spectral: 0.0,
-        cf: CfKey { group: 0, cube: 0 },
+        cf: CfKey::new(0, 0),
         gradient: [0.0; 2],
         prediction_w_positive: false,
     };

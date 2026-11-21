@@ -5,7 +5,7 @@ use num_complex::Complex32;
 
 use crate::native::NativeSource;
 
-/// Two-level convolution-function cell key (HPG `CFSimpleIndexer`).
+/// Convolution-function cell key (HPG `CFSimpleIndexer`).
 ///
 /// `group` linearises the variable-support axes of a kernel set (w-plane,
 /// frequency cell, parallactic-angle cell, antenna-type pair); `cube`
@@ -20,6 +20,20 @@ pub struct CfKey {
     pub group: u16,
     /// Fixed-size slice inside the group.
     pub cube: u16,
+    /// W-plane index for legacy PB/W keys whose other fields retain the angle.
+    pub w_plane: u16,
+}
+
+impl CfKey {
+    /// A variable-support group and a fixed-size slice of that group.
+    #[must_use]
+    pub const fn new(group: u16, cube: u16) -> Self {
+        Self {
+            group,
+            cube,
+            w_plane: 0,
+        }
+    }
 }
 
 /// One selected row×channel sample after flagging, phase-centre shift and
