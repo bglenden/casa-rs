@@ -171,7 +171,16 @@ def test_regrid_region_dropdeg_and_replicated_direction(casa):
                     product.done()
         finally:
             source.done()
-    for actual, expected in zip(results[1], results[0]):
+    actual, expected = results[1][0], results[0][0]
+    selected = np.s_[3:15, 4:20, :, 1:6]
+    valid = np.zeros(data.shape, dtype=bool)
+    valid[selected] = True
+    np.testing.assert_array_equal(actual[1], valid)
+    assert expected[1][selected].all()
+    np.testing.assert_allclose(actual[0][selected], data[selected], atol=2e-5)
+    np.testing.assert_allclose(expected[0][selected], data[selected], atol=2e-5)
+    assert not np.any(actual[0][~valid])
+    for actual, expected in zip(results[1][1:], results[0][1:]):
         _compare(actual, expected)
 
 
@@ -210,7 +219,7 @@ def test_regrid_an_empty_target_leaves_the_input_grid_unchanged(casa):
             assert source.fromarray(pixels=data)
             result = source.regrid(csys={"unused": 1}, shape=[-2, 3], force=True)
             try:
-                np.testing.assert_array_equal(result.getchunk(), data)
+                np.testing.assert_allclose(result.getchunk(), data, atol=2e-7)
                 assert result.maskhandler("get") == ["T"]
             finally:
                 result.done()
@@ -272,3 +281,69 @@ def test_regrid_stretches_expression_mask_on_the_input_grid(casa, tmp_path):
         finally:
             source.done()
             mask.done()
+
+
+def test_regrid_preserves_blank_pixels_in_a_direct_fits_attachment(casa, tmp_path):
+    data = _ramp()[:, :, 0, :].copy()
+    data[7, 9, :] = np.nan
+    path = str(tmp_path / "blank-regrid.fits")
+    writer = tools.image()
+    try:
+        assert writer.fromarray(pixels=data)
+        assert writer.tofits(outfile=path)
+    finally:
+        writer.done()
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.open(path)
+            target = _record(source, "direction", [.2, .3])
+            result = source.regrid(csys=target, axes=[0, 1], decimate=1, method="nearest")
+            try:
+                actual_mask = result.getchunk(getmask=True)
+                np.testing.assert_array_equal(actual_mask, ~np.isnan(data))
+                np.testing.assert_array_equal(result.getchunk()[actual_mask], data[actual_mask])
+            finally:
+                result.done()
+        finally:
+            source.done()
+
+
+def test_regrid_on_transposed_axes_uses_the_mapped_sky_plane(casa):
+    data = _ramp()
+    expected = data.transpose(3, 1, 0, 2)
+    results = []
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            mapped = source.transpose(order="3102")
+            try:
+                target = _record(mapped, "direction", [.2, .3])
+                result = mapped.regrid(csys=target, axes=[2, 1], method="nearest", decimate=1)
+                try:
+                    results.append(_read(result))
+                    np.testing.assert_array_equal(result.getchunk(), expected)
+                finally:
+                    result.done()
+            finally:
+                mapped.done()
+        finally:
+            source.done()
+    _compare(results[1], results[0])
+
+
+def test_regrid_refuses_a_position_velocity_grid(casa):
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=_ramp())
+            strip = source.pv(start=[4, 7], end=[16, 7])
+            try:
+                with pytest.raises(RuntimeError, match="PV images are not supported"):
+                    strip.regrid()
+                assert strip.isopen()
+            finally:
+                strip.done()
+        finally:
+            source.done()

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_coordinates::{Coordinate, CoordinateSystem, CoordinateType};
 use casa_lattices::{ScratchSpace, TempStoragePolicy};
 use casa_types::RecordValue;
 
@@ -72,7 +72,15 @@ pub fn regrid_image<T: RegridPixel>(
     beam_record: &RecordValue,
     options: ImageRegridOptions<'_>,
 ) -> Result<ImageRegridProduct<T>, ImageError> {
-    if input.misc_info().get("secondary_coordinates").is_some() {
+    let source_coordinates = input.coordinates();
+    if input.find_axis(CoordinateType::Spectral).is_some()
+        && let Some(index) = source_coordinates.find_coordinate(CoordinateType::Linear)
+        && let Some(axes) = source_coordinates.coordinate_pixel_axes(index)
+        && axes
+            .into_iter()
+            .zip(source_coordinates.coordinate(index).axis_names())
+            .any(|(axis, name)| axis.is_some() && name == "Offset")
+    {
         return Err(invalid("PV images are not supported by regrid"));
     }
     let shape: Vec<i64> = if options.shape.first().is_none_or(|&size| size < 0) {
@@ -124,6 +132,14 @@ pub fn regrid_image<T: RegridPixel>(
             )
         })
         .transpose()?;
+    if selection
+        .as_ref()
+        .is_some_and(SubimagePlan::has_multiple_regions)
+    {
+        return Err(invalid(
+            "This application does not support multiple region selection",
+        ));
+    }
     let selected = selection
         .as_ref()
         .map(|selection| {

@@ -20,7 +20,8 @@ use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::{
     DirectionSampling, Plane, RegridMethod, RegridPixel, RegridTemplate, Regridded,
-    jy_per_pixel_scale, positions, same_axes, sample_direction_planes, spectral::SpectralPlan,
+    direction_affine, jy_per_pixel_scale, positions, same_axes, sample_direction_planes,
+    spectral::SpectralPlan,
 };
 use crate::{ImageError, ImageInterface, ImagePixel};
 
@@ -734,6 +735,24 @@ fn apply_direction<T: RegridPixel>(
     let input_shape = axes.map(|axis| result.data.shape()[axis]);
     let grid = if options.replicate {
         replicated_grid(input_shape, shape)
+    } else if options.image_tool.is_some()
+        && input.increment() == target.increment()
+        && input.reference_value() == target.reference_value()
+        && *input.pc_matrix() == *target.pc_matrix()
+        && let Some(affine) = direction_affine(input, target, shape)
+        && affine
+            .source_pixel([0.; 2])
+            .iter()
+            .all(|value| value.fract() == 0.)
+    {
+        // An integral crop or translation on the same tangent plane is exact.
+        // A sky round trip can move the first excluded row across the
+        // interpolation boundary and fill it by extrapolating the edge.
+        (0..shape[1])
+            .flat_map(|y| {
+                (0..shape[0]).map(move |x| Some(affine.source_pixel([x as f64, y as f64])))
+            })
+            .collect()
     } else {
         // Casacore's inter-coordinate conversion uses native frames, while
         // toWorldMany and toPixelMany retain each coordinate's conversion layer.
