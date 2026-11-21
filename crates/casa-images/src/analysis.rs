@@ -56,6 +56,10 @@ pub use imsubimage::{DeviationOptions, ImageDeviation};
 pub use imsubimage::{FindSourcesOptions, find_image_sources};
 pub use imsubimage::{FourierOptions, FourierPixel, ImageFourier};
 pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
+pub use imsubimage::{
+    ImageProfileFit, ProfileDivisor, ProfileEstimates, ProfileFitOptions, ProfileOutputNames,
+    ProfilePeaks, ProfileRegion, ProfileSigma,
+};
 mod list_log;
 mod planes;
 mod projection_header;
