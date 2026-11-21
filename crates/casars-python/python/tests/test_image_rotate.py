@@ -107,8 +107,12 @@ def test_rotate_shape_defaults_mask_and_native_writer_readers(casa, tmp_path):
                 products[writer.__name__, reader.__name__] = image.getchunk(), image.getchunk(getmask=True)
             finally:
                 image.done()
+    # Replication sets the sample positions. Cubic interpolation still
+    # uses its four-by-four input mask stencil at those positions.
+    cubic_mask = np.ones(expected.shape[:2] + (expected.shape[-1],), dtype=bool)
+    cubic_mask[1:5, 6:12, :] = False
     for pixels, valid in products.values():
-        np.testing.assert_array_equal(valid, selected[:, :, 0, :])
+        np.testing.assert_array_equal(valid, cubic_mask)
         np.testing.assert_array_equal(pixels[valid], expected[:, :, 0, :][valid])
 
 
@@ -183,3 +187,71 @@ def test_rotate_composes_with_a_preexisting_coordinate_shear(casa, kind):
                 product.done()
         finally:
             source.done()
+
+
+@pytest.mark.parametrize("pixel_type", ["f", "d", "c", "cd"])
+def test_rotate_preserves_pixel_precision_and_complex_components(casa, pixel_type):
+    values = _ramp().astype(np.float64)
+    if pixel_type.startswith("c"):
+        values = values * (1 - 2j)
+    measured = []
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromshape(shape=list(values.shape), type=pixel_type)
+            assert source.putchunk(values)
+            product = source.rotate(pa=.32, method="linear", decimate=1)
+            try:
+                assert product.pixeltype() == source.pixeltype()
+                mask, data = product.getchunk(getmask=True), product.getchunk()
+                assert data.dtype == source.getchunk().dtype
+                measured.append((mask, data))
+            finally:
+                product.done()
+        finally:
+            source.done()
+    np.testing.assert_array_equal(measured[1][0], measured[0][0])
+    np.testing.assert_allclose(measured[1][1], measured[0][1], atol=2e-5, rtol=2e-5)
+
+
+def test_rotate_region_and_stretched_input_mask(casa, tmp_path):
+    data = _ramp()[..., None, None] + 10*np.arange(7, dtype=np.float32)
+    manager = casa.regionmanager()
+    region = manager.box([4, 5, 0, 1], [18, 20, 0, 5])
+    manager.done()
+    selected = np.broadcast_to(np.arange(24)[:, None, None, None] >= 9, (24, 26, 1, 1))
+    products = []
+    for api in (casa, tools):
+        source = api.image()
+        mask = api.image()
+        path = tmp_path / f"{api.__name__}-rotation-mask.im"
+        try:
+            assert source.fromarray(pixels=data)
+            assert mask.fromarray(str(path), pixels=selected.astype(np.float32))
+            mask.done()
+            options = dict(pa="35deg", region=region, mask=f'"{path}" > 0', method="linear")
+            with pytest.raises(RuntimeError):
+                source.rotate(**options, stretch=True)
+            with pytest.raises(RuntimeError):
+                source.rotate(**options, shape=[15, 16, 1, 5])
+            product = source.rotate(**options, shape=[15, 16, 1, 5], stretch=True)
+            try:
+                coords = product.coordsys()
+                try:
+                    np.testing.assert_array_equal(coords.referencepixel()["numeric"], [8., 8., 0., 2.])
+                finally:
+                    coords.done()
+                valid, values = product.getchunk(getmask=True), product.getchunk()
+                assert values.shape == (15, 16, 1, 5)
+                assert valid[7, 7].all()
+                px, py = np.array([8., 8.]) + _plane_rotation(np.deg2rad(35)).T @ [-1., -1.]
+                np.testing.assert_allclose(values[7, 7, 0], 4 + px + 2*(5 + py) + 10*np.arange(1, 6),
+                                           atol=2e-5)
+                products.append((valid, values))
+            finally:
+                product.done()
+        finally:
+            mask.done()
+            source.done()
+    np.testing.assert_array_equal(products[1][0], products[0][0])
+    np.testing.assert_allclose(products[1][1], products[0][1], rtol=2e-5, atol=2e-5)
