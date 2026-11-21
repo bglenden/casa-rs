@@ -7954,6 +7954,16 @@ beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
 of the pixels being copied.
 
+## `imregrid` can terminate when shifting a sliced direction
+
+CASA 6.7.6.14 on macOS returns the original pixels and mask when regridding
+the unchanged direction axis of the 3 × 2 × 5 `dropdeg_ra.image` fixture.
+Increasing the retained axis's reference pixel by 0.25 in the same template
+record makes the task terminate with SIGBUS. The casacore regrid path
+treats a direction coordinate as a two-axis plane even when an axis has
+been removed. Casa-rs preserves the unchanged slice directly. It refused
+the shifted fixture with an all-masked result and published no output.
+
 ## `imregrid` can attach new linear coordinates to unshifted data
 
 CASA 6.7.6.14 can copy pixels and masks unchanged when regridding a leading
