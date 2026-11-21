@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::CoordinateSystem;
 use casa_types::RecordValue;
 
-use crate::expr_parser::{HashMapResolver, parse_image_expr};
+use crate::expr_parser::{HashMapResolver, parse_image_expr, referenced_images};
 use crate::{
-    ImageError, ImageInfo, ImageInterface, ImageMathSummary, ImagePixelType, ImmathRequest,
+    GaussianBeam, ImageError, ImageInfo, ImageInterface, ImageMathSummary, ImagePixelType,
+    ImmathRequest,
 };
 
 use super::ResolvedInputs;
@@ -55,15 +56,32 @@ fn run_evalexpr_typed<T: RealMathPixel>(
         .chain(extra_quoted.iter())
         .cloned()
         .collect();
-    let mut raws: Vec<RawImage<T>> = Vec::with_capacity(all_paths.len());
-    for path in &all_paths {
-        raws.push(open_raw_image::<T>(path)?);
+    let rewritten_expr = quote_var_aliases(expr, varnames);
+    let mut names = referenced_images(&rewritten_expr).map_err(expression_error)?;
+    if let Some(mask) = request
+        .mask
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        names.extend(
+            referenced_images(&quote_var_aliases(mask, varnames)).map_err(expression_error)?,
+        );
+    }
+    let mut raws: Vec<(usize, RawImage<T>)> = Vec::with_capacity(all_paths.len());
+    for (index, path) in all_paths.iter().enumerate() {
+        if names
+            .iter()
+            .any(|name| Path::new(name) == path || varnames.get(index) == Some(name))
+        {
+            raws.push((index, open_raw_image::<T>(path)?));
+        }
     }
 
     let has_selection = has_any_selection(request);
+    let beam_warnings = beam_warnings(&raws)?;
     let selections: Vec<Option<ImmathSelection>> = if has_selection {
         raws.iter()
-            .map(|raw| ImmathSelection::from_raw(raw, request, false).map(Some))
+            .map(|(_, raw)| ImmathSelection::from_raw(raw, request, false).map(Some))
             .collect::<Result<Vec<_>, _>>()?
     } else {
         vec![None; raws.len()]
@@ -76,7 +94,7 @@ fn run_evalexpr_typed<T: RealMathPixel>(
 
     let mask_overrides: Vec<Option<casa_types::ArrayD<bool>>> = if has_mask {
         let mut raw_aliases: Vec<(String, &dyn ImageInterface<T>)> = Vec::new();
-        for (idx, raw) in raws.iter().enumerate() {
+        for &(idx, ref raw) in &raws {
             if idx < imagename_paths.len()
                 && let Some(vn) = varnames.get(idx)
             {
@@ -87,7 +105,7 @@ fn run_evalexpr_typed<T: RealMathPixel>(
             }
         }
         let mut masks = Vec::with_capacity(raws.len());
-        for (raw, sel) in raws.iter().zip(selections.iter()) {
+        for ((_, raw), sel) in raws.iter().zip(selections.iter()) {
             let window = sel
                 .as_ref()
                 .map(|s| (s.start.as_slice(), s.shape.as_slice()));
@@ -104,14 +122,18 @@ fn run_evalexpr_typed<T: RealMathPixel>(
         vec![None; raws.len()]
     };
 
-    let mut prepared: Vec<PreparedInput<T>> = Vec::with_capacity(raws.len());
-    for ((raw, mask_override), sel) in raws.into_iter().zip(mask_overrides).zip(selections.iter()) {
-        prepared.push(apply_selection_to_raw(raw, mask_override, sel.as_ref())?);
+    let mut prepared: Vec<(usize, PreparedInput<T>)> = Vec::with_capacity(raws.len());
+    for (((index, raw), mask_override), sel) in
+        raws.into_iter().zip(mask_overrides).zip(selections.iter())
+    {
+        prepared.push((
+            index,
+            apply_selection_to_raw(raw, mask_override, sel.as_ref())?,
+        ));
     }
 
-    let rewritten_expr = quote_var_aliases(expr, varnames);
     let mut resolver_map: HashMap<String, &dyn ImageInterface<T>> = HashMap::new();
-    for (idx, prep) in prepared.iter().enumerate() {
+    for &(idx, ref prep) in &prepared {
         if idx < imagename_paths.len()
             && let Some(vn) = varnames.get(idx)
         {
@@ -122,8 +144,8 @@ fn run_evalexpr_typed<T: RealMathPixel>(
         }
     }
     let resolver = HashMapResolver(resolver_map);
-    let compiled = parse_image_expr::<T, _>(&rewritten_expr, &resolver)
-        .map_err(|err| ImageError::InvalidMetadata(format!("Invalid image expression: {err}")))?;
+    let compiled =
+        parse_image_expr::<T, _>(&rewritten_expr, &resolver).map_err(expression_error)?;
 
     let out_shape = compiled.shape().to_vec();
     let (coords, units, image_info, misc_info, legacy_coords) =
@@ -147,7 +169,56 @@ fn run_evalexpr_typed<T: RealMathPixel>(
         shape: out_shape,
         units,
         valid_pixels,
+        beam_warnings,
     })
+}
+
+fn beam_warnings<T: RealMathPixel>(
+    raws: &[(usize, RawImage<T>)],
+) -> Result<Vec<String>, ImageError> {
+    let mut messages = Vec::new();
+    let mut reference = None;
+    for (_, raw) in raws {
+        let image = raw.as_interface();
+        let beams = image.image_info()?.beam_set;
+        let first = reference.get_or_insert_with(|| beams.clone());
+        if *first != beams {
+            messages.push("immath: input restoring beams differ".to_string());
+            if let (Some(beam), Some(previous)) = (beams.single_beam(), first.single_beam()) {
+                let input = beam_values(beam)?;
+                let previous = beam_values(previous)?;
+                let decimals = (14..=20)
+                    .find(|&places| {
+                        input.iter().zip(previous).all(|(&value, other)| {
+                            value == other
+                                || format!("{value:.places$}") != format!("{other:.places$}")
+                        })
+                    })
+                    .unwrap_or(20);
+                messages.push(format_beam("input", input, decimals));
+                messages.push(format_beam("reference", previous, decimals));
+            }
+        }
+    }
+    Ok(messages)
+}
+
+fn beam_values(beam: GaussianBeam) -> Result<[f64; 3], ImageError> {
+    Ok([
+        beam.major_in("arcmin")?,
+        beam.minor_in("arcmin")?,
+        beam.position_angle_in("deg")?,
+    ])
+}
+
+fn format_beam(label: &str, [major, minor, pa]: [f64; 3], places: usize) -> String {
+    format!(
+        "immath: {label} beam major={major:.places$}arcmin minor={minor:.places$}arcmin pa={pa:.places$}deg"
+    )
+}
+
+fn expression_error(error: crate::expr_parser::ExprParseError) -> ImageError {
+    ImageError::InvalidMetadata(format!("Invalid image expression: {error}"))
 }
 
 fn has_any_selection(request: &ImmathRequest) -> bool {
