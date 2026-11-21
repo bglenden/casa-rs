@@ -2198,7 +2198,7 @@ fn apply_row_all_channels(
         let is_switched_power = subtype == "G EVLASWPOW";
         let position_angle = subtype == "PosAng Jones";
         let channelized_polarization = polarization::Leakage::is_channelized(subtype)
-            || matches!(subtype, "Xf Jones" | "Xfparang Jones")
+            || matches!(subtype, "Xf Jones" | "Xfparang Jones" | "GlinXphf Jones")
             || position_angle;
         let bounded_frequency_cache = is_tsys || channelized_polarization;
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
@@ -2255,7 +2255,8 @@ fn apply_row_all_channels(
         let is_bandpass = is_tsys || matches!(subtype, "B Jones" | "BPOLY");
         let resample_frequency = is_bandpass || channelized_polarization;
         let first_receptor_only =
-            (is_bandpass || is_switched_power || polarization::is_cross_hand_phase(subtype))
+            (is_bandpass || is_switched_power || polarization::is_cross_hand_phase(subtype)
+                || matches!(subtype, "GlinXph Jones" | "GlinXphf Jones"))
                 && correlation_types.len() == 1;
         let (ant1_transient, ant2_transient) = (
             bounded_frequency_cache && ant1.interpolated,
@@ -4473,7 +4474,8 @@ fn load_parameters(
     let supports_calwt = (table_plan.summary.parameter_family
         == CalibrationParameterFamily::Complex
         && leakage.is_none()
-        && !cross_hand_phase)
+        && !cross_hand_phase
+        && !matches!(table_plan.summary.table_subtype.as_str(), "GlinXph Jones" | "GlinXphf Jones"))
         || matches!(
             table_plan.summary.table_subtype.as_str(),
             "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"

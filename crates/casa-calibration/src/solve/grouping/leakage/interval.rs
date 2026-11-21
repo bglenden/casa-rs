@@ -36,7 +36,7 @@ impl IntervalFits {
         circular: bool,
     ) -> Self {
         if kind.parallactic() {
-            Self::Parallactic(ParallacticAverages::new(channels, circular))
+            Self::Parallactic(ParallacticAverages::new(channels, circular, kind.gain_phase()))
         } else if kind.cross_hand() {
             let measurement = match (kind, circular) {
                 (LeakageSolveKind::PosAng, true) => Measurement::CircularAngle,
@@ -130,12 +130,16 @@ impl IntervalFits {
                 let angles = angles.expect("parallactic angle geometry");
                 let (phases, source) = average.finish(angles)?;
                 SourceFitMode::Polarization.report(source, location);
+                let gain_phase = request.kind.gain_phase();
                 let values = phases
                     .into_iter()
                     .map(|phase| {
                         let estimate = LeakageEstimate {
-                            gain: [phase.unwrap_or(Complex32::ONE), Complex32::ZERO],
-                            valid: [phase.is_some(), false],
+                            gain: [
+                                phase.unwrap_or(Complex32::ONE),
+                                if gain_phase { Complex32::ONE } else { Complex32::ZERO },
+                            ],
+                            valid: [phase.is_some(), gain_phase && phase.is_some()],
                             ..LeakageEstimate::default()
                         };
                         vec![estimate; antennas]

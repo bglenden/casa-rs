@@ -44,7 +44,7 @@ pub(super) fn write(
     )
     .map_err(|error| error.to_string())?;
     let mut written = 0;
-    let receptors = if request.kind.cross_hand() { 1 } else { 2 };
+    let receptors = if request.kind.cross_hand() && !request.kind.gain_phase() { 1 } else { 2 };
     for interval in solutions {
         let antennas = interval.values.first().map_or(0, Vec::len);
         for antenna in 0..antennas {
