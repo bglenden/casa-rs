@@ -28,9 +28,13 @@ pub(super) fn parameters(task: &TaskInvocation<'_>) -> Result<ShadowParameters, 
         _ => (ParameterValue::Table(BTreeMap::new()), None),
     };
     let additional = additional_antennas(&config);
+    let tolerance_m = task
+        .value("tolerance")
+        .and_then(number)
+        .map_or_else(|| task.number("tolerance"), Ok)?;
     Ok(ShadowParameters {
         options: ShadowOptions {
-            tolerance_m: task.number("tolerance")?,
+            tolerance_m,
             enabled: additional.is_some(),
             additional: additional.unwrap_or_default(),
         },
