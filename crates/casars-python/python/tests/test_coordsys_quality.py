@@ -127,7 +127,8 @@ def test_native_writer_reader_pairs_keep_labels_and_values(casa, tmp_path):
                 _assert_value(image.getchunk(), data.astype(np.float64))
                 coords = image.coordsys()
                 try:
-                    assert coords.summary(list=False) == expected_report
+                    report, = coords.summary(list=False)
+                    assert report == expected_report
                     assert coords.toworld([0])["numeric"].tolist() == [2.]
                     assert coords.toworld([1], "s")["string"].tolist() == ["DATA"]
                 finally:
