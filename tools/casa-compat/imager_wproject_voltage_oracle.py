@@ -132,7 +132,7 @@ def two_windows(seed, active, high_window):
 def multiple_windows(work, seed, image, beam, results):
     from casars.tools import imager as native_imager
 
-    for high_window, selection in [(1, '0,1'), (0, '0:0~6^2,1:20~30^3')]:
+    for high_window, selection in [(1, '0,1'), (0, '0:0~6^2,1:0~9^3')]:
         label = f'high-window-{high_window}'
         active = work / f'{label}.ms'
         two_windows(seed, active, high_window)
@@ -145,8 +145,9 @@ def multiple_windows(work, seed, image, beam, results):
         compare_geometry(*summary)
         assert summary[0]['nwplanes'] > 32
         print(label, 'geometry', summary[0], flush=True)
-        scratch_pair(work, active, label, image, beam, results, planes=-1, spw=selection,
-                     angle='0deg')
+        model = scratch_pair(work, active, label, image, beam, results, planes=-1, spw=selection,
+                             angle='0deg')
+        assert np.max(np.abs(model)) > .5
 
 
 def multiple_measurement_sets(work, seed, image, beam, results):
