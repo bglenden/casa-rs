@@ -522,23 +522,21 @@ impl DirectionCoordinate {
         longitude: f64,
         latitude: f64,
     ) -> Result<Self, CoordinateError> {
-        if !longitude.is_finite() || !latitude.is_finite() || self.crval[1].abs() > FRAC_PI_2 {
+        if !longitude.is_finite() || !latitude.is_finite() {
             return Err(CoordinateError::InvalidRecord(
                 "wcs wcsset_error: Invalid coordinate transformation parameter".into(),
             ));
         }
-        self.longpole = longitude;
-        let fiducial = theta_0_for_projection(&self.projection);
-        self.native_pole =
-            compute_native_pole(self.crval[0], self.crval[1], longitude, latitude, fiducial);
-        let pole = self.native_pole[1];
-        let sine = fiducial.sin() * pole.sin() + fiducial.cos() * pole.cos() * longitude.cos();
-        if !sine.is_finite() || (sine - self.crval[1].sin()).abs() > 2.0e-12 {
+        if longitude.to_degrees() != 999.0 {
+            self.longpole = longitude;
+        }
+        if self.crval[1].abs() > FRAC_PI_2 || self.validate_native_pole().is_err() {
             return Err(CoordinateError::InvalidRecord(
                 "wcs wcsset_error: Ill-conditioned coordinate transformation parameter".into(),
             ));
         }
-        self.latpole = pole;
+        self = self.with_latpole(latitude);
+        self.latpole = self.native_pole[1];
         Ok(self)
     }
 

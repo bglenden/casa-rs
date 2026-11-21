@@ -61,6 +61,7 @@ def test_direction_defaults_rebuild_the_axis_at_its_system_axes(casa):
      "xform": np.array([[0.8, -0.6], [0.6, 0.8]], dtype=np.float32), "poles": "180deg,23deg"},
     {"proj": "CAR", "poles": ["0deg", "90deg"], "xform": [[1., 0.], [0., 1.]]},
     {"proj": "CAR", "poles": ["0deg", "-90deg"]},
+    {"proj": "CAR", "poles": ["999deg", "999deg"]},
 ])
 def test_direction_argument_forms_and_projected_values_match_casa(casa, parameters):
     values = []
@@ -87,6 +88,7 @@ def test_rejected_direction_edits_preserve_state(casa, caplog):
             ({"refval": np.int64(25)}, "Unrecognized format for world coordinate"),
             ({"proj": "car"}, "unknown projection"),
             ({"proj": "CAR"}, "Ill-conditioned coordinate transformation"),
+            ({"refval": ["12deg", "100deg"]}, "Ill-conditioned coordinate transformation"),
             ({"poles": [180, 0]}, "pole parameter is not understood"),
             ({"xform": np.array([[1., 0.], [1., 0.]])}, "singular"),
         ):
