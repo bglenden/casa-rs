@@ -46,7 +46,7 @@ pub(super) fn format_position(
                 };
                 format!("{}{unit}", number(value, increments[0]))
             }
-            _ => number(value, increments[0]),
+            _ => number(value, increments[local]),
         };
         fields.push(text);
     }
@@ -138,6 +138,7 @@ fn number(value: f64, increment: f64) -> String {
 mod tests {
     use std::path::Path;
 
+    use casa_coordinates::LinearCoordinate;
     use casa_tables::{Table, TableOptions};
     use casa_types::Value;
 
@@ -183,5 +184,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn extrema_use_the_increment_for_each_linear_axis() {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(
+            LinearCoordinate::new(2, Vec::new(), Vec::new())
+                .with_reference_value(vec![0.0, 1000.0])
+                .with_increment(vec![1.0, 1e-5]),
+        );
+        let label = format_position(&coordinates, &[1, 1], None).unwrap();
+        let last = label
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap();
+        assert_eq!(last, 1000.00001);
     }
 }

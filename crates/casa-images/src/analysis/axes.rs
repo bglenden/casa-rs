@@ -8,7 +8,8 @@
 //! record's coordinates are found where the record places them.
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
+    CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType, RecordCoordinate,
+    StokesCoordinate, StokesType,
 };
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -79,6 +80,19 @@ pub(super) fn direction_plane_axes<T: ImagePixel>(
     Ok([*longitude, *latitude])
 }
 
+pub(super) fn world_axes_for_plane(
+    coordinates: &CoordinateSystem,
+    plane: [usize; 2],
+) -> Result<[usize; 2], ImageError> {
+    let [Some(first), Some(second)] = plane.map(|axis| coordinates.pixel_axis_to_world_axis(axis))
+    else {
+        return Err(ImageError::InvalidMetadata(
+            "a world region requires both world axes of the image plane".into(),
+        ));
+    };
+    Ok([first, second])
+}
+
 /// The axes of a `rank`-axis image other than its plane's, in order.
 pub(super) fn other_axes(rank: usize, plane: [usize; 2]) -> Vec<usize> {
     (0..rank).filter(|axis| !plane.contains(axis)).collect()
@@ -92,11 +106,13 @@ pub(super) fn subimage_coordinates(
 ) -> Result<CoordinateSystem, ImageError> {
     let mut record = coordinates.to_record();
     shift_record_reference_pixels(&mut record, start, shape)?;
-    CoordinateSystem::from_record(&record).map_err(|error| {
-        ImageError::InvalidMetadata(format!(
-            "failed to build subimage coordinate system: {error}"
-        ))
-    })
+    coordinates
+        .restore_record_with_layout(&record)
+        .map_err(|error| {
+            ImageError::InvalidMetadata(format!(
+                "failed to build subimage coordinate system: {error}"
+            ))
+        })
 }
 
 /// `coordinates` for a subimage starting at pixel `start`, optionally replacing
@@ -161,7 +177,7 @@ pub(super) fn replace_stokes_in_record(
     record: &mut RecordValue,
     stokes: &[StokesType],
 ) -> Result<(), ImageError> {
-    let placed = CoordinateSystem::record_coordinates(record).map_err(|error| {
+    let placed = section_record_axes(record).map_err(|error| {
         ImageError::InvalidMetadata(format!("stokes record coordinates: {error}"))
     })?;
     for coordinate in placed {
@@ -214,6 +230,15 @@ pub(super) fn replace_stokes_in_record(
     Ok(())
 }
 
+fn section_record_axes(record: &RecordValue) -> Result<Vec<RecordCoordinate>, CoordinateError> {
+    match CoordinateSystem::record_coordinates(record) {
+        Err(CoordinateError::UnsupportedAxisLayout(_)) => {
+            CoordinateSystem::from_mapped_record(record)?.coordinates_in_record(record)
+        }
+        result => result,
+    }
+}
+
 /// Moves each coordinate in `record` back by `start`, the subimage's first
 /// pixel, along the coordinate's own axes.
 ///
@@ -238,7 +263,7 @@ pub(super) fn section_record_reference_pixels(
     shape: &[usize],
     stride: Option<&[usize]>,
 ) -> Result<(), ImageError> {
-    let placed = CoordinateSystem::record_coordinates(record).map_err(|error| {
+    let placed = section_record_axes(record).map_err(|error| {
         ImageError::InvalidMetadata(format!("subimage coordinate system: {error}"))
     })?;
     for coordinate in placed {
@@ -330,6 +355,7 @@ mod tests {
     use casa_lattices::TempStoragePolicy;
 
     use crate::TempImage;
+    use crate::analysis::{SubimageOptions, SubimagePlan, SubimageRegion};
 
     use super::{CoordinateType, StridedSection, direction_plane_axes, stokes_for_axis};
 
@@ -380,6 +406,48 @@ mod tests {
         let sliced =
             TempImage::<f32>::new(vec![3, 2, 5], coordinates, TempStoragePolicy::Memory).unwrap();
         assert!(direction_plane_axes(&sliced).is_err());
+    }
+
+    #[test]
+    fn mapped_world_regions_and_pixel_sections_keep_the_selected_geometry() {
+        let mut coordinates = coordinate_system_for_shape(&[4, 3, 2, 5], false);
+        coordinates
+            .transpose_axes(&[0, 1, 2, 3], &[1, 2, 0, 3])
+            .unwrap();
+        let image = TempImage::<f32>::new(
+            vec![3, 2, 4, 5],
+            coordinates.clone(),
+            TempStoragePolicy::Memory,
+        )
+        .unwrap();
+        let first = coordinates.to_world(&[1.0, 0.0, 1.0, 0.0]).unwrap();
+        let last = coordinates.to_world(&[2.0, 0.0, 2.0, 0.0]).unwrap();
+        let world_box = [first[0], first[1], last[0], last[1]];
+        let pixel_box = super::super::crtf_world_box_pixels(&image, world_box).unwrap();
+        assert_eq!(pixel_box, "1,1,2,2");
+        let region = format!(
+            "box[[{}rad, {}rad], [{}rad, {}rad]]",
+            first[0], first[1], last[0], last[1],
+        );
+        for text in ["box[[1pix, 1pix], [2pix, 2pix]]", &region] {
+            let plan = SubimagePlan::new(
+                &image,
+                Some(coordinates.to_record()),
+                SubimageOptions {
+                    region: Some(SubimageRegion::Text(text)),
+                    dropdeg: false,
+                    keepaxes: &[],
+                },
+            )
+            .unwrap();
+            assert_eq!(plan.bounds().0, [1, 0, 1, 0]);
+            assert_eq!(plan.shape, [2, 2, 2, 5]);
+            assert_eq!(plan.coordinates.pixel_axis_to_world_axis(0), Some(1));
+            let reference = plan.coordinates.to_world(&[0.0; 4]).unwrap();
+            for (actual, expected) in reference.iter().zip(&first) {
+                assert!((actual - expected).abs() < 1e-12);
+            }
+        }
     }
 
     #[test]

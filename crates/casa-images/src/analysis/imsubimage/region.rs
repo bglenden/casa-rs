@@ -669,11 +669,16 @@ fn parse_spectral_endpoint(
     }
     let q = Quantity::read(text.trim())
         .map_err(|e| ImageError::InvalidMetadata(format!("invalid CRTF range {text:?}: {e}")))?;
-    let freq_hz = q.get_si_value();
-    let mut world = coords.to_world(&vec![0.0; coords.n_pixel_axes()])?;
-    world[spec_axis] = freq_hz;
-    let pix = coords.to_pixel(&world)?;
-    Ok(pix[spec_axis].round() as isize)
+    let (index, _) = coords
+        .pixel_axis_owner(spec_axis)
+        .ok_or_else(|| ImageError::InvalidMetadata("CRTF range requires a spectral axis".into()))?;
+    let CoordinateModel::Spectral(spectral) = coords.coordinate(index) else {
+        return Err(ImageError::InvalidMetadata(
+            "CRTF range requires a spectral axis".into(),
+        ));
+    };
+    let world = spectral.value_from_hz(q.get_si_value())?;
+    Ok(spectral.to_pixel(&[world])?[0].round() as isize)
 }
 
 fn spectral_coordinate(coordinates: &CoordinateSystem) -> Result<&SpectralCoordinate, ImageError> {
@@ -685,6 +690,32 @@ fn spectral_coordinate(coordinates: &CoordinateSystem) -> Result<&SpectralCoordi
     Err(ImageError::InvalidMetadata(
         "CRTF range requires a spectral axis".into(),
     ))
+}
+
+#[cfg(test)]
+mod mapped_tests {
+    use casa_coordinates::LinearCoordinate;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    use super::{CoordinateSystem, SpectralCoordinate, parse_spectral_endpoint};
+
+    #[test]
+    fn spectral_selection_uses_the_owning_coordinate_with_independent_axis_orders() {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(LinearCoordinate::new(1, Vec::new(), Vec::new()));
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::TOPO,
+            1.4e9,
+            2e6,
+            0.0,
+            0.0,
+        ));
+        coordinates.transpose_axes(&[0, 1], &[1, 0]).unwrap();
+        assert_eq!(
+            parse_spectral_endpoint("1.404GHz", &coordinates, 0, None).unwrap(),
+            2
+        );
+    }
 }
 
 fn parse_crtf_shape<T: ImagePixel>(
@@ -833,10 +864,11 @@ fn crtf_point_to_pixel<T: ImagePixel>(
                 ));
             }
             let [ax, ay] = plane;
+            let [longitude, latitude] = super::super::axes::world_axes_for_plane(coords, plane)?;
             let base = vec![0.0; coords.n_pixel_axes()];
             let mut world = coords.to_world(&base)?;
-            world[ax] = parse_world_angle(parts[0])?;
-            world[ay] = parse_world_angle(parts[1])?;
+            world[longitude] = parse_world_angle(parts[0])?;
+            world[latitude] = parse_world_angle(parts[1])?;
             let pix = coords.to_pixel(&world)?;
             Ok([pix[ax], pix[ay]])
         }

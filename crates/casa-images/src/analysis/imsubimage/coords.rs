@@ -36,7 +36,7 @@ pub(super) fn reduce_coordinates_and_beams(
         Ok(record)
     };
     let shifted = if spec.stride.is_some() {
-        CoordinateSystem::from_record(&section_record(input_coords.to_record())?)?
+        input_coords.restore_record_with_layout(&section_record(input_coords.to_record())?)?
     } else {
         subimage_coordinates_with_stokes(
             input_coords,
@@ -53,9 +53,14 @@ pub(super) fn reduce_coordinates_and_beams(
         let record = shifted_legacy.unwrap_or_else(|| shifted.to_record());
         let reduced =
             drop_axes_from_legacy_record(&record, ndim, spec.kept_axes).ok_or_else(|| {
-                ImageError::InvalidMetadata("could not reduce the subimage axis maps".into())
+                ImageError::InvalidMetadata(
+                    "could not reduce the subimage axis maps (#1002)".into(),
+                )
             })?;
-        (CoordinateSystem::from_record(&reduced)?, Some(reduced))
+        (
+            input_coords.restore_record_with_layout(&reduced)?,
+            Some(reduced),
+        )
     };
 
     image_info.beam_set = subset_beam_section(

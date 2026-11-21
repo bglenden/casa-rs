@@ -88,6 +88,7 @@ pub(super) fn read_coordinates(
             let placed = RecordCoordinate {
                 field,
                 pixel_axes: placement.pixel_axes,
+                world_axes: placement.world_axes,
             };
             (placed, coordinate)
         })
@@ -115,11 +116,12 @@ const SUPPORTED: &str = "casa-rs reads a coordinate system only when each coordi
      adjacent and in the coordinate's own order (#1002)";
 
 /// One coordinate's `pixelmap<i>` and `worldmap<i>` over the axes it keeps,
-/// and its `pixelmap<i>` as the record has it.
+/// and both maps as the record has them.
 struct AxisMaps {
     pixel: Vec<i32>,
     world: Vec<i32>,
     record_pixel: Vec<i32>,
+    record_world: Vec<i32>,
 }
 
 /// Where one of a record's coordinates goes in the system.
@@ -129,6 +131,8 @@ pub(super) struct Placement {
     /// The system pixel axis of each of the record coordinate's own axes,
     /// `None` for a removed one.
     pub(super) pixel_axes: Vec<Option<usize>>,
+    /// The system world axis of each of the record coordinate's own axes.
+    pub(super) world_axes: Vec<Option<usize>>,
 }
 
 /// The order of `coordinates`, read from `rec` as `(record index, field
@@ -147,17 +151,21 @@ pub(super) fn coordinate_order(
         .map(|(index, name, coordinate)| axis_maps(rec, *index, name, coordinate))
         .collect::<Result<Vec<_>, _>>()?;
     if maps.iter().all(Option::is_none) {
-        let mut next = 0;
+        let (mut next_pixel, mut next_world) = (0, 0);
         return Ok(coordinates
             .iter()
             .enumerate()
             .map(|(index, (_, _, coordinate))| {
-                let count = coordinate.n_pixel_axes();
-                next += count;
-                Placement {
+                let pixel_end = next_pixel + coordinate.n_pixel_axes();
+                let world_end = next_world + coordinate.n_world_axes();
+                let placement = Placement {
                     index,
-                    pixel_axes: (next - count..next).map(Some).collect(),
-                }
+                    pixel_axes: (next_pixel..pixel_end).map(Some).collect(),
+                    world_axes: (next_world..world_end).map(Some).collect(),
+                };
+                next_pixel = pixel_end;
+                next_world = world_end;
+                placement
             })
             .collect());
     }
@@ -211,6 +219,11 @@ pub(super) fn coordinate_order(
                 .iter()
                 .map(|&axis| usize::try_from(axis).ok())
                 .collect(),
+            world_axes: maps[index]
+                .record_world
+                .iter()
+                .map(|&axis| usize::try_from(axis).ok())
+                .collect(),
         })
         .collect())
 }
@@ -250,6 +263,7 @@ fn axis_maps(
     if pixel.iter().chain(&world).all(|&axis| axis >= 0) {
         return Ok(Some(AxisMaps {
             record_pixel: pixel.clone(),
+            record_world: world.clone(),
             pixel,
             world,
         }));
@@ -302,6 +316,7 @@ fn axis_maps(
         pixel: keep(&pixel),
         world: keep(&world),
         record_pixel: pixel,
+        record_world: world,
     }))
 }
 

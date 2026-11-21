@@ -1426,7 +1426,9 @@ impl<T: ImagePixel> PagedImage<T> {
         let Some((field, _)) = CoordinateSystem::first_spectral_in_record(record)? else {
             return Ok(None);
         };
-        Ok(CoordinateSystem::record_coordinates(record)?
+        Ok(self
+            .coords
+            .coordinates_in_record(record)?
             .into_iter()
             .find(|coordinate| coordinate.field == field)
             .and_then(|coordinate| coordinate.pixel_axes.into_iter().next().flatten()))

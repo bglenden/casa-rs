@@ -198,6 +198,7 @@ where
     let mut out_shape = input.shape().to_vec();
     out_shape[x] = strip.shape[0];
     out_shape.remove(y);
+    let offset_axis = x - usize::from(y < x);
     let mut result = ArrayD::zeros(IxDyn(&out_shape).f());
     let mut valid = ArrayD::from_elem(IxDyn(&out_shape).f(), false);
     let mut pixels = Vec::with_capacity(plane_shape[0] * plane_shape[1]);
@@ -239,13 +240,44 @@ where
                     (sum + f64::from(value as f32), n + 1)
                 });
             if n > 0 {
-                output_index[x] = i;
+                output_index[offset_axis] = i;
                 result[IxDyn(&output_index)] = (sum / f64::from(n)) as f32;
                 valid[IxDyn(&output_index)] = true;
             }
         }
     }
     Ok((result, valid))
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType};
+    use casa_types::measures::direction::DirectionRef;
+    use ndarray::IxDyn;
+
+    use super::{ArrayD, geometry, sample};
+
+    #[test]
+    fn pv_offset_stays_on_the_longitude_axis_after_latitude_is_removed() {
+        let direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, 0.0],
+            [-1e-5, 1e-5],
+            [0.0, 0.0],
+        );
+        let strip = geometry::Strip::new(&direction, [[2.0, 3.0], [7.0, 3.0]], [10, 8], 1).unwrap();
+        let pixels = ArrayD::from_shape_fn(IxDyn(&[8, 10, 2]), |index| {
+            (50 * index[0] + index[1] + 500 * index[2]) as f32
+        });
+        let (result, mask) = sample(&pixels, None, [1, 0], &strip).unwrap();
+        assert_eq!(result.shape(), [6, 2]);
+        let expected = ArrayD::from_shape_fn(IxDyn(&[6, 2]), |index| {
+            (152 + index[0] + 500 * index[1]) as f32
+        });
+        assert_eq!(result, expected);
+        assert!(mask.iter().all(|valid| *valid));
+    }
 }
 
 fn output_coordinates<T: ImagePixel>(

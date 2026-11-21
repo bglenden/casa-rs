@@ -51,7 +51,7 @@ mod impbcor;
 mod impv;
 mod lel_mask;
 
-use self::axes::direction_plane_axes;
+use self::axes::{direction_plane_axes, world_axes_for_plane};
 pub use self::exportfits::{
     ImageFitsExportOptions, ImageFitsHeader, export_attached_fits, image_fits_header,
     image_fits_header_with_beams, validate_attached_fits_target,
@@ -3145,6 +3145,7 @@ fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
         ));
     }
     let [x, y] = direction_plane_axes(image)?;
+    let [longitude, latitude] = world_axes_for_plane(coordinates, [x, y])?;
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let base_world = coordinates.to_world(&base_pixel)?;
     pairs
@@ -3266,10 +3267,10 @@ fn crtf_world_box_pixels<T: ImagePixel>(
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let mut first_world = coordinates.to_world(&base_pixel)?;
     let mut second_world = first_world.clone();
-    first_world[x] = world_box[0];
-    first_world[y] = world_box[1];
-    second_world[x] = world_box[2];
-    second_world[y] = world_box[3];
+    first_world[longitude] = world_box[0];
+    first_world[latitude] = world_box[1];
+    second_world[longitude] = world_box[2];
+    second_world[latitude] = world_box[3];
     let first_pixel = coordinates.to_pixel(&first_world)?;
     let second_pixel = coordinates.to_pixel(&second_world)?;
     let x0 = rounded_nonnegative_pixel_value(first_pixel[x], "first CRTF world x")?;
