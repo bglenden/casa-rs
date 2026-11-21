@@ -414,7 +414,7 @@ fn inverse_order(order: &[usize], rank: usize, kind: &str) -> Result<Vec<i32>, C
     }
     let mut inverse = vec![-1; rank];
     for (new, &old) in order.iter().enumerate() {
-        let axis = inverse.get_mut(old).ok_or_else(&invalid)?;
+        let axis = inverse.get_mut(old).ok_or_else(invalid)?;
         if *axis >= 0 {
             return Err(invalid());
         }

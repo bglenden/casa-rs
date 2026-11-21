@@ -139,11 +139,20 @@ def describe(path):
     data = ia.getchunk()
     samples = []
     for pixel in sample_pixels(shape):
+        world = [float(v) for v in cs.toworld([float(p) for p in pixel], "n")["numeric"]]
         samples.append({
             "pixel": pixel,
-            "world": [float(v) for v in cs.toworld([float(p) for p in pixel], "n")["numeric"]],
+            "world": world,
             "value": float(data[tuple(pixel)]),
+            "inverse_pixel": [float(v) for v in cs.topixel(world)["numeric"]],
         })
+    matrix = np.array([sample["world"] for sample in samples]).T.copy()
+    np.testing.assert_allclose(
+        cs.topixelmany(matrix)["numeric"],
+        np.array([sample["inverse_pixel"] for sample in samples]).T,
+        rtol=1e-10,
+        atol=1e-10,
+    )
     record = {
         "shape": shape,
         "axis_types": list(cs.axiscoordinatetypes()),
@@ -262,7 +271,7 @@ def fixture(out):
         handle.write("\n")
 
 
-def readback(path, reference, name):
+def readback(path, reference, name, require_maps=False):
     with open(reference) as handle:
         expected = json.load(handle)["images"][name]
     got = describe(path)
@@ -270,12 +279,20 @@ def readback(path, reference, name):
     for key in ("shape", "axis_types", "names", "units"):
         if got[key] != expected[key]:
             problems.append(f"{key}: CASA reads {got[key]}, the fixture has {expected[key]}")
+    if require_maps and got["maps"] != expected["maps"]:
+        problems.append("The coordinate numbers, signed maps or replacement vectors changed")
     for ours, theirs in zip(got["samples"], expected["samples"]):
         pixel = theirs["pixel"]
         if ours["value"] != theirs["value"]:
             problems.append(f"pixel {pixel}: value {ours['value']} against {theirs['value']}")
         if not np.allclose(ours["world"], theirs["world"], rtol=1e-12, atol=1e-12):
             problems.append(f"pixel {pixel}: world {ours['world']} against {theirs['world']}")
+        if "inverse_pixel" in theirs and not np.allclose(
+            ours["inverse_pixel"], theirs["inverse_pixel"], rtol=1e-10, atol=1e-7,
+        ):
+            problems.append(
+                f"world {theirs['world']}: inverse pixel {ours['inverse_pixel']} against {theirs['inverse_pixel']}"
+            )
     print(json.dumps({"image": path, "reads_as": name, "maps": got["maps"], "problems": problems}, indent=1))
     return 1 if problems else 0
 
@@ -289,11 +306,12 @@ def main():
     reading.add_argument("image")
     reading.add_argument("--reference", required=True)
     reading.add_argument("--name", required=True)
+    reading.add_argument("--require-maps", action="store_true")
     args = parser.parse_args()
     if args.command == "fixture":
         fixture(args.out)
         return 0
-    return readback(args.image, args.reference, args.name)
+    return readback(args.image, args.reference, args.name, args.require_maps)
 
 
 if __name__ == "__main__":
