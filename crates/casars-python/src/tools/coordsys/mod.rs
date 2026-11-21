@@ -8,6 +8,7 @@ mod construction;
 pub(super) use construction::{append_coordinate, validate_coordinate_indices};
 mod conversion_frames;
 mod convert_direction;
+mod direction_edit;
 mod doppler;
 pub(super) use doppler::stored_velocity_settings;
 mod frame_metadata;

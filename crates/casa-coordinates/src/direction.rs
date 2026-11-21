@@ -513,6 +513,33 @@ impl DirectionCoordinate {
         self
     }
 
+    /// Apply explicit WCS poles in radians and retain the selected solution.
+    ///
+    /// # Errors
+    /// Returns an error when the pole cannot represent the reference latitude.
+    pub fn with_wcs_poles(
+        mut self,
+        longitude: f64,
+        latitude: f64,
+    ) -> Result<Self, CoordinateError> {
+        if !longitude.is_finite() || !latitude.is_finite() {
+            return Err(CoordinateError::InvalidRecord(
+                "wcs wcsset_error: Invalid coordinate transformation parameter".into(),
+            ));
+        }
+        if longitude.to_degrees() != 999.0 {
+            self.longpole = longitude;
+        }
+        if self.crval[1].abs() > FRAC_PI_2 || self.validate_native_pole().is_err() {
+            return Err(CoordinateError::InvalidRecord(
+                "wcs wcsset_error: Ill-conditioned coordinate transformation parameter".into(),
+            ));
+        }
+        self = self.with_latpole(latitude);
+        self.latpole = self.native_pole[1];
+        Ok(self)
+    }
+
     /// Returns the projection.
     pub fn projection(&self) -> &Projection {
         &self.projection
