@@ -34,6 +34,7 @@ pub(super) fn decode_polygon(
     let mask = ArrayD::from_shape_fn(IxDyn(&shape), |index| plane.mask[[index[x], index[y]]]);
     Ok(ParsedRegion {
         is_compound: false,
+        is_crtf: false,
         shapes: Vec::new(),
         saved_mask: Some(SavedRegionMask::Cropped(mask)),
         saved_bounds: Some((start, shape)),

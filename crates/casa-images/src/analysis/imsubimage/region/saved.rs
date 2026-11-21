@@ -97,6 +97,7 @@ pub(super) fn parse_saved_region(
                 .collect();
             Ok(ParsedRegion {
                 is_compound: false,
+                is_crtf: false,
                 shapes,
                 saved_mask: None,
                 saved_bounds: Some((blc, shape)),
@@ -120,6 +121,7 @@ pub(super) fn parse_saved_region(
                 .collect();
             Ok(ParsedRegion {
                 is_compound: false,
+                is_crtf: false,
                 shapes,
                 saved_mask: None,
                 saved_bounds: Some((blc, shape)),
@@ -131,6 +133,7 @@ pub(super) fn parse_saved_region(
             let bounds = ellipsoid_bounds(&ellipse, full_shape, plane)?;
             Ok(ParsedRegion {
                 is_compound: false,
+                is_crtf: false,
                 shapes: vec![ellipse.into()],
                 saved_mask: None,
                 saved_bounds: Some(bounds),
@@ -175,6 +178,7 @@ fn polygon_region(
         .collect();
     Ok(ParsedRegion {
         is_compound,
+        is_crtf: false,
         shapes: Vec::new(),
         saved_mask: Some(SavedRegionMask::Whole(mask)),
         saved_bounds: Some((min_pt, shape)),

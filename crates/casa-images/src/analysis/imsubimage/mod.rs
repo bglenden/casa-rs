@@ -796,14 +796,14 @@ fn write_output_history(
     input_history: &[ImageHistoryEntry],
     request: &ImsubimageRequest,
 ) -> Result<(), ImageError> {
-    const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
-    let time = UNIX_EPOCH_MJD_SECONDS
-        + std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| ImageError::Io(e.to_string()))?
-            .as_secs_f64();
-
+    let time = ImageHistoryEntry::current_time()?;
     let mut entries = input_history.to_vec();
+    entries.push(ImageHistoryEntry {
+        time_mjd_seconds: time,
+        message: format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
+        priority: "INFO".into(),
+        location: "::imsubimage".to_string(),
+    });
     let msg = format!(
         "imsubimage(imagename={:?}, outfile={:?}, box={:?}, region={:?}, chans={:?}, \
          stokes={:?}, mask={:?}, dropdeg={}, overwrite={}, verbose={}, stretch={}, keepaxes={:?})",
