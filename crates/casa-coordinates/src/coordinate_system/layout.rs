@@ -705,7 +705,7 @@ impl super::CoordinateSystem {
         Ok(())
     }
 
-    fn explicit_layout(&mut self) -> &mut Layout {
+    pub(super) fn explicit_layout(&mut self) -> &mut Layout {
         self.layout.get_or_insert_with(|| {
             let (mut pixel, mut world) = (0, 0);
             let placements = self

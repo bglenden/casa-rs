@@ -97,9 +97,9 @@ impl CoordinateSystem {
             (old.n_pixel_axes(), old.n_world_axes()),
             "a replacing coordinate has the same axes"
         );
-        if let Some(layout) = &mut self.layout {
-            layout.placements[index].replace_model(old, &coord);
-        }
+        self.explicit_layout();
+        let placement = &mut self.layout.as_mut().expect("explicit layout").placements[index];
+        placement.replace_model(&self.coordinates[index], &coord);
         std::mem::replace(&mut self.coordinates[index], coord)
     }
 

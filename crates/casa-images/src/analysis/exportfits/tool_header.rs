@@ -415,7 +415,9 @@ fn linear_fallback(
     coords: &CoordinateSystem,
     rank: usize,
 ) -> Result<BTreeMap<String, FitsValue>, ImageError> {
-    if coords.n_world_axes() != rank {
+    if coords.n_world_axes() != rank
+        || (0..rank).any(|axis| coords.pixel_axis_to_world(axis) != Some(axis))
+    {
         return Err(header_creation_error());
     }
     let mut wcs = BTreeMap::new();
@@ -466,7 +468,7 @@ fn normalize_wcs(
     }
     for index in 0..coords.n_coordinates() {
         let coordinate = coords.coordinate(index);
-        let axes = coords.pixel_axes(index);
+        let axes = coords.world_axes(index);
         match coordinate {
             CoordinateModel::Direction(direction) => {
                 let frame = direction.direction_ref();
@@ -514,8 +516,10 @@ fn normalize_wcs(
                 }
             }
             CoordinateModel::Stokes(stokes) => {
-                if let [Some(axis)] = axes.as_slice() {
-                    wcs.extend(stokes_axis_keywords(stokes, axis + 1)?);
+                if let [Some(axis)] = axes.as_slice()
+                    && let [Some(pixel)] = coords.pixel_axes(index).as_slice()
+                {
+                    wcs.extend(stokes_axis_keywords(stokes, axis + 1, pixel + 1)?);
                 }
             }
             _ => {}
@@ -545,13 +549,14 @@ pub(super) fn wrapped_beam_position_angle(angle: f64) -> f64 {
 pub(super) fn stokes_axis_keywords(
     stokes: &StokesCoordinate,
     axis: usize,
+    pixel: usize,
 ) -> Result<[(String, FitsValue); 3], ImageError> {
     let (reference, increment) =
         fits_stokes_axis(stokes.stokes()).ok_or_else(header_creation_error)?;
     Ok([
         (format!("CRVAL{axis}"), FitsValue::Float(reference)),
         (format!("CDELT{axis}"), FitsValue::Float(increment)),
-        (format!("CRPIX{axis}"), FitsValue::Float(1.0)),
+        (format!("CRPIX{pixel}"), FitsValue::Float(1.0)),
     ])
 }
 
@@ -563,7 +568,7 @@ pub(super) fn projection_parameters(
     for index in 0..coords.n_coordinates() {
         let axis = coords.coordinate(index);
         if let CoordinateModel::Direction(direction) = axis
-            && let [_, Some(latitude)] = coords.pixel_axes(index).as_slice()
+            && let [_, Some(latitude)] = coords.world_axes(index).as_slice()
             && let Some(latitude_axis) = output_axis(latitude + 1)
         {
             let projection = direction.projection();

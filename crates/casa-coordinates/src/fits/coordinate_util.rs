@@ -108,9 +108,13 @@ pub fn try_to_fits_header(
     for index in 0..cs.n_coordinates() {
         let model = cs.coordinate(index);
         let pixel = cs.pixel_axes(index);
-        if pixel != cs.world_axes(index) {
+        if pixel
+            .iter()
+            .zip(cs.world_axes(index))
+            .any(|(pixel, world)| pixel.is_some() != world.is_some())
+        {
             return Err(CoordinateError::UnsupportedAxisLayout(
-                "FITS export requires matched pixel and world axes".into(),
+                "FITS export requires a world axis for each visible pixel axis".into(),
             ));
         }
         let axes: Vec<_> = pixel.iter().flatten().map(|axis| axis + 1).collect();
@@ -153,7 +157,57 @@ pub fn try_to_fits_header(
         h.set("TIMESYS", FitsValue::String(timesys));
     }
 
-    Ok(h)
+    let pixel_to_world = (0..naxis)
+        .map(|pixel| cs.pixel_axis_to_world(pixel).map(|axis| axis + 1))
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            CoordinateError::UnsupportedAxisLayout(
+                "FITS export requires a world axis for each visible pixel axis".into(),
+            )
+        })?;
+    if pixel_to_world.iter().copied().eq(1..=naxis) {
+        return Ok(h);
+    }
+    Ok(permute_fits_world_rows(&h, &pixel_to_world))
+}
+
+// The emitters build WCS in pixel order. FITS stores CRPIX by pixel column;
+// CTYPE, CRVAL, CDELT, CUNIT, PV and the rows of PC are world ordered.
+fn permute_fits_world_rows(header: &FitsHeader, pixel_to_world: &[usize]) -> FitsHeader {
+    let mut result = FitsHeader::new();
+    for keyword in header.iter() {
+        if keyword.name.starts_with("PC") {
+            continue;
+        }
+        let mut name = keyword.name.clone();
+        for prefix in ["CTYPE", "CRVAL", "CDELT", "CUNIT", "PV"] {
+            if let Some(suffix) = keyword.name.strip_prefix(prefix) {
+                let (axis, parameter) = suffix
+                    .split_once('_')
+                    .map_or((suffix, None), |(axis, parameter)| (axis, Some(parameter)));
+                if let Ok(axis) = axis.parse::<usize>() {
+                    name = format!("{prefix}{}", pixel_to_world[axis - 1]);
+                    if let Some(parameter) = parameter {
+                        name.push('_');
+                        name.push_str(parameter);
+                    }
+                }
+                break;
+            }
+        }
+        result.set(name, keyword.value.clone());
+    }
+    for (old_row, &world) in pixel_to_world.iter().enumerate() {
+        for pixel in 1..=pixel_to_world.len() {
+            let value = header
+                .get_float(&format!("PC{}_{pixel}", old_row + 1))
+                .unwrap_or(f64::from(old_row + 1 == pixel));
+            if value != f64::from(world == pixel) {
+                result.set(format!("PC{world}_{pixel}"), FitsValue::Float(value));
+            }
+        }
+    }
+    result
 }
 
 /// Emits FITS keywords for a [`DirectionCoordinate`].

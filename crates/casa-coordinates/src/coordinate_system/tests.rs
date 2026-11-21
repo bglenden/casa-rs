@@ -1017,3 +1017,22 @@ fn decoded_contiguous_coordinates_keep_the_slice_transform_path() {
     let restored = CoordinateSystem::from_record(&original.to_record()).unwrap();
     assert!(restored.layout.as_ref().unwrap().contiguous);
 }
+
+#[test]
+fn replacement_preserves_the_old_default_values_before_first_serialization() {
+    let initial =
+        LinearCoordinate::new(1, vec![], vec!["m".into()]).with_reference_value(vec![10.0]);
+    let replacement = initial.clone().with_reference_value(vec![20.0]);
+    let mut built = CoordinateSystem::new();
+    built.add_coordinate(initial);
+    let mut restored = CoordinateSystem::from_record(&built.to_record()).unwrap();
+    for system in [&mut built, &mut restored] {
+        system.replace_coordinate(0, replacement.clone());
+        let record = system.to_record();
+        assert_eq!(
+            crate::record_utils::get_required_vec_f64(&record, "worldreplace0").unwrap(),
+            [10.0]
+        );
+        assert_eq!(system.to_world(&[0.0]).unwrap(), [20.0]);
+    }
+}

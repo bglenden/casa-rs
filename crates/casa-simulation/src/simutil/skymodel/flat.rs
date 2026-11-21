@@ -53,6 +53,11 @@ pub fn flat_image(image_path: &Path, complist: Option<&Path>) -> Result<PathBuf,
         })
     };
     let (direction_index, direction_axes) = axis(CoordinateType::Direction, "a direction")?;
+    let [_, _] = direction_axes.as_slice() else {
+        return Err(SkyModelError::Model(
+            "flatimage needs both direction pixel axes".into(),
+        ));
+    };
     let (_, spectral_axes) = axis(CoordinateType::Spectral, "a spectral")?;
     let (stokes_index, stokes_axes) = axis(CoordinateType::Stokes, "a Stokes")?;
     let CoordinateModel::Stokes(stokes) = coordinates.coordinate(stokes_index) else {
