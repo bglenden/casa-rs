@@ -2,15 +2,48 @@
 
 use std::path::Path;
 
-use pyo3::exceptions::PyTypeError;
+use numpy::PyUntypedArray;
+use pyo3::exceptions::{PyOverflowError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyString};
+use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 
 use crate::convert::value::CasaValue;
+use crate::convert::{DoubleList, IntList};
 use crate::tools::{LogLine, emit, table};
 
 use super::PyImageTool;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+
+pub(super) fn numeric_axis_vector(value: &Bound<'_, PyAny>) -> PyResult<IntList> {
+    if value.is_none() || value.is_instance_of::<PyTuple>() {
+        return Err(PyTypeError::new_err(
+            "axes must be a number, list, or NumPy array",
+        ));
+    }
+    let flattened = value
+        .cast::<PyUntypedArray>()
+        .ok()
+        .map(|_| value.call_method1("ravel", ("F",))?.call_method0("tolist"))
+        .transpose()?;
+    let values = flattened.as_ref().unwrap_or(value);
+    if let Ok(integers) = values.extract::<IntList>() {
+        return Ok(integers);
+    }
+    let DoubleList(numbers) = values.extract()?;
+    numbers
+        .into_iter()
+        .map(|number| {
+            if number.is_finite() && number >= i64::MIN as f64 && number < -(i64::MIN as f64) {
+                Ok(number as i64)
+            } else {
+                Err(PyOverflowError::new_err(
+                    "axes must be finite integer indices",
+                ))
+            }
+        })
+        .collect::<PyResult<Vec<_>>>()
+        .map(IntList)
+}
 
 pub(super) fn string_vector(
     value: Option<&Bound<'_, PyAny>>,

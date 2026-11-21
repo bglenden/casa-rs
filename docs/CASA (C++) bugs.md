@@ -9288,3 +9288,28 @@ from `rotate(pa="35deg", method="linear")`. Both singleton axes are
 removed from the interpolation pass, leaving the initialized output pixel
 instead of copying the input. Casa-rs preserves the original pixel, mask
 and coordinates when the rotation has no sampled axis.
+
+### `image.sepconvolve` can replace an explicitly selected kernel axis
+
+On a `[13, 15]` Float image with an impulse at `[6, 7]`, the pinned
+CASA 6.7.6.14 call `sepconvolve(axes=[1], types=["boxcar"], widths=[4])`
+spreads the impulse along pixel axis 0. The parser assigns `-1` while
+checking the sole axis, so the request takes the default branch.
+Casa-rs respects the supplied axis and applies the kernel to axis 1.
+
+The Python wrapper also raises a `SystemError` for tuple-valued axes,
+such as `axes=(0, 1)` with two valid widths. Casa-rs reports a
+`TypeError` before creating or replacing an output.
+
+### `image.sepconvolve` accepts undefined kernel coefficients
+
+CASA 6.7.6.14 fills the processed profiles with NaN for a zero-pixel
+Gaussian width. With width `[-2]` on a `[10, 12]` image it can terminate
+while trying to allocate the kernel. Casa-rs rejects a nonpositive
+Gaussian pixel width before publishing an output.
+
+For an even profile length, the Hanning generator assigns symmetric
+coefficients around the lower middle sample and leaves its trailing
+coefficient uninitialized. Casa-rs assigns zero to the unused final
+coefficient. The assigned coefficients retain CASA's normalization and
+indexing.
