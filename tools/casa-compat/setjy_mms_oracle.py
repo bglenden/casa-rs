@@ -46,6 +46,7 @@ def verify(source, root, name, *, usescratch, missing_source=False, **options):
                         copy = work / f'{label}-{index}-{reader}.ms'
                         make_input(member, copy, scratch=False)
                         reopened.append(consume(factory, copy))
+                assert max(np.max(np.abs(model)) for model in reopened) > 2., label
             results.append((got, cells, reopened))
         expected, actual = results
         compare_returns(actual[0], expected[0])
