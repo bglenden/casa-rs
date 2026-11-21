@@ -8,6 +8,7 @@ import difflib
 import inspect
 import os
 from pathlib import Path
+import select
 import subprocess
 import sys
 
@@ -65,19 +66,34 @@ def files(root, vis, multi_vis, products, native):
     return len(cases) + 1
 
 
-def terminals(vis, caltable, multi_vis, multi_cal):
+def terminals(vis, caltable, multi_vis, multi_cal, *, iterator=None):
     code = """
 import sys
-if sys.argv[1]=='casa':
-    from casatasks import listcal
+native = sys.argv[1] == 'native'
+kwargs = dict(field='FLUX', antenna='A0', spw=sys.argv[5], pagerows=int(sys.argv[4]))
+if sys.argv[6] != 'task':
+    if native:
+        from casars.tools import calibrater
+    else:
+        from casatools import calibrater
+    cb = calibrater()
+    assert cb.setvi(old=sys.argv[6] == 'legacy', quiet=True)
+    assert cb.open(sys.argv[2], addcorr=False, addmodel=False)
+    try:
+        assert cb.listcal(sys.argv[3], **kwargs) is True
+    finally:
+        cb.done()
 else:
-    from casars.tasks import listcal
-assert listcal(sys.argv[2],sys.argv[3],field='FLUX',antenna='A0',
-               spw=sys.argv[5],pagerows=int(sys.argv[4])) is None
+    if native:
+        from casars.tasks import listcal
+    else:
+        from casatasks import listcal
+    assert listcal(sys.argv[2], sys.argv[3], **kwargs) is None
 """
     def execute(engine, source, table, size, spw, response):
         return subprocess.run([sys.executable, '-c', code, engine, str(source), str(table),
-                               str(size), spw], input=response, text=True,
+                               str(size), spw, iterator or 'task'],
+                              input=response, text=True,
                               capture_output=True, timeout=40)
 
     cases = [(0, ''), (-2, ''), (5, 'a\n'), (5, '\nq\n'), (5, 'q\n'), (5, '')]
@@ -99,6 +115,116 @@ assert listcal(sys.argv[2],sys.argv[3],field='FLUX',antenna='A0',
         assert 'SpwID = 0' in result.stdout and 'RETURN to continue' in result.stdout
         assert 'Listed ' not in result.stdout
     return len(cases) + 2
+
+
+def direct_files_and_errors(root, vis, products):
+    from casatools import calibrater as reference
+    from casars.tools import calibrater as native
+
+    assert inspect.signature(reference().listcal) == inspect.signature(native().listcal)
+    files = {}
+    for create in (reference, native):
+        cb = create()
+        for path in (products['gain'], root / 'missing.cal'):
+            try:
+                cb.listcal(str(path), listfile=str(root / 'detached.txt'))
+            except RuntimeError as error:
+                assert str(error) == 'Error in Calibrater::listCal.'
+            else:
+                raise AssertionError('an unattached tool produced a listing')
+        assert not (root / 'detached.txt').exists()
+        for old in (False, True):
+            assert cb.setvi(old=old, quiet=True)
+            assert cb.open(str(vis), addcorr=False, addmodel=False)
+            for tag, name, values in (
+                ('all', 'gain', dict(pagerows=0)),
+                ('ids', 'gain', dict(field=[0], antenna=[0, 2], spw=[0], pagerows=1)),
+                ('selector', 'bandpass', dict(field='FLUX', antenna=['A0', 'A2'], spw='0:1~5^2')),
+                ('delay', 'delay', dict(antenna='A1,A3', pagerows=-1)),
+                ('mixed', 'gain', dict(antenna=[0, 'A2'], pagerows=np.int16(3))),
+                ('numpy-matrix', 'gain', dict(antenna=np.array([[0, 2]], dtype=np.int32))),
+                ('bytes-paths', 'gain', dict(field=b'FLUX')),
+            ):
+                path = root / f'tool-{create.__module__}-{old}-{tag}.txt'
+                encode = bytes if tag == 'bytes-paths' else str
+                assert cb.listcal(encode(products[name]), listfile=encode(path), **values) is True
+                actual = path.read_text()
+                key = old, tag
+                same_text(actual, files.setdefault(key, actual))
+                try:
+                    cb.listcal(str(products[name]), listfile=str(path), **values)
+                except RuntimeError as error:
+                    assert str(error) == 'Error in Calibrater::listCal.'
+                else:
+                    raise AssertionError('an existing listing file was overwritten')
+                assert path.read_text() == actual
+            path = root / 'invalid-direct.txt'
+            for field in (0.0, [0.0], np.float32(0)):
+                try:
+                    cb.listcal(str(products['gain']), field=field, listfile=str(path))
+                except RuntimeError as error:
+                    assert str(error) == 'Error in Calibrater::listCal.'
+                else:
+                    raise AssertionError('a float was accepted as a field ID')
+                assert not path.exists()
+            if create is native:
+                # A broken SWIG conversion can publish the listing and then
+                # raise SystemError. Native validates before publication.
+                for pagerows in (None, np.float32(5), np.bool_(True), 2**63):
+                    try:
+                        cb.listcal(str(products['gain']), listfile=str(path), pagerows=pagerows)
+                    except (TypeError, OverflowError):
+                        pass
+                    else:
+                        raise AssertionError('an invalid page size was accepted')
+                    assert not path.exists()
+            assert cb.close()
+        assert cb.done()
+    return len(files)
+
+
+def locked_input(root, vis, caltable):
+    writer_code = """
+import sys
+from casatools import table
+tb = table()
+assert tb.open(sys.argv[1], nomodify=False, lockoptions={'option': 'user'})
+tb.lock(write=True)
+print('locked', flush=True)
+assert sys.stdin.readline() == 'release\\n'
+tb.unlock()
+tb.close()
+"""
+    reader_code = """
+import sys
+if sys.argv[1] == 'native':
+    from casars.tools import calibrater
+else:
+    from casatools import calibrater
+cb = calibrater()
+assert cb.open(sys.argv[2], addcorr=False, addmodel=False)
+print('attached', flush=True)
+assert cb.listcal(sys.argv[3], listfile=sys.argv[4]) is True
+cb.done()
+"""
+    results = []
+    for engine in ('casa', 'native'):
+        output = root / f'{engine}-writer-locked.txt'
+        with subprocess.Popen([sys.executable, '-c', writer_code, str(caltable)],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as writer:
+            assert writer.stdout.readline().strip() == 'locked'
+            with subprocess.Popen([sys.executable, '-c', reader_code, engine, str(vis),
+                                   str(caltable), str(output)], stdout=subprocess.PIPE,
+                                  text=True) as reader:
+                try:
+                    assert reader.stdout.readline().strip() == 'attached'
+                    assert not select.select([reader.stdout], [], [], 0.5)[0]
+                    assert not output.exists()
+                finally:
+                    writer.communicate('release\n', timeout=20)
+                assert writer.returncode == reader.wait(timeout=20) == 0
+            results.append(output.read_text())
+    same_text(results[0], results[1])
 
 
 def errors(root, vis, caltable, native, bad_tables):
@@ -216,7 +342,13 @@ def main():
     file_cases = files(root, vis, multi_vis, products, native)
     terminal_cases = terminals(vis, products['bandpass'], multi_vis, products['multi'])
     failures = errors(root, vis, products['gain'], native, [baseline, unknown]) + 1
-    print(f'{file_cases} file listings, {terminal_cases} terminal cases and {failures} error cases passed')
+    print(f'{file_cases} task file listings, {terminal_cases} task terminal cases and {failures} task error cases passed')
+    direct_file_cases = direct_files_and_errors(root, vis, products)
+    direct_terminal_cases = sum(terminals(vis, products['bandpass'], multi_vis, products['multi'],
+                                          iterator=iterator) for iterator in ('modern', 'legacy'))
+    locked_input(root, vis, products['gain'])
+    print(f'{direct_file_cases} direct file comparisons and {direct_terminal_cases} direct terminal cases passed. '
+          'Both engines waited for the CASA writer lock before publishing identical output.')
 
 
 if __name__ == '__main__':

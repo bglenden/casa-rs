@@ -193,6 +193,51 @@ impl PyCalibrater {
         Ok(result)
     }
 
+    #[pyo3(signature = (caltable, field = None, antenna = None, spw = None, listfile = None, pagerows = None), text_signature = "($self, caltable, field=[], antenna=[], spw=[], listfile='', pagerows=50)")]
+    #[allow(clippy::too_many_arguments)]
+    fn listcal(
+        &self,
+        py: Python<'_>,
+        caltable: Bound<'_, PyAny>,
+        field: Option<Bound<'_, PyAny>>,
+        antenna: Option<Bound<'_, PyAny>>,
+        spw: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = arguments::supplied)] listfile: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = arguments::supplied)] pagerows: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let caltable = arguments::text(Some(caltable), "caltable", "")?;
+        let listfile = arguments::text(listfile, "listfile", "")?;
+        let field = arguments::listing_selector(field.as_ref())?;
+        let antenna = arguments::listing_selector(antenna.as_ref())?;
+        let spw = arguments::listing_selector(spw.as_ref())?;
+        let pagerows = arguments::listing_page_rows(pagerows.as_ref())?;
+        let report = self.with_lifecycle(py, move |state| {
+            Ok(state.list_calibration(
+                Path::new(caltable.split('\0').next().unwrap_or_default()),
+                &field,
+                &antenna,
+                &spw,
+                listfile.split('\0').next().unwrap_or_default(),
+                pagerows,
+            ))
+        })?;
+        let report = match report {
+            Ok(report) => report,
+            Err(error) => return listcal_error(py, &error),
+        };
+        let presenter = py
+            .import("casars.tasks._runner")?
+            .getattr("_present_listcal")?;
+        let report = crate::parameters::to_python(py, &report)?;
+        match presenter.call1((report,)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.is_instance_of::<PyRuntimeError>(py) => {
+                listcal_error(py, &error.value(py).to_string())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// CASA's retired plotcal entry point still validates its arguments
     /// and reports the current attachment state.
     #[pyo3(signature = (antennas, fields, spwids, plottype = "AMP", tablename = "", polarization = 1, multiplot = false, nx = 1, ny = 1, psfile = ""), text_signature = "($self, antennas, fields, spwids, plottype='AMP', tablename='', polarization=1, multiplot=False, nx=1, ny=1, psfile='')")]
@@ -374,6 +419,15 @@ pub(super) fn selector(value: &Variant) -> Option<String> {
         ),
         value => Some(value.describe()),
     }
+}
+
+fn listcal_error(py: Python<'_>, error: &str) -> PyResult<bool> {
+    emit(
+        py,
+        LOGGER,
+        &[LogLine::error(format!("Caught Exception: {error}"))],
+    )?;
+    Err(runtime_error("Error in Calibrater::listCal."))
 }
 
 fn plot_flag(value: &Bound<'_, PyAny>) -> PyResult<bool> {
