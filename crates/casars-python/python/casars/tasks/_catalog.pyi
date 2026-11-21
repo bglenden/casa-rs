@@ -841,7 +841,7 @@ def flagdata(
     addantenna: str = ...,
     lowerlimit: float = ...,
     upperlimit: float = ...,
-    ntime: str = ...,
+    ntime: str | float = ...,
     combinescans: bool = ...,
     timecutoff: float = ...,
     freqcutoff: float = ...,

@@ -61,6 +61,10 @@ const CASA_READS: &[(&str, f64, &str)] = &[
     ("12h00m00.0 ", 180.0, "deg"),
     ("1..5", 1.0013888888888889, "deg"),
     ("12:", 180.0, "deg"),
+    ("12h:", 12.0, "h:"),
+    ("12m:", 12.0, "m:"),
+    ("--5s", 0.0, "--5s"),
+    ("-+-5s", 0.0, "-+-5s"),
     // Date-times.
     ("2020/01/01/00:00:00", 58849.0, "d"),
     ("2020-01-01T00:00:00", 58849.0, "d"),
@@ -103,13 +107,9 @@ const CASA_REJECTS: &[&str] = &[
     "10xyz",
     "5\ts",
     "1e",
+    "12s:",
+    "--abc",
 ];
-
-/// Strings CASA reads whose unit this crate's unit parser does not accept
-/// (casacore's unit grammar allows repeated signs and a leading power before a
-/// name, and `h:`): CASA reads `--5s` as 0 `--5s`, `1.4.5GHz` as
-/// 1.4 `5GHz` and `12h:` as 12 `h:`.
-const UNIT_PARSER_GAPS: &[&str] = &["--5s", "-+-5s", "12h:"];
 
 fn close(left: f64, right: f64) -> bool {
     (left - right).abs() <= 1e-12 * left.abs().max(right.abs()).max(1.0)
@@ -141,10 +141,7 @@ fn strings_casa_rejects_are_rejected() {
 }
 
 #[test]
-fn unit_parser_gaps_are_rejected() {
-    for &text in UNIT_PARSER_GAPS {
-        assert!(Quantity::read(text).is_err(), "{text:?}");
-    }
+fn unit_powers_saturate() {
     // A long exponent saturates rather than overflowing.
     assert!(Quantity::read("1 J99999999999").is_ok());
 }

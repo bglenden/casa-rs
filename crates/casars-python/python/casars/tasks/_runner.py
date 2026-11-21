@@ -354,6 +354,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise KeyError("nreport") from error
             if completion.message == f"argument _{completion.parameter} must be a string":
                 raise TypeError(completion.message) from error
+            if completion.parameter == "ntime":
+                if completion.message == "Parameter ntime cannot be < = 0":
+                    raise ValueError(completion.message) from error
+                raise RuntimeError(completion.message) from error
             if completion.parameter in ("channelavg", "chanbin", "timeavg", "outfile"):
                 raise RuntimeError(completion.message) from error
             if completion.parameter == "outfile.not_found":
@@ -558,6 +562,14 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
                 values[parameter] = converted
     _coerce_flagdata_quack_options(values, errors, cfloat, cint)
     _coerce_flagdata_channel_bins(values, errors, cint)
+    if "ntime" in values:
+        duration = values["ntime"]
+        if duration is None:
+            errors["ntime"] = ["null value not allowed"] * 3
+        elif isinstance(duration, cfloat):
+            values["ntime"] = float(duration)
+        elif not isinstance(duration, str):
+            errors["ntime"] = ["must be of cFloat type", "must be of cStr type"]
     for parameter, expected, casa_type in (
         ("autocorr", bool, "cBool"),
         ("spwchan", bool, "cBool"),
@@ -565,6 +577,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
         ("basecnt", bool, "cBool"),
         ("fieldcnt", bool, "cBool"),
         ("name", str, "cStr"),
+        ("display", str, "cStr"),
         ("timebin", str, "cStr"),
         ("minrel", cfloat, "cFloat"),
         ("maxrel", cfloat, "cFloat"),

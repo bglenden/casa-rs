@@ -139,9 +139,12 @@ fn parse_term(
     // exponents and exponents on a parenthesized expression remain valid.
     let start = *pos;
     let parenthesized = bytes[start] == b'(';
-    let val = if bytes[*pos].is_ascii_digit() {
-        // casacore accepts numeric fields as dimensionless, including a
-        // numeric prefix directly before a unit (for example `1m`).
+    let val = if bytes[*pos].is_ascii_digit() || matches!(bytes[*pos], b'+' | b'-') {
+        // casacore accepts dimensionless powers before a named unit,
+        // including leading signs and adjacent numbers (for example `--5s`).
+        while matches!(bytes.get(*pos), Some(b'+' | b'-')) {
+            *pos += 1;
+        }
         while bytes.get(*pos).is_some_and(u8::is_ascii_digit) {
             *pos += 1;
         }
@@ -234,7 +237,7 @@ fn parse_field(
 /// Scan forward to find the end of a field token.
 ///
 /// A field consists of alphabetic characters plus the special characters
-/// `'`, `"`, `_`, `$`, `%`.  Digits following alphabetic characters are
+/// `'`, `"`, `_`, `$`, `:`, `%`.  Digits following alphabetic characters are
 /// included only when the resulting token (alpha+digit) is a registered unit
 /// name (e.g. `S0`, `M0`, `R0`).  Otherwise digits are parsed separately as
 /// exponents, matching the C++ `UnitVal::create()` behaviour where `"m2"` is
@@ -242,18 +245,9 @@ fn parse_field(
 fn scan_field(bytes: &[u8], start: usize, resolve: &impl Fn(&str) -> Option<UnitVal>) -> usize {
     let mut i = start;
 
-    // Special: handle `:` sequences (`:`, `::`, `:::`)
-    if i < bytes.len() && bytes[i] == b':' {
-        while i < bytes.len() && bytes[i] == b':' {
-            i += 1;
-        }
-        return i;
-    }
-
     while i < bytes.len() {
         let b = bytes[i];
-        if b.is_ascii_alphabetic() || b == b'_' || b == b'\'' || b == b'"' || b == b'$' || b == b'%'
-        {
+        if b.is_ascii_alphabetic() || b"_'\"$:%".contains(&b) {
             i += 1;
         } else {
             break;
