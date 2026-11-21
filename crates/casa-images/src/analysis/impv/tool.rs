@@ -135,7 +135,7 @@ pub fn generate_image_pv(
         .into_iter()
         .chain((0..tile.len()).filter(|axis| *axis != x && *axis != y))
         .collect();
-    for plane in TraversalCursorIter::new(grid, ones, TraversalSpec::tiles()) {
+    for plane in TraversalCursorIter::new(grid, ones.clone(), TraversalSpec::tiles()) {
         let mut plane_start = plane?.position;
         let mut output_start = plane_start.clone();
         output_start.remove(y);
