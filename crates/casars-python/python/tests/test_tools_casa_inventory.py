@@ -165,7 +165,7 @@ def test_calibrater_method_returns_before_open() -> None:
 
 
 IMAGER_CALIBRATION = {
-    "open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft", "setjy", "ssoflux",
+    "open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft", "setjy", "ssoflux", "predictcomp",
 }
 IMAGER_SETTINGS = {"defineimage", "setoptions", "setsdoptions", "setvp"}
 

@@ -15,6 +15,7 @@ use crate::interpolation::{self, Curve};
 
 pub(crate) mod fixed;
 mod sources;
+pub(crate) use sources::source_direction;
 
 use fixed::{FixedScale, FixedSpectrum};
 
@@ -143,6 +144,17 @@ impl FluxCatalog {
             cone_table,
             coefficients,
         })
+    }
+
+    pub(crate) fn missing_coefficients(&self, source: &str) -> casa_ms::MsError {
+        let table = match &self.coefficients {
+            Coefficients::Table(coefficients) => coefficients.table.path().map_or_else(
+                || coefficients.scale.table().into(),
+                |path| path.display().to_string(),
+            ),
+            Coefficients::Fixed(_) => "the requested standard".into(),
+        };
+        invalid(format!("{source} does not appears to be in {table}"))
     }
 
     pub(crate) fn spectrum(
