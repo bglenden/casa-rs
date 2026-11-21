@@ -80,6 +80,40 @@ fn string_value(record: &RecordValue, field: &str) -> Option<String> {
 }
 
 #[test]
+fn stored_polygon_follows_physical_axes_with_independent_world_order() {
+    let original = direction_spectral_coords();
+    let mut mapped = original.clone();
+    mapped.transpose_axes(&[2, 0, 1], &[1, 2, 0]).unwrap();
+    let mut region = PolygonRegion::new(&mapped, [2, 0]).unwrap();
+    let corners = [[1.2, 0.2], [3.8, 0.2], [3.8, 2.8], [1.2, 2.8]];
+    region
+        .add_polygon(
+            corners
+                .iter()
+                .map(|&[x, y]| {
+                    let world = mapped.to_world(&[y, 0.0, x]).unwrap();
+                    [world[1], world[2]]
+                })
+                .collect(),
+        )
+        .unwrap();
+    let record = region.to_record(&mapped).unwrap();
+    let reopened = PolygonRegion::from_record("direction", &record, &mapped).unwrap();
+    let reordered = PolygonRegion::from_record("direction", &record, &original).unwrap();
+    assert_eq!(reopened.pixel_axes, [2, 0]);
+    assert_eq!(reordered.pixel_axes, [0, 1]);
+    for (region, coords, shape) in [
+        (reopened, mapped, [5, 2, 6]),
+        (reordered, original, [6, 5, 2]),
+    ] {
+        let plane = region.lattice_plane(&coords, &shape).unwrap().unwrap();
+        assert_eq!(plane.start, [2, 1]);
+        assert_eq!(plane.mask.shape(), [2, 2]);
+        assert!(plane.mask.iter().all(|&inside| inside));
+    }
+}
+
+#[test]
 fn region_statistics_follow_polygon_membership() {
     let dir = tempfile::tempdir().unwrap();
     let image = ramp_image(&dir.path().join("region.image"));

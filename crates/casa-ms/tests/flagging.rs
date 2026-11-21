@@ -292,6 +292,45 @@ fn extend_mode_grows_existing_flags_across_pols_time_and_frequency() {
 }
 
 #[test]
+fn extend_with_an_undefined_late_flag_cell_leaves_an_open_ms_unchanged() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let mut ms = MeasurementSet::open(&ms_path).expect("open MS");
+    set_flag_on_open_ms(&mut ms, 0, 0, 2, true);
+    assert_not_flag(&ms, 0, 1, 2);
+    let row = ms.row_count();
+    let mut last = ms
+        .main_table()
+        .row_accessor()
+        .row(row - 1)
+        .expect("last fixture row")
+        .clone();
+    last.remove("FLAG");
+    ms.main_table_mut()
+        .add_row(last)
+        .expect("add incomplete row");
+
+    let failure = flagdata(
+        &mut ms,
+        &FlagDataRequest {
+            mode: FlagDataMode::Extend,
+            extendpols: true,
+            flagbackup: false,
+            ..FlagDataRequest::default()
+        },
+    )
+    .expect_err("undefined FLAG must fail before applying growth");
+    assert!(
+        failure
+            .to_string()
+            .contains(&format!("FLAG row {row} is undefined"))
+    );
+    assert_flag(&ms, 0, 0, 2);
+    assert_not_flag(&ms, 0, 1, 2);
+    assert!(!flag_row(&ms, 0));
+}
+
+#[test]
 fn flagmanager_merge_rename_delete_and_invalid_names_are_reported() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());

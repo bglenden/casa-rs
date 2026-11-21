@@ -27,24 +27,18 @@ pub(super) struct MaskTarget<'a> {
 }
 
 fn mask_axes(system: &CoordinateSystem) -> Vec<(CoordinateType, usize, String)> {
-    (0..system.n_coordinates())
-        .flat_map(|index| {
+    (0..system.n_pixel_axes())
+        .map(|axis| {
+            let (index, local) = system.pixel_axis_owner(axis).expect("dense pixel axes");
             let coordinate = system.coordinate(index);
-            let mut names = coordinate.axis_names();
-            match coordinate {
+            let name = match coordinate {
                 CoordinateModel::Direction(direction) => {
-                    names.fill(direction.conversion_direction_ref().to_string());
+                    direction.conversion_direction_ref().to_string()
                 }
-                CoordinateModel::Spectral(spectral) => {
-                    names.fill(spectral.world_frequency_ref().to_string());
-                }
-                _ => {}
-            }
-            names
-                .into_iter()
-                .take(coordinate.n_pixel_axes())
-                .enumerate()
-                .map(move |(axis, name)| (coordinate.coordinate_type(), axis, name))
+                CoordinateModel::Spectral(spectral) => spectral.world_frequency_ref().to_string(),
+                _ => coordinate.axis_names().remove(local),
+            };
+            (coordinate.coordinate_type(), local, name)
         })
         .collect()
 }

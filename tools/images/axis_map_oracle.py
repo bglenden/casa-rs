@@ -76,6 +76,8 @@ CROPS = [
     ("dropdeg_linear.image", [2, 3], [4, 5]),
     ("dropdeg_linear_between.image", [2, 3], [4, 5]),
     ("tabular_spectral_first.image", [1, 0, 0, 0], [2, 2, 1, 0]),
+    ("swapped.image", [0, 1, 0, 0], [1, 2, 1, 4]),
+    ("interleaved.image", [1, 0, 0, 0], [2, 1, 1, 4]),
 ]
 
 

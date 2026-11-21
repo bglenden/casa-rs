@@ -6,6 +6,7 @@ use casa_types::quanta::{Quantity, Unit};
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
+use crate::analysis::world_axes_for_plane;
 use crate::saved_region::{
     PolygonPixelPlane, native_region_kind, parse_quantum_vector_field, polygon_pixel_plane,
 };
@@ -75,14 +76,15 @@ pub(super) fn polygon_plane(
     }
     // WCPolygon assigns its mode to the two mapped world axes.
     let mut modes = vec![1.0; coords.n_world_axes()];
-    for axis in axes {
+    let world_axes = world_axes_for_plane(coords, axes)?;
+    for axis in world_axes {
         modes[axis] = mode;
     }
     let points = x_values.into_iter().zip(y_values).map(|(x, y)| [x, y]);
     let projected = project_points(
         coords,
         shape,
-        axes,
+        world_axes,
         axes,
         [&x_unit, &y_unit],
         points,
@@ -101,15 +103,9 @@ pub(super) fn project_points(
     points: impl IntoIterator<Item = [f64; 2]>,
     modes: &[f64],
 ) -> Result<Vec<[f64; 2]>, ImageError> {
-    let reference = (0..coords.n_coordinates())
-        .flat_map(|i| coords.coordinate(i).reference_value())
-        .collect::<Vec<_>>();
-    let reference_pixels = (0..coords.n_coordinates())
-        .flat_map(|i| coords.coordinate(i).reference_pixel())
-        .collect::<Vec<_>>();
-    let axis_units = (0..coords.n_coordinates())
-        .flat_map(|i| coords.coordinate(i).axis_units())
-        .collect::<Vec<_>>();
+    let reference = coords.reference_value();
+    let reference_pixels = coords.reference_pixel();
+    let axis_units = coords.world_axis_units();
     let scale = |index: usize| {
         if units[index] == "default" {
             return Err(ImageError::InvalidMetadata(
@@ -141,8 +137,10 @@ pub(super) fn project_points(
             let pixels = coords.to_pixel(&world)?;
             let pixel = |index: usize| {
                 let axis = pixel_axes[index];
-                let offset = if modes[axis] == 2.0 {
-                    reference_pixels[world_axes[index]]
+                let offset = if modes[world_axes[index]] == 2.0 {
+                    reference_pixels[coords
+                        .world_axis_to_pixel_axis(world_axes[index])
+                        .unwrap_or(axis)]
                 } else {
                     shape[axis] as f64 * 0.5
                 };

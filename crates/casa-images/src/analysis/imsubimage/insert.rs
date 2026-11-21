@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_coordinates::CoordinateType;
 use casa_lattices::{
     Lattice, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy, TraversalCursorIter,
     TraversalSpec,
@@ -40,24 +40,21 @@ impl ImageInsertion {
                     .into(),
             ));
         }
-        let reference_pixels = |coords: &CoordinateSystem| {
-            (0..coords.n_coordinates())
-                .flat_map(|index| coords.coordinate(index).reference_pixel())
-                .collect::<Vec<_>>()
-        };
         let by_ref = locate.is_empty() || matches!(locate, [value] if *value < 0.0);
         let (selection, source_ref) = if by_ref {
             let plan = SubimagePlan::from_selection(source, None, selection, false, &[], None)?;
-            let pixels = reference_pixels(&plan.coordinates)
+            let pixels = plan
+                .coordinates
+                .reference_pixel()
                 .into_iter()
                 .zip(&stride)
                 .map(|(pixel, &step)| pixel / step as f64)
                 .collect();
             (plan.selection, pixels)
         } else {
-            (selection, reference_pixels(source.coordinates()))
+            (selection, source.coordinates().reference_pixel())
         };
-        let target_ref = reference_pixels(target.coordinates());
+        let target_ref = target.coordinates().reference_pixel();
         if source_ref.len() != dimensions || target_ref.len() != dimensions {
             return Err(ImageError::InvalidMetadata(
                 "Image coordinates do not match the pixel dimensions".into(),

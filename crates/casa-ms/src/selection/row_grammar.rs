@@ -34,7 +34,7 @@ pub(super) fn apply(
             for warning in spw.warnings() {
                 tracing::warn!(%warning, "SPW selection");
             }
-            flagdata_channel_ranges(ms, &spw)?
+            flagdata_channel_ranges(ms, &spw, false)?
         } else {
             selected_channel_ranges(ms, &spw)?
         };
@@ -87,12 +87,23 @@ pub(crate) fn selected_channel_ranges(
     ms: &MeasurementSet,
     spw: &SpwSelection,
 ) -> MsResult<BTreeMap<i32, ChannelSelection>> {
+    channel_ranges(ms, spw, false)
+}
+
+fn channel_ranges(
+    ms: &MeasurementSet,
+    spw: &SpwSelection,
+    retain_full_segments: bool,
+) -> MsResult<BTreeMap<i32, ChannelSelection>> {
     let windows = ms.spectral_window()?;
     let mut full_windows = BTreeSet::new();
     let mut selected = BTreeMap::<_, ChannelSelection>::new();
     for range in spw.channel_list() {
         let id = range.spw_id as i32;
-        if range.start == 0 && range.step <= 1 && range.stop == windows.num_chan(range.spw_id)? - 1
+        if !retain_full_segments
+            && range.start == 0
+            && range.step <= 1
+            && range.stop == windows.num_chan(range.spw_id)? - 1
         {
             full_windows.insert(id);
             selected.remove(&id);
@@ -116,8 +127,9 @@ pub(crate) fn selected_channel_ranges(
 pub(crate) fn flagdata_channel_ranges(
     ms: &MeasurementSet,
     spw: &SpwSelection,
+    retain_full_segments: bool,
 ) -> MsResult<BTreeMap<i32, ChannelSelection>> {
-    let mut ranges = selected_channel_ranges(ms, spw)?;
+    let mut ranges = channel_ranges(ms, spw, retain_full_segments)?;
     let named = spw
         .channel_list()
         .iter()

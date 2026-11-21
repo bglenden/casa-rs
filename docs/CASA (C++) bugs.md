@@ -3970,13 +3970,19 @@ result meets the clipping criterion. The paired Stokes clip oracle
 reproduces the CASA flags and compares the native flags with independently
 calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
-## Manual flagging can flag channels between requested stride steps
+## Manual flagging and extension can flag channels between requested stride steps
 
 In CASA 6.7.6.14, manual flagging with `spw='0:0~3^2'` changes all four
 channels of the window. Using the explicit list `spw='0:0;2'` selects
 channels 0 and 2. The `tools/casa-compat/flagdata_apply_backup_oracle.py`
 comparison reproduces the extra flags and checks that casa-rs retains the
 two requested channels. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+With XX channel 3 already flagged, `mode='extend'`, `flagnearfreq=True`,
+and `spw='0:1~7^2'`, CASA flags the unselected channels 2 and 4. The native
+task grows to the neighboring selected channels 1 and 5, as CASA does with
+the explicit channel list `0:1;3;5;7`.
+[Extension oracle](../tools/casa-compat/flagdata_extend_oracle.py)
 
 ## Clip channel averaging can abort on a strided selection
 
@@ -4022,7 +4028,7 @@ and accumulates each weight spectrum over its actual contributing
 integrations. The test calculates the expected masks from the stored values,
 then compares flags and data using both CASA and casacore readback.
 
-## Decorated manual, quack and elevation selections can flag unnamed correlations
+## Decorated manual, quack, elevation and extension selections can flag unnamed correlations
 
 In CASA 6.7.6.14, manual, quack and elevation flagging ignore the correlation scope
 when a recognized visibility operator appears in the expression. For example,
@@ -4032,9 +4038,14 @@ The `tools/casa-compat/flagdata_routine_expressions_oracle.py` comparison
 reproduces the extra flags and checks casa-rs against explicit CASA selection
 of the named planes. `ALL` still selects every stored correlation. An
 expression with no known product leaves the flags unchanged.
-An elevation comparison also verifies that `ABS_YY` selects only YY in
-casa-rs. CASA changes all four planes with that expression.
+An elevation comparison verifies that `ABS_YY` selects only YY in
+casa-rs. CASA changes all four planes with that expression. An extension
+comparison starts with four flagged XX channels. With `growfreq=50`,
+`growtime=0`, and `extendpols=True`, CASA fills both XX and YY for
+`ABS_XX`. Native extension fills all eight XX channels and preserves
+YY, matching the explicit CASA `XX` product.
 [Elevation oracle](../tools/casa-compat/flagdata_elevation_oracle.py)
+· [Extension oracle](../tools/casa-compat/flagdata_extend_oracle.py)
 
 ## Time-averaged clipping can derive row flags from a subset of channels
 
@@ -7943,6 +7954,16 @@ beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
 of the pixels being copied.
 
+## `imregrid` can terminate when shifting a sliced direction
+
+CASA 6.7.6.14 on macOS returns the original pixels and mask when regridding
+the unchanged direction axis of the 3 × 2 × 5 `dropdeg_ra.image` fixture.
+Increasing the retained axis's reference pixel by 0.25 in the same template
+record makes the task terminate with SIGBUS. The casacore regrid path
+treats a direction coordinate as a two-axis plane even when an axis has
+been removed. Casa-rs preserves the unchanged slice directly. It refused
+the shifted fixture with an all-masked result and published no output.
+
 ## `imregrid` can attach new linear coordinates to unshifted data
 
 CASA 6.7.6.14 can copy pixels and masks unchanged when regridding a leading
@@ -8295,3 +8316,17 @@ CASA 6.7.6.14 indexes the world-unit vector with pixel positions in
 `["","rad"]` and Stokes units `["rad"]`. The empty unit belongs to Stokes.
 casa-rs uses the coordinate's world axes and reports `["rad","rad"]`
 for direction and `[""]` for Stokes. See #1002 and #1819.
+
+## FITS import with independently placed spectral and Stokes axes
+
+CASA 6.7.6.14 writes a two-axis image with Stokes followed by frequency
+in pixel order and frequency followed by Stokes in world order. The
+FITS PC matrix has zero diagonal and unit off-diagonal terms. The
+same CASA build segfaults in `image.fromfits` when opening its output.
+
+casa-rs pairs the world rows with their pixel columns using the PC
+matrix before parsing the local coordinate models. Imported pixels
+keep the FITS array order and the native record retains the original
+world order. The regression reads files written by CASA and by casa-rs
+and independently checks which pixel step moves each world coordinate.
+See #1002 and #1823.
