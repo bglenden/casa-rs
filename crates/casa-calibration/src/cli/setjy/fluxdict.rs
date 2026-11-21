@@ -95,7 +95,15 @@ pub(super) fn run(
                 .map_err(execution)?;
             scratch_ready = true;
         }
-        publish_models(&mut opened, parts, &field_rows, prepared, &spws, scratch)?;
+        publish_models(
+            &mut opened,
+            parts,
+            &field_rows,
+            prepared,
+            &spws,
+            scratch,
+            false,
+        )?;
         append_values(&mut combined, values);
     }
     opened.release().map_err(execution)?;

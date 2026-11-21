@@ -3,11 +3,14 @@
 """Compare resolved Butler–JPL-Horizons 2010 disk predictions with CASA."""
 
 import argparse
+from contextlib import chdir
 from pathlib import Path
+from shutil import copytree
 from tempfile import TemporaryDirectory
 
+from casaconfig import config
 import casatasks as casa
-from casatools import table
+from casatools import ms, table
 from casars import tasks as rust
 import numpy as np
 
@@ -39,7 +42,8 @@ def ephemeris_observation(path, body, epoch, frequency):
         assert writer.done()
 
 
-def paired(seed, root, body, epoch, *, frequency=None, by_channel=True, missing=False, **options):
+def paired(seed, root, body, epoch, *, frequency=None, by_channel=True, missing=False,
+           direction=None, attached_ephemeris=None, time_frame='UTC', **options):
     with TemporaryDirectory(dir=root, prefix=f'{body}-') as tmp:
         work = Path(tmp)
         answers = []
@@ -47,6 +51,26 @@ def paired(seed, root, body, epoch, *, frequency=None, by_channel=True, missing=
             path = work / f'{label}.ms'
             make_input(seed, path, scratch=True)
             ephemeris_observation(path, body, epoch, frequency)
+            if time_frame != 'UTC':
+                writer = table()
+                assert writer.open(str(path), nomodify=False)
+                for name in ('TIME', 'TIME_CENTROID'):
+                    info = dict(writer.getcolkeyword(name, 'MEASINFO'), Ref=time_frame)
+                    assert writer.putcolkeyword(name, 'MEASINFO', info)
+                assert writer.done()
+            if direction is not None:
+                writer = table()
+                assert writer.open(str(path / 'FIELD'), nomodify=False)
+                for name in ('PHASE_DIR', 'DELAY_DIR', 'REFERENCE_DIR'):
+                    angles = writer.getcell(name, 0)
+                    angles[:, 0] = direction
+                    assert writer.putcell(name, 0, angles)
+                assert writer.done()
+            if attached_ephemeris is not None:
+                writer = ms()
+                assert writer.open(str(path), nomodify=False)
+                assert writer.addephemeris(0, str(attached_ephemeris), body, [0])
+                assert writer.done()
             if missing:
                 module.setjy(str(path), field='0', standard='manual', fluxdensity=7.)
                 saved = data(path, 'MODEL_DATA')
@@ -58,15 +82,17 @@ def paired(seed, root, body, epoch, *, frequency=None, by_channel=True, missing=
                 np.testing.assert_array_equal(model, saved)
             if options.get('fluxdensity') == 0.:
                 np.testing.assert_array_equal(model[..., data(path, 'FIELD_ID') == 0], 0.)
-            if body == 'Mars' and epoch == 55000. and by_channel and not options:
+            if (body == 'Mars' and epoch == 55000. and by_channel and not options
+                    and direction is None and time_frame == 'UTC'):
                 read_scratch_in_both(path, model)
             answers.append((result, model))
         reference, native = answers
         if missing:
             return
-        compare_returns(native[0], reference[0], rtol=2e-7)
-        compare(f'{body} {epoch} {frequency} by-channel={by_channel}', native[1], reference[1])
-        flux = native[0]['0']['0']['fluxd']
+    compare_returns(native[0], reference[0], rtol=2e-7)
+    compare(f'{body} {epoch} {frequency} by-channel={by_channel} direction={direction}',
+            native[1], reference[1])
+    flux = native[0]['0']['0']['fluxd']
     assert np.all(np.isfinite(flux)) and flux[0] >= 0. and not np.any(flux[1:])
     if options.get('fluxdensity') == 0.:
         assert flux[0] == 0.
@@ -74,6 +100,7 @@ def paired(seed, root, body, epoch, *, frequency=None, by_channel=True, missing=
         assert flux[0] == 1.
     else:
         assert flux[0] > 0. and not np.array_equal(native[1], np.ones_like(native[1]))
+    return flux[0]
 
 
 def read_scratch_in_both(path, model):
@@ -122,9 +149,35 @@ def main():
     paired(seed, args.root, 'unrecognized', 55000., missing=True)
     paired(seed, args.root, 'Mars', 55000., fluxdensity=0.)
     paired(seed, args.root, 'Mars', 55000., fluxdensity=40.)
+    paired(seed, args.root, 'Mars', 55000., direction=(0., 0.))
+    paired(seed, args.root, 'Mars', 55000., direction=(0., np.pi / 2.))
+    paired(seed, args.root, 'Mars', 55000.1, time_frame='TAI')
     model = args.root / 'resolved.im'
     write_image(model, seed, cube=False)
     paired(seed, args.root, 'Mars', 55000., model=str(model))
+    ephemerides = Path(config.measurespath) / 'ephemerides' / 'JPL-Horizons'
+    ephemeris = args.root / 'Uranus_54708-55437dUTC.tab'
+    copytree(ephemerides / ephemeris.name, ephemeris)
+    writer = table()
+    assert writer.open(str(ephemeris), nomodify=False)
+    assert writer.putkeyword('posrefsys', 'ICRF/J2000.0') and writer.done()
+    paired(seed, args.root, 'Uranus', 55000., direction=(1e-6, -2e-6),
+           attached_ephemeris=ephemeris)
+    custom = args.root.resolve() / 'custom-ephemeris'
+    custom.mkdir()
+    override = custom / 'Mars_54708-55437dUTC.tab'
+    copytree(ephemerides / override.name, override)
+    assert writer.open(str(override), nomodify=False)
+    assert writer.removecols(['RA', 'DEC']) and writer.done()
+    with chdir(custom):
+        paired(seed.resolve(), args.root.resolve(), 'Mars', 55000.)
+    overlapping = custom / 'Mars_54600-55460dUTC.tab'
+    copytree(ephemerides / override.name, overlapping)
+    for path, temperature in ((override, 30.), (overlapping, 90.)):
+        assert writer.open(str(path), nomodify=False)
+        assert writer.putkeyword('T_mean', dict(value=temperature, unit='K')) and writer.done()
+    with chdir(custom):
+        assert paired(seed.resolve(), args.root.resolve(), 'Mars', 55000.) < 15.
     refuses_virtual(seed, args.root)
 
 

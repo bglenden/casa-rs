@@ -35,6 +35,7 @@ use crate::ft::setjy::{ManualFlux, sampled_point};
 use crate::ft::virtual_publication::VirtualFtPublication;
 use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
+use crate::solve::grouping::VisibilityModels;
 
 mod fluxdict;
 mod model_files;
@@ -189,6 +190,7 @@ fn run_ms(
     selected.channel_selections.clear();
     let spws = requested_windows(&opened.measurement_set, selection.spw.as_deref())?;
     let image = model_files::task_image(task)?;
+    let calibration_directions = matches!(flux, FluxParameters::Solar2010(_)) && image.is_none();
     let (models, fluxes, completed) = prepare(
         &opened.measurement_set,
         &selected,
@@ -218,7 +220,15 @@ fn run_ms(
             selected.channel_selections.clear();
         }
     }
-    publish_models(&mut opened, parts, &selected, models, &spws, scratch)?;
+    publish_models(
+        &mut opened,
+        parts,
+        &selected,
+        models,
+        &spws,
+        scratch,
+        calibration_directions,
+    )?;
     opened.release().map_err(execution)?;
     record_history(task, path, partition);
     if partially_written {
@@ -257,19 +267,30 @@ fn publish_models(
     models: FieldModels,
     spws: &[i32],
     scratch: bool,
+    calibration_directions: bool,
 ) -> Result<(), TaskFailure> {
     if scratch {
         let entries: Vec<_> = models
             .values()
             .flat_map(|model| model.entries.iter().cloned())
             .collect();
+        let geometry = if calibration_directions && !entries.is_empty() {
+            let ms = &opened.measurement_set;
+            Some(
+                VisibilityModels::from_entries(ms, &selected.selected_rows, &entries)
+                    .and_then(|models| models.with_calibration_field_directions(ms))
+                    .map_err(execution)?,
+            )
+        } else {
+            None
+        };
         write_model_scratch(
             &mut opened.measurement_set,
             selected,
             &entries,
             false,
             true,
-            None,
+            geometry,
             &mut opened.lock,
         )
         .map_err(execution)?;
@@ -483,7 +504,12 @@ fn prepare(
             .or_default()
             .push(row.row_index);
     }
-    let engine = MsCalEngine::new(ms).map_err(execution)?;
+    let engine = if matches!(flux, FluxParameters::Solar2010(_)) && image.is_none() {
+        MsCalEngine::for_calibration(ms)
+    } else {
+        MsCalEngine::new(ms)
+    }
+    .map_err(execution)?;
     let field_table = ms.field().map_err(execution)?;
     let windows = ms.spectral_window().map_err(execution)?;
     let time = ms.main_table().column_accessor("TIME").map_err(execution)?;
@@ -533,7 +559,7 @@ fn prepare(
                 field_midpoint(&time, &windows_for_field)?,
                 engine.time_reference(),
             );
-            match Solar2010::open(workspace, &name, &midpoint) {
+            match Solar2010::open(workspace, &name, &midpoint, &frame) {
                 Ok(solar) => Some(solar),
                 Err(error) => {
                     tracing::warn!(field = %name, %error, "no 2010 Solar System flux model");

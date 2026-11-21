@@ -27,20 +27,37 @@ pub(crate) struct Solar2010 {
 }
 
 impl Solar2010 {
-    pub(crate) fn open(workspace: &Path, body: &str, epoch: &MEpoch) -> MsResult<Self> {
+    pub(crate) fn open(
+        workspace: &Path,
+        body: &str,
+        epoch: &MEpoch,
+        frame: &MeasFrame,
+    ) -> MsResult<Self> {
         let mut temperature = Temperature::for_body(body).ok_or_else(|| {
             invalid(format!(
                 "Solar System object {body:?} is not supported by Butler-JPL-Horizons 2010"
             ))
         })?;
-        let path = find_table(workspace, body, epoch)?;
+        let path = find_table(workspace, body, epoch, frame)?;
         let table = Table::open(TableOptions::new(path))?;
         let radius = quantity_keyword(&table, "meanrad", "AU")?
             .ok_or_else(|| invalid("ephemeris has no meanrad"))?;
         let interpolation = EphemerisSample::new(&table, epoch.value().as_mjd())?;
         let distance = interpolation.sample(&table, "Rho")?;
-        let ra = interpolation.sample(&table, "RA")?.to_radians();
-        let dec = interpolation.sample(&table, "DEC")?.to_radians();
+        let has_direction = table.schema().is_some_and(|schema| {
+            ["RA", "DEC"]
+                .iter()
+                .all(|name| schema.column(name).is_some())
+        });
+        let direction = if has_direction {
+            MDirection::from_angles(
+                interpolation.sample(&table, "RA")?.to_radians(),
+                interpolation.sample(&table, "DEC")?.to_radians(),
+                DirectionRef::J2000,
+            )
+        } else {
+            MDirection::from_angles(0., std::f64::consts::FRAC_PI_2, DirectionRef::J2000)
+        };
         if let Temperature::Ephemeris = temperature {
             temperature = Temperature::Constant(
                 quantity_keyword(&table, "T_mean", "K")?
@@ -56,7 +73,7 @@ impl Solar2010 {
             return Err(invalid("invalid Solar System radius or range"));
         }
         Ok(Self {
-            direction: MDirection::from_angles(ra, dec, DirectionRef::J2000),
+            direction,
             diameter_rad: 2. * radius / distance,
             temperature,
         })
@@ -67,13 +84,8 @@ impl Solar2010 {
         position: Option<MDirection>,
         frequencies: &[MFrequency],
     ) -> MsResult<(SkyComponent, [f64; 4])> {
-        let direction = position
-            .filter(|direction| {
-                let (lon, lat) = direction.as_angles();
-                direction.refer() != DirectionRef::J2000
-                    || lon.sin().atan2(lon.cos()).hypot(lat) >= 1e-7
-            })
-            .unwrap_or_else(|| self.direction.clone());
+        // Explicit FIELD references are retained even at the north pole.
+        let direction = position.unwrap_or_else(|| self.direction.clone());
         let shape = ComponentShape::from_parameters(
             ShapeType::Disk,
             direction,
@@ -101,20 +113,24 @@ impl Solar2010 {
     }
 }
 
-fn find_table(workspace: &Path, body: &str, epoch: &MEpoch) -> MsResult<PathBuf> {
+fn find_table(
+    workspace: &Path,
+    body: &str,
+    epoch: &MEpoch,
+    frame: &MeasFrame,
+) -> MsResult<PathBuf> {
     let mut roots = vec![workspace.to_path_buf()];
     for runtime in MeasuresRuntime::discover_candidates().unwrap_or_default() {
         roots.push(runtime.path.join("ephemerides/JPL-Horizons"));
     }
     let prefix = format!("{}_", body.to_ascii_lowercase());
     for root in roots {
-        let mut candidates = std::fs::read_dir(root)
+        let candidates = std::fs::read_dir(root)
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|entry| entry.path().is_dir())
-            .collect::<Vec<_>>();
-        candidates.sort_unstable_by_key(std::fs::DirEntry::file_name);
+            .filter(|entry| entry.path().is_dir());
+        // CASA accepts the first covering table in directory iteration order.
         for candidate in candidates {
             let name = candidate.file_name();
             let lower = name.to_string_lossy().to_ascii_lowercase();
@@ -124,7 +140,7 @@ fn find_table(workspace: &Path, body: &str, epoch: &MEpoch) -> MsResult<PathBuf>
             else {
                 continue;
             };
-            if covers(range, epoch) {
+            if covers(range, epoch, frame) {
                 return Ok(candidate.path());
             }
         }
@@ -135,7 +151,7 @@ fn find_table(workspace: &Path, body: &str, epoch: &MEpoch) -> MsResult<PathBuf>
     )))
 }
 
-fn covers(range: &str, epoch: &MEpoch) -> bool {
+fn covers(range: &str, epoch: &MEpoch, frame: &MeasFrame) -> bool {
     let Some(separator) = range
         .get(1..)
         .and_then(|range| range.find('-'))
@@ -145,7 +161,7 @@ fn covers(range: &str, epoch: &MEpoch) -> bool {
     };
     let (start, rest) = range.split_at(separator);
     let rest = &rest[1..];
-    let Some(unit) = rest.find(|ch| matches!(ch, 'd' | 'h' | 'm' | 's' | 'y')) else {
+    let Some(unit) = rest.find(['d', 'h', 'm', 's', 'y']) else {
         return false;
     };
     let (end, time) = rest.split_at(unit);
@@ -157,7 +173,7 @@ fn covers(range: &str, epoch: &MEpoch) -> bool {
     ) else {
         return false;
     };
-    let Ok(time) = epoch.convert_to(reference, &MeasFrame::new()) else {
+    let Ok(time) = epoch.convert_to(reference, frame) else {
         return false;
     };
     Quantity::new(time.value().as_mjd(), "d")
