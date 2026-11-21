@@ -12,6 +12,7 @@ mod frame_metadata;
 mod inspect;
 mod linear_transform;
 mod observation;
+mod ordering;
 mod reference;
 mod rest_frequency;
 mod stubs;
