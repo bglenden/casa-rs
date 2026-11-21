@@ -257,7 +257,7 @@ const METHODS: &[Method] = &[
             param("poles", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("setepoch", &[param("value", K::Any, Required)], R::Any, Yes),
     method(

@@ -439,6 +439,7 @@ pub fn direction_affine(
         .fold(f64::INFINITY, f64::min)
         * 1e-7;
     if input.direction_ref() == output.direction_ref()
+        && input.conversion_direction_ref() == output.conversion_direction_ref()
         && same_tangent_plane(input, output, rounding_radians)
         && *input.pc_matrix() == ndarray::Array2::<f64>::eye(2)
         && corners_cover_the_plane(output, shape)

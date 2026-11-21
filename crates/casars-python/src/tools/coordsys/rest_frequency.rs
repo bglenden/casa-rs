@@ -70,10 +70,7 @@ pub(super) fn quantity_tokens(value: &str) -> Vec<String> {
 }
 
 pub(super) fn quantity_vector(texts: &[String]) -> PyResult<Option<(Vec<f64>, Unit)>> {
-    let quantities = texts
-        .iter()
-        .map(|text| read_quantity(text, &format!(" In converting quantity {text}")))
-        .collect::<Result<Vec<_>, _>>()?;
+    let quantities = text_quantities(texts)?;
     let Some(first) = quantities.first() else {
         return Ok(None);
     };
@@ -83,6 +80,15 @@ pub(super) fn quantity_vector(texts: &[String]) -> PyResult<Option<(Vec<f64>, Un
         .map(|quantity| casacore::get_value(quantity, &unit))
         .collect();
     Ok(Some((values, unit)))
+}
+
+pub(super) fn text_quantities(texts: &[String]) -> PyResult<Vec<Quantity>> {
+    texts
+        .iter()
+        .map(|text| {
+            read_quantity(text, &format!(" In converting quantity {text}")).map_err(Into::into)
+        })
+        .collect()
 }
 
 fn raised(message: impl Into<String>) -> PyErr {

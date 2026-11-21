@@ -20,15 +20,18 @@ from imager_legacy_pbw_oracle import (
 
 
 def predict(dataset, model, cache, machine, correction, *, scratch=True, limit=.05,
-            accepts=True, factory=imager, spw='0:0', **terms):
+            accepts=True, factory=imager, spw='0:0', wprojplanes=1, empty_model=None, **terms):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
     assert tool.selectvis(field=0, spw=spw)
-    assert tool.defineimage(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
-                            phasecenter=0, stokes='IQUV', outframe='TOPO')
-    assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
+    definition = dict(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
+                      phasecenter=0, stokes='IQUV', outframe='TOPO')
+    assert tool.defineimage(**definition)
+    assert tool.setoptions(ftmachine=machine, wprojplanes=wprojplanes, numthreads=1,
                            cfcachedirname=str(cache), applypointingoffsets=False,
                            dopbgriddingcorrections=correction, pblimit=limit, **terms)
+    if empty_model is not None:
+        assert tool.ft(str(empty_model)) and tool.defineimage(**definition)
     assert tool.ft(str(model)) is accepts
     assert tool.done()
 
@@ -210,6 +213,127 @@ def compare_cold_evla(root, dataset, model):
         results['mixed-warm'] = error
         print('Mixed EVLA and VLA observations reused CASA cells', error, flush=True)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+
+
+def compare_cold_multi_w(root, dataset, model, *, reference=None):
+    # Put rows on both sides of the legacy truncation boundaries at both W signs.
+    source = root / 'four-w-planes.ms'
+    make_input(dataset, source, scratch=True)
+    frequency = data(source / 'SPECTRAL_WINDOW', 'CHAN_FREQ')[0, 0]
+    scale = 9.0 / (.25 / np.deg2rad(15. / 3600.))
+    boundaries = np.array([.1, .55, 1.1, 1.55, 2.1, 2.55, 3.1, 3.55, 4.1])
+    editor = table()
+    assert editor.open(str(source), nomodify=False)
+    uvw = editor.getcol('UVW')
+    rows = np.arange(uvw.shape[1])
+    uvw[2] = boundaries[rows % len(boundaries)] ** 2 / scale * 299792458. / frequency
+    uvw[2, rows % 2 == 0] *= -1.
+    assert editor.putcol('UVW', uvw) and editor.done()
+
+    if reference is None:
+        pinned, casa_cache = root / 'pinned.ms', root / 'casa-cache'
+        make_input(source, pinned, scratch=True)
+        predict(pinned, model, casa_cache, 'awproject', False,
+                wprojplanes=4, wbawp=True, factory=casa_imager)
+    else:
+        pinned, casa_cache = reference
+        np.testing.assert_array_equal(data(source, 'UVW'), data(pinned, 'UVW'))
+    native, native_cache = root / 'native.ms', root / 'native-cache'
+    make_input(source, native, scratch=True)
+    predict(native, model, native_cache, 'awproject', False, wprojplanes=4, wbawp=True)
+    expected = data(pinned, 'MODEL_DATA')
+    errors = {'cells': compare_cells(native_cache, casa_cache, count=16)}
+    results = {'native': native}
+    for name, cache, factory in (('casa-reads-native', native_cache, casa_imager),
+                                 ('native-reads-casa', casa_cache, imager)):
+        target = root / f'{name}.ms'
+        make_input(source, target, scratch=True)
+        before = cache_contents(cache)
+        predict(target, model, cache, 'mawproject', False, wprojplanes=4, wbawp=True, factory=factory)
+        assert cache_contents(cache) == before
+        results[name] = target
+    for name, target in results.items():
+        actual = data(target, 'MODEL_DATA')
+        np.testing.assert_array_equal(actual[:, 1:, :], expected[:, 1:, :])
+        errors[name] = relative_rms(actual[:, 0, :], expected[:, 0, :])
+
+    saved = root / 'saved.ms'
+    make_input(source, saved, scratch=False)
+    predict(saved, model, native_cache, 'awproject', False, scratch=False, wprojplanes=4, wbawp=True)
+    record = recipe(saved)
+    assert record['name'] == 'AWProjectWBFT'
+    held = Path(record['diskimage']) / 'CASARS_LEGACY_AW_CACHE'
+    errors['saved-kernels'] = compare_cells(held, casa_cache, count=16)
+    native_cache.rename(root / 'moved-native-cache')
+    prior = corrected_or_data(saved)
+    tool = ms()
+    assert tool.open(str(saved), nomodify=False)
+    assert tool.msselect({'field': '0'}) and tool.uvsub() and tool.done()
+    actual = prior - data(saved, 'CORRECTED_DATA')
+    assert not np.any(actual[:, 1:, :])
+    errors['saved-replay'] = relative_rms(actual[:, 0, :], expected[:, 0, :])
+    errors.update(frame_converted_w_boundary(root, source, model, casa_cache, scale))
+    print('multiple W planes', errors, flush=True)
+    assert all(np.isfinite(error) and error < 1.e-3 for error in errors.values()), errors
+
+
+def frame_converted_w_boundary(root, dataset, model, cache, scale):
+    source, wide_model, tagged = (root / name for name in
+                                  ('topo-source.ms', 'wide-model.im', 'tagged-cache'))
+    make_input(dataset, source, scratch=True)
+    shutil.copytree(model, wide_model)
+    shutil.copytree(cache, tagged)
+    editor = table()
+    assert editor.open(str(source / 'SPECTRAL_WINDOW'), nomodify=False)
+    assert editor.putcell('MEAS_FREQ_REF', 0, 5) and editor.done()  # TOPO
+    frequency = data(source / 'SPECTRAL_WINDOW', 'CHAN_FREQ')[0, 0]
+    assert editor.open(str(source), nomodify=False)
+    uvw = editor.getcol('UVW')
+    offsets = np.array([-3.e-4, -3.e-6, -3.e-7, 3.e-7, 1.e-6, 3.e-6, 1.e-5, 3.e-4])
+    uvw[2] = (2. + np.resize(offsets, uvw.shape[1])) ** 2 / scale * 299792458. / frequency
+    assert editor.putcol('UVW', uvw) and editor.done()
+    tool = image()
+    assert tool.open(str(wide_model))
+    coordinates = tool.coordsys()
+    increment = coordinates.increment()['numeric']
+    increment[-1] = 1.e7
+    assert coordinates.setincrement(increment) and tool.setcoordsys(coordinates.torecord())
+    assert coordinates.done() and tool.done()
+    # A phase tag in plane 1 makes choosing the wrong side of the
+    # boundary observable, independently of the small change in W phase.
+    cells = sorted(tagged.glob('CFS_0_0_CF_0_1_*.im'))
+    assert len(cells) == 2
+    for path in cells:
+        assert tool.open(str(path))
+        pixels = tool.getchunk()
+        phase = np.exp(.45j * np.arange(pixels.shape[0], dtype=np.float32)).reshape((-1, 1, 1, 1))
+        assert tool.putchunk(pixels * phase) and tool.done()
+
+    outputs = {}
+    for name, factory in (('casa', casa_imager), ('native', imager)):
+        target = root / f'{name}-topo.ms'
+        make_input(source, target, scratch=True)
+        predict(target, wide_model, tagged, 'awproject', False, factory=factory,
+                wprojplanes=4, wbawp=True, empty_model=root / f'{name}-blank.im')
+        outputs[name] = data(target, 'MODEL_DATA')
+    reference = outputs['casa'][:, 0, :]
+    above = np.resize(offsets, reference.shape[1]) > 0.
+    assert np.max(np.abs(reference[:, above])) > 10.
+    assert np.max(np.abs(reference[:, ~above])) < 5.
+    np.testing.assert_array_equal(outputs['native'][:, 1:, :], outputs['casa'][:, 1:, :])
+    errors = {'native-frequency-scratch': relative_rms(outputs['native'][:, 0, :], reference)}
+
+    saved = root / 'saved-topo.ms'
+    make_input(source, saved, scratch=False)
+    predict(saved, wide_model, tagged, 'awproject', False, scratch=False, wprojplanes=4, wbawp=True)
+    prior = corrected_or_data(saved)
+    reader = ms()
+    assert reader.open(str(saved), nomodify=False)
+    assert reader.msselect({'field': '0'}) and reader.uvsub() and reader.done()
+    replay = prior - data(saved, 'CORRECTED_DATA')
+    assert not np.any(replay[:, 1:, :])
+    errors['native-frequency-saved'] = relative_rms(replay[:, 0, :], reference)
+    return errors
 
 
 def cold_case(root, dataset, model, machine, terms, *, reference=None):
@@ -579,6 +703,7 @@ def main():
     parser.add_argument('--cold', action='store_true')
     parser.add_argument('--cold-evla', action='store_true')
     parser.add_argument('--cold-correction', action='store_true')
+    parser.add_argument('--cold-multi-w', action='store_true')
     args = parser.parse_args()
     args.work.mkdir(parents=True)
     if args.cold:
@@ -586,6 +711,9 @@ def main():
         return
     if args.cold_evla:
         compare_cold_evla(args.work, args.dataset, args.model)
+        return
+    if args.cold_multi_w:
+        compare_cold_multi_w(args.work, args.dataset, args.model)
         return
     if args.cold_correction:
         compare_cold_correction(args.work, args.dataset, args.model)

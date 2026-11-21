@@ -20,3 +20,7 @@ same calls, which avoid CASA's uninitialized local during error cleanup.
 The `immath` beam precision test finds the native log records by their
 message prefixes. The CASA run uses the upstream line offsets. Both runs
 check the same beam values and precision.
+
+The invalid-interpolation `imregrid` case checks CASA's `RuntimeError`
+in the control run and the native task's interpolation-specific
+`ValueError` from parameter validation.
