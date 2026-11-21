@@ -2,7 +2,7 @@
 //! Manual calibrator point models on the shared calibration task front end.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_components::{ComponentList, SkyComponent};
 use casa_ms::derived::engine::MsCalEngine;
@@ -30,6 +30,7 @@ use crate::ft::setjy::standards::{
     CalibratorSpectrum, CatalogMatch, CatalogScale, FluxCatalog, FluxScale,
 };
 use crate::ft::setjy::{ManualFlux, sampled_point};
+use crate::ft::virtual_publication::VirtualFtPublication;
 use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
 
@@ -58,11 +59,74 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         return model_files::list(task);
     }
     let path = task.input_path("vis")?;
-    if super::multi_ms::partition_paths(&path)?.is_some() {
-        return Err(TaskFailure::validation("setjy on a Multi-MS is pending #1519").at("vis"));
-    }
     let scratch = task.flag("usescratch")?;
-    let mut opened = OpenedMs::open(&path).map_err(execution)?;
+    let value = if let Some(paths) = super::multi_ms::partition_paths(&path)? {
+        run_multi(task, &path, &paths, scratch)?
+    } else {
+        let opened = OpenedMs::open(&path).map_err(execution)?;
+        run_ms(task, &path, opened, &mut [], scratch, false)?
+    };
+    TaskSuccess::new(value, &())
+}
+
+fn run_multi(
+    task: &TaskInvocation<'_>,
+    path: &Path,
+    paths: &[PathBuf],
+    scratch: bool,
+) -> Result<CasaValue, TaskFailure> {
+    // CASA gives every member a MODEL_DATA column even when a partition
+    // has no selected rows or the requested prediction is virtual.
+    for part in paths {
+        OpenedMs::open(part)
+            .and_then(|opened| opened.initialize_calibrater(false, false, true))
+            .and_then(OpenedMs::release)
+            .map_err(execution)?;
+    }
+    if !scratch {
+        let root = OpenedMs::open(path).map_err(execution)?;
+        let mut parts = paths
+            .iter()
+            .map(|part| OpenedMs::open(part).map_err(execution))
+            .collect::<Result<Vec<_>, _>>()?;
+        let outcome = run_ms(task, path, root, &mut parts, false, false);
+        for part in parts {
+            part.release().map_err(execution)?;
+        }
+        return outcome;
+    }
+
+    let mut first = None;
+    let mut last_failure = None;
+    for part in paths {
+        let opened = OpenedMs::open(part).map_err(execution)?;
+        match run_ms(task, part, opened, &mut [], true, true) {
+            Ok(value) if matches!(&value, CasaValue::Dict { entries } if !entries.is_empty()) => {
+                first.get_or_insert(value);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(partition = %part.display(), message = %error.message,
+                    "setjy failed for Multi-MS partition");
+                last_failure = Some(error);
+            }
+        }
+    }
+    first.ok_or_else(|| {
+        let reason =
+            last_failure.map_or_else(|| "no selected rows".to_owned(), |error| error.message);
+        execution(format!("Error in parallel processing of MMS: {reason}"))
+    })
+}
+
+fn run_ms(
+    task: &TaskInvocation<'_>,
+    path: &Path,
+    mut opened: OpenedMs,
+    parts: &mut [OpenedMs],
+    scratch: bool,
+    partition: bool,
+) -> Result<CasaValue, TaskFailure> {
     let mut selection = selection(task)?;
     if task.text("standard")?.as_deref() == Some("fluxscale") {
         // The wrapper validates the dictionary before its virtual imager
@@ -72,11 +136,11 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
         let selected = opened.resolve(&selection).map_err(execution)?;
         if selected.selected_rows.is_empty() {
-            return empty_selection(task);
+            return empty_selection(task, partition);
         }
-        let result = fluxdict::run(task, opened, selection, &selected, scratch)?;
-        super::history::record_task(task, &path);
-        return TaskSuccess::new(result, &());
+        let result = fluxdict::run(task, opened, parts, selection, &selected, scratch)?;
+        record_history(task, path, partition);
+        return Ok(result);
     }
     // The task first checks field, SPW and intent for virtual models.
     // The imager then applies time, scan and observation to the model selection.
@@ -86,16 +150,16 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     if !scratch && time_filtered {
         let initial = opened.resolve(&selection).map_err(execution)?;
         if initial.selected_rows.is_empty() {
-            return empty_selection(task);
+            return empty_selection(task, partition);
         }
     }
     add_time_selection(task, &mut selection)?;
     let mut selected = opened.resolve(&selection).map_err(execution)?;
     if selected.selected_rows.is_empty() {
         if !scratch && time_filtered {
-            return TaskSuccess::new(flux_dictionary(Vec::new()), &());
+            return Ok(flux_dictionary(Vec::new()));
         }
-        return empty_selection(task);
+        return empty_selection(task, partition);
     }
     let Some(flux) = flux_parameters(task)? else {
         if scratch {
@@ -104,12 +168,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                 .map_err(execution)?;
         }
         opened.release().map_err(execution)?;
-        return TaskSuccess::new(
-            CasaValue::Dict {
-                entries: Vec::new(),
-            },
-            &(),
-        );
+        return Ok(CasaValue::Dict {
+            entries: Vec::new(),
+        });
     };
     // Imager::sjy_make_visibilities selects all channels of each chosen SPW.
     selected.channel_selections.clear();
@@ -144,9 +205,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             selected.channel_selections.clear();
         }
     }
-    publish_models(&mut opened, &selected, models, &spws, scratch)?;
+    publish_models(&mut opened, parts, &selected, models, &spws, scratch)?;
     opened.release().map_err(execution)?;
-    super::history::record_task(task, &path);
+    record_history(task, path, partition);
     if partially_written {
         // CASA's cleanup after the later failure raises once an earlier
         // component list has already been applied and retired.
@@ -154,11 +215,31 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             "flux coefficients are missing for a later field after earlier models were written",
         ));
     }
-    TaskSuccess::new(fluxes, &())
+    Ok(fluxes)
+}
+
+fn record_history(task: &TaskInvocation<'_>, path: &Path, partition: bool) {
+    if !partition {
+        super::history::record_task(task, path);
+        return;
+    }
+    let mut session = task.session().clone();
+    let updated = session
+        .set(
+            "vis",
+            ParameterValue::String(path.to_string_lossy().into_owned()),
+        )
+        .and_then(|()| session.set("ismms", ParameterValue::Bool(true)));
+    if let Err(error) = updated {
+        tracing::warn!(partition = %path.display(), %error, "updating setjy partition HISTORY");
+        return;
+    }
+    super::history::record_task(&TaskInvocation::new(&session, task.workspace()), path);
 }
 
 fn publish_models(
     opened: &mut OpenedMs,
+    parts: &mut [OpenedMs],
     selected: &ResolvedMsSelection,
     models: FieldModels,
     spws: &[i32],
@@ -179,7 +260,7 @@ fn publish_models(
             &mut opened.lock,
         )
         .map_err(execution)?;
-    } else {
+    } else if parts.is_empty() {
         // Fields can place records in different tables, depending on SOURCE_ID.
         for (field, mut model) in models.into_iter().rev() {
             let mut publication = VirtualModelPublication::default();
@@ -197,18 +278,42 @@ fn publish_models(
             }
             published.map_err(execution)?;
         }
+    } else {
+        for (field, model) in models.into_iter().rev() {
+            let inputs = std::iter::once(&opened.measurement_set)
+                .chain(parts.iter().map(|part| &part.measurement_set));
+            let components = model
+                .entries
+                .into_iter()
+                .filter(|entry| entry.kind == VirtualModelKind::ComponentList)
+                .collect();
+            let mut publication = VirtualFtPublication::replacing_field(
+                inputs,
+                components,
+                model.images,
+                field,
+                spws,
+            )
+            .map_err(execution)?;
+            publication
+                .publish(
+                    std::iter::once((&mut opened.measurement_set, &mut opened.lock)).chain(
+                        parts
+                            .iter_mut()
+                            .map(|part| (&mut part.measurement_set, &mut part.lock)),
+                    ),
+                )
+                .map_err(execution)?;
+        }
     }
     Ok(())
 }
 
-fn empty_selection(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    if task.flag("ismms")? {
-        return TaskSuccess::new(
-            CasaValue::Dict {
-                entries: Vec::new(),
-            },
-            &(),
-        );
+fn empty_selection(task: &TaskInvocation<'_>, partition: bool) -> Result<CasaValue, TaskFailure> {
+    if partition || task.flag("ismms")? {
+        return Ok(CasaValue::Dict {
+            entries: Vec::new(),
+        });
     }
     Err(execution(
         "No rows were selected. Please check your data selection",

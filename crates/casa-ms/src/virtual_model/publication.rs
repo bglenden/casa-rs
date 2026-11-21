@@ -98,6 +98,26 @@ impl VirtualModelPublication {
         )
     }
 
+    /// Replace the windows only when the planned storage target still owns them.
+    /// Verify the route and publish under the same locks.
+    pub fn replace_windows_at_holding<'a>(
+        &mut self,
+        ms: &mut MeasurementSet,
+        entries: impl IntoIterator<Item = &'a VirtualModelEntry>,
+        lock: &mut TableWriteLock,
+        field: i32,
+        spws: &[i32],
+        expected: &Path,
+    ) -> MsResult<()> {
+        self.publish(
+            ms,
+            entries.into_iter().map(|entry| (entry, true)),
+            Some(lock),
+            Some((field, expected)),
+            Some((field, spws)),
+        )
+    }
+
     pub(super) fn publish<'a>(
         &mut self,
         ms: &mut MeasurementSet,
