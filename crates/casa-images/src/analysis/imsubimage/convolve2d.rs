@@ -82,6 +82,15 @@ impl ImageGaussianConvolution {
         if !has_sky {
             axes.sort_unstable();
         }
+        if request.target_resolution && !has_sky {
+            let x = increment(coordinates, axes[0])?;
+            if !x.unit().conformant(&Unit::new("rad").expect("radians")) {
+                return Err(invalid(format!(
+                    "Major axis must have angular units ({} is not).",
+                    x.unit().name()
+                )));
+            }
+        }
         let geometry = Sampling::new(coordinates, axes, has_sky, &request.widths)?;
         let beam_set = &section.image_info.beam_set;
         let channels = beam_set.n_channels().max(1);
@@ -448,7 +457,7 @@ impl Sampling {
             (scale, beam)
         } else {
             let scale = if automatic {
-                samples.volume()?.recip()
+                samples.volume().recip()
             } else {
                 scale
             };
@@ -463,13 +472,10 @@ impl Sampling {
 }
 
 fn beams_near(a: GaussianBeam, b: GaussianBeam) -> bool {
-    let angular_floor = (0.01_f64 / 3600.).to_radians();
-    let close = |a: f64, b: f64| (a - b).abs() <= angular_floor.max(1e-5 * a.abs().max(b.abs()));
-    close(a.major, b.major)
-        && close(a.minor, b.minor)
-        && (close(a.major, a.minor)
-            || close(
-                unwrap_position_angle(a.position_angle - b.position_angle),
-                0.,
-            ))
+    let close_width = |a: f64, b: f64| (a - b).abs() <= 1e-5 * a.abs().max(b.abs());
+    let angular_tolerance = (0.01_f64 / 3600.).to_radians();
+    close_width(a.major, b.major)
+        && close_width(a.minor, b.minor)
+        && (unwrap_position_angle(a.position_angle) - unwrap_position_angle(b.position_angle)).abs()
+            <= angular_tolerance
 }

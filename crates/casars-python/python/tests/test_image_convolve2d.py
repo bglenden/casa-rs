@@ -249,3 +249,127 @@ def test_convolve2d_beam_history_is_written_with_call_history_disabled(casa):
         finally:
             result.done()
             source.done()
+
+
+@pytest.mark.parametrize("declination", [89.99305555555556, 90.])
+def test_convolve2d_circular_kernel_is_symmetric_at_the_pole(casa, declination):
+    data = np.zeros((17, 19), np.float32)
+    data[8, 9] = 2.
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=data)
+        coords = source.coordsys()
+        assert coords.setunits(["deg", "deg"])
+        assert coords.setreferencevalue([45., declination])
+        assert source.setcoordsys(coords.torecord())
+        coords.done()
+        result = source.convolve2d(major="2pix", minor="2pix", pa="0deg", scale=1.)
+        try:
+            np.testing.assert_allclose(result.getchunk()[8:11, 9:12], [
+                [2., 1., .125], [1., .5, .0625], [.125, .0625, .0078125],
+            ], rtol=4e-5, atol=2e-7)
+        finally:
+            result.done()
+            source.done()
+
+
+def test_convolve2d_target_resolution_needs_angular_widths(casa):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromshape(shape=[15, 15], linear=True)
+        try:
+            with pytest.raises(RuntimeError, match="Major axis must have angular units"):
+                source.convolve2d(major="4pix", minor="2pix", pa="0deg", targetres=True)
+        finally:
+            source.done()
+
+
+def test_convolve2d_target_tolerance_is_relative_for_beam_widths(casa):
+    data = np.zeros((17, 19, 1, 2), np.float32)
+    data[8, 9, 0, :] = 2.
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=data)
+        coords = source.coordsys()
+        units = coords.units()
+        assert coords.setunits(["arcsec", "arcsec", *units[2:]])
+        increment = coords.increment()["numeric"]
+        increment[:2] = [-.0002, .0002]
+        assert coords.setincrement(increment)
+        assert source.setcoordsys(coords.torecord())
+        coords.done()
+        assert source.setbrightnessunit("Jy/beam")
+        assert source.setrestoringbeam(
+            major=".004arcsec", minor=".004arcsec", pa="0deg", channel=0,
+        )
+        result = source.convolve2d(
+            major=".009arcsec", minor=".009arcsec", pa="0deg", scale=2., targetres=True,
+        )
+        try:
+            np.testing.assert_allclose(result.getchunk()[8, 9, 0], [4., 4.], atol=3e-6)
+            assert np.all(result.getchunk()[9, 9, 0] > 3.9)
+            assert result.restoringbeam()["major"]["value"] == pytest.approx(.009)
+        finally:
+            result.done()
+            source.done()
+
+
+def test_convolve2d_matches_a_wide_resolved_sampled_beam(casa):
+    pixels = np.zeros((13, 15), np.float32)
+    pixels[6, 7] = 2.
+    # More than 513 pixels in the Gaussian footprint, even though the
+    # selected image is small.
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=pixels)
+        assert source.setbrightnessunit("Jy/beam")
+        assert source.setrestoringbeam(major="119'", minor="112'", pa="15deg")
+        result = source.convolve2d(major="121pix", minor="92pix", pa="0deg")
+        try:
+            assert result.getchunk()[6, 7] == pytest.approx(.000292812649, rel=4e-4)
+            beam = result.restoringbeam()
+            assert beam["major"]["value"] == pytest.approx(10168.115, rel=3e-4)
+            assert beam["minor"]["value"] == pytest.approx(8714.848, rel=3e-4)
+            assert beam["positionangle"]["value"] == pytest.approx(3.044727, abs=.02)
+        finally:
+            result.done()
+            source.done()
+
+
+def test_convolve2d_very_wide_unit_volume_kernel_stays_bounded():
+    pixels = np.zeros((13, 15), np.float32)
+    pixels[6, 7] = 2.
+    source = tools.image()
+    assert source.fromarray(pixels=pixels)
+    result = source.convolve2d(major="1950pix", minor="1800pix", pa="0deg")
+    try:
+        expected = 8. * np.log(2.) / (np.pi * 1950. * 1800.)
+        assert result.getchunk()[6, 7] == pytest.approx(expected, rel=4e-5)
+        assert result.brightnessunit() == ""
+    finally:
+        result.done()
+        source.done()
+
+
+@pytest.mark.parametrize("source_pa,kernel_pa,peak,beam", [
+    (0, 0, .01110102329, (10183.4745, 230.51220, 0.)),
+    (17, 19, .01401280519, (10181.9254, 291.01767, 18.01662)),
+])
+def test_convolve2d_wide_undersampled_beam_uses_discrete_samples(casa, source_pa, kernel_pa, peak, beam):
+    pixels = np.zeros((13, 15), np.float32)
+    pixels[6, 7] = 2.
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=pixels)
+        assert source.setbrightnessunit("Jy/beam")
+        assert source.setrestoringbeam(major="119'", minor="2.4'", pa=f"{source_pa}deg")
+        result = source.convolve2d(major="121pix", minor="3pix", pa=f"{kernel_pa}deg")
+        try:
+            assert result.getchunk()[6, 7] == pytest.approx(peak, rel=4e-4)
+            fitted = result.restoringbeam()
+            assert fitted["major"]["value"] == pytest.approx(beam[0], rel=6e-4)
+            assert fitted["minor"]["value"] == pytest.approx(beam[1], rel=6e-4)
+            assert fitted["positionangle"]["value"] == pytest.approx(beam[2], abs=.02)
+        finally:
+            result.done()
+            source.done()

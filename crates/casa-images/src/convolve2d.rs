@@ -95,13 +95,26 @@ pub(crate) fn sky_per_pixel(direction: &DirectionCoordinate) -> Result<[[f64; 2]
     const STEP: f64 = 0.5;
     let crpix = direction.reference_pixel();
     let world = |dx: f64, dy: f64| direction.to_world(&[crpix[0] + dx, crpix[1] + dy]);
-    let centre = world(0.0, 0.0)?;
+    let reference = world(0.0, 0.0)?;
+    let (longitude, latitude) = (reference[0], reference[1]);
+    let (sin_lon, cos_lon) = longitude.sin_cos();
+    let (sin_lat, cos_lat) = latitude.sin_cos();
+    let east = [-sin_lon, cos_lon, 0.];
+    let north = [-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat];
+    let line_of_sight = |world: &[f64]| {
+        let (sin_lon, cos_lon) = world[0].sin_cos();
+        let (sin_lat, cos_lat) = world[1].sin_cos();
+        [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat]
+    };
     let mut jacobian = [[0.0; 2]; 2];
     for (axis, (dx, dy)) in [(STEP, 0.0), (0.0, STEP)].into_iter().enumerate() {
-        let (plus, minus) = (world(dx, dy)?, world(-dx, -dy)?);
-        let dlon = (plus[0] - minus[0] + PI).rem_euclid(2.0 * PI) - PI;
-        jacobian[0][axis] = dlon * centre[1].cos() / (2.0 * STEP);
-        jacobian[1][axis] = (plus[1] - minus[1]) / (2.0 * STEP);
+        let plus = line_of_sight(&world(dx, dy)?);
+        let minus = line_of_sight(&world(-dx, -dy)?);
+        let project = |basis: [f64; 3]| {
+            (0..3).map(|i| basis[i] * (plus[i] - minus[i])).sum::<f64>() / (2.0 * STEP)
+        };
+        jacobian[0][axis] = project(east);
+        jacobian[1][axis] = project(north);
     }
     Ok(jacobian)
 }
@@ -120,6 +133,8 @@ pub(crate) struct GaussianSamples {
     pub(crate) side: usize,
     along: [f64; 2],
     across: [f64; 2],
+    determinant_root: f64,
+    minor_pixels: f64,
 }
 
 impl GaussianSamples {
@@ -172,6 +187,8 @@ impl GaussianSamples {
             side,
             along,
             across,
+            determinant_root,
+            minor_pixels: largest_root.recip(),
         })
     }
 
@@ -184,11 +201,30 @@ impl GaussianSamples {
         (-4.0 * LN_2 * (major.powi(2) + minor.powi(2))).exp()
     }
 
-    pub(crate) fn volume(&self) -> Result<f64, ImageError> {
-        if self.side > 8193 {
-            return Err(ImageError::InvalidMetadata(
-                "Gaussian kernel exceeds the volume workspace".into(),
-            ));
+    pub(crate) fn precision(&self) -> [[f64; 2]; 2] {
+        let entry =
+            |i: usize, j: usize| self.along[i] * self.along[j] + self.across[i] * self.across[j];
+        [[entry(0, 0), entry(0, 1)], [entry(0, 1), entry(1, 1)]]
+    }
+
+    pub(crate) fn well_sampled(&self) -> bool {
+        self.minor_pixels >= 8.
+    }
+
+    pub(crate) fn volume(&self) -> f64 {
+        if self.side > 129 {
+            if self.well_sampled() {
+                // At this sampling the discrete and continuous volumes
+                // differ only by the far Gaussian tails outside the stamp.
+                return PI / (4. * LN_2 * self.determinant_root);
+            }
+            let mid = (self.side / 2) as isize;
+            return lattice_gaussian_volume(
+                self.precision(),
+                self.determinant_root.powi(2),
+                [0., 0.],
+                [[-mid, mid]; 2],
+            );
         }
         let mut sum = 0.;
         for y in 0..self.side {
@@ -196,7 +232,7 @@ impl GaussianSamples {
                 sum += self.sample(x, y);
             }
         }
-        Ok(sum)
+        sum
     }
 
     fn collect(self) -> Result<Vec<f64>, ImageError> {
@@ -215,6 +251,39 @@ impl GaussianSamples {
         }
         Ok(values)
     }
+}
+
+// Sum a possibly thin Gaussian by completing the square along the narrower
+// lattice direction. Expand each strip to a tail well below Float precision.
+fn lattice_gaussian_volume(
+    precision: [[f64; 2]; 2],
+    determinant: f64,
+    mean: [f64; 2],
+    bounds: [[isize; 2]; 2],
+) -> f64 {
+    const LIMIT: f64 = 14.;
+    let first = usize::from(precision[1][1] > precision[0][0]);
+    let second = 1 - first;
+    let a = precision[first][first];
+    let tilt = precision[first][second] / a;
+    let reduced = determinant / a;
+    let row_radius = (LIMIT / reduced).sqrt();
+    let row_first = ((mean[second] - row_radius).ceil() as isize).max(bounds[second][0]);
+    let row_last = ((mean[second] + row_radius).floor() as isize).min(bounds[second][1]);
+    let mut volume = 0.;
+    for row in row_first..=row_last {
+        let row_delta = row as f64 - mean[second];
+        let row_cost = reduced * row_delta * row_delta;
+        let center = mean[first] - tilt * row_delta;
+        let radius = ((LIMIT - row_cost).max(0.) / a).sqrt();
+        let first_pixel = ((center - radius).ceil() as isize).max(bounds[first][0]);
+        let last_pixel = ((center + radius).floor() as isize).min(bounds[first][1]);
+        for pixel in first_pixel..=last_pixel {
+            let form = a * (pixel as f64 - center).powi(2) + row_cost;
+            volume += (-4. * LN_2 * form).exp();
+        }
+    }
+    volume
 }
 
 fn kernel(beam: &GaussianBeam, sky: [[f64; 2]; 2]) -> Result<(usize, Vec<f64>), ImageError> {
