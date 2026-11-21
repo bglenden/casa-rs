@@ -278,6 +278,51 @@ impl PyCalibrater {
         self.attached(py, |state| state.reset(apply, solve))
     }
 
+    #[pyo3(signature = (tablein = "", tableout = "", fields = None), text_signature = "($self, tablein='', tableout='', fields=[])")]
+    fn linpolcor(
+        &self,
+        py: Python<'_>,
+        tablein: &str,
+        tableout: &str,
+        fields: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        // CASA leaves this correction disabled before reading any tables.
+        let _ = (tablein, tableout, fields);
+        let attached = self.with_lifecycle(py, |state| Ok(state.dataset_path().is_some()))?;
+        let line = if attached {
+            LogLine::error(
+                "The linpolcor() function has been disabled while some calibrater infrastructural work is completed.",
+            )
+        } else {
+            LogLine::error("Must first open a MeasurementSet.")
+        };
+        emit(py, LOGGER, &[line])?;
+        Ok(false)
+    }
+
+    #[pyo3(signature = (posangcor, tablein, tableout = ""), text_signature = "($self, posangcor, tablein, tableout='')")]
+    fn posangcal(
+        &self,
+        py: Python<'_>,
+        posangcor: &Bound<'_, PyAny>,
+        tablein: &str,
+        tableout: &str,
+    ) -> PyResult<bool> {
+        // Pinned CASA aborts on an open MS before it can apply the correction.
+        let _ = (posangcor, tablein, tableout);
+        if self.with_lifecycle(py, |state| Ok(state.dataset_path().is_some()))? {
+            return Err(PyRuntimeError::new_err(
+                "CASA 6.7.6.14 aborts in calibrater.posangcal with an open MeasurementSet",
+            ));
+        }
+        emit(
+            py,
+            LOGGER,
+            &[LogLine::error("Must first open a MeasurementSet.")],
+        )?;
+        Ok(false)
+    }
+
     #[pyo3(signature = (calset = 0), text_signature = "($self, calset=0)")]
     fn initcalset(&self, py: Python<'_>, calset: i64) -> PyResult<bool> {
         self.attached(py, |state| state.init_cal_set(calset))
