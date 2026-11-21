@@ -16,7 +16,7 @@ from imager_component_voltage_oracle import compare, predict, scratch_pair, sour
 from imager_legacy_pbw_oracle import corrected_or_data, data, make_input
 
 
-def radial_table(path, frequency, *, airy=False):
+def radial_table(path, frequency, *, airy=False, wrap_longitude=False):
     me = measures()
     direction = me.direction('J2000', '-180arcsec' if airy else '180arcsec', '72arcsec')
     manager = vpmanager()
@@ -34,10 +34,10 @@ def radial_table(path, frequency, *, airy=False):
         np.testing.assert_allclose(reported[axis]['value'], direction[axis]['value'], atol=1.e-15)
     assert manager.saveastable(str(path))
     reader = table()
-    assert reader.open(str(path), nomodify=not airy)
+    assert reader.open(str(path), nomodify=not wrap_longitude)
     stored = reader.getcell('pbdescription', 0)
     assert stored['squintdir'] == reported and stored['squintreffreq'] == definition['squintreffreq']
-    if airy:
+    if wrap_longitude:
         # CASA writes signed longitude. The native direction serializer uses [0, 2π).
         stored['squintdir']['m0']['value'] += np.float64(2. * np.pi)
         assert reader.putcell('pbdescription', 0, stored)
@@ -111,12 +111,16 @@ def run(root, seed, model):
         scaled = scratch_pair(work, seed, component, results, 'reference-frequency',
                               squint=True, vptable=half)
         assert relative_rms(scaled, component_squint) > .1
-        airy = work / 'airy.tbl'
+        airy, wrapped = work / 'airy.tbl', work / 'airy-wrapped.tbl'
         radial_table(airy, '0.7GHz', airy=True)
-        scratch_pair(work, seed, component, results, 'airy-component-wrapped', squint=True,
-                     vptable=airy)
+        radial_table(wrapped, '0.7GHz', airy=True, wrap_longitude=True)
+        signed = scratch_pair(work, seed, component, results, 'airy-component-signed', squint=True,
+                              vptable=airy)
+        alternate = scratch_pair(work, seed, component, results, 'airy-component-wrapped',
+                                 squint=True, vptable=wrapped)
+        np.testing.assert_allclose(signed, alternate, rtol=1.e-6, atol=1.e-6)
         scratch_pair(work, seed, None, results, 'airy-image-wrapped', model=model, squint=True,
-                     vptable=airy)
+                     vptable=wrapped)
         check_other_gridder(work, seed, model, beam)
         saved_exchange(work, seed, [
             ('component', component, None, unattenuated),
