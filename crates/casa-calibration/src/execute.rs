@@ -4490,16 +4490,7 @@ fn load_parameters(
         }
     })?;
     let leakage = polarization::Leakage::from_subtype(&table_plan.summary.table_subtype);
-    let tec = table_plan.summary.table_subtype == "F Jones";
-    let ionosphere = tec
-        .then(|| {
-            ionosphere::Ionosphere::read(
-                &table,
-                &table_plan.spec.path,
-                table_plan.spec.callibrary.is_none(),
-            )
-        })
-        .transpose()?;
+    let ionosphere = ionosphere::Ionosphere::for_plan(&table, table_plan)?;
     let cross_hand_phase = polarization::is_cross_hand_phase(&table_plan.summary.table_subtype);
     let supports_calwt = (table_plan.summary.parameter_family
         == CalibrationParameterFamily::Complex
@@ -4572,7 +4563,7 @@ fn load_parameters(
                         source: MsError::from(source),
                     })?;
                 let path = &table_plan.spec.path;
-                if (table_plan.summary.table_subtype == "PosAng Jones" || tec)
+                if (table_plan.summary.table_subtype == "PosAng Jones" || ionosphere.is_some())
                     && values.shape().first() != Some(&1)
                 {
                     return Err(ApplyExecutionError::UnsupportedParameterShape {

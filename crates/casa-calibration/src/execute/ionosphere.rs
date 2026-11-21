@@ -15,14 +15,17 @@ pub(super) struct Ionosphere {
 }
 
 impl Ionosphere {
-    pub(super) fn read(
+    pub(super) fn for_plan(
         table: &Table,
-        path: &Path,
-        traditional: bool,
-    ) -> Result<Self, ApplyExecutionError> {
+        plan: &ApplyCalibrationTablePlan,
+    ) -> Result<Option<Self>, ApplyExecutionError> {
+        if plan.summary.table_subtype != "F Jones" {
+            return Ok(None);
+        }
+        let path = &plan.spec.path;
         // FJones::setApply reads the keyword. CLPatchPanel setup calls the
         // base setCallib path and keeps the default magnetic shell height.
-        let keyword = if traditional {
+        let keyword = if plan.spec.callibrary.is_none() {
             table.keywords().get(HEIGHT_KEYWORD)
         } else {
             None
@@ -41,10 +44,10 @@ impl Ionosphere {
         if !height.is_finite() {
             return Err(invalid(path, "F Jones ionosphere height must be finite"));
         }
-        Ok(Self {
+        Ok(Some(Self {
             height_m: 1000. * height,
             field_cache: Mutex::default(),
-        })
+        }))
     }
 
     fn magnetic_field(

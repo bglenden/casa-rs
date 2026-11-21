@@ -2,10 +2,10 @@
   "schema_version": 1,
   "task": "gencal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "0886835f74c8d8215774fd93b1577fad093d9321",
+  "audit_revision": "a2f2ca7c89075becc36bf44cb9a11a8734bd393d",
   "parameters": {
     "vis": {
-      "scope": "Input MeasurementSet geometry, metadata and table sources, including SYSPOWER and CALDEVICE. Jy/K service requests also read observing metadata.",
+      "scope": "Input MeasurementSet geometry, metadata and table sources, including SYSPOWER and CALDEVICE. Jy/K service requests also read observing metadata. TEC samples observed pointings in antenna frames.",
       "evidence": [
         "specified",
         "vla-priors",
@@ -14,17 +14,19 @@
         "manual-positions",
         "vla-archive",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "status": "Implemented",
       "behaviors": [
         "tables",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     },
     "caltable": {
-      "scope": "CASA-readable output, cumulative corrections, and validation before replacing an existing table. Jy/K replaces the file atomically with accumulated receptor gains.",
+      "scope": "CASA-readable output, cumulative corrections, and validation before replacing an existing table. Jy/K replaces the file atomically with accumulated receptor gains. TEC replaces an existing table only after the complete product is available.",
       "evidence": [
         "specified",
         "vla-priors",
@@ -33,17 +35,19 @@
         "manual-positions",
         "vla-archive",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "status": "Implemented",
       "behaviors": [
         "tables",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     },
     "caltype": {
-      "scope": "Eleven routine prior types, five switched-power types and Jy/K. TEC and EOP remain in #1535.",
+      "scope": "Eleven routine prior types, five switched-power types, Jy/K and TEC. EOP remains in #1535.",
       "evidence": [
         "specified",
         "vla-priors",
@@ -52,26 +56,30 @@
         "manual-positions",
         "vla-archive",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "status": "Partial",
       "behaviors": [
         "tables",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     },
     "infile": {
-      "scope": "VLA gain curves, ALMA position JSON and Jy/K factor CSV. TEC and EOP inputs remain in #1535.",
+      "scope": "VLA gain curves, ALMA position JSON, Jy/K factor CSV and native CASA TEC images. EOP file input remains in #1535.",
       "evidence": [
         "vla-priors",
         "manual-positions",
         "alma-service",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "behaviors": [
         "positions",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     },
     "endpoint": {
@@ -125,7 +133,7 @@
       ]
     },
     "spw": {
-      "scope": "Spectral-window selection and output axes. Switched-power modes validate the selector and derive their grid from SYSPOWER. Jy/K uses this selector for service factors. Factor files provide their own selection.",
+      "scope": "Spectral-window selection and output axes. Switched-power modes validate the selector and derive their grid from SYSPOWER. Jy/K uses this selector for service factors. Factor files provide their own selection. TEC validates the selector then derives the full solution grid and publishes it on SPW 0.",
       "evidence": [
         "specified",
         "vla-priors",
@@ -134,74 +142,84 @@
         "manual-positions",
         "vla-archive",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "status": "Implemented",
       "behaviors": [
         "tables",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     },
     "antenna": {
-      "scope": "Ordered IDs and expressions, all-antenna defaults, and applicable automatic lookup. Switched-power modes validate the selector and keep the full antenna grid. Jy/K takes antenna selectors from its factor source.",
+      "scope": "Ordered IDs and expressions, all-antenna defaults, and applicable automatic lookup. Switched-power modes validate the selector and keep the full antenna grid. Jy/K takes antenna selectors from its factor source. TEC validates the selector then derives corrections for all antennas.",
       "evidence": [
         "specified",
         "opacity",
         "manual-positions",
         "vla-archive",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "status": "Implemented",
       "behaviors": [
         "positions",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     },
     "pol": {
-      "scope": "Ordered receptor behavior for the applicable routine types. Both receptors are generated in the five switched-power modes. Jy/K takes receptor labels from its factor source.",
+      "scope": "Ordered receptor behavior for the applicable routine types. Both receptors are generated in the five switched-power modes. Jy/K takes receptor labels from its factor source. The F Jones table stores one line-of-sight coefficient per antenna for both receptors.",
       "evidence": [
         "specified",
         "opacity",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "behaviors": [
         "tables",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     },
     "parameter": {
-      "scope": "Scalar or vector corrections, CASA cycling and family-specific units. The five switched-power modes derive values from the MS subtables. Jy/K gains come from the factor source.",
+      "scope": "Scalar or vector corrections, CASA cycling and family-specific units. The five switched-power modes derive values from the MS subtables. Jy/K gains come from the factor source. TEC uses a sole value as the shell height in kilometres. Other vector lengths select the 450 km default.",
       "evidence": [
         "specified",
         "opacity",
         "manual-positions",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "status": "Implemented",
       "behaviors": [
         "tables",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     },
     "uniform": {
-      "scope": "Both antenna-grid policies for scalar and spectral SYSCAL. Switched-power modes consistently use the full antenna grid. Jy/K fills the same G Jones grid for both settings.",
+      "scope": "Both antenna-grid policies for scalar and spectral SYSCAL. Switched-power modes consistently use the full antenna grid. Jy/K fills the same G Jones grid for both settings. The TEC table follows the full antenna and time grid for either setting.",
       "evidence": [
         "tsys",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ],
       "status": "Implemented",
       "behaviors": [
         "tables",
         "switched-power",
-        "jyperk"
+        "jyperk",
+        "tecim"
       ]
     }
   },
@@ -252,6 +270,16 @@
       "evidence": [
         "jyperk"
       ]
+    },
+    {
+      "id": "tecim",
+      "title": "Ionosphere correction from a vertical TEC cube",
+      "status": "Implemented",
+      "scope": "Interpolate TEC in world coordinates and convert it to line-of-sight electron content. Apply dispersive phase and Faraday rotation across both feed bases without scaling weights.",
+      "evidence": [
+        "tecim"
+      ],
+      "gap": "Dedicated dataset-scale performance validation remains in #979."
     }
   ],
   "decisions": [
@@ -310,6 +338,20 @@
       "owner_decision": "Standing CASA bug policy in AGENTS.md.",
       "evidence": [
         "jyperk"
+      ]
+    },
+    {
+      "id": "flag-incomplete-tec",
+      "state": "Previously agreed",
+      "record": "A flagged F Jones coefficient can leave unflagged visibilities",
+      "inputs": "A circular-feed F Jones table with the last antenna flagged at every epoch.",
+      "casa": "Leaves that antenna with a unity gain and unflagged baseline outputs.",
+      "ours": "Flags baselines with an unavailable correction when the apply mode writes flags.",
+      "rationale": "Preserve the validity of calibrated visibilities when a term is missing.",
+      "impact": "Valid solutions continue to apply using CASA science and flags.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "tecim"
       ]
     }
   ],
@@ -441,6 +483,19 @@
       "links": [
         "tools/casa-compat/gencal_jyperk_oracle.py",
         "docs/CASA (C++) bugs.md"
+      ]
+    },
+    "tecim": {
+      "kind": "Pinned F Jones generation, weighted application and solver preapply",
+      "state": "passed",
+      "scope": "Native Float TEC images with daily and absolute time, nonidentity transforms, signed shell heights, public tasks, calibration libraries, flag handling and both feed bases.",
+      "result": "LOS TEC normalized RMS below 7e-8. Corrected visibility and solver preapply RMS below 3.2e-5 across matched writer-reader combinations.",
+      "revision": "a2f2ca7c89075becc36bf44cb9a11a8734bd393d",
+      "command": "CASARS_CALIBRATE_BIN=<native-bin> casa-python tools/casa-compat/gencal_tecim_oracle.py <new-dir>",
+      "casa_version": "6.7.6.14",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1970",
+      "links": [
+        "tools/casa-compat/gencal_tecim_oracle.py"
       ]
     }
   }
