@@ -324,3 +324,41 @@ def test_decompose_retains_starting_estimates_after_one_iteration(casa, simple):
             np.testing.assert_allclose(result["components"][0], expected, rtol=5e-5, atol=5e-6)
         finally:
             source.done()
+
+
+@pytest.mark.parametrize("simple", [False, True])
+def test_decompose_sparse_fit_reconstructs_all_detected_samples(casa, simple):
+    points = np.array([[7., 7.], [8., 7.], [8., 8.]])
+    intensities = [9., 3., 1.]
+    values = np.zeros((13, 15), dtype=np.float32)
+    values[tuple(points.astype(int).T)] = intensities
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, linear=True)
+        try:
+            peak, x, y, width, ratio, angle = source.decompose(
+                threshold=.7, simple=simple, maxrms=1e-4, maxretry=0,
+            )["components"][0]
+            # The three data points constrain fewer than six parameters.
+            # Compare the predictions at each detected sample.
+            dx, dy = (points - [x + 6., y + 7.]).T
+            along = (-np.sin(angle) * dx + np.cos(angle) * dy) / (width + 6.)
+            across = (np.cos(angle) * dx + np.sin(angle) * dy) / ((width + 6.) * ratio)
+            predicted = peak * np.exp(-4 * np.log(2) * (along**2 + across**2))
+            np.testing.assert_allclose(predicted, intensities, rtol=0., atol=1e-5)
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("simple, width", [(False, -5.), (True, -5.25)])
+def test_decompose_default_fit_for_a_single_point(casa, simple, width):
+    values = np.zeros((13, 15), dtype=np.float32)
+    values[7, 7] = 9.
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, linear=True)
+        try:
+            result = source.decompose(threshold=.7, simple=simple)
+            np.testing.assert_array_equal(result["components"], [[9., 1., 0., width, 1., 0.]])
+        finally:
+            source.done()

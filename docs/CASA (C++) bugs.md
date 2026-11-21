@@ -8745,3 +8745,11 @@ On an 11 × 13 zero image, CASA reports zero regions with
 `decompose(simple=True, fit=True, threshold=0.7)`, then starts fitting
 143 components to the background. Casa-rs returns empty component and
 bound matrices when the detection set is empty.
+
+A fit can also be underdetermined. Three samples with values 9, 3, and 1
+at [7, 7], [8, 7], and [8, 8] constrain fewer than the six parameters
+returned for a 2D Gaussian. With `threshold=0.7`, `maxretry=0`, and
+`maxrms=0.0001`, each implementation reconstructs all three samples to
+within 0.00001. The independent solvers can select different centers,
+widths, and angles from the valid solutions. Casa-rs also uses a fixed
+retry sequence so fits with identical inputs are reproducible.
