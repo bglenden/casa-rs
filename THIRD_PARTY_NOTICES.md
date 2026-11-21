@@ -75,3 +75,11 @@ notice:
 > PERSONS OR PROPERTY OR OTHERWISE, AND WHETHER OR NOT LOSS WAS SUSTAINED
 > FROM, OR AROSE OUT OF THE RESULTS OF, OR USE OF, THE SOFTWARE OR
 > SERVICES PROVIDED HEREUNDER.
+
+## CASA image task tests
+
+The upstream test modules under `resources/casa-compat/upstream-image-tests`
+come from the CASA 6.7.6.14 release, Copyright (c) Associated Universities, Inc.
+Their original copyright notices and GNU Library General Public License
+version 2 or later terms are retained. The test source is included with its
+[license](resources/casa-compat/upstream-image-tests/6.7.6.14/LICENSE).
