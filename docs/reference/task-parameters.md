@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 887
-- Surfaces: 51 (51 task, 0 session)
-- Surface bindings: 1191
+- Concepts: 888
+- Surfaces: 52 (52 task, 0 session)
+- Surface bindings: 1204
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -38,6 +38,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Clear Calibration](#surface-clearcal)<br><code>clearcal</code> | task | 1 | <code>calibration</code> | 5 | Initialize or reset scratch visibility columns. |
 | [Delete Model](#surface-delmod)<br><code>delmod</code> | task | 1 | <code>calibration</code> | 4 | Remove scratch or virtual model visibilities. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 6 | <code>calibration</code> | 18 | Generate a calibration table such as antpos, gceff, or opac. |
+| [Get ALMA Jy/K Calibration](#surface-getjyperkalma)<br><code>getjyperkalma</code> | task | 1 | <code>calibration</code> | 13 | Generate an ALMA Jy/K gain table from the service or a factor file. |
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 8 | <code>msexplore</code> | 102 | Plot selected MeasurementSet or calibration table data. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 5 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
@@ -952,9 +953,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Solve | Calibration table the task writes. |
 | <code>caltype</code> | <code>specifycal.caltype@r1</code> | <code>choice (20 values)</code> | <code>""</code>; required | Gencal | Type of calibration gencal specifies. |
 | <code>infile</code> | <code>specifycal.infile@r1</code> | <code>string</code> | <code>""</code>; optional | Gencal | File some calibration types read: weather, EOP or a Jy/K table. |
-| <code>endpoint</code> | <code>specifycal.endpoint@r1</code> | <code>string</code> | <code>"asdm"</code>; optional | Gencal | Web service the ALMA antenna positions come from. |
+| <code>endpoint</code> | <code>specifycal.endpoint@r1</code> | <code>string</code> | <code>"asdm"</code>; optional | Gencal | ALMA Jy/K database query endpoint. |
 | <code>timeout</code> | <code>specifycal.timeout@r1</code> | <code>integer</code> | <code>180</code>; optional | Gencal | Seconds the antenna-position web service has to answer. |
-| <code>retry</code> | <code>specifycal.retry@r1</code> | <code>integer</code> | <code>3</code>; optional | Gencal | Times the antenna-position web service is asked again. |
+| <code>retry</code> | <code>specifycal.retry@r1</code> | <code>integer</code> | <code>3</code>; optional | Gencal | Number of attempts to contact the ALMA Jy/K database. |
 | <code>retry_wait_time</code> | <code>specifycal.retry_wait_time@r1</code> | <code>integer</code> | <code>5</code>; optional | Gencal | Seconds between requests to the antenna-position web service. |
 | <code>ant_pos_time_limit</code> | <code>specifycal.ant_pos_time_limit@r1</code> | <code>integer</code> | <code>0</code>; optional | Gencal | Days before or after the observation an antenna-position correction may come from. |
 | <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
@@ -966,6 +967,32 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
 | <code>gaincurve_table</code> | <code>parameter.gaincurve_table@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Gencal | Optional gaincurve input table for gceff. |
+
+<a id="surface-getjyperkalma"></a>
+
+## Get ALMA Jy/K Calibration (<code>getjyperkalma</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Generate an ALMA Jy/K gain table from the service or a factor file.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
+| <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Solve | Calibration table the task writes. |
+| <code>infile</code> | <code>specifycal.infile@r1</code> | <code>string</code> | <code>""</code>; optional | Gencal | File some calibration types read: weather, EOP or a Jy/K table. |
+| <code>endpoint</code> | <code>specifycal.endpoint@r1</code> | <code>string</code> | <code>"asdm"</code>; optional | Gencal | ALMA Jy/K database query endpoint. |
+| <code>timeout</code> | <code>specifycal.timeout@r1</code> | <code>integer</code> | <code>180</code>; optional | Gencal | Seconds the antenna-position web service has to answer. |
+| <code>retry</code> | <code>specifycal.retry@r1</code> | <code>integer</code> | <code>3</code>; optional | Gencal | Number of attempts to contact the ALMA Jy/K database. |
+| <code>retry_wait_time</code> | <code>specifycal.retry_wait_time@r1</code> | <code>integer</code> | <code>5</code>; optional | Gencal | Seconds between requests to the antenna-position web service. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>pol</code> | <code>specifycal.pol@r1</code> | <code>string</code> | <code>""</code>; optional | Gencal | Polarizations the calibration applies to; empty for all. |
+| <code>backup_hosts</code> | <code>jyperk.backup_hosts@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Gencal | Jy/K database URLs to try in order after JYPERKDB_URL. |
+| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
 
 <a id="surface-plotms"></a>
 
