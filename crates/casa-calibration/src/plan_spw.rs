@@ -3,6 +3,51 @@
 
 use super::*;
 
+pub(super) fn resolve_calibration_spw_mapping(
+    spec: &ApplyCalibrationTableSpec,
+    subtype: &str,
+    available: &[i32],
+    calibration_window_count: usize,
+    selected: &[i32],
+) -> Result<Vec<ApplySpwMapping>, ApplyPlanError> {
+    let effective_spec;
+    let spec_for_spw_mapping = match subtype {
+        "KAntPos Jones" => {
+            effective_spec = k_antpos_spwmap_spec(spec, selected);
+            &effective_spec
+        }
+        "F Jones" if spec.callibrary.is_none() => {
+            effective_spec = ApplyCalibrationTableSpec {
+                spwmap: vec![0],
+                ..spec.clone()
+            };
+            &effective_spec
+        }
+        _ => spec,
+    };
+    resolve_spw_mapping(
+        spec_for_spw_mapping,
+        available,
+        calibration_window_count,
+        selected,
+    )
+}
+
+fn k_antpos_spwmap_spec(
+    spec: &ApplyCalibrationTableSpec,
+    applicable_data_spw_ids: &[i32],
+) -> ApplyCalibrationTableSpec {
+    let mut spec = spec.clone();
+    let len = applicable_data_spw_ids
+        .iter()
+        .filter_map(|spw| usize::try_from(*spw).ok())
+        .max()
+        .map(|spw| spw + 1)
+        .unwrap_or_default();
+    spec.spwmap = vec![0; len];
+    spec
+}
+
 pub(crate) fn resolve_spw_mapping(
     spec: &ApplyCalibrationTableSpec,
     available: &[i32],
