@@ -23,8 +23,8 @@ mod reference_code;
 mod replace;
 mod rest_frequency;
 mod spectral_samples;
-mod stubs;
 mod subimage;
+mod summary;
 pub(crate) mod surface;
 mod tabular;
 mod transform_many;
@@ -44,16 +44,6 @@ use casa_types::measures::{direction_to_record, epoch_to_record, position_to_rec
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-
-use crate::tools::not_yet_implemented_in;
-
-/// The issue that records the methods casa-rs refuses.
-const ISSUE: u32 = 1027;
-
-/// A method casa-rs does not implement yet.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("coordsys", method, ISSUE)
-}
 
 fn index_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i32> {
     if value.is_none() {
