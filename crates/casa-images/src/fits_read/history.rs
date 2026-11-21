@@ -5,9 +5,29 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 use crate::{
-    ImageError,
+    GaussianBeam, ImageError,
     image::{ImageHistoryEntry, ImageHistoryRow},
 };
+
+pub(super) fn restoring_beam_from_history(rows: &[ImageHistoryRow]) -> Option<GaussianBeam> {
+    let keys = ["BMAJ", "BMIN", "BPA"];
+    let line = rows
+        .iter()
+        .map(|row| row.entry.message.as_str())
+        .find(|line| keys.iter().all(|key| line.contains(key)))?;
+    let [Some(major), Some(minor), Some(pa)] = keys.map(|key| {
+        line.split_whitespace()
+            .skip_while(|field| !field.contains(key))
+            .nth(1)?
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+    }) else {
+        return None;
+    };
+    (major >= minor && minor > 0.0)
+        .then(|| GaussianBeam::new(major.to_radians(), minor.to_radians(), pa.to_radians()))
+}
 
 pub(crate) fn history_rows(path: &Path) -> Result<Vec<ImageHistoryRow>, ImageError> {
     let cards = read_cards(path)?;

@@ -512,6 +512,19 @@ impl<'s> Lexer<'s> {
                 break;
             }
         }
+        // A named image mask is a single lattice operand. Numeric ranges
+        // in index arrays still lex as a number, a colon and a number.
+        if self.peek_char() == Some(':')
+            && self.src[self.pos + 1..]
+                .starts_with(|character: char| character.is_ascii_alphabetic() || character == '_')
+        {
+            self.advance_char();
+            while self.peek_char().is_some_and(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '.')
+            }) {
+                self.advance_char();
+            }
+        }
         let text = self.src[start..self.pos].to_string();
         Ok((Token::Ident(text), start))
     }

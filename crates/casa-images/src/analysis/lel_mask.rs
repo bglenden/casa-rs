@@ -518,8 +518,15 @@ pub fn open_fits_expression<T: ImageExprValue + From<f32>>(
     path: &Path,
     use_mask: bool,
 ) -> Result<ImageExpression<T>, ImageError> {
+    open_fits_expression_with_history(path, use_mask).map(|(image, _)| image)
+}
+
+pub(super) fn open_fits_expression_with_history<T: ImageExprValue + From<f32>>(
+    path: &Path,
+    use_mask: bool,
+) -> Result<(ImageExpression<T>, Vec<crate::image::ImageHistoryEntry>), ImageError> {
     let fits = FitsToolImport::open(path, 0, -1)?;
-    if fits.is_tile_compressed() {
+    if fits.hdu_index() > 1 || fits.is_tile_compressed() {
         return Err(ImageError::CasaSelection(format!(
             "No data in the zeroth or first extension of {}",
             path.display(),
@@ -549,7 +556,8 @@ pub fn open_fits_expression<T: ImageExprValue + From<f32>>(
         }),
         mask_fn,
     );
-    expression.compile()
+    let history = fits.history.into_iter().map(|row| row.entry).collect();
+    Ok((expression.compile()?, history))
 }
 
 fn open_path_with_mask_name(
