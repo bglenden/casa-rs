@@ -114,6 +114,7 @@ pub(super) fn read_clip_times(
         .map_err(|error| fail(error.to_string()))?;
     let plan = MsReadPlan::new(selected.len(), budget).map_err(|error| fail(error.to_string()))?;
     let mut timed = Vec::with_capacity(selected.len());
+    let calibration = super::is_calibration_table(ms);
     for rows in selected.chunks(plan.rows_per_block.max(1)) {
         let begin = timed.len();
         for (&row, value) in rows.iter().zip(
@@ -133,6 +134,17 @@ pub(super) fn read_clip_times(
             }
         }
         for (slot, name) in GROUP_COLUMNS.into_iter().enumerate() {
+            if calibration && name == "ARRAY_ID" {
+                for row in &mut timed[begin..] {
+                    row.group[slot] = -1;
+                }
+                continue;
+            }
+            let name = if calibration && name == "DATA_DESC_ID" {
+                "SPECTRAL_WINDOW_ID"
+            } else {
+                name
+            };
             for (row, value) in timed[begin..]
                 .iter_mut()
                 .zip(load_i32_cells(table, rows, name, path)?)
@@ -152,12 +164,17 @@ pub(super) fn ordered_baseline_chunks(
     path: &str,
 ) -> Result<Vec<ClipTimedRow>, FlaggingError> {
     let mut timed = read_clip_times(ms, selected, path)?;
-    if combine_scans {
+    // The calibration iterator fixes its chunks by observation, scan,
+    // field and window. MeasurementSet iterator controls apply to MSes.
+    let calibration = super::is_calibration_table(ms);
+    if !calibration && combine_scans {
         for row in &mut timed {
             row.combine_scans();
         }
     }
-    if let Some(seconds) = interval.filter(|seconds| *seconds > 0.0 && seconds.is_finite()) {
+    if !calibration
+        && let Some(seconds) = interval.filter(|seconds| *seconds > 0.0 && seconds.is_finite())
+    {
         mark_time_chunks(&mut timed, seconds);
     }
     timed.sort_unstable_by(|left, right| {

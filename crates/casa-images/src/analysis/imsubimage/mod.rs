@@ -19,9 +19,14 @@ mod decompose;
 mod deviation;
 mod findsources;
 mod fitcomponents;
+mod fitprofile;
 pub use fitcomponents::{
     ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
     fit_image_components,
+};
+pub use fitprofile::{
+    ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
+    ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
 };
 mod fourier;
 pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};

@@ -56,6 +56,10 @@ pub use imsubimage::{DeviationOptions, ImageDeviation};
 pub use imsubimage::{FindSourcesOptions, find_image_sources};
 pub use imsubimage::{FourierOptions, FourierPixel, ImageFourier};
 pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
+pub use imsubimage::{
+    ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
+    ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
+};
 mod list_log;
 mod planes;
 mod projection_header;
@@ -503,14 +507,18 @@ pub fn imhead_put_reference_pixel(
         .and_then(imhead_axis_index)
         .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
     let mut image = AnyPagedImage::open(path)?;
-    let axis_type = match &image {
-        AnyPagedImage::Float32(image) => image.coordinates().pixel_axis_type(axis),
-        AnyPagedImage::Float64(image) => image.coordinates().pixel_axis_type(axis),
-        AnyPagedImage::Complex32(image) => image.coordinates().pixel_axis_type(axis),
-        AnyPagedImage::Complex64(image) => image.coordinates().pixel_axis_type(axis),
+    let coordinates = image.coordinates();
+    if coordinates.pixel_axis_owner(axis).is_none() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid axis keyword {hdkey:?}"
+        )));
     }
-    .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
-    if axis_type == CoordinateType::Stokes {
+    if coordinates
+        .world_axis_owner(axis)
+        .is_some_and(|(index, _)| {
+            coordinates.coordinate(index).coordinate_type() == CoordinateType::Stokes
+        })
+    {
         return Err(ImageError::InvalidMetadata(
             "A polarization axis cannot have a reference pixel".into(),
         ));
@@ -581,8 +589,9 @@ pub fn imhead_put_axis_quantity(
         .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
     let summary = imhead(path)?;
     let header = summary
-        .axes
+        .world_axes
         .get(axis)
+        .filter(|_| axis < summary.shape.len())
         .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
     if header.coordinate_type == "Stokes" {
         if prefix == "cdelt" {
@@ -605,15 +614,17 @@ pub fn imhead_put_axis_quantity(
         header.unit
     );
     let mut image = AnyPagedImage::open(path)?;
-    match (&mut image, prefix) {
-        (AnyPagedImage::Float32(image), "cdelt") => image.set_increment(axis, value)?,
-        (AnyPagedImage::Float64(image), "cdelt") => image.set_increment(axis, value)?,
-        (AnyPagedImage::Complex32(image), "cdelt") => image.set_increment(axis, value)?,
-        (AnyPagedImage::Complex64(image), "cdelt") => image.set_increment(axis, value)?,
-        (AnyPagedImage::Float32(image), _) => image.set_reference_value(axis, value)?,
-        (AnyPagedImage::Float64(image), _) => image.set_reference_value(axis, value)?,
-        (AnyPagedImage::Complex32(image), _) => image.set_reference_value(axis, value)?,
-        (AnyPagedImage::Complex64(image), _) => image.set_reference_value(axis, value)?,
+    let set_value = if prefix == "cdelt" {
+        CoordinateSystem::set_world_increment_in_record
+    } else {
+        CoordinateSystem::set_world_reference_value_in_record
+    };
+    let edit = |record: &mut RecordValue| set_value(record, axis, value);
+    match &mut image {
+        AnyPagedImage::Float32(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Float64(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Complex32(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Complex64(image) => image.edit_coordinates(edit)?,
     };
     image.save()?;
     drop(image);
@@ -671,11 +682,14 @@ fn imhead_put_stokes_values(
         ));
     }
     let mut image = AnyPagedImage::open(path)?;
+    let edit = |record: &mut RecordValue| {
+        CoordinateSystem::set_world_stokes_types_in_record(record, axis, &names)
+    };
     let old = match &mut image {
-        AnyPagedImage::Float32(image) => image.set_stokes_types(axis, &names)?,
-        AnyPagedImage::Float64(image) => image.set_stokes_types(axis, &names)?,
-        AnyPagedImage::Complex32(image) => image.set_stokes_types(axis, &names)?,
-        AnyPagedImage::Complex64(image) => image.set_stokes_types(axis, &names)?,
+        AnyPagedImage::Float32(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Float64(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Complex32(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Complex64(image) => image.edit_coordinates(edit)?,
     };
     image.save()?;
     drop(image);
@@ -1170,16 +1184,18 @@ fn imhead_put_axis_text(
         .strip_prefix(prefix)
         .and_then(imhead_axis_index)
         .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
-    if prefix == "cunit" {
-        let summary = imhead(path)?;
-        let header = summary.axes.get(axis).ok_or_else(|| {
-            ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}"))
-        })?;
-        if header.coordinate_type == "Stokes" {
-            return Err(ImageError::InvalidMetadata(
-                "A polarization axis cannot have a unit".into(),
-            ));
-        }
+    let mut image = AnyPagedImage::open(path)?;
+    let coordinates = image.coordinates();
+    let (index, _) = coordinates
+        .world_axis_owner(axis)
+        .filter(|_| axis < image.shape().len())
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    if prefix == "cunit"
+        && coordinates.coordinate(index).coordinate_type() == CoordinateType::Stokes
+    {
+        return Err(ImageError::InvalidMetadata(
+            "A polarization axis cannot have a unit".into(),
+        ));
     }
     let ParameterValue::String(name) = hdvalue else {
         return Err(ImageError::InvalidMetadata(format!(
@@ -1191,16 +1207,17 @@ fn imhead_put_axis_text(
             "Axis names and units containing NUL are not supported (#977)".into(),
         ));
     }
-    let mut image = AnyPagedImage::open(path)?;
-    let old = match (&mut image, prefix) {
-        (AnyPagedImage::Float32(image), "cunit") => image.set_axis_unit(axis, name)?,
-        (AnyPagedImage::Float64(image), "cunit") => image.set_axis_unit(axis, name)?,
-        (AnyPagedImage::Complex32(image), "cunit") => image.set_axis_unit(axis, name)?,
-        (AnyPagedImage::Complex64(image), "cunit") => image.set_axis_unit(axis, name)?,
-        (AnyPagedImage::Float32(image), _) => image.set_axis_name(axis, name)?,
-        (AnyPagedImage::Float64(image), _) => image.set_axis_name(axis, name)?,
-        (AnyPagedImage::Complex32(image), _) => image.set_axis_name(axis, name)?,
-        (AnyPagedImage::Complex64(image), _) => image.set_axis_name(axis, name)?,
+    let set_label = if prefix == "cunit" {
+        CoordinateSystem::set_world_axis_unit_in_record
+    } else {
+        CoordinateSystem::set_world_axis_name_in_record
+    };
+    let edit = |record: &mut RecordValue| set_label(record, axis, name);
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Float64(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Complex32(image) => image.edit_coordinates(edit)?,
+        AnyPagedImage::Complex64(image) => image.edit_coordinates(edit)?,
     };
     image.save()?;
     drop(image);
@@ -1721,7 +1738,8 @@ where
         has_multiple_beams: info.beam_set.is_multi(),
         per_plane_beams: per_plane_beam_summary(image, &info.beam_set)?.map(Box::new),
         extrema: None,
-        axes: axis_summaries(image.coordinates(), image.shape()),
+        axes: axis_summaries(image.coordinates(), image.shape(), false),
+        world_axes: axis_summaries(image.coordinates(), image.shape(), true),
     })
 }
 
@@ -1898,7 +1916,11 @@ fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
     })
 }
 
-fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageAxisSummary> {
+fn axis_summaries(
+    coordinates: &CoordinateSystem,
+    shape: &[usize],
+    world: bool,
+) -> Vec<ImageAxisSummary> {
     let mut summaries = Vec::new();
     for coord_idx in 0..coordinates.n_coordinates() {
         let coord = coordinates.coordinate(coord_idx);
@@ -1913,10 +1935,19 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
             (refs, increments) = direction.reference_and_increment_in_world_units();
             units = direction.visible_world_units();
         }
-        let axes = coordinates
+        let pixel_axes = coordinates
             .coordinate_pixel_axes(coord_idx)
             .unwrap_or_default();
-        for (axis_in_coord, axis) in axes.into_iter().enumerate() {
+        let world_axes;
+        let axes = if world {
+            world_axes = coordinates
+                .coordinate_world_axes(coord_idx)
+                .unwrap_or_default();
+            &world_axes
+        } else {
+            &pixel_axes
+        };
+        for (axis_in_coord, &axis) in axes.iter().enumerate() {
             let Some(axis) = axis else {
                 continue;
             };
@@ -1927,7 +1958,13 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
                     .get(axis_in_coord)
                     .cloned()
                     .unwrap_or_else(|| format!("Axis{axis}")),
-                shape: *shape.get(axis).unwrap_or(&0),
+                shape: pixel_axes
+                    .get(axis_in_coord)
+                    .copied()
+                    .flatten()
+                    .and_then(|pixel| shape.get(pixel))
+                    .copied()
+                    .unwrap_or(0),
                 reference_value: *refs.get(axis_in_coord).unwrap_or(&0.0),
                 reference_pixel: *refpix.get(axis_in_coord).unwrap_or(&0.0),
                 increment: *increments.get(axis_in_coord).unwrap_or(&0.0),
@@ -1942,6 +1979,9 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
         }
     }
     summaries.sort_unstable_by_key(|axis| axis.axis);
+    if world {
+        return summaries;
+    }
     for (axis, &extent) in shape.iter().enumerate().skip(summaries.len()) {
         summaries.push(ImageAxisSummary {
             axis,

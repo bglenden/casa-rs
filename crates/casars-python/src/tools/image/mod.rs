@@ -33,6 +33,7 @@ mod deviation;
 mod fft;
 mod findsources;
 mod fitcomponents;
+mod fitprofile;
 mod fits_export;
 mod fits_header;
 mod fits_import;

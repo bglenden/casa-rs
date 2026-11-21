@@ -4498,6 +4498,35 @@ combination gives an independent reference. Native feathering of the original
 crop agrees with it to a normalized RMS of `1.93e-7`. CASA's direct regrid
 of the crop differs from that reference by `6.01e-4` (#977).
 
+## `feather` uses direction increments as radians
+
+In CASA 6.7.6.14, `StokesImageUtil::MakeGaussianPSF` uses the numeric
+direction increments as radians when sampling the restoring beam for
+`feather`. The increments still carry the coordinate's declared units.
+With a 64 × 64 × 1 × 4 cube, 1 arcminute pixels, and beam major axes of
+3 and 8 arcminutes, storing the direction units as arcminutes makes the
+crossover kernel an impulse. CASA returns the low-resolution image
+multiplied by the beam-area ratio `(3/8)^2`. Expressing the same grid in
+radians retains the high-resolution signal. The two CASA products differ
+by 0.476 normalized RMS relative to the radian result.
+
+casa-rs samples the beam using direction increments in radians. On those
+inputs its two products agreed within `7e-8` normalized RMS, and the native
+product agreed with the radian CASA result within `7e-7`. The
+`direction_units_do_not_change_the_fourier_combination` regression uses
+the pinned CASA radian reference with the same physical grid stored in
+arcminutes (#977).
+
+## `imregrid` can terminate after a direction pixel axis is removed
+
+In CASA 6.7.6.14, make the right-ascension axis degenerate and drop it with
+`imsubimage(dropdeg=True)`. Copy the product and shift the Declination
+reference pixel by 0.25 in the copy. With the recorded `dropdeg_ra.image`
+fixture, `imregrid(axes=[0], decimate=1)` from the original to the shifted
+template terminates CASA with a bus error after creating the output mask.
+casa-rs returns a recoverable error and leaves the output absent. The
+coordinate layer can still open and transform both input grids (#977).
+
 ## `tb.copyrows` adds the rows before it finds a cell it cannot convert, and wraps integers
 
 - Date noted: 2026-10-31
@@ -8042,6 +8071,15 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## Calibration quack can flag the whole scan when times are out of order
+
+With CASA 6.7.6.14, two Tsys time blocks in the same scan stored in reverse
+order are both flagged by `quackinterval=1.0` with either `quackmode='beg'`
+or `quackmode='endb'`, even though their timestamps are ten seconds apart.
+The calibration handler uses the first and last eligible stored rows to
+derive the scan boundaries. Casa-rs uses the eligible timestamps and flags
+the chronological beginning or end as requested.
+
 ## Calibration flagdata ignores a channel stride
 
 CASA 6.7.6.14 manually flags channels 1 through 5 on current CPARAM
@@ -8958,3 +8996,57 @@ selected at pixel 1 shows the same mismatch. The output write position is
 initialized to zero and only the spectral position is updated. Casa-rs
 writes the fitted result to the selected polarization and ancillary position.
 The input grid and validity mask remain present in both requested images.
+
+### `image.fitprofile` can mislabel or leave part of a fitted spectrum
+
+In CASA 6.7.6.14, collapsing the spatial axes of a cube centered on
+J2000 zero can place the averaged spectrum near the antipode. On a
+5 × 7 × 27 synthetic line cube the direction record reports a right
+ascension of 12 hours. With default detailed logging the inverse
+projection can fail and the call raises even though the spectral fit
+converged. Casa-rs uses the original direction coordinate evaluated
+at the selected spatial pixel midpoint, including for its model and
+residual products.
+
+In the same process, fit an 11-channel spectrum with a model image and
+then reject a fit to a 23-channel spectrum using an amplitude range.
+CASA's failure buffer keeps the first call's 11-channel shape. Only the
+first 11 channels of the rejected model are NaN and masked. A later
+shorter fit can instead attempt a slice larger than its output.
+Casa-rs uses the current spectrum's shape to mark every rejected
+channel invalid. Profiles skipped by `minpts` still retain the input
+pixels and mask in the products.
+
+A log-transformed polynomial with every coefficient fixed crashes
+CASA during fitting. Casa-rs evaluates the given coefficients in log
+space and reports their zero parameter errors without trying to estimate
+a covariance. Pixels outside the log function's domain remain masked.
+
+For an explicit direction-axis fit on a spectral cube, CASA rejects
+the fit with `The X vector must have some elements` even though the
+box supplies 23 pixels on the requested axis. The spectral-axis branch
+precomputes its abscissa and the alternate-axis branch fails to supply
+one. Casa-rs derives the fit abscissa from the requested pixel axis and
+reports its center and width in that axis's world units.
+
+With a Galactic conversion frame on a J2000 image, the angles in the
+`fitprofile` direction record are Galactic but CASA labels and formats
+them as equatorial. Casa-rs reports the conversion frame and displays
+its longitude and latitude in degrees.
+
+CASA calculates the reported integral uncertainty by multiplying
+relative errors by the signed line integral. A fitted absorption
+line therefore has a negative uncertainty. Casa-rs preserves its
+negative integral and reports the standard error as a nonnegative
+magnitude.
+
+For a Gaussian multiplet with tied peaks of 6 and 3 and an accepted
+amplitude range of 4 to 7, CASA accepts both peaks because its
+constraint loop repeatedly examines the first peak. Casa-rs checks
+the range against every component of the multiplet.
+
+A synthetic Gaussian centered at channel 15 with its peak and width
+fixed gives a different center in CASA after its peak and sample values
+are scaled from 1 to 10⁻¹⁵. The velocity center shifts by about
+0.0175 km/s. Casa-rs scales the solver's damping to its curvature and
+fits the same physical center at both intensities.

@@ -112,9 +112,15 @@ fn axis_header_value(
         .zip(lower.get(5..))
         .filter(|(prefix, _)| ["cdelt", "crpix", "crval", "ctype", "cunit"].contains(prefix))
     {
-        let index = crate::analysis::imhead_axis_index(suffix);
+        let axes = if prefix == "crpix" {
+            &summary.axes
+        } else {
+            &summary.world_axes
+        };
+        let index =
+            crate::analysis::imhead_axis_index(suffix).filter(|index| *index < summary.shape.len());
         let axis = index
-            .and_then(|index| summary.axes.get(index))
+            .and_then(|index| axes.get(index))
             .ok_or_else(|| execution(format!("imhead: invalid axis keyword {key:?}")))?;
         let quantity = |value| {
             CasaValue::dict([

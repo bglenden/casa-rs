@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The image tasks' guard on existing products (#931): CASA's `overwrite` is
-//! the consent. A task binary run a second time without `--overwrite` fails
-//! and leaves the first product byte for byte as it was; with `--overwrite`
-//! from an input with other pixels, the product holds what a fresh run from
-//! that input writes.
+//! The image tasks' guard on existing products (#931). With overwrite off,
+//! each task leaves an existing product byte for byte as it was. With
+//! overwrite on, the replaced pixels match a fresh run. Feather follows
+//! CASA's overwrite default, so its refusal requires `--no-overwrite`.
 
 mod support;
 
@@ -69,16 +68,16 @@ fn substituted<'a>(args: &[&'a str], from: &str, to: &'a str) -> Vec<&'a str> {
     args
 }
 
-/// Run `binary` with `args`, which write `product` from `input`, twice; then
-/// with `--overwrite` from `replacement`, an input with other pixels. The
-/// second run must change nothing, and the third must leave the pixels a
-/// fresh run from `replacement` writes.
+/// Write `product` from `input`, then attempt a second write with overwrite
+/// off. Verify replacement with overwrite on against a fresh run from
+/// `replacement`, an input with other pixels.
 fn assert_guards_its_product(
     binary: &str,
     args: &[&str],
     product: &str,
     (input, replacement): (&str, &str),
     workspace: &Path,
+    overwrite_by_default: bool,
 ) {
     assert_ran(binary, args, &run(binary, args, workspace));
     let path = workspace.join(product);
@@ -86,7 +85,11 @@ fn assert_guards_its_product(
     assert!(!before.is_empty(), "{binary} wrote no {product}");
     let first_pixels = pixels(&path);
 
-    let second = run(binary, args, workspace);
+    let mut refusing = args.to_vec();
+    if overwrite_by_default {
+        refusing.push("--no-overwrite");
+    }
+    let second = run(binary, &refusing, workspace);
     assert!(!second.status.success(), "{binary} replaced {product}");
     let stderr = String::from_utf8_lossy(&second.stderr);
     assert!(stderr.contains("already exists"), "{binary}: {stderr}");
@@ -94,7 +97,9 @@ fn assert_guards_its_product(
 
     let from_replacement = substituted(args, input, replacement);
     let mut replacing = from_replacement.clone();
-    replacing.push("--overwrite");
+    if !overwrite_by_default {
+        replacing.push("--overwrite");
+    }
     assert_ran(binary, &replacing, &run(binary, &replacing, workspace));
     let fresh = format!("fresh-{product}");
     let reference = substituted(&from_replacement, product, &fresh);
@@ -103,33 +108,35 @@ fn assert_guards_its_product(
     let replaced = pixels(&path);
     assert_ne!(
         replaced, first_pixels,
-        "{binary} --overwrite kept {product}"
+        "{binary} kept {product} with overwrite on"
     );
     assert_eq!(
         replaced,
         pixels(&workspace.join(&fresh)),
-        "{binary} --overwrite did not write what a fresh run writes"
+        "{binary} did not write what a fresh run writes with overwrite on"
     );
 }
 
 #[test]
-fn each_image_task_refuses_its_existing_product_without_overwrite() {
+fn image_tasks_guard_existing_products_when_overwrite_is_off() {
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path();
     write_image(&path.join("in.image"), 1.0);
     write_image(&path.join("other.image"), 3.0);
     write_image(&path.join("low.image"), 0.5);
 
-    let cases: [(&str, &[&str], &str); 7] = [
+    let cases: [(&str, &[&str], &str, bool); 7] = [
         (
             env!("CARGO_BIN_EXE_imsubimage"),
             &["in.image", "out.sub"],
             "out.sub",
+            false,
         ),
         (
             env!("CARGO_BIN_EXE_immoments"),
             &["in.image", "--outfile", "out.mom0", "--moments", "0"],
             "out.mom0",
+            false,
         ),
         (
             env!("CARGO_BIN_EXE_immath"),
@@ -142,6 +149,7 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
                 "out.math",
             ],
             "out.math",
+            false,
         ),
         (
             env!("CARGO_BIN_EXE_impbcor"),
@@ -154,6 +162,7 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
                 "out.pbcor",
             ],
             "out.pbcor",
+            false,
         ),
         (
             env!("CARGO_BIN_EXE_imregrid"),
@@ -166,6 +175,7 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
                 "out.regrid",
             ],
             "out.regrid",
+            false,
         ),
         (
             env!("CARGO_BIN_EXE_feather"),
@@ -178,15 +188,24 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
                 "low.image",
             ],
             "out.feather",
+            true,
         ),
         (
             env!("CARGO_BIN_EXE_exportfits"),
             &["in.image", "out.fits"],
             "out.fits",
+            false,
         ),
     ];
-    for (binary, args, product) in cases {
-        assert_guards_its_product(binary, args, product, ("in.image", "other.image"), path);
+    for (binary, args, product, overwrite_by_default) in cases {
+        assert_guards_its_product(
+            binary,
+            args,
+            product,
+            ("in.image", "other.image"),
+            path,
+            overwrite_by_default,
+        );
     }
     // PV requires square pixels and endpoints two pixels inside the direction plane.
     let increment = [-2.0e-6, 2.0e-6];
@@ -206,6 +225,7 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
         "out.pv",
         ("pv-in.image", "pv-other.image"),
         path,
+        false,
     );
     // importfits reads the FITS files exportfits writes: out.fits now holds
     // other.image's pixels, and in.fits holds in.image's.
@@ -218,5 +238,6 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
         "back.image",
         ("out.fits", "in.fits"),
         path,
+        false,
     );
 }
