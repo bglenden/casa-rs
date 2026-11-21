@@ -3955,6 +3955,12 @@ fixture puts the XX imaginary value outside the range and its derived
 Stokes I value inside it. CASA flags both contributing planes at that
 channel. casa-rs evaluates the explicit XX product.
 
+TFCrop also matches the I in `IMAG_Q`. Its paired control adds the same
+imaginary spike to XX and YY. The derived Q remains flat, while CASA fits
+I and flags both planes. Native TFCrop evaluates Q and returns the usual
+unknown-polarization error for a bare `IMAG` operator. It uses the same
+native Stokes equations as clip. [TFCrop correlation oracle](../tools/casa-compat/flagdata_tfcrop_correlations_oracle.py)
+
 With `correlation="REAL_XX", clipzeros=True`, CASA compares the signed
 real value to the zero tolerance. A finite value of −3 is flagged.
 casa-rs compares the magnitude to the zero tolerance and uses the

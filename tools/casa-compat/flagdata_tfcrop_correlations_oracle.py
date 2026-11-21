@@ -15,7 +15,7 @@ import numpy as np
 from casars import tasks
 from flagdata_preview_oracle import auxiliary_content
 from flagdata_routine_controls_oracle import flags
-from flagdata_tfcrop_sources_oracle import check_science_state, put_samples, science_state
+from flagdata_tfcrop_sources_oracle import check_science_state, put_samples, science_state, seed_sources
 from record_casa_returns import make_cal_ms
 
 
@@ -74,9 +74,11 @@ def check_products(libraries):
         ("circular", "data", "ABS_LL", ((21, 1),)),
         ("stored-i", "data", "", ()),
         ("stored-i", "data", "ABS_I", ()),
+        ("stored-i", "data", "WVR", ()),
         ("stored-i", "data", "ABS_WVR", ((16, 0),)),
         ("stored-i", "data", "WVR_I", ((16, 0),)),
         ("stored-q", "data", "ABS_ALL", ((16, 0),)),
+        ("stored-q", "data", "ALL", ()),
         ("stored-q", "data", "ABS_Q", ((16, 0),)),
     )
     for index, (dataset, column, expression, coordinates) in enumerate(cases):
@@ -109,21 +111,38 @@ def check_products(libraries):
     return len(cases)
 
 
+def assert_unknown_product(task, path, column, expression, reported):
+    message = f"Unknown polarization requested, ({reported}) supported types are: XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
+    initial = auxiliary_content(path)
+    try:
+        task(vis=path, mode="tfcrop", action="calculate", datacolumn=column, correlation=expression,
+             flagdimension="freq", antenna="0&1", extendflags=False)
+    except RuntimeError as error:
+        assert str(error) == message
+    else:
+        raise AssertionError((path, expression))
+    assert auxiliary_content(path) == initial
+    assert not any(mask.any() for mask in flags(path))
+
+
 def check_unknown_operator_product(libraries):
-    message = "Unknown polarization requested, (REAL) supported types are: XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
+    seed_sources()
     for name, task in libraries:
-        path = f"unknown-product-{name}.ms"
-        copytree("linear.ms", path)
-        initial = auxiliary_content(path)
-        try:
-            task(vis=path, mode="tfcrop", action="calculate", datacolumn="data", correlation="REAL",
-                 flagdimension="freq", antenna="0&1", extendflags=False)
-        except RuntimeError as error:
-            assert str(error) == message
-        else:
-            raise AssertionError(name)
-        assert auxiliary_content(path) == initial
-        assert not any(mask.any() for mask in flags(path))
+        for source, column, expression, reported in (("linear", "data", "REAL", "REAL"),
+                ("complex", "weight_spectrum", "YY_ABS", "REAL ABS")):
+            path = f"unknown-{source}-{name}.ms"
+            copytree(f"{source}.ms", path)
+            assert_unknown_product(task, path, column, expression, reported)
+        path = f"real-source-{name}.ms"
+        copytree("complex.ms", path)
+        assert task(vis=path, mode="tfcrop", antenna="0&1", datacolumn="weight_spectrum",
+                    correlation="ABS_YY", flagdimension="freq", extendflags=False, flagbackup=False) == {}
+        actual, rows = flags(path)
+        expected = np.zeros_like(actual)
+        with table(path, ack=False) as main:
+            expected[:, 18, 1] = main.getcol("WEIGHT_SPECTRUM")[:, 18, 1] == 42.
+        np.testing.assert_array_equal(actual, expected)
+        assert not rows.any()
 
 
 def check_related_flag_state(libraries):
@@ -131,7 +150,8 @@ def check_related_flag_state(libraries):
         baseline = ((main.getcol("FIELD_ID") == 0) & (main.getcol("ANTENNA1") == 0)
                     & (main.getcol("ANTENNA2") == 1))
     row = np.flatnonzero(baseline)[0]
-    cases = (("ABS_I", False, 0), ("ABS_I", False, 1), ("XX", True, 0), ("XX", True, 1))
+    cases = (("ABS_I", False, 0), ("ABS_I", False, 1), ("XX", True, 0), ("XX", True, 1),
+             ("XX,YY", True, 0))
     for index, (expression, extend, plane) in enumerate(cases):
         for name, task in libraries:
             path = f"related-{index}-{name}.ms"
@@ -144,7 +164,7 @@ def check_related_flag_state(libraries):
             expected = seeded.copy()
             # Stokes I covers both contributing planes. For an explicit XX
             # fit, native extension may update the selected physical plane.
-            if expression == "ABS_I" or name == "casa" or plane == 1:
+            if expression != "XX" or name == "casa" or plane == 1:
                 expected[row, 9, :] = True
             before = auxiliary_content(path)
             options = dict(vis=path, mode="tfcrop", antenna="0&1", datacolumn="data",
@@ -159,6 +179,65 @@ def check_related_flag_state(libraries):
             np.testing.assert_array_equal(actual, expected)
             np.testing.assert_array_equal(actual_rows, rows)
     return len(cases)
+
+
+def check_global_products(libraries):
+    source = "global.ms"
+    copytree("linear.ms", source)
+    with table("stored-i.ms/POLARIZATION", ack=False) as extra:
+        with table(f"{source}/POLARIZATION", readonly=False, ack=False) as pol:
+            row = pol.nrows()
+            pol.addrows(1)
+            extra.copyrows(pol, startrowin=0, startrowout=row, nrow=1)
+    seeded, original_rows = flags(source)
+    with table(source, readonly=False, ack=False) as main:
+        pair = (main.getcol("ANTENNA1") == 0) & (main.getcol("ANTENNA2") == 1)
+        row = np.flatnonzero(pair)[0]
+        seeded[row, 9, 0] = True
+        main.putcol("DATA", np.ones_like(main.getcol("DATA")))
+        main.putcol("FLAG", seeded)
+    expected = seeded.copy()
+    expected[row, 9, 1] = True
+    for index, expression in enumerate(("", "ABS_ALL")):
+        for name, task in libraries:
+            path = f"global-{index}-{name}.ms"
+            copytree(source, path)
+            assert task(vis=path, mode="tfcrop", antenna="0&1", datacolumn="data",
+                        correlation=expression, flagdimension="freq", extendflags=False, flagbackup=False) == {}
+            actual, rows = flags(path)
+            np.testing.assert_array_equal(actual, expected)
+            np.testing.assert_array_equal(rows, original_rows)
+    return 2
+
+
+def check_imaginary_products(libraries):
+    source = "imaginary.ms"
+    copytree("linear.ms", source)
+    with table(source, readonly=False, ack=False) as main:
+        rows = ((main.getcol("FIELD_ID") == 0) & (main.getcol("ANTENNA1") == 0)
+                & (main.getcol("ANTENNA2") == 1))
+        data = np.ones_like(main.getcol("DATA"))
+        data[:, :, 0] *= 2j
+        data[:, :, 1] *= 1j
+        data[rows, 16, :] += 30j
+        main.putcol("DATA", data)
+    empty, original_rows = flags(source)
+    for index, expression in enumerate(("IMAG_I", "IMAG_Q", "IMAG")):
+        for name, task in libraries:
+            path = f"imaginary-{index}-{name}.ms"
+            copytree(source, path)
+            if expression == "IMAG" and name == "native":
+                assert_unknown_product(task, path, "data", expression, expression)
+                continue
+            assert task(vis=path, mode="tfcrop", antenna="0&1", datacolumn="data", correlation=expression,
+                        flagdimension="freq", extendflags=False, flagbackup=False) == {}
+            expected = empty.copy()
+            if name == "casa" or expression == "IMAG_I":
+                expected[rows, 16, :] = True
+            actual, flags_row = flags(path)
+            np.testing.assert_array_equal(actual, expected)
+            np.testing.assert_array_equal(flags_row, original_rows)
+    return 3
 
 
 def check_mixed_layouts(libraries):
@@ -201,8 +280,11 @@ def main():
         check_unknown_operator_product(libraries)
         related = check_related_flag_state(libraries)
         mixed = check_mixed_layouts(libraries)
+        global_products = check_global_products(libraries)
+        imaginary = check_imaginary_products(libraries)
     print(f"{products} TFCrop correlation products, {related} related flag products, {mixed} mixed-layout "
-          "products and an invalid expression verified")
+          f"products, {global_products} global product sets, {imaginary} imaginary expressions and real-source "
+          "operator refusals verified")
 
 
 if __name__ == "__main__":

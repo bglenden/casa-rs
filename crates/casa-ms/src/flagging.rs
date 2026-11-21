@@ -1444,10 +1444,7 @@ fn apply_tfcrop_flags(
             let selection = correlations.as_ref().zip(*description);
             let default_projections;
             let (projections, metric) = if let Some((selection, ddid)) = selection {
-                (
-                    selection.for_description(ddid, true)?,
-                    Some(selection.metric),
-                )
+                (selection.for_description(ddid)?, Some(selection.metric))
             } else {
                 default_projections = planes
                     .iter()
@@ -1493,40 +1490,14 @@ fn apply_tfcrop_flags(
         }
     }
     if request.extendflags {
-        let mut restricted_mask = correlations
-            .as_ref()
-            .filter(|selection| selection.restrict_extension)
-            .map(|_| modified.clone());
-        let mask = restricted_mask.as_mut().unwrap_or(&mut modified);
-        if request.casa_row_selection && channel_selections.is_some() {
-            for (_, group) in &groups {
-                extend_tfcrop_selected_channels(group, &loaded.flags_by_row, mask);
-            }
-        } else {
-            extend_autoflag_grouped(
-                groups.iter().map(|(_, group)| group.as_slice()),
-                &samples,
-                mask,
-            );
-        }
-        if let Some((selection, extended)) = correlations.as_ref().zip(restricted_mask) {
-            for (description, group) in &groups {
-                let projections = selection.for_description(
-                    description.expect("public TFCrop group has a data description"),
-                    false,
-                )?;
-                for sample in group {
-                    if projections.iter().any(|projection| match projection {
-                        ClipProjection::Stored(plane) => *plane == sample.corr,
-                        ClipProjection::Stokes(first, second, _) => {
-                            [*first, *second].contains(&sample.corr)
-                        }
-                    }) {
-                        modified[sample.index] = extended[sample.index];
-                    }
-                }
-            }
-        }
+        extend_tfcrop_groups(
+            &groups,
+            &samples,
+            &loaded.flags_by_row,
+            request.casa_row_selection && channel_selections.is_some(),
+            correlations.as_ref(),
+            &mut modified,
+        );
     }
     let union_candidates = count_mask(&modified);
     let planned_ms = started.elapsed().as_millis();
@@ -1569,6 +1540,42 @@ fn apply_tfcrop_flags(
         })
     });
     Ok(changes)
+}
+
+fn extend_tfcrop_groups(
+    groups: &[(Option<i32>, Vec<Sample>)],
+    samples: &[Sample],
+    flags: &BTreeMap<usize, ArrayD<bool>>,
+    selected_channels: bool,
+    correlations: Option<&TfcropCorrelations>,
+    modified: &mut [bool],
+) {
+    let mut restricted_mask = correlations
+        .filter(|selection| selection.restrict_extension)
+        .map(|_| modified.to_vec());
+    let mask = restricted_mask.as_deref_mut().unwrap_or(modified);
+    if selected_channels {
+        for (_, group) in groups {
+            extend_tfcrop_selected_channels(group, flags, mask);
+        }
+    } else {
+        extend_autoflag_grouped(
+            groups.iter().map(|(_, group)| group.as_slice()),
+            samples,
+            mask,
+        );
+    }
+    if let Some((selection, extended)) = correlations.zip(restricted_mask) {
+        for (description, group) in groups {
+            let planes = selection
+                .extension_planes(description.expect("public TFCrop group has a data description"));
+            for sample in group {
+                if planes.binary_search(&sample.corr).is_ok() {
+                    modified[sample.index] = extended[sample.index];
+                }
+            }
+        }
+    }
 }
 
 struct TfcropSeries {
@@ -1634,8 +1641,13 @@ fn tfcrop_metric_roundoff(metric: ClipMetric, value: Complex64, uncertainty: f32
     let radius = f64::from(uncertainty);
     match metric {
         ClipMetric::SquaredMagnitude => (radius * (2.0 * value.norm() + radius)) as f32,
-        ClipMetric::Phase if radius < value.norm() => (radius / value.norm()).asin() as f32,
-        ClipMetric::Phase => std::f32::consts::PI,
+        ClipMetric::Phase
+            if radius < value.norm() && (value.re >= 0.0 || radius < value.im.abs()) =>
+        {
+            (radius / value.norm()).asin() as f32
+        }
+        // The fit compares principal arguments on either side of ±π.
+        ClipMetric::Phase => std::f32::consts::TAU,
         _ => uncertainty,
     }
 }
@@ -4170,6 +4182,17 @@ mod tests {
 
     use super::*;
     use ndarray::array;
+
+    #[test]
+    fn tfcrop_angle_roundoff_covers_the_principal_phase_branch_cut() {
+        let above = Complex64::new(-1.0, 1.0e-8);
+        let below = Complex64::new(-1.0, -1.0e-8);
+        let bound = tfcrop_metric_roundoff(ClipMetric::Phase, above, 1.0e-6);
+        assert!(f64::from(bound) >= (above.arg() - below.arg()).abs());
+        let away_from_cut =
+            tfcrop_metric_roundoff(ClipMetric::Phase, Complex64::new(1.0, 0.0), 1.0e-6);
+        assert!((1.0e-6..=1.1e-6).contains(&away_from_cut));
+    }
 
     fn sample(index: usize, row: usize, corr: usize, chan: usize, real: f64, flag: bool) -> Sample {
         Sample {
