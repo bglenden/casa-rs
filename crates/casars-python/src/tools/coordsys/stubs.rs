@@ -53,17 +53,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (csys, whichin, whichout), text_signature = "($self, csys, whichin, whichout)")]
-    fn replace(
-        &self,
-        csys: &Bound<'_, PyAny>,
-        whichin: &Bound<'_, PyAny>,
-        whichout: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("replace")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (direction = None, spectral = None), text_signature = "($self, direction='', spectral='')")]
     fn setconversiontype(
         &self,

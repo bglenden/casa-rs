@@ -257,7 +257,7 @@ fn replacement(value: &Value, key: &str) -> PyResult<Value> {
     Ok(ArrayValue::from_f64_vec(values).into())
 }
 
-fn restore(mut record: RecordValue, parent_name: String) -> PyResult<CoordinateState> {
+pub(super) fn restore(mut record: RecordValue, parent_name: String) -> PyResult<CoordinateState> {
     validate_coordinate_indices(&record)?;
     normalize_stokes_records(&mut record)?;
 
