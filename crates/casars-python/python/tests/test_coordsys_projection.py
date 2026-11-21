@@ -2,8 +2,6 @@
 
 import numpy as np
 import pytest
-from astropy.io import fits
-from astropy.wcs import WCS
 
 from casars import tools
 from test_image_workflow import _assert_value
@@ -83,6 +81,7 @@ def test_projection_errors_keep_the_previous_transform(casa):
         for name, parameters in (
             ("sin", []), ("NCP", []), ("BOGUS", []), ("CEA", [1.5]), ("CYP", [1., 0.]),
             ("BON", []), ("COD", [30.]), ("COE", [0., 5.]), ("HPX", [0., 2.]), ("ZPN", []),
+            ("COD", [180., 0.]), ("COP", [180., 0.]), ("COD", [30., 180.]),
         ):
             with pytest.raises(RuntimeError):
                 coords.setprojection(name, parameters)
@@ -137,9 +136,44 @@ def test_healpix_and_bonne_accept_agreeing_polar_and_equatorial_points(casa, lat
             np.testing.assert_allclose(central, [0., latitude / 0.1], rtol=0, atol=2.e-11)
 
 
-def test_zpn_coefficients_and_results_survive_fits_writer_reader_pairs(casa, tmp_path):
-    parameters = np.array([0.02, 1.0, 0.1, -0.02] + [0.0] * 16)
-    pixel = [1.0, 1.6]
+def test_zero_latitude_bonne_rejects_pixels_outside_the_sky(casa):
+    for api in (tools, casa):
+        coords = setup_direction(api)
+        assert coords.setprojection("BON", [0.])
+        for pixel in ([40., 0.], [0., 20.]):
+            with pytest.raises(RuntimeError):
+                coords.toworld(pixel)
+
+
+@pytest.mark.parametrize(("name", "parameters", "invalid_latitude"), [
+    ("CEA", [1.], -0.5), ("CYP", [1., 1.], -0.5), ("BON", [0.], -0.5),
+    ("HPX", [], -0.5), ("COP", [30., 10.], 0.9),
+])
+def test_failed_reference_edit_keeps_the_projected_grid(casa, name, parameters, invalid_latitude):
+    for api in (tools, casa):
+        coords = setup_direction(api)
+        assert coords.setprojection(name, parameters)
+        before = coords.torecord()
+        with pytest.raises(RuntimeError, match="coordinate transformation"):
+            coords.setreferencevalue([0., invalid_latitude])
+        if api is tools:
+            _assert_value(coords.torecord(), before)
+            np.testing.assert_allclose(coords.toworld([0., 0.])["numeric"], [0., 0.], atol=1e-12)
+        else:
+            assert coords.torecord()["direction0"]["crval"][1] == pytest.approx(invalid_latitude)
+
+
+@pytest.mark.parametrize("high_order", [False, True])
+def test_zpn_coefficients_and_results_survive_fits_writer_reader_pairs(casa, tmp_path, high_order):
+    from astropy.io import fits
+    from astropy.wcs import WCS
+
+    if high_order:
+        parameters = np.array([0.0, 1.0] + [0.0] * 18 + [0.1])
+        pixel = [0.0, -11.0]
+    else:
+        parameters = np.array([0.02, 1.0, 0.1, -0.02] + [0.0] * 16)
+        pixel = [1.0, 1.6]
     for writer in (tools, casa):
         coords = setup_direction(writer)
         assert coords.setreferencevalue([0., np.pi / 2.])
@@ -159,11 +193,12 @@ def test_zpn_coefficients_and_results_survive_fits_writer_reader_pairs(casa, tmp
                 # CASA writes every coefficient one slot too high. Move its
                 # recorded values to the FITS WCS indices before readback.
                 assert "PV2_0" not in header
-                np.testing.assert_allclose([header.pop(f"PV2_{n + 1}") for n in range(20)], parameters)
+                np.testing.assert_allclose([header.pop(f"PV2_{n + 1}") for n in range(len(parameters))], parameters)
                 for n, coefficient in enumerate(parameters):
-                    header[f"PV2_{n}"] = coefficient
+                    if not high_order or coefficient != 0.0:
+                        header[f"PV2_{n}"] = coefficient
             else:
-                np.testing.assert_allclose([header[f"PV2_{n}"] for n in range(20)], parameters)
+                np.testing.assert_allclose([header[f"PV2_{n}"] for n in range(len(parameters))], parameters)
             np.testing.assert_allclose(WCS(header).pixel_to_world_values(*pixel), np.rad2deg(world), rtol=0, atol=3.e-8)
         for reader in (tools, casa):
             image = reader.image()
@@ -171,6 +206,8 @@ def test_zpn_coefficients_and_results_survive_fits_writer_reader_pairs(casa, tmp
             try:
                 reopened = image.coordsys()
                 assert reopened.projection()["type"] == "ZPN"
+                if reader is tools:
+                    np.testing.assert_allclose(reopened.projection()["parameters"], parameters)
                 np.testing.assert_allclose(reopened.toworld(pixel)["numeric"], world, rtol=0, atol=3.e-10)
             finally:
                 image.done()

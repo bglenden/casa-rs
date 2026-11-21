@@ -46,21 +46,20 @@ fn apply_casa_projection_defaults(kind: ProjectionType, parameters: &mut Vec<f64
 fn refresh_direction_pole(record: &mut RecordValue) -> Result<(), CoordinateError> {
     let direction = crate::DirectionCoordinate::from_record(record)?;
     let pole = direction.native_pole()[1];
-    if [
-        "CAR", "SFL", "MER", "AIT", "PAR", "MOL", "PCO", "TSC", "CSC", "QSC",
-    ]
-    .contains(&direction.projection().name())
-    {
+    let fiducial = crate::direction::fiducial_latitude_degrees(direction.projection());
+    if fiducial != 90.0 {
         let latitude = direction.reference_value()[1].to_degrees();
         let longitude = direction.longpole().to_degrees();
         // WCSLIB checks the *unclamped* candidate pole latitude in degrees.
         // A residual in sin(latitude) alone misses errors near LONGPOLE=90.
         let (u, v) = if longitude == 0.0 {
-            (0.0, 90.0 - latitude)
+            (fiducial, 90.0 - latitude)
         } else {
             let (_, cosine) = crate::direction::wcslib_sin_cos_degrees(longitude);
             let (sine_latitude, _) = crate::direction::wcslib_sin_cos_degrees(latitude);
-            let z = cosine.abs();
+            let (y, cos_fiducial) = crate::direction::wcslib_sin_cos_degrees(fiducial);
+            let x = cos_fiducial * cosine;
+            let z = x.hypot(y);
             if z == 0.0 {
                 if sine_latitude != 0.0 {
                     return Err(CoordinateError::InvalidRecord(
@@ -76,7 +75,7 @@ fn refresh_direction_pole(record: &mut RecordValue) -> Result<(), CoordinateErro
                     ));
                 }
                 (
-                    0.0_f64.atan2(cosine).to_degrees(),
+                    y.atan2(x).to_degrees(),
                     ratio.clamp(-1.0, 1.0).acos().to_degrees(),
                 )
             }

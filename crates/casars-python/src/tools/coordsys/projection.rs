@@ -37,7 +37,7 @@ pub(super) fn direction_projection(name: &str, mut parameters: Vec<f64>) -> PyRe
         let mut defaults = if name == "SIN" {
             vec![0.0; 2]
         } else {
-            kind.fits_parameter_defaults().to_vec()
+            kind.fits_parameter_defaults()[..*count as usize].to_vec()
         };
         defaults[..supplied].fill(0.0);
         parameters = defaults;
