@@ -165,7 +165,7 @@ impl PyImageTool {
                     }
                 }
                 attachment.require_pixel_read_lock(&mut input)?;
-                let staged = (|| {
+                let staged: PyResult<ImageHandle> = (|| {
                     let ImageHandle::Float(source) = &*input else {
                         unreachable!("checked float pixels")
                     };
