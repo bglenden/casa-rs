@@ -618,6 +618,52 @@ fn imstat_logfile_records_the_block_and_appends() {
 }
 
 #[test]
+fn imstat_plane_log_has_velocity_and_iterations_and_omits_masked_planes() {
+    let workspace = tempfile::tempdir().unwrap();
+    let image = fixture("fourdim.im");
+    let logfile = workspace.path().join("planes.log");
+    run_imstat(
+        &image,
+        json!({"axes": [0, 1], "logfile": logfile, "append": false}),
+    );
+    let text = std::fs::read_to_string(&logfile).unwrap();
+    assert!(text.contains("#VELOCITY column unit = km/s"), "{text}");
+    assert!(
+        text.contains("1141.36626") && text.contains("1141.1552"),
+        "{text}"
+    );
+
+    let mask = format!("\"{}\" > 115", image.display());
+    run_imstat(
+        &image,
+        json!({"axes": [0, 1], "mask": mask, "logfile": logfile, "append": false}),
+    );
+    let text = std::fs::read_to_string(&logfile).unwrap();
+    let rows = text
+        .lines()
+        .skip_while(|line| !line.contains("VELOCITY(Plane)"))
+        .skip(1);
+    assert_eq!(rows.count(), 1, "{text}");
+    assert!(text.contains("4.000000e0"), "{text}");
+    assert!(!text.contains("NaN"), "{text}");
+
+    run_imstat(
+        &fixture("values.im"),
+        json!({"axes": [0, 1], "algorithm": "chauvenet", "zscore": 1.5, "logfile": logfile, "append": false}),
+    );
+    let text = std::fs::read_to_string(&logfile).unwrap();
+    assert!(text.contains("N Iter"), "{text}");
+    assert!(
+        text.lines().any(|line| line
+            .split_whitespace()
+            .last()
+            .and_then(|n| n.parse::<usize>().ok())
+            .is_some_and(|n| n > 0)),
+        "{text}"
+    );
+}
+
+#[test]
 fn imstat_classic_statistics_match_casa_without_a_beam_and_with_a_box() {
     let expected = expected();
     let unbeamed = fixture("unbeamed.im");
