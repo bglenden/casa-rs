@@ -502,12 +502,12 @@ impl ImagerPrediction {
         result
     }
 
-    /// The legacy A/W constructor can fail after the sky model has been filled.
+    /// These legacy A/W failures occur after the sky model has been filled.
     pub fn retains_prepared_model(error: &AttachmentError) -> bool {
         matches!(
             error,
             AttachmentError::PredictionPreparation(MsError::InvalidInput(message))
-                if message == DISABLED_AW_TERMS
+                if message == DISABLED_AW_TERMS || message == super::legacy_aw::MISSING_SENSITIVITY
         )
     }
 

@@ -14,7 +14,8 @@ from casatools import image, imager as casa_imager, ms as casa_ms, table
 import numpy as np
 
 from imager_legacy_pbw_oracle import (
-    cache_contents, corrected_or_data, data, make_input, recipe, reject_recipe, relative_rms,
+    cache_contents, configured_imager, corrected_or_data, data, make_input, recipe, reject_recipe,
+    relative_rms,
 )
 
 
@@ -331,6 +332,91 @@ def refuses_unsupported_cells(root, dataset, model):
         predict(target, model, cache, 'awproject', False, accepts=False, spw=spw, wbawp=True)
         assert not list(cache.glob('*CFS_*.im'))
         print(label, 'refused before publishing any cells', flush=True)
+def cold_correction_retry(root, dataset, model, machine, *, scratch, factory):
+    target, cache = root / 'target.ms', root / 'cache'
+    make_input(dataset, target, scratch=scratch)
+    tool = configured_imager(factory, target, cache, scratch=scratch, spw='0:0', machine='ft')
+
+    def correction(enabled):
+        assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
+                               cfcachedirname=str(cache), dopbgriddingcorrections=enabled,
+                               wbawp=True)
+
+    prior = data(target, 'MODEL_DATA') if scratch else None
+    correction(True)
+    assert not tool.ft(str(model))
+    issued = cache_contents(cache)
+    assert issued and not (cache / 'avgPB').exists()
+    if scratch:
+        np.testing.assert_array_equal(data(target, 'MODEL_DATA'), prior)
+    else:
+        reader = table()
+        assert reader.open(str(target / 'SOURCE'))
+        assert 'definedmodel_field_0' not in reader.keywordnames() and reader.done()
+    correction(False)
+    assert tool.ft() and tool.done()
+    assert cache_contents(cache) == issued
+    return target, cache
+
+
+def compare_cold_correction(root, dataset, model, *, reference=None,
+                            machines=('awproject', 'mawproject')):
+    assert casatasks.version_string() == '6.7.6.14'
+    measured = {}
+    for machine in machines:
+        with TemporaryDirectory(dir=root) as attempt:
+            case = Path(attempt)
+            if reference is None:
+                pinned, casa_cache = cold_correction_retry(
+                    case / 'pinned', dataset, model, machine, scratch=True, factory=casa_imager,
+                )
+            else:
+                pinned, casa_cache = reference / f'{machine}.ms', reference / f'{machine}-cache'
+            native, native_cache = cold_correction_retry(
+                case / 'native', dataset, model, machine, scratch=True, factory=imager,
+            )
+            expected = data(pinned, 'MODEL_DATA')
+            actual = data(native, 'MODEL_DATA')
+            np.testing.assert_array_equal(actual[:, 1:, :], expected[:, 1:, :])
+            errors = {
+                'recovered_scratch': relative_rms(actual[:, 0, :], expected[:, 0, :]),
+                'recovered_cache': compare_cells(native_cache, casa_cache),
+            }
+            for candidate, factory, cache in (
+                (case / 'pinned-warm.ms', casa_imager, casa_cache),
+                (case / 'native-warm.ms', imager, native_cache),
+            ):
+                for wideband in (True, False):
+                    target = candidate.with_name(f'{candidate.stem}-{wideband}.ms')
+                    make_input(dataset, target, scratch=True)
+                    tool = configured_imager(factory, target, cache, scratch=True, spw='0:0', machine='ft')
+                    before = data(target, 'MODEL_DATA').tobytes()
+                    assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
+                                           cfcachedirname=str(cache), dopbgriddingcorrections=True,
+                                           wbawp=wideband)
+                    unchanged = cache_contents(cache)
+                    assert not tool.ft(str(model)) and tool.done()
+                    assert data(target, 'MODEL_DATA').tobytes() == before
+                    assert cache_contents(cache) == unchanged
+
+            saved, saved_cache = cold_correction_retry(
+                case / 'virtual', dataset, model, machine, scratch=False, factory=imager,
+            )
+            entry = recipe(saved)
+            assert entry['name'] == 'AWProjectWBFT'
+            assert compare_cells(Path(entry['diskimage']) / 'CASARS_LEGACY_AW_CACHE', casa_cache) < 1.e-3
+            saved_cache.rename(case / 'moved-cache')
+            before = corrected_or_data(saved)
+            tool = ms()
+            assert tool.open(str(saved), nomodify=False)
+            assert tool.msselect({'field': '0'}) and tool.uvsub() and tool.done()
+            predicted = before - data(saved, 'CORRECTED_DATA')
+            assert not np.any(predicted[:, 1:, :])
+            errors['recovered_virtual'] = relative_rms(predicted[:, 0, :], expected[:, 0, :])
+            measured[machine] = errors
+            print(machine, errors, flush=True)
+            assert max(errors.values()) < 1.e-3
+    (root / 'results.json').write_text(json.dumps(measured, indent=2) + '\n')
 
 
 def main():
@@ -342,10 +428,14 @@ def main():
     parser.add_argument('--corrected-reference', type=Path)
     parser.add_argument('--saved-reference', type=Path)
     parser.add_argument('--cold', action='store_true')
+    parser.add_argument('--cold-correction', action='store_true')
     args = parser.parse_args()
     args.work.mkdir(parents=True)
     if args.cold:
         compare_cold(args.work, args.dataset, args.model)
+        return
+    if args.cold_correction:
+        compare_cold_correction(args.work, args.dataset, args.model)
         return
     if args.uncorrected_reference is None or args.corrected_reference is None:
         parser.error('both the corrected and uncorrected references are required for warm comparisons')
