@@ -39,7 +39,7 @@ impl ApplyChain {
             .map(ApplyStep::Table)
             .chain(parang.as_ref().map(|_| ApplyStep::ParallacticAngle))
             .collect::<Vec<_>>();
-        if has_leakage(plan) || (forward_model && plan.parang) {
+        if has_polarization_matrix(plan) || (forward_model && plan.parang) {
             steps.sort_by_key(|step| match step {
                 ApplyStep::Table(index) => {
                     viscal_order(&plan.calibration_tables[*index].summary.table_subtype)
@@ -58,10 +58,11 @@ impl ApplyChain {
     }
 }
 
-pub(crate) fn has_leakage(plan: &ApplyPlan) -> bool {
-    plan.calibration_tables
-        .iter()
-        .any(|table| polarization::Leakage::from_subtype(&table.summary.table_subtype).is_some())
+pub(crate) fn has_polarization_matrix(plan: &ApplyPlan) -> bool {
+    plan.calibration_tables.iter().any(|table| {
+        let subtype = table.summary.table_subtype.as_str();
+        subtype == "PosAng Jones" || polarization::Leakage::from_subtype(subtype).is_some()
+    })
 }
 
 /// The supported CASA VisCal::Type order. Equal types keep supplied apply order.

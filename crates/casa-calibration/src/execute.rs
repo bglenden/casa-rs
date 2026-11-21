@@ -76,7 +76,7 @@ mod solve_priors;
 mod switched_power;
 pub(crate) mod tsys_weights;
 mod weights;
-pub(crate) use chain::has_leakage;
+pub(crate) use chain::has_polarization_matrix;
 use chain::{ApplyChain, ApplyStep};
 use channels::{DataChannelGrid, apply_row};
 pub(crate) use solve_priors::{

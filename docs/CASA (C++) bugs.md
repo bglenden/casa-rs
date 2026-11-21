@@ -7323,6 +7323,21 @@ fit retains the identity angle correction.
 [Paired oracle](../tools/casa-compat/polcal_joint_leakage_oracle.py)
 · [Full Jones oracle](../tools/casa-compat/polcal_general_leakage_oracle.py)
 
+## A flagged channel shifts Stokes-I normalization to other channels
+
+In CASA 6.7.6.14, `VisEquation::divideByStokesIModel` advances the visibility,
+model and weight pointers only when a channel has unflagged parallel hands
+and positive model intensity. A skipped channel shifts which samples the
+later channels' normalization factors modify. In a circular-feed
+`polcal(poltype='PosAng')` solve with channel-dependent flux and position
+angle changing in time, flagging channel 0 changes the fitted position
+angles on channels 1 and 2.
+
+Casa-rs computes Stokes I from each channel's own model and scales only that
+channel's data and weights. Changing the flag on channel 0 leaves the
+solutions in the other channels unchanged in this fixture.
+[Paired oracle](../tools/casa-compat/polcal_position_angle_oracle.py)
+
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
 In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet

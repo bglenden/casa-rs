@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 use ndarray::{ArrayD, IxDyn};
 
-use super::chain::{ApplyChain, has_leakage, viscal_order};
+use super::chain::{ApplyChain, has_polarization_matrix, viscal_order};
 use super::{
     ApplyExecutionError, ApplyPlan, ArrayValue, Complex32, EvaluatedApplyRow, ExecutionRowInputs,
     HashMap, MeasurementSet, PreviewWeightSource, RowGeometryCache, applies_preview_weights,
@@ -193,7 +193,7 @@ pub(crate) fn evaluate_solve_priors(
             | PriorSolveBoundary::CrossHand
             | PriorSolveBoundary::PositionAngle
     );
-    let polarized = deferred_data || has_leakage(&plan);
+    let polarized = deferred_data || has_polarization_matrix(&plan);
     if !polarized
         && matches!(
             boundary,

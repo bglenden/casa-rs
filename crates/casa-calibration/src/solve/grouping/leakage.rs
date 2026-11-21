@@ -293,18 +293,19 @@ struct BaselineAverages {
     start: f64,
     bins: Vec<CoherencyMean>,
     centroid: WeightedTime,
-    spectral_weight: f64,
 }
 
 impl BaselineAverages {
     fn finish_time(&mut self, solution_time: &mut WeightedTime) {
+        // SDBList reduces each baseline's Float weight spectrum before
+        // converting its aggregate weight to Double.
+        let weight = f64::from(self.bins.iter().flat_map(|bin| bin.weights).sum::<f32>());
         if self.centroid.mean().is_some() {
-            solution_time.observe_mean(self.centroid, self.spectral_weight);
-        } else if self.spectral_weight > 0.0 {
-            solution_time.observe(self.start, self.spectral_weight);
+            solution_time.observe_mean(self.centroid, weight);
+        } else if weight > 0.0 {
+            solution_time.observe(self.start, weight);
         }
         self.centroid = WeightedTime::default();
-        self.spectral_weight = 0.0;
     }
 }
 
@@ -374,11 +375,12 @@ impl LeakageInputs<'_> {
                         start: row.time_seconds,
                         bins: vec![CoherencyMean::default(); count],
                         centroid: WeightedTime::default(),
-                        spectral_weight: 0.0,
                     });
                 if span.is_some_and(|span| row.time_seconds - active.start > span) {
+                    if kind.cross_hand() {
+                        active.finish_time(&mut time);
+                    }
                     fits.accumulate(pair, &mut active.bins, antennas)?;
-                    active.finish_time(&mut time);
                     active.start = row.time_seconds;
                 }
                 let (spectral_weight, scalar_weight) = self.average_row(
@@ -391,15 +393,16 @@ impl LeakageInputs<'_> {
                     active
                         .centroid
                         .observe(row.time_centroid_seconds, scalar_weight);
-                    active.spectral_weight += spectral_weight;
                 } else {
                     time.observe(row.time_centroid_seconds, spectral_weight);
                 }
             }
         }
         for ((_, _, pair), mut active) in averages {
+            if kind.cross_hand() {
+                active.finish_time(&mut time);
+            }
             fits.accumulate(pair, &mut active.bins, antennas)?;
-            active.finish_time(&mut time);
         }
         Ok(fits
             .finish(

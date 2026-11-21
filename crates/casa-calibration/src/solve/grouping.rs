@@ -26,7 +26,7 @@ use super::{
 use crate::ApplyCalibrationTableSpec;
 use crate::execute::{
     EvaluatedApplyRow, PreappliedRows, PriorSolveBoundary, evaluate_apply_rows,
-    evaluate_solve_priors, has_leakage,
+    evaluate_solve_priors, has_polarization_matrix,
 };
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
@@ -90,7 +90,7 @@ pub(crate) fn load_preapplied_rows(
     .map_err(|source| GainSolveError::PriorCalibrationPlan {
         source: Box::new(source),
     })?;
-    if legacy_rotate && !has_leakage(&plan) {
+    if legacy_rotate && !has_polarization_matrix(&plan) {
         plan.parang = false;
     }
     let preapplied = match mode {

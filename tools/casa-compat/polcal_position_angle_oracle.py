@@ -9,7 +9,7 @@ import casatasks as casa
 from casatools import calibrater
 import numpy as np
 
-from calibration_leakage_apply_oracle import CHANNELS, compare_application
+from calibration_leakage_apply_oracle import CHANNELS, compare_application, model_preapply
 from calibration_smoothcal_oracle import opened
 from polcal_cross_hand_oracle import plant_cross_hand
 from polcal_leakage_solve_oracle import compare_apply, plant, put_observations
@@ -63,6 +63,36 @@ def solve(root, vis, api, **options):
     return products, angles
 
 
+def flag_channel_independently(root, vis, api, sky, position, later):
+    variable = sky.copy()
+    variable[:, 0] = variable[:, 1]
+    variable[:, 1, later] *= 3.
+    variable[:, 2, later] *= .5
+    data = put_observations(vis, variable, [position])
+    data[1, :, later] *= np.exp(.8j)
+    data[2, :, later] *= np.exp(-.8j)
+    with opened(vis, True) as ms:
+        ms.putcol('DATA', data)
+    _, baseline = solve(root/'time-variable-unflagged', vis, api)
+    with opened(vis, True) as ms:
+        flags = ms.getcol('FLAG')
+        flags[:, 0] = True
+        ms.putcol('FLAG', flags)
+    for label, task in [('casa', casa.polcal), ('native', api.polcal)]:
+        product = root/f'{label}-flagged-channel.cal'
+        assert task(str(vis), str(product), field='0', poltype='PosAng') is None
+        with opened(product) as table:
+            flags = table.getcol('FLAG')
+            assert flags[:, 0].all() and not flags[:, 1:].any()
+            difference = np.max(np.abs(table.getcol('FPARAM')[:, 1:]-baseline[:, 1:]))
+            print(label, 'angle difference after flagging channel 0', difference)
+            if label == 'native':
+                assert difference < 3e-5
+            else:
+                # Pinned CASA advances the normalization pointers only for usable channels.
+                assert difference > .1
+
+
 def compare_basis(root, basis, api):
     root.mkdir()
     vis, leak, gains, stokes, sky = plant(root, basis)
@@ -79,6 +109,16 @@ def compare_basis(root, basis, api):
                              minsnr=1e20, minblperant=20)
     np.testing.assert_allclose(actual, angles, atol=3e-5, rtol=0.)
     compare_apply(root/'position-angle', vis, products, api, [], cross_hand_tolerance=1e-5)
+    difference, _ = compare_application(root, vis, api, 'correction-only',
+                                        [position], False, field='0', applymode='calonly')
+    assert difference < 1e-5
+    difference, _ = compare_application(root, vis, api, 'reverse-supplied-order',
+                                        [position, gains], False, field='0')
+    assert difference < 1e-5
+    if basis.startswith('XX'):
+        prior_root = root/'gain-with-posang-prior'
+        prior_root.mkdir()
+        assert model_preapply(prior_root, vis, api, [position], True) < 1e-5
 
     flux = sky.copy()
     flux[:, 0, time > np.median(time[fields == 0])] *= 3
@@ -118,6 +158,7 @@ def compare_basis(root, basis, api):
         assert not np.any(actual)
         with opened(products['native']) as table:
             assert table.getcol('FLAG').all()
+        flag_channel_independently(root, vis, api, sky, position, time > np.median(time[fields == 0]))
 
 
 def main():

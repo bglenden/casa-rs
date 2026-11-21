@@ -97,11 +97,12 @@ pub(super) fn apply_position_angle(
             }
         });
         let invalid = left.flagged || right.flagged;
-        let input_flagged = linear_order.is_some_and(|indices| {
-            indices
-                .into_iter()
-                .any(|index| output.flags[[index, channel]])
-        });
+        let input_flagged = propagate
+            && linear_order.is_some_and(|indices| {
+                indices
+                    .into_iter()
+                    .any(|index| output.flags[[index, channel]])
+            });
         let mut flag = |index: usize| {
             if propagate && !output.flags[[index, channel]] {
                 output.flags[[index, channel]] = true;
