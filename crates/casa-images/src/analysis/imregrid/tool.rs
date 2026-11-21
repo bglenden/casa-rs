@@ -95,8 +95,7 @@ pub fn regrid_image<T: RegridPixel>(
         return Err(invalid("PV images are not supported by regrid"));
     }
     let rotating = matches!(options.target, ImageRegridTarget::Rotation(_));
-    let shape_specified = options.shape.first().is_some_and(|&size| size >= 0)
-        || (rotating && options.shape.len() == 1 && options.shape != [-1]);
+    let shape_specified = options.shape.first().is_some_and(|&size| size >= 0);
     let shape: Vec<i64> = if !shape_specified {
         input
             .shape()
@@ -152,12 +151,14 @@ pub fn regrid_image<T: RegridPixel>(
             "This application does not support multiple region selection",
         ));
     }
-    let (selected_coords, ndim) = selection
+    let (selected_coords, selected_shape) = selection
         .as_ref()
-        .map_or((input.coordinates(), input.ndim()), |selection| {
-            (&selection.coordinates, selection.shape.len())
+        .map_or((input.coordinates(), input.shape()), |selection| {
+            (&selection.coordinates, selection.shape.as_slice())
         });
-    if output_shape.len() != ndim {
+    let ndim = selected_shape.len();
+    let has_rotation_shape = rotating && !options.shape.is_empty() && options.shape != [-1];
+    if output_shape.len() != ndim || (has_rotation_shape && options.shape.len() != ndim) {
         return Err(invalid(
             "The number of pixel axes in the output shape and Coordinate System must be the same",
         ));
@@ -169,7 +170,8 @@ pub fn regrid_image<T: RegridPixel>(
             options.axes,
         ),
         ImageRegridTarget::Rotation(angle) => {
-            let (target, axes) = rotated_grid(selected_coords, angle)?;
+            let (target, axes) =
+                rotated_grid(selected_coords, angle, selected_shape, &output_shape)?;
             rotation_axes = axes;
             (target, rotation_axes.as_slice())
         }
@@ -177,7 +179,10 @@ pub fn regrid_image<T: RegridPixel>(
     let all_axes = axes.is_empty() || axes == [-1];
     if info.beam_set.is_multi()
         && target.find_coordinate(CoordinateType::Spectral).is_some()
-        && let Some(axis) = input.find_axis(CoordinateType::Spectral)
+        && let Some(axis) = selected_coords
+            .find_coordinate(CoordinateType::Spectral)
+            .and_then(|index| selected_coords.coordinate_pixel_axes(index))
+            .and_then(|axes| axes.into_iter().flatten().next())
         && (all_axes || axes.contains(&(axis as i64)))
     {
         return Err(invalid(

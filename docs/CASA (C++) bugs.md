@@ -9227,3 +9227,21 @@ For a default `[24, 26]` direction image, CASA 6.7.6.14 rejects
 The longitude and latitude grids still overlap after a right-angle
 rotation about the reference pixel. Casa-rs samples the actual
 overlapping pixels and masks the portions outside the source.
+
+### `image.rotate` can permute the coordinate axes when dropping a singleton
+
+For a Float `[24, 26, 1, 7]` cube transposed with `order="2301"`,
+CASA 6.7.6.14 returns shape `[7, 24, 26]` from `rotate(pa="35deg",
+dropdeg=True, replicate=True)` but assigns Direction, Direction and
+Spectral coordinates in that order. With per-channel restoring beams,
+it fails because the spectral dimension no longer agrees with the beam
+record. Casa-rs retains Spectral, Direction and Direction in pixel order
+and keeps each beam on its original channel.
+
+### `image.rotate` can replace the only pixel of a linear plane with zero
+
+On a linear `[1, 1]` image whose pixel is 5, CASA 6.7.6.14 returns zero
+from `rotate(pa="35deg", method="linear")`. Both singleton axes are
+removed from the interpolation pass, leaving the initialized output pixel
+instead of copying the input. Casa-rs preserves the original pixel, mask
+and coordinates when the rotation has no sampled axis.

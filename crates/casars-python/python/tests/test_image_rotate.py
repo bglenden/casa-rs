@@ -159,6 +159,129 @@ def test_rotate_right_angle_keeps_the_actual_sky_overlap():
         source.done()
 
 
+def test_rotate_normalizes_obtuse_direction_transform(casa):
+    for api in (casa, tools):
+        source = api.image()
+        product = coords = None
+        try:
+            assert source.fromarray(pixels=_ramp())
+            product = source.rotate(pa="120deg", replicate=True)
+            coords = product.coordsys()
+            np.testing.assert_allclose(
+                coords.lineartransform(type="direction"),
+                -_plane_rotation(np.deg2rad(120)), atol=2e-14,
+            )
+            np.testing.assert_allclose(coords.increment()["numeric"], [1., -1.], atol=2e-14)
+        finally:
+            if coords is not None:
+                coords.done()
+            if product is not None:
+                product.done()
+            source.done()
+
+
+@pytest.mark.parametrize("linear", [False, True])
+def test_rotate_validates_rank_before_expanding_default_shape(casa, linear):
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromshape(shape=[24, 26], linear=linear)
+            for shape in ([-2], [-1, -1, -1], [-1, 2, 3, 4]):
+                with pytest.raises(RuntimeError):
+                    source.rotate(pa="35deg", shape=shape)
+            for shape in ([], [-1], [-2, 3]):
+                product = source.rotate(pa="35deg", shape=shape)
+                try:
+                    np.testing.assert_array_equal(product.shape(), [24, 26])
+                finally:
+                    product.done()
+        finally:
+            source.done()
+
+
+def test_rotate_dropdeg_maps_spectral_axis_and_beams_after_transpose():
+    source = tools.image()
+    data = _ramp()[..., None, None] + 100*np.arange(7, dtype=np.float32)
+    mapped = product = coords = None
+    try:
+        assert source.fromarray(pixels=data)
+        for channel in range(7):
+            assert source.setrestoringbeam(major=f"{2+channel}arcmin", minor="1arcmin",
+                                           pa="5deg", channel=channel, polarization=0)
+        mapped = source.transpose(order="2301")
+        product = mapped.rotate(pa="35deg", dropdeg=True, replicate=True, method="nearest")
+        np.testing.assert_array_equal(product.shape(), [7, 24, 26])
+        np.testing.assert_array_equal(product.getchunk(), data[:, :, 0, :].transpose(2, 0, 1))
+        coords = product.coordsys()
+        assert coords.axiscoordinatetypes() == ["Spectral", "Direction", "Direction"]
+        for channel in range(7):
+            beam = product.restoringbeam(channel=channel, polarization=0)
+            assert beam["major"] == {"unit": "arcmin", "value": pytest.approx(2+channel)}
+    finally:
+        if coords is not None:
+            coords.done()
+        if product is not None:
+            product.done()
+        if mapped is not None:
+            mapped.done()
+        source.done()
+
+
+@pytest.mark.parametrize("linear", [False, True])
+def test_rotate_singleton_plane_matches_interpolation_admission(casa, linear):
+    profiles = np.arange(26, dtype=np.float32)[None, :]
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromshape(shape=[1, 26], linear=linear)
+            assert source.putchunk(profiles)
+            for shape, pa in (([1, 26], "35deg"), ([24, 26], "35deg"), ([24, 26], "0deg")):
+                with pytest.raises(RuntimeError):
+                    source.rotate(pa=pa, method="nearest", shape=shape)
+            product = source.rotate(pa="0deg", method="nearest")
+            try:
+                np.testing.assert_array_equal(product.getchunk(), profiles)
+            finally:
+                product.done()
+        finally:
+            source.done()
+
+
+def test_rotate_rejects_resized_linear_singletons(casa):
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromshape(shape=[24, 26], linear=True)
+            with pytest.raises(RuntimeError):
+                source.rotate(pa="35deg", shape=[1, 26])
+            source.done()
+            assert source.fromshape(shape=[1, 1], linear=True)
+            assert source.putchunk(np.array([[5.]], dtype=np.float32))
+            with pytest.raises(RuntimeError):
+                source.rotate(pa="35deg", shape=[24, 26], method="nearest")
+        finally:
+            source.done()
+
+
+def test_rotate_keeps_the_only_pixel_in_a_linear_plane():
+    source = tools.image()
+    product = coords = None
+    try:
+        assert source.fromshape(shape=[1, 1], linear=True)
+        assert source.putchunk(np.array([[5.]], dtype=np.float32))
+        product = source.rotate(pa="35deg", method="linear")
+        np.testing.assert_array_equal(product.getchunk(), [[5.]])
+        np.testing.assert_array_equal(product.getchunk(getmask=True), [[True]])
+        coords = product.coordsys()
+        np.testing.assert_array_equal(coords.lineartransform(type="linear"), np.eye(2))
+    finally:
+        if coords is not None:
+            coords.done()
+        if product is not None:
+            product.done()
+        source.done()
+
+
 @pytest.mark.parametrize("kind", ["direction", "linear"])
 def test_rotate_composes_with_a_preexisting_coordinate_shear(casa, kind):
     data = _ramp()
