@@ -4,7 +4,6 @@
 //! returns (#931): the summary dictionary in summary mode, `{}` otherwise.
 //! The CASA values it does not implement yet are refused naming #978.
 
-use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -27,6 +26,10 @@ use casa_task_runtime::{
 };
 use casa_types::quanta::Quantity;
 
+#[path = "flagdata/automatic.rs"]
+mod automatic;
+#[path = "flagdata/command.rs"]
+mod command;
 #[path = "flagdata/rflag.rs"]
 mod rflag;
 #[path = "flagdata/shadow.rs"]
@@ -66,6 +69,7 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     let mode = task.required_text("mode")?;
+    let automatic_calibration = automatic::table_kind(task, &mode)?;
     tfcrop::integer_setting(task, "winsize")?;
     if mode == "antint" {
         antint_min_channel_fraction(task)?;
@@ -151,7 +155,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         })?;
     }
     let path = task.path("vis")?;
-    let calibration = is_calibration_table(&path);
+    let calibration = automatic_calibration.unwrap_or_else(|| is_calibration_table(&path));
     let (mut request, threshold_inputs) = prepare_flagdata_request(
         task,
         &mode,
@@ -211,6 +215,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         FlaggingError::InvalidRFlagScale(parameter) => {
             TaskFailure::validation(error.to_string()).at(parameter)
+        }
+        FlaggingError::InvalidAutomaticAverageVector(parameter) => {
+            TaskFailure::execution(error.to_string()).at(parameter)
         }
         FlaggingError::UnknownTfcropProduct(_) => {
             TaskFailure::execution(error.to_string()).at("correlation")
@@ -529,59 +536,12 @@ fn save_flag_parameters(
     }
     push_command_argument(&mut arguments, "reason", &ParameterValue::String(reason));
     let content = arguments.join(" ");
-    write_flag_command_file(
+    command::write_file(
         &outfile,
         &content,
         task.flag("overwrite")?,
         matches!(action, "none" | ""),
     )
-}
-
-fn write_flag_command_file(
-    outfile: &str,
-    content: &str,
-    overwrite: bool,
-    save_only: bool,
-) -> Result<(), TaskFailure> {
-    let path = Path::new(outfile);
-    let parent = path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let save = || -> std::io::Result<()> {
-        let mut builder = tempfile::Builder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            builder.permissions(std::fs::Permissions::from_mode(0o666));
-        }
-        let mut pending = builder.tempfile_in(parent)?;
-        writeln!(pending, "{content}")?;
-        if overwrite {
-            pending.persist(path)?;
-        } else {
-            pending.persist_noclobber(path)?;
-        }
-        Ok(())
-    };
-    save().map_err(|error| {
-        if !overwrite && error.kind() == ErrorKind::AlreadyExists {
-            let message = format!(
-                "You have set overwrite to False. Remove {outfile} before saving the flag commands"
-            );
-            if save_only {
-                return TaskFailure::validation(message).at("outfile");
-            }
-            return TaskFailure::execution(message).at("outfile");
-        }
-        let parameter = if error.kind() == ErrorKind::NotFound {
-            "outfile.not_found"
-        } else {
-            "outfile"
-        };
-        TaskFailure::execution(format!("Error writing flag commands to {outfile}: {error}"))
-            .at(parameter)
-    })
 }
 
 fn is_calibration_table(path: &Path) -> bool {
@@ -842,6 +802,8 @@ fn flagdata_request(
     thresholds: &rflag::ThresholdInputs,
 ) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
+    let (automatic_enabled, automatic_average_vector) =
+        automatic::controls(task, mode, calibration)?;
     let spw = task_selection_text(task, "spw")?;
     let correlation = task_selection_text(task, "correlation")?;
     let clipminmax = match task.numbers("clipminmax")?.as_slice() {
@@ -897,7 +859,11 @@ fn flagdata_request(
         clipzeros: task.flag("clipzeros")?,
         clipminmax,
         clipoutside,
-        clip_channel_bins: channel_averaging_bins(task, mode, channel_bins)?,
+        clip_channel_bins: if calibration && mode != FlagDataMode::Clip {
+            None
+        } else {
+            channel_averaging_bins(task, mode, channel_bins)?
+        },
         clip_time_bin: clip_time_bin(task, mode)?,
         time_chunk: None,
         combinescans: task.flag("combinescans")?,
@@ -914,7 +880,11 @@ fn flagdata_request(
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         tfcrop: if mode == FlagDataMode::Tfcrop {
-            tfcrop::parameters(task)?
+            if automatic_enabled {
+                tfcrop::parameters(task)?
+            } else {
+                None
+            }
         } else {
             Some(casa_ms::flagging::TfcropOptions::default())
         },
@@ -922,7 +892,7 @@ fn flagdata_request(
         freqdevscale: task.number("freqdevscale")?,
         spectralmax: task.number("spectralmax")?,
         spectralmin: task.number("spectralmin")?,
-        rflag_window: if timedev.invalid || freqdev.invalid {
+        rflag_window: if timedev.invalid || freqdev.invalid || !automatic_enabled {
             None
         } else if mode == FlagDataMode::Rflag {
             let width = match task.value("winsize") {
@@ -946,6 +916,7 @@ fn flagdata_request(
         } else {
             Some(3)
         },
+        automatic_average_vector,
         timedev: timedev.scalar,
         freqdev: freqdev.scalar,
         timedev_by_field_spw: timedev.by_field_spw.clone(),

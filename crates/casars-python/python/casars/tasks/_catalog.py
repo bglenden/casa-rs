@@ -1030,10 +1030,7 @@ def flagdata(
 
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``inpfile``, ``reason``, ``tbuff``, ``channelavg``, ``chanbin``,
-    ``timeavg``, ``timebin``, ``savepars``.
-    Accepted only at CASA's default, where CASA reads them, until #1616:
-    ``ntime``, ``combinescans``.
+    ``inpfile``, ``reason``, ``tbuff``, ``savepars``.
     """
     return _call_casa(flagdata, locals())
 
