@@ -31,12 +31,20 @@ impl Region {
         method: &str,
     ) -> PyResult<Option<Self>> {
         let region = Self::capture(py, value)?;
-        if let Some(Self::Record(record)) = &region
-            && !matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name)))
-                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"
-                    | "WCDifference" | "WCIntersection" | "WCComplement"))
-        {
-            return Err(super::stub(method).unwrap_err());
+        if let Some(Self::Record(record)) = &region {
+            let Some(Value::Scalar(ScalarValue::String(name))) = record.get("name") else {
+                return Err(super::stub(method).unwrap_err());
+            };
+            match name.as_str() {
+                "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" => {}
+                "WCUnion" | "WCDifference" | "WCIntersection" | "WCComplement" | "WCExtension"
+                | "WCConcatenation" => {
+                    if record.get("regions").is_none() {
+                        return Err(raised("RecordInterface: field regions is unknown"));
+                    }
+                }
+                _ => return Err(super::stub(method).unwrap_err()),
+            }
         }
         Ok(region)
     }
