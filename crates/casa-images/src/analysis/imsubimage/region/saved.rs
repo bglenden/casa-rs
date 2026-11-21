@@ -621,7 +621,7 @@ fn decode_wc_ellipsoid(
         let pixel = coords.to_pixel(&world)?;
         [pixel[x], pixel[y]]
     };
-    let scales = super::direction_pixel_scales(coords, plane).ok_or_else(invalid)?;
+    let scales = super::direction_pixel_scales(coords).ok_or_else(invalid)?;
     let radius = |q: &Quantity, axis: usize| {
         let size = if q.unit().name() == "pix" {
             q.value()
