@@ -45,6 +45,7 @@ use crate::{
 };
 use casa_numerics::solve_weighted_least_squares;
 
+mod antint;
 mod clip;
 mod clip_average;
 mod clip_columns;
@@ -58,6 +59,7 @@ mod geometry;
 mod shadow;
 mod summary;
 
+pub use antint::AntennaIntegrationOptions;
 use clip::{ClipOptions, apply_clip_array};
 use clip_average::{ChannelBins, check_channel_bins};
 use clip_columns::ClipColumns;
@@ -132,6 +134,8 @@ pub enum FlagDataMode {
     Elevation,
     /// Flag selected baselines involving a shadowed antenna.
     Shadow,
+    /// Propagate flags from a reference antenna to selected integrations.
+    Antint,
     /// CASA TFCrop-family robust time/frequency outlier flagging.
     Tfcrop,
     /// CASA RFlag-family two-pass robust time/frequency flagging.
@@ -226,6 +230,8 @@ pub struct FlagDataRequest {
     pub elevation_limits_deg: [f64; 2],
     /// Dish shadowing parameters.
     pub shadow: ShadowOptions,
+    /// Reference antenna integration flagging parameters.
+    pub antint: AntennaIntegrationOptions,
     /// TFCrop time cutoff in robust sigma units.
     pub timecutoff: f64,
     /// TFCrop frequency cutoff in robust sigma units.
@@ -294,6 +300,7 @@ impl Default for FlagDataRequest {
             quackincrement: false,
             elevation_limits_deg: [0.0, 90.0],
             shadow: ShadowOptions::default(),
+            antint: AntennaIntegrationOptions::default(),
             timecutoff: 4.0,
             freqcutoff: 3.0,
             timedevscale: 5.0,
@@ -481,6 +488,7 @@ fn flagdata_with_persistence(
                 | FlagDataMode::Elevation
                 | FlagDataMode::Extend
                 | FlagDataMode::Shadow
+                | FlagDataMode::Antint
         );
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
@@ -566,6 +574,14 @@ fn flagdata_with_persistence(
             ms,
             &selected_rows,
             &request.shadow,
+            channel_selections.as_ref(),
+            correlations.as_ref(),
+            &ms_path,
+        )?,
+        FlagDataMode::Antint => antint::apply(
+            ms,
+            &selected_rows,
+            &request.antint,
             channel_selections.as_ref(),
             correlations.as_ref(),
             &ms_path,

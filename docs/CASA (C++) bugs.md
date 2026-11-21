@@ -4053,6 +4053,11 @@ Native shadow flagging matches explicit `YY` for the first expression and
 leaves the flags unchanged when the expression names no stored product.
 [Shadow oracle](../tools/casa-compat/flagdata_shadow_oracle.py)
 
+The reference-antenna integration oracle verifies the same protection for
+`mode='antint'` with `ABS_XX`. Native changes match explicit `XX` and
+preserve the other correlation's stored flags.
+[Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
+
 ## Time-averaged clipping can derive row flags from a subset of channels
 
 With `timeavg=True`, `channelavg=True` and `spw="0:1~2"` on a
@@ -4082,6 +4087,31 @@ The padded file and dictionary with the supplied coordinates agree on
 casa-rs reads the complete coordinate and reproduces the mask verified
 by the padded file, dictionary, and independent Measures projection.
 [Shadow oracle](../tools/casa-compat/flagdata_shadow_oracle.py)
+
+## Reference-antenna integration flagging can crash on an autocorrelation
+
+In CASA 6.7.6.14, `flagdata(mode='antint', antint_ref_antenna='A0')`
+can crash when the reference antenna has a stored autocorrelation and
+all four cross-baselines are also present. The agent allocates four
+reference-baseline entries but tries to accumulate flags from five rows.
+
+Native antint uses the cross-baselines to decide whether the integration
+meets the threshold and applies that decision to all selected rows, including
+the autocorrelation. The pinned oracle checks the crash in a subprocess
+and independently verifies the complete native sample and row masks.
+[Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
+
+## Reference-antenna flag decisions can leak to later spectral windows
+
+In CASA 6.7.6.14, two spectral windows can share an integration timestamp.
+When only SPW 0 has enough flagged reference baselines, `mode='antint'`
+flags both windows. When only SPW 1 has enough flags, CASA flags SPW 1
+alone. The agent retains its decision by timestamp across windows.
+
+Native antint evaluates each visibility-iterator integration separately.
+Its stored sample masks match explicit CASA selection of each spectral
+window and preserve the other window's flags in the combined operation.
+[Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
 
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 
