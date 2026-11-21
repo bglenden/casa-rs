@@ -110,6 +110,35 @@ def test_spectral_extrapolation_rejects_unusable_new_tables(casa):
         _assert_value(cs.torecord(), before)
 
 
+def test_independent_pixel_and_world_order_keeps_increments_on_their_own_axes(casa):
+    source = casa.coordsys().newcoordsys(spectral=True, linear=1)
+    frequencies = np.array([10.0, 11.0, 13.0, 18.0])
+    assert source.setspectral(frequencies={"value": frequencies, "unit": "Hz"})
+    assert source.setincrement([2.0], "linear")
+    record = source.torecord()
+    record["worldmap0"] = np.array([1], dtype=np.int32)
+    record["worldmap1"] = np.array([0], dtype=np.int32)
+    for api, linear_step, spectral_step in ((tools, 2.0, 5.0), (casa, 5.0, 8.0 / 3.0)):
+        cs = api.coordsys()
+        assert cs.fromrecord(record)
+        section = cs.subimage([2.0, 0.0], [2, 4])
+        np.testing.assert_array_equal(section["worldmap0"], [1])
+        np.testing.assert_array_equal(section["pixelmap0"], [0])
+        np.testing.assert_allclose(section["linear1"]["cdelt"], [linear_step])
+        np.testing.assert_allclose(section["spectral0"]["tabular"]["worldvalues"], [13.0, 13.0 + spectral_step])
+
+
+def test_numeric_zero_dimensional_arrays_are_one_element_origins(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(linear=1)
+        for origin, pixel in ((np.array(1.5), -1.5), (np.array(2, dtype=np.int16), -2.0)):
+            np.testing.assert_array_equal(cs.subimage(origin)["linear0"]["crpix"], [pixel])
+        with pytest.raises(RuntimeError, match="not a vector of pixel positions"):
+            cs.subimage(np.array([], dtype=np.float16))
+        with pytest.raises(RuntimeError, match="originShift.nelements"):
+            cs.subimage(np.array([], dtype=float))
+
+
 def test_rejected_arguments_and_stokes_extents(casa):
     for api in (tools, casa):
         cs = api.coordsys().newcoordsys(stokes="I,Q,U,V")

@@ -8355,3 +8355,14 @@ and rest frequency to Hz before building the subimage record.
 An explicit negative length for a sampled spectral axis can abort CASA
 when the signed length is used for an unsigned allocation. casa-rs raises
 `RuntimeError` before allocating sample storage.
+
+When the spectral axis is in different positions in pixel and world order,
+CASA indexes the world increment vector with the spectral pixel position.
+Cropping a `[10, 11, 13, 18] Hz` table to its final two pixels can change a
+linear axis's increment from `2` to `5` and leave the spectral samples at
+`[13, 15.6667] Hz`. casa-rs preserves the linear increment and stores the
+sampled spectral values `[13, 18] Hz`.
+
+CASA also reads byte-swapped NumPy origin arrays as native-endian bytes.
+For example, `np.array(1.5, dtype=">f8")` applies a zero-pixel shift on a
+little-endian host. casa-rs reads the declared byte order.

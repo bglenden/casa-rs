@@ -39,18 +39,20 @@ impl<'a, 'py> FromPyObject<'a, 'py> for SubimageShape {
 fn origin_input(input: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<f32>> {
     let invalid = || raised("Parameter neworigin is not a vector of pixel positions");
     let input = input.ok_or_else(invalid)?;
-    if let Ok(array) = input.cast::<PyUntypedArray>()
-        && array.is_empty()
-        && matches!(array.dtype().kind(), b'i' | b'u' | b'f')
-    {
-        return Ok(Vec::new());
-    }
     if bool_vector(input)?.is_some() {
         return Err(invalid());
     }
-    let values = match input.extract::<Variant>()? {
-        Variant::Numbers(values) | Variant::Array { values, .. } => values,
-        _ => return Err(invalid()),
+    let array = input
+        .cast::<PyUntypedArray>()
+        .ok()
+        .filter(|array| matches!(array.dtype().kind(), b'i' | b'u' | b'f'));
+    let values = match array {
+        Some(array) if array.ndim() == 0 => vec![input.call_method0("item")?.extract()?],
+        Some(array) if array.is_empty() => Vec::new(),
+        _ => match input.extract::<Variant>()? {
+            Variant::Numbers(values) | Variant::Array { values, .. } => values,
+            _ => return Err(invalid()),
+        },
     };
     values
         .into_iter()
