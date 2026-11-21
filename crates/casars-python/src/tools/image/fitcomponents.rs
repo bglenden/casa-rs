@@ -305,7 +305,7 @@ impl FitRequest<'_> {
                 "{}\n{} fitted components\n{}",
                 self.history_call(),
                 fit.components.len(),
-                fit.summary_text()
+                fit.log_text()
             );
             write_text(self.logfile, &text, self.append)?;
         }

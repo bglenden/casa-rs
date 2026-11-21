@@ -57,9 +57,9 @@ impl FitPlane {
             .copied()
             .zip(self.validity.iter().copied())
             .enumerate()
-            .filter_map(move |(index, (value, valid))| {
-                (valid && range.includes(value))
-                    .then(|| ([(index % width) as f64, (index / width) as f64], value))
+            .filter(move |(_, (value, valid))| *valid && range.includes(*value))
+            .map(move |(index, (value, _))| {
+                ([(index % width) as f64, (index / width) as f64], value)
             })
     }
 

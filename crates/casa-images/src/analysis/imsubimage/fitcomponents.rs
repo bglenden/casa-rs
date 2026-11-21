@@ -107,6 +107,7 @@ pub struct ImageComponentFit {
     brightness: String,
     spectral: bool,
     correlated: bool,
+    input_estimates: String,
 }
 
 impl ImageComponentFit {
@@ -147,6 +148,28 @@ impl ImageComponentFit {
             );
         }
         output
+    }
+
+    /// A fit report with the estimates, fitted measurements and convergence.
+    pub fn log_text(&self) -> String {
+        use std::fmt::Write;
+
+        let mut text = String::new();
+        if !self.input_estimates.is_empty() {
+            text.push_str("Estimates file contents\n");
+            text.push_str(&self.input_estimates);
+            text.push('\n');
+        }
+        for plane in &self.planes {
+            let status = if plane.model.is_some() {
+                "converged"
+            } else {
+                "did not converge"
+            };
+            let _ = writeln!(text, "Channel {} {status}", plane.channel);
+        }
+        text.push_str(&self.summary_text());
+        text
     }
 
     /// CASA's text summary for the fitted components.
@@ -326,6 +349,7 @@ pub fn fit_image_components<T: ComponentFitPixel>(
         brightness,
         spectral.is_some(),
         !image_info.beam_set.is_empty(),
+        input_estimates.map_or_else(String::new, |estimates| estimates.text),
     ))
 }
 
@@ -398,6 +422,7 @@ impl FitProgress {
         brightness: &str,
         spectral: bool,
         correlated: bool,
+        input_estimates: String,
     ) -> ImageComponentFit {
         let mut record = RecordValue::default();
         let count = Value::Scalar(ScalarValue::Int32(self.components.len() as i32));
@@ -457,6 +482,7 @@ impl FitProgress {
             brightness: brightness.to_owned(),
             spectral,
             correlated,
+            input_estimates,
         }
     }
 }
