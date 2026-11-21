@@ -134,3 +134,22 @@ def test_rotate_refusals_preserve_existing_named_image(casa, tmp_path):
         finally:
             prior.done()
             source.done()
+
+
+def test_rotate_right_angle_keeps_the_actual_sky_overlap():
+    source = tools.image()
+    data = _ramp()
+    x, y = np.ogrid[:24, :26]
+    original_x, original_y = y - 1, 25 - x
+    valid = np.broadcast_to((original_x >= 0) & (original_x < 24), data.shape)
+    expected = np.where(valid, original_x + 2*original_y, 0)
+    try:
+        assert source.fromarray(pixels=data)
+        result = source.rotate(pa="90deg", method="nearest")
+        try:
+            np.testing.assert_array_equal(result.getchunk(getmask=True), valid)
+            np.testing.assert_array_equal(result.getchunk(), expected)
+        finally:
+            result.done()
+    finally:
+        source.done()
