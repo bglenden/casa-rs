@@ -7794,6 +7794,18 @@ with a two-axis coordinate system and `shape=[2, 3, 2]` throws
 an unreadable directory. Casa-rs reports both errors in Python and
 preserves the prior native image and its history (#1625).
 
+## Direct image methods and gzip-compressed FITS
+
+CASA 6.7.6.14 reads gzip-compressed FITS through `image.fromfits` and
+`image.newimagefromfits`. The same file raises an unable-to-open error in
+`open`, `newimage`, `newimagefromfile`, `fromimage`, and
+`newimagefromimage`.
+
+casa-rs also accepts these files through the direct FITS attachment and copy
+methods. They preserve the FITS pixels, blank mask, coordinates, unit, and
+history through CFITSIO. The explicit import methods agree with CASA.
+See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ## FITS import can abort on an empty primary HDU
 
 CASA 6.7.6.14 aborts in `ia.fromfits(infile=path, whichhdu=0)` when the FITS
