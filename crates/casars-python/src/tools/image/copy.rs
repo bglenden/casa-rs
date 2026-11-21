@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::analysis::{ImageRegionSection, SubimageRegion};
@@ -10,31 +10,42 @@ use casa_images::{
 use casa_lattices::TiledShape;
 use casa_types::RecordValue;
 use ndarray::{ArrayD, SliceInfoElem, Zip};
+use numpy::{PyArrayDyn, PyArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
 use crate::convert::Variant;
 use crate::tools::table::casa_record;
 
+use super::PyImageTool;
 use super::beams::{axis_length, image_info, image_info_record, plane_axes, subset_beam_record};
 use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::lifecycle::open_image;
 use super::pixels::and_mask;
-use super::region_read::resolve_region_section;
-use super::{PyImageTool, stub};
+use super::region_read::{is_boolean_sequence, resolve_region_section};
 
 struct CopyImage<'a> {
     method: &'static str,
     infile: &'a str,
     outfile: &'a str,
-    region: RecordValue,
+    region: CopyRegion,
     region_history: String,
     mask: String,
     mask_history: String,
     dropdeg: bool,
     overwrite: bool,
+}
+
+enum CopyRegion {
+    Record(RecordValue),
+    Text(String),
+}
+
+struct TextOrigin {
+    coordinates: Option<(CoordinateSystem, Vec<usize>)>,
+    table: Option<PathBuf>,
 }
 
 type PixelSection<T> = (ArrayD<T>, Option<ArrayD<bool>>);
@@ -201,9 +212,34 @@ impl CopyImage<'_> {
         original: &ImageHandle,
         path: Option<&Path>,
         add_history: bool,
+        origin: Option<&TextOrigin>,
     ) -> PyResult<ImageHandle> {
-        let region = (!self.region.is_empty()).then_some(SubimageRegion::Record(&self.region));
-        let section = resolve_region_section(original, region, false)?;
+        let section = match &self.region {
+            CopyRegion::Record(region) => {
+                let region = (!region.is_empty()).then_some(SubimageRegion::Record(region));
+                resolve_region_section(original, region, false)?
+            }
+            CopyRegion::Text(text) if text.is_empty() => {
+                resolve_region_section(original, None, false)?
+            }
+            CopyRegion::Text(text) => {
+                let origin = origin.expect("text origin resolved before copying");
+                let coordinates = origin
+                    .coordinates
+                    .as_ref()
+                    .map(|(coords, shape)| (coords, shape.as_slice()));
+                let table = origin.table.as_deref();
+                if let ImageHandle::Float(storage) = original {
+                    storage.with_float_view(|image| {
+                        ImageRegionSection::resolve_copy_text(image, text, coordinates, table)
+                    })
+                } else {
+                    with_pixels!(original, storage => with_storage!(storage, image =>
+                        ImageRegionSection::resolve_copy_text(image.as_ref(), text, coordinates, table)))
+                }
+                .map_err(raised)?
+            }
+        };
         let mut selection = Selection::new(&section);
         if self.dropdeg {
             selection.drop_degenerate()?;
@@ -281,8 +317,8 @@ impl CopyImage<'_> {
                 )
             } else {
                 format!(
-                    "infile={:?}, outfile={:?}, region={{...}}, vmask={}",
-                    self.infile, self.outfile, self.mask_history
+                    "infile={:?}, outfile={:?}, region={}, vmask={}",
+                    self.infile, self.outfile, self.region_history, self.mask_history
                 )
             };
             copy.record_history(
@@ -297,8 +333,56 @@ impl CopyImage<'_> {
         Ok(copy)
     }
 
-    fn run(&self, history: bool) -> PyResult<super::attachment::AttachedImage> {
-        let original = open_image(self.infile)?;
+    fn text_origin(
+        &self,
+        attached: Option<&super::attachment::AttachedImage>,
+    ) -> PyResult<Option<TextOrigin>> {
+        let CopyRegion::Text(text) = &self.region else {
+            return Ok(None);
+        };
+        let use_attached_coordinates = self.method == "fromimage" || self.infile.is_empty();
+        if !use_attached_coordinates && text.is_empty() {
+            return Ok(None);
+        }
+        let attached = attached.ok_or_else(|| {
+            if use_attached_coordinates {
+                raised("No attached image. Cannot use a string value for region")
+            } else {
+                raised("Logic error at File: src/tools/image/image_cmpt.cc, line 4055")
+            }
+        })?;
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let image = attached.lock();
+        Ok(Some(TextOrigin {
+            coordinates: use_attached_coordinates
+                .then(|| (image.coordinates().clone(), image.shape().to_vec())),
+            table: image.path().map(Path::to_path_buf),
+        }))
+    }
+
+    fn run(
+        &self,
+        history: bool,
+        attached: Option<&super::attachment::AttachedImage>,
+    ) -> PyResult<super::attachment::AttachedImage> {
+        let use_attached_coordinates = self.method == "fromimage" || self.infile.is_empty();
+        let (original, origin) = if use_attached_coordinates {
+            let origin = self.text_origin(attached)?;
+            (open_image(self.infile)?, origin)
+        } else {
+            let original = open_image(self.infile)?;
+            if matches!(&self.region, CopyRegion::Text(_))
+                && !matches!(&*original.lock(), ImageHandle::Float(_))
+            {
+                return Err(raised(format!(
+                    "Logic Error: {} has a different data type than the data type of the requested object",
+                    self.infile
+                )));
+            }
+            (original, self.text_origin(attached)?)
+        };
         if self.overwrite
             && !self.outfile.is_empty()
             && let Ok(target) = Path::new(self.outfile).canonicalize()
@@ -313,33 +397,54 @@ impl CopyImage<'_> {
         publish_image(self.outfile, self.overwrite, |path| {
             let mut image = original.lock();
             original.require_lock(&mut image, casa_tables::LockType::Read)?;
-            let copied = self.build(&image, path, history)?;
+            let copied = self.build(&image, path, history, origin.as_ref())?;
             image.release_requested_lock()?;
             Ok(copied)
         })
     }
 }
 
-fn record_argument(
+fn copy_region_argument(
     py: Python<'_>,
     raw: Option<&Bound<'_, PyAny>>,
-    method: &str,
-) -> PyResult<(RecordValue, String)> {
+    default_history: &str,
+) -> PyResult<(CopyRegion, String)> {
+    let empty_record = || CopyRegion::Record(RecordValue::default());
     let Some(raw) = raw else {
-        return Ok((RecordValue::default(), "[]".into()));
+        return Ok((empty_record(), default_history.into()));
     };
     if let Ok(dict) = raw.cast::<PyDict>() {
-        return Ok((casa_record(py, Some(dict))?, "{...}".into()));
+        return Ok((
+            CopyRegion::Record(casa_record(py, Some(dict))?),
+            "{...}".into(),
+        ));
     }
-    let value: Variant = raw.extract()?;
-    if value.is_empty_sequence() {
-        return Ok((RecordValue::default(), "[]".into()));
+    if let Ok(text) = raw.cast::<PyString>() {
+        let text = text.to_str()?.to_owned();
+        let history = format!("{text:?}");
+        return Ok((CopyRegion::Text(text), history));
     }
-    if let Variant::Text(text) = value {
-        if text.is_empty() {
-            return Ok((RecordValue::default(), format!("{text:?}")));
-        }
-        return Err(stub(method).unwrap_err());
+    if is_boolean_sequence(raw)? {
+        let values = if let Ok(array) = raw.cast::<PyArrayDyn<bool>>() {
+            array
+                .readonly()
+                .as_array()
+                .reversed_axes()
+                .iter()
+                .copied()
+                .collect()
+        } else {
+            raw.extract::<Vec<bool>>()?
+        };
+        let history = values
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        return Ok((empty_record(), format!("[{history}]")));
+    }
+    if raw.extract::<Variant>()?.is_empty_sequence() {
+        return Ok((empty_record(), "[]".into()));
     }
     Err(raised("Unsupported type for region"))
 }
@@ -375,7 +480,7 @@ impl PyImageTool {
         overwrite: bool,
     ) -> PyResult<bool> {
         let method = "fromimage";
-        let (region, region_history) = record_argument(py, region, method)?;
+        let (region, region_history) = copy_region_argument(py, region, "[]")?;
         let (mask, mask_history) = mask_argument(mask)?;
         let request = CopyImage {
             method,
@@ -390,7 +495,7 @@ impl PyImageTool {
         };
         py.detach(|| {
             let mut state = self.state();
-            state.image = Some(request.run(state.history)?);
+            state.image = Some(request.run(state.history, state.image.as_ref())?);
             Ok(true)
         })
     }
@@ -407,7 +512,7 @@ impl PyImageTool {
         overwrite: bool,
     ) -> PyResult<Py<Self>> {
         let method = "newimagefromimage";
-        let (region, region_history) = record_argument(py, region, method)?;
+        let (region, region_history) = copy_region_argument(py, region, "{...}")?;
         let (mask, mask_history) = mask_argument(mask)?;
         let request = CopyImage {
             method,
@@ -420,7 +525,10 @@ impl PyImageTool {
             dropdeg,
             overwrite,
         };
-        let output = py.detach(|| request.run(self.state().history))?;
+        let output = py.detach(|| {
+            let state = self.state();
+            request.run(state.history, state.image.as_ref())
+        })?;
         Py::new(py, Self::attached(output))
     }
 }

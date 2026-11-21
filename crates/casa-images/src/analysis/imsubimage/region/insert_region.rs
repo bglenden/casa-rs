@@ -62,11 +62,32 @@ impl Projection {
         Ok(self.input.world_to_pixel(world)?)
     }
 
-    pub(super) fn project_shape(&self, shape: SpatialShape) -> Result<SpatialShape, ImageError> {
+    pub(super) fn project_shape(
+        &self,
+        shape: SpatialShape,
+        snap_roundoff: bool,
+    ) -> Result<SpatialShape, ImageError> {
+        let project_point = |pixel| {
+            self.point(pixel).map(|projected| {
+                if snap_roundoff {
+                    // A direction WCS round trip can move an integer boundary
+                    // by a few billionths of a pixel.
+                    projected.map(|value| {
+                        if (value - value.round()).abs() < 1e-8 {
+                            value.round()
+                        } else {
+                            value
+                        }
+                    })
+                } else {
+                    projected
+                }
+            })
+        };
         let polygon = |vertices: &[[f64; 2]]| {
             vertices
                 .iter()
-                .map(|&pixel| self.point(pixel))
+                .map(|&pixel| project_point(pixel))
                 .collect::<Result<Vec<_>, _>>()
                 .map(SpatialShape::Polygon)
         };
@@ -105,7 +126,7 @@ impl Projection {
             } => rectangle([cx, cy], half_w, half_h, cos_pa, sin_pa),
             SpatialShape::Polygon(vertices) => polygon(&vertices),
             SpatialShape::Circle { cx, cy, rx, .. } => {
-                let [cx, cy] = self.point([cx, cy])?;
+                let [cx, cy] = project_point([cx, cy])?;
                 let radius = rx * scale(0);
                 Ok(SpatialShape::Circle {
                     cx,
@@ -122,7 +143,7 @@ impl Projection {
                 cos_pa,
                 sin_pa,
             } => {
-                let [cx, cy] = self.point([cx, cy])?;
+                let [cx, cy] = project_point([cx, cy])?;
                 Ok(SpatialShape::Ellipse {
                     cx,
                     cy,

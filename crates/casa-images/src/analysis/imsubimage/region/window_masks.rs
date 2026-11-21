@@ -91,16 +91,21 @@ impl SubimageSelection {
             let qualified = ArrayD::from_shape_fn(IxDyn(shape), |idx| {
                 let x = start[px] + idx[px];
                 let y = start[py] + idx[py];
-                self.qualified_shapes.iter().any(|region| {
-                    let contains = |axis: Option<usize>, selected: Option<&[usize]>| {
-                        axis.zip(selected).is_none_or(|(axis, selected)| {
-                            selected.contains(&(start[axis] + idx[axis]))
-                        })
-                    };
-                    contains(self.channel_axis, region.planes.channels.as_deref())
-                        && contains(self.stokes_axis, region.planes.stokes.as_deref())
-                        && shape_contains(&region.spatial, x, y)
-                })
+                // Each containing CRTF row adds or removes the pixel in document order.
+                self.qualified_shapes
+                    .iter()
+                    .rev()
+                    .find(|region| {
+                        let contains = |axis: Option<usize>, selected: Option<&[usize]>| {
+                            axis.zip(selected).is_none_or(|(axis, selected)| {
+                                selected.contains(&(start[axis] + idx[axis]))
+                            })
+                        };
+                        contains(self.channel_axis, region.planes.channels.as_deref())
+                            && contains(self.stokes_axis, region.planes.stokes.as_deref())
+                            && shape_contains(&region.spatial, x, y)
+                    })
+                    .is_some_and(|region| !region.excluded)
             });
             if qualified.iter().any(|&value| !value) {
                 and_mask(mask, qualified);

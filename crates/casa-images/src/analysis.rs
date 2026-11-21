@@ -2901,8 +2901,15 @@ pub(super) fn parse_stokes_selection<T: ImagePixel>(
     let axis = image.find_axis(CoordinateType::Stokes).ok_or_else(|| {
         ImageError::InvalidMetadata("Stokes selection requires a Stokes axis".to_string())
     })?;
-    let Some(CoordinateModel::Stokes(stokes)) = coordinate_for_axis(image.coordinates(), axis)
-    else {
+    parse_stokes_names(image.coordinates(), axis, text)
+}
+
+fn parse_stokes_names(
+    coordinates: &CoordinateSystem,
+    axis: usize,
+    text: &str,
+) -> Result<Vec<usize>, ImageError> {
+    let Some(CoordinateModel::Stokes(stokes)) = coordinate_for_axis(coordinates, axis) else {
         return Err(ImageError::InvalidMetadata(
             "Stokes selection requires a Stokes coordinate".to_string(),
         ));

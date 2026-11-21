@@ -15,7 +15,7 @@ use super::pixels::{Chunk, ChunkRead, and_mask, collapse_axes};
 use super::subimage::Region;
 use super::{PyImageTool, stub};
 
-fn is_boolean_sequence(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+pub(super) fn is_boolean_sequence(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     if let Ok(array) = value.cast::<PyUntypedArray>() {
         return Ok(array.dtype().kind() == b'b');
     }

@@ -67,7 +67,12 @@ impl StridedSection<'_> {
 pub(super) fn direction_plane_axes<T: ImagePixel>(
     image: &(impl ImageInterface<T> + ?Sized),
 ) -> Result<[usize; 2], ImageError> {
-    let coordinates = image.coordinates();
+    direction_plane_axes_for_coordinates(image.coordinates())
+}
+
+pub(super) fn direction_plane_axes_for_coordinates(
+    coordinates: &CoordinateSystem,
+) -> Result<[usize; 2], ImageError> {
     let Some(index) = coordinates.find_coordinate(CoordinateType::Direction) else {
         return Ok([0, 1]);
     };
