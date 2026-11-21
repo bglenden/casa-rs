@@ -40,7 +40,7 @@ pub struct ImageGaussianConvolution {
 
 #[derive(Clone, Copy)]
 struct Plane {
-    samples: GaussianSamples,
+    samples: Option<GaussianSamples>,
     scale: f64,
     beam: GaussianBeam,
 }
@@ -112,7 +112,12 @@ impl ImageGaussianConvolution {
                 )?);
             }
         }
-        let unit = if per_pixel { "Jy/beam" } else { image.units() }.to_owned();
+        let unit = if per_pixel && planes.last().is_some_and(|plane| plane.samples.is_some()) {
+            "Jy/beam"
+        } else {
+            image.units()
+        }
+        .to_owned();
         let keep_requested = has_sky && (per_pixel || request.target_resolution);
         section.image_info.beam_set = if !has_sky {
             ImageBeamSet::default()
@@ -138,6 +143,13 @@ impl ImageGaussianConvolution {
         let mut output_info = section.image_info.to_record();
         if keep_requested && output_info.get("restoringbeam").is_some() {
             output_info.upsert("restoringbeam", Value::Record(geometry.beam_record()?));
+        } else if per_pixel && let Some(Value::Record(grid)) = output_info.get("perplanebeams") {
+            let mut grid = grid.clone();
+            let record = geometry.beam_record()?;
+            for index in 0..planes.len() {
+                grid.upsert(format!("*{index}"), Value::Record(record.clone()));
+            }
+            output_info.upsert("perplanebeams", Value::Record(grid));
         }
         Ok(Self {
             inner: ImageConvolution { section },
@@ -176,8 +188,9 @@ impl ImageGaussianConvolution {
             .collect::<Vec<_>>();
         let plan =
             |plane: Plane| KernelPlan::gaussian(plane.samples, self.axes, shape, plane.scale);
-        if self.beam_axes.iter().all(Option::is_none) {
-            let workspace = plan(self.planes[0])?;
+        if self.beam_axes.iter().all(Option::is_none)
+            && let Some(workspace) = plan(self.planes[0])?
+        {
             self.inner.copy_groups(
                 image,
                 options,
@@ -401,18 +414,16 @@ impl Sampling {
         per_beam: bool,
     ) -> Result<Plane, ImageError> {
         let input_beam = self.sky && !input.is_null();
+        if target && input_beam && multiple && beams_near(self.request, input) {
+            return Ok(Plane {
+                samples: None,
+                scale: 1.,
+                beam: input,
+            });
+        }
         let beam = if target && input_beam {
-            if multiple && beams_near(self.request, input) {
-                // An already matching plane is copied through a unit impulse.
-                GaussianBeam::new(
-                    self.request.major * 1e-12,
-                    self.request.minor * 1e-12,
-                    self.request.position_angle,
-                )
-            } else {
-                self.request.deconvolving_beam(input)
-                    .ok().flatten().ok_or_else(|| invalid("Unable to reach target resolution. Input image beam is identical to or larger than the output beam size"))?
-            }
+            self.request.deconvolving_beam(input)
+                .ok().flatten().ok_or_else(|| invalid("Unable to reach target resolution. Input image beam is identical to or larger than the output beam size"))?
         } else {
             self.request
         };
@@ -440,7 +451,7 @@ impl Sampling {
             (scale, GaussianBeam::default())
         };
         Ok(Plane {
-            samples,
+            samples: Some(samples),
             scale,
             beam,
         })

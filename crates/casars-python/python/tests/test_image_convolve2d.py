@@ -116,3 +116,112 @@ def test_convolve2d_requires_explicit_empty_widths_with_a_beam(casa):
                 source.convolve2d(beam={"major": "3pix", "minor": "2pix", "pa": "0deg"})
         finally:
             source.done()
+
+
+@pytest.mark.parametrize("unit,scale,expected_peak", [
+    ("Jy/beam", -1., 0.87883055),
+    ("Jy/beam", 2., 4.),
+    ("K", -1., 0.29383147),
+    ("K", 2., 1.33737469),
+])
+def test_convolve2d_scales_a_sampled_input_beam(casa, unit, scale, expected_peak):
+    shape, center = (25, 25), (12, 12)
+    signal = np.zeros(shape, dtype=np.float32)
+    signal[center] = 2.
+    kernel = pixel_gaussian(shape, center, 3., 2., 25., True)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=signal)
+        assert source.setbrightnessunit(unit)
+        assert source.setrestoringbeam(major="120arcsec", minor="90arcsec", pa="22deg")
+        result = source.convolve2d(major="180arcsec", minor="120arcsec", pa="25deg", scale=scale)
+        try:
+            np.testing.assert_allclose(result.getchunk(), expected_peak * kernel, rtol=4e-4, atol=2e-7)
+            assert result.brightnessunit() == unit
+            beam = result.restoringbeam()
+            assert beam["major"]["value"] == pytest.approx(216.04094, rel=4e-4)
+            assert beam["minor"]["value"] == pytest.approx(149.51836, rel=4e-4)
+            assert beam["positionangle"]["value"] == pytest.approx(23.93931, abs=.02)
+        finally:
+            result.done()
+            source.done()
+
+
+@pytest.mark.parametrize("scale,peaks", [
+    (-1., [2., 1.1604917, 1.28224123]),
+    (2., [2., 4., 4.]),
+])
+def test_convolve2d_target_leaves_an_already_matching_beam_plane_alone(casa, scale, peaks):
+    shape = (25, 25, 1, 3)
+    values = np.zeros(shape, dtype=np.float32)
+    values[12, 12, 0] = 2.
+    values[13, 14, 0, 0] = 7.
+    mask = values != 7.
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        assert source.putregion(pixelmask=mask)
+        assert source.setbrightnessunit("Jy/beam")
+        for channel, (major, minor, pa) in enumerate([(180, 120, 25), (120, 90, 22), (100, 70, 10)]):
+            assert source.setrestoringbeam(
+                major=f"{major}arcsec", minor=f"{minor}arcsec", pa=f"{pa}deg", channel=channel,
+            )
+        result = source.convolve2d(
+            major="180arcsec", minor="120arcsec", pa="25deg", scale=scale, targetres=True,
+        )
+        try:
+            assert result.restoringbeam()["major"]["value"] == pytest.approx(180.)
+            assert result.restoringbeam()["minor"]["value"] == pytest.approx(120.)
+            assert result.restoringbeam()["positionangle"]["value"] == pytest.approx(25.)
+            np.testing.assert_array_equal(result.getchunk()[..., 0], values[..., 0])
+            np.testing.assert_array_equal(result.getchunk(getmask=True), mask)
+            np.testing.assert_allclose(result.getchunk()[12, 12, 0], peaks, rtol=4e-4)
+            assert result.getchunk()[13, 14, 0, 1] > 0.
+        finally:
+            result.done()
+            source.done()
+
+
+@pytest.mark.parametrize("args,message", [
+    ({"axes": [0, 0]}, "Axes must be different"),
+    ({"axes": [0, 2]}, "Axis value must be less"),
+    ({"axes": [0]}, "exactly 2"),
+    ({"type": "box"}, "Boxcar kernel not yet implemented"),
+    ({"type": "hanning"}, "HANNING is not supported"),
+    ({"type": "unknown"}, "Illegal kernel type"),
+    ({"major": "1pix", "minor": "2pix"}, "Major axis is less"),
+    ({"major": "2pix", "minor": "120arcsec"}, "unequal units"),
+])
+def test_convolve2d_rejects_incompatible_kernel_options(casa, args, message):
+    parameters = {"major": "3pix", "minor": "2pix", "pa": "0deg"} | args
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromshape(shape=[11, 11])
+        try:
+            with pytest.raises(RuntimeError, match=message):
+                source.convolve2d(**parameters)
+        finally:
+            source.done()
+
+
+def test_unreachable_target_resolution_preserves_existing_product(casa, tmp_path):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromshape(shape=[19, 21])
+        assert source.setrestoringbeam(major="120arcsec", minor="90arcsec", pa="22deg")
+        product = api.image()
+        path = str(tmp_path / f"{api.__name__}-target.im")
+        assert product.fromarray(path, np.float32([5., 6., 7.]))
+        product.done()
+        try:
+            with pytest.raises(RuntimeError, match="Unable to reach target resolution"):
+                source.convolve2d(
+                    path, major="90arcsec", minor="50arcsec", pa="20deg",
+                    overwrite=True, targetres=True,
+                )
+            assert source.restoringbeam()["major"]["value"] == pytest.approx(120.)
+            assert product.open(path)
+            np.testing.assert_array_equal(product.getchunk(), [5., 6., 7.])
+        finally:
+            product.done()
+            source.done()

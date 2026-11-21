@@ -211,13 +211,13 @@ impl ImageConvolution {
             let group = group?;
             let selected;
             let workspace = match groups.workspace {
-                KernelWorkspaces::Shared(workspace) => workspace,
+                KernelWorkspaces::Shared(workspace) => Some(workspace),
                 KernelWorkspaces::PerPlane(function) => {
                     selected = function(&group.position)?;
-                    &selected
+                    selected.as_ref()
                 }
             };
-            let invalid_kernel = workspace.nonfinite;
+            let invalid_kernel = workspace.is_some_and(|workspace| workspace.nonfinite);
             let inner_shape = shape
                 .iter()
                 .zip(&group.shape)
@@ -232,7 +232,7 @@ impl ImageConvolution {
                     &tile.shape,
                     input.stride,
                 )?;
-                if has_active && !invalid_kernel {
+                if workspace.is_some() && has_active && !invalid_kernel {
                     for (mut index, &sample) in pixels.indexed_iter() {
                         if !sample.into().is_finite()
                             && validity.as_ref().is_none_or(|mask| mask[&index])
@@ -246,7 +246,6 @@ impl ImageConvolution {
                         }
                     }
                 }
-                drop(pixels);
                 if let Some(mask) = validity.filter(|mask| mask.iter().any(|&valid| !valid)) {
                     if !have_mask {
                         output.create_filled_mask("mask0", true)?;
@@ -256,6 +255,11 @@ impl ImageConvolution {
                     output.put_mask_slice("mask0", &mask, &tile.position)?;
                 }
 
+                let Some(workspace) = workspace else {
+                    output.put_slice(&pixels, &tile.position)?;
+                    continue;
+                };
+                drop(pixels);
                 let initial = if invalid_kernel { f64::NAN } else { 0. };
                 let mut result = ArrayD::from_elem(IxDyn(&tile.shape), initial);
                 if !invalid_kernel {
@@ -299,7 +303,8 @@ pub(super) struct ConvolutionGroups<'a, T: ConvolutionPixel> {
     pub(super) workspace: KernelWorkspaces<'a, T>,
 }
 
-type PlaneKernel<'a, T> = dyn Fn(&[usize]) -> Result<KernelPlan<'static, T>, ImageError> + 'a;
+type PlaneKernel<'a, T> =
+    dyn Fn(&[usize]) -> Result<Option<KernelPlan<'static, T>>, ImageError> + 'a;
 
 pub(super) enum KernelWorkspaces<'a, T: ConvolutionPixel> {
     Shared(&'a KernelPlan<'a, T>),
