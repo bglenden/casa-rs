@@ -442,7 +442,7 @@ fn damped_step(
         .map(|(r, d)| r / d)
         .collect::<Vec<_>>();
     let mut rho = dot(&rhs, &direction);
-    let tolerance = rho * 1e-12;
+    let tolerance = rho * 1e-16;
     let mut solution = vec![0.; size];
     let mut product = vec![0.; size];
     for _ in 0..size.min(128) {
