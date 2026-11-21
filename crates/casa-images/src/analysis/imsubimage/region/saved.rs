@@ -24,13 +24,17 @@ pub(super) fn load_saved_region(
     full_shape: &[usize],
     plane: [usize; 2],
 ) -> Result<ParsedRegion, ImageError> {
-    let rec = match AnyPagedImage::open(image_path)? {
-        AnyPagedImage::Float32(img) => img.get_region_record(region_name)?,
-        AnyPagedImage::Float64(img) => img.get_region_record(region_name)?,
-        AnyPagedImage::Complex32(img) => img.get_region_record(region_name)?,
-        AnyPagedImage::Complex64(img) => img.get_region_record(region_name)?,
-    };
-    parse_saved_region(region_name, &rec, target_coords, full_shape, plane)
+    let record = load_saved_region_record(image_path, region_name)?;
+    parse_saved_region(region_name, &record, target_coords, full_shape, plane)
+}
+
+pub(super) fn load_saved_region_record(path: &Path, name: &str) -> Result<RecordValue, ImageError> {
+    match AnyPagedImage::open(path)? {
+        AnyPagedImage::Float32(img) => img.get_region_record(name),
+        AnyPagedImage::Float64(img) => img.get_region_record(name),
+        AnyPagedImage::Complex32(img) => img.get_region_record(name),
+        AnyPagedImage::Complex64(img) => img.get_region_record(name),
+    }
 }
 
 pub(super) fn parse_saved_region(

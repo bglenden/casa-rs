@@ -1,23 +1,86 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::borrow::Cow;
+use std::fs;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_types::RecordValue;
 
 use crate::analysis::axes::{direction_plane_axes_for_coordinates, stokes_for_axis};
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::{
     ParsedRegion, PlaneSelection, QualifiedShape, SpatialShape, insert_region,
-    parse_crtf_qualifiers, parse_crtf_shape, parse_crtf_spectral_range, shape_candidate_bounds,
-    shape_contains, split_top_level,
+    parse_crtf_qualifiers, parse_crtf_shape, parse_crtf_spectral_range,
+    saved::load_saved_region_record, saved_region_source, shape_candidate_bounds, shape_contains,
+    split_top_level,
 };
 
 #[derive(Clone, Copy)]
 pub(in crate::analysis::imsubimage) struct TextRegionContext<'a> {
     pub(in crate::analysis::imsubimage) coordinates: Option<&'a CoordinateSystem>,
-    pub(in crate::analysis::imsubimage) table: Option<&'a Path>,
     pub(in crate::analysis::imsubimage) shape: Option<&'a [usize]>,
+}
+
+pub(in crate::analysis::imsubimage) enum CopyTextInput<'a> {
+    Document {
+        text: Cow<'a, str>,
+        file: Option<&'a Path>,
+    },
+    Record(RecordValue),
+}
+
+pub(in crate::analysis::imsubimage) fn copy_text_input<'a>(
+    text: &'a str,
+    table: Option<&Path>,
+) -> Result<CopyTextInput<'a>, ImageError> {
+    let path = Path::new(text);
+    if path.is_file() {
+        let bytes = fs::read(path)
+            .map_err(|error| ImageError::Io(format!("read region file {text}: {error}")))?;
+        if bytes.starts_with(&[0xbe; 4]) {
+            return casa_tables::read_table_record_file(path)
+                .map(CopyTextInput::Record)
+                .map_err(|_| invalid_region_file(path));
+        }
+        if !bytes.starts_with(b"#CRTF") {
+            return Err(invalid_region_file(path));
+        }
+        let text = String::from_utf8(bytes).map_err(|_| invalid_region_file(path))?;
+        return Ok(CopyTextInput::Document {
+            text: Cow::Owned(text),
+            file: Some(path),
+        });
+    }
+    if looks_like_inline_crtf(text, true) {
+        return Ok(CopyTextInput::Document {
+            text: Cow::Borrowed(text),
+            file: None,
+        });
+    }
+    let (table, name) =
+        saved_region_source(text).map_or((table, text), |(path, name)| (Some(path), name));
+    let missing = || {
+        let table = table.map_or_else(
+            || "Temporary_Image".into(),
+            |path| path.display().to_string(),
+        );
+        ImageError::CasaSelection(format!(
+            "Unable to open region file or region table description {name} in image {table}"
+        ))
+    };
+    let path = table.ok_or_else(missing)?;
+    load_saved_region_record(path, name)
+        .map(CopyTextInput::Record)
+        .map_err(|_| missing())
+}
+
+pub(in crate::analysis::imsubimage) fn invalid_region_file(path: &Path) -> ImageError {
+    ImageError::CasaSelection(format!(
+        "{} is neither a valid binary region file, nor a valid region text file.",
+        path.display()
+    ))
 }
 
 // CASA discards CRTF entries whose source lattice has no selected pixel
@@ -57,6 +120,7 @@ pub(super) fn parse_crtf_document<T: ImagePixel>(
 ) -> Result<ParsedRegion, ImageError> {
     let mut shapes = Vec::new();
     let mut defaults = PlaneSelection::default();
+    let mut global_tokens = Vec::new();
     let text_origin = text_context.and_then(|context| context.coordinates);
     let origin = text_origin.unwrap_or_else(|| image.coordinates());
     let origin_plane = text_origin
@@ -84,13 +148,18 @@ pub(super) fn parse_crtf_document<T: ImagePixel>(
             continue;
         }
         if lower.starts_with("global ") {
-            parse_crtf_qualifiers(
-                &split_top_level(stmt[7..].trim(), ','),
-                image,
-                full_shape,
-                &mut defaults,
-                text_origin,
-            )?;
+            let tokens = split_top_level(stmt[7..].trim(), ',');
+            if copy_text {
+                global_tokens.extend(tokens);
+            } else {
+                parse_crtf_qualifiers(
+                    &tokens,
+                    image.coordinates(),
+                    full_shape,
+                    &mut defaults,
+                    text_origin,
+                )?;
+            }
             continue;
         }
         let tokens = shape_tokens(stmt, copy_text)?;
@@ -99,12 +168,33 @@ pub(super) fn parse_crtf_document<T: ImagePixel>(
         };
         let (first, excluded) = first
             .strip_prefix('-')
+            .filter(|_| copy_text)
             .map_or((*first, false), |shape| (shape.trim_start(), true));
         let spatial = parse_crtf_shape(origin, first, origin_plane, copy_text)?;
-        if let Some(shape) = origin_shape
-            && !overlaps_image(&spatial, shape, origin_plane)
-        {
-            continue;
+        let mut planes = defaults.clone();
+        let row_tokens = &tokens[1..];
+        if let Some(shape) = origin_shape {
+            let effective = last_plane_qualifiers(&global_tokens, row_tokens, origin);
+            if !overlaps_image(&spatial, shape, origin_plane)
+                || !planes_overlap(&effective, origin, shape)?
+            {
+                continue;
+            }
+            parse_crtf_qualifiers(
+                &effective,
+                image.coordinates(),
+                full_shape,
+                &mut planes,
+                text_origin,
+            )?;
+        } else {
+            parse_crtf_qualifiers(
+                row_tokens,
+                image.coordinates(),
+                full_shape,
+                &mut planes,
+                text_origin,
+            )?;
         }
         let project = |shape| match &projection {
             Some(projection) => projection.project_shape(shape),
@@ -122,8 +212,6 @@ pub(super) fn parse_crtf_document<T: ImagePixel>(
             });
         }
         let spatial = project(spatial)?;
-        let mut planes = defaults.clone();
-        parse_crtf_qualifiers(&tokens[1..], image, full_shape, &mut planes, text_origin)?;
         shapes.push(QualifiedShape {
             spatial,
             planes,
@@ -153,22 +241,18 @@ fn shape_tokens(statement: &str, copy_text: bool) -> Result<Vec<&str>, ImageErro
     if !copy_text {
         return Ok(split_top_level(statement, ','));
     }
-    let sections = split_top_level(statement, ';');
-    if let Some(extra) = sections
-        .iter()
-        .skip(1)
-        .map(|text| text.trim())
-        .find(|text| !text.is_empty() && !text.contains('='))
-    {
-        return Err(ImageError::CasaSelection(format!(
-            "Illegal extra characters on line ({extra}). Did you forget a '='?"
-        )));
-    }
-    Ok(sections
+    let tokens = split_top_level(statement, ';')
         .into_iter()
         .flat_map(|section| split_top_level(section, ','))
         .filter(|token| !token.trim().is_empty())
-        .collect())
+        .collect::<Vec<_>>();
+    if let Some(extra) = tokens.iter().skip(1).find(|token| !token.contains('=')) {
+        return Err(ImageError::CasaSelection(format!(
+            "Illegal extra characters on line ({}). Did you forget a '='?",
+            extra.trim()
+        )));
+    }
+    Ok(tokens)
 }
 
 fn origin_pixel_planes<T: ImagePixel>(
@@ -207,4 +291,56 @@ fn origin_pixel_planes<T: ImagePixel>(
         None
     };
     Ok(PlaneSelection { channels, stokes })
+}
+
+fn last_plane_qualifiers<'a>(
+    global: &[&'a str],
+    row: &[&'a str],
+    origin: &CoordinateSystem,
+) -> Vec<&'a str> {
+    [
+        ("range", CoordinateType::Spectral),
+        ("corr", CoordinateType::Stokes),
+    ]
+    .into_iter()
+    .filter(|&(_, kind)| {
+        (0..origin.n_pixel_axes()).any(|axis| origin.pixel_axis_type(axis) == Some(kind))
+    })
+    .filter_map(|(key, _)| {
+        global
+            .iter()
+            .chain(row)
+            .rev()
+            .find(|token| {
+                token
+                    .split_once('=')
+                    .is_some_and(|(field, _)| field.trim().eq_ignore_ascii_case(key))
+            })
+            .copied()
+    })
+    .collect()
+}
+
+fn planes_overlap(
+    qualifiers: &[&str],
+    origin: &CoordinateSystem,
+    shape: &[usize],
+) -> Result<bool, ImageError> {
+    match parse_crtf_qualifiers(
+        qualifiers,
+        origin,
+        shape,
+        &mut PlaneSelection::default(),
+        None,
+    ) {
+        Ok(()) => Ok(true),
+        Err(ImageError::CasaSelection(message))
+            if message.starts_with("CRTF spectral range")
+                || (message.starts_with("Stokes ")
+                    && message.ends_with("is not one of this image's Stokes planes")) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
 }

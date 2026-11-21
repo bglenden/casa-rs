@@ -10,7 +10,10 @@ use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::{
     SubimageRegion,
-    region::{SubimageSelection, TextRegionContext, saved::lattice_pixel_section},
+    region::{
+        CopyTextInput, SubimageSelection, TextRegionContext, copy_text_input, invalid_region_file,
+        saved::lattice_pixel_section,
+    },
 };
 
 /// Pixel section enclosing a selected region in the source image.
@@ -73,19 +76,25 @@ impl ImageRegionSection {
         origin: Option<(&CoordinateSystem, &[usize])>,
         table: Option<&Path>,
     ) -> Result<Self, ImageError> {
+        let (text, file) = match copy_text_input(text, table)? {
+            CopyTextInput::Record(record) => {
+                return Self::resolve(image, Some(SubimageRegion::Record(&record)), false);
+            }
+            CopyTextInput::Document { text, file } => (text, file),
+        };
         let context = TextRegionContext {
             coordinates: origin.map(|(coordinates, _)| coordinates),
-            table,
             shape: Some(origin.map_or_else(|| image.shape(), |(_, shape)| shape)),
         };
         let section = SubimageSelection::resolve_with_origin(
             image,
             None,
-            Some(SubimageRegion::Text(text)),
+            Some(SubimageRegion::Text(&text)),
             None,
             None,
             Some(context),
-        )?;
+        )
+        .map_err(|error| file.map_or(error, invalid_region_file))?;
         Ok(Self::from_selection(section, image.ndim(), false))
     }
 

@@ -250,7 +250,7 @@ def test_copy_crtf_applies_additions_and_subtractions_in_document_order(
 
 
 @pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
-@pytest.mark.parametrize("case", ["linear", "extra_statement", "bare_pixels"])
+@pytest.mark.parametrize("case", ["linear", "extra_statement", "bare_pixels", "extra_token", "headerless"])
 def test_copy_reports_unsupported_crtf_and_preserves_parent(casa, tmp_path, method, case):
     source = str(tmp_path / "source.im")
     fixture = casa.image()
@@ -263,7 +263,18 @@ def test_copy_reports_unsupported_crtf_and_preserves_parent(casa, tmp_path, meth
             "Illegal extra characters on line",
         ),
         "bare_pixels": ("4,5,10,12", "Unable to open region file or region table"),
+        "extra_token": (
+            "box[[4pix,5pix],[10pix,12pix]], garbage",
+            "Illegal extra characters on line",
+        ),
+        "headerless": (
+            "box[[4pix,5pix],[10pix,12pix]]", "nor a valid region text file",
+        ),
     }[case]
+    if case == "headerless":
+        path = tmp_path / "region.crtf"
+        path.write_text(text + "\n")
+        text = str(path)
     try:
         assert fixture.fromshape(source, shape, linear=linear)
     finally:
@@ -276,4 +287,156 @@ def test_copy_reports_unsupported_crtf_and_preserves_parent(casa, tmp_path, meth
                 getattr(active, method)(infile=source, region=text)
             np.testing.assert_array_equal(active.shape(), shape)
         finally:
+            active.done()
+
+
+@pytest.mark.parametrize("pixel_type", ["c", "d", "cd"])
+@pytest.mark.parametrize("region", ["", "box[[1pix,1pix],[4pix,4pix]]"])
+def test_new_copy_string_region_opens_only_float_sources(casa, tmp_path, pixel_type, region):
+    source = str(tmp_path / "source.im")
+    fixture = casa.image()
+    try:
+        assert fixture.fromshape(source, [7, 9], type=pixel_type)
+    finally:
+        fixture.done()
+    for api in (casa, tools):
+        active = api.image()
+        product = None
+        try:
+            assert active.fromshape(shape=[7, 9])
+            destination = tmp_path / f"{api.__name__}-rejected.im"
+            with pytest.raises(RuntimeError, match="has a different data type"):
+                active.newimagefromimage(infile=source, outfile=str(destination), region=region)
+            np.testing.assert_array_equal(active.shape(), [7, 9])
+            assert not destination.exists()
+
+            product = active.newimagefromimage(infile=source, region={})
+            assert product.pixeltype() != "float"
+            np.testing.assert_array_equal(product.shape(), [7, 9])
+            assert active.fromimage(infile=source, region=region)
+            assert active.pixeltype() == product.pixeltype()
+            expected_shape = [4, 4] if region else [7, 9]
+            np.testing.assert_array_equal(active.shape(), expected_shape)
+        finally:
+            if product is not None:
+                product.done()
+            active.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("planes", ["outside", "no_axes"])
+def test_copy_crtf_tests_qualifiers_in_the_definition_lattice(casa, tmp_path, method, planes):
+    source = str(tmp_path / "source.im")
+    channels = 8 if method == "fromimage" else 2
+    shape = (20, 20, 1, channels) if planes == "outside" else (20, 20)
+    pixels = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    fixture = casa.image()
+    coordinates = None
+    try:
+        assert fixture.fromarray(source, pixels)
+        coordinates = fixture.coordsys()
+        definition = coordinates.torecord()
+    finally:
+        if coordinates is not None:
+            coordinates.done()
+        fixture.done()
+
+    if planes == "outside":
+        attachment_shape = [20, 20, 1, 2]
+        region = (
+            "box[[1pix,1pix],[3pix,3pix]], range=[4pix,5pix]\n"
+            "box[[6pix,6pix],[7pix,7pix]], range=[0pix,1pix]"
+        )
+        expected = pixels[6:8, 6:8, :, :2]
+    else:
+        attachment_shape = list(shape)
+        region = "box[[1pix,1pix],[3pix,3pix]], range=[1pix,2pix], corr=[I]"
+        expected = pixels[1:4, 1:4]
+
+    for api in (casa, tools):
+        active = api.image()
+        product = None
+        try:
+            assert active.fromshape(shape=attachment_shape, csys=definition)
+            result = getattr(active, method)(infile=source, region=region)
+            product = active if result is True else result
+            np.testing.assert_array_equal(product.getchunk(), expected)
+            np.testing.assert_array_equal(product.getchunk(getmask=True), True)
+        finally:
+            if product is not None and product is not active:
+                product.done()
+            active.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+def test_copy_checks_the_lattice_shape_of_named_pixel_regions(casa, tmp_path, method):
+    source = str(tmp_path / "source.im")
+    attachment = str(tmp_path / "attached.im")
+    fixture = casa.image()
+    manager = casa.regionmanager()
+    region = {
+        "name": "LCBox", "isRegion": 1, "comment": "", "oneRel": True,
+        "blc": np.array([2, 3], dtype=np.float32),
+        "trc": np.array([5, 7], dtype=np.float32), "shape": np.array([10, 10], dtype=np.int32),
+    }
+    try:
+        assert fixture.fromshape(source, [20, 20])
+        assert fixture.done()
+        assert fixture.fromshape(attachment, [10, 10])
+        assert fixture.done()
+        assert manager.fromrecordtotable(attachment, "saved_box", region) == "saved_box"
+    finally:
+        fixture.done()
+        manager.done()
+
+    for api in (casa, tools):
+        active = api.image()
+        destination = tmp_path / f"{api.__name__}-rejected.im"
+        try:
+            assert active.open(attachment)
+            for argument in ("saved_box", region):
+                with pytest.raises(RuntimeError, match="mismatches lattice shape in region"):
+                    getattr(active, method)(
+                        infile=source, outfile=str(destination), region=argument,
+                    )
+                np.testing.assert_array_equal(active.shape(), [10, 10])
+                assert not destination.exists()
+        finally:
+            active.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("unit, radii", [("arcsec", (4, 4)), ("pix", (2, 8))])
+def test_copy_crtf_circles_on_unequal_direction_increments(casa, tmp_path, method, unit, radii):
+    pixels = np.arange(31 * 33, dtype=np.float32).reshape(31, 33)
+    source = str(tmp_path / "source.im")
+    fixture = casa.image()
+    coordinates = None
+    try:
+        assert fixture.fromshape(shape=list(pixels.shape))
+        coordinates = fixture.coordsys()
+        assert coordinates.setincrement([-1 / 60, 2 / 60])
+        record = coordinates.torecord()
+        assert fixture.fromarray(source, pixels, record)
+    finally:
+        if coordinates is not None:
+            coordinates.done()
+        fixture.done()
+
+    rx, ry = radii
+    x, y = np.ogrid[-rx:rx + 1, -ry:ry + 1]
+    expected = pixels[15 - rx:16 + rx, 16 - ry:17 + ry]
+    mask = (x / rx) ** 2 + (y / ry) ** 2 <= 1
+    for api in (casa, tools):
+        active = api.image()
+        product = None
+        try:
+            assert active.fromshape(shape=list(pixels.shape), csys=record)
+            result = getattr(active, method)(infile=source, region=f"circle[[15pix,16pix],4{unit}]")
+            product = active if result is True else result
+            np.testing.assert_array_equal(product.getchunk(), expected)
+            np.testing.assert_array_equal(product.getchunk(getmask=True), mask)
+        finally:
+            if product is not None and product is not active:
+                product.done()
             active.done()

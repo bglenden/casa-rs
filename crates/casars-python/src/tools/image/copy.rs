@@ -372,6 +372,14 @@ impl CopyImage<'_> {
             (open_image(self.infile)?, origin)
         } else {
             let original = open_image(self.infile)?;
+            if matches!(&self.region, CopyRegion::Text(_))
+                && !matches!(&*original.lock(), ImageHandle::Float(_))
+            {
+                return Err(raised(format!(
+                    "Logic Error: {} has a different data type than the data type of the requested object",
+                    self.infile
+                )));
+            }
             (original, self.text_origin(attached)?)
         };
         if self.overwrite

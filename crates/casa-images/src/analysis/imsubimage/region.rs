@@ -33,7 +33,9 @@ pub(super) use sections::StridedSection;
 
 use channels::resolve_channels;
 use saved::{load_saved_region, parse_saved_region};
-pub(super) use text_origin::TextRegionContext;
+pub(super) use text_origin::{
+    CopyTextInput, TextRegionContext, copy_text_input, invalid_region_file,
+};
 use text_origin::{looks_like_inline_crtf, parse_crtf_document};
 
 #[derive(Debug, Clone)]
@@ -148,7 +150,6 @@ impl SubimageSelection {
         }
         let text_context = TextRegionContext {
             coordinates: Some(target.coordinates()),
-            table: image.name(),
             shape: None,
         };
         let mut selection =
@@ -236,6 +237,11 @@ impl SubimageSelection {
         let mut is_crtf = false;
         if let Some(region) = region_arg {
             let parsed = match region {
+                SubimageRegion::Text(text)
+                    if text_context.is_some_and(|context| context.shape.is_some()) =>
+                {
+                    parse_crtf_document(image, text, &full_shape, plane, text_context)?
+                }
                 SubimageRegion::Text(text) => {
                     parse_region_argument(image, text, &full_shape, plane, text_context)?
                 }
@@ -408,7 +414,6 @@ fn parse_region_argument<T: ImagePixel>(
         return load_saved_region(path, name, image.coordinates(), full_shape, plane);
     }
 
-    let copy_text = text_context.is_some_and(|context| context.shape.is_some());
     let box_text = text
         .strip_prefix("box:")
         .or_else(|| {
@@ -416,7 +421,7 @@ fn parse_region_argument<T: ImagePixel>(
                 .and_then(|value| value.strip_suffix(')'))
         })
         .or_else(|| looks_like_four_ints(text).then_some(text));
-    if !copy_text && let Some(box_text) = box_text {
+    if let Some(box_text) = box_text {
         let b = parse_single_box(box_text.trim(), full_shape, plane)?;
         return Ok(ParsedRegion {
             is_compound: false,
@@ -439,12 +444,9 @@ fn parse_region_argument<T: ImagePixel>(
         }
         String::from_utf8(bytes)
             .map_err(|e| ImageError::Io(format!("read CRTF file {text}: {e}")))?
-    } else if looks_like_inline_crtf(text, copy_text) {
+    } else if looks_like_inline_crtf(text, false) {
         text.to_string()
-    } else if let Some(path) = text_context
-        .map_or_else(|| image.name(), |context| context.table)
-        .filter(|path| path.is_dir())
-    {
+    } else if let Some(path) = image.name().filter(|path| path.is_dir()) {
         return load_saved_region(path, text, image.coordinates(), full_shape, plane);
     } else {
         return Err(ImageError::CasaSelection(format!(
@@ -476,13 +478,17 @@ fn parse_single_box(
     Ok(boxes[0])
 }
 
-fn parse_crtf_qualifiers<T: ImagePixel>(
+fn parse_crtf_qualifiers(
     tokens: &[&str],
-    image: &dyn ImageInterface<T>,
+    coordinates: &CoordinateSystem,
     full_shape: &[usize],
     planes: &mut PlaneSelection,
     text_origin: Option<&CoordinateSystem>,
 ) -> Result<(), ImageError> {
+    let axis_for = |coordinates: &CoordinateSystem, kind| {
+        (0..coordinates.n_pixel_axes())
+            .find(|&axis| coordinates.pixel_axis_type(axis) == Some(kind))
+    };
     for tok in tokens {
         let trimmed = tok.trim();
         let Some((key, val)) = trimmed.split_once('=') else {
@@ -505,16 +511,12 @@ fn parse_crtf_qualifiers<T: ImagePixel>(
                 let selected = if let Some(origin) = text_origin {
                     let missing =
                         || ImageError::CasaSelection("Exception: No regions found.".into());
-                    let axis = (0..origin.n_pixel_axes())
-                        .find(|&axis| origin.pixel_axis_type(axis) == Some(CoordinateType::Stokes))
-                        .ok_or_else(missing)?;
+                    let axis = axis_for(origin, CoordinateType::Stokes).ok_or_else(missing)?;
                     let selected =
                         parse_stokes_names(origin, axis, &joined).map_err(|_| missing())?;
                     let origin_values = stokes_for_axis(origin, axis)?;
-                    let axis = image
-                        .find_axis(CoordinateType::Stokes)
-                        .ok_or_else(missing)?;
-                    let input_values = stokes_for_axis(image.coordinates(), axis)?;
+                    let axis = axis_for(coordinates, CoordinateType::Stokes).ok_or_else(missing)?;
+                    let input_values = stokes_for_axis(coordinates, axis)?;
                     let matched = selected
                         .into_iter()
                         .filter_map(|index| {
@@ -528,17 +530,22 @@ fn parse_crtf_qualifiers<T: ImagePixel>(
                     }
                     matched
                 } else {
-                    parse_stokes_selection(image, &joined)?
+                    let axis = axis_for(coordinates, CoordinateType::Stokes).ok_or_else(|| {
+                        ImageError::InvalidMetadata(
+                            "Stokes selection requires a Stokes axis".into(),
+                        )
+                    })?;
+                    parse_stokes_names(coordinates, axis, &joined)?
                 };
                 planes.stokes = Some(selected);
             }
         } else if key == "range" {
-            let spec_ax = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
+            let spec_ax = axis_for(coordinates, CoordinateType::Spectral).ok_or_else(|| {
                 ImageError::InvalidMetadata("CRTF range requires a spectral axis".into())
             })?;
             let indices = parse_crtf_spectral_range(
                 val,
-                image.coordinates(),
+                coordinates,
                 spec_ax,
                 full_shape[spec_ax],
                 text_origin,
@@ -649,7 +656,7 @@ fn parse_crtf_shape(
     coordinates: &CoordinateSystem,
     stmt: &str,
     plane: [usize; 2],
-    polygon_box: bool,
+    copy_text: bool,
 ) -> Result<SpatialShape, ImageError> {
     let trimmed = stmt.trim();
     let Some(bracket) = trimmed.find('[') else {
@@ -685,7 +692,7 @@ fn parse_crtf_shape(
             }
             let [x0, y0] = crtf_point_to_pixel(coordinates, args[0], plane)?;
             let [x1, y1] = crtf_point_to_pixel(coordinates, args[1], plane)?;
-            if polygon_box {
+            if copy_text {
                 return Ok(SpatialShape::Polygon(vec![
                     [x0, y0],
                     [x1, y0],
@@ -740,6 +747,30 @@ fn parse_crtf_shape(
             }
             let [cx, cy] = crtf_point_to_pixel(coordinates, args[0], plane)?;
             let [rx, ry] = crtf_radius_to_pixels(coordinates, args[1])?;
+            if copy_text {
+                if let Some(radius) = parse_crtf_pix(args[1])?
+                    && let Some([sx, sy]) = direction_pixel_scales(coordinates)
+                    && (sx / sy - 1.0).abs() > 1e-9
+                {
+                    // CASA's CRTF parser expresses a pixel-radius circle on a
+                    // non-square grid as an axis-aligned ellipse.
+                    return Ok(SpatialShape::Ellipse {
+                        cx,
+                        cy,
+                        semi_major: radius * sx / sy,
+                        semi_minor: radius * sy / sx,
+                        cos_pa: 1.0,
+                        sin_pa: 0.0,
+                    });
+                }
+                let radius = if plane[0] < plane[1] { rx } else { ry };
+                return Ok(SpatialShape::Circle {
+                    cx,
+                    cy,
+                    rx: radius,
+                    ry: radius,
+                });
+            }
             Ok(SpatialShape::Circle { cx, cy, rx, ry })
         }
         "ellipse" => {
