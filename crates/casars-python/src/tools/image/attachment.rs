@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
+use casa_images::fits_read::FitsToolImport;
 use casa_tables::publication::check_write_access;
 use casa_tables::{Table, TableError, TableInfo, TableOptions, TableUseLock, TableWriteLock};
 use casa_types::RecordValue;
@@ -86,11 +87,15 @@ impl AttachedImage {
     }
 
     pub(super) fn open(path: &Path) -> PyResult<Self> {
-        Self::open_with_read_lock(path, true)
+        Self::open_resolved(path, path, path)
+    }
+
+    pub(super) fn open_resolved(path: &Path, probe: &Path, name: &Path) -> PyResult<Self> {
+        Self::open_with_read_lock(path, probe, name, true)
     }
 
     pub(super) fn open_for_ordered_read(path: &Path) -> PyResult<Self> {
-        Self::open_with_read_lock(path, false)
+        Self::open_with_read_lock(path, path, path, false)
     }
 
     pub(super) fn name_path<'a>(&'a self, image: &'a ImageHandle) -> Option<&'a Path> {
@@ -101,19 +106,34 @@ impl AttachedImage {
         self.key.as_deref()
     }
 
-    fn open_with_read_lock(path: &Path, keep_read_lock: bool) -> PyResult<Self> {
-        if path.is_file() {
-            return ImageHandle::open(path).map(Self::temporary).map_err(raised);
+    fn open_with_read_lock(
+        path: &Path,
+        probe: &Path,
+        name: &Path,
+        keep_read_lock: bool,
+    ) -> PyResult<Self> {
+        if probe.is_file() {
+            let source =
+                FitsToolImport::open_attachment_named(path, probe, name).map_err(raised)?;
+            return ImageHandle::open_fits(path, source)
+                .map(Self::temporary)
+                .map_err(raised);
+        }
+        let unrecognized = || {
+            raised(format!(
+                "Exception: Unable to open image {}.",
+                name.display()
+            ))
+        };
+        if path != probe && (!probe.is_dir() || !path.is_dir()) {
+            return Err(unrecognized());
         }
         let key = key(path)?;
         if !key.join("table.dat").is_file()
             || !fs::read_to_string(key.join("table.info"))
                 .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image")
         {
-            return Err(raised(format!(
-                "Exception: Unable to open image {}.",
-                path.display()
-            )));
+            return Err(unrecognized());
         }
         let name = std::path::absolute(path).map_err(raised)?;
         let shared = Self::shared(&registry(), &key, &name);

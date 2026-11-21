@@ -196,7 +196,7 @@ pub(crate) fn stored_table_keywords<'a>(
 
 /// Absolute form of `path` with `.` and `..` resolved lexically, like
 /// casacore's `Path::absoluteName`.
-fn lexical_absolute(path: &Path) -> PathBuf {
+pub fn lexical_absolute(path: &Path) -> PathBuf {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let mut normal = PathBuf::new();
     for component in absolute.components() {

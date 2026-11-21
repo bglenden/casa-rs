@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The active MeasComet table and the queries CASA exposes on it.
 
-use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -15,6 +14,7 @@ use super::{PyMeasures, State, arguments};
 use crate::convert::holder::MeasureValue;
 use crate::convert::value::CasaValue;
 use crate::tools::LogLine;
+use crate::tools::casacore_path::expand_path;
 
 pub(super) const COMET_UNAVAILABLE: &str = "No or outside range comet table specified";
 
@@ -102,54 +102,6 @@ fn resolve(path: &Path) -> Option<PathBuf> {
 fn is_readable_table(path: &Path) -> bool {
     AipsIo::open(path.join("table.dat"), AipsOpenOption::Old)
         .is_ok_and(|mut io| io.get_next_type().is_ok_and(|kind| kind == "Table"))
-}
-
-fn expand_path(name: &str) -> Option<Cow<'_, str>> {
-    if !name.starts_with('~') && !name.contains('$') {
-        return Some(Cow::Borrowed(name));
-    }
-    let mut path = Cow::Borrowed(name);
-    // casacore Path::expandName follows environment references recursively
-    // and stops expanding if the substitutions form a cycle.
-    for _ in 0..25 {
-        if let Some(suffix) = path
-            .strip_prefix('~')
-            .filter(|s| s.is_empty() || s.starts_with('/'))
-            && let Ok(home) = std::env::var("HOME")
-            && !home.is_empty()
-        {
-            path = Cow::Owned(format!("{home}{suffix}"));
-        }
-        let mut changed = false;
-        let next = path
-            .split('/')
-            .map(|part| match expand_variable(part) {
-                Some(expanded) => {
-                    changed = true;
-                    Cow::Owned(expanded)
-                }
-                None => Cow::Borrowed(part),
-            })
-            .collect::<Vec<_>>()
-            .join("/");
-        if !changed {
-            return Some(path);
-        }
-        path = Cow::Owned(next);
-    }
-    None
-}
-
-fn expand_variable(part: &str) -> Option<String> {
-    let (prefix, expression) = part.split_once('$')?;
-    let (variable, suffix) = match expression.strip_prefix('{') {
-        Some(braced) => braced.split_once('}')?,
-        None => (expression, ""),
-    };
-    let value = std::env::var(variable)
-        .ok()
-        .filter(|value| !value.is_empty())?;
-    Some(format!("{prefix}{value}{suffix}"))
 }
 
 fn read_distance_or_diameter(

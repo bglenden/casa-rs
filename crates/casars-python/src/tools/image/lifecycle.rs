@@ -1,39 +1,60 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use casa_images::ImagePixelType;
+use casa_tables::lexical_absolute;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::prelude::*;
 
+use crate::tools::casacore_path::expand_path;
 use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
 use super::handle::raised;
 
-pub(super) fn open_image(infile: &str) -> PyResult<AttachedImage> {
+pub(super) fn input_path<'a>(py: Python<'_>, infile: &'a str) -> PyResult<Cow<'a, str>> {
+    let expanded = expand_path(infile)
+        .ok_or_else(|| raised("Path::expandName: recursive environment variable"))?;
+    if expanded
+        .strip_prefix('~')
+        .is_some_and(|suffix| !suffix.is_empty() && !suffix.starts_with('/'))
+    {
+        let resolved = py
+            .import("os.path")?
+            .call_method1("expanduser", (expanded.as_ref(),))?
+            .extract()?;
+        return Ok(Cow::Owned(resolved));
+    }
+    Ok(expanded)
+}
+
+pub(super) fn open_image(infile: &str, expanded: &str) -> PyResult<AttachedImage> {
     if infile.is_empty() {
         return Err(raised("Exception: File name is empty."));
     }
-    let path = Path::new(infile);
+    let path = Path::new(expanded);
     if !path.exists() {
         return Err(raised(format!("Exception: File {infile} does not exist..")));
     }
     let path = std::path::absolute(path).map_err(raised)?;
-    AttachedImage::open(&path)
+    let absolute = lexical_absolute(&path);
+    AttachedImage::open_resolved(&absolute, &path, Path::new(infile))
 }
 
 #[pymethods]
 impl PyImageTool {
     #[pyo3(signature = (infile, cache = true), text_signature = "($self, infile, cache=True)")]
     fn open(&self, py: Python<'_>, infile: String, cache: bool) -> PyResult<bool> {
+        let expanded = input_path(py, &infile);
         py.detach(|| {
             let mut state = self.state();
             state.image = None;
             // ImageFactory's cache flag applies to component-list images.
             let _ = cache;
-            state.image = Some(open_image(&infile)?);
+            state.image = Some(open_image(&infile, expanded?.as_ref())?);
             Ok(true)
         })
     }
@@ -43,7 +64,8 @@ impl PyImageTool {
     }
 
     fn newimagefromfile(&self, py: Python<'_>, infile: &str) -> PyResult<Py<Self>> {
-        let image = py.detach(|| open_image(infile))?;
+        let expanded = input_path(py, infile)?;
+        let image = py.detach(|| open_image(infile, expanded.as_ref()))?;
         Py::new(py, Self::attached(image))
     }
 

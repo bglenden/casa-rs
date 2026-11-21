@@ -1,5 +1,10 @@
 """Persistent and temporary copies returned by the CASA image factories."""
 
+import getpass
+import os
+import re
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -544,3 +549,309 @@ def test_copy_rejects_malformed_slicer_before_replacing_images(
         finally:
             reader.done()
             active.done()
+
+
+@pytest.mark.parametrize("spelling", ["plain", "braced", "nested", "home", "named-home", "literal"])
+def test_image_file_factories_resolve_input_names(tmp_path, monkeypatch, oracle, spelling):
+    monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("CASARS_IMAGE_TEST_NESTED", "$CASARS_IMAGE_TEST_DIRECTORY")
+    monkeypatch.delenv("CASARS_IMAGE_TEST_LITERAL", raising=False)
+    source = tmp_path / "source.im"
+    arguments = {
+        "plain": "$CASARS_IMAGE_TEST_DIRECTORY/source.im",
+        "braced": "${CASARS_IMAGE_TEST_DIRECTORY}/source.im",
+        "nested": "$CASARS_IMAGE_TEST_NESTED/source.im",
+    }
+    if spelling in ("home", "named-home"):
+        prefix = "~" if spelling == "home" else f"~{getpass.getuser()}"
+        home = os.environ.get("HOME") if spelling == "home" else os.path.expanduser(prefix)
+        if not home or home == prefix or not Path(home).is_dir():
+            pytest.skip("the account has no resolvable home directory")
+        arguments[spelling] = f"{prefix}/{os.path.relpath(source, home)}"
+    elif spelling == "literal":
+        directory = tmp_path / "$CASARS_IMAGE_TEST_LITERAL"
+        directory.mkdir()
+        source = directory / "source.im"
+        arguments[spelling] = str(source)
+
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    writer = tools.image()
+    try:
+        assert writer.fromarray(str(source), pixels)
+    finally:
+        writer.done()
+    argument = arguments[spelling]
+    for api in (oracle, tools):
+        for method in ("open", "newimage", "newimagefromfile", "fromimage", "newimagefromimage"):
+            image = api.image()
+            product = image
+            try:
+                assert image.fromshape(shape=[3])
+                returned = getattr(image, method)(infile=argument)
+                if method in ("open", "fromimage"):
+                    assert returned
+                else:
+                    product = returned
+                    np.testing.assert_array_equal(image.shape(), [3])
+                np.testing.assert_array_equal(product.getchunk(), pixels)
+                if method in ("fromimage", "newimagefromimage"):
+                    assert f'infile="{argument}"' in product.history()[-1]
+                else:
+                    assert product.name() == str(source)
+            finally:
+                if product is not image:
+                    product.done()
+                image.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+def test_image_copy_overwrites_a_sibling_using_the_resolved_source(tmp_path, monkeypatch, oracle, method):
+    monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(tmp_path))
+    source = tmp_path / "source.im"
+    target = tmp_path / "destination.im"
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    for api in (oracle, tools):
+        image = api.image()
+        product = image
+        try:
+            assert image.fromarray(str(source), pixels, overwrite=True)
+            assert image.done()
+            assert image.fromarray(str(target), -pixels, overwrite=True)
+            assert image.done()
+            returned = getattr(image, method)(
+                infile="$CASARS_IMAGE_TEST_DIRECTORY/source.im", outfile=str(target), overwrite=True,
+            )
+            if method == "newimagefromimage":
+                product = returned
+            else:
+                assert returned
+            np.testing.assert_array_equal(product.getchunk(), pixels)
+            assert product.done()
+            assert image.open(str(source))
+            np.testing.assert_array_equal(image.getchunk(), pixels)
+        finally:
+            if product is not image:
+                product.done()
+            image.done()
+
+
+@pytest.mark.parametrize("cycle", [False, True])
+def test_expanded_image_input_errors_preserve_factory_state(tmp_path, monkeypatch, oracle, cycle):
+    variable = "CASARS_IMAGE_TEST_INVALID"
+    monkeypatch.setenv(variable, f"${variable}" if cycle else str(tmp_path))
+    argument = f"${variable}/missing.im"
+    reason = "recursive environment variable" if cycle else rf"{re.escape(argument)} does not exist"
+    for api in (oracle, tools):
+        for method in ("open", "newimage", "newimagefromfile", "fromimage", "newimagefromimage"):
+            image = api.image()
+            try:
+                assert image.fromarray(pixels=[4., 9., 16.])
+                with pytest.raises(RuntimeError, match=reason):
+                    getattr(image, method)(infile=argument)
+                assert image.isopen() == (method != "open")
+                if image.isopen():
+                    np.testing.assert_array_equal(image.getchunk(), [4., 9., 16.])
+            finally:
+                image.done()
+
+
+@pytest.mark.parametrize("kind", ["directory", "regular-file"])
+def test_expanded_unrecognized_inputs_report_the_original_name(tmp_path, monkeypatch, oracle, kind):
+    monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(tmp_path))
+    invalid = tmp_path / "unrecognized.im"
+    if kind == "directory":
+        invalid.mkdir()
+    else:
+        invalid.write_text("not an image\n")
+    argument = "$CASARS_IMAGE_TEST_DIRECTORY/unrecognized.im"
+    for api in (oracle, tools):
+        for method in ("open", "newimage", "newimagefromfile", "fromimage", "newimagefromimage"):
+            image = api.image()
+            try:
+                assert image.fromarray(pixels=[4., 9., 16.])
+                with pytest.raises(RuntimeError, match=rf"Unable to open image {re.escape(argument)}"):
+                    getattr(image, method)(infile=argument)
+                assert image.isopen() == (method != "open")
+                if image.isopen():
+                    np.testing.assert_array_equal(image.getchunk(), [4., 9., 16.])
+            finally:
+                image.done()
+    if kind == "directory":
+        assert list(invalid.iterdir()) == []
+
+
+def test_explicit_fits_import_resolves_names_and_reports_the_original_spelling(tmp_path, monkeypatch, oracle):
+    monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(tmp_path))
+    (tmp_path / "source.fits").write_bytes(_hdu(True, [1, 2, 3, 4]))
+    argument = "${CASARS_IMAGE_TEST_DIRECTORY}/source.fits"
+    missing = "${CASARS_IMAGE_TEST_DIRECTORY}/missing.fits"
+    for api in (oracle, tools):
+        for method in ("fromfits", "newimagefromfits"):
+            image = api.image()
+            product = image
+            try:
+                assert image.fromshape(shape=[3])
+                with pytest.raises(RuntimeError, match=rf"{re.escape(missing)} does not exist"):
+                    getattr(image, method)(infile=missing)
+                np.testing.assert_array_equal(image.shape(), [3])
+                returned = getattr(image, method)(infile=argument)
+                if method == "newimagefromfits":
+                    product = returned
+                    np.testing.assert_array_equal(image.shape(), [3])
+                else:
+                    assert returned
+                    assert f'fitsfile="{argument}"' in product.history()[-1]
+                np.testing.assert_array_equal(product.getchunk(), [[1., 3.], [2., 4.]])
+            finally:
+                if product is not image:
+                    product.done()
+                image.done()
+
+
+def test_explicit_fits_import_treats_brackets_as_part_of_the_filename(tmp_path, monkeypatch, oracle):
+    monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(tmp_path))
+    (tmp_path / "source.fits").write_bytes(_hdu(True, [1, 2, 3, 4]))
+    literal = tmp_path / "source.fits[0]"
+    argument = "$CASARS_IMAGE_TEST_DIRECTORY/source.fits[0]"
+    for api in (oracle, tools):
+        for method in ("fromfits", "newimagefromfits"):
+            image = api.image()
+            product = image
+            try:
+                literal.unlink(missing_ok=True)
+                assert image.fromarray(pixels=[4., 9., 16.])
+                with pytest.raises(RuntimeError, match=rf"{re.escape(argument)} does not exist"):
+                    getattr(image, method)(infile=argument)
+                np.testing.assert_array_equal(image.getchunk(), [4., 9., 16.])
+                literal.write_bytes(_hdu(True, [11, 12, 13, 14]))
+                result = getattr(image, method)(infile=argument)
+                if method == "newimagefromfits":
+                    product = result
+                else:
+                    assert result
+                np.testing.assert_array_equal(product.getchunk(), [[11., 13.], [12., 14.]])
+            finally:
+                if product is not image:
+                    product.done()
+                image.done()
+        try:
+            assert image.open(argument)
+            if api is oracle:
+                assert image.name() == str(tmp_path / "source.fits")
+                np.testing.assert_array_equal(image.getchunk(), [[1., 3.], [2., 4.]])
+            else:
+                assert image.name() == str(literal)
+                np.testing.assert_array_equal(image.getchunk(), [[11., 13.], [12., 14.]])
+        finally:
+            image.done()
+
+
+@pytest.mark.parametrize("method", ["fromfits", "newimagefromfits"])
+@pytest.mark.parametrize("symlink", [False, True])
+def test_fits_import_cannot_overwrite_the_input_directory(tmp_path, monkeypatch, method, symlink):
+    image = tools.image()
+    target = tmp_path / "target.im"
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    fits = _hdu(True, [1, 2, 3, 4])
+    assert image.fromarray(str(target), pixels)
+    original_history = image.history()
+    image.done()
+    source = target / "source.fits"
+    if symlink:
+        peer = tmp_path / "peer.fits"
+        peer.write_bytes(fits)
+        source.symlink_to(peer)
+    else:
+        source.write_bytes(fits)
+    monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(target))
+    try:
+        assert image.fromarray(pixels=[4., 9., 16.])
+        with pytest.raises(RuntimeError, match="contains the source FITS file"):
+            getattr(image, method)(outfile=str(target), infile="$CASARS_IMAGE_TEST_DIRECTORY/source.fits", overwrite=True)
+        np.testing.assert_array_equal(image.getchunk(), [4., 9., 16.])
+        assert source.is_symlink() == symlink
+        assert source.read_bytes() == fits
+        assert image.open(str(target))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+        assert image.history() == original_history
+    finally:
+        image.done()
+
+
+def test_unbraced_filename_variable_keeps_its_directory(tmp_path, monkeypatch, oracle):
+    (tmp_path / "source.fits").write_bytes(_hdu(True, [1, 2, 3, 4]))
+    monkeypatch.setenv("CASARS_IMAGE_TEST_BASENAME", "source.fits")
+    unbraced = str(tmp_path / "$CASARS_IMAGE_TEST_BASENAME")
+    braced = str(tmp_path / "${CASARS_IMAGE_TEST_BASENAME}")
+    for api in (oracle, tools):
+        image = api.image()
+        try:
+            if api is oracle:
+                with pytest.raises(RuntimeError, match=rf"{re.escape(unbraced)} does not exist"):
+                    image.open(unbraced)
+            else:
+                assert image.open(unbraced)
+                np.testing.assert_array_equal(image.getchunk(), [[1., 3.], [2., 4.]])
+            assert image.open(braced)
+            np.testing.assert_array_equal(image.getchunk(), [[1., 3.], [2., 4.]])
+        finally:
+            image.done()
+
+
+def test_expanded_fits_attachment_keeps_the_resolved_backing_name(tmp_path, monkeypatch, oracle):
+    original = tmp_path / "original"
+    replacement = tmp_path / "replacement"
+    for directory, pixels in ((original, [1, 2, 3, 4]), (replacement, [11, 12, 13, 14])):
+        directory.mkdir()
+        (directory / "source.fits").write_bytes(_hdu(True, pixels))
+    for api, reported_directory in ((oracle, replacement), (tools, original)):
+        image = api.image()
+        try:
+            monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(original))
+            assert image.open("$CASARS_IMAGE_TEST_DIRECTORY/source.fits")
+            monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(replacement))
+            assert image.name() == str(reported_directory / "source.fits")
+            np.testing.assert_array_equal(image.getchunk(), [[1., 3.], [2., 4.]])
+        finally:
+            image.done()
+
+
+def test_expanded_image_open_uses_casas_lexical_parent_directory(tmp_path, monkeypatch, oracle):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    nested = right / "nested"
+    nested.mkdir(parents=True)
+    (left / "alias").symlink_to(nested, target_is_directory=True)
+    (left / "physical-directory.fits").write_bytes(_hdu(True, [1, 2, 3, 4]))
+    (right / "physical-directory.fits").mkdir()
+    (left / "physical-text.fits").write_bytes(_hdu(True, [1, 2, 3, 4]))
+    (right / "physical-text.fits").write_text("not a FITS image\n")
+    (left / "lexical-text.fits").write_text("not a FITS image\n")
+    (right / "lexical-text.fits").write_bytes(_hdu(True, [1, 2, 3, 4]))
+    writer = tools.image()
+    try:
+        for path, pixel in ((left / "both.im", 7), (right / "both.im", 9), (right / "right.im", 9)):
+            assert writer.fromarray(str(path), np.full((2, 2), pixel, dtype=np.float32))
+            assert writer.done()
+    finally:
+        writer.done()
+    monkeypatch.setenv("CASARS_IMAGE_TEST_DIRECTORY", str(tmp_path))
+    prefix = "$CASARS_IMAGE_TEST_DIRECTORY/left/alias/.."
+    for api in (oracle, tools):
+        image = api.image()
+        try:
+            assert image.open(prefix + "/both.im")
+            assert image.name() == str(left / "both.im")
+            np.testing.assert_array_equal(image.getchunk(), 7)
+            for name in ("right.im", "physical-directory.fits", "physical-text.fits"):
+                rejected = f"{prefix}/{name}"
+                with pytest.raises(RuntimeError, match=rf"Unable to open image {re.escape(rejected)}"):
+                    image.open(rejected)
+                assert not image.isopen()
+            lexical = left / "lexical-text.fits"
+            with pytest.raises(RuntimeError, match=rf"Cannot open file {re.escape(str(lexical))}"):
+                image.open(prefix + "/lexical-text.fits")
+            assert not image.isopen()
+        finally:
+            image.done()

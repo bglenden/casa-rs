@@ -16,6 +16,7 @@ use ndarray::{IxDyn, ShapeBuilder};
 use crate::{GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType};
 
 mod beams;
+mod disk_file;
 mod history;
 mod tool_import;
 pub(crate) use history::{history_rows, read_cards};

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::ffi::{CStr, c_long};
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -31,6 +29,10 @@ use ndarray::{Array2, Axis, IxDyn, ShapeBuilder, Slice, Zip};
 
 use super::{
     PrimaryHdu, brightness_unit,
+    disk_file::{
+        FITS_RECORD_BYTES, attachment_file_length, open_disk_file, unable_to_open_image,
+        unreadable_fits,
+    },
     history::{history_from_cards, restoring_beam_from_history},
     image_info_from_fits_header, read_fits_axis_shape,
 };
@@ -64,7 +66,23 @@ impl FitsToolImport {
     /// Returns an error for an unreadable FITS file, a missing image HDU,
     /// or invalid coordinate or beam metadata.
     pub fn open(path: &Path, which_rep: usize, which_hdu: i64) -> Result<Self, ImageError> {
-        Self::open_impl(path, which_rep, which_hdu, false)
+        Self::open_impl(FitsFile::open(path), path, which_rep, which_hdu, false)
+    }
+
+    /// Import from a resolved path, using the original name in FITS diagnostics.
+    ///
+    /// # Errors
+    /// As [`Self::open`].
+    pub fn open_named(
+        path: &Path,
+        name: &Path,
+        which_rep: usize,
+        which_hdu: i64,
+    ) -> Result<Self, ImageError> {
+        if !path.is_file() {
+            return Err(unreadable_fits(name));
+        }
+        Self::open_impl(open_disk_file(path), name, which_rep, which_hdu, false)
     }
 
     /// Open the FITS image used by the direct image attachment and copy tools.
@@ -77,15 +95,45 @@ impl FitsToolImport {
     /// Returns an error for an unrecognized input, missing initial record,
     /// absent image HDU, or invalid metadata.
     pub fn open_attachment(path: &Path) -> Result<Self, ImageError> {
-        let length = attachment_file_length(path)?;
-        let mut fits = FitsFile::open(path).map_err(|_| {
+        Self::open_attachment_named(path, path, path)
+    }
+
+    /// Recognize FITS using the expanded spelling and read it at its lexical
+    /// absolute path. Report an unrecognized input with the caller's spelling.
+    ///
+    /// # Errors
+    /// As [`Self::open_attachment`].
+    pub fn open_attachment_named(
+        path: &Path,
+        probe: &Path,
+        name: &Path,
+    ) -> Result<Self, ImageError> {
+        let (mut length, mut tight_value) = attachment_file_length(probe, name)?;
+        if probe != path {
+            if !path.is_file() {
+                return Err(ImageError::CasaSelection(format!(
+                    "{} does not exist or is not readable",
+                    path.display()
+                )));
+            }
+            (length, tight_value) = attachment_file_length(path, name).map_err(|_| {
+                ImageError::CasaSelection(format!(
+                    "Cannot open file {} (or other I/O error)",
+                    path.display()
+                ))
+            })?;
+        }
+        if tight_value {
+            return Err(initial_record_error(path));
+        }
+        let mut fits = open_disk_file(path).map_err(|_| {
             if length.is_some() {
                 ImageError::CasaSelection(format!(
                     "FITSImgParser::setup - {} Error opening FITS input.",
                     path.display()
                 ))
             } else {
-                unable_to_open_image(path)
+                unable_to_open_image(name)
             }
         })?;
         let count = if length.is_some() {
@@ -107,25 +155,21 @@ impl FitsToolImport {
     /// # Errors
     /// As [`Self::open`].
     pub fn open_for_concatenation(path: &Path) -> Result<Self, ImageError> {
-        Self::open_impl(path, 0, -1, true)
+        Self::open_impl(FitsFile::open(path), path, 0, -1, true)
     }
 
     fn open_impl(
-        path: &Path,
+        fits: fitsio::errors::Result<FitsFile>,
+        name: &Path,
         which_rep: usize,
         which_hdu: i64,
         group_linear_axes: bool,
     ) -> Result<Self, ImageError> {
-        let mut fits = FitsFile::open(path).map_err(|_| {
-            ImageError::CasaSelection(format!(
-                "Exception: {} does not exist or is not readable.",
-                path.display()
-            ))
-        })?;
+        let mut fits = fits.map_err(|_| unreadable_fits(name))?;
         let missing_hdu = || {
             ImageError::CasaSelection(format!(
                 "Exception: No image at specified location in file {}.",
-                path.display()
+                name.display()
             ))
         };
         let count = fits.num_hdus().map_err(fits_error)?;
@@ -432,51 +476,6 @@ impl FitsToolImport {
     }
 }
 
-const FITS_RECORD_BYTES: u64 = 2880;
-
-/// Raw FITS has a physical length. CFITSIO detects compressed streams by
-/// their magic bytes and handles their decompressed record boundaries.
-fn attachment_file_length(path: &Path) -> Result<Option<u64>, ImageError> {
-    let unrecognized = |_| unable_to_open_image(path);
-    let mut file = File::open(path).map_err(unrecognized)?;
-    let mut first_card = [0; 80];
-    file.read_exact(&mut first_card[..2])
-        .map_err(unrecognized)?;
-    if matches!(
-        first_card[..2],
-        [0x1f, 0x8b | 0x1e | 0x9d | 0xa0] | [b'P', b'K'] | [b'B', b'Z']
-    ) {
-        return Ok(None);
-    }
-    let length = file.metadata().map_err(unrecognized)?.len();
-    if length < FITS_RECORD_BYTES {
-        return Err(unable_to_open_image(path));
-    }
-    file.read_exact(&mut first_card[2..])
-        .map_err(unrecognized)?;
-    // ImageOpener recognizes SIMPLE followed by '=' and 'T', with any
-    // number of intervening spaces. FITSImgParser then parses the card.
-    let first_value = first_card[6..]
-        .iter()
-        .copied()
-        .filter(|&byte| byte != b' ')
-        .take(2);
-    if !first_card.starts_with(b"SIMPLE") || !first_value.eq(*b"=T") {
-        return Err(unable_to_open_image(path));
-    }
-    if first_card[8] == b'=' && first_card[9] != b' ' {
-        return Err(initial_record_error(path));
-    }
-    Ok(Some(length))
-}
-
-fn unable_to_open_image(path: &Path) -> ImageError {
-    ImageError::CasaSelection(format!(
-        "Exception: Unable to open image {}.",
-        path.display()
-    ))
-}
-
 fn initial_record_error(path: &Path) -> ImageError {
     ImageError::CasaSelection(format!(
         "FITSImgParser::setup - {} Error reading initial record -- exiting.",
@@ -541,7 +540,7 @@ impl FitsSectionReader {
     /// Returns an error for missing or incompatible image data, including
     /// a source whose shape changed since its metadata was read.
     pub fn open(path: &Path, hdu_index: usize, shape: &[usize]) -> Result<Self, ImageError> {
-        let mut file = FitsFile::open(path).map_err(fits_error)?;
+        let mut file = open_disk_file(path).map_err(fits_error)?;
         let hdu = file.hdu(hdu_index).map_err(fits_error)?;
         let HduInfo::ImageInfo { shape: actual, .. } = hdu.info else {
             return Err(ImageError::InvalidMetadata(

@@ -167,7 +167,7 @@ impl ImageHandle {
         Self::open_native(path, Some(0))
     }
 
-    fn open_fits(path: &Path, mut source: FitsToolImport) -> Result<Self, ImageError> {
+    pub(super) fn open_fits(path: &Path, mut source: FitsToolImport) -> Result<Self, ImageError> {
         if source.is_tile_compressed() {
             return Err(ImageError::CasaSelection(format!(
                 "No data in the zeroth or first extension of {}",
