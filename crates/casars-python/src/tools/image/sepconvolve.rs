@@ -27,7 +27,7 @@ use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 fn parse_widths(value: Option<&Bound<'_, PyAny>>) -> PyResult<(Option<Vec<Quantity>>, String)> {
     let variant = value
-        .map(Bound::extract)
+        .map(|value| value.extract::<Variant>())
         .transpose()?
         .unwrap_or(Variant::Empty);
     let history = variant.describe();
