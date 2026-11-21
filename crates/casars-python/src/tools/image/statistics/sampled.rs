@@ -12,6 +12,10 @@ use crate::convert::value::CasaValue;
 use super::flux::FluxScale;
 use super::{BASIC, Chunk, QUANTILES, StatsOptions, add_extrema, raised};
 
+mod storage;
+
+use storage::Rows;
+
 // Rows use the same field order as BASIC followed by QUANTILES.
 const COLS: usize = BASIC.len() + QUANTILES.len();
 
@@ -43,7 +47,8 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
         output_shape.push(1);
     }
     let plane_count = output_shape.iter().product::<usize>();
-    let mut rows = Vec::with_capacity(plane_count);
+    let mut rows = Rows::new(plane_count, options.disk).map_err(raised)?;
+    let mut has_samples = false;
     let mut extrema = [None, None];
     let mut start = vec![0; rank];
     let stride = vec![1; rank];
@@ -87,7 +92,7 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
             sample.push(SamplePoint { value, position });
         }
         if sample.is_empty() && !biweight {
-            rows.push([0.0; COLS]);
+            rows.push([0.0; COLS]).map_err(raised)?;
             if chauvenet {
                 iterations.push(0);
             }
@@ -153,9 +158,11 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
             row[3] = f64::from(row[3] as f32);
             row[4] = f64::from(row[4] as f32);
         }
-        rows.push(row);
+        has_samples |= row[0] > 0.0;
+        rows.push(row).map_err(raised)?;
     }
-    let empty = !rows.iter().any(|row| row[0] > 0.0);
+    rows.flush().map_err(raised)?;
+    let empty = !has_samples;
     for (column, &(name, _)) in BASIC.iter().chain(&QUANTILES).enumerate() {
         if biweight && !matches!(name, "npts" | "min" | "max" | "mean" | "sigma")
             || !options.robust && column >= BASIC.len()
@@ -167,7 +174,7 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
         } else {
             CasaValue::Floats {
                 shape: output_shape.clone(),
-                values: rows.iter().map(|row| row[column]).collect(),
+                values: rows.column(column).map_err(raised)?,
             }
         };
         record.push((name, values));
@@ -176,15 +183,15 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
         record.push(("flux", CasaValue::floats(Vec::new())));
     } else if !biweight {
         if let Some(scale) = flux_scale {
+            let mut values = rows.column(1).map_err(raised)?;
+            for (index, value) in values.iter_mut().enumerate() {
+                *value *= scale.for_plane(index);
+            }
             record.push((
                 "flux",
                 CasaValue::Floats {
                     shape: output_shape,
-                    values: rows
-                        .iter()
-                        .enumerate()
-                        .map(|(index, row)| row[1] * scale.for_plane(index))
-                        .collect(),
+                    values,
                 },
             ));
         }

@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use casa_tables::DEFAULT_TILED_ARRAY_CACHE_BYTES;
 use ndarray::ArrayD;
 
 use crate::array_lattice::ArrayLattice;
@@ -137,6 +138,26 @@ impl<T: LatticeElement> TempLattice<T> {
     /// The policy is explicit and measured in bytes; no element-count or
     /// element-width-dependent threshold is hidden in this constructor.
     pub fn new(shape: Vec<usize>, policy: TempStoragePolicy) -> Result<Self, LatticeError> {
+        Self::create(shape, policy, None)
+    }
+
+    /// Creates a lattice with an initial paged cache sized in physical tiles.
+    ///
+    /// The cache size must be positive when the policy selects paged storage.
+    /// The default paged cache is never allocated during construction.
+    pub fn new_with_cache_tiles(
+        shape: Vec<usize>,
+        policy: TempStoragePolicy,
+        cache_tiles: usize,
+    ) -> Result<Self, LatticeError> {
+        Self::create(shape, policy, Some(cache_tiles))
+    }
+
+    fn create(
+        shape: Vec<usize>,
+        policy: TempStoragePolicy,
+        cache_tiles: Option<usize>,
+    ) -> Result<Self, LatticeError> {
         let plan = policy.plan::<T>(&shape)?;
 
         if !plan.is_paged() {
@@ -144,6 +165,16 @@ impl<T: LatticeElement> TempLattice<T> {
                 storage: TempLatticeStorage::Memory(ArrayLattice::zeros(shape)),
             })
         } else {
+            let element_bytes = std::mem::size_of::<T>();
+            let tiled_shape = TiledShape::new(shape, element_bytes)?;
+            let cache_bytes = cache_tiles.map_or(DEFAULT_TILED_ARRAY_CACHE_BYTES, |tiles| {
+                tiled_shape
+                    .tile_shape()
+                    .iter()
+                    .product::<usize>()
+                    .saturating_mul(element_bytes)
+                    .saturating_mul(tiles)
+            });
             let lease = match policy.scratch().expect("paged policy has scratch") {
                 ScratchSpace::SystemTemp => {
                     let dir = tempfile::tempdir().map_err(|e| {
@@ -167,8 +198,7 @@ impl<T: LatticeElement> TempLattice<T> {
                 }
             };
             let table_path = lease._directory.path().join("TempLattice.table");
-            let ts = TiledShape::new(shape, std::mem::size_of::<T>())?;
-            let pa = PagedArray::create(ts, &table_path)?;
+            let pa = PagedArray::create_with_cache(tiled_shape, &table_path, cache_bytes)?;
             Ok(Self {
                 storage: TempLatticeStorage::Paged {
                     array: Box::new(pa),
@@ -571,5 +601,20 @@ mod tests {
 
         lat.set_maximum_cache_size_pixels(512).unwrap();
         assert_eq!(lat.maximum_cache_size_pixels(), 512);
+    }
+
+    #[test]
+    fn paged_cache_accepts_a_tile_budget_at_creation() {
+        let policy = TempStoragePolicy::Paged {
+            scratch: ScratchSpace::SystemTemp,
+        };
+        let shape = vec![16, 16, 16];
+        let mut lat =
+            TempLattice::<f32>::new_with_cache_tiles(shape.clone(), policy.clone(), 2).unwrap();
+        assert_eq!(lat.maximum_cache_size_pixels(), 2 * 16 * 16 * 16);
+        lat.temp_close().unwrap();
+        lat.reopen().unwrap();
+        assert_eq!(lat.maximum_cache_size_pixels(), 2 * 16 * 16 * 16);
+        assert!(TempLattice::<f32>::new_with_cache_tiles(shape, policy, 0).is_err());
     }
 }
