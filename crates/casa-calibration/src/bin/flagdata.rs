@@ -964,19 +964,12 @@ fn time_averaging_bin(
     if !matches!(mode, FlagDataMode::Clip | FlagDataMode::Tfcrop) {
         return Ok(None);
     }
-    match task.value("timeavg") {
-        Some(ParameterValue::Bool(false)) => Ok(None),
-        Some(ParameterValue::Bool(true)) => task.required_text("timebin").map(Some),
-        Some(ParameterValue::Array(values))
-            if values
-                .iter()
-                .all(|value| matches!(value, ParameterValue::Bool(_))) =>
-        {
+    match automatic::average_switch(task, "timeavg")? {
+        Some(false) => Ok(None),
+        Some(true) => task.required_text("timebin").map(Some),
+        None => {
             Err(TaskFailure::execution("RecordInterface::asBool - invalid data type").at("timeavg"))
         }
-        _ => Err(
-            TaskFailure::validation("timeavg must be a Boolean or Boolean vector").at("timeavg"),
-        ),
     }
 }
 
@@ -988,27 +981,13 @@ fn channel_averaging_bins(
     if !matches!(mode, FlagDataMode::Clip | FlagDataMode::Tfcrop) {
         return Ok(None);
     }
-    match task.value("channelavg") {
-        Some(ParameterValue::Bool(false)) => return Ok(None),
-        Some(ParameterValue::Bool(true)) => {}
-        Some(ParameterValue::Array(values))
-            if values
-                .iter()
-                .all(|value| matches!(value, ParameterValue::Bool(_))) =>
-        {
-            return Err(
-                TaskFailure::execution("RecordInterface::asBool - invalid data type")
-                    .at("channelavg"),
-            );
-        }
-        _ => {
-            return Err(
-                TaskFailure::validation("channelavg must be a Boolean or Boolean vector")
-                    .at("channelavg"),
-            );
-        }
+    match automatic::average_switch(task, "channelavg")? {
+        Some(false) => Ok(None),
+        Some(true) => Ok(Some(channel_bins)),
+        None => Err(
+            TaskFailure::execution("RecordInterface::asBool - invalid data type").at("channelavg"),
+        ),
     }
-    Ok(Some(channel_bins))
 }
 
 fn channel_bin_widths(task: &TaskInvocation<'_>) -> Result<Vec<u32>, TaskFailure> {

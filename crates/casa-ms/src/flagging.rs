@@ -1607,65 +1607,19 @@ fn apply_tfcrop_flags(
             .collect()
     };
     if let Some(options) = &options {
-        let mut roundoff = if loaded.model_roundoff.is_empty() {
-            Vec::new()
-        } else {
-            vec![0.0; samples.len()]
-        };
-        for (description, group) in &groups {
-            let planes = samples_by_corr(group);
-            let selection = correlations.as_ref().zip(*description);
-            let default_projections;
-            let (projections, metric) = if let Some((selection, ddid)) = selection {
-                (selection.for_description(ddid)?, Some(selection.metric))
-            } else {
-                default_projections = planes
-                    .iter()
-                    .filter(|plane| {
-                        calibration_projection
-                            .as_ref()
-                            .is_none_or(|p| p.includes(plane[0].corr))
-                    })
-                    .map(|plane| ClipProjection::Stored(plane[0].corr))
-                    .collect::<Vec<_>>();
-                (default_projections.as_slice(), None)
-            };
-            for &projection in projections {
-                let Some(series) = tfcrop_series(
-                    &planes,
-                    projection,
-                    metric,
-                    &modified,
-                    &loaded.model_roundoff,
-                    &mut roundoff,
-                ) else {
-                    continue;
-                };
-                for &direction in options.passes.directions() {
-                    let (cutoff, candidates) = match direction {
-                        TfcropDirection::Freq => (request.freqcutoff, &mut freq_flags),
-                        TfcropDirection::Time => (request.timecutoff, &mut time_flags),
-                    };
-                    tfcrop_fit_base_and_flag(
-                        &series.samples,
-                        direction,
-                        cutoff,
-                        options,
-                        TfcropArithmetic {
-                            casa_arithmetic: request.casa_row_selection,
-                            model_roundoff: &roundoff,
-                        },
-                        &mut modified,
-                        candidates,
-                    );
-                }
-                for (first, second) in series.pairs {
-                    modified[second] |= modified[first];
-                    freq_flags[second] |= freq_flags[first];
-                    time_flags[second] |= time_flags[first];
-                }
-            }
-        }
+        fit_tfcrop_groups(
+            &groups,
+            options,
+            request,
+            correlations.as_ref(),
+            calibration_projection.as_ref(),
+            &loaded.model_roundoff,
+            &mut TfcropFitMasks {
+                modified: &mut modified,
+                freq_flags: &mut freq_flags,
+                time_flags: &mut time_flags,
+            },
+        )?;
     }
     if request.extendflags {
         let fit_flags = loaded
@@ -1724,6 +1678,79 @@ fn apply_tfcrop_flags(
         })
     });
     Ok(changes)
+}
+
+struct TfcropFitMasks<'a> {
+    modified: &'a mut [bool],
+    freq_flags: &'a mut [bool],
+    time_flags: &'a mut [bool],
+}
+
+fn fit_tfcrop_groups(
+    groups: &[(Option<i32>, Vec<Sample>)],
+    options: &TfcropOptions,
+    request: &FlagDataRequest,
+    correlations: Option<&TfcropCorrelations>,
+    calibration_projection: Option<&calibration::CalibrationProjection>,
+    model_roundoff: &[f32],
+    masks: &mut TfcropFitMasks<'_>,
+) -> Result<(), FlaggingError> {
+    let mut roundoff = if model_roundoff.is_empty() {
+        Vec::new()
+    } else {
+        vec![0.0; masks.modified.len()]
+    };
+    for (description, group) in groups {
+        let planes = samples_by_corr(group);
+        let selection = correlations.zip(*description);
+        let default_projections;
+        let (projections, metric) = if let Some((selection, ddid)) = selection {
+            (selection.for_description(ddid)?, Some(selection.metric))
+        } else {
+            default_projections = planes
+                .iter()
+                .filter(|plane| calibration_projection.is_none_or(|p| p.includes(plane[0].corr)))
+                .map(|plane| ClipProjection::Stored(plane[0].corr))
+                .collect::<Vec<_>>();
+            (default_projections.as_slice(), None)
+        };
+        for &projection in projections {
+            let Some(series) = tfcrop_series(
+                &planes,
+                projection,
+                metric,
+                masks.modified,
+                model_roundoff,
+                &mut roundoff,
+            ) else {
+                continue;
+            };
+            for &direction in options.passes.directions() {
+                let (cutoff, candidates) = match direction {
+                    TfcropDirection::Freq => (request.freqcutoff, &mut *masks.freq_flags),
+                    TfcropDirection::Time => (request.timecutoff, &mut *masks.time_flags),
+                };
+                tfcrop_fit_base_and_flag(
+                    &series.samples,
+                    direction,
+                    cutoff,
+                    options,
+                    TfcropArithmetic {
+                        casa_arithmetic: request.casa_row_selection,
+                        model_roundoff: &roundoff,
+                    },
+                    masks.modified,
+                    candidates,
+                );
+            }
+            for (first, second) in series.pairs {
+                masks.modified[second] |= masks.modified[first];
+                masks.freq_flags[second] |= masks.freq_flags[first];
+                masks.time_flags[second] |= masks.time_flags[first];
+            }
+        }
+    }
+    Ok(())
 }
 
 fn extend_tfcrop_groups(
@@ -2684,6 +2711,7 @@ fn load_time_averaged_tfcrop(
     };
     let mut axes = AveragedSampleAxes::default();
     let mut samples = Vec::new();
+    let mut model_roundoff = Vec::new();
     let mut flags_by_bin = BTreeMap::new();
     let mut channel_layouts = HashMap::<(i32, usize), Arc<[usize]>>::new();
     for group in clip_time::clip_time_groups(&timed, seconds) {
@@ -2733,6 +2761,7 @@ fn load_time_averaged_tfcrop(
         } else {
             (flags, channels.as_slice())
         };
+        let first_sample = samples.len();
         if let Some(combined) = &combined {
             push_row_samples(
                 &combined.data,
@@ -2743,6 +2772,20 @@ fn load_time_averaged_tfcrop(
                 request.data_column.name(),
                 &mut samples,
             )?;
+            if let Some(roundoff) = combined.fourier_roundoff {
+                model_roundoff.resize(first_sample, 0.0);
+                model_roundoff.extend(samples[first_sample..].iter().map(|sample| {
+                    if let Some(bins) = bins {
+                        bins.original_channels(sample.chan)
+                            .iter()
+                            .filter(|&&chan| flags[[sample.corr, chan]] == sample.flag)
+                            .map(|&chan| roundoff[[sample.corr, chan]])
+                            .fold(0.0, f32::max)
+                    } else {
+                        roundoff[[sample.corr, sample.chan]]
+                    }
+                }));
+            }
         } else {
             push_flag_samples(fit_flags, fit_channels, None, metadata, &mut samples);
         }
@@ -2764,7 +2807,7 @@ fn load_time_averaged_tfcrop(
     Ok(LoadedSamples {
         samples,
         flags_by_row,
-        model_roundoff: Vec::new(),
+        model_roundoff,
         axes,
     })
 }
