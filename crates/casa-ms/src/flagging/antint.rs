@@ -105,7 +105,7 @@ pub(super) fn apply(
         channels_by_description: &channels_by_description,
         options,
     }
-    .affected_rows(plan.rows_per_block.max(1), &fail, |indices| {
+    .affected_rows(plan.rows_per_block.max(1), fail, |indices| {
         column
             .array_cells_owned_uncached(indices)
             .map_err(|error| fail(error.to_string()))
