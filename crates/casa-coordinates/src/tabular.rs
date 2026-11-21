@@ -280,13 +280,19 @@ impl TabularCoordinate {
             if !dp.is_finite() || !dw.is_finite() || !(dw / dp).is_finite() {
                 return Err(invalid("tabular sample span must be finite"));
             }
-            // Casacore checks monotonicity after the first interval. Its
-            // restore and evaluation still need distinct first pixel samples.
-            if pixel[0] == pixel[1]
-                || pixel
-                    .windows(2)
-                    .skip(1)
-                    .any(|pair| (pair[1] - pair[0]) * dp.signum() <= 0.0)
+            // Interpolate1D compares adjacent pixels with nearAbs before it
+            // can evaluate or serialize the world samples.
+            if pixel
+                .windows(2)
+                .any(|pair| (pair[1] - pair[0]).abs() <= 1e-13)
+            {
+                return Err(invalid("tabular table has repeated pixel values"));
+            }
+            // Casacore allows the first interval to run in either direction.
+            if pixel
+                .windows(2)
+                .skip(1)
+                .any(|pair| (pair[1] - pair[0]) * dp.signum() <= 0.0)
                 || world
                     .windows(2)
                     .skip(1)
@@ -329,8 +335,7 @@ impl TabularCoordinate {
         &self.world_values
     }
 
-    /// Whether the first pair of pixels runs opposite to the table's endpoints.
-    pub fn has_reversed_pixel_interval(&self) -> bool {
+    fn has_reversed_pixel_interval(&self) -> bool {
         self.pixel_values.len() > 2
             && (self.pixel_values[1] > self.pixel_values[0])
                 != (self.pixel_values.last().unwrap() > &self.pixel_values[0])

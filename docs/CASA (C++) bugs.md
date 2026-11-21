@@ -8280,6 +8280,7 @@ according to their declared byte order.
 
 CASA 6.7.6.14 accepts `settabular([0, 0, 2], [5, 6, 7])` and then raises
 `Interpolate1D::operator() data has repeated x values` in `torecord()`.
+The interpolator also treats adjacent pixels within \(10^{-13}\) as repeated.
 It also accepts nonfinite samples, which can turn even finite input
 positions into `NaN`. casa-rs rejects these samples before changing the
 coordinate. Finite one-sample tables still define constant mappings.

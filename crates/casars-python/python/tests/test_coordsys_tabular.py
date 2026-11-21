@@ -168,8 +168,10 @@ def test_unusable_samples_preserve_the_prior_mapping():
     before = cs.torecord()
     with pytest.raises(RuntimeError, match="samples must be finite"):
         cs.settabular([0, 1], [2, np.inf])
-    with pytest.raises(RuntimeError, match="monotonically"):
+    with pytest.raises(RuntimeError, match="repeated pixel values"):
         cs.settabular([0, 0, 2], [5, 6, 7])
+    with pytest.raises(RuntimeError, match="repeated pixel values"):
+        cs.settabular([0., 1e-30, 1.], [0., 1., 2.])
     _assert_value(cs.torecord(), before)
 
 
