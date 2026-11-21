@@ -114,7 +114,7 @@ def test_native_smoothing_preserves_complex_values_and_metadata(casa, tmp_path, 
                 assert reopened.getchunk(getmask=True).all()
                 assert reopened.brightnessunit() == "Jy/beam"
                 assert reopened.restoringbeam()["major"]["value"] == pytest.approx(3.)
-                assert reopened.pixeltype() == "Complex"
+                assert reopened.pixeltype() == "complex"
             finally:
                 reopened.done()
 
