@@ -3933,6 +3933,12 @@ physical columns. The paired fixture holds complex DATA within the requested
 range and puts signed floats outside it. CASA flags the samples from the
 float column. casa-rs computes the range from the requested complex DATA.
 
+The same iterator substitution affects TFCrop's `DATA` and `RESIDUAL_DATA`
+fits. A fixture with distinct spikes in the complex and float columns shows
+that CASA flags the float source. Native TFCrop keeps the complex source and
+matches the CASA masks for a control containing only complex observations.
+[TFCrop source oracle](../tools/casa-compat/flagdata_tfcrop_sources_oracle.py)
+
 With `datacolumn="FLOAT_DATA", clipzeros=True`, CASA also flags finite
 negative values outside the zero tolerance. casa-rs applies the zero
 tolerance to the magnitude of each sample. An explicit inside or outside

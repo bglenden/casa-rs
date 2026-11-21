@@ -29,7 +29,6 @@ impl ClipColumns {
         column: FlagDataColumn,
         average: bool,
         models: Option<ClipModels>,
-        prefer_float: bool,
     ) -> Result<Option<Self>, FlaggingError> {
         let has_column = |name| {
             table
@@ -42,12 +41,7 @@ impl ClipColumns {
         let float_data = FlagDataColumn::FloatData.name();
         let (primary, subtract, broadcast_weights) = match column {
             FlagDataColumn::Residual => (FlagDataColumn::CorrectedData.name(), Some(model), false),
-            FlagDataColumn::Data if prefer_float && has_column(float_data) => {
-                (float_data, None, false)
-            }
-            FlagDataColumn::ResidualData
-                if (prefer_float || !has_column(observed)) && has_column(float_data) =>
-            {
+            FlagDataColumn::ResidualData if !has_column(observed) && has_column(float_data) => {
                 (float_data, Some(model), false)
             }
             FlagDataColumn::ResidualData => (observed, Some(model), false),
@@ -380,16 +374,24 @@ impl ClipColumnCells<'_> {
         // Allow for the few ulps between Fourier predictors before using a
         // small difference as evidence of an outlier in the residual.
         let scale = 8.0 * f32::EPSILON;
+        let bound = |observed, predicted| {
+            // A recipe outside its spectral coverage does not alter this sample.
+            if predicted == 0.0 {
+                0.0
+            } else {
+                scale * (observed + predicted)
+            }
+        };
         Ok(match data.as_ref() {
             ArrayValue::Complex32(data) => Some(
                 ndarray::Zip::from(data)
                     .and(model)
-                    .map_collect(|data, model| scale * (data.norm() + model.norm())),
+                    .map_collect(|data, model| bound(data.norm(), model.norm())),
             ),
             ArrayValue::Float32(data) => Some(
                 ndarray::Zip::from(data)
                     .and(model)
-                    .map_collect(|data, model| scale * (data.abs() + model.norm())),
+                    .map_collect(|data, model| bound(data.abs(), model.norm())),
             ),
             _ => None,
         })

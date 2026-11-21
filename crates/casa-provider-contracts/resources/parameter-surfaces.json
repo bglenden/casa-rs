@@ -25188,7 +25188,7 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": "Unaveraged TFCrop reads DATA, CORRECTED, MODEL, RESIDUAL, RESIDUAL_DATA, FLOAT_DATA, WEIGHT or WEIGHT_SPECTRUM. Its observed-data iterator uses the FLOAT_DATA view when both observed columns are present. A string vector is recorded in HISTORY when the active agent ignores this argument.",
+          "surface_note": "Unaveraged TFCrop reads DATA, CORRECTED, MODEL, RESIDUAL, RESIDUAL_DATA, FLOAT_DATA, WEIGHT or WEIGHT_SPECTRUM. DATA and RESIDUAL_DATA use complex DATA when both observed columns are present. A string vector is recorded in HISTORY when the active agent ignores this argument.",
           "projections": {
             "cli": {
               "positional": null,

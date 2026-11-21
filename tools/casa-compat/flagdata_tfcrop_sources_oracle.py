@@ -90,20 +90,30 @@ def check_sources(libraries):
         ("complex", "weight_spectrum", ((18, 1),)),
         ("scalar", "weight", None),
         ("float", "data", ((14, 1),)),
+        ("float", "residual_data", ()),
         ("float", "float_data", ((14, 1),)),
         ("float-only", "float_data", ((14, 1),)),
+        ("float-only", "residual_data", ()),
         ("signed", "float_data", ((14, 1),)),
         ("signed", "data", ()),
     )
+    # The native DATA selection keeps the complex source when both observed
+    # columns exist. The complex-only cases verify these same masks in CASA.
+    complex_source_masks = {
+        ("float", "data"): ((16, 0), (10, 1)),
+        ("signed", "data"): ((16, 0), (10, 1)),
+        ("float", "residual_data"): ((16, 0),),
+    }
     for index, (variant, column, coordinates) in enumerate(cases):
-        expected = empty.copy()
         dimension = "time" if coordinates is None else "freq"
-        if coordinates is None:
-            expected[broad, :, 0] = True
-        else:
-            for channel, plane in coordinates:
-                expected[narrow, channel, plane] = True
         for name, task in libraries:
+            expected = empty.copy()
+            selected = complex_source_masks.get((variant, column), coordinates) if name == "native" else coordinates
+            if selected is None:
+                expected[broad, :, 0] = True
+            else:
+                for channel, plane in selected:
+                    expected[narrow, channel, plane] = True
             path = f"source-{index}-{name}.ms"
             copytree(f"{variant}.ms", path)
             original, auxiliary = science_state(path), auxiliary_content(path)
@@ -153,7 +163,7 @@ def check_sources(libraries):
     return len(cases), len(refusals)
 
 
-def check_virtual_residuals(libraries):
+def seed_fourier_models():
     empty, narrow, _ = make_fixture("model-source.ms")
     with table("model-source.ms/FIELD", ack=False) as fields:
         direction = fields.getcell("PHASE_DIR", 0).ravel()
@@ -166,6 +176,11 @@ def check_virtual_residuals(libraries):
         model = materialized.getcol("MODEL_DATA")
     with table("model-virtual.ms", ack=False) as virtual:
         assert not np.array_equal(virtual.getcol("MODEL_DATA"), model)
+    return empty, narrow, model
+
+
+def check_virtual_residuals(libraries):
+    empty, narrow, model = seed_fourier_models()
     cases = (("residual_data", 16, 0, 30.), ("residual", 12, 1, 30.),
              ("residual_data", 16, 0, 0.0001), ("residual", 12, 1, 0.0001))
     for index, (column, channel, plane, amplitude) in enumerate(cases):
@@ -189,7 +204,50 @@ def check_virtual_residuals(libraries):
                 np.testing.assert_array_equal(actual, expected, err_msg=f"{source} {name} {column} {amplitude}")
                 assert not rows.any()
                 check_science_state(path, original)
-    return len(cases)
+    # An exactly zero prediction leaves even a very small signal available
+    # to the statistical fit. This band has no Fourier model coverage.
+    assert not model[narrow, 16:, :].any()
+    row = np.flatnonzero(narrow)[0]
+    observed = model + 1.
+    observed[row, 23, 0] += 8 * np.finfo(np.float32).eps
+    expected = empty.copy()
+    expected[row, 23, 0] = True
+    for source in ("scratch", "virtual"):
+        for name, task in libraries:
+            path = f"zero-model-{source}-{name}.ms"
+            copytree(f"model-{source}.ms", path)
+            with table(path, readonly=False, ack=False) as main:
+                put_samples(main, "DATA", observed)
+            assert task(vis=path, mode="tfcrop", field="0", antenna="0&1", spw="0:16~31",
+                        datacolumn="residual_data", flagdimension="freq", freqfit="poly", maxnpieces=1,
+                        freqcutoff=2., extendflags=False, flagbackup=False) == {}
+            actual, rows = flags(path)
+            np.testing.assert_array_equal(actual, expected, err_msg=f"{source} {name}")
+            assert not rows.any()
+    return len(cases) + 1
+
+
+def check_disabled_model(libraries):
+    for index, reason in enumerate(("invalid-fit", "missing-corrected")):
+        for name, task in libraries:
+            path = f"disabled-{index}-{name}.ms"
+            copytree("model-virtual.ms", path)
+            with table(f"{path}/SOURCE", readonly=False, ack=False) as source:
+                record = source.getcell("SOURCE_MODEL", 0)
+                del record["ft_0"]
+                source.putcell("SOURCE_MODEL", 0, record)
+            if reason == "missing-corrected":
+                with table(path, readonly=False, ack=False) as main:
+                    main.removecols("CORRECTED_DATA")
+            science, auxiliary = science_state(path), auxiliary_content(path)
+            options = dict(vis=path, mode="tfcrop", field="0", antenna="0&1", datacolumn="residual",
+                           maxnpieces=0 if reason == "invalid-fit" else 7,
+                           extendflags=False, flagbackup=False)
+            assert task(action="calculate", **options) == {}
+            assert auxiliary_content(path) == auxiliary
+            assert task(**options) == {}
+            assert not any(mask.any() for mask in flags(path))
+            check_science_state(path, science)
 
 
 def main():
@@ -198,8 +256,9 @@ def main():
     with TemporaryDirectory(prefix="flagdata-tfcrop-sources-") as root, chdir(root):
         products, refusals = check_sources(libraries)
         virtual = check_virtual_residuals(libraries)
+        check_disabled_model(libraries)
     print(f"{products} TFCrop stored-source products, {virtual} virtual residual products and "
-          f"{refusals} source refusals verified")
+          f"{refusals} source refusals and two disabled models verified")
 
 
 if __name__ == "__main__":

@@ -1062,7 +1062,7 @@ fn apply_clip_flags(
         None
     };
     let Some(mut columns) =
-        ClipColumns::bind(ms.main_table(), request.data_column, average, models, false)?
+        ClipColumns::bind(ms.main_table(), request.data_column, average, models)?
     else {
         return Ok(ChangeSet::default());
     };
@@ -1361,16 +1361,15 @@ fn apply_tfcrop_flags(
 ) -> Result<ChangeSet, FlaggingError> {
     let started = Instant::now();
     let column = request.data_column;
+    let options = request.tfcrop.filter(|options| {
+        (1..=9).contains(&options.max_pieces) && (1..=3).contains(&options.half_window)
+    });
     let mut columns = if request.casa_row_selection {
-        tfcrop_columns(ms, column, selected_rows, model_factory)?
+        tfcrop_columns(ms, column, selected_rows, model_factory, options.is_some())?
     } else {
         None
     };
-    let options = request.tfcrop.filter(|options| {
-        (1..=9).contains(&options.max_pieces)
-            && (1..=3).contains(&options.half_window)
-            && (!request.casa_row_selection || columns.is_some())
-    });
+    let options = options.filter(|_| !request.casa_row_selection || columns.is_some());
     if options.is_none() && !request.extendflags {
         return Ok(ChangeSet::default());
     }
@@ -1507,23 +1506,41 @@ fn tfcrop_columns(
     column: FlagDataColumn,
     selected_rows: &[usize],
     model_factory: Option<FlagDataModelFactory>,
+    active: bool,
 ) -> Result<Option<ClipColumns>, FlaggingError> {
     let table = ms.main_table();
+    let exists = |name| {
+        table
+            .schema()
+            .is_some_and(|schema| schema.contains_column(name))
+    };
     let is_residual = matches!(
         column,
         FlagDataColumn::Residual | FlagDataColumn::ResidualData
     );
-    if !is_residual
-        && !table
-            .schema()
-            .is_some_and(|schema| schema.contains_column(column.name()))
-    {
+    let required_sources_exist = if is_residual {
+        exists("MODEL_DATA") || !crate::scratch_columns::virtual_model_fields(ms).is_empty()
+    } else {
+        exists(column.name())
+    };
+    if !required_sources_exist {
         return Err(FlaggingError::MissingTfcropColumn);
+    }
+    // CASA admits the column names before it starts the fit. Only a
+    // running fit opens a virtual recipe's image.
+    if !active {
+        return Ok(None);
+    }
+    if column == FlagDataColumn::Residual && !exists("CORRECTED_DATA") {
+        tracing::warn!(
+            "Cannot create agent Tfcrop: necessary CORRECTED_DATA column is not available"
+        );
+        return Ok(None);
     }
     let path = display_ms_path(ms);
     let models =
         clip_models::ClipModels::for_selection(ms, column, selected_rows, model_factory, &path)?;
-    match ClipColumns::bind(table, column, false, models, true) {
+    match ClipColumns::bind(table, column, false, models) {
         Err(FlaggingError::MissingClipColumn) => Err(FlaggingError::MissingTfcropColumn),
         result => result,
     }
@@ -2639,6 +2656,15 @@ fn tfcrop_fit_base_and_flag(
     };
 
     let mut normalized_roundoff = avg_roundoff.as_ref().map(|_| vec![0.0; axis0.len()]);
+    // The fitted baseline shares information across the axis, including
+    // channels at which the model has no spectral coverage.
+    let fit_roundoff = avg_roundoff.as_ref().map_or(0.0, |bounds| {
+        bounds
+            .iter()
+            .copied()
+            .filter(|bound| bound.is_finite())
+            .fold(0.0, f32::max)
+    });
     for key1 in &axis1 {
         let mut normalized = vec![0.0f32; axis0.len()];
         let mut flags = vec![false; axis0.len()];
@@ -2652,12 +2678,11 @@ fn tfcrop_fit_base_and_flag(
                 if !flags[i0] && (casa_arithmetic || avg_fit[i0].abs() > f32::EPSILON) {
                     let fit = avg_fit[i0];
                     normalized[i0] = tfcrop_value(sample) / fit;
-                    if let (Some(roundoff), Some(mean)) = (&mut normalized_roundoff, &avg_roundoff)
-                    {
+                    if let Some(roundoff) = &mut normalized_roundoff {
                         // The fitted baseline also uses residuals made with the
                         // reconstructed model. Compare above both uncertainties.
                         let measured = model_roundoff.get(sample.index).copied().unwrap_or(0.0);
-                        let uncertainty = (measured + mean[i0]) / fit.abs();
+                        let uncertainty = (measured + fit_roundoff) / fit.abs();
                         if uncertainty.is_finite() {
                             roundoff[i0] = uncertainty;
                         }
