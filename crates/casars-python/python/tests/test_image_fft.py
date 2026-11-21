@@ -220,7 +220,7 @@ def test_image_fft_preserves_untransformed_spectral_display_fields(casa, tmp_pat
     record = coordinate.torecord()
     coordinate.done()
     spectral = next(value for key, value in record.items() if key.startswith("spectral"))
-    settings = dict(nativeType=1, velUnit="m/s", waveUnit="cm", formatUnit="m/s")
+    settings = dict(nativeType=1, velUnit="m/s", waveUnit="mm", formatUnit="m/s")
     spectral.update(settings)
     values = np.ones((7, 8, 3), dtype=np.float32)
     for index, api in enumerate((casa, tools)):
