@@ -8740,7 +8740,7 @@ and error semantics of a native Quality coordinate.
 
 CASA 6.7.6.14 restores a two-axis Linear coordinate system stored as an
 outer `coordsys0` coordinate. With child units `m` and `s`, both
-`coordsys.convert([6, 7], unitsin=['pix', 'pix'], unitsout=['cm', 'ms'])`
+`coordsys.convert([6.0, 7.0], unitsin=['pix', 'pix'], unitsout=['cm', 'ms'])`
 and the equivalent `convertmany([[6.0], [7.0]], ...)` segfault. Casa-rs
 raises a Python error and leaves the coordinate record usable. Scalar and
 batched `toworld` and `topixel` continue to use the nested transform.

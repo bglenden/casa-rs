@@ -173,6 +173,21 @@ impl Placement {
                     )?;
                 }
             }
+        } else if matches!(model, CoordinateModel::System(_))
+            && self.world.indices.iter().any(|&axis| axis < 0)
+        {
+            let declared = model.declared_axis_units();
+            let native = model.axis_units();
+            for (local, (&axis, value)) in self.world.indices.iter().zip(&mut values).enumerate() {
+                if axis < 0 && declared[local] != native[local] {
+                    *value = convert_value_to_unit(
+                        *value,
+                        &declared[local],
+                        &native[local],
+                        "worldreplace",
+                    )?;
+                }
+            }
         }
         Ok(values)
     }

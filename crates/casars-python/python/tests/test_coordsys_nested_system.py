@@ -124,7 +124,8 @@ def test_nested_edits_and_records_survive_all_native_writer_reader_pairs(casa, s
                 image.done()
 
 
-def test_direction_and_frequency_in_a_nested_system_use_declared_units(casa):
+@pytest.mark.parametrize("hide_longitude", [False, True])
+def test_direction_and_frequency_in_a_nested_system_use_declared_units(casa, hide_longitude):
     seed = casa.coordsys().newcoordsys(direction=True, spectral=True)
     try:
         assert seed.setunits(["deg", "deg", "Hz"])
@@ -135,7 +136,7 @@ def test_direction_and_frequency_in_a_nested_system_use_declared_units(casa):
     finally:
         seed.done()
 
-    points = np.array([[4.0, 5.0, 8.0], [6.0, 4.0, 7.0]]).T
+    points = np.array([[4.0, 5.0, 8.0], [4.0 if hide_longitude else 6.0, 4.0, 7.0]]).T
     east = np.deg2rad(-0.25 * (points[0] - 4.0))
     north = np.deg2rad(0.125 * (points[1] - 5.0))
     forward = np.sqrt(1.0 - east**2 - north**2)
@@ -145,13 +146,21 @@ def test_direction_and_frequency_in_a_nested_system_use_declared_units(casa):
         np.rad2deg(np.arcsin(forward * np.sin(latitude) + north * np.cos(latitude))),
         1.4e9 + (points[2] - 8.0) * 1000.0,
     ])
+    first_axis = int(hide_longitude)
+    if hide_longitude:
+        original["pixelmap0"] = np.array([-1, 0, 1], dtype=np.int32)
+        original["worldmap0"] = np.array([-1, 0, 1], dtype=np.int32)
+        original["pixelreplace0"][0] = 4.0
+        original["worldreplace0"][0] = 20.0
+        points = points[1:]
+        expected = expected[1:]
     for api in (casa, tools):
         cs = api.coordsys()
         try:
             assert cs.fromrecord(original)
-            np.testing.assert_array_equal(cs.units(), ["deg", "deg", "Hz"])
-            np.testing.assert_allclose(cs.referencevalue()["numeric"], [20.0, 30.0, 1.4e9])
-            np.testing.assert_allclose(cs.increment()["numeric"], [-0.25, 0.125, 1000.0])
+            np.testing.assert_array_equal(cs.units(), ["deg", "deg", "Hz"][first_axis:])
+            np.testing.assert_allclose(cs.referencevalue()["numeric"], [20.0, 30.0, 1.4e9][first_axis:])
+            np.testing.assert_allclose(cs.increment()["numeric"], [-0.25, 0.125, 1000.0][first_axis:])
             np.testing.assert_allclose(cs.toworldmany(points)["numeric"], expected, atol=1e-8, rtol=0)
             np.testing.assert_allclose(cs.topixelmany(expected)["numeric"], points, atol=1e-8, rtol=0)
             np.testing.assert_allclose(cs.toworld(points[:, 1])["numeric"], expected[:, 1], atol=1e-8, rtol=0)
