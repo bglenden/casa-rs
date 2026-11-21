@@ -8,6 +8,7 @@
 //! modes are native robust-statistics implementations of the CASA algorithm
 //! families rather than a binding to CASA C++.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fs;
@@ -624,9 +625,13 @@ fn flagdata_with_persistence(
             correlations.as_ref(),
             &ms_path,
         )?,
-        FlagDataMode::Tfcrop => {
-            apply_tfcrop_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
-        }
+        FlagDataMode::Tfcrop => apply_tfcrop_flags(
+            ms,
+            &selected_rows,
+            channel_selections.as_ref(),
+            request,
+            model_factory,
+        )?,
         FlagDataMode::Rflag => {
             apply_rflag_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
@@ -1049,7 +1054,7 @@ fn apply_clip_flags(
         None
     };
     let Some(mut columns) =
-        ClipColumns::bind(ms.main_table(), request.data_column, average, models)?
+        ClipColumns::bind(ms.main_table(), request.data_column, average, models, false)?
     else {
         return Ok(ChangeSet::default());
     };
@@ -1344,31 +1349,43 @@ fn apply_tfcrop_flags(
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
+    model_factory: Option<FlagDataModelFactory>,
 ) -> Result<ChangeSet, FlaggingError> {
-    if request.casa_row_selection
-        && !ms
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column(request.data_column.name()))
-    {
-        return Err(FlaggingError::MissingTfcropColumn);
-    }
+    let started = Instant::now();
+    let column = request.data_column;
+    let mut columns = if request.casa_row_selection {
+        tfcrop_columns(ms, column, selected_rows, model_factory)?
+    } else {
+        None
+    };
     let options = request.tfcrop.filter(|options| {
-        (1..=9).contains(&options.max_pieces) && (1..=3).contains(&options.half_window)
+        (1..=9).contains(&options.max_pieces)
+            && (1..=3).contains(&options.half_window)
+            && (!request.casa_row_selection || columns.is_some())
     });
     if options.is_none() && !request.extendflags {
         return Ok(ChangeSet::default());
     }
-    let started = Instant::now();
     let loaded = load_samples(
         ms,
         selected_rows,
         channel_selections,
-        options.map(|_| request.data_column),
+        options.map(|_| {
+            columns
+                .as_mut()
+                .map_or(SampleData::Stored(column), |operands| {
+                    SampleData::Visibility(column, operands)
+                })
+        }),
         None,
         false,
     )?;
-    let samples = loaded.samples;
+    let mut samples = loaded.samples;
+    if request.casa_row_selection && column.is_real() {
+        for sample in &mut samples {
+            sample.amp = sample.real;
+        }
+    }
     let loaded_ms = started.elapsed().as_millis();
     let mut modified = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
@@ -1473,6 +1490,33 @@ fn apply_tfcrop_flags(
     Ok(changes)
 }
 
+fn tfcrop_columns(
+    ms: &MeasurementSet,
+    column: FlagDataColumn,
+    selected_rows: &[usize],
+    model_factory: Option<FlagDataModelFactory>,
+) -> Result<Option<ClipColumns>, FlaggingError> {
+    let table = ms.main_table();
+    let is_residual = matches!(
+        column,
+        FlagDataColumn::Residual | FlagDataColumn::ResidualData
+    );
+    if !is_residual
+        && !table
+            .schema()
+            .is_some_and(|schema| schema.contains_column(column.name()))
+    {
+        return Err(FlaggingError::MissingTfcropColumn);
+    }
+    let path = display_ms_path(ms);
+    let models =
+        clip_models::ClipModels::for_selection(ms, column, selected_rows, model_factory, &path)?;
+    match ClipColumns::bind(table, column, false, models, true) {
+        Err(FlaggingError::MissingClipColumn) => Err(FlaggingError::MissingTfcropColumn),
+        result => result,
+    }
+}
+
 fn extend_tfcrop_selected_channels(
     group: &[Sample],
     flags: &BTreeMap<usize, ArrayD<bool>>,
@@ -1527,7 +1571,7 @@ fn apply_rflag_flags(
         ms,
         selected_rows,
         channel_selections,
-        Some(request.data_column),
+        Some(SampleData::Stored(request.data_column)),
         None,
         false,
     )?;
@@ -1959,22 +2003,27 @@ fn select_autocorrelations(
         .collect())
 }
 
-/// The selected rows' samples and flags. Each sample carries its value in
-/// `data_column`, or zero when the caller reads the flags alone (`None`):
+enum SampleData<'a> {
+    Stored(FlagDataColumn),
+    Visibility(FlagDataColumn, &'a mut ClipColumns),
+}
+
+/// The selected rows' samples and flags. Each sample carries its selected
+/// input value, or zero when the caller reads the flags alone (`None`):
 /// manual flagging and extension, as CASA's, need no data column.
 fn load_samples(
     ms: &MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
-    data_column: Option<FlagDataColumn>,
+    data: Option<SampleData<'_>>,
     flag_correlations: Option<&CorrelationSelection>,
     retain_channel_overlaps: bool,
 ) -> Result<LoadedSamples, FlaggingError> {
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
     let table = ms.main_table();
-    let data_cells = data_column
-        .map(|column| {
+    let stored = if let Some(SampleData::Stored(column)) = data.as_ref() {
+        Some(
             table
                 .column_accessor(column.name())
                 .and_then(|accessor| accessor.array_cells_owned(selected_rows))
@@ -1982,24 +2031,59 @@ fn load_samples(
                 .map_err(|source| FlaggingError::MutateFlags {
                     path: path.clone(),
                     reason: format!("read selected {} rows: {source}", column.name()),
-                })
-        })
-        .transpose()?;
+                })?,
+        )
+    } else {
+        None
+    };
     let flag_cells = table
         .column_accessor(FLAG_COLUMN)
         .and_then(|column| column.array_cells_owned(selected_rows))
         .map_err(|source| FlaggingError::MutateFlags {
             path: path.clone(),
             reason: format!("read selected FLAG rows: {source}"),
-        })?;
+        })?
+        .into_iter()
+        .zip(selected_rows)
+        .map(|(cell, row)| match cell {
+            Some(ArrayValue::Bool(flags)) if flags.ndim() == 2 => Ok(flags),
+            Some(ArrayValue::Bool(_)) => Err(FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("FLAG row {row} is not rank-2"),
+            }),
+            Some(other) => Err(FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("FLAG row {row} must be bool array, found {other:?}"),
+            }),
+            None => Err(FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("FLAG row {row} is undefined"),
+            }),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let ddids = load_i32_cells(table, selected_rows, "DATA_DESC_ID", &path)?;
+    let visibility = if let Some(SampleData::Visibility(column, columns)) = data {
+        Some((
+            column.name(),
+            columns.read(
+                ms,
+                selected_rows,
+                &flag_cells,
+                Some(&ddids),
+                &ddid_to_spw,
+                &path,
+            )?,
+        ))
+    } else {
+        None
+    };
     let fields = load_i32_cells(table, selected_rows, "FIELD_ID", &path)?;
     let scans = load_i32_cells(table, selected_rows, "SCAN_NUMBER", &path)?;
     let ant1s = load_i32_cells(table, selected_rows, "ANTENNA1", &path)?;
     let ant2s = load_i32_cells(table, selected_rows, "ANTENNA2", &path)?;
     let mut samples = Vec::new();
     let mut flags_by_row = BTreeMap::new();
-    for (row_slot, &row) in selected_rows.iter().enumerate() {
+    for (row_slot, (&row, flags)) in selected_rows.iter().zip(flag_cells).enumerate() {
         let ddid = ddids[row_slot];
         let spw = ddid_to_spw
             .get(&ddid)
@@ -2008,34 +2092,14 @@ fn load_samples(
                 path: path.clone(),
                 reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
             })?;
-        let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
-            Some(ArrayValue::Bool(values)) => values.clone(),
-            Some(other) => {
-                return Err(FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("FLAG row {row} must be bool array, found {other:?}"),
-                });
-            }
-            None => {
-                return Err(FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("FLAG row {row} is undefined"),
-                });
-            }
+        let data = if let Some((column, cells)) = &stored {
+            let value = checked_row_data(cells.get(row_slot), &flags, row, column, &path)?;
+            Some((*column, Cow::Borrowed(value)))
+        } else if let Some((column, cells)) = &visibility {
+            Some((*column, cells.row(row_slot, &flags, None, row, &path)?))
+        } else {
+            None
         };
-        let data = data_cells
-            .as_ref()
-            .map(|(column, cells)| {
-                checked_row_data(cells.get(row_slot), &flags, row, column, &path)
-                    .map(|value| (*column, value))
-            })
-            .transpose()?;
-        if flags.ndim() != 2 {
-            return Err(FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("FLAG row {row} is not rank-2"),
-            });
-        }
         let nchan = flags.shape()[1];
         let channels = match channel_selections.and_then(|selectors| selectors.get(&spw)) {
             Some(selection) => if retain_channel_overlaps {
@@ -2059,7 +2123,7 @@ fn load_samples(
         };
         match data {
             Some((column, value)) => push_row_samples(
-                value,
+                value.as_ref(),
                 &flags,
                 &channels,
                 metadata,

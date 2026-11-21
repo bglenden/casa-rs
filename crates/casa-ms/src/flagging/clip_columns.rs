@@ -29,6 +29,7 @@ impl ClipColumns {
         column: FlagDataColumn,
         average: bool,
         models: Option<ClipModels>,
+        prefer_float: bool,
     ) -> Result<Option<Self>, FlaggingError> {
         let has_column = |name| {
             table
@@ -41,7 +42,12 @@ impl ClipColumns {
         let float_data = FlagDataColumn::FloatData.name();
         let (primary, subtract, broadcast_weights) = match column {
             FlagDataColumn::Residual => (FlagDataColumn::CorrectedData.name(), Some(model), false),
-            FlagDataColumn::ResidualData if !has_column(observed) && has_column(float_data) => {
+            FlagDataColumn::Data if prefer_float && has_column(float_data) => {
+                (float_data, None, false)
+            }
+            FlagDataColumn::ResidualData
+                if (prefer_float || !has_column(observed)) && has_column(float_data) =>
+            {
                 (float_data, Some(model), false)
             }
             FlagDataColumn::ResidualData => (observed, Some(model), false),
