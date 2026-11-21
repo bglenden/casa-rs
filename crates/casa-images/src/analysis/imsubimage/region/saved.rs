@@ -159,6 +159,35 @@ fn polygon_region(
     })
 }
 
+pub(in crate::analysis::imsubimage) fn lattice_pixel_section(
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+    shape: &[usize],
+) -> Result<Option<StridedSection>, ImageError> {
+    if matches!(rec.get("name"), Some(Value::Scalar(ScalarValue::String(name))) if name == "LCBox")
+    {
+        let stored_shape = read_numeric_vec(rec.get("shape"))
+            .ok_or_else(|| ImageError::CasaSelection("LCBox region has no lattice shape".into()))?;
+        if !stored_shape
+            .iter()
+            .copied()
+            .eq(shape.iter().map(|&size| size as f64))
+        {
+            return Err(ImageError::CasaSelection(format!(
+                "shape of lattice {shape:?} mismatches lattice shape in region {stored_shape:?}"
+            )));
+        }
+        let (start, end) = decode_lc_box("region", rec, shape)?;
+        let count = start.iter().zip(end).map(|(&lo, hi)| hi - lo + 1).collect();
+        return Ok(Some(StridedSection {
+            start,
+            count,
+            stride: vec![1; shape.len()],
+        }));
+    }
+    lc_slicer_section(rec, coords, shape)
+}
+
 pub(super) fn lc_slicer_section(
     rec: &RecordValue,
     coords: &CoordinateSystem,
