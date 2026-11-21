@@ -1147,7 +1147,8 @@ mod tests {
         assert_eq!(ProjectionType::from_name("ZEA"), Some(ProjectionType::ZEA));
         assert_eq!(ProjectionType::from_name("STG"), Some(ProjectionType::STG));
         assert_eq!(ProjectionType::from_name("NCP"), Some(ProjectionType::NCP));
-        assert_eq!(ProjectionType::from_name("BON"), None);
+        assert_eq!(ProjectionType::from_name("BON"), Some(ProjectionType::BON));
+        assert_eq!(ProjectionType::from_name("XPH"), None);
     }
 
     #[test]
