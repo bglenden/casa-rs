@@ -4,12 +4,13 @@
 
 import argparse
 from pathlib import Path
+import signal
 
 import casatasks as casa
 from casatools import calibrater
 import numpy as np
 
-from applycal_oracle import copy_ms
+from applycal_oracle import copy_ms, isolated_applycal
 from calibration_smoothcal_oracle import opened
 from record_casa_returns import make_cal_ms
 
@@ -114,7 +115,7 @@ def leakage_law(value, left, right, full):
                      yx-left[1]*xx-right[0].conjugate()*yy, yy])
 
 
-def model_preapply(root, source, native, tables, parang):
+def model_preapply(root, source, native, tables, parang, *, full_matrix=True, corrdepflags=False):
     vis = root/'solve.ms'
     copy_ms(source, vis)
     tool = calibrater()
@@ -136,7 +137,8 @@ def model_preapply(root, source, native, tables, parang):
     assert tool.close()
     with opened(vis, True) as table:
         corrupted = table.getcol('MODEL_DATA')
-        assert np.max(np.abs(corrupted[[0, 3]] - model[[0, 3]])) > .005
+        if full_matrix:
+            assert np.max(np.abs(corrupted[[0, 3]] - model[[0, 3]])) > .005
         left, right = [GAIN[indices].T for indices in antennas]
         factor = (left[:, None, :]*right[None, :, :].conj()).reshape(4, -1)
         table.putcol('DATA', corrupted * factor[:, None, :])
@@ -146,6 +148,7 @@ def model_preapply(root, source, native, tables, parang):
         product = root/f'{name}-solve.cal'
         api.gaincal(str(vis), str(product), field='0', gaintype='G', calmode='ap',
                     minblperant=3, minsnr=0., refant='A0', solint='inf', parang=parang,
+                    corrdepflags=corrdepflags,
                     gaintable=[str(term) for term in tables], interp=['linear']*len(tables))
         with opened(product) as table:
             gains = table.getcol('CPARAM')
@@ -203,6 +206,22 @@ def run_basis(root, basis, native):
     error, _ = compare_application(root, vis, native, 'channel-range', [root/'df.cal'], [True],
                                    spw='0:2~6')
     errors.append(error)
+    time_variable = root/'df-time-variable.cal'
+    copy_ms(root/'df.cal', time_variable)
+    with opened(time_variable, True) as table:
+        size = table.nrows()
+        cells = {name: table.getcol(name) for name in table.colnames()
+                 if all(table.iscelldefined(name, row) for row in range(size))}
+        table.addrows(size)
+        for name, first in cells.items():
+            last = first
+            if name == 'TIME':
+                last = first + 180.
+            elif name == 'CPARAM':
+                last = first * (.85+.30j)
+            table.putcol(name, np.concatenate([first, last], axis=-1))
+    error, _ = compare_application(root, vis, native, 'df-time-variable', [time_variable], [True])
+    errors.append(error)
     spectral = root/'spectral.ms'
     copy_ms(vis, spectral)
     with opened(spectral, True) as table:
@@ -217,6 +236,16 @@ def run_basis(root, basis, native):
     errors.append(error)
     error, _ = compare_application(root, spectral, native, 'spectral-gains', [linear, gain], [True, True])
     errors.append(error)
+    nonfinite = root/'dlls-nan.cal'
+    copy_ms(root/'dlls.cal', nonfinite)
+    with opened(nonfinite, True) as table:
+        row = table.getcell('CPARAM', 0)
+        row[0, 0] = np.nan
+        table.putcell('CPARAM', 0, row)
+    error, reference = compare_application(root, vis, native, 'dlls-nan', [nonfinite], [True])
+    assert np.isfinite(reference[:, 0, 0]).all()
+    assert result(root/'native-dlls-nan.ms')[1][:, 0, 0].all()
+    errors.append(error)
     print(f'{basis}: {len(errors)} cases, maximum visibility normalized RMS {max(errors):.6g}')
     for parang in (False, True):
         solve = root/f'model-solve-parang-{int(parang)}'
@@ -224,6 +253,12 @@ def run_basis(root, basis, native):
         priors = [root/'dlls.cal', gain] if parang else [root/'dlls.cal']
         error = model_preapply(solve, vis, native, priors, parang)
         print(f'{basis}, ordered MODEL_DATA prior solve, parang={parang}: gain normalized RMS {error:.6g}')
+    for corrdepflags in (False, True):
+        solve = root/f'model-solve-calibration-flags-{int(corrdepflags)}'
+        solve.mkdir()
+        error = model_preapply(solve, vis, native, [root/'d-flagged.cal'], False,
+                               full_matrix=False, corrdepflags=corrdepflags)
+        print(f'{basis}, cross-hand prior FLAG, corrdepflags={corrdepflags}: gain normalized RMS {error:.6g}')
 
 
 def unsupported_layout(root, native):
@@ -235,6 +270,51 @@ def unsupported_layout(root, native):
         except RuntimeError:
             continue
         raise AssertionError(f'{name} accepted D Jones with missing cross-hand products')
+
+
+def permuted_layout(root, native):
+    source = root/'linear'/'source.ms'
+    caltable = root/'linear'/'d.cal'
+    expected, flags, _, _ = result(root/'linear'/'casa-d.ms')
+    order = [0, 3, 1, 2]
+    for name, api in [('casa', casa), ('native', native)]:
+        vis = root/f'{name}-permuted.ms'
+        copy_ms(source, vis)
+        with opened(vis/'POLARIZATION', True) as table:
+            table.putcell('CORR_TYPE', 0, table.getcell('CORR_TYPE', 0)[order])
+            table.putcell('CORR_PRODUCT', 0, table.getcell('CORR_PRODUCT', 0)[:, order])
+        with opened(vis, True) as table:
+            for column in ('DATA', 'CORRECTED_DATA', 'FLAG', 'SIGMA', 'WEIGHT'):
+                if column in table.colnames():
+                    table.putcol(column, table.getcol(column)[order])
+        api.applycal(str(vis), gaintable=[str(caltable)], calwt=False, flagbackup=False)
+    got, got_flags, _, _ = result(root/'native-permuted.ms')
+    positional, positional_flags, _, _ = result(root/'casa-permuted.ms')
+    np.testing.assert_allclose(got, expected[order], rtol=3e-6, atol=3e-7)
+    np.testing.assert_array_equal(got_flags, flags[order])
+    assert np.linalg.norm(positional-expected[order]) / np.linalg.norm(expected) > .05
+    assert np.any(positional_flags != flags[order])
+
+
+def malformed_table(root, native):
+    caltable = root/'one-receptor.cal'
+    copy_ms(root/'linear'/'d.cal', caltable)
+    with opened(caltable, True) as table:
+        for column in ('CPARAM', 'FLAG', 'PARAMERR', 'SNR'):
+            for row in range(table.nrows()):
+                table.putcell(column, row, table.getcell(column, row)[:1])
+    casa_ms, native_ms = [root/f'{name}-malformed.ms' for name in ('casa', 'native')]
+    for vis in (casa_ms, native_ms):
+        copy_ms(root/'linear'/'source.ms', vis)
+    args = {'vis': str(casa_ms), 'gaintable': [str(caltable)], 'flagbackup': False}
+    probe = isolated_applycal(args)
+    assert probe.returncode == -signal.SIGABRT and 'ArrayShapeError' in probe.stderr
+    try:
+        native.applycal(**dict(args, vis=str(native_ms)))
+    except RuntimeError as error:
+        assert 'leakage requires two CPARAM receptors' in str(error)
+    else:
+        raise AssertionError('Native applycal accepted a one-receptor leakage table')
 
 
 def main():
@@ -249,6 +329,9 @@ def main():
     for basis, label in [('RR RL LR LL', 'circular'), ('XX XY YX YY', 'linear')]:
         run_basis(root/label, basis, tasks)
     unsupported_layout(root, tasks)
+    permuted_layout(root, tasks)
+    malformed_table(root, tasks)
+    print('Missing cross-hands, permuted correlation metadata, and malformed leakage table controls passed.')
 
 
 if __name__ == '__main__':

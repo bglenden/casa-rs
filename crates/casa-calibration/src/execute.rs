@@ -1635,9 +1635,9 @@ struct RowGeometryCache {
     projected_offsets: HashMap<ProjectedOffsetKey, [f64; 3]>,
     materialized_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
     calibration_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
-    temperature_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
-    temperature_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
-    temperature_time: Option<u64>,
+    transient_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
+    transient_frequency_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
+    transient_time: Option<u64>,
     last_elevation_context: Option<RowGeometryContextKey>,
     last_elevations: Vec<Option<f64>>,
     last_projected_context: Option<RowGeometryContextKey>,
@@ -1854,19 +1854,19 @@ impl RowGeometryCache {
     fn calibration_lookup<F>(
         &mut self,
         key: CalibrationLookupKey,
-        temperature_time: Option<u64>,
+        transient_time: Option<u64>,
         load: F,
     ) -> Result<Option<fields::GridAtTime>, ApplyExecutionError>
     where
         F: FnOnce() -> Result<Option<fields::GridAtTime>, ApplyExecutionError>,
     {
-        let lookups = if let Some(time) = temperature_time {
-            if self.temperature_time != Some(time) {
-                self.temperature_grids.clear();
-                self.temperature_lookups.clear();
-                self.temperature_time = Some(time);
+        let lookups = if let Some(time) = transient_time {
+            if self.transient_time != Some(time) {
+                self.transient_frequency_grids.clear();
+                self.transient_lookups.clear();
+                self.transient_time = Some(time);
             }
-            &mut self.temperature_lookups
+            &mut self.transient_lookups
         } else {
             &mut self.calibration_lookups
         };
@@ -2180,8 +2180,11 @@ fn apply_row_all_channels(
                 .unwrap_or(-1);
         }
 
-        let is_tsys = table_plan.summary.table_subtype == "B TSYS";
-        let is_switched_power = table_plan.summary.table_subtype == "G EVLASWPOW";
+        let subtype = table_plan.summary.table_subtype.as_str();
+        let is_tsys = subtype == "B TSYS";
+        let is_switched_power = subtype == "G EVLASWPOW";
+        let channelized_leakage = polarization::Leakage::is_channelized(subtype);
+        let bounded_frequency_cache = is_tsys || channelized_leakage;
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
                 table_index,
@@ -2199,7 +2202,7 @@ fn apply_row_all_channels(
             if let Some(cache) = cache {
                 cache.calibration_lookup(
                     key,
-                    is_tsys.then(|| row.time_seconds.to_bits()),
+                    bounded_frequency_cache.then(|| row.time_seconds.to_bits()),
                     calculate,
                 )
             } else {
@@ -2233,13 +2236,14 @@ fn apply_row_all_channels(
 
         // CASA samples BPOLY on its CAL_DESC window and then interpolates
         // the resulting B grid onto the data window.
-        let subtype = table_plan.summary.table_subtype.as_str();
         let is_bandpass = is_tsys || matches!(subtype, "B Jones" | "BPOLY");
-        let resample_frequency = is_bandpass || polarization::Leakage::is_channelized(subtype);
+        let resample_frequency = is_bandpass || channelized_leakage;
         let first_receptor_only =
             (is_bandpass || is_switched_power) && correlation_types.len() == 1;
-        let (ant1_transient, ant2_transient) =
-            (is_tsys && ant1.interpolated, is_tsys && ant2.interpolated);
+        let (ant1_transient, ant2_transient) = (
+            bounded_frequency_cache && ant1.interpolated,
+            bounded_frequency_cache && ant2.interpolated,
+        );
         let (ant1, ant2) = (ant1.grid, ant2.grid);
         let bandpass_weights = (is_bandpass && !is_tsys && calibrate_weights)
             .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types, None))
@@ -4402,9 +4406,10 @@ fn load_parameters(
             source: MsError::from(source),
         }
     })?;
+    let leakage = polarization::Leakage::from_subtype(&table_plan.summary.table_subtype);
     let supports_calwt = (table_plan.summary.parameter_family
         == CalibrationParameterFamily::Complex
-        && polarization::Leakage::from_subtype(&table_plan.summary.table_subtype).is_none())
+        && leakage.is_none())
         || matches!(
             table_plan.summary.table_subtype.as_str(),
             "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"
@@ -4440,6 +4445,15 @@ fn load_parameters(
                         path: table_plan.spec.path.display().to_string(),
                         source: MsError::from(source),
                     })?;
+                if leakage.is_some() && gains.shape().first() != Some(&2) {
+                    return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                        path: table_plan.spec.path.display().to_string(),
+                        reason: format!(
+                            "leakage requires two CPARAM receptors, found shape {:?} at row {row_index}",
+                            gains.shape()
+                        ),
+                    });
+                }
                 CalibrationGrid::Complex(GainGrid::from_arrays(
                     &table_plan.spec.path,
                     gains,

@@ -46,6 +46,7 @@ pub(crate) enum PriorCalibrationMode {
     Gain {
         scalar: bool,
         rotate_model: bool,
+        share_input_flags: bool,
     },
     Bandpass {
         share_input_flags: bool,
@@ -90,13 +91,17 @@ pub(crate) fn load_preapplied_rows(
     }
     let preapplied = match mode {
         PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false).map(Into::into),
-        PriorCalibrationMode::Gain { scalar, .. } => {
+        PriorCalibrationMode::Gain {
+            scalar,
+            share_input_flags,
+            ..
+        } => {
             let boundary = if scalar {
                 PriorSolveBoundary::ScalarGain
             } else {
                 PriorSolveBoundary::Gain
             };
-            evaluate_solve_priors(ms, plan, boundary, false)
+            evaluate_solve_priors(ms, plan, boundary, share_input_flags)
         }
         PriorCalibrationMode::Bandpass {
             share_input_flags, ..

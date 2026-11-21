@@ -129,7 +129,8 @@ fn full_matrix(terms: [GainSample; 2], forward: bool) -> ([Complex32; 4], bool) 
     let one = Complex32::new(1.0, 0.0);
     let [x, y] = terms.map(|sample| sample.value);
     let det = one - x * y;
-    if terms.into_iter().any(|sample| sample.flagged) || (!forward && det.norm() == 0.0) {
+    let invertible = det.norm() > 0.0;
+    if terms.into_iter().any(|sample| sample.flagged) || (!forward && !invertible) {
         ([one, zero, zero, one], true)
     } else if forward {
         ([one, x, y, one], false)

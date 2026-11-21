@@ -34,11 +34,16 @@ impl PriorSolveBoundary {
 pub(crate) struct PreappliedRows {
     pub(crate) data: HashMap<usize, EvaluatedApplyRow>,
     pub(crate) model: Option<ForwardModelApply>,
+    pub(crate) polarized: bool,
 }
 
 impl From<HashMap<usize, EvaluatedApplyRow>> for PreappliedRows {
     fn from(data: HashMap<usize, EvaluatedApplyRow>) -> Self {
-        Self { data, model: None }
+        Self {
+            data,
+            model: None,
+            polarized: false,
+        }
     }
 }
 
@@ -124,7 +129,7 @@ pub(crate) fn evaluate_solve_priors(
             PriorSolveBoundary::Gain | PriorSolveBoundary::ScalarGain
         )
     {
-        return evaluate_apply_rows(ms, &plan, share_input_flags).map(Into::into);
+        return evaluate_apply_rows(ms, &plan, false).map(Into::into);
     }
     // VisEquation::collapse2 corrects DATA with earlier terms and corrupts
     // MODEL_DATA with terms at or after K. This distinction matters even for
@@ -149,7 +154,11 @@ pub(crate) fn evaluate_solve_priors(
     plan.calibration_tables = data_tables;
     let mut rows = evaluate_apply_rows(ms, &plan, share_input_flags)?;
     if model_tables.is_empty() && !forward_parang {
-        return Ok(rows.into());
+        return Ok(PreappliedRows {
+            data: rows,
+            model: None,
+            polarized,
+        });
     }
     for table in &mut model_tables {
         table.calwt = false;
@@ -160,6 +169,7 @@ pub(crate) fn evaluate_solve_priors(
         return Ok(PreappliedRows {
             data: rows,
             model: Some(ForwardModelApply::new(ms, plan)?),
+            polarized,
         });
     }
     for_each_apply_row(

@@ -51,7 +51,7 @@ pub(super) fn prepare(
     output: &crate::plan::SpectralWindowPlan,
     cache: Option<&mut RowGeometryCache>,
     table: &LoadedCalibrationTable,
-    transient_temperature: bool,
+    transient_grid: bool,
 ) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
     let interpolation = table.interp;
     let path = &table.path;
@@ -71,8 +71,8 @@ pub(super) fn prepare(
         grid_id: Arc::as_ptr(&grid) as usize,
     };
     let cache = cache.map(|cache| {
-        if transient_temperature {
-            &mut cache.temperature_grids
+        if transient_grid {
+            &mut cache.transient_frequency_grids
         } else {
             &mut cache.materialized_grids
         }
@@ -261,31 +261,29 @@ mod tests {
             }
         }
         assert_eq!(cache.materialized_grids.len(), 1);
-        if real {
-            for time in [1.0_f64, 2.0, 3.0] {
-                let key = calibration_lookup_key(0, 0, 0, 0, time, ApplyInterpolationMode::Linear);
-                let interpolated = cache
-                    .calibration_lookup(key, Some(time.to_bits()), || {
-                        Ok(Some(fields::GridAtTime {
-                            grid: Arc::new(raw.as_ref().clone()),
-                            interpolated: true,
-                        }))
-                    })
-                    .unwrap()
-                    .unwrap();
-                prepare(
-                    interpolated.grid,
-                    &input,
-                    &output,
-                    Some(&mut cache),
-                    &table,
-                    true,
-                )
+        for time in [1.0_f64, 2.0, 3.0] {
+            let key = calibration_lookup_key(0, 0, 0, 0, time, ApplyInterpolationMode::Linear);
+            let interpolated = cache
+                .calibration_lookup(key, Some(time.to_bits()), || {
+                    Ok(Some(fields::GridAtTime {
+                        grid: Arc::new(raw.as_ref().clone()),
+                        interpolated: true,
+                    }))
+                })
+                .unwrap()
                 .unwrap();
-                assert_eq!(cache.temperature_lookups.len(), 1);
-                assert_eq!(cache.temperature_grids.len(), 1);
-                assert_eq!(cache.materialized_grids.len(), 1);
-            }
+            prepare(
+                interpolated.grid,
+                &input,
+                &output,
+                Some(&mut cache),
+                &table,
+                true,
+            )
+            .unwrap();
+            assert_eq!(cache.transient_lookups.len(), 1);
+            assert_eq!(cache.transient_frequency_grids.len(), 1);
+            assert_eq!(cache.materialized_grids.len(), 1);
         }
         let CalibrationGrid::Complex(gain) = first.unwrap().as_ref().clone() else {
             unreachable!()
