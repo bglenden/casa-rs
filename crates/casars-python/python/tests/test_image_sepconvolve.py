@@ -66,7 +66,10 @@ def test_sepconvolve_hanning_uses_the_full_profile(casa, length, scale):
             # CASA leaves the trailing even-length kernel coefficient uninitialized.
             # All assigned coefficients, and the native zero padding, are checked.
             limit = length if length % 2 or api is tools else length-1
-            np.testing.assert_allclose(result.getchunk()[:limit, 3], expected[:limit], atol=4e-7)
+            # CASA's single-precision FFT leaves noise below 7e-7 on the
+            # amplitude-one, wide reference kernel.
+            tolerance = 7e-7 if api is casa else 2e-8
+            np.testing.assert_allclose(result.getchunk()[:limit, 3], expected[:limit], atol=tolerance)
             np.testing.assert_array_equal(result.getchunk(getmask=True)[:, 3], np.ones(length, dtype=bool))
         finally:
             if result is not None:
@@ -75,16 +78,17 @@ def test_sepconvolve_hanning_uses_the_full_profile(casa, length, scale):
 
 
 @pytest.mark.parametrize("widths", [[2, 4], ["2 arcmin", "4 arcmin"], "2pix,4pix"])
-def test_sepconvolve_combines_kernels_in_axis_order(casa, widths):
+@pytest.mark.parametrize("scale", [-1., 1.2])
+def test_sepconvolve_combines_kernels_in_axis_order(casa, widths, scale):
     data = _impulse((13, 15))
     expected = np.zeros_like(data)
-    expected[4:8, :] = .25*_gaussian(np.arange(15), 7, 15, 2)
+    expected[4:8, :] = (.25 if scale < 0 else scale)*_gaussian(np.arange(15), 7, 15, 2, scale)
     for api in (casa, tools):
         source = api.image()
         result = None
         try:
             assert source.fromarray(pixels=data)
-            result = source.sepconvolve(widths=widths, types=["Gauss", "b"], axes=[1, 0])
+            result = source.sepconvolve(widths=widths, types=["Gauss", "b"], axes=[1, 0], scale=scale)
             np.testing.assert_allclose(result.getchunk(), expected, atol=3e-7)
         finally:
             if result is not None:
@@ -119,7 +123,9 @@ def test_sepconvolve_region_raw_mask_values_and_native_interoperability(casa, tm
     valid = original_valid[2:12, 3:14, :, 1:4]
     selected = np.where(valid, cropped, 0.)
     expected = np.zeros_like(selected)
-    for ox in (-1, 0, 1):
+    # The boxcar of width 3 begins an extra pixel to the left in an
+    # even-length profile. The cropped x and y lengths are 10 and 11.
+    for ox in (-2, -1, 0):
         for oy in (-1, 0, 1):
             x = slice(max(0, ox), min(10, 10+ox))
             y = slice(max(0, oy), min(11, 11+oy))
@@ -196,6 +202,35 @@ def test_sepconvolve_invalid_calls_preserve_named_output(casa, tmp_path):
             np.testing.assert_array_equal(prior.getchunk(), data+4.)
         finally:
             prior.done()
+            source.done()
+
+
+def test_sepconvolve_stretches_an_external_mask_without_masking_intermediate_passes(casa, tmp_path):
+    data = np.ones((13, 15, 1, 5), dtype=np.float32)
+    selected = np.broadcast_to(np.arange(13)[:, None, None, None] >= 6, (13, 15, 1, 1))
+    valid = np.broadcast_to(selected, data.shape)
+    for api in (casa, tools):
+        source, mask_image = api.image(), api.image()
+        name = str(tmp_path/f"{api.__name__}-mask.im")
+        result = None
+        try:
+            assert source.fromarray(pixels=data)
+            assert mask_image.fromarray(name, pixels=selected.astype(np.float32))
+            mask_image.done()
+            options = {"types": ["b", "b"], "widths": [3, 3], "mask": f'"{name}" > 0.5'}
+            with pytest.raises(RuntimeError):
+                source.sepconvolve(**options)
+            result = source.sepconvolve(stretch=True, **options)
+            np.testing.assert_array_equal(result.getchunk(getmask=True), valid)
+            pixels = result.getchunk()
+            np.testing.assert_allclose(pixels[5:8, 7, 0, :], [[1/3]*5, [2/3]*5, [1]*5], atol=3e-7)
+            np.testing.assert_array_equal(source.getchunk(), data)
+            assert mask_image.open(name)
+            np.testing.assert_array_equal(mask_image.getchunk(), selected)
+        finally:
+            if result is not None:
+                result.done()
+            mask_image.done()
             source.done()
 
 

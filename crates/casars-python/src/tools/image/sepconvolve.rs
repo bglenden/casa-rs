@@ -75,24 +75,23 @@ fn parse_widths(value: Option<&Bound<'_, PyAny>>) -> PyResult<(Option<Vec<Quanti
 }
 
 fn width_text(text: &str) -> PyResult<Quantity> {
-    if text.trim().is_empty() {
+    let text = text.trim();
+    if text.is_empty() {
         return Ok(Quantity::dimensionless(0.0));
     }
-    match read_quantity(text, " in converting convolution width") {
-        Ok(quantity) => Ok(quantity),
-        Err(error) => {
-            let mut parts = text.split_whitespace();
-            let first = parts.next().expect("nonempty width");
-            if parts.next().is_some() {
-                let quantity =
-                    read_quantity(first, " in converting convolution width").map_err(raised)?;
-                if !quantity.unit().name().is_empty() {
-                    return Ok(quantity);
-                }
-            }
-            Err(raised(error))
-        }
+    // A string-vector entry contains one quantity. CASA consumes its first
+    // numeric value and attached unit even if another quantity follows it.
+    let context = " in converting convolution width";
+    if let Some((first, rest)) = text.split_once(char::is_whitespace)
+        && rest
+            .trim_start()
+            .starts_with(|c: char| c.is_ascii_digit() || "+-.".contains(c))
+        && let Ok(quantity) = read_quantity(first, context)
+        && !quantity.unit().name().is_empty()
+    {
+        return Ok(quantity);
     }
+    read_quantity(text, context).map_err(raised)
 }
 
 fn make_product(
