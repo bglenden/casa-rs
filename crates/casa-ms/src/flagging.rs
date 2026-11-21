@@ -8,6 +8,7 @@
 //! modes are native robust-statistics implementations of the CASA algorithm
 //! families rather than a binding to CASA C++.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fs;
@@ -632,9 +633,13 @@ fn flagdata_with_persistence(
             correlations.as_ref(),
             &ms_path,
         )?,
-        FlagDataMode::Tfcrop => {
-            apply_tfcrop_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
-        }
+        FlagDataMode::Tfcrop => apply_tfcrop_flags(
+            ms,
+            &selected_rows,
+            channel_selections.as_ref(),
+            request,
+            model_factory,
+        )?,
         FlagDataMode::Rflag => {
             apply_rflag_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
@@ -1352,31 +1357,42 @@ fn apply_tfcrop_flags(
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
+    model_factory: Option<FlagDataModelFactory>,
 ) -> Result<ChangeSet, FlaggingError> {
-    if request.casa_row_selection
-        && !ms
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column(request.data_column.name()))
-    {
-        return Err(FlaggingError::MissingTfcropColumn);
-    }
+    let started = Instant::now();
+    let column = request.data_column;
     let options = request.tfcrop.filter(|options| {
         (1..=9).contains(&options.max_pieces) && (1..=3).contains(&options.half_window)
     });
+    let mut columns = if request.casa_row_selection {
+        tfcrop_columns(ms, column, selected_rows, model_factory, options.is_some())?
+    } else {
+        None
+    };
+    let options = options.filter(|_| !request.casa_row_selection || columns.is_some());
     if options.is_none() && !request.extendflags {
         return Ok(ChangeSet::default());
     }
-    let started = Instant::now();
     let loaded = load_samples(
         ms,
         selected_rows,
         channel_selections,
-        options.map(|_| request.data_column),
+        options.map(|_| {
+            columns
+                .as_mut()
+                .map_or(SampleData::Stored(column), |operands| {
+                    SampleData::Visibility(column, operands)
+                })
+        }),
         None,
         false,
     )?;
-    let samples = loaded.samples;
+    let mut samples = loaded.samples;
+    if request.casa_row_selection && column.is_real() {
+        for sample in &mut samples {
+            sample.amp = sample.real;
+        }
+    }
     let loaded_ms = started.elapsed().as_millis();
     let mut modified = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
@@ -1409,6 +1425,10 @@ fn apply_tfcrop_flags(
         group_samples(&samples).into_values().collect()
     };
     if let Some(options) = &options {
+        let arithmetic = TfcropArithmetic {
+            casa_arithmetic: request.casa_row_selection,
+            model_roundoff: &loaded.model_roundoff,
+        };
         for group in &groups {
             for by_corr in samples_by_corr(group) {
                 for &direction in options.passes.directions() {
@@ -1421,7 +1441,7 @@ fn apply_tfcrop_flags(
                         direction,
                         cutoff,
                         options,
-                        request.casa_row_selection,
+                        arithmetic,
                         &mut modified,
                         candidates,
                     );
@@ -1481,6 +1501,51 @@ fn apply_tfcrop_flags(
     Ok(changes)
 }
 
+fn tfcrop_columns(
+    ms: &MeasurementSet,
+    column: FlagDataColumn,
+    selected_rows: &[usize],
+    model_factory: Option<FlagDataModelFactory>,
+    active: bool,
+) -> Result<Option<ClipColumns>, FlaggingError> {
+    let table = ms.main_table();
+    let exists = |name| {
+        table
+            .schema()
+            .is_some_and(|schema| schema.contains_column(name))
+    };
+    let is_residual = matches!(
+        column,
+        FlagDataColumn::Residual | FlagDataColumn::ResidualData
+    );
+    let required_sources_exist = if is_residual {
+        exists("MODEL_DATA") || !crate::scratch_columns::virtual_model_fields(ms).is_empty()
+    } else {
+        exists(column.name())
+    };
+    if !required_sources_exist {
+        return Err(FlaggingError::MissingTfcropColumn);
+    }
+    // CASA admits the column names before it starts the fit. Only a
+    // running fit opens a virtual recipe's image.
+    if !active {
+        return Ok(None);
+    }
+    if column == FlagDataColumn::Residual && !exists("CORRECTED_DATA") {
+        tracing::warn!(
+            "Cannot create agent Tfcrop: necessary CORRECTED_DATA column is not available"
+        );
+        return Ok(None);
+    }
+    let path = display_ms_path(ms);
+    let models =
+        clip_models::ClipModels::for_selection(ms, column, selected_rows, model_factory, &path)?;
+    match ClipColumns::bind(table, column, false, models) {
+        Err(FlaggingError::MissingClipColumn) => Err(FlaggingError::MissingTfcropColumn),
+        result => result,
+    }
+}
+
 fn extend_tfcrop_selected_channels(
     group: &[Sample],
     flags: &BTreeMap<usize, ArrayD<bool>>,
@@ -1535,7 +1600,7 @@ fn apply_rflag_flags(
         ms,
         selected_rows,
         channel_selections,
-        Some(request.data_column),
+        Some(SampleData::Stored(request.data_column)),
         None,
         false,
     )?;
@@ -1983,14 +2048,19 @@ fn select_autocorrelations(
         .collect())
 }
 
-/// The selected rows' samples and flags. Each sample carries its value in
-/// `data_column`, or zero when the caller reads the flags alone (`None`):
+enum SampleData<'a> {
+    Stored(FlagDataColumn),
+    Visibility(FlagDataColumn, &'a mut ClipColumns),
+}
+
+/// The selected rows' samples and flags. Each sample carries its selected
+/// input value, or zero when the caller reads the flags alone (`None`):
 /// manual flagging and extension, as CASA's, need no data column.
 fn load_samples(
     ms: &MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
-    data_column: Option<FlagDataColumn>,
+    data: Option<SampleData<'_>>,
     flag_correlations: Option<&CorrelationSelection>,
     retain_channel_overlaps: bool,
 ) -> Result<LoadedSamples, FlaggingError> {
@@ -2002,8 +2072,8 @@ fn load_samples(
         data_description_spw_map(ms)?
     };
     let table = ms.main_table();
-    let data_cells = data_column
-        .map(|column| {
+    let stored = if let Some(SampleData::Stored(column)) = data.as_ref() {
+        Some(
             table
                 .column_accessor(column.name())
                 .and_then(|accessor| accessor.array_cells_owned(selected_rows))
@@ -2011,29 +2081,65 @@ fn load_samples(
                 .map_err(|source| FlaggingError::MutateFlags {
                     path: path.clone(),
                     reason: format!("read selected {} rows: {source}", column.name()),
-                })
-        })
-        .transpose()?;
+                })?,
+        )
+    } else {
+        None
+    };
     let flag_cells = table
         .column_accessor(FLAG_COLUMN)
         .and_then(|column| column.array_cells_owned(selected_rows))
         .map_err(|source| FlaggingError::MutateFlags {
             path: path.clone(),
             reason: format!("read selected FLAG rows: {source}"),
-        })?;
+        })?
+        .into_iter()
+        .zip(selected_rows)
+        .map(|(cell, row)| match cell {
+            Some(ArrayValue::Bool(flags)) if flags.ndim() == 2 => Ok(flags),
+            Some(ArrayValue::Bool(_)) => Err(FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("FLAG row {row} is not rank-2"),
+            }),
+            Some(other) => Err(FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("FLAG row {row} must be bool array, found {other:?}"),
+            }),
+            None => Err(FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("FLAG row {row} is undefined"),
+            }),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let row_window = if calibration {
         "SPECTRAL_WINDOW_ID"
     } else {
         "DATA_DESC_ID"
     };
     let ddids = load_i32_cells(table, selected_rows, row_window, &path)?;
+    let visibility = if let Some(SampleData::Visibility(column, columns)) = data {
+        Some((
+            column.name(),
+            columns.read(
+                ms,
+                selected_rows,
+                &flag_cells,
+                Some(&ddids),
+                &ddid_to_spw,
+                &path,
+            )?,
+        ))
+    } else {
+        None
+    };
     let fields = load_i32_cells(table, selected_rows, "FIELD_ID", &path)?;
     let scans = load_i32_cells(table, selected_rows, "SCAN_NUMBER", &path)?;
     let ant1s = load_i32_cells(table, selected_rows, "ANTENNA1", &path)?;
     let ant2s = load_i32_cells(table, selected_rows, "ANTENNA2", &path)?;
     let mut samples = Vec::new();
     let mut flags_by_row = BTreeMap::new();
-    for (row_slot, &row) in selected_rows.iter().enumerate() {
+    let mut model_roundoff = Vec::new();
+    for (row_slot, (&row, flags)) in selected_rows.iter().zip(flag_cells).enumerate() {
         let ddid = ddids[row_slot];
         let spw = if calibration {
             ddid
@@ -2046,34 +2152,14 @@ fn load_samples(
                     reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
                 })?
         };
-        let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
-            Some(ArrayValue::Bool(values)) => values.clone(),
-            Some(other) => {
-                return Err(FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("FLAG row {row} must be bool array, found {other:?}"),
-                });
-            }
-            None => {
-                return Err(FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("FLAG row {row} is undefined"),
-                });
-            }
+        let data = if let Some((column, cells)) = &stored {
+            let value = checked_row_data(cells.get(row_slot), &flags, row, column, &path)?;
+            Some((*column, Cow::Borrowed(value)))
+        } else if let Some((column, cells)) = &visibility {
+            Some((*column, cells.row(row_slot, &flags, None, row, &path)?))
+        } else {
+            None
         };
-        let data = data_cells
-            .as_ref()
-            .map(|(column, cells)| {
-                checked_row_data(cells.get(row_slot), &flags, row, column, &path)
-                    .map(|value| (*column, value))
-            })
-            .transpose()?;
-        if flags.ndim() != 2 {
-            return Err(FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("FLAG row {row} is not rank-2"),
-            });
-        }
         let nchan = flags.shape()[1];
         let channels = match channel_selections.and_then(|selectors| selectors.get(&spw)) {
             Some(selection) => if retain_channel_overlaps {
@@ -2095,9 +2181,10 @@ fn load_samples(
             ant1: ant1s[row_slot],
             ant2: ant2s[row_slot],
         };
+        let first_sample = samples.len();
         match data {
             Some((column, value)) => push_row_samples(
-                value,
+                value.as_ref(),
                 &flags,
                 &channels,
                 metadata,
@@ -2113,11 +2200,22 @@ fn load_samples(
                 &mut samples,
             ),
         }
+        if let Some((_, cells)) = &visibility
+            && let Some(roundoff) = cells.fourier_residual_roundoff(row_slot, &flags, row, &path)?
+        {
+            model_roundoff.resize(first_sample, 0.0);
+            model_roundoff.extend(
+                samples[first_sample..]
+                    .iter()
+                    .map(|sample| roundoff[[sample.corr, sample.chan]]),
+            );
+        }
         flags_by_row.insert(row, flags);
     }
     Ok(LoadedSamples {
         samples,
         flags_by_row,
+        model_roundoff,
     })
 }
 
@@ -2470,15 +2568,25 @@ impl Default for TfcropOptions {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct TfcropArithmetic<'a> {
+    casa_arithmetic: bool,
+    model_roundoff: &'a [f32],
+}
+
 fn tfcrop_fit_base_and_flag(
     samples: &[Sample],
     direction: TfcropDirection,
     cutoff: f64,
     options: &TfcropOptions,
-    casa_arithmetic: bool,
+    arithmetic: TfcropArithmetic<'_>,
     modified: &mut [bool],
     direction_flags: &mut [bool],
 ) {
+    let TfcropArithmetic {
+        casa_arithmetic,
+        model_roundoff,
+    } = arithmetic;
     if samples.is_empty() {
         return;
     }
@@ -2499,6 +2607,7 @@ fn tfcrop_fit_base_and_flag(
 
     let mut avg_dat = vec![0.0f32; axis0.len()];
     let mut avg_flag = vec![false; axis0.len()];
+    let mut avg_roundoff = (!model_roundoff.is_empty()).then(|| vec![0.0; axis0.len()]);
     let mut all_zeros = true;
     for (i0, key0) in axis0.iter().enumerate() {
         let mut sum = 0.0f32;
@@ -2509,11 +2618,17 @@ fn tfcrop_fit_base_and_flag(
                 && !sample_is_modified(sample, modified)
             {
                 sum += tfcrop_value(sample);
+                if let Some(roundoff) = &mut avg_roundoff {
+                    roundoff[i0] += model_roundoff.get(sample.index).copied().unwrap_or(0.0);
+                }
                 count += 1;
             }
         }
         if count > 0 {
             avg_dat[i0] = sum / count as f32;
+            if let Some(roundoff) = &mut avg_roundoff {
+                roundoff[i0] /= count as f32;
+            }
             all_zeros = false;
         } else {
             avg_flag[i0] = true;
@@ -2540,15 +2655,38 @@ fn tfcrop_fit_base_and_flag(
         ),
     };
 
+    let mut normalized_roundoff = avg_roundoff.as_ref().map(|_| vec![0.0; axis0.len()]);
+    // The fitted baseline shares information across the axis, including
+    // channels at which the model has no spectral coverage.
+    let fit_roundoff = avg_roundoff.as_ref().map_or(0.0, |bounds| {
+        bounds
+            .iter()
+            .copied()
+            .filter(|bound| bound.is_finite())
+            .fold(0.0, f32::max)
+    });
     for key1 in &axis1 {
         let mut normalized = vec![0.0f32; axis0.len()];
         let mut flags = vec![false; axis0.len()];
+        if let Some(roundoff) = &mut normalized_roundoff {
+            roundoff.fill(0.0);
+        }
         for (i0, key0) in axis0.iter().enumerate() {
             let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
             if let Some(sample) = by_row_chan.get(&(row, chan)) {
                 flags[i0] = sample_is_modified(sample, modified);
                 if !flags[i0] && (casa_arithmetic || avg_fit[i0].abs() > f32::EPSILON) {
-                    normalized[i0] = tfcrop_value(sample) / avg_fit[i0];
+                    let fit = avg_fit[i0];
+                    normalized[i0] = tfcrop_value(sample) / fit;
+                    if let Some(roundoff) = &mut normalized_roundoff {
+                        // The fitted baseline also uses residuals made with the
+                        // reconstructed model. Compare above both uncertainties.
+                        let measured = model_roundoff.get(sample.index).copied().unwrap_or(0.0);
+                        let uncertainty = (measured + fit_roundoff) / fit.abs();
+                        if uncertainty.is_finite() {
+                            roundoff[i0] = uncertainty;
+                        }
+                    }
                 }
             } else {
                 flags[i0] = true;
@@ -2563,7 +2701,13 @@ fn tfcrop_fit_base_and_flag(
                 break;
             }
             for i0 in 0..axis0.len() {
-                if !flags[i0] && (normalized[i0] - 1.0).abs() > cutoff as f32 * sd {
+                let deviation = (normalized[i0] - 1.0).abs();
+                if !flags[i0]
+                    && deviation > cutoff as f32 * sd
+                    && normalized_roundoff
+                        .as_ref()
+                        .is_none_or(|bounds| bounds[i0] == 0.0 || deviation > bounds[i0])
+                {
                     flags[i0] = true;
                 }
             }
@@ -2573,7 +2717,13 @@ fn tfcrop_fit_base_and_flag(
             previous_sd = sd;
         }
 
-        tfcrop_window_flags(&normalized, &mut flags, options, cutoff as f32 * sd);
+        tfcrop_window_flags(
+            &normalized,
+            normalized_roundoff.as_deref(),
+            &mut flags,
+            options,
+            cutoff as f32 * sd,
+        );
 
         for (i0, key0) in axis0.iter().enumerate() {
             if !flags[i0] {
@@ -2592,6 +2742,7 @@ fn tfcrop_fit_base_and_flag(
 
 fn tfcrop_window_flags(
     normalized: &[f32],
+    roundoff: Option<&[f32]>,
     flags: &mut [bool],
     options: &TfcropOptions,
     threshold: f32,
@@ -2603,20 +2754,23 @@ fn tfcrop_window_flags(
     }
     let width = half_width.saturating_mul(2).saturating_add(1);
     for (start, samples) in normalized.windows(width).enumerate() {
+        let deviations = || {
+            samples.iter().enumerate().map(|(offset, value)| {
+                let deviation = (*value - 1.0).abs();
+                roundoff.map_or(deviation, |bounds| {
+                    let bound = bounds[start + offset];
+                    if deviation <= bound {
+                        0.0
+                    } else {
+                        deviation - bound
+                    }
+                })
+            })
+        };
         let exceeds_mean = matches!(stats, TfcropWindowStats::Sum | TfcropWindowStats::Both)
-            && samples
-                .iter()
-                .map(|value| (*value - 1.0).abs())
-                .sum::<f32>()
-                / width as f32
-                > threshold;
+            && deviations().sum::<f32>() / width as f32 > threshold;
         let exceeds_rms = matches!(stats, TfcropWindowStats::Std | TfcropWindowStats::Both)
-            && (samples
-                .iter()
-                .map(|value| (*value - 1.0) * (*value - 1.0))
-                .sum::<f32>()
-                / width as f32)
-                .sqrt()
+            && (deviations().map(|value| value * value).sum::<f32>() / width as f32).sqrt()
                 > threshold;
         flags[start + half_width] |= exceeds_mean || exceeds_rms;
     }
@@ -3835,6 +3989,7 @@ struct Sample {
 struct LoadedSamples {
     samples: Vec<Sample>,
     flags_by_row: BTreeMap<usize, ArrayD<bool>>,
+    model_roundoff: Vec<f32>,
 }
 
 #[derive(Default)]
@@ -4321,7 +4476,7 @@ mod tests {
             TfcropDirection::Freq,
             1.0,
             &TfcropOptions::default(),
-            false,
+            TfcropArithmetic::default(),
             &mut modified,
             &mut direction_flags,
         );
@@ -4338,7 +4493,7 @@ mod tests {
             TfcropDirection::Time,
             1.0,
             &TfcropOptions::default(),
-            false,
+            TfcropArithmetic::default(),
             &mut modified,
             &mut direction_flags,
         );

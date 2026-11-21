@@ -44,6 +44,11 @@ pub(super) struct ClipModels {
     fourier: Option<Box<dyn FlagDataModelPredictor>>,
 }
 
+pub(super) struct ReadClipModels {
+    pub(super) cells: Vec<Option<ArrayValue>>,
+    pub(super) fourier: Vec<bool>,
+}
+
 struct Recipe {
     selection: Selection,
     components: Option<ComponentList>,
@@ -158,9 +163,10 @@ impl ClipModels {
         rows: &[usize],
         flags: &[ArrayD<bool>],
         path: &str,
-    ) -> Result<Vec<Option<ArrayValue>>, FlaggingError> {
+    ) -> Result<ReadClipModels, FlaggingError> {
         let table = ms.main_table();
         let mut cells = vec![None; rows.len()];
+        let mut fourier = vec![false; rows.len()];
         let descriptions = ms
             .data_description()
             .map_err(|error| failure(path, error))?;
@@ -225,9 +231,11 @@ impl ClipModels {
                         .map_err(|error| failure(path, error))?;
                 let model = predictor
                     .predict(ms, row, labels, &flags[slot])
-                    .map_err(|error| failure(path, error))?
-                    .unwrap_or_else(|| default_model(labels, frequencies.len()));
-                cells[slot] = Some(ArrayValue::Complex32(model));
+                    .map_err(|error| failure(path, error))?;
+                fourier[slot] = model.is_some();
+                cells[slot] = Some(ArrayValue::Complex32(
+                    model.unwrap_or_else(|| default_model(labels, frequencies.len())),
+                ));
             }
         }
         if !physical.is_empty() {
@@ -297,7 +305,7 @@ impl ClipModels {
             };
             cells[slot] = Some(ArrayValue::Complex32(model));
         }
-        Ok(cells)
+        Ok(ReadClipModels { cells, fourier })
     }
 }
 

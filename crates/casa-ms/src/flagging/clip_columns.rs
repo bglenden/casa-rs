@@ -189,11 +189,14 @@ impl ClipColumns {
         ddid_to_spw: &BTreeMap<i32, i32>,
         path: &str,
     ) -> Result<ClipColumnCells<'a>, FlaggingError> {
-        let mut model = self
+        let (mut model, fourier_model) = self
             .models
             .as_mut()
             .map(|models| models.read(ms, rows, flags, path))
-            .transpose()?;
+            .transpose()?
+            .map_or((None, Vec::new()), |models| {
+                (Some(models.cells), models.fourier)
+            });
         let mut read = |name: &str| {
             if name == "MODEL_DATA"
                 && let Some(cells) = model.take()
@@ -217,6 +220,7 @@ impl ClipColumns {
                 .transpose()?,
             subtract: self.subtract.map(read).transpose()?,
             model_name: self.subtract,
+            fourier_model,
             inverse_sigma: self.inverse_sigma,
             sum_weights: self.sum_weights,
         })
@@ -345,12 +349,54 @@ pub(super) struct ClipColumnCells<'a> {
     primary: ClipOperand<'a>,
     subtract: Option<Vec<Option<ArrayValue>>>,
     model_name: Option<&'static str>,
+    fourier_model: Vec<bool>,
     average_weights: Option<ClipOperand<'a>>,
     inverse_sigma: bool,
     sum_weights: bool,
 }
 
 impl ClipColumnCells<'_> {
+    pub(super) fn fourier_residual_roundoff(
+        &self,
+        slot: usize,
+        flags: &ArrayD<bool>,
+        row: usize,
+        path: &str,
+    ) -> Result<Option<ArrayD<f32>>, FlaggingError> {
+        if self.model_name.is_none() || self.fourier_model.get(slot) != Some(&true) {
+            return Ok(None);
+        }
+        let data = self.measurements(slot, flags, row, path)?;
+        let Some(ArrayValue::Complex32(model)) = self.model(slot, flags, row, path)? else {
+            return Ok(None);
+        };
+        // The observed and predicted operands are stored at Float precision.
+        // Allow for the few ulps between Fourier predictors before using a
+        // small difference as evidence of an outlier in the residual.
+        let scale = 8.0 * f32::EPSILON;
+        let bound = |observed, predicted| {
+            // A recipe outside its spectral coverage does not alter this sample.
+            if predicted == 0.0 {
+                0.0
+            } else {
+                scale * (observed + predicted)
+            }
+        };
+        Ok(match data.as_ref() {
+            ArrayValue::Complex32(data) => Some(
+                ndarray::Zip::from(data)
+                    .and(model)
+                    .map_collect(|data, model| bound(data.norm(), model.norm())),
+            ),
+            ArrayValue::Float32(data) => Some(
+                ndarray::Zip::from(data)
+                    .and(model)
+                    .map_collect(|data, model| bound(data.abs(), model.norm())),
+            ),
+            _ => None,
+        })
+    }
+
     pub(super) fn measurements(
         &self,
         slot: usize,
