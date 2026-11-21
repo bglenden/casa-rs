@@ -53,20 +53,22 @@ def test_interleaved_axes_stokes_and_fractional_origin_match_casa(casa):
 
 
 @pytest.mark.parametrize("length, expected", [([], [1020., 1055., 1105., 1155.]), ([1], [1020.])])
-def test_subsampled_spectral_tables_keep_native_frames_and_physical_hz(casa, length, expected):
+@pytest.mark.parametrize(("unit", "right_scale"), [("Hz", 1.e6), ("MHz", 1.0)])
+def test_subsampled_spectral_tables_keep_native_frames_and_physical_hz(casa, length, expected, unit, right_scale):
     source = casa.coordsys().newcoordsys(spectral=True)
     frequencies = np.array([1.e9, 1.01e9, 1.03e9, 1.08e9])
     assert source.setspectral(refcode="LSRK", frequencies={"value": frequencies, "unit": "Hz"})
-    assert source.setunits(["MHz"])
+    assert source.setunits([unit])
     current = tools.coordsys()
     assert current.fromrecord(source.torecord())
     left = current.subimage([1.5], length)["spectral0"]
     right = source.subimage([1.5], length)["spectral0"]
     assert left["unit"] == right["unit"] == "Hz"
     assert left["system"] == right["system"] == "LSRK"
-    np.testing.assert_allclose(right["tabular"]["worldvalues"], expected)
-    np.testing.assert_allclose(left["tabular"]["worldvalues"], np.array(expected) * 1.e6)
-    np.testing.assert_allclose(left["restfreq"], right["restfreq"] * 1.e6)
+    expected = np.array(expected)
+    np.testing.assert_allclose(right["tabular"]["worldvalues"], expected * right_scale)
+    np.testing.assert_allclose(left["tabular"]["worldvalues"], expected * 1.e6)
+    np.testing.assert_allclose(left["restfreq"], right["restfreq"] * (1.e6 / right_scale))
     with pytest.raises(RuntimeError, match="illegal table"):
         current.subimage([1.5], [-1])
 
