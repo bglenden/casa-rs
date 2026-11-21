@@ -8426,6 +8426,16 @@ CASA also reads byte-swapped NumPy origin arrays as native-endian bytes.
 For example, `np.array(1.5, dtype=">f8")` applies a zero-pixel shift on a
 little-endian host. casa-rs reads the declared byte order.
 
+## FITS export shifts the zenithal polynomial coefficients
+
+CASA 6.7.6.14 starts the `ZPN` coefficients at latitude-axis `PV i_1`
+when it exports an image. FITS WCS defines the constant coefficient at
+`PV i_0`. For a polynomial beginning `[0.02, 1, 0.1, -0.02]`, reopening the
+export in CASA changes the sky positions. A zero constant can cause CASA
+to reopen the file as a linear coordinate. casa-rs writes the coefficients
+from `PV i_0`. Both readers recover the original sky positions from that
+header.
+
 ## A rejected combined conversion-frame request changes the direction frame
 
 CASA 6.7.6.14 applies the direction conversion in `coordsys.setconversiontype`

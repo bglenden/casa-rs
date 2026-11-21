@@ -90,15 +90,26 @@ fn theta_0_for_projection(proj: &Projection) -> f64 {
     use crate::projection::ProjectionType;
     match proj.projection_type() {
         ProjectionType::CAR
+        | ProjectionType::CYP
+        | ProjectionType::CEA
+        | ProjectionType::HPX
         | ProjectionType::MER
         | ProjectionType::SFL
         | ProjectionType::AIT
         | ProjectionType::PAR
         | ProjectionType::MOL
         | ProjectionType::PCO
+        | ProjectionType::BON
         | ProjectionType::TSC
         | ProjectionType::CSC
         | ProjectionType::QSC => 0.0,
+        ProjectionType::COP | ProjectionType::COD | ProjectionType::COE | ProjectionType::COO => {
+            proj.parameters()
+                .first()
+                .copied()
+                .unwrap_or_default()
+                .to_radians()
+        }
         _ => FRAC_PI_2, // zenithal projections
     }
 }
@@ -489,6 +500,26 @@ impl DirectionCoordinate {
     /// Returns the projection.
     pub fn projection(&self) -> &Projection {
         &self.projection
+    }
+
+    /// Rebuild the coordinate with the selected projection. Retain the native
+    /// frame, reference angles, pixel origin, increments, PC and angular units.
+    ///
+    /// # Errors
+    /// Returns an error if the projection or WCS matrix is invalid.
+    pub fn with_rebuilt_projection(&self, projection: Projection) -> Result<Self, CoordinateError> {
+        projection.validate_conversion_parameters()?;
+        let mut rebuilt = Self::new(
+            self.direction_ref,
+            projection,
+            self.crval,
+            self.cdelt,
+            self.crpix,
+        )
+        .with_normalized_pc_matrix(self.pc.clone())?;
+        rebuilt.latpole = rebuilt.native_pole[1];
+        rebuilt.world_units = self.world_units.clone();
+        Ok(rebuilt)
     }
 
     /// Whether this slant SIN projection uses the North Celestial Pole form.

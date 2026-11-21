@@ -13,11 +13,19 @@
 //! |------|------|-------------|
 //! | SIN  | Slant orthographic | `-SIN` |
 //! | AZP  | Zenithal perspective with a tilted plane | `-AZP` |
+//! | ZPN  | Zenithal polynomial | `-ZPN` |
 //! | SZP  | Slant zenithal perspective | `-SZP` |
 //! | AIR  | Airy's zenithal projection | `-AIR` |
 //! | TAN  | Gnomonic (tangent plane) | `-TAN` |
 //! | ARC  | Zenithal equidistant | `-ARC` |
 //! | CAR  | Plate carree (cylindrical equidistant) | `-CAR` |
+//! | CYP  | Cylindrical perspective | `-CYP` |
+//! | CEA  | Cylindrical equal area | `-CEA` |
+//! | COP  | Conic perspective | `-COP` |
+//! | COD  | Conic equidistant | `-COD` |
+//! | COE  | Conic equal area | `-COE` |
+//! | COO  | Conic orthomorphic | `-COO` |
+//! | BON  | Bonne's equal-area projection | `-BON` |
 //! | SFL  | Sanson-Flamsteed (sinusoidal) | `-SFL` |
 //! | PAR  | Parabolic | `-PAR` |
 //! | MOL  | Mollweide equal-area | `-MOL` |
@@ -29,6 +37,7 @@
 //! | TSC  | Tangential spherical cube | `-TSC` |
 //! | CSC  | COBE quadrilateralized spherical cube | `-CSC` |
 //! | QSC  | Quadrilateralized spherical cube | `-QSC` |
+//! | HPX  | HEALPix | `-HPX` |
 //! | NCP  | North Celestial Pole (SIN special case) | `-NCP` |
 
 use std::f64::consts::{FRAC_PI_2, LN_2, PI, SQRT_2, TAU};
@@ -37,8 +46,12 @@ use std::fmt;
 use crate::error::CoordinateError;
 
 mod azp;
+mod conic;
 mod cube;
+mod cylindrical;
+mod healpix;
 mod szp;
+mod zpn;
 
 use azp::ZenithalPerspective;
 use szp::SlantZenithalPerspective;
@@ -59,6 +72,8 @@ pub enum ProjectionType {
     SIN,
     /// Zenithal perspective with a tilted projection plane.
     AZP,
+    /// Zenithal polynomial projection.
+    ZPN,
     /// Slant zenithal perspective with a displaced projection point.
     SZP,
     /// Airy's zenithal projection.
@@ -69,6 +84,18 @@ pub enum ProjectionType {
     ARC,
     /// Plate carree (cylindrical equidistant) projection.
     CAR,
+    /// Cylindrical perspective projection.
+    CYP,
+    /// Cylindrical equal-area projection.
+    CEA,
+    /// Conic perspective projection.
+    COP,
+    /// Conic equidistant projection.
+    COD,
+    /// Conic equal-area projection.
+    COE,
+    /// Conic orthomorphic projection.
+    COO,
     /// Sanson-Flamsteed (sinusoidal) projection.
     SFL,
     /// Parabolic projection.
@@ -77,12 +104,16 @@ pub enum ProjectionType {
     MOL,
     /// Polyconic projection.
     PCO,
+    /// Bonne's equal-area projection.
+    BON,
     /// Tangential spherical cube.
     TSC,
     /// COBE quadrilateralized spherical cube.
     CSC,
     /// Quadrilateralized spherical cube.
     QSC,
+    /// HEALPix projection.
+    HPX,
     /// Mercator projection.
     MER,
     /// Hammer-Aitoff equal-area projection.
@@ -97,15 +128,27 @@ pub enum ProjectionType {
 
 impl ProjectionType {
     /// Defaults for the latitude-axis `PV` parameters supported by the
-    /// FITS reader and writer, in one-based parameter order.
+    /// FITS reader and writer, starting at [`Self::fits_parameter_start`].
     #[must_use]
     pub fn fits_parameter_defaults(self) -> &'static [f64] {
         match self {
             Self::AZP => &[0.0, 0.0],
+            Self::ZPN => &[0.0; 20],
             Self::SZP => &[0.0, 0.0, 90.0],
             Self::AIR => &[90.0],
+            Self::CYP => &[1.0, 1.0],
+            Self::CEA => &[1.0],
+            Self::COP | Self::COD | Self::COE | Self::COO => &[0.0, 0.0],
+            Self::BON => &[0.0],
+            Self::HPX => &[4.0, 3.0],
             _ => &[],
         }
+    }
+
+    /// First latitude-axis FITS `PV` index for this projection.
+    #[must_use]
+    pub fn fits_parameter_start(self) -> usize {
+        usize::from(self != Self::ZPN)
     }
 
     /// Parses a projection name (case-insensitive) to a [`ProjectionType`].
@@ -119,24 +162,33 @@ impl ProjectionType {
     ///
     /// assert_eq!(ProjectionType::from_name("SIN"), Some(ProjectionType::SIN));
     /// assert_eq!(ProjectionType::from_name("tan"), Some(ProjectionType::TAN));
-    /// assert_eq!(ProjectionType::from_name("BON"), None);
+    /// assert_eq!(ProjectionType::from_name("XPH"), None);
     /// ```
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_uppercase().as_str() {
             "SIN" => Some(Self::SIN),
             "AZP" => Some(Self::AZP),
+            "ZPN" => Some(Self::ZPN),
             "SZP" => Some(Self::SZP),
             "AIR" => Some(Self::AIR),
             "TAN" => Some(Self::TAN),
             "ARC" => Some(Self::ARC),
             "CAR" => Some(Self::CAR),
+            "CYP" => Some(Self::CYP),
+            "CEA" => Some(Self::CEA),
+            "COP" => Some(Self::COP),
+            "COD" => Some(Self::COD),
+            "COE" => Some(Self::COE),
+            "COO" => Some(Self::COO),
             "SFL" => Some(Self::SFL),
             "PAR" => Some(Self::PAR),
             "MOL" => Some(Self::MOL),
             "PCO" => Some(Self::PCO),
+            "BON" => Some(Self::BON),
             "TSC" => Some(Self::TSC),
             "CSC" => Some(Self::CSC),
             "QSC" => Some(Self::QSC),
+            "HPX" => Some(Self::HPX),
             "MER" => Some(Self::MER),
             "AIT" => Some(Self::AIT),
             "ZEA" => Some(Self::ZEA),
@@ -151,18 +203,27 @@ impl ProjectionType {
         match self {
             Self::SIN => "SIN",
             Self::AZP => "AZP",
+            Self::ZPN => "ZPN",
             Self::SZP => "SZP",
             Self::AIR => "AIR",
             Self::TAN => "TAN",
             Self::ARC => "ARC",
             Self::CAR => "CAR",
+            Self::CYP => "CYP",
+            Self::CEA => "CEA",
+            Self::COP => "COP",
+            Self::COD => "COD",
+            Self::COE => "COE",
+            Self::COO => "COO",
             Self::SFL => "SFL",
             Self::PAR => "PAR",
             Self::MOL => "MOL",
             Self::PCO => "PCO",
+            Self::BON => "BON",
             Self::TSC => "TSC",
             Self::CSC => "CSC",
             Self::QSC => "QSC",
+            Self::HPX => "HPX",
             Self::MER => "MER",
             Self::AIT => "AIT",
             Self::ZEA => "ZEA",
@@ -243,6 +304,9 @@ impl Projection {
         match self.projection_type {
             ProjectionType::SIN => project_sin(phi, theta, &self.parameters),
             ProjectionType::AZP => ZenithalPerspective::new(&self.parameters)?.project(phi, theta),
+            ProjectionType::ZPN => {
+                zpn::ZenithalPolynomial::new(&self.parameters)?.project(phi, theta)
+            }
             ProjectionType::SZP => {
                 SlantZenithalPerspective::new(&self.parameters)?.project(phi, theta)
             }
@@ -250,10 +314,20 @@ impl Projection {
             ProjectionType::TAN => project_tan(phi, theta),
             ProjectionType::ARC => project_arc(phi, theta),
             ProjectionType::CAR => project_car(phi, theta),
+            ProjectionType::CYP => cylindrical::project_cyp(&self.parameters, phi, theta),
+            ProjectionType::CEA => cylindrical::project_cea(&self.parameters, phi, theta),
+            kind @ (ProjectionType::COP
+            | ProjectionType::COD
+            | ProjectionType::COE
+            | ProjectionType::COO) => {
+                conic::Conic::new(kind, &self.parameters)?.project(phi, theta)
+            }
+            ProjectionType::HPX => healpix::Healpix::new(&self.parameters)?.project(phi, theta),
             ProjectionType::SFL => project_sfl(phi, theta),
             ProjectionType::PAR => project_par(phi, theta),
             ProjectionType::MOL => project_mol(phi, theta),
             ProjectionType::PCO => project_pco(phi, theta),
+            ProjectionType::BON => project_bon(phi, theta, self.bonne_latitude()?),
             ProjectionType::TSC | ProjectionType::CSC | ProjectionType::QSC => {
                 cube::project(self.projection_type, phi, theta)
             }
@@ -271,15 +345,24 @@ impl Projection {
         match self.projection_type {
             ProjectionType::SIN => deproject_sin(x, y, &self.parameters),
             ProjectionType::AZP => ZenithalPerspective::new(&self.parameters)?.deproject(x, y),
+            ProjectionType::ZPN => zpn::ZenithalPolynomial::new(&self.parameters)?.deproject(x, y),
             ProjectionType::SZP => SlantZenithalPerspective::new(&self.parameters)?.deproject(x, y),
             ProjectionType::AIR => deproject_air(x, y, self.airy_coefficient()?),
             ProjectionType::TAN => deproject_tan(x, y),
             ProjectionType::ARC => deproject_arc(x, y),
             ProjectionType::CAR => deproject_car(x, y),
+            ProjectionType::CYP => cylindrical::deproject_cyp(&self.parameters, x, y),
+            ProjectionType::CEA => cylindrical::deproject_cea(&self.parameters, x, y),
+            kind @ (ProjectionType::COP
+            | ProjectionType::COD
+            | ProjectionType::COE
+            | ProjectionType::COO) => conic::Conic::new(kind, &self.parameters)?.deproject(x, y),
+            ProjectionType::HPX => healpix::Healpix::new(&self.parameters)?.deproject(x, y),
             ProjectionType::SFL => deproject_sfl(x, y),
             ProjectionType::PAR => deproject_par(x, y),
             ProjectionType::MOL => deproject_mol(x, y),
             ProjectionType::PCO => deproject_pco(x, y),
+            ProjectionType::BON => deproject_bon(x, y, self.bonne_latitude()?),
             ProjectionType::TSC | ProjectionType::CSC | ProjectionType::QSC => {
                 cube::deproject(self.projection_type, x, y)
             }
@@ -300,9 +383,29 @@ impl Projection {
     pub fn validate_conversion_parameters(&self) -> Result<(), CoordinateError> {
         match self.projection_type {
             ProjectionType::AZP => ZenithalPerspective::new(&self.parameters).map(|_| ()),
+            ProjectionType::ZPN => zpn::ZenithalPolynomial::new(&self.parameters).map(|_| ()),
             ProjectionType::SZP => SlantZenithalPerspective::new(&self.parameters).map(|_| ()),
             ProjectionType::AIR => self.airy_coefficient().map(|_| ()),
+            ProjectionType::CYP => cylindrical::cyp_parameters(&self.parameters).map(|_| ()),
+            ProjectionType::CEA => cylindrical::cea_scale(&self.parameters).map(|_| ()),
+            kind @ (ProjectionType::COP
+            | ProjectionType::COD
+            | ProjectionType::COE
+            | ProjectionType::COO) => conic::Conic::new(kind, &self.parameters).map(|_| ()),
+            ProjectionType::HPX => healpix::Healpix::new(&self.parameters).map(|_| ()),
+            ProjectionType::BON => self.bonne_latitude().map(|_| ()),
             _ => Ok(()),
+        }
+    }
+
+    fn bonne_latitude(&self) -> Result<f64, CoordinateError> {
+        let angle = self.parameters.first().copied().unwrap_or(f64::NAN);
+        if angle.is_finite() {
+            Ok(angle.to_radians())
+        } else {
+            Err(CoordinateError::ConversionFailed(
+                "BON requires a finite conformal latitude".into(),
+            ))
         }
     }
 
@@ -616,6 +719,43 @@ fn deproject_arc(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
 
 fn project_car(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
     Ok((phi, theta))
+}
+
+// The Bonne projection uses the sinusoidal projection in the zero-latitude
+// limit. The radius of each latitude arc is cot(theta1) + theta1 - theta.
+fn project_bon(phi: f64, theta: f64, theta1: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta1 == 0.0 {
+        return project_sfl(phi, theta);
+    }
+    let radius0 = 1.0 / theta1.tan() + theta1;
+    let radius = radius0 - theta;
+    if radius == 0.0 {
+        return Ok((0.0, radius0));
+    }
+    let (sine, cosine) = (phi * theta.cos() / radius).sin_cos();
+    Ok((radius * sine, radius0 - radius * cosine))
+}
+
+fn deproject_bon(x: f64, y: f64, theta1: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta1 == 0.0 {
+        return deproject_sfl(x, y);
+    }
+    let radius0 = 1.0 / theta1.tan() + theta1;
+    let dy = radius0 - y;
+    let radius = x.hypot(dy).copysign(theta1);
+    let theta = radius0 - radius;
+    let phi = if theta.abs() == FRAC_PI_2 || radius == 0.0 {
+        0.0
+    } else {
+        (x / radius).atan2(dy / radius) * radius / theta.cos()
+    };
+    if phi.abs() <= PI + 2.e - 13 && theta.abs() <= FRAC_PI_2 + 2.e - 13 {
+        Ok((phi.clamp(-PI, PI), theta.clamp(-FRAC_PI_2, FRAC_PI_2)))
+    } else {
+        Err(CoordinateError::ConversionFailed(
+            "Pixel is outside the BON projection".into(),
+        ))
+    }
 }
 
 fn deproject_car(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {

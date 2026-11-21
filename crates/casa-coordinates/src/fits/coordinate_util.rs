@@ -321,18 +321,15 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, [a1, a2]: [usize;
     h.set(format!("CTYPE{a1}"), FitsValue::String(ctype_lon));
     h.set(format!("CTYPE{a2}"), FitsValue::String(ctype_lat));
     let projection = direction.projection();
-    for (index, &default) in projection
-        .projection_type()
-        .fits_parameter_defaults()
-        .iter()
-        .enumerate()
-    {
+    let projection_type = projection.projection_type();
+    let start = projection_type.fits_parameter_start();
+    for (index, &default) in projection_type.fits_parameter_defaults().iter().enumerate() {
         let value = projection
             .parameters()
             .get(index)
             .copied()
             .unwrap_or(default);
-        h.set(format!("PV{a2}_{}", index + 1), FitsValue::Float(value));
+        h.set(format!("PV{a2}_{}", index + start), FitsValue::Float(value));
     }
 
     // CRVAL in degrees
@@ -784,7 +781,8 @@ fn parse_direction(
     let proj_type = ProjectionType::from_name(proj_code)
         .ok_or_else(|| CoordinateError::UnsupportedProjection(proj_code.to_string()))?;
     let defaults = proj_type.fits_parameter_defaults();
-    let specified = (1..=defaults.len())
+    let start = proj_type.fits_parameter_start();
+    let specified = (start..start + defaults.len())
         .map(|index| h.get_float(&format!("PV{a2}_{index}")))
         .collect::<Vec<_>>();
     let parameters = if specified.iter().any(Option::is_some) {
