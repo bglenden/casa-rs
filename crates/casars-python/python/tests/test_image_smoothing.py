@@ -187,3 +187,26 @@ def test_analytic_two_sample_boxcar_keeps_the_single_plane_reference():
         coords.done()
         output.done()
         image.done()
+
+
+@pytest.mark.parametrize("method,shape,count", [
+    ("boxcar", [6, 7, 2], 56),
+    ("hanning", [7, 7, 2], 58),
+])
+def test_circle_selection_keeps_smoothing_validity(casa, method, shape, count):
+    data = np.arange(8 * 9 * 2, dtype=np.float32).reshape(8, 9, 2)
+    cases = []
+    for api in (tools, casa):
+        source = api.image()
+        assert source.fromarray(pixels=data)
+        result = getattr(source, method)(region="circle[[4pix,4pix],3pix]", drop=False, axis=0)
+        try:
+            assert result.shape().tolist() == shape
+            valid = result.getchunk(getmask=True)
+            assert int(valid.sum()) == count
+            cases.append((result.getchunk(), valid))
+        finally:
+            result.done()
+            source.done()
+    np.testing.assert_allclose(cases[0][0], cases[1][0])
+    np.testing.assert_array_equal(cases[0][1], cases[1][1])
