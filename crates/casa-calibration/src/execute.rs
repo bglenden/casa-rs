@@ -2253,7 +2253,8 @@ fn apply_row_all_channels(
         let is_bandpass = is_tsys || matches!(subtype, "B Jones" | "BPOLY");
         let resample_frequency = is_bandpass || channelized_polarization;
         let first_receptor_only =
-            (is_bandpass || is_switched_power) && correlation_types.len() == 1;
+            (is_bandpass || is_switched_power || matches!(subtype, "X Jones" | "Xf Jones"))
+                && correlation_types.len() == 1;
         let (ant1_transient, ant2_transient) = (
             bounded_frequency_cache && ant1.interpolated,
             bounded_frequency_cache && ant2.interpolated,

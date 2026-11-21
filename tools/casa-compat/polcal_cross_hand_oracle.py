@@ -12,6 +12,7 @@ from calibration_leakage_apply_oracle import CHANNELS, compare_application, make
 from calibration_smoothcal_oracle import opened
 from polcal_leakage_solve_oracle import compare_apply, plant, put_observations
 from polcal_standard_leakage_oracle import solve
+from record_casa_returns import make_cal_ms
 
 
 def plant_cross_hand(vis, output, antennas, epoch):
@@ -27,6 +28,26 @@ def plant_cross_hand(vis, output, antennas, epoch):
         for name in ('NUM_CHAN', 'CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION'):
             table.putcell(name, 0, ms.getcell(name, 0))
     return terms
+
+
+def compare_single_correlation(root, api):
+    root.mkdir()
+    vis = root/'single-correlation.ms'
+    make_cal_ms(str(vis), stokes='RR')
+    with opened(vis/'POLARIZATION', True) as polarization:
+        polarization.putcell('CORR_TYPE', 0, np.array([8], np.int32))
+        polarization.putcell('CORR_PRODUCT', 0, np.ones((2, 1), np.int32))
+    with opened(vis) as ms:
+        epoch = float(ms.getcol('TIME').min())
+        raw = ms.getcol('DATA')
+    table = root/'antenna-phases.cal'
+    terms = plant_cross_hand(vis, table, 5, epoch)
+    terms *= np.exp(0.33j * np.arange(5))
+    with opened(table, True) as calibration:
+        calibration.putcol('CPARAM', terms)
+    difference, corrected = compare_application(root, vis, api, 'LL', [table], False)
+    assert difference < 1e-5
+    assert np.linalg.norm(corrected-raw) > .2 * np.linalg.norm(raw)
 
 
 def compare_basis(root, basis, api):
@@ -58,6 +79,14 @@ def compare_basis(root, basis, api):
                      time_tolerance=1e-4)
     compare_apply(root/'selected-priors', vis, products, api, [gains, leak])
 
+    with opened(vis) as ms:
+        times, fields = ms.getcol('TIME'), ms.getcol('FIELD_ID')
+    flux = sky.copy()
+    flux[:, 0, times > np.median(times[fields == 0])] *= 3
+    put_observations(vis, flux, [planted])
+    solve(root/'preaveraged-centroid', vis, api, [], poltype='Xf', preavg=0.,
+          time_tolerance=1e-4)
+
     data = put_observations(vis, sky, [planted])
     with opened(vis, True) as ms:
         data[1:3, 3] = 0.
@@ -73,13 +102,17 @@ def compare_basis(root, basis, api):
         np.testing.assert_array_equal(table.getcol('CPARAM')[:, 3:5], 1.)
 
     for label, task in [('casa', casa.polcal), ('native', api.polcal)]:
-        output = root/f'{label}-unsupported-x-mueller.cal'
-        try:
-            task(str(vis), str(output), field='0', smodel=stokes, poltype='X')
-        except RuntimeError:
-            assert not output.exists()
-        else:
-            raise AssertionError(f'{label} accepted the legacy X Mueller solve')
+        for case, options in (
+            ('legacy-mueller', dict(poltype='X')),
+            ('invalid-reference', dict(poltype='Xf', refant='JUNK')),
+        ):
+            output = root/f'{label}-{case}.cal'
+            try:
+                task(str(vis), str(output), field='0', smodel=stokes, **options)
+            except RuntimeError:
+                assert not output.exists()
+            else:
+                raise AssertionError(f'{label} accepted {case}')
 
 
 def main():
@@ -93,6 +126,7 @@ def main():
     root.mkdir()
     compare_basis(root/'circular', 'RR RL LR LL', tasks)
     compare_basis(root/'linear', 'XX XY YX YY', tasks)
+    compare_single_correlation(root/'single-correlation', tasks)
 
 
 if __name__ == '__main__':

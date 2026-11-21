@@ -226,7 +226,7 @@ pub(crate) fn solve_polarization(
             .then_with(|| a[0].0.time_seconds.total_cmp(&b[0].0.time_seconds))
     });
     let mut references = Vec::new();
-    if context.refant_id >= 0 {
+    if context.refant_id >= 0 && !request.kind.cross_hand() {
         references.extend([context.refant_id, context.refant_id]);
         references.extend(context.refant_alternates.iter().copied());
         references.extend(
@@ -289,6 +289,20 @@ impl WindowChannels {
 struct BaselineAverages {
     start: f64,
     bins: Vec<CoherencyMean>,
+    centroid: WeightedTime,
+    spectral_weight: f64,
+}
+
+impl BaselineAverages {
+    fn finish_time(&mut self, solution_time: &mut WeightedTime) {
+        if self.centroid.mean().is_some() {
+            solution_time.observe_mean(self.centroid, self.spectral_weight);
+        } else if self.spectral_weight > 0.0 {
+            solution_time.observe(self.start, self.spectral_weight);
+        }
+        self.centroid = WeightedTime::default();
+        self.spectral_weight = 0.0;
+    }
 }
 
 fn interval_window(rows: &[BucketedRow<'_>]) -> i32 {
@@ -349,22 +363,33 @@ impl LeakageInputs<'_> {
                     .or_insert_with(|| BaselineAverages {
                         start: row.time_seconds,
                         bins: vec![CoherencyMean::default(); count],
+                        centroid: WeightedTime::default(),
+                        spectral_weight: 0.0,
                     });
                 if span.is_some_and(|span| row.time_seconds - active.start > span) {
                     fits.accumulate(pair, &mut active.bins, antennas)?;
+                    active.finish_time(&mut time);
                     active.start = row.time_seconds;
                 }
-                let weight = self.average_row(
+                let (spectral_weight, scalar_weight) = self.average_row(
                     row,
                     (&input, index),
                     &self.windows[&row.data_spw_id],
                     &mut active.bins,
                 )?;
-                time.observe(row.time_centroid_seconds, weight);
+                if let Some(scalar_weight) = scalar_weight {
+                    active
+                        .centroid
+                        .observe(row.time_centroid_seconds, scalar_weight);
+                    active.spectral_weight += spectral_weight;
+                } else {
+                    time.observe(row.time_centroid_seconds, spectral_weight);
+                }
             }
         }
         for ((_, _, pair), mut active) in averages {
             fits.accumulate(pair, &mut active.bins, antennas)?;
+            active.finish_time(&mut time);
         }
         Ok(fits
             .finish(
@@ -391,7 +416,7 @@ impl LeakageInputs<'_> {
         batch: (&SolveInputBatch, usize),
         window: &WindowChannels,
         bins: &mut [CoherencyMean],
-    ) -> Result<f64, GainSolveError> {
+    ) -> Result<(f64, Option<f64>), GainSolveError> {
         let correlations = correlation_types_for_ddid(self.ms, row.data_desc_id)?;
         let order = coherency_order(row.data_desc_id, &correlations).map_err(prior_error)?;
         let prior = self
@@ -461,6 +486,37 @@ impl LeakageInputs<'_> {
             .map_err(prior_error)?;
         let flags = flags.as_ref().unwrap_or(input.flags.as_ref());
         let samples = input.samples();
+        // The X solve time combines baseline centroids using spectral
+        // weights, while time averaging each baseline uses scalar weights.
+        let scalar_weight = self.request.kind.cross_hand().then(|| {
+            let normalized = SolveSamples {
+                flags: samples::two_dimensional(flags),
+                model: Some(samples::two_dimensional(&model)),
+                ..samples
+            };
+            let shared_flags = samples::channel_flags(&normalized);
+            let channels = SelectedChannels {
+                indices: &window.channels,
+                all_channels: false,
+                bin_width: (window.bin_width > 1).then_some(window.bin_width),
+                excluded: &[],
+                bin_weights: None,
+            };
+            order
+                .into_iter()
+                .map(|corr| {
+                    samples::centroid_weight(
+                        &normalized,
+                        corr,
+                        channels,
+                        Some(&shared_flags),
+                        Complex32::ONE,
+                        true,
+                    )
+                })
+                .filter(|weight| weight.is_finite() && *weight > 0.0)
+                .sum()
+        });
         let mut total = 0.0;
         let retain_unweighted_model = self.request.kind.iterative()
             && matches!(self.request.interval, GainSolveInterval::Integration)
@@ -505,7 +561,7 @@ impl LeakageInputs<'_> {
                 .map(f64::from)
                 .sum::<f64>();
         }
-        Ok(total)
+        Ok((total, scalar_weight))
     }
 }
 

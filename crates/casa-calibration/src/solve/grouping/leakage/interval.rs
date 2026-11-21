@@ -153,8 +153,8 @@ fn cross_hand(
         tracing::info!(
             field,
             spw,
-            position_angle_degrees = 0.5 * sum.arg().to_degrees(),
-            "Mean position angle offset solution"
+            phase_degrees = sum.arg().to_degrees(),
+            "Mean cross-hand phase solution"
         );
     }
     Some((-1, values))

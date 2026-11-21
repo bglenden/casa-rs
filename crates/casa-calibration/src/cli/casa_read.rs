@@ -236,11 +236,7 @@ pub(super) fn leakage_request(
         preaverage_seconds: task.number("preavg")?,
         min_baselines: task.integer("minblperant")?.max(0) as usize,
         min_snr: task.number("minsnr")? as f32,
-        refant: if kind.cross_hand() {
-            bandpass_refant("")
-        } else {
-            bandpass_refant(&task.required_text("refant")?)
-        },
+        refant: bandpass_refant(&task.required_text("refant")?),
         append: task.flag("append")?,
     })
 }
