@@ -317,7 +317,7 @@ fn dense_pa_import_keeps_the_last_paired_buffer_and_charges_discarded_paths() {
     cells[0].imaging.path.reserve(256);
     let longest = cells[0].imaging.path.capacity() + cells[0].weight.path.capacity();
     let discarded = longest + cells[2].imaging.path.capacity() + cells[2].weight.path.capacity();
-    let opening = coalesce_imported_pa(&mut cells);
+    let opening = coalesce_imported_pa(&mut cells, true);
     let mut retained: Vec<_> = cells
         .iter()
         .map(|cell| {

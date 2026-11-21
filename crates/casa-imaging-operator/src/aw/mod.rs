@@ -394,6 +394,7 @@ impl AwCatalog {
             polarization,
             bound_bytes,
             false,
+            None,
         )
     }
 
@@ -417,6 +418,7 @@ impl AwCatalog {
             polarization,
             bound_bytes,
             true,
+            None,
         )
     }
 
@@ -427,10 +429,11 @@ impl AwCatalog {
         polarization: &PolarizationRouting,
         bound_bytes: usize,
         legacy: bool,
+        live_pa_deg: Option<&[f64]>,
     ) -> Result<Self, AwCatalogError> {
         let root = root.to_path_buf();
         let mut cells = read_cells(&root)?;
-        let header_opening_bytes = coalesce_imported_pa(&mut cells);
+        let header_opening_bytes = coalesce_imported_pa(&mut cells, live_pa_deg.is_none());
         // A native cell's working field is the image field times the
         // oversampling: `working_size · working_increment = sampling · n · Δx`.
         let [grid_n, _] = geometry.grid_shape();
@@ -525,7 +528,7 @@ impl AwCatalog {
         let rotatable = cells
             .iter()
             .all(|cell| cell.imaging.rotatable && cell.weight.rotatable);
-        let rotations = PaSchedule::new(&indexing, &pa_deg, rotatable, legacy)
+        let rotations = PaSchedule::new(&indexing, &pa_deg, rotatable, legacy, live_pa_deg)
             .map_err(|error| cache_error(&root, error))?;
         let variants = rotations
             .group_count(groups.len(), per_pa)
@@ -1262,7 +1265,15 @@ impl ConvolutionFunctionSet for AwCatalog {
 /// one degree of the previous buffer replaces its angle and cells
 /// (CFCache::fillCFListFromDisk, CFStore2::resize). Thus only the last
 /// buffer survives each run of neighboring angles within that tolerance.
-fn coalesce_imported_pa(cells: &mut Vec<CellFiles>) -> usize {
+fn coalesce_imported_pa(cells: &mut Vec<CellFiles>, imported: bool) -> usize {
+    if !imported {
+        let paths = cells
+            .iter()
+            .map(|cell| cell.imaging.path.capacity() + cell.weight.path.capacity())
+            .max()
+            .unwrap_or(0);
+        return CELL_IMAGE_RECORD_BYTES + 4 * paths;
+    }
     cells.sort_unstable_by(|a, b| b.imaging.pa_deg.total_cmp(&a.imaging.pa_deg));
     let tolerance = 1.0_f32.to_radians();
     let mut next = None::<f64>;

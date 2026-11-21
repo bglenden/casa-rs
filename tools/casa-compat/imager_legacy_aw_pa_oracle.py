@@ -139,12 +139,106 @@ def rotate_and_replay(root, source, model, casa_cache, native_cache, reference):
     return errors
 
 
+def timed_edge_input(seed, target, offsets):
+    make_input(seed, target, scratch=True)
+    editor = table()
+    assert editor.open(str(target), nomodify=False)
+    for column in ('TIME', 'TIME_CENTROID'):
+        values = editor.getcol(column)
+        epochs, indices = np.unique(values, return_inverse=True)
+        assert len(epochs) == 3
+        assert editor.putcol(column, epochs[0] + np.asarray(offsets)[indices])
+    assert editor.done()
+
+
+def selection_edge(root, seed, model, label, reference):
+    work = root / label
+    work.mkdir()
+    offsets, step = (([0., 12600., 21630.], 20.) if label == 'overlap'
+                     else ([0., 2000., 2000.], .5))
+    terms = dict(pastep=step, rotpastep=180., wbawp=True)
+    source = work / 'source.ms'
+    timed_edge_input(seed, source, offsets)
+    if reference is None:
+        cold, warm = work / 'pinned-cold.ms', work / 'pinned-warm.ms'
+        cold_cache, warm_cache = work / 'pinned-cold-cache', work / 'pinned-warm-cache'
+        make_input(source, cold, scratch=True)
+        predict(cold, model, cold_cache, 'awproject', False, factory=casa_imager, **terms)
+        make_input(source, warm, scratch=True)
+        shutil.copytree(cold_cache, warm_cache)
+        predict(warm, model, warm_cache, 'mawproject', False, factory=casa_imager, **terms)
+    else:
+        cold, warm = reference / 'cold.ms', reference / 'warm.ms'
+        cold_cache = reference / 'cold-cache'
+        for pinned in (cold, warm):
+            np.testing.assert_array_equal(data(source, 'TIME'), data(pinned, 'TIME'))
+    angles = kernel_angles(cold_cache)
+    assert len(angles) == 8
+    first, second = angles[0], angles[2]
+    separation = abs(first - second)
+    assert separation > step
+    if label == 'subdegree':
+        assert separation < 1.
+
+    saved, native_cache = work / 'saved.ms', work / 'native-cache'
+    make_input(source, saved, scratch=False)
+    predict(saved, model, native_cache, 'awproject', False, scratch=False, **terms)
+    entry = recipe(saved)
+    chosen = entry['casars_legacy_aw_live_pa_bases']
+    expected_bases = [first, first, second] if label == 'overlap' else [first, second]
+    np.testing.assert_allclose(chosen, expected_bases, rtol=0., atol=2.e-5)
+    held = Path(entry['diskimage']) / 'CASARS_LEGACY_AW_CACHE'
+    errors = {f'{label}-cells': compare_cells(held, cold_cache, count=8)}
+    moved = work / 'moved-cache'
+    native_cache.rename(moved)
+    prior = corrected_or_data(saved)
+    reader = ms()
+    assert reader.open(str(saved), nomodify=False)
+    assert reader.msselect({'field': '0'}) and reader.uvsub() and reader.done()
+    subtracted = prior - data(saved, 'CORRECTED_DATA')
+    assert not np.any(subtracted[:, 1:, :])
+    expected = data(cold, 'MODEL_DATA')[:, 0, :]
+    errors[f'{label}-cold-replay'] = relative_rms(subtracted[:, 0, :], expected)
+
+    before = cache_contents(moved)
+    target = work / 'native-warm.ms'
+    make_input(source, target, scratch=True)
+    predict(target, model, moved, 'mawproject', False, **terms)
+    assert cache_contents(moved) == before
+    errors[f'{label}-warm'] = compare_scratch(data(target, 'MODEL_DATA'), data(warm, 'MODEL_DATA'))
+    return errors
+
+
+def incompatible_append(root, seed, source, model, full):
+    cache = root / 'different-sampling'
+    cache.mkdir()
+    editor = image()
+    for path in full.glob('*CFS_0_0_CF_*.im'):
+        target = cache / path.name
+        shutil.copytree(path, target)
+        assert editor.open(str(target))
+        metadata = editor.miscinfo()
+        metadata['Sampling'] = 19.
+        assert editor.setmiscinfo(metadata) and editor.done()
+    before = cache_contents(cache)
+    assert len(list(cache.glob('*CFS_*.im'))) == 4
+    scratch(seed, root / 'compatible-existing-angle.ms', model, cache)
+    invalid = root / 'incompatible-new-angle.ms'
+    make_input(source, invalid, scratch=True)
+    predict(invalid, model, cache, 'awproject', False, accepts=False, pastep=5., wbawp=True)
+    assert cache_contents(cache) == before
+    scratch(seed, root / 'same-angle-after-refusal.ms', model, cache)
+    assert cache_contents(cache) == before
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ('work', 'dataset', 'model'):
         parser.add_argument(f'--{option}', type=Path, required=True)
     parser.add_argument('--cold-reference', type=Path)
     parser.add_argument('--rotation-reference', type=Path)
+    parser.add_argument('--overlap-reference', type=Path)
+    parser.add_argument('--subdegree-reference', type=Path)
     args = parser.parse_args()
     assert casatasks.version_string() == '6.7.6.14'
     args.work.mkdir(parents=True)
@@ -157,6 +251,9 @@ def main():
     errors.update(extend_cache(args.work, source, args.model, casa_cache, expected))
     errors.update(rotate_and_replay(args.work, nearby, args.model, casa_cache, native_cache,
                                     args.rotation_reference))
+    incompatible_append(args.work, args.dataset, source, args.model, casa_cache)
+    for label, reference in (('overlap', args.overlap_reference), ('subdegree', args.subdegree_reference)):
+        errors.update(selection_edge(args.work, args.dataset, args.model, label, reference))
     print('legacy A/W parallactic-angle NRMS', errors, flush=True)
     assert all(np.isfinite(error) and error < 1.e-6 for error in errors.values()), errors
 

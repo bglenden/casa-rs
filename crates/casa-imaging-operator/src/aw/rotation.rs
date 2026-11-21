@@ -1,9 +1,39 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Parallactic-angle rotation epochs for an imported aperture buffer.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
-use super::{AwIndexing, first_covered_pa};
+use super::{
+    AwCatalog, AwCatalogError, AwIndexing, GridGeometry, PolarizationRouting, first_covered_pa,
+};
+
+impl AwCatalog {
+    /// Open cells selected during legacy CASA generation, retaining the
+    /// individual live PA buffers before CASA's warm import coalesces them.
+    /// When rotation is enabled, `base_pa_deg` contains the actual selected
+    /// buffer for each observation time. An unrotated catalog has no row map.
+    ///
+    /// # Errors
+    /// The cells or explicitly selected rotation bases are invalid.
+    pub fn open_legacy_live(
+        root: impl AsRef<Path>,
+        indexing: AwIndexing,
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        bound_bytes: usize,
+        base_pa_deg: &[f64],
+    ) -> Result<Self, AwCatalogError> {
+        Self::open(
+            root.as_ref(),
+            indexing,
+            geometry,
+            polarization,
+            bound_bytes,
+            true,
+            Some(base_pa_deg),
+        )
+    }
+}
 
 /// Feed angles at the selected observation times and the rotation threshold.
 #[derive(Clone, Debug, PartialEq)]
@@ -78,6 +108,7 @@ impl PaSchedule {
         pa_deg: &[f64],
         rotatable: bool,
         legacy: bool,
+        live_pa_deg: Option<&[f64]>,
     ) -> Result<Self, &'static str> {
         let Some(rotation) = &indexing.rotation else {
             return Ok(Self::Unrotated);
@@ -86,7 +117,7 @@ impl PaSchedule {
             return Err("runtime rotation needs axis-aligned linear cells (#1070)");
         }
         if legacy {
-            return Self::legacy(rotation, pa_deg, indexing.pa_tolerance_rad);
+            return Self::legacy(rotation, pa_deg, indexing.pa_tolerance_rad, live_pa_deg);
         }
         if pa_deg.len() != 1 {
             return Err("runtime rotation needs one PA buffer (#1070)");
@@ -100,6 +131,7 @@ impl PaSchedule {
         rotation: &AwPaRotation,
         pa_deg: &[f64],
         tolerance_rad: f32,
+        live_pa_deg: Option<&[f64]>,
     ) -> Result<Self, &'static str> {
         let mut active = pa_deg
             .iter()
@@ -108,11 +140,20 @@ impl PaSchedule {
                 (base, base, None)
             })
             .collect::<Vec<_>>();
+        if live_pa_deg.is_some_and(|base| base.len() != rotation.samples.len()) {
+            return Err("legacy AW live bases do not match the recorded samples");
+        }
         let mut variants = Vec::new();
         let mut epochs = Vec::new();
-        for &(time, angle) in rotation.samples.iter() {
-            let pa = first_covered_pa(pa_deg, angle, tolerance_rad)
-                .ok_or("no imported AW buffer within pastep of a selected row")?;
+        for (index, &(time, angle)) in rotation.samples.iter().enumerate() {
+            let pa = if let Some(base) = live_pa_deg {
+                pa_deg
+                    .binary_search_by(|degrees| degrees.total_cmp(&base[index]))
+                    .ok()
+            } else {
+                first_covered_pa(pa_deg, angle, tolerance_rad)
+            }
+            .ok_or("no imported AW buffer within pastep of a selected row")?;
             let (base, current, variant) = &mut active[pa];
             let angle = f64::from(angle);
             if (*current - angle).abs() > rotation.step_rad {
