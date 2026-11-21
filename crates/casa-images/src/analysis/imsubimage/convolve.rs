@@ -151,7 +151,7 @@ impl ImageConvolution {
             )?,
         };
         self.section.copy_metadata(image, output)?;
-        let cursor = bounded_read_cursor(input.dense_shape(shape))?
+        let cursor = convolution_cursor(input.dense_shape(shape), &active)?
             .iter()
             .zip(input.stride)
             .map(|(&extent, &stride)| extent.div_ceil(stride).max(1))
@@ -348,8 +348,11 @@ impl<'a, T: ConvolutionPixel> KernelPlan<'a, T> {
                 shape: &size,
                 stride: input.stride,
             };
+            let active = (0..input.shape.len())
+                .map(|axis| weights.shape().get(axis).is_some_and(|&width| width > 1))
+                .collect::<Vec<_>>();
             let halo_cursor = fft::limit_source_cursor(
-                bounded_read_cursor(halo_section.dense_shape(&size))?,
+                convolution_cursor(halo_section.dense_shape(&size), &active)?,
                 input.stride,
                 weights.shape(),
             );
@@ -454,6 +457,21 @@ fn accumulate(
             .and(source)
             .for_each(|accum, &value| *accum += weight * value);
     }
+}
+
+// Extend a tile along the axes actually convolved before batching planes.
+// A storage-major cube tile can otherwise contain one sample per FFT lane.
+fn convolution_cursor(shape: Vec<usize>, active: &[bool]) -> Result<Vec<usize>, ImageError> {
+    let axes = (0..shape.len())
+        .filter(|&axis| active[axis])
+        .chain((0..shape.len()).filter(|&axis| !active[axis]));
+    let axis_order = axes.collect::<Vec<_>>();
+    let mut cursor = vec![0; shape.len()];
+    let ordered = bounded_read_cursor(axis_order.iter().map(|&axis| shape[axis]).collect())?;
+    for (&axis, width) in axis_order.iter().zip(ordered) {
+        cursor[axis] = width;
+    }
+    Ok(cursor)
 }
 
 fn tiles(shape: &[usize], cursor: Vec<usize>) -> TraversalCursorIter {

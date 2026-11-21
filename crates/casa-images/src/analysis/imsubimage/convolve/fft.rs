@@ -74,7 +74,7 @@ pub(super) fn convolve_block(
         kernel: kernel_grid,
         axes,
     } = shapes;
-    if axes.is_empty() {
+    if axes.iter().all(|&axis| source.shape()[axis] == 1) {
         return Ok(None);
     }
 
