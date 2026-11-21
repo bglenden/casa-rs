@@ -4,6 +4,38 @@ use crate::ImageError;
 
 use super::planes::FitPlane;
 
+#[derive(Default)]
+pub(super) struct Statistics {
+    count: usize,
+    mean: f64,
+    variance: f64,
+    squares: f64,
+}
+
+impl Statistics {
+    fn add(&mut self, value: f64) {
+        self.count += 1;
+        let delta = value - self.mean;
+        self.mean += delta / self.count as f64;
+        self.variance += delta * (value - self.mean);
+        self.squares += value * value;
+    }
+
+    pub(super) fn sigma(&self) -> f64 {
+        (self.variance / self.count.saturating_sub(1) as f64).sqrt()
+    }
+
+    pub(super) fn rms(&self) -> f64 {
+        (self.squares / self.count as f64).sqrt()
+    }
+}
+
+pub(super) struct FitStatistics {
+    pub(super) used: usize,
+    pub(super) input: Statistics,
+    pub(super) residual: Statistics,
+}
+
 pub(super) enum IntensityRange {
     Any,
     Include([f32; 2]),
@@ -71,6 +103,27 @@ impl FitPlane {
             count += 1;
         }
         (sum / f64::from(count)).sqrt()
+    }
+
+    pub(super) fn statistics(
+        &self,
+        range: &IntensityRange,
+        model: impl Fn([f64; 2]) -> f64,
+    ) -> FitStatistics {
+        let mut input = Statistics::default();
+        let mut residual = Statistics::default();
+        let mut used = 0;
+        for (position, pixel) in self.selected_samples(&IntensityRange::Any) {
+            used += usize::from(range.includes(pixel));
+            let pixel = f64::from(pixel);
+            input.add(pixel);
+            residual.add(pixel - model(position));
+        }
+        FitStatistics {
+            used,
+            input,
+            residual,
+        }
     }
 
     pub(super) fn ellipse_sum(&self, center: [f64; 2], [major, ratio, pa]: [f64; 3]) -> f64 {

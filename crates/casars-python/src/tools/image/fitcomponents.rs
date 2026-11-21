@@ -238,6 +238,7 @@ impl FitRequest<'_> {
                 estimates: nonempty(self.estimates).map(Path::new),
                 zero_level: self.dooff.then_some((self.offset, self.fixoffset)),
                 rms: self.rms.as_ref().map(MeasureArgument::value),
+                report_log: !self.logfile.is_empty(),
                 noise_fwhm: self.noise.as_ref().map(MeasureArgument::value),
             },
         )

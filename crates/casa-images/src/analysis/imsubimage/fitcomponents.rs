@@ -26,7 +26,7 @@ use self::estimates::Estimates;
 use self::model::{FitComponent, FitGeometry};
 use self::planes::{FitPlane, FitSelection};
 use self::record::quantity;
-use self::samples::IntensityRange;
+use self::samples::{FitStatistics, IntensityRange};
 use self::summary::{SummaryRow, format_summary};
 use self::uncertainty::Noise;
 use super::SubimageRegion;
@@ -86,6 +86,8 @@ pub struct FitComponentsOptions<'a> {
     pub zero_level: Option<(f64, bool)>,
     /// Override the residual RMS in the uncertainty calculation.
     pub rms: Option<ComponentFitQuantity<'a>>,
+    /// Collect per-plane statistics for the optional text report.
+    pub report_log: bool,
     /// Correlation width for the uncertainty calculation.
     pub noise_fwhm: Option<ComponentFitQuantity<'a>>,
 }
@@ -93,6 +95,7 @@ pub struct FitComponentsOptions<'a> {
 struct ModelPlane {
     channel: usize,
     model: Option<SkyFit>,
+    statistics: Option<FitStatistics>,
 }
 
 /// Fitted Gaussian components, their public records and model planes.
@@ -161,13 +164,48 @@ impl ImageComponentFit {
             text.push_str(&self.input_estimates);
             text.push('\n');
         }
+        let zero_level = self.record.get("zerooff").is_some();
         for plane in &self.planes {
-            let status = if plane.model.is_some() {
-                "converged"
+            let _ = writeln!(
+                text,
+                "*** Details of fit for channel number {}",
+                plane.channel
+            );
+            if let Some(statistics) = &plane.statistics {
+                let _ = writeln!(text, "Number of pixels used in fit: {}", statistics.used);
+                let _ = writeln!(
+                    text,
+                    "Input and residual image statistics (to be used as a rough guide only as to goodness of fit)"
+                );
+                for (name, stats) in [
+                    ("input", &statistics.input),
+                    ("residual", &statistics.residual),
+                ] {
+                    let _ = writeln!(
+                        text,
+                        "       --- Standard deviation of {name} image: {} {}",
+                        stats.sigma(),
+                        self.brightness
+                    );
+                    let _ = writeln!(
+                        text,
+                        "       --- RMS of {name} image: {} {}",
+                        stats.rms(),
+                        self.brightness
+                    );
+                }
+            }
+            if let Some(model) = &plane.model {
+                if zero_level {
+                    let _ = writeln!(
+                        text,
+                        "Zero level offset fit: {} +/- {} {}",
+                        model.offset, model.offset_error, self.brightness
+                    );
+                }
             } else {
-                "did not converge"
-            };
-            let _ = writeln!(text, "Channel {} {status}", plane.channel);
+                let _ = writeln!(text, "Fit did not converge");
+            }
         }
         text.push_str(&self.summary_text());
         text
@@ -337,9 +375,16 @@ pub fn fit_image_components<T: ComponentFitPixel>(
                 fit = None;
             }
         }
+        let statistics = if options.report_log {
+            fit.as_ref()
+                .map(|model| data.statistics(&range, |position| fit_value(model, position)))
+        } else {
+            None
+        };
         progress.planes.push(ModelPlane {
             channel,
             model: fit,
+            statistics,
         });
     }
     Ok(progress.finish(

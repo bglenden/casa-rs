@@ -177,7 +177,11 @@ def test_fitcomponents_estimate_files_fixed_parameters_and_reports(casa, tmp_pat
                 direction_errors = component["shape"]["direction"]["error"]
                 assert direction_errors["longitude"]["value"] == 0.
                 assert direction_errors["latitude"]["value"] == 0.
-            assert logfile.read_text().startswith("existing line\n")
+            log = logfile.read_text()
+            assert log.startswith("existing line\n")
+            assert "Details of fit for channel number 0" in log
+            assert "Number of pixels used in fit: 1638" in log
+            assert "RMS of residual image" in log
             assert "ConMaj" in summary.read_text()
             assert "PeakErr" in summary.read_text()
             assert len(newestimates.read_text().splitlines()) == 2
