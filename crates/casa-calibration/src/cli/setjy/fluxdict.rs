@@ -9,8 +9,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::{
-    FluxParameters, add_time_selection, execution, flux_dictionary, prepare, publish_models,
-    requested_windows,
+    FluxParameters, add_time_selection, execution, flux_dictionary, model_files, prepare,
+    publish_models, requested_windows,
 };
 use crate::attachment::OpenedMs;
 use crate::ft::setjy::ManualFlux;
@@ -28,11 +28,7 @@ pub(super) fn run(
     selected: &ResolvedMsSelection,
     scratch: bool,
 ) -> Result<CasaValue, TaskFailure> {
-    if task.text("model")?.is_some_and(|model| !model.is_empty()) {
-        return Err(
-            TaskFailure::validation("this setjy model configuration is pending #1519").at("model"),
-        );
-    }
+    let image = model_files::task_image(task)?;
     let dictionary = FluxDictionary::new(task.value("fluxdict"))?;
     let selected_fields = selected
         .selected_rows
@@ -90,6 +86,7 @@ pub(super) fn run(
             &model,
             &spws,
             by_channel,
+            image.as_deref().map(|path| (path, scratch)),
         )?;
         if !scratch_ready {
             opened = opened
