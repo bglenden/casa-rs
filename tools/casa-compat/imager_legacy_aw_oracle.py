@@ -263,7 +263,9 @@ def compare_cells(actual, expected):
                     'ConjFreq', 'ConjPoln', 'TelescopeName', 'BandName'):
             assert got_meta[key] == wanted_meta[key], (name, key)
         compare_cell_coordinates(got_coords, wanted_coords)
-        errors.append(relative_rms(got, wanted))
+        error = relative_rms(got, wanted)
+        assert np.isfinite(error), name
+        errors.append(error)
     return max(errors)
 
 
@@ -415,7 +417,7 @@ def compare_cold_correction(root, dataset, model, *, reference=None,
             errors['recovered_virtual'] = relative_rms(predicted[:, 0, :], expected[:, 0, :])
             measured[machine] = errors
             print(machine, errors, flush=True)
-            assert max(errors.values()) < 1.e-3
+            assert all(error < 1.e-3 for error in errors.values())
     (root / 'results.json').write_text(json.dumps(measured, indent=2) + '\n')
 
 
