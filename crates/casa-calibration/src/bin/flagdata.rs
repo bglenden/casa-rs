@@ -893,6 +893,7 @@ fn flagdata_request(
         } else {
             Some(casa_ms::flagging::TfcropOptions::default())
         },
+        rflag_calculate: None,
         timedevscale: task.number("timedevscale")?,
         freqdevscale: task.number("freqdevscale")?,
         spectralmax: task.number("spectralmax")?,

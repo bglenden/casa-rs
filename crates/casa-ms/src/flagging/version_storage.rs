@@ -50,6 +50,28 @@ pub fn save_disk_flag_version(
     merge: FlagMerge,
 ) -> Result<(), FlaggingError> {
     validate_version_name(ms, versionname)?;
+    snapshot_disk_flags(ms, versionname, comment, merge)
+}
+
+/// Save the raw agentflagger version, whose empty name produces `flags.`.
+pub fn save_agent_disk_flag_version(
+    ms: &MeasurementSet,
+    versionname: &str,
+    comment: &str,
+    merge: FlagMerge,
+) -> Result<(), FlaggingError> {
+    if !versionname.is_empty() {
+        return save_disk_flag_version(ms, versionname, comment, merge);
+    }
+    snapshot_disk_flags(ms, versionname, comment, merge)
+}
+
+fn snapshot_disk_flags(
+    ms: &MeasurementSet,
+    versionname: &str,
+    comment: &str,
+    merge: FlagMerge,
+) -> Result<(), FlaggingError> {
     let path = ms_path(ms)?;
     let captured = {
         #[cfg(unix)]

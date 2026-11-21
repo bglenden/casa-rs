@@ -4,8 +4,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use casa_ms::flagging::FlagDataMode;
-use casa_ms::flagging::{flagdata_calibration_program, save_next_casa_flag_backup};
+use casa_ms::flagging::{
+    FlagDataColumn, FlagDataMode, flagdata_calibration_program, save_next_casa_flag_backup,
+    validate_calibration_flag_averaging,
+};
 use casa_ms::{
     FlagDataReport, FlagDataRequest, MeasurementSet, flagdata_empty_record,
     flagdata_named_summary_record, ms_task_success,
@@ -56,6 +58,37 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
             agents.push((index, values));
         }
     }
+    let configured = requests
+        .iter()
+        .zip(&agents)
+        .filter_map(|(request, &(_, values))| {
+            if matches!(request.mode, FlagDataMode::Elevation | FlagDataMode::Shadow)
+                || (matches!(
+                    request.mode,
+                    FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
+                ) && !(matches!(
+                    request.data_column,
+                    FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
+                ) && table
+                    .main_table()
+                    .schema()
+                    .is_some_and(|schema| schema.contains_column(request.data_column.name()))))
+            {
+                return None;
+            }
+            let mode = match values.get("mode") {
+                Some(ParameterValue::String(mode))
+                    if !matches!(mode.as_str(), "" | "manualflag") =>
+                {
+                    mode
+                }
+                _ => "manual",
+            };
+            let enabled = |name| matches!(values.get(name), Some(ParameterValue::Bool(true)));
+            Some((mode, enabled("channelavg"), enabled("timeavg")))
+        });
+    validate_calibration_flag_averaging(configured)
+        .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
     let mut reports =
         flagdata_calibration_program(table, &requests, write_flags, commands.len() > 1).map_err(
             |error| {
@@ -222,6 +255,11 @@ fn prepare(
     }
     if mode == "antint" {
         request.data_column = data_column(column, FlagDataMode::Clip, true).unwrap_or_default();
+    }
+    if mode == "tfcrop"
+        && matches!(task.session().given("correlation"), Some(ParameterValue::String(value)) if value.is_empty())
+    {
+        request.correlation = Some("SOL1".to_owned());
     }
     request.summary_options.minrel = parent.number("minrel")?;
     request.summary_options.maxrel = parent.number("maxrel")?;

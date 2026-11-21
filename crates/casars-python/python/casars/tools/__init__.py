@@ -17,6 +17,7 @@ the module path.
 from __future__ import annotations
 
 from .._core import (
+    agentflagger,
     calibrater,
     imager,
     componentlist,
@@ -32,6 +33,7 @@ from .._core import (
 )
 
 __all__ = [
+    "agentflagger",
     "calibrater",
     "imager",
     "componentlist",

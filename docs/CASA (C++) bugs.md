@@ -8148,6 +8148,18 @@ summary can flag only A1. Used alone, the same command can leave all flags
 unchanged. Casa-rs flags the selected channel for antennas other than A1 in
 both cases. The oracle checks each mask against the original table.
 
+The direct `agentflagger` tool can abort when its antenna-integration agent
+names a physical CPARAM or FPARAM column. In casa-rs, `run()` raises a
+RuntimeError and leaves the stored flags intact, including when an earlier
+agent staged a flag edit. An unmatched local antenna selector also raises
+before publication. The direct calibration agent oracle checks both paths
+and verifies that the next run starts without the consumed agents.
+
+With a direct manual calibration agent configured with `array='9'` and
+`antenna='A2'`, CASA cancels filtering and flags every antenna. Casa-rs keeps
+the valid antenna restriction to avoid changing flags on unrelated rows. The
+direct oracle checks both masks on CPARAM and FPARAM tables.
+
 ## PlotMS shows the excluded antenna on a GSPLINE plot
 
 On a GSPLINE table with antennas A0 through A4, CASA 6.7.6.14 and
