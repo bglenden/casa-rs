@@ -9120,6 +9120,22 @@ source with a larger fitted height cannot replace a sharper source
 whose sampled peak is stronger. The fit can resolve an extremum
 between two equally bright adjacent pixels.
 
+### `image.moments` can report an extreme channel in the wrong Doppler convention
+
+On a spectral cube with nine monotonically increasing channel intensities,
+a rest frequency of 1.1 GHz and observed frequencies near 1.415 GHz, CASA
+6.7.6.14 uses optical velocities for the weighted coordinate with
+`doppler="OPTICAL"`. The median, maximum and minimum coordinates still
+use radio velocities. Casa-rs converts the selected channel to the
+requested Doppler convention for every coordinate-valued moment.
+
+On a one-axis tabular image with world coordinates `[3, 4, 10, 14, 64, 80]`,
+a region retaining pixels 1, 3 and 5 should carry world coordinates
+`[4, 14, 80]`. CASA 6.7.6.14 uses different coordinates for the
+weighted and maximum-coordinate moments and the output reference
+pixel. Casa-rs preserves the world coordinates evaluated at the
+original selected pixels.
+
 On an entirely masked Float direction image, default `image.maxfit`
 can dereference an absent maximum and terminate the CASA Python
 process. Casa-rs raises a Python error and preserves the image.

@@ -134,7 +134,7 @@ fn build(
     overwrite: bool,
     history: Option<String>,
 ) -> PyResult<AttachedImage> {
-    let (stages, main, output) = read_locked(input, |handle| {
+    let (stages, output) = read_locked(input, |handle| {
         let ImageHandle::Float(storage) = handle else {
             return Err(raised("This method only supports float-valued images"));
         };
@@ -144,7 +144,7 @@ fn build(
             handle.path().and_then(Path::to_str),
         )
         .map_err(raised)?;
-        let main = names[0].clone();
+        let temporary = names[0].is_empty();
         names.push(smoothout.to_owned());
         let destinations = names
             .iter()
@@ -163,7 +163,7 @@ fn build(
                 ensure_artifacts_do_not_overlap(destination, region).map_err(raised)?;
             }
         }
-        let stages = NamedImageStages::new(names.iter().map(String::as_str), overwrite)?;
+        let mut stages = NamedImageStages::new(names.iter().map(String::as_str), overwrite)?;
         let mut products = storage.with_float_view(|image| {
             let mut beams = image.image_info().map_err(raised)?.to_record();
             input.beam_view().apply_to(&mut beams);
@@ -201,12 +201,15 @@ fn build(
         if let (Some(path), Some(image)) = (paths[products.moments.len()], &products.smoothed) {
             image.save_as(path).map_err(raised)?;
         }
-        let output = main.is_empty().then(|| products.moments.remove(0));
-        Ok((stages, main, output))
+        if products.smoothed.is_none() {
+            stages.omit(products.moments.len());
+        }
+        let output = temporary.then(|| products.moments.remove(0));
+        Ok((stages, output))
     })?;
-    stages.publish(true)?;
-    match output {
-        Some(image) => {
+    let primary = stages.publish_and_open_primary()?;
+    match (primary, output) {
+        (None, Some(image)) => {
             let record = image.coordinates().to_record();
             Ok(AttachedImage::temporary(ImageHandle::Float(
                 Storage::Temp {
@@ -216,7 +219,8 @@ fn build(
                 },
             )))
         }
-        None => AttachedImage::open(Path::new(&main)),
+        (Some(image), None) => Ok(image),
+        _ => Err(raised("Expected exactly one primary moment image")),
     }
 }
 

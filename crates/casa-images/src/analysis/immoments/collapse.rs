@@ -172,7 +172,12 @@ impl MomentSamples {
         }
     }
 
-    pub(super) fn extract(&mut self, original: &Lane, smoothed: Option<&Lane>, positions: &[f64]) {
+    pub(super) fn extract(
+        &mut self,
+        original: &Lane,
+        smoothed: Option<&Lane>,
+        mut coordinate: impl FnMut(usize) -> Result<f64, ImageError>,
+    ) -> Result<(), ImageError> {
         self.samples.clear();
         let guide = smoothed.unwrap_or(original);
         let selected = Selection::new(
@@ -182,13 +187,7 @@ impl MomentSamples {
             self.peak_snr,
             self.noise,
         );
-        for (index, ((&value, &valid), &position)) in original
-            .values
-            .iter()
-            .zip(&original.valid)
-            .zip(positions)
-            .enumerate()
-        {
+        for (index, (&value, &valid)) in original.values.iter().zip(&original.valid).enumerate() {
             if !valid {
                 continue;
             }
@@ -203,17 +202,18 @@ impl MomentSamples {
             };
             self.samples.push(Sample {
                 value: value.into(),
-                position,
+                position: coordinate(index)?,
             });
         }
         self.sum = self.samples.iter().map(|sample| sample.value).sum();
+        Ok(())
     }
 
-    pub(super) fn measure(&self, moment: i32) -> Option<f32> {
+    pub(super) fn measure(&self, moment: i32) -> Option<f64> {
         if self.samples.is_empty() {
             None
         } else {
-            calculate(&self.samples, self.sum, self.scale, moment).map(|value| value as f32)
+            calculate(&self.samples, self.sum, self.scale, moment)
         }
     }
 }

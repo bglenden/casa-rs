@@ -76,6 +76,8 @@ def test_public_moment_numbers(casa, number):
     {"smoothaxes": [3], "smoothtypes": "boxcar", "smoothwidths": [3.], "includepix": [2., 7.]},
     {"smoothaxes": [3], "smoothtypes": ["gaussian"], "smoothwidths": [2.], "includepix": [2., 7.]},
     {"smoothaxes": [3], "smoothtypes": ["hanning"], "includepix": [2., 7.]},
+    {"smoothaxes": [0, 3], "smoothtypes": ["boxcar", "hanning"], "smoothwidths": [3.], "includepix": [.1, 10.]},
+    {"smoothaxes": [3], "smoothtypes": ["hanning"], "smoothwidths": []},
 ])
 def test_moment_method_axis_and_velocity_variants(casa, options):
     results = []
@@ -298,3 +300,125 @@ def test_moments_rejects_invalid_requests_without_replacing_a_product(tmp_path):
     finally:
         existing.done()
         image.done()
+
+
+def test_intensity_moments_do_not_project_pixels_outside_the_sin_horizon(casa):
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.fromshape(shape=[7, 6, 2, 9])
+            assert image.set(pixels=1.)
+            coords = image.coordsys()
+            try:
+                assert coords.setunits(["rad", "rad"], type="direction")
+                assert coords.setincrement([1., 1.], type="direction")
+                assert image.setcoordsys(coords.torecord())
+            finally:
+                coords.done()
+            result = image.moments([8], axis=0, drop=False)
+            try:
+                assert tuple(result.shape()) == (1, 6, 2, 9)
+                np.testing.assert_array_equal(result.getchunk(), 1.)
+                assert result.getchunk(getmask=True).all()
+            finally:
+                result.done()
+        finally:
+            image.done()
+
+
+@pytest.mark.parametrize("drop", [True, False])
+def test_stokes_reduction_refuses_incompatible_beam_metadata(casa, tmp_path, drop):
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.fromshape(shape=[7, 6, 2, 9])
+            for channel in range(9):
+                for pol, major in enumerate(("2arcmin", "3arcmin")):
+                    assert image.setrestoringbeam(major=major, minor="1arcmin", pa="0deg",
+                                                  channel=channel, polarization=pol)
+            path = tmp_path / f"{api.__name__}.im"
+            with pytest.raises(RuntimeError, match="Number of polarizations"):
+                image.moments([8], axis=2, drop=drop, outfile=str(path))
+            assert not path.exists()
+            assert image.isopen()
+        finally:
+            image.done()
+
+
+def test_moment_axis_removal_after_reopening_implicit_order_coordinates(tmp_path):
+    image = tools.image()
+    path = str(tmp_path / "implicit-order.im")
+    try:
+        assert image.fromarray(path, _cube())
+        coords = image.coordsys()
+        try:
+            record = {key: value for key, value in coords.torecord().items()
+                      if not key.startswith(("pixelmap", "worldmap", "pixelreplace", "worldreplace"))}
+        finally:
+            coords.done()
+        assert image.setcoordsys(record)
+        assert image.close()
+        assert image.open(path)
+        product = image.moments([8], axis=3)
+        try:
+            np.testing.assert_allclose(product.getchunk(), _cube().max(axis=3), rtol=1e-7)
+            coords = product.coordsys()
+            try:
+                assert coords.axiscoordinatetypes() == ["Direction", "Direction", "Stokes"]
+                assert coords.ncoordinates() == 2
+            finally:
+                coords.done()
+        finally:
+            product.done()
+    finally:
+        image.done()
+
+
+def test_all_coordinate_moments_use_the_requested_doppler_convention():
+    image = tools.image()
+    try:
+        values = np.arange(1, 10, dtype=np.float32)
+        assert image.fromarray(pixels=np.broadcast_to(values, (7, 6, 1, 9)).copy())
+        coords = image.coordsys()
+        try:
+            assert coords.setrestfrequency("1.1GHz")
+            assert image.setcoordsys(coords.torecord())
+            frequencies = [coords.toworld([3., 3., 0., float(i)], "n")["numeric"][3]
+                           for i in range(9)]
+        finally:
+            coords.done()
+        velocities = 299792.458 * (1.1e9 / np.asarray(frequencies) - 1.)
+        expected = {1: np.average(velocities, weights=values), 4: velocities[6],
+                    9: velocities[-1], 11: velocities[0]}
+        for moment, coordinate in expected.items():
+            product = image.moments([moment], includepix=[0., 20.], doppler="OPTICAL")
+            try:
+                np.testing.assert_allclose(product.getchunk(), coordinate, rtol=2e-7)
+                assert product.brightnessunit() == "km/s"
+            finally:
+                product.done()
+    finally:
+        image.done()
+
+
+def test_strided_tabular_moments_use_the_original_channel_labels(casa):
+    cs = tools.coordsys().newcoordsys(tabular=True)
+    image = tools.image()
+    try:
+        assert cs.settabular(pixel=list(range(6)), world=[3., 4., 10., 14., 64., 80.])
+        assert image.fromarray(pixels=np.arange(6, dtype=np.float32), csys=cs.torecord())
+        region = casa.regionmanager().box([1], [5], [2])
+        for moment, expected in ((1, np.average([4., 14., 80.], weights=[1., 3., 5.])), (9, 80.)):
+            product = image.moments([moment], axis=0, drop=False, region=region)
+            try:
+                np.testing.assert_allclose(product.getchunk(), [expected], rtol=2e-7)
+                coords = product.coordsys()
+                try:
+                    np.testing.assert_allclose(coords.toworld([0.], "n")["numeric"], [4.])
+                finally:
+                    coords.done()
+            finally:
+                product.done()
+    finally:
+        image.done()
+        cs.done()

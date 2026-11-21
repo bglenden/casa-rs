@@ -163,6 +163,28 @@ impl<'a> MomentAxis<'a> {
         })
     }
 
+    pub(super) fn profile_is_separable(&self) -> bool {
+        self.pixel_axes
+            .iter()
+            .flatten()
+            .all(|&axis| axis == self.index)
+    }
+
+    pub(super) fn profile_pixel(&self, image_pixel: &[usize]) -> Vec<f64> {
+        let mut local = self.reference_pixel.clone();
+        for (pixel, &axis) in local.iter_mut().zip(&self.pixel_axes) {
+            if let Some(axis) = axis {
+                *pixel = image_pixel[axis] as f64;
+            }
+        }
+        local
+    }
+
+    pub(super) fn sample_world(&self, local: &mut [f64], pixel: f64) -> Result<f64, ImageError> {
+        local[self.local] = pixel;
+        self.position(local)
+    }
+
     pub(super) fn profiles(&self, shape: &[usize]) -> Result<ProfileCoordinates, ImageError> {
         let coupled: Vec<_> = self
             .pixel_axes

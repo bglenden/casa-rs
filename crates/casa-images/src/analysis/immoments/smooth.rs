@@ -43,10 +43,10 @@ pub(super) fn kernels(
         }
         selected.push(axis);
     }
-    if types.first().is_none_or(|name| name.is_empty()) {
+    if widths.is_empty() || types.first().is_none_or(|name| name.is_empty()) {
         return Ok(Vec::new());
     }
-    if types.len() != selected.len() || widths.len() < types.len() {
+    if types.len() != selected.len() {
         return Err(invalid(
             "Smoothing axes, kernel types and widths must conform",
         ));
@@ -54,8 +54,13 @@ pub(super) fn kernels(
     selected
         .into_iter()
         .zip(types)
-        .zip(widths)
-        .map(|((axis, name), &width)| {
+        .enumerate()
+        .map(|(index, (axis, name))| {
+            let width = widths
+                .get(index)
+                .copied()
+                .or_else(|| name.starts_with(['H', 'h']).then_some(0.))
+                .ok_or_else(|| invalid("A boxcar or Gaussian smoothing kernel requires a width"))?;
             Ok(AxisKernel {
                 axis,
                 weights: weights(shape[axis], name, width)?,

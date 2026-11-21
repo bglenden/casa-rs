@@ -137,6 +137,16 @@ pub fn make_image_moments(
             .filter(|&axis| axis < plan.shape.len())
             .ok_or_else(|| invalid("Illegal moment axis; out of range"))?
     };
+    let stokes_axis = plan
+        .coordinates
+        .find_coordinate(CoordinateType::Stokes)
+        .and_then(|coordinate| plan.coordinates.coordinate_pixel_axes(coordinate))
+        .and_then(|axes| axes.first().copied().flatten());
+    if stokes_axis == Some(axis) && plan.image_info.beam_set.n_stokes() > 1 {
+        return Err(invalid(
+            "Number of polarizations is not consistent with the restoring beam set",
+        ));
+    }
     let kernels = smooth::kernels(&plan.shape, options.smoothing)?;
     let method = Method::new(options.methods, clip, !kernels.is_empty(), options.moments)?;
     let smooth::Sources {
@@ -236,7 +246,19 @@ fn reduce(
         product.make_mask("mask0", true, false)?;
         products.push(product);
     }
-    let spectral_positions = moment_axis.profiles(&plan.shape)?;
+    let weighted_world = options
+        .moments
+        .iter()
+        .any(|moment| matches!(moment, 1 | 2 | 4));
+    let extrema_world = options
+        .moments
+        .iter()
+        .any(|moment| matches!(moment, 9 | 11));
+    let mut separable_world = if weighted_world && moment_axis.profile_is_separable() {
+        vec![None; plan.shape[axis]]
+    } else {
+        Vec::new()
+    };
     let guide_geometry = smoothed
         .map(|image| {
             let plan = SubimagePlan::new(
@@ -272,13 +294,12 @@ fn reduce(
     } else {
         options.peak_snr
     };
-    let mut samples = MomentSamples::new(
-        method,
-        clip,
-        peak_snr,
-        noise,
-        moment_axis.integrated_scale()?,
-    );
+    let scale = if options.moments.contains(&0) {
+        moment_axis.integrated_scale()?
+    } else {
+        1.
+    };
+    let mut samples = MomentSamples::new(method, clip, peak_snr, noise, scale);
     let mut reader = moment_selection.reader(
         input,
         options.mask,
@@ -303,12 +324,33 @@ fn reduce(
                 .as_mut()
                 .map(|guide| guide.read(&position))
                 .transpose()?;
-            let mut reduced = position;
-            reduced.remove(axis);
-            samples.extract(&lane, guide.as_ref(), spectral_positions.at(&reduced));
+            let mut local = if weighted_world || extrema_world {
+                moment_axis.profile_pixel(&position)
+            } else {
+                Vec::new()
+            };
+            samples.extract(&lane, guide.as_ref(), |index| {
+                if !weighted_world {
+                    return Ok(index as f64);
+                }
+                if let Some(cached) = separable_world.get_mut(index) {
+                    if let Some(world) = *cached {
+                        return Ok(world);
+                    }
+                    let world = moment_axis.sample_world(&mut local, index as f64)?;
+                    *cached = Some(world);
+                    return Ok(world);
+                }
+                moment_axis.sample_world(&mut local, index as f64)
+            })?;
             for (which, &moment) in options.moments.iter().enumerate() {
                 if let Some(value) = samples.measure(moment) {
-                    values[which][offset] = value;
+                    let world = if !weighted_world && matches!(moment, 9 | 11) {
+                        moment_axis.sample_world(&mut local, value)?
+                    } else {
+                        value
+                    };
+                    values[which][offset] = world as f32;
                     masks[which][offset] = true;
                 }
             }
@@ -349,7 +391,15 @@ fn remove_axis(
         let kept = (0..ndim)
             .filter(|&number| number != axis)
             .collect::<Vec<_>>();
-        let record = native.cloned().unwrap_or_else(|| coordinates.to_record());
+        let record = native
+            .filter(|record| {
+                record
+                    .fields()
+                    .iter()
+                    .any(|field| field.name.starts_with("pixelmap"))
+            })
+            .cloned()
+            .unwrap_or_else(|| coordinates.to_record());
         let reduced = reduce_subimage_coordinate_record(&record, ndim, &kept)?;
         *coordinates = CoordinateSystem::from_record(&reduced)?;
         return Ok(());
