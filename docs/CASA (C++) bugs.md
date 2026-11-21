@@ -4033,19 +4033,23 @@ length. A width of `4294967298` wraps into two channels, which can flag two
 samples even though the whole-window mean falls outside the clipping
 range. Native flagdata applies the same whole-window rule as other widths
 larger than the window, for both scalar and per-window forms.
-## Time-averaged clipping can substitute zeros for defined inputs
+## Time-averaged clipping and TFCrop can substitute zeros for defined inputs
 
-In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping
-`RESIDUAL_DATA`, `FLOAT_DATA`, `WEIGHT` or `WEIGHT_SPECTRUM` on the paired
-fixture. It misses nonzero averaged values and flags the selected samples
-when clipping inside a narrow range around zero. The time clip oracle
-checks both effects against the same physical visibilities and statistics.
+In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping or
+fitting TFCrop over `RESIDUAL_DATA`, `FLOAT_DATA`, `WEIGHT` or `WEIGHT_SPECTRUM`
+on the paired fixtures. Both modes share `FlagDataHandler::setTimeAverageIter`,
+which leaves those averaged buffers zeroed, so CASA misses nonzero averaged
+values and flags the selected samples when clipping inside a narrow range
+around zero. The time clip and TFCrop time-averaging oracles check both effects
+against the same physical visibilities and statistics.
 
 Native flagdata averages observed visibilities with inverse variance,
 uses the same weights for the model when deriving an observed residual,
 and accumulates each weight spectrum over its actual contributing
 integrations. The test calculates the expected masks from the stored values,
 then compares flags and data using both CASA and casacore readback.
+[Time clip oracle](../tools/casa-compat/flagdata_clip_timeavg_oracle.py)
+· [TFCrop time averaging oracle](../tools/casa-compat/flagdata_tfcrop_timeavg_oracle.py)
 
 ## Decorated flag selections can alter unnamed correlations
 
@@ -4077,21 +4081,22 @@ The reference-antenna integration oracle verifies the same protection for
 preserve the other correlation's stored flags.
 [Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
 
-## Time-averaged clipping can derive row flags from a subset of channels
+## Time-averaged clipping and TFCrop can derive row flags from a subset of channels
 
 With `timeavg=True`, `channelavg=True` and `spw="0:1~2"` on a
 four-channel window, CASA 6.7.6.14 can set `FLAG_ROW` when the selected
-channels meet the clip range. This masks the original unselected
-channels even though their stored sample flags stay clear. CASA can
-also leave row flags clear for fully flagged original rows in an earlier
-time bin, and clear a pre-existing row flag while writing an averaged
-result.
+channels meet the clip range. Because TFCrop shares
+`AveragingTvi2::writeFlag`, `mode='tfcrop'` with `timeavg=True`,
+`channelavg=True`, `spw="0:8~19"` and `extendflags=True` reproduces the same
+row-flag promotion over unflagged unselected channels, and time-averaged flag
+writes can also clear pre-existing `FLAG_ROW=True` or vary on affected bins.
 
-Native time-averaged clipping preserves pre-existing row flags and sets
-new row flags when all original cells in the changed row are flagged.
-The paired oracle computes both the selected sample flags and the
-original-axis row status, including a whole-scan control where CASA
-writes the same row flags.
+Native time-averaged clipping and TFCrop preserve pre-existing row flags and
+set new row flags only when all original cells in the changed row are flagged.
+The paired oracles verify both the selected sample flags and the original-axis
+row status, including whole-window controls where CASA writes the same row flags.
+[Time clip oracle](../tools/casa-compat/flagdata_clip_timeavg_oracle.py)
+· [TFCrop time averaging oracle](../tools/casa-compat/flagdata_tfcrop_timeavg_oracle.py)
 
 ## Shadow flagging can drop the last digit of an antenna's Z coordinate
 
@@ -8441,6 +8446,16 @@ process. casa-rs raises an error for the duplicate axis.
 
 The pinned biweight algorithm can also terminate when every selected
 pixel is masked. casa-rs returns a recoverable error for the empty sample.
+
+## Image statistics can fail after dropping one direction axis
+
+In CASA 6.7.6.14, create a Float image with shape `[9, 1, 1, 5]`, fill it
+with `x + 10 * channel`, and call `subimage(dropdeg=True)` to retain one
+direction axis and the frequency axis. `statistics` on an `LCSlicer` from
+`[1, 1]` through `[7, 4]` with stride `[2, 2]` raises a WCSLIB `wcsp2s`
+error while formatting the selected coordinates. The same region is
+readable with `getregion`. Casa-rs returns the pixel statistics, including
+the analytic sample count of 8 and sum of 192.
 
 ## Image statistics can use the wrong beam for a selected channel
 

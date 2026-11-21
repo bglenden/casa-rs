@@ -873,7 +873,11 @@ fn flagdata_request(
         } else {
             channel_averaging_bins(task, mode, channel_bins)?
         },
-        clip_time_bin: clip_time_bin(task, mode)?,
+        clip_time_bin: if calibration && mode != FlagDataMode::Clip {
+            None
+        } else {
+            time_averaging_bin(task, mode)?
+        },
         time_chunk: None,
         combinescans: task.flag("combinescans")?,
         quackinterval,
@@ -953,26 +957,19 @@ fn antint_min_channel_fraction(task: &TaskInvocation<'_>) -> Result<f64, TaskFai
     task.number("minchanfrac")
 }
 
-fn clip_time_bin(
+fn time_averaging_bin(
     task: &TaskInvocation<'_>,
     mode: FlagDataMode,
 ) -> Result<Option<String>, TaskFailure> {
-    if mode != FlagDataMode::Clip {
+    if !matches!(mode, FlagDataMode::Clip | FlagDataMode::Tfcrop) {
         return Ok(None);
     }
-    match task.value("timeavg") {
-        Some(ParameterValue::Bool(false)) => Ok(None),
-        Some(ParameterValue::Bool(true)) => task.required_text("timebin").map(Some),
-        Some(ParameterValue::Array(values))
-            if values
-                .iter()
-                .all(|value| matches!(value, ParameterValue::Bool(_))) =>
-        {
+    match automatic::average_switch(task, "timeavg")? {
+        Some(false) => Ok(None),
+        Some(true) => task.required_text("timebin").map(Some),
+        None => {
             Err(TaskFailure::execution("RecordInterface::asBool - invalid data type").at("timeavg"))
         }
-        _ => Err(
-            TaskFailure::validation("timeavg must be a Boolean or Boolean vector").at("timeavg"),
-        ),
     }
 }
 
@@ -984,27 +981,13 @@ fn channel_averaging_bins(
     if !matches!(mode, FlagDataMode::Clip | FlagDataMode::Tfcrop) {
         return Ok(None);
     }
-    match task.value("channelavg") {
-        Some(ParameterValue::Bool(false)) => return Ok(None),
-        Some(ParameterValue::Bool(true)) => {}
-        Some(ParameterValue::Array(values))
-            if values
-                .iter()
-                .all(|value| matches!(value, ParameterValue::Bool(_))) =>
-        {
-            return Err(
-                TaskFailure::execution("RecordInterface::asBool - invalid data type")
-                    .at("channelavg"),
-            );
-        }
-        _ => {
-            return Err(
-                TaskFailure::validation("channelavg must be a Boolean or Boolean vector")
-                    .at("channelavg"),
-            );
-        }
+    match automatic::average_switch(task, "channelavg")? {
+        Some(false) => Ok(None),
+        Some(true) => Ok(Some(channel_bins)),
+        None => Err(
+            TaskFailure::execution("RecordInterface::asBool - invalid data type").at("channelavg"),
+        ),
     }
-    Ok(Some(channel_bins))
 }
 
 fn channel_bin_widths(task: &TaskInvocation<'_>) -> Result<Vec<u32>, TaskFailure> {
