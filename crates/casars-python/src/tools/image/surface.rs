@@ -834,6 +834,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method(
+        "pad",
         &[
             param("outfile", K::Text, Text("")),
             param("npixels", K::Int, Int(1)),
@@ -849,7 +850,7 @@ const METHODS: &[Method] = &[
             param("wantreturn", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "pbcor",
