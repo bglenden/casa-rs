@@ -1082,8 +1082,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>quackincrement</code> | <code>flagdata.quackincrement@r1</code> | <code>variant</code> | <code>false</code>; optional | Quack | Quack successive intervals, taking existing flags into account. |
 | <code>tolerance</code> | <code>flagdata.tolerance@r1</code> | <code>float</code> | <code>0.0</code>; optional | Shadow | Shadowing in metres that shadow mode tolerates. |
 | <code>addantenna</code> | <code>flagdata.addantenna@r1</code> | <code>string</code> | <code>""</code>; optional | Shadow | Antennas, from a file or dictionary, that shadow mode adds. |
-| <code>lowerlimit</code> | <code>flagdata.lowerlimit@r1</code> | <code>float</code> | <code>0.0</code>; optional | Elevation | Lowest elevation, in degrees, that elevation mode keeps. |
-| <code>upperlimit</code> | <code>flagdata.upperlimit@r1</code> | <code>float</code> | <code>90.0</code>; optional | Elevation | Highest elevation, in degrees, that elevation mode keeps. |
+| <code>lowerlimit</code> | <code>flagdata.lowerlimit@r2</code> | <code>variant</code> | <code>0.0</code>; optional | Elevation | Lowest elevation, in degrees, that elevation mode keeps. |
+| <code>upperlimit</code> | <code>flagdata.upperlimit@r2</code> | <code>variant</code> | <code>90.0</code>; optional | Elevation | Highest elevation, in degrees, that elevation mode keeps. |
 | <code>ntime</code> | <code>flagdata.ntime@r2</code> | <code>variant</code> | <code>"scan"</code>; optional | Automatic | Visibility iterator time chunk: 'scan', a duration string, or seconds.<br><em>Surface:</em> Manual, unflag, quack, clip and summary validate ntime before running. Clip time averaging does not cross iterator chunks. Automatic agents remain on #1616. |
 | <code>combinescans</code> | <code>flagdata.combinescans@r1</code> | <code>bool</code> | <code>false</code>; optional | Automatic | Let the automatic modes' time chunks span scans. |
 | <code>timecutoff</code> | <code>parameter.timecutoff@r1</code> | <code>float</code> | <code>4.0</code>; optional | Automatic | TFCrop time cutoff in robust sigma units. |

@@ -9376,9 +9376,9 @@
     },
     {
       "id": "flagdata.lowerlimit",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "lowerlimit",
-      "value_domain": {"kind": "float"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
@@ -9388,9 +9388,9 @@
     },
     {
       "id": "flagdata.upperlimit",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "upperlimit",
-      "value_domain": {"kind": "float"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,

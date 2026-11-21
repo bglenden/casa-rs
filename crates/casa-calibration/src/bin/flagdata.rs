@@ -132,7 +132,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if calculate
         && !matches!(
             request.mode,
-            FlagDataMode::Manual | FlagDataMode::Clip | FlagDataMode::Quack | FlagDataMode::Summary
+            FlagDataMode::Manual
+                | FlagDataMode::Clip
+                | FlagDataMode::Quack
+                | FlagDataMode::Summary
+                | FlagDataMode::Elevation
         )
     {
         return Err(not_yet("action", &action));
@@ -225,6 +229,7 @@ fn save_flag_parameters(
             "clipzeros",
         ],
         "quack" => &["quackmode", "quackinterval", "quackincrement"],
+        "elevation" => &["lowerlimit", "upperlimit"],
         _ => return Err(not_yet("savepars", mode)),
     };
     for &field in fields {
@@ -615,6 +620,7 @@ fn flagdata_request(
         quackinterval,
         quackmode,
         quackincrement,
+        elevation_limits_deg: [task.number("lowerlimit")?, task.number("upperlimit")?],
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         timedevscale: task.number("timedevscale")?,
@@ -791,11 +797,12 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
         "unflag" => Ok((FlagDataMode::Manual, FlagDataAction::Unflag)),
         "clip" => flag(FlagDataMode::Clip),
         "quack" => flag(FlagDataMode::Quack),
+        "elevation" => flag(FlagDataMode::Elevation),
         "tfcrop" => flag(FlagDataMode::Tfcrop),
         "rflag" => flag(FlagDataMode::Rflag),
         "extend" => flag(FlagDataMode::Extend),
         "summary" => flag(FlagDataMode::Summary),
-        "list" | "shadow" | "elevation" | "antint" => Err(not_yet("mode", text)),
+        "list" | "shadow" | "antint" => Err(not_yet("mode", text)),
         _ => Err(unknown(
             "mode",
             text,

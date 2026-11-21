@@ -52,6 +52,7 @@ mod clip_models;
 mod clip_time;
 mod command;
 mod correlation;
+mod elevation;
 mod extend;
 mod summary;
 
@@ -124,6 +125,8 @@ pub enum FlagDataMode {
     Clip,
     /// CASA quack-style scan-edge flagging.
     Quack,
+    /// Flag selected baselines outside the antenna elevation limits.
+    Elevation,
     /// CASA TFCrop-family robust time/frequency outlier flagging.
     Tfcrop,
     /// CASA RFlag-family two-pass robust time/frequency flagging.
@@ -212,6 +215,8 @@ pub struct FlagDataRequest {
     pub quackmode: QuackMode,
     /// Start the interval from the first or last time with unflagged data.
     pub quackincrement: bool,
+    /// Inclusive lower and upper antenna elevations, in degrees.
+    pub elevation_limits_deg: [f64; 2],
     /// TFCrop time cutoff in robust sigma units.
     pub timecutoff: f64,
     /// TFCrop frequency cutoff in robust sigma units.
@@ -269,6 +274,7 @@ impl Default for FlagDataRequest {
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
             quackincrement: false,
+            elevation_limits_deg: [0.0, 90.0],
             timecutoff: 4.0,
             freqcutoff: 3.0,
             timedevscale: 5.0,
@@ -446,7 +452,10 @@ fn flagdata_with_persistence(
         && request.casa_row_selection
         && matches!(
             request.mode,
-            FlagDataMode::Manual | FlagDataMode::Clip | FlagDataMode::Quack
+            FlagDataMode::Manual
+                | FlagDataMode::Clip
+                | FlagDataMode::Quack
+                | FlagDataMode::Elevation
         );
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
@@ -520,6 +529,25 @@ fn flagdata_with_persistence(
             correlations.as_ref(),
             request,
         )?,
+        FlagDataMode::Elevation => {
+            let outside = elevation::rows_outside_limits(
+                ms,
+                &selected_rows,
+                request.elevation_limits_deg,
+                &ms_path,
+            )?;
+            set_selected_flags(
+                ms,
+                &outside,
+                channel_selections.as_ref(),
+                correlations.as_ref(),
+                true,
+                selected_flag_row_policy(
+                    correlations.as_ref(),
+                    SelectedFlagRowPolicy::ChangedSamples,
+                ),
+            )?
+        }
         FlagDataMode::Tfcrop => {
             apply_tfcrop_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
