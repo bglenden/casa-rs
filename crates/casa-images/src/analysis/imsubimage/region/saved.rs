@@ -159,7 +159,7 @@ fn polygon_region(
     })
 }
 
-pub(super) fn lc_slicer_section(
+pub(in crate::analysis::imsubimage) fn lc_slicer_section(
     rec: &RecordValue,
     coords: &CoordinateSystem,
     shape: &[usize],

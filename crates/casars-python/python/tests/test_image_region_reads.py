@@ -108,3 +108,27 @@ def test_getregion_accepts_a_world_box_for_every_pixel_type(casa, selected_regio
             np.testing.assert_array_equal(result, expected)
         finally:
             image.done()
+
+
+def test_pixel_slicer_on_an_image_with_one_direction_axis(casa):
+    x, frequency = np.ogrid[:9, :5]
+    pixels = (x + 10 * frequency).astype(np.float32)
+    manager = casa.regionmanager()
+    try:
+        section = manager.box([1, 1], [7, 4], [2, 2])
+    finally:
+        manager.done()
+    selected = pixels[1:8:2, 1:5:2]
+    for api in (casa, tools):
+        image = api.image()
+        view = None
+        try:
+            assert image.fromarray(pixels=pixels[:, None, None, :])
+            view = image.subimage(dropdeg=True, list=False)
+            np.testing.assert_array_equal(view.shape(), [9, 5])
+            np.testing.assert_array_equal(view.getregion(region=section), selected)
+            np.testing.assert_array_equal(view.getregion(region=section, getmask=True), True)
+        finally:
+            if view is not None:
+                view.done()
+            image.done()
