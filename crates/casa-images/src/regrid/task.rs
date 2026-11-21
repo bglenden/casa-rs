@@ -40,6 +40,7 @@ pub(crate) struct ImageToolSampling {
     pub(crate) force: bool,
     pub(crate) convert_reference: bool,
     pub(crate) shape_specified: bool,
+    pub(crate) half_turn: bool,
 }
 
 impl TaskRegridOptions<'_> {
@@ -847,6 +848,23 @@ fn direction_grid(
     options: &TaskRegridOptions<'_>,
     frame: &MeasFrame,
 ) -> Result<Vec<Option<[f64; 2]>>, ImageError> {
+    if options.image_tool.is_some_and(|tool| tool.half_turn) {
+        let reference = input.reference_pixel();
+        // The two grids have the same tangent point and opposite pixel
+        // offsets. Check the projection, then reflect about the exact pivot.
+        return Ok((0..shape[1])
+            .flat_map(|y| {
+                let reference = &reference;
+                (0..shape[0]).map(move |x| {
+                    let pixel = [x as f64, y as f64];
+                    target.pixel_to_world(pixel).ok()?;
+                    Some(std::array::from_fn(|axis| {
+                        2.0 * reference[axis] - pixel[axis]
+                    }))
+                })
+            })
+            .collect());
+    }
     if options.image_tool.is_some()
         && input.increment() == target.increment()
         && input.reference_value() == target.reference_value()

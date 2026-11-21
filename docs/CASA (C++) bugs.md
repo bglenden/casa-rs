@@ -8148,6 +8148,18 @@ summary can flag only A1. Used alone, the same command can leave all flags
 unchanged. Casa-rs flags the selected channel for antennas other than A1 in
 both cases. The oracle checks each mask against the original table.
 
+The direct `agentflagger` tool can abort when its antenna-integration agent
+names a physical CPARAM or FPARAM column. In casa-rs, `run()` raises a
+RuntimeError and leaves the stored flags intact, including when an earlier
+agent staged a flag edit. An unmatched local antenna selector also raises
+before publication. The direct calibration agent oracle checks both paths
+and verifies that the next run starts without the consumed agents.
+
+With a direct manual calibration agent configured with `array='9'` and
+`antenna='A2'`, CASA cancels filtering and flags every antenna. Casa-rs keeps
+the valid antenna restriction to avoid changing flags on unrelated rows. The
+direct oracle checks both masks on CPARAM and FPARAM tables.
+
 ## PlotMS shows the excluded antenna on a GSPLINE plot
 
 On a GSPLINE table with antennas A0 through A4, CASA 6.7.6.14 and
@@ -9219,3 +9231,40 @@ sky-coordinate round trip moves those samples across the linear
 interpolator's boundary by a fraction of a pixel at floating-point
 precision. Casa-rs uses the exact integer shift on the same tangent
 plane, preserving the selected region's validity boundary.
+
+### `image.rotate` can reject an overlapping right-angle sky rotation
+
+For a default `[24, 26]` direction image, CASA 6.7.6.14 rejects
+`rotate(pa="90deg", method="nearest")` with a no-overlap error.
+The longitude and latitude grids still overlap after a right-angle
+rotation about the reference pixel. Casa-rs samples the actual
+overlapping pixels and masks the portions outside the source.
+
+At `pa="180deg"` on the same grid, CASA's linear and cubic interpolators
+can include pixels just outside the top or left edge. A sky-coordinate
+round trip moves some positions back inside the interpolation cutoff.
+Casa-rs checks the sky projection and reflects the pixel about the exact
+reference pixel, so those positions remain outside the grid.
+
+### `image.rotate` can permute the coordinate axes when dropping a singleton
+
+For a Float `[24, 26, 1, 7]` cube transposed with `order="2301"`,
+CASA 6.7.6.14 returns shape `[7, 24, 26]` from `rotate(pa="35deg",
+dropdeg=True, replicate=True)` but assigns Direction, Direction and
+Spectral coordinates in that order. With per-channel restoring beams,
+it fails because the spectral dimension no longer agrees with the beam
+record. Casa-rs retains Spectral, Direction and Direction in pixel order
+and keeps each beam on its original channel.
+
+On a default direction image of shape `[1, 26]`, CASA 6.7.6.14
+can also terminate when `rotate(pa="35deg", dropdeg=True)` removes one
+axis of the required two-axis plane. Casa-rs rejects the resulting
+coordinate geometry with an error.
+
+### `image.rotate` can replace the only pixel of a linear plane with zero
+
+On a linear `[1, 1]` image whose pixel is 5, CASA 6.7.6.14 returns zero
+from `rotate(pa="35deg", method="linear")`. Both singleton axes are
+removed from the interpolation pass, leaving the initialized output pixel
+instead of copying the input. Casa-rs preserves the original pixel, mask
+and coordinates when the rotation has no sampled axis.

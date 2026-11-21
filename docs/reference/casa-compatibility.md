@@ -3950,6 +3950,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
+| [agentflagger](#agentflagger) | `casars.tools` | 19 | yes | 19 | 0 | 0 | 0 | 0 | 0 |
 | calibrater | `casars.tools` | 37 | no | | | | | | |
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 61 | 0 | 0 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
@@ -3962,6 +3963,63 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 23 | 6 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 54 | 1 | 2 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
+
+### agentflagger
+
+#### agentflagger method implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
+
+Audit baseline: `1ab256e49c7c7aa43ba9719dc2f58b46fdf25558`. Status counts: Implemented: 19, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+
+| CASA method | CASA parameters | Implementation | Scope | Evidence |
+|---|---|---|---|---|
+| `deleteflagversion` | `versionname=[]` | Implemented | Deletes named calibration snapshots in caller order. Empty lists and missing names are no-ops. The main table stays intact. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `done` |  | Implemented | Releases the calibration attachment and clears queued and initialized agents. Repeated calls succeed. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `getflagversionlist` | `printflags=True` | Implemented | Returns the original table header, main entry and ordered raw calibration version names and comments. The print switch controls logging. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `init` |  | Implemented | Initializes compatible queued agents once a calibration table has a global selection. Retains initialized agents and leaves incompatible configurations out of execution. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `open` | `msname='', ntime=0.0` | Implemented | Attaches current-format CPARAM and FPARAM calibration tables and resets global selection and agent state. MeasurementSet attachment is tracked in #978. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parseagentparameters` | `aparams` | Implemented | Accepts native calibration agent records, including manual, unflag, clip, quack, summary, extend, TFCrop and RFlag plus CASA parser and initialization refusals. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parseantintparameters` | `field='', spw='', array='', feed='', scan='', antenna='', uvrange='', time='', correlation='', intent='', observation='', antint_ref_antenna='', minchanfrac=0.6, verbose=False, apply=True` | Implemented | Queues the specialized antenna-integration configuration. A raw configuration with a physical calibration column raises safely during execution where CASA aborts. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parseclipparameters` | `field='', spw='', array='', feed='', scan='', antenna='', uvrange='', time='', correlation='', intent='', observation='', datacolumn='DATA', clipminmax=[], clipoutside=True, channelavg=False, chanbin=1, timeavg=False, timebin='', clipzeros=False, apply=True` | Implemented | Queues clipping of physical calibration values with row, channel and solution-plane selection, range and zero handling, averaging compatibility and flag or unflag action. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parseelevationparameters` | `field='', spw='', array='', feed='', scan='', antenna='', uvrange='', time='', correlation='', intent='', observation='', lowerlimit=0.0, upperlimit=90.0, apply=True` | Implemented | Accepts the specialized elevation configuration and matches CASA’s deferred refusal on calibration tables. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parseextendparameters` | `field='', spw='', array='', feed='', scan='', antenna='', uvrange='', time='', correlation='', intent='', observation='', ntime=0.0, combinescans=False, extendpols=True, growtime=50.0, growfreq=50.0, growaround=False, flagneartime=False, flagnearfreq=False, apply=True` | Implemented | Queues calibration flag extension across time, channel and solution planes, with configured neighbor rules, growth percentages and flag or unflag action. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parsemanualparameters` | `field='', spw='', array='', feed='', scan='', antenna='', uvrange='', time='', correlation='', intent='', observation='', autocorr=False, apply=True` | Implemented | Queues flag or unflag for selected calibration rows and channels, with autocorrelation and time controls. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parsequackparameters` | `field='', spw='', array='', feed='', scan='', antenna='', uvrange='', time='', correlation='', intent='', observation='', quackmode='beg', quackinterval=1.0, quackincrement=False, apply=True` | Implemented | Queues flagging or unflagging at scan boundaries with the CASA interval, edge and increment options. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parsesummaryparameters` | `field='', spw='', array='', feed='', scan='', antenna='', uvrange='', time='', correlation='', intent='', observation='', spwchan=False, spwcorr=False, basecnt=False, fieldcnt=False, name=''` | Implemented | Queues staged flag statistics for calibration rows, windows and channels with the requested breakdowns and report name. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `parsetfcropparameters` | `field='', spw='', array='', feed='', scan='', antenna='', uvrange='', time='', correlation='', intent='', observation='', ntime=0.0, combinescans=False, datacolumn='DATA', timecutoff=4.0, freqcutoff=3.0, timefit='line', freqfit='poly', maxnpieces=7, flagdimension='freqtime', usewindowstats='none', halfwin=1, extendflags=True, apply=True, channelavg=False, chanbin=1, timeavg=False, timebin=''` | Implemented | Queues time and frequency fits against stored calibration values, with the native fit and window controls, averaging validation and action. An explicitly empty correlation selects the first solution plane. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `printflagselection` |  | Implemented | Logs the active calibration selection and returns the tool’s Boolean result. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `restoreflagversion` | `versionname=[], merge=''` | Implemented | Restores requested versions in order with replace, OR and AND semantics. Earlier successful restores persist when a later name is missing. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `run` | `writeflags=True, sequential=True` | Implemented | Consumes initialized agents with sequential or combined ordering. Dry runs keep staged results in reports. Each RFlag agent separately controls threshold calculation. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `saveflagversion` | `versionname='', comment='', merge=''` | Implemented | Snapshots the original calibration flags through the casacore read lock. Supports raw names, comments, merge modes and the empty-name flags. version. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+| `selectdata` | `config={}, field='', spw='', array='', feed='', scan='', antenna='', uvrange='', timerange='', correlation='', intent='', observation=''` | Implemented | Replaces global calibration row selection. A nonempty config record takes precedence over keyword selectors. Agents can choose their own channel selection. | [signature](#agentflagger-evidence-signature), [calibration-casa](#agentflagger-evidence-calibration-casa) |
+
+#### agentflagger interacting modes and tool behavior
+
+#### agentflagger deviations and unfinished work
+
+#### agentflagger evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="agentflagger-evidence-signature"></a>
+##### signature
+
+**Signature inventory — recorded.** All 19 installed CASA methods, parameter order and effective defaults per method.
+
+- [crates/casars-python/python/tests/data/casa_agentflagger_signatures.json](https://github.com/bglenden/casa-rs/blob/1ab256e49c7c7aa43ba9719dc2f58b46fdf25558/crates/casars-python/python/tests/data/casa_agentflagger_signatures.json)
+- [crates/casars-python/python/tests/test_tools_casa_inventory.py](https://github.com/bglenden/casa-rs/blob/1ab256e49c7c7aa43ba9719dc2f58b46fdf25558/crates/casars-python/python/tests/test_tools_casa_inventory.py)
+
+<a id="agentflagger-evidence-calibration-casa"></a>
+##### calibration-casa
+
+**Same-input behavior and file interchange — passed.** Current complex and real calibration tables, selection, lifecycle, flag masks, reports, mixed averaging, raw version operations and safe refusal controls.
+
+- [tools/casa-compat/agentflagger_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/1ab256e49c7c7aa43ba9719dc2f58b46fdf25558/tools/casa-compat/agentflagger_calibration_oracle.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/1ab256e49c7c7aa43ba9719dc2f58b46fdf25558/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- Revision: `1ab256e49c7c7aa43ba9719dc2f58b46fdf25558`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/agentflagger_calibration_oracle.py --work <new-dir>`.
+- Receipt: `resources/casa-compat/evidence/agentflagger-calibration-20261121.json`.
 
 ### componentlist
 

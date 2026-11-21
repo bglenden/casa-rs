@@ -310,7 +310,9 @@ pub fn impbcor(request: &ImpbcorRequest) -> Result<PbcorSummary, ImageError> {
     impbcor::run(request)
 }
 
-pub use self::imregrid::{ImageRegridOptions, ImageRegridProduct, imregrid, regrid_image};
+pub use self::imregrid::{
+    ImageRegridOptions, ImageRegridProduct, ImageRegridTarget, imregrid, regrid_image,
+};
 
 /// Export a CASA image (or FITS image) to a primary-HDU FITS file using full
 /// CASA `exportfits` semantics.
