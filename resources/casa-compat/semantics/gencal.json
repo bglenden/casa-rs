@@ -2,21 +2,23 @@
   "schema_version": 1,
   "task": "gencal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+  "audit_revision": "5d663965543f72f387b4fac83f630b8dd18c8c87",
   "parameters": {
     "vis": {
-      "scope": "Input MeasurementSet geometry, metadata and table source for the routine families.",
+      "scope": "Input MeasurementSet geometry, metadata and table sources, including SYSPOWER and CALDEVICE.",
       "evidence": [
         "specified",
         "vla-priors",
         "tsys",
         "opacity",
         "manual-positions",
-        "vla-archive"
+        "vla-archive",
+        "switched-power"
       ],
       "status": "Implemented",
       "behaviors": [
-        "tables"
+        "tables",
+        "switched-power"
       ]
     },
     "caltable": {
@@ -27,26 +29,30 @@
         "tsys",
         "opacity",
         "manual-positions",
-        "vla-archive"
+        "vla-archive",
+        "switched-power"
       ],
       "status": "Implemented",
       "behaviors": [
-        "tables"
+        "tables",
+        "switched-power"
       ]
     },
     "caltype": {
-      "scope": "Eleven routine prior types. Eight advanced types belong to CAL-24 (#1535).",
+      "scope": "Eleven routine and five switched-power prior types. TEC, EOP and Jy/K remain in CAL-24 (#1535).",
       "evidence": [
         "specified",
         "vla-priors",
         "tsys",
         "opacity",
         "manual-positions",
-        "vla-archive"
+        "vla-archive",
+        "switched-power"
       ],
       "status": "Partial",
       "behaviors": [
-        "tables"
+        "tables",
+        "switched-power"
       ]
     },
     "infile": {
@@ -95,63 +101,73 @@
       ]
     },
     "spw": {
-      "scope": "Routine spectral-window selection and the family-specific output axes.",
+      "scope": "Spectral-window selection and output axes. Switched-power modes validate the selector and derive their grid from SYSPOWER.",
       "evidence": [
         "specified",
         "vla-priors",
         "tsys",
         "opacity",
         "manual-positions",
-        "vla-archive"
+        "vla-archive",
+        "switched-power"
       ],
       "status": "Implemented",
       "behaviors": [
-        "tables"
+        "tables",
+        "switched-power"
       ]
     },
     "antenna": {
-      "scope": "Ordered IDs and expressions, all-antenna defaults, and the applicable automatic lookup.",
+      "scope": "Ordered IDs and expressions, all-antenna defaults, and applicable automatic lookup. Switched-power modes validate the selector and keep the full antenna grid.",
       "evidence": [
         "specified",
         "opacity",
         "manual-positions",
-        "vla-archive"
+        "vla-archive",
+        "switched-power"
       ],
       "status": "Implemented",
       "behaviors": [
-        "positions"
+        "positions",
+        "switched-power"
       ]
     },
     "pol": {
-      "scope": "Ordered receptor behavior for the applicable routine types. Advanced overrides belong to CAL-24 (#1535).",
-      "evidence": [
-        "specified",
-        "opacity"
-      ],
-      "behaviors": [
-        "tables"
-      ]
-    },
-    "parameter": {
-      "scope": "Scalar or vector routine correction values, CASA cycling and family-specific units.",
+      "scope": "Ordered receptor behavior for the applicable routine types. Both receptors are generated in the five switched-power modes.",
       "evidence": [
         "specified",
         "opacity",
-        "manual-positions"
+        "switched-power"
+      ],
+      "behaviors": [
+        "tables",
+        "switched-power"
+      ]
+    },
+    "parameter": {
+      "scope": "Scalar or vector corrections, CASA cycling and family-specific units. The five switched-power modes derive values from the MS subtables.",
+      "evidence": [
+        "specified",
+        "opacity",
+        "manual-positions",
+        "switched-power"
       ],
       "status": "Implemented",
       "behaviors": [
-        "tables"
+        "tables",
+        "switched-power"
       ]
     },
     "uniform": {
-      "scope": "Both antenna-grid policies for scalar and spectral SYSCAL temperatures.",
+      "scope": "Both antenna-grid policies for scalar and spectral SYSCAL. Switched-power modes consistently use the full antenna grid.",
       "evidence": [
-        "tsys"
+        "tsys",
+        "switched-power"
       ],
       "status": "Implemented",
       "behaviors": [
-        "tables"
+        "tables",
+        "switched-power"
       ]
     }
   },
@@ -182,6 +198,16 @@
         "vla-archive",
         "alma-service"
       ]
+    },
+    {
+      "id": "switched-power",
+      "title": "VLA switched-power gains and visibility weights",
+      "status": "Implemented",
+      "scope": "Generate, overwrite and apply CASA G EVLASWPOW tables from SYSPOWER and CALDEVICE for the five switched-power modes. Preserve the separate visibility gains and Tsys weight factors and share application with solver preapply.",
+      "evidence": [
+        "switched-power"
+      ],
+      "gap": "Compared with the installed CASA reference."
     }
   ],
   "decisions": [
@@ -212,6 +238,20 @@
       "owner_decision": "Standing CASA bug policy in AGENTS.md.",
       "evidence": [
         "opacity"
+      ]
+    },
+    {
+      "id": "safe-switched-power-input",
+      "state": "Previously agreed",
+      "record": "A one-receptor SYSPOWER shape aborts switched-power calibration",
+      "inputs": "One receptor per SYSPOWER measurement or a SYSPOWER timestamp between visibility scans.",
+      "casa": "A malformed receptor shape aborts. An empty scan match is dereferenced and returned 0 in the oracle.",
+      "ours": "Refuses malformed shapes before publication and assigns unknown scan -1 to timestamps without a matching scan.",
+      "rationale": "Avoid process termination and retain physical measurement timestamps.",
+      "impact": "Usable SYSPOWER samples retain their actual times. Samples with no matching visibility scan carry an unknown scan ID.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "switched-power"
       ]
     }
   ],
@@ -315,6 +355,21 @@
       "links": [
         "https://github.com/bglenden/casa-rs/issues/979"
       ]
+    },
+    "switched-power": {
+      "kind": "Pinned same-input products and table interchange",
+      "state": "passed",
+      "scope": "All five VLA switched-power, weights and requantizer modes, both writer-reader directions, solver preapply and invalid data controls.",
+      "links": [
+        "tools/casa-compat/gencal_switched_power_oracle.py",
+        "docs/CASA (C++) bugs.md"
+      ],
+      "revision": "5d663965543f72f387b4fac83f630b8dd18c8c87",
+      "source_revision": "5d663965543f72f387b4fac83f630b8dd18c8c87",
+      "command": "CASARS_CALIBRATE_BIN=<native-bin> casa-python tools/casa-compat/gencal_switched_power_oracle.py --work <new-dir>",
+      "casa_version": "6.7.6.14",
+      "receipt": "resources/casa-compat/evidence/gencal-switched-power-20261121.json",
+      "result": "Five native and CASA generation modes and 96 writer-reader applications passed."
     }
   }
 }

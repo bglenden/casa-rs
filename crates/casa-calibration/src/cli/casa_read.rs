@@ -269,6 +269,11 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         "eff" => GencalType::Eff,
         "tsys" => GencalType::Tsys,
         "opac" => GencalType::Opac,
+        "swpow" => GencalType::Swpow,
+        "evlagain" => GencalType::Evlagain,
+        "swp/rq" => GencalType::SwpOverRq,
+        "swpwts" => GencalType::Swpwts,
+        "rq" => GencalType::Rq,
         other => return Err(not_yet("caltype", other)),
     };
     let antenna = task.text("antenna")?.unwrap_or_default();

@@ -7323,6 +7323,19 @@ selections retain CASA's repeated in-place rotations when the parameter
 vector cycles. The paired
 `tools/casa-compat/calibration_gencal_antpos_oracle.py` checks both forms (#32).
 
+## A one-receptor SYSPOWER shape aborts switched-power calibration
+
+On CASA 6.7.6.14, `gencal(caltype='rq')` with one receptor per SYSPOWER
+array aborts in `ArrayBase::validateConformance`. Casa-rs validates each
+input shape and raises an error before publishing the calibration table.
+The switched-power oracle checks the isolated CASA abort and native refusal
+on the same MeasurementSet (#1535).
+
+CASA also uses the first scan from an empty selection when a SYSPOWER
+timestamp falls between visibility scans. The reference case records scan 0.
+Casa-rs records the calibration table's unknown scan value, `-1`, and keeps
+the power sample and its original time.
+
 ## Opacity priors can index a nonexistent second receptor
 
 CASA 6.7.6.14 constructs a scalar solution for `gencal(caltype='opac')`.

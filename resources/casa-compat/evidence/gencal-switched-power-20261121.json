@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "5d663965543f72f387b4fac83f630b8dd18c8c87",
+  "casa_version": "6.7.6.14",
+  "scope": "Five gencal switched-power modes, CASA and native table readers and writers, weighted and unweighted application, solver preapply and shared output protection.",
+  "command": "CASARS_CALIBRATE_BIN=<native-bin> casa-python tools/casa-compat/gencal_switched_power_oracle.py --work <new-dir>",
+  "result": "passed",
+  "modes": [
+    "evlagain",
+    "swpow",
+    "swpwts",
+    "swp/rq",
+    "rq"
+  ],
+  "rows_per_nominal_table": 60,
+  "writer_reader_applications": 96,
+  "paired_regression_products": 60,
+  "single_correlation_controls": [
+    "LL",
+    "LR"
+  ],
+  "between_sample_linear_interpolation": true,
+  "checked_weights": [
+    "WEIGHT",
+    "WEIGHT_SPECTRUM"
+  ],
+  "checked_solver_preapply": true,
+  "native_linked_table_report_refusals": 2,
+  "refusals_checked": [
+    "invalid SPW",
+    "missing CALDEVICE",
+    "one-receptor SYSPOWER",
+    "dangling CALDEVICE",
+    "missing NUM_CAL_LOAD"
+  ],
+  "native_missing_scan_id": -1
+}
