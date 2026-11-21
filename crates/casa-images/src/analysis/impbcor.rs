@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Primary-beam correction of a selected image lattice.
 
-mod beam;
+pub(super) mod beam;
 
 use std::fs;
 use std::io;
@@ -149,29 +149,13 @@ where
         _ => unreachable!("a named primary beam was opened before execution"),
     };
     let mut valid = mask.unwrap_or_else(|| ArrayD::from_elem(IxDyn(&selection.shape), true));
-    let pixels = beam
-        .pixels
-        .broadcast(IxDyn(&selection.shape))
-        .ok_or_else(|| ImageError::ShapeMismatch {
-            expected: selection.shape.clone(),
-            got: beam.pixels.shape().to_vec(),
-        })?;
-    let cutoff = request.cutoff as f32;
-    Zip::from(&mut data)
-        .and(&mut valid)
-        .and(pixels)
-        .for_each(|pixel, good, &pb| {
-            *good &= correction.keeps(pb.into(), cutoff);
-            *pixel = correction.apply(*pixel, pb);
-        });
-    if let Some(mask) = beam.mask {
-        let mask = mask
-            .broadcast(IxDyn(&selection.shape))
-            .expect("beam and mask share a shape");
-        Zip::from(&mut valid)
-            .and(mask)
-            .for_each(|good, &mask| *good &= mask);
-    }
+    correction.apply_to_window(
+        &mut data,
+        &mut valid,
+        &beam.pixels,
+        beam.mask.as_ref(),
+        request.cutoff as f32,
+    )?;
     let coords = match image.table().keywords().get("coords") {
         Some(Value::Record(record)) => Some(record.clone()),
         _ => None,
@@ -219,7 +203,10 @@ where
     })
 }
 
-fn normalize_box<T: ImagePixel>(image: &PagedImage<T>, text: &str) -> Result<String, ImageError> {
+pub(super) fn normalize_box<T: ImagePixel>(
+    image: &dyn crate::ImageInterface<T>,
+    text: &str,
+) -> Result<String, ImageError> {
     let plane = super::axes::direction_plane_axes(image)?;
     text.split(',')
         .enumerate()
@@ -266,13 +253,13 @@ fn region_record<T: ImagePixel>(
 }
 
 #[derive(Clone, Copy)]
-enum Correction {
+pub(super) enum Correction {
     Divide,
     Multiply,
 }
 
 impl Correction {
-    fn parse(mode: &str) -> Result<Self, ImageError> {
+    pub(super) fn parse(mode: &str) -> Result<Self, ImageError> {
         match mode.trim().as_bytes().first().map(u8::to_ascii_lowercase) {
             Some(b'd') => Ok(Self::Divide),
             Some(b'm') => Ok(Self::Multiply),
@@ -287,6 +274,40 @@ impl Correction {
                 Self::Divide => beam >= f64::from(cutoff),
                 Self::Multiply => beam <= f64::from(cutoff),
             }
+    }
+
+    pub(super) fn apply_to_window<T>(
+        self,
+        data: &mut ArrayD<T>,
+        validity: &mut ArrayD<bool>,
+        beam: &ArrayD<T>,
+        beam_mask: Option<&ArrayD<bool>>,
+        cutoff: f32,
+    ) -> Result<(), ImageError>
+    where
+        T: Copy + Into<f64> + Div<Output = T> + Mul<Output = T>,
+    {
+        let shape = data.raw_dim();
+        let pixels = beam
+            .broadcast(shape.clone())
+            .ok_or_else(|| ImageError::ShapeMismatch {
+                expected: data.shape().to_vec(),
+                got: beam.shape().to_vec(),
+            })?;
+        Zip::from(data)
+            .and(&mut *validity)
+            .and(pixels)
+            .for_each(|pixel, good, &pb| {
+                *good &= self.keeps(pb.into(), cutoff);
+                *pixel = self.apply(*pixel, pb);
+            });
+        if let Some(mask) = beam_mask {
+            let mask = mask.broadcast(shape).expect("beam and mask share a shape");
+            Zip::from(validity)
+                .and(mask)
+                .for_each(|good, &mask| *good &= mask);
+        }
+        Ok(())
     }
 
     fn apply<T: Div<Output = T> + Mul<Output = T>>(self, image: T, beam: T) -> T {

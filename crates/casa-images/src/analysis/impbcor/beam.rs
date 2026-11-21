@@ -8,8 +8,11 @@ use casa_provider_contracts::{ParameterValue, parameter_array_to_casa};
 use casa_types::{ArrayD, ArrayValue};
 use ndarray::{Axis, Slice};
 
-use crate::analysis::{axes::direction_plane_axes, imsubimage::region::SubimageSelection};
-use crate::{ImageError, ImagePixel, PagedImage};
+use crate::analysis::{
+    axes::{StridedSection, direction_plane_axes},
+    imsubimage::region::SubimageSelection,
+};
+use crate::{ImageError, ImageInterface, ImagePixel};
 
 pub(super) struct SelectedBeam<T> {
     pub(super) pixels: ArrayD<T>,
@@ -18,39 +21,28 @@ pub(super) struct SelectedBeam<T> {
 }
 
 pub(super) fn array<T: ImagePixel + From<f32>>(
-    target: &PagedImage<T>,
+    target: &dyn ImageInterface<T>,
     values: &[ParameterValue],
     selection: &SubimageSelection,
 ) -> Result<SelectedBeam<T>, ImageError> {
-    direction(target.coordinates())?;
     let values = parameter_array_to_casa(values)
         .map_err(|message| ImageError::CasaSelection(message.into()))?;
-    let ArrayValue::Float64(mut values) = values else {
+    let ArrayValue::Float64(values) = values else {
         return Err(ImageError::CasaSelection(
             "pbimage pixels must be a floating-point array".into(),
         ));
     };
-    let target_axes = direction_plane_axes(target)?;
     let input_shape = values.shape().to_vec();
-    let plane = if input_shape == target.shape() {
-        None
-    } else if values.ndim() == 2 {
-        if plane_shape(target.shape(), target_axes) != input_shape.as_slice() {
-            return Err(ImageError::CasaSelection(
-                "Array shape does not equal image direction plane shape".into(),
-            ));
-        }
-        Some(([0, 1], target_axes))
-    } else {
-        return Err(ImageError::CasaSelection(format!(
-            "Primary beam array is of wrong shape ({input_shape:?})"
-        )));
+    let layout = BeamLayout::for_array(target, &input_shape)?;
+    let stride = vec![1; target.ndim()];
+    let section = StridedSection {
+        start: &selection.start,
+        shape: &selection.shape,
+        stride: &stride,
     };
-    let (start, shape) = window(selection, values.shape(), plane);
-    for (axis, (&start, &len)) in start.iter().zip(&shape).enumerate() {
-        values.slice_axis_inplace(Axis(axis), Slice::from(start..start + len));
-    }
-    let pixels = align(values.mapv(|v| T::from(v as f32)), plane, target.ndim());
+    let pixels = layout
+        .read_array(&values, &section)
+        .mapv(|value| T::from(value as f32));
     Ok(SelectedBeam {
         pixels,
         mask: None,
@@ -59,39 +51,18 @@ pub(super) fn array<T: ImagePixel + From<f32>>(
 }
 
 pub(super) fn image<T: ImagePixel>(
-    target: &PagedImage<T>,
-    beam: &PagedImage<T>,
+    target: &dyn ImageInterface<T>,
+    beam: &dyn ImageInterface<T>,
     selection: &SubimageSelection,
 ) -> Result<SelectedBeam<T>, ImageError> {
-    let target_axes = direction_plane_axes(target)?;
-    let beam_axes = direction_plane_axes(beam)?;
-    let same_shape = target.shape() == beam.shape();
-    let target_direction = direction(target.coordinates())?;
-    let beam_direction = direction(beam.coordinates())?;
-    let plane = if same_shape && beam_axes == target_axes {
-        None
-    } else if plane_shape(beam.shape(), beam_axes)
-        .into_iter()
-        .zip(plane_shape(target.shape(), target_axes))
-        .all(|(beam, target)| beam == 1 || beam == target)
-        && beam
-            .shape()
-            .iter()
-            .enumerate()
-            .all(|(axis, &length)| beam_axes.contains(&axis) || length == 1)
-    {
-        Some((beam_axes, target_axes))
-    } else {
-        return Err(ImageError::CasaSelection("Input image and primary beam image have different shapes. Cannot do primary beam correction.".into()));
+    let layout = BeamLayout::for_image(target, beam)?;
+    let stride = vec![1; target.ndim()];
+    let section = StridedSection {
+        start: &selection.start,
+        shape: &selection.shape,
+        stride: &stride,
     };
-    if !matching_direction(target_direction, beam_direction, same_shape) {
-        return Err(ImageError::CasaSelection("Direction coordinates of input image and primary beam image are different. Cannot do primary beam correction.".into()));
-    }
-    let (start, shape) = window(selection, beam.shape(), plane);
-    let pixels = align(beam.get_slice(&start, &shape)?, plane, target.ndim());
-    let mask = beam
-        .get_mask_slice(&start, &shape, &vec![1; shape.len()])?
-        .map(|mask| align(mask, plane, target.ndim()));
+    let (pixels, mask) = layout.read_image(beam, &section)?;
     Ok(SelectedBeam {
         pixels,
         mask,
@@ -99,27 +70,135 @@ pub(super) fn image<T: ImagePixel>(
     })
 }
 
-fn plane_shape(shape: &[usize], axes: [usize; 2]) -> [usize; 2] {
-    axes.map(|axis| shape[axis])
+pub(in crate::analysis) struct BeamLayout {
+    plane: Option<([usize; 2], [usize; 2])>,
+    target_rank: usize,
 }
 
-fn window(
-    selection: &SubimageSelection,
-    beam_shape: &[usize],
-    plane: Option<([usize; 2], [usize; 2])>,
-) -> (Vec<usize>, Vec<usize>) {
-    let Some((source, target)) = plane else {
-        return (selection.start.clone(), selection.shape.clone());
-    };
-    let mut start = vec![0; beam_shape.len()];
-    let mut shape = vec![1; beam_shape.len()];
-    for (source, target) in source.into_iter().zip(target) {
-        if beam_shape[source] != 1 {
-            start[source] = selection.start[target];
-            shape[source] = selection.shape[target];
-        }
+impl BeamLayout {
+    pub(in crate::analysis) fn for_array<T: ImagePixel>(
+        target: &dyn ImageInterface<T>,
+        shape: &[usize],
+    ) -> Result<Self, ImageError> {
+        direction(target.coordinates())?;
+        let target_axes = direction_plane_axes(target)?;
+        let plane = if shape == target.shape() {
+            None
+        } else if shape.len() == 2 {
+            if plane_shape(target.shape(), target_axes) != shape {
+                return Err(ImageError::CasaSelection(
+                    "Array shape does not equal image direction plane shape".into(),
+                ));
+            }
+            Some(([0, 1], target_axes))
+        } else {
+            return Err(ImageError::CasaSelection(format!(
+                "Primary beam array is of wrong shape ({shape:?})"
+            )));
+        };
+        Ok(Self {
+            plane,
+            target_rank: target.ndim(),
+        })
     }
-    (start, shape)
+
+    pub(in crate::analysis) fn for_image<T: ImagePixel>(
+        target: &dyn ImageInterface<T>,
+        beam: &dyn ImageInterface<T>,
+    ) -> Result<Self, ImageError> {
+        let target_axes = direction_plane_axes(target)?;
+        let beam_axes = direction_plane_axes(beam)?;
+        let same_shape = target.shape() == beam.shape();
+        let target_direction = direction(target.coordinates())?;
+        let beam_direction = direction(beam.coordinates())?;
+        let plane = if same_shape && beam_axes == target_axes {
+            None
+        } else if plane_shape(beam.shape(), beam_axes)
+            .into_iter()
+            .zip(plane_shape(target.shape(), target_axes))
+            .all(|(beam, target)| beam == 1 || beam == target)
+            && beam
+                .shape()
+                .iter()
+                .enumerate()
+                .all(|(axis, &length)| beam_axes.contains(&axis) || length == 1)
+        {
+            Some((beam_axes, target_axes))
+        } else {
+            return Err(ImageError::CasaSelection("Input image and primary beam image have different shapes. Cannot do primary beam correction.".into()));
+        };
+        if !matching_direction(target_direction, beam_direction, same_shape) {
+            return Err(ImageError::CasaSelection("Direction coordinates of input image and primary beam image are different. Cannot do primary beam correction.".into()));
+        }
+        Ok(Self {
+            plane,
+            target_rank: target.ndim(),
+        })
+    }
+
+    pub(in crate::analysis) fn read_array<T: Clone>(
+        &self,
+        beam: &ArrayD<T>,
+        section: &StridedSection<'_>,
+    ) -> ArrayD<T> {
+        let (start, shape, stride) = self.window(section, beam.shape());
+        let values = beam.slice_each_axis(|axis| {
+            let axis = axis.axis.index();
+            let stop = start[axis] + (shape[axis] - 1) * stride[axis] + 1;
+            Slice::new(
+                start[axis] as isize,
+                Some(stop as isize),
+                stride[axis] as isize,
+            )
+        });
+        align(values.to_owned(), self.plane, self.target_rank)
+    }
+
+    pub(in crate::analysis) fn read_image<T: ImagePixel>(
+        &self,
+        beam: &dyn ImageInterface<T>,
+        section: &StridedSection<'_>,
+    ) -> Result<(ArrayD<T>, Option<ArrayD<bool>>), ImageError> {
+        let (start, shape, stride) = self.window(section, beam.shape());
+        let pixels = align(
+            beam.get_slice(&start, &shape, &stride)?,
+            self.plane,
+            self.target_rank,
+        );
+        let mask = beam
+            .get_mask_slice(&start, &shape, &stride)?
+            .map(|mask| align(mask, self.plane, self.target_rank));
+        Ok((pixels, mask))
+    }
+
+    fn window(
+        &self,
+        section: &StridedSection<'_>,
+        beam_shape: &[usize],
+    ) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+        let Some((source, target)) = self.plane else {
+            return (
+                section.start.to_vec(),
+                section.shape.to_vec(),
+                section.stride.to_vec(),
+            );
+        };
+        let mut start = vec![0; beam_shape.len()];
+        let mut shape = vec![1; beam_shape.len()];
+        let mut stride = vec![1; beam_shape.len()];
+        for (source, target) in source.into_iter().zip(target) {
+            if beam_shape[source] != 1 {
+                start[source] = section.start[target];
+                shape[source] = section.shape[target];
+                stride[source] = section.stride[target];
+            }
+        }
+        (start, shape, stride)
+    }
+}
+
+fn plane_shape(shape: &[usize], axes: [usize; 2]) -> [usize; 2] {
+    axes.map(|axis| shape[axis])
 }
 
 fn align<T>(

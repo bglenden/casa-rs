@@ -9,6 +9,7 @@ mod crop;
 mod decimate;
 mod insert;
 mod noise;
+mod pbcor;
 mod pixel_edit;
 mod read_window;
 mod rebin;
@@ -27,6 +28,7 @@ pub use crop::{ImageCrop, ImageCropOptions};
 pub use decimate::{DecimationMethod, DecimationPixel, ImageDecimation, ImageDecimationOptions};
 pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
+pub use pbcor::{ImagePbcor, ImagePbcorBeam, ImagePbcorOptions};
 pub use pixel_edit::ImagePixelSelection;
 pub use rebin::{ImageRebin, ImageRebinOptions};
 
