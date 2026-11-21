@@ -288,7 +288,8 @@ mod tests {
                 "msmetadata",
                 "ms",
                 "calibrater",
-                "imager"
+                "imager",
+                "agentflagger"
             ]
         );
         let annotated = bundle.annotations["python"]["objects"]
