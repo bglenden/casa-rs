@@ -479,7 +479,7 @@ mod tests {
         assert_eq!(image.find_axis_by_name("right asc"), Some(2));
         assert_eq!(direction_plane_axes(&image).unwrap(), [2, 0]);
         assert_eq!(stokes_for_axis(&coordinates, 1).unwrap().len(), 2);
-        let summaries = super::super::axis_summaries(&coordinates, &[3, 2, 4, 5]);
+        let summaries = super::super::axis_summaries(&coordinates, &[3, 2, 4, 5], false);
         assert_eq!(
             summaries
                 .iter()

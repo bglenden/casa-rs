@@ -130,7 +130,8 @@ pub(super) fn summary(path: &Path) -> Result<ImageHeaderSummary, ImageError> {
         has_multiple_beams: info.beam_set.is_multi(),
         per_plane_beams: per_plane_beams.map(Box::new),
         extrema: None,
-        axes: axis_summaries(coords, &primary.shape),
+        axes: axis_summaries(coords, &primary.shape, false),
+        world_axes: axis_summaries(coords, &primary.shape, true),
     })
 }
 

@@ -2454,6 +2454,890 @@
           -0.000727220521664304
         ]
       ]
+    },
+    {
+      "image": "car",
+      "key": "crval2",
+      "value": "1deg",
+      "setup": {
+        "conversionSystem": "GALACTIC"
+      },
+      "native_worlds": [
+        [
+          0.0005818591294269985,
+          0.016871513148688136
+        ],
+        [
+          6.283039841658635,
+          0.0171624041266564
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        60.0,
+        1.0,
+        1415000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "CAR",
+      "longpole": 0.0,
+      "latpole": 89.0,
+      "worlds": [
+        [
+          1.6956239281896328,
+          -1.0352020082838442
+        ],
+        [
+          1.6945317687499553,
+          -1.034652009640479
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "car",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "conversionSystem": "GALACTIC"
+      },
+      "native_worlds": [
+        [
+          0.0005817764173314432,
+          -0.0005817764173314432
+        ],
+        [
+          6.2830398630752535,
+          -0.0002908882086657216
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "CAR",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          1.6820151465985582,
+          -1.0512547333326356
+        ],
+        [
+          1.6809056014228088,
+          -1.0506982145972044
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "sfl",
+      "key": "crval2",
+      "value": "1deg",
+      "setup": {
+        "conversionSystem": "GALACTIC"
+      },
+      "native_worlds": [
+        [
+          0.0005818592279160223,
+          0.016871516102611853
+        ],
+        [
+          6.283039841652481,
+          0.017162404311277572
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1415000000.0
+      ],
+      "refpix": [
+        2.0,
+        -58.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "SFL",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          1.6956239306082168,
+          -1.0352020055983664
+        ],
+        [
+          1.6945317688790833,
+          -1.0346520094679337
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "sfl",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "conversionSystem": "GALACTIC"
+      },
+      "native_worlds": [
+        [
+          0.0005817765157865853,
+          -0.0005817764173314432
+        ],
+        [
+          6.283039863069099,
+          -0.0002908882086657216
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "SFL",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          1.6820151467804862,
+          -1.0512547333718147
+        ],
+        [
+          1.6809056014114527,
+          -1.05069821459475
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "mer",
+      "key": "crval2",
+      "value": "1deg",
+      "setup": {
+        "conversionSystem": "GALACTIC"
+      },
+      "native_worlds": [
+        [
+          0.0005818591294274945,
+          0.01687151318150674
+        ],
+        [
+          6.283039841658635,
+          0.017162404130758774
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        60.0,
+        1.0,
+        1415000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "MER",
+      "longpole": 0.0,
+      "latpole": 89.0,
+      "worlds": [
+        [
+          1.6956239282145282,
+          -1.0352020082535849
+        ],
+        [
+          1.6945317687530712,
+          -1.034652009636698
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "mer",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "conversionSystem": "GALACTIC"
+      },
+      "native_worlds": [
+        [
+          0.0005817764173314432,
+          -0.0005817763845128307
+        ],
+        [
+          6.2830398630752535,
+          -0.0002908882045633516
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "MER",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          1.6820151466248627,
+          -1.051254733302527
+        ],
+        [
+          1.680905601426101,
+          -1.0506982145934425
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "ait",
+      "key": "crval2",
+      "value": "1deg",
+      "setup": {
+        "conversionSystem": "GALACTIC"
+      },
+      "native_worlds": [
+        [
+          0.0005818592053304578,
+          0.01687151314663621
+        ],
+        [
+          6.283039841653988,
+          0.017162404125823105
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        60.0,
+        1.0,
+        1415000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "AIT",
+      "longpole": 0.0,
+      "latpole": 89.0,
+      "worlds": [
+        [
+          1.695623928325188,
+          -1.035202008315116
+        ],
+        [
+          1.6945317687409394,
+          -1.0346520096394443
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "ait",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "conversionSystem": "GALACTIC"
+      },
+      "native_worlds": [
+        [
+          0.0005817764932239497,
+          -0.0005817764193825905
+        ],
+        [
+          6.283039863070607,
+          -0.00029088820949900077
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "AIT",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          1.6820151467371502,
+          -1.0512547333647178
+        ],
+        [
+          1.6809056014135653,
+          -1.0506982145961152
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "car",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "cdelt": [
+          -1e-10,
+          2e-10
+        ]
+      },
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -9.999999999999996e-11,
+        1.9999999999999993e-10,
+        1.0,
+        1000.0
+      ],
+      "projection": "CAR",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          5.817764173314429e-14,
+          -1.1635528346628858e-13
+        ],
+        [
+          6.283185307179571,
+          -5.817764173314429e-14
+        ]
+      ],
+      "conversion_system": "J2000",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "sfl",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "cdelt": [
+          -1e-10,
+          2e-10
+        ]
+      },
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -9.999999999999996e-11,
+        1.9999999999999993e-10,
+        1.0,
+        1000.0
+      ],
+      "projection": "SFL",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          5.817764173314429e-14,
+          -1.1635528346628858e-13
+        ],
+        [
+          6.283185307179571,
+          -5.817764173314429e-14
+        ]
+      ],
+      "conversion_system": "J2000",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "mer",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "cdelt": [
+          -1e-10,
+          2e-10
+        ]
+      },
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -9.999999999999996e-11,
+        1.9999999999999993e-10,
+        1.0,
+        1000.0
+      ],
+      "projection": "MER",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          5.817764173314429e-14,
+          -1.1657231602233293e-13
+        ],
+        [
+          6.283185307179571,
+          -5.803813180686363e-14
+        ]
+      ],
+      "conversion_system": "J2000",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "ait",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "cdelt": [
+          -1e-10,
+          2e-10
+        ]
+      },
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -9.999999999999996e-11,
+        1.9999999999999993e-10,
+        1.0,
+        1000.0
+      ],
+      "projection": "AIT",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          5.817764173314429e-14,
+          -1.1635528346628858e-13
+        ],
+        [
+          6.283185307179571,
+          -5.817764173314429e-14
+        ]
+      ],
+      "conversion_system": "J2000",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ]
+    },
+    {
+      "image": "car",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "cdelt": [
+          0.0,
+          2e-10
+        ]
+      },
+      "error": "wcs wcsset_error: Linear transformation matrix is singular"
+    },
+    {
+      "image": "car",
+      "key": "crval1",
+      "value": "1deg",
+      "setup": {
+        "conversionSystem": "GALACTIC",
+        "worldmap0": [
+          1,
+          0
+        ],
+        "crpix": [
+          2.0,
+          3.0
+        ]
+      },
+      "native_worlds": [
+        [
+          0.0005818561750970936,
+          0.016580624940037408
+        ],
+        [
+          6.283039842397226,
+          0.016871515917991613
+        ]
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        60.0,
+        1.0,
+        1415000000.0
+      ],
+      "refpix": [
+        2.0,
+        3.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "CAR",
+      "longpole": 0.0,
+      "latpole": 89.0,
+      "worlds": [
+        [
+          1.6954031722633065,
+          -1.0354702034969814
+        ],
+        [
+          1.6943107243451798,
+          -1.0349200989863394
+        ]
+      ],
+      "conversion_system": "GALACTIC",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "axis_get": {
+        "crval1": {
+          "unit": "'",
+          "value": 60.0
+        },
+        "crval2": {
+          "unit": "'",
+          "value": 0.0
+        },
+        "ctype1": "Declination",
+        "ctype2": "Right Ascension",
+        "cdelt1": {
+          "unit": "'",
+          "value": 1.0
+        },
+        "crpix1": 2.0
+      },
+      "axis_list": {
+        "crval1": 60.0,
+        "crval2": 0.0,
+        "ctype1": "Declination",
+        "ctype2": "Right Ascension",
+        "cdelt1": 1.0,
+        "crpix1": 2.0
+      }
+    },
+    {
+      "image": "sfl",
+      "key": "crval4",
+      "value": "1.5GHz",
+      "setup": {
+        "projection_parameters": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1500000000.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "projection": "SFL",
+      "longpole": 0.0,
+      "latpole": 90.0,
+      "worlds": [
+        [
+          0.0005817765157865853,
+          -0.0005817764173314432
+        ],
+        [
+          6.283039863069099,
+          -0.0002908882086657216
+        ]
+      ],
+      "conversion_system": "J2000",
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "projection_parameters": [
+        1.0,
+        0.0,
+        0.0
+      ]
     }
   ]
 }
