@@ -54,19 +54,27 @@ def test_mapped_record_queries_and_transforms(casa, tmp_path, fixture):
         for axis in range(right.naxes(side)):
             _assert_value(left.findaxis(side, axis), right.findaxis(side, axis), "findaxis")
 
-    point = right.referencepixel()["numeric"] + np.array([0.25, 0.1, 0.0, 0.2])
+    delta = np.array([0.25, 0.1, 0.3, 0.2])
+    delta[right.findcoordinate("Stokes")["pixel"]] = 0.0
+    point = right.referencepixel()["numeric"] + delta
     matrix = np.column_stack((right.referencepixel()["numeric"], point))
     expected_world = right.toworld(point, "nq")
     _assert_value(left.toworld(point, "nq"), expected_world, "toworld")
+    _assert_value(left.toworld(point, "sm"), right.toworld(point, "sm"), "toworld")
     _assert_value(left.topixel(expected_world), right.topixel(expected_world), "topixel")
     np.testing.assert_allclose(left.topixel(expected_world)["numeric"], point, atol=5e-7)
     expected_many = right.toworldmany(matrix)
     _assert_value(left.toworldmany(matrix), expected_many, "toworldmany")
-    _assert_value(left.topixelmany(expected_many), right.topixelmany(expected_many), "topixelmany")
+    worlds = expected_many["numeric"]
+    _assert_value(left.topixelmany(worlds), right.topixelmany(worlds), "topixelmany")
     for value, is_world in ((point, False), (expected_world, True)):
         offsets = right.torel(value, is_world)
         _assert_value(left.torel(value, is_world), offsets, "torel")
         _assert_value(left.toabs(offsets, is_world), right.toabs(offsets, is_world), "toabs")
+    for value, is_world in ((matrix, False), (worlds, True)):
+        offsets = right.torelmany(value, is_world)
+        _assert_value(left.torelmany(value, is_world), offsets, "torelmany")
+        _assert_value(left.toabsmany(offsets, is_world), right.toabsmany(offsets, is_world), "toabsmany")
     if fixture == "independent":
         np.testing.assert_array_equal(left.axesmap(True), [2, 0, 1, 3])
         np.testing.assert_array_equal(left.axesmap(False), [1, 2, 0, 3])
