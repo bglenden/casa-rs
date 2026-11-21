@@ -262,3 +262,19 @@ def test_two_point_handles_singleton_sky_axis_and_an_empty_pair_set(casa, tmp_pa
         finally:
             output.done()
             source.done()
+
+
+def test_two_point_fourier_estimate_preserves_small_differences_on_a_large_offset(tmp_path):
+    shape = (17, 19)
+    data = _ramp(shape, 8) + np.float32(2**26)
+    source, output = tools.image(), tools.image()
+    path = str(tmp_path/"large-offset.im")
+    try:
+        assert source.fromarray(pixels=data)
+        assert source.twopointcorrelation(path) is True
+        assert output.open(path)
+        np.testing.assert_allclose(output.getchunk(), _expected_ramp(shape, 8), atol=2e-8)
+        assert output.getchunk(getmask=True).all()
+    finally:
+        output.done()
+        source.done()
