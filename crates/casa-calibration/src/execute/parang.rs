@@ -39,13 +39,16 @@ pub(crate) fn apply(
     let [Some(xx), Some(xy), Some(yx), Some(yy)] = indices else {
         return Err(error());
     };
-    let (s1, c1) = first_angle.sin_cos();
-    let (s2, c2) = second_angle.sin_cos();
-    let (s1, c1, s2, c2) = (s1 as f32, c1 as f32, s2 as f32, c2 as f32);
+    let rotations = [first_angle, second_angle].map(|angle| {
+        // PJones stores the feed angle as Float and constructs its Jones
+        // matrix from the argument of a single-precision unit phasor.
+        let (sin, cos) = f64::from(angle as f32).sin_cos();
+        (sin as f32).atan2(cos as f32).sin_cos()
+    });
     for channel in 0..corrected.shape()[1] {
         let indices = [xx, xy, yx, yy];
         let data = indices.map(|index| corrected[[index, channel]]);
-        let rotated = rotate_linear(data, [(s1, c1), (s2, c2)]);
+        let rotated = rotate_linear(data, rotations);
         for (index, value) in indices.into_iter().zip(rotated) {
             corrected[[index, channel]] = value;
         }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The public polarization calibration task.
+//! Public polarization and joint cross-hand calibration tasks.
 
 use casa_ms::MeasurementSet;
 use casa_provider_contracts::CasaValue;
@@ -20,6 +20,30 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let ms = MeasurementSet::open(&vis)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     let outcome = solve_polarization(&ms, &request).map_err(TaskFailure::execution)?;
+    if let Some(stats) = outcome.gain_stats {
+        let result = crate::casa_return::solve_record(
+            &request.priors,
+            &outcome.selected,
+            &request.output,
+            &stats,
+        );
+        return TaskSuccess::new(
+            result,
+            &serde_json::json!({
+                "kind": "solve_gain",
+                "report": {
+                    "output_table": request.output,
+                    "gain_type": task.required_text("gaintype")?,
+                    "refant_antenna_id": -1,
+                    "field_ids": outcome.solved_fields,
+                    "spectral_window_ids": outcome.solved_windows,
+                    "solution_row_count": outcome.rows,
+                    "selected_data": outcome.selected,
+                    "solve_stats": stats,
+                }
+            }),
+        );
+    }
     let result = if outcome.source.is_empty() {
         CasaValue::None
     } else {

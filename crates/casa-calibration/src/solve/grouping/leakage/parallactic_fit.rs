@@ -3,7 +3,21 @@
 
 use num_complex::{Complex32, Complex64};
 
+use crate::GainSolveMode;
 use crate::solve::kernel::complex32_to_64;
+
+/// CASA applies the selected amplitude or phase constraint to averaged
+/// coherencies and scales phase-only weights by the measured power.
+pub(super) fn solve_sample(mode: GainSolveMode, value: Complex32, weight: f32) -> (Complex32, f32) {
+    match mode {
+        GainSolveMode::Amplitude => (value.norm().into(), weight),
+        GainSolveMode::Phase if value != Complex32::ZERO => {
+            let amplitude = value.norm();
+            (value / amplitude, weight * (amplitude * amplitude))
+        }
+        _ => (value, weight),
+    }
+}
 
 #[derive(Clone, Default)]
 pub(super) struct SegmentChannel {

@@ -319,6 +319,8 @@ pub enum GainSolveError {
         "the cross-hand phase and Q/U solve requires at least {required} unflagged time segments"
     )]
     InsufficientParallacticCoverage { required: usize },
+    #[error("GlinXphJones needs multiple SDBs")]
+    InsufficientGainPhaseSegments,
 
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]

@@ -73,7 +73,10 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    if task.surface() == "polcal" {
+    if task.surface() == "polcal"
+        || (task.surface() == "gaincal"
+            && matches!(task.required_text("gaintype")?.as_str(), "XY+QU" | "XYf+QU"))
+    {
         return polcal::run(task);
     }
     if task.surface() == "polfromgain" {
