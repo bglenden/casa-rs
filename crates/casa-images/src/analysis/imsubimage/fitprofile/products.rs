@@ -67,11 +67,27 @@ pub(super) fn destinations(
     models: &ProfileModels,
     automatic: usize,
     has_sigma: bool,
+    multifit: bool,
 ) -> Vec<Product> {
     let mut outputs = Vec::new();
     for (name, kind) in names.spectra.into_iter().zip([Kind::Model, Kind::Residual]) {
         add(&mut outputs, name, kind);
     }
+    if multifit {
+        add_solution_fields(&mut outputs, names, models, automatic);
+    }
+    if has_sigma {
+        add(&mut outputs, names.sigma, Kind::Sigma);
+    }
+    outputs
+}
+
+fn add_solution_fields(
+    outputs: &mut Vec<Product>,
+    names: &ProfileOutputNames<'_>,
+    models: &ProfileModels,
+    automatic: usize,
+) {
     if let Some(spectral) = &models.spectral_polynomial {
         for (field, name) in names
             .coefficients
@@ -81,7 +97,7 @@ pub(super) fn destinations(
         {
             for index in 0..spectral.values.len() {
                 add(
-                    &mut outputs,
+                    outputs,
                     &format!("{name}_{index}"),
                     Kind::Coefficient {
                         error: field == 1,
@@ -121,7 +137,7 @@ pub(super) fn destinations(
             for (group, suffix, len) in &groups {
                 for index in 0..*len {
                     add(
-                        &mut outputs,
+                        outputs,
                         &format!("{name}{suffix}_{index}"),
                         Kind::Line {
                             field,
@@ -133,10 +149,6 @@ pub(super) fn destinations(
             }
         }
     }
-    if has_sigma {
-        add(&mut outputs, names.sigma, Kind::Sigma);
-    }
-    outputs
 }
 
 fn add(outputs: &mut Vec<Product>, name: &str, kind: Kind) {
@@ -226,31 +238,37 @@ impl ProfileProducts {
             fit.solution.as_ref().map(|(curve, solution)| {
                 fit.x
                     .iter()
-                    .map(|&x| curve.output_value(&solution.values, x) as f32)
+                    .map(|&x| curve.fitted_value(&solution.values, x))
                     .collect::<Vec<_>>()
             })
         });
         let mut shape = vec![1; self.shape.len()];
         shape[axis] = data.values.len();
         let dims = IxDyn(&shape);
-        let model = array(
-            dims.clone(),
-            solution.unwrap_or_else(|| vec![f32::NAN; data.values.len()]),
-        );
+        let values = solution.unwrap_or_else(|| vec![f64::NAN; data.values.len()]);
         let mask = array(
             dims.clone(),
             fit.map_or_else(|| vec![false; data.values.len()], |fit| fit.mask.clone()),
         );
         if let Some(output) = &mut self.model {
+            let model = array(
+                dims.clone(),
+                values.iter().map(|&value| value as f32).collect(),
+            );
             output.put(&model, &mask, position)?;
         }
         if let Some(output) = &mut self.residual {
+            let log = fit.is_some_and(|fit| fit.logarithmic);
             let residual = array(
                 dims,
                 data.values
                     .iter()
-                    .zip(&model)
-                    .map(|(&datum, &prediction)| datum - prediction)
+                    .zip(&values)
+                    .map(|(&datum, &prediction)| {
+                        let datum = f64::from(datum);
+                        let ordinate = if log { datum.ln() } else { datum };
+                        (ordinate - prediction) as f32
+                    })
                     .collect(),
             );
             output.put(&residual, &mask, position)?;
@@ -271,7 +289,18 @@ impl ProfileProducts {
             spectrum.image.save()?;
         }
         let mut shape = self.shape;
-        shape[fit.selection.axis] = 1;
+        let axis = fit.selection.axis;
+        let mut solution_coordinates = self.coordinates;
+        if converged && fit.options.multifit && shape[axis] > 1 {
+            let reference = fit.selection.plan.coordinates.reference_pixel();
+            let offset = (shape[axis] - 1) as f64 * 0.5;
+            CoordinateSystem::set_reference_pixel_in_record(
+                &mut solution_coordinates,
+                axis,
+                reference[axis] - offset,
+            )?;
+        }
+        shape[axis] = 1;
         for (product, path) in fit.products.iter().zip(staged) {
             let Some(path) = path else { continue };
             match product.kind {
@@ -292,7 +321,14 @@ impl ProfileProducts {
                         _ => format!("{axis_unit}.{}", fit.source.units()),
                     };
                     let values = result_array(record, &group.key(), FIELDS[field])?;
-                    write_field(shape.clone(), &self.coordinates, values, index, &unit, path)?;
+                    write_field(
+                        shape.clone(),
+                        &solution_coordinates,
+                        values,
+                        index,
+                        &unit,
+                        path,
+                    )?;
                 }
                 Kind::Coefficient { error, index } if converged => {
                     let group = if record.get("plp").is_some() {
@@ -302,7 +338,14 @@ impl ProfileProducts {
                     };
                     let field = if error { "error" } else { "solution" };
                     let values = result_array(record, group, field)?;
-                    write_field(shape.clone(), &self.coordinates, values, index, "", path)?;
+                    write_field(
+                        shape.clone(),
+                        &solution_coordinates,
+                        values,
+                        index,
+                        "",
+                        path,
+                    )?;
                 }
                 _ => {}
             }

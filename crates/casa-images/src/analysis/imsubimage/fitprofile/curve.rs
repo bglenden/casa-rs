@@ -118,9 +118,7 @@ impl Curve {
                     let log = x.ln();
                     coefficients[0] * (log * evaluate_polynomial(&coefficients[1..], log)).exp()
                 }
-                SpectralPolynomial::LogTransformed => {
-                    coefficients[0].ln() + x * evaluate_polynomial(&coefficients[1..], x)
-                }
+                SpectralPolynomial::LogTransformed => evaluate_polynomial(coefficients, x),
             }
         });
         continuum
@@ -130,18 +128,6 @@ impl Curve {
                 .iter()
                 .map(|line| line.value(parameters, x))
                 .sum::<f64>()
-    }
-
-    pub(super) fn output_value(&self, parameters: &[f64], x: f64) -> f64 {
-        let model = self.fitted_value(parameters, x);
-        if matches!(
-            self.spectral.as_ref(),
-            Some((SpectralPolynomial::LogTransformed, _))
-        ) {
-            model.exp()
-        } else {
-            model
-        }
     }
 
     pub(super) fn valid_widths(&self, parameters: &[f64]) -> bool {

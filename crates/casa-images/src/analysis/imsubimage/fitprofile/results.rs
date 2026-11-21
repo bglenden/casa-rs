@@ -58,11 +58,12 @@ impl ProfileResults {
         let multiplets = models
             .multiplets
             .iter()
-            .map(|multiplet| {
+            .enumerate()
+            .map(|(index, multiplet)| {
                 LineResults::new(
                     &shape,
                     multiplet.components.len(),
-                    "Gaussian multiplet results",
+                    &format!("Gaussian multiplet number {} results", index + 1),
                 )
             })
             .collect();
@@ -127,7 +128,7 @@ impl ProfileResults {
                 }
                 let index = multi_index;
                 multi_index += 1;
-                (index, "GMULTIPLET")
+                (index, "GAUSSIAN MULTIPLET")
             } else if matches!(line.kind, LineKind::Gaussian) {
                 let index = gaussian;
                 gaussian += 1;
@@ -177,8 +178,8 @@ impl ProfileResults {
                 }
             }
             let label = match kind {
-                SpectralPolynomial::PowerLog => "POWERLOGPOLY",
-                SpectralPolynomial::LogTransformed => "LOGTRANSPOLY",
+                SpectralPolynomial::PowerLog => "POWER LOGARITHMIC POLYNOMIAL",
+                SpectralPolynomial::LogTransformed => "LOGARITHMIC TRANSFORMED POLYNOMIAL",
             };
             self.store_type(pixel, types, label);
             types += 1;
@@ -197,19 +198,24 @@ impl ProfileResults {
         self.model_types[IxDyn(&index)] = value.to_owned();
     }
 
-    pub(super) fn finish(self, x_unit: &str, y_unit: &str) -> RecordValue {
+    pub(super) fn finish(self, x_unit: &str, y_unit: &str, has_direction: bool) -> RecordValue {
         let mut result = RecordValue::default();
         for (name, value) in [
             ("attempted", ArrayValue::Bool(self.attempted)),
             ("succeeded", ArrayValue::Bool(self.succeeded)),
             ("converged", ArrayValue::Bool(self.converged)),
             ("valid", ArrayValue::Bool(self.valid)),
-            ("direction", ArrayValue::String(self.direction)),
             ("niter", ArrayValue::Int64(self.iterations)),
             ("ncomps", ArrayValue::Int64(self.components)),
             ("type", ArrayValue::String(self.model_types)),
         ] {
             result.upsert(name, Value::Array(value));
+        }
+        if has_direction {
+            result.upsert(
+                "direction",
+                Value::Array(ArrayValue::String(self.direction)),
+            );
         }
         result.upsert("xUnit", text(x_unit));
         result.upsert("yUnit", text(y_unit));
@@ -239,16 +245,16 @@ impl ProfileResults {
 }
 
 struct LineResults {
-    description: &'static str,
+    description: String,
     arrays: [ArrayD<f64>; 8],
 }
 
 impl LineResults {
-    fn new(shape: &[usize], count: usize, description: &'static str) -> Self {
+    fn new(shape: &[usize], count: usize, description: &str) -> Self {
         let extents = with_axis(shape, count);
         let arrays = std::array::from_fn(|_| ArrayD::from_elem(IxDyn(&extents), f64::NAN));
         Self {
-            description,
+            description: description.to_owned(),
             arrays,
         }
     }
@@ -267,7 +273,7 @@ impl LineResults {
         for (name, array) in NAMES.into_iter().zip(self.arrays) {
             result.upsert(name, Value::Array(ArrayValue::Float64(array)));
         }
-        result.upsert("description", text(self.description));
+        result.upsert("description", text(&self.description));
         Some(result)
     }
 }

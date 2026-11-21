@@ -99,6 +99,19 @@ impl<'a> ProfileAxis<'a> {
         }
     }
 
+    pub(super) fn has_direction(&self) -> bool {
+        self.coordinates
+            .find_coordinate(CoordinateType::Direction)
+            .is_some_and(|owner| {
+                self.coordinates
+                    .coordinate_pixel_axes(owner)
+                    .is_some_and(|axes| {
+                        axes.iter()
+                            .all(|axis| axis.is_some_and(|axis| axis != self.pixel_axis))
+                    })
+            })
+    }
+
     pub(super) fn direction(&self, position: &[f64]) -> String {
         let Some(owner) = self.coordinates.find_coordinate(CoordinateType::Direction) else {
             return String::new();

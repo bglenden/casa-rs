@@ -125,6 +125,7 @@ impl<'a> Sigma<'a> {
                 Lane {
                     values: data,
                     valid: vec![true; length],
+                    has_mask: false,
                 }
             }
             ProfileSigma::Image(image) => {
@@ -137,14 +138,19 @@ impl<'a> Sigma<'a> {
                     .iter()
                     .copied()
                     .collect();
-                let valid = image
-                    .get_mask_slice(&indices, &shape, &stride)?
-                    .map_or_else(|| vec![true; length], |mask| mask.iter().copied().collect());
-                Lane { values, valid }
+                let valid = image.get_mask_slice(&indices, &shape, &stride)?;
+                let has_mask = valid.is_some();
+                let valid =
+                    valid.map_or_else(|| vec![true; length], |mask| mask.iter().copied().collect());
+                Lane {
+                    values,
+                    valid,
+                    has_mask,
+                }
             }
         };
         for (value, valid) in lanes.values.iter_mut().zip(&mut lanes.valid) {
-            if self.maximum > 0. && *value > 0. && value.is_finite() {
+            if self.maximum > 0. && value.is_finite() {
                 *value /= self.maximum;
             } else {
                 *value = 0.;

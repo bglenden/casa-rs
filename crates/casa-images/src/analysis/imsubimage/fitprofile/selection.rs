@@ -121,11 +121,16 @@ impl ProfileSelection {
         count[self.axis] = self.plan.shape[self.axis];
         let (values, valid) = source.read(&self.source_pixel(position), &count, &self.stride)?;
         let values: Vec<_> = values.iter().copied().collect();
+        let has_mask = valid.is_some();
         let valid = valid.map_or_else(
             || vec![true; values.len()],
             |mask| mask.iter().copied().collect(),
         );
-        Ok(Lane { values, valid })
+        Ok(Lane {
+            values,
+            valid,
+            has_mask,
+        })
     }
 
     pub(super) fn selected_planes(&self, good: &[i64]) -> Result<Vec<bool>, ImageError> {
@@ -152,6 +157,7 @@ impl ProfileSelection {
 pub(super) struct Lane {
     pub(super) values: Vec<f32>,
     pub(super) valid: Vec<bool>,
+    pub(super) has_mask: bool,
 }
 
 pub(super) struct MeanLane {
@@ -177,7 +183,8 @@ impl MeanLane {
     }
 
     pub(super) fn finish(self) -> Lane {
-        let valid = self.count.iter().map(|&count| count > 0).collect();
+        let valid: Vec<_> = self.count.iter().map(|&count| count > 0).collect();
+        let has_mask = valid.iter().any(|&value| !value);
         let values = self
             .sums
             .into_iter()
@@ -190,6 +197,10 @@ impl MeanLane {
                 }
             })
             .collect();
-        Lane { values, valid }
+        Lane {
+            values,
+            valid,
+            has_mask,
+        }
     }
 }

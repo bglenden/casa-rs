@@ -187,9 +187,13 @@ impl<'a> ImageProfileFit<'a> {
             options.beam_record,
         )?;
         let models = models(&mut options)?;
-        if models.spectral_polynomial.is_some() && options.polynomial.is_some() {
+        if models.spectral_polynomial.is_some()
+            && (options.polynomial.is_some()
+                || !models.singlets.is_empty()
+                || !models.multiplets.is_empty())
+        {
             return Err(invalid(
-                "Cannot fit both an ordinary and a spectral polynomial",
+                "A spectral polynomial cannot be fit simultaneously with other functions",
             ));
         }
         let automatic = if models.singlets.is_empty()
@@ -221,7 +225,13 @@ impl<'a> ImageProfileFit<'a> {
                 "There is nothing to fit. Specify a line or polynomial model",
             ));
         }
-        let products = products::destinations(&names, &models, automatic, options.sigma.is_some());
+        let products = products::destinations(
+            &names,
+            &models,
+            automatic,
+            options.sigma.is_some(),
+            options.multifit,
+        );
         Ok(Self {
             source,
             original_coordinates: coordinates,
@@ -294,7 +304,7 @@ impl<'a> ImageProfileFit<'a> {
                 &previous,
             )?;
             if let Some(outcome) = &outcome {
-                results.attempted[IxDyn(&position)] = true;
+                results.attempted[IxDyn(&position)] = outcome.attempted;
                 results.direction(&position, axis.direction(&world_pixel));
                 if let Some((curve, solution)) = &outcome.solution {
                     results.record_fit(
@@ -317,7 +327,7 @@ impl<'a> ImageProfileFit<'a> {
             products.write_spectrum(&position, self.selection.axis, &data, outcome.as_ref())?;
         }
         let converged = results.converged.iter().any(|&value| value);
-        let record = results.finish(&axis.unit, self.source.units());
+        let record = results.finish(&axis.unit, self.source.units(), axis.has_direction());
         products.finish(
             &self,
             staged,
@@ -363,7 +373,11 @@ impl<'a> ImageProfileFit<'a> {
             let lane_pixel = self.selection.position(lane);
             mean.add(&self.selection.read_lane(reader, &lane_pixel)?);
             if let (Some(sigma), Some(mean_sigma)) = (sigma, &mut mean_sigma) {
-                mean_sigma.add(&sigma.lane(&self.selection, &lane_pixel)?);
+                let mut weights = sigma.lane(&self.selection, &lane_pixel)?;
+                for (valid, &value) in weights.valid.iter_mut().zip(&weights.values) {
+                    *valid &= value > 0.;
+                }
+                mean_sigma.add(&weights);
             }
         }
         Ok((mean.finish(), mean_sigma.map(MeanLane::finish)))
@@ -385,7 +399,7 @@ impl<'a> ImageProfileFit<'a> {
         planes: &[bool],
         previous: &[(Vec<usize>, Vec<f64>)],
     ) -> Result<Option<FitLane>, ImageError> {
-        if data.valid.iter().any(|&valid| !valid)
+        if data.has_mask
             && data.valid.iter().filter(|&&valid| valid).count() < self.options.min_points
         {
             return Ok(None);
@@ -404,14 +418,14 @@ impl<'a> ImageProfileFit<'a> {
             let y = f64::from(data.values[index]);
             let y = if logarithmic { y.ln() } else { y };
             let weight = weights.map_or(1., |sigma| {
-                if sigma.valid[index] {
+                if sigma.valid[index] && sigma.values[index] > 0. {
                     f64::from(sigma.values[index]).powi(-2)
                 } else {
                     0.
                 }
             });
-            if planes[index] && data.valid[index] && weight > 0. && x.is_finite() && y.is_finite() {
-                mask[index] = true;
+            mask[index] = data.valid[index] && x.is_finite() && y.is_finite();
+            if planes[index] && mask[index] && weight > 0. {
                 samples.push(Sample { x, y, weight });
             }
         }
@@ -421,11 +435,8 @@ impl<'a> ImageProfileFit<'a> {
         if let Some(near) = nearest(position, previous) {
             curve.parameters.copy_from_slice(near);
         }
-        let solution = if curve.parameters.is_empty() {
-            None
-        } else {
-            solver::solve(&curve, &samples)
-        };
+        let attempted = !curve.parameters.is_empty();
+        let solution = attempted.then(|| solver::solve(&curve, &samples)).flatten();
         let valid = solution
             .as_ref()
             .is_some_and(|solution| self.accepts(&curve, solution));
@@ -433,6 +444,8 @@ impl<'a> ImageProfileFit<'a> {
             x,
             mask,
             valid,
+            attempted,
+            logarithmic,
             solution: solution.map(|solution| (curve, solution)),
         }))
     }
@@ -465,7 +478,7 @@ impl<'a> ImageProfileFit<'a> {
         let log_x = matches!(law.kind, SpectralPolynomial::LogTransformed);
         for value in &mut x {
             *value /= divisor;
-            if log_x {
+            if log_x && divisor != 1. {
                 *value = value.ln();
             }
         }
@@ -507,6 +520,8 @@ struct FitLane {
     x: Vec<f64>,
     mask: Vec<bool>,
     valid: bool,
+    attempted: bool,
+    logarithmic: bool,
     solution: Option<(Curve, Solution)>,
 }
 

@@ -120,7 +120,10 @@ impl PyImageTool {
         };
         let request = ProfileRequest {
             selection: [r#box, chans, stokes],
-            region: region.map_or_else(|| Ok(RegionArgument::default()), Bound::extract)?,
+            region: region.map_or_else(
+                || Ok(RegionArgument::default()),
+                |argument| argument.extract(),
+            )?,
             mask: mask_argument(mask)?,
             axis,
             ngauss,
@@ -209,7 +212,8 @@ impl ProfileRequest<'_> {
         sigma: Option<&Image>,
         history: bool,
     ) -> PyResult<(NamedImageStages, RecordValue)> {
-        let beam_record = attachment.beam_view().beam_set().map_err(raised)?;
+        let mut beam_record = image.image_info().map_err(raised)?.to_record();
+        attachment.beam_view().apply_to(&mut beam_record);
         let [pixel_box, channels, stokes] = self.selection;
         let fit = ImageProfileFit::new(
             image,
