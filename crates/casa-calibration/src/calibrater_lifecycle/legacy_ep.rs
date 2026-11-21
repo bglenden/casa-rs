@@ -136,7 +136,7 @@ pub(crate) fn convolution(
         },
     )
     .map_err(invalid)?;
-    let aperture = legacy_aperture()?;
+    let aperture = EvlaApertureModel::new(legacy_vla_surface()?);
     let (products, kernel_memory, w_scale) = if w_planes == 1 {
         let products = LegacyEpConvolution::vla_l_band(
             &aperture,
@@ -349,7 +349,7 @@ fn first_cross_row<'a>(
     })
 }
 
-fn legacy_aperture() -> MsResult<EvlaApertureModel> {
+pub(crate) fn legacy_vla_surface() -> MsResult<EvlaDishSurface> {
     use std::io::Read;
     let relative = "nrao/VLA/VLA.surface";
     let path = std::env::var_os("CASARS_EP_VLA_SURFACE")
@@ -374,9 +374,7 @@ fn legacy_aperture() -> MsResult<EvlaApertureModel> {
     if text.len() > 1_048_576 {
         return Err(invalid("legacy EP aperture surface exceeds 1 MiB"));
     }
-    Ok(EvlaApertureModel::new(
-        EvlaDishSurface::from_surface_text(&text).map_err(invalid)?,
-    ))
+    EvlaDishSurface::from_surface_text(&text).map_err(invalid)
 }
 
 #[cfg(test)]

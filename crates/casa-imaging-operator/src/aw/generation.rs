@@ -133,7 +133,7 @@ pub(super) fn generate(
     root: &Path,
     input: &NativeAwRequestInput,
     units: &[Unit],
-    only_missing: bool,
+    modes: (bool, bool),
     workers: usize,
 ) -> Result<(), AwCatalogError> {
     let model = EvlaApertureModel::new(input.surface.clone());
@@ -146,7 +146,7 @@ pub(super) fn generate(
             let Some(unit) = units.get(next.fetch_add(1, Ordering::Relaxed)) else {
                 break;
             };
-            let generated = generate_unit(root, input, &model, unit, only_missing, &mut workspace);
+            let generated = generate_unit(root, input, &model, unit, modes, &mut workspace);
             if let Err(error) = generated {
                 failed.store(true, Ordering::Relaxed);
                 return Err(error);
@@ -180,7 +180,7 @@ fn generate_unit(
     input: &NativeAwRequestInput,
     model: &EvlaApertureModel,
     unit: &Unit,
-    only_missing: bool,
+    (only_missing, legacy_vla): (bool, bool),
     workspace: &mut Option<EvlaAwWorkspace>,
 ) -> Result<(), AwCatalogError> {
     let grid = input.grid;
@@ -225,7 +225,9 @@ fn generate_unit(
         };
         let workspace = match workspace {
             Some(workspace) => workspace,
-            None => workspace.insert(EvlaAwWorkspace::new(model.clone(), request)?),
+            None => workspace.insert(
+                EvlaAwWorkspace::new(model.clone(), request)?.with_legacy_vla_feed(legacy_vla),
+            ),
         };
         // Only the W screen depends on w: the aperture and the weight cell
         // are formed once per unit.
@@ -242,6 +244,7 @@ fn generate_unit(
             diameter_m: input.antenna_diameter_m,
             sky_increment_rad: grid.sky_increment_rad[1].abs(),
             working_size: grid.size,
+            legacy_vla,
         };
         let suffix = cell_suffix(unit.pa, unit.frequency, iw, unit.mueller);
         write_cell(

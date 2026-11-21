@@ -306,6 +306,7 @@ pub(super) struct CellMisc {
     pub(super) conjugate_frequency: f64,
     pub(super) conjugate_mueller: u32,
     pub(super) diameter_m: f64,
+    pub(super) legacy_vla: bool,
     /// The working sky increment and size the cell was generated on:
     /// private keys (`CasaRsSkyIncrement`, `CasaRsWorkingSize`) the loader
     /// checks against the image geometry so a cache is never reused for
@@ -422,8 +423,14 @@ fn build_cell(
                 "ConjPoln",
                 ScalarValue::Int32(misc.conjugate_mueller as i32),
             ),
-            field("TelescopeName", ScalarValue::String("EVLA".to_string())),
-            field("BandName", ScalarValue::String(String::new())),
+            field(
+                "TelescopeName",
+                ScalarValue::String(if misc.legacy_vla { "VLA" } else { "EVLA" }.into()),
+            ),
+            field(
+                "BandName",
+                ScalarValue::String(if misc.legacy_vla { "none" } else { "" }.into()),
+            ),
             field("Diameter", ScalarValue::Float64(misc.diameter_m)),
             field("OpCode", ScalarValue::Bool(false)),
             field(

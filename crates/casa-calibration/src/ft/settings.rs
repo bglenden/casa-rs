@@ -232,6 +232,10 @@ pub struct ImagerLegacyAwOptions {
     pub rotation_step_deg: f64,
     /// Select the conjugate-beam frequency map in the catalog.
     pub conjugate_beams: bool,
+    /// Include the legacy Mueller term when generating a cold cache.
+    pub mueller_term: bool,
+    /// Place cold A/W cells at the upper selected frequency in each SPW.
+    pub wideband: bool,
 }
 
 impl ImagerTransformOptions {

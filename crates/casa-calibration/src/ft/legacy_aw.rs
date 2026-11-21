@@ -6,7 +6,10 @@ use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, StokesType};
 use casa_images::PagedImage;
-use casa_imaging_model::PolarizationCoordinate;
+use casa_imaging_model::{
+    NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
+    PolarizationCoordinate,
+};
 use casa_imaging_operator::{
     AwCatalog, AwIndexing, AwPaRotation, GridGeometry, GridPadding, ImageExtent, NativeCacheLock,
     PolarizationRouting,
@@ -18,7 +21,7 @@ use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::epoch::EpochRef;
 use casa_types::{ArrayValue, Correlation, RecordValue, ScalarValue, Value};
 
-use crate::calibrater_lifecycle::legacy_ep::{model_geometry, reserve_model};
+use crate::calibrater_lifecycle::legacy_ep::{legacy_vla_surface, model_geometry, reserve_model};
 use crate::paths::copy_editable_table_tree;
 
 use super::image::ImageModel;
@@ -29,13 +32,16 @@ use super::settings::{ImagerLegacyAwOptions, PredictionGeometry};
 
 pub(crate) const CACHE: &str = "CASARS_LEGACY_AW_CACHE";
 pub(crate) const MACHINE: &str = "AWProjectWBFT";
+const COLD_STAGE: &str = ".casars-legacy-aw-";
+const OWNED_STAGE: &str = "preparing";
+const CELL_JOURNAL: &str = "promoting";
 
 pub(super) fn prepare_model(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     model: &PagedImage<f32>,
     geometry: &PredictionGeometry,
-    options: &ImagerLegacyAwOptions,
+    (options, switches): &(ImagerLegacyAwOptions, [bool; 2]),
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
@@ -46,15 +52,14 @@ pub(super) fn prepare_model(
     {
         return Err(invalid("this legacy AW configuration is pending #1520"));
     }
-    if !options.cache_directory.is_dir() {
-        return Err(invalid("legacy AW needs an existing CASA cache (#1520)"));
+    if options.cache_directory.as_os_str().is_empty() {
+        return Err(invalid("legacy AW requires a convolution cache directory"));
     }
     if ms.observation()?.string(0, "TELESCOPE_NAME")? != "VLA" {
         return Err(invalid(
             "legacy AW currently needs the original VLA (#1520)",
         ));
     }
-    let _cache_lock = NativeCacheLock::shared(&options.cache_directory).map_err(invalid)?;
     let (shape, increment, coordinates) = model_geometry(model)?;
     let [side, _, _, _] = shape;
     let host = HostResources::detect().map_err(invalid)?;
@@ -112,6 +117,63 @@ pub(super) fn prepare_model(
             "legacy AW currently needs a VLA L-band model (#1520)",
         ));
     }
+    let _cache_lock = ready_cache(
+        &options.cache_directory,
+        || {
+            if options.correct_primary_beam || !options.wideband || !switches[1] {
+                return Err(invalid(
+                    "this cold legacy AW term configuration is pending #1520",
+                ));
+            }
+            let spw = row.spectral_window_id;
+            let frequencies = ms.spectral_window()?.chan_freq(spw as usize)?;
+            let channels = match selected.channel_selections.get(&spw) {
+                Some(selection) => selection.indices(frequencies.len())?,
+                None => (0..frequencies.len()).collect(),
+            };
+            let channel_frequencies_hz = channels
+                .into_iter()
+                .map(|channel| frequencies[channel])
+                .collect::<Vec<_>>();
+            let cf_frequency_hz = channel_frequencies_hz.iter().copied().fold(0_f64, f64::max);
+            let (_, pa) = samples
+                .first()
+                .ok_or_else(|| invalid("legacy AW has no first visibility buffer"))?;
+            let fft_side = 2048;
+            let oversampling = 20;
+            let input = NativeAwRequestInput {
+                surface: legacy_vla_surface()?,
+                antenna_diameter_m: 25.,
+                frequencies: vec![NativeAwFrequencyGroup {
+                    spectral_window: spw.try_into().map_err(invalid)?,
+                    channel_frequencies_hz,
+                    cf_frequency_hz,
+                }],
+                w_values: vec![0.],
+                w_increment: 0.,
+                pa_values: vec![f64::from(*pa)],
+                mueller_elements: vec![0, 15],
+                reference_frequency_hz: reference_hz,
+                grid: NativeAwGrid {
+                    size: fft_side,
+                    sky_increment_rad: increment
+                        .map(|cell| cell * (oversampling * side) as f64 / fft_side as f64),
+                    oversampling,
+                },
+                terms: NativeAwTerms {
+                    aperture: switches[1],
+                    w_term: false,
+                    prolate_spheroidal: switches[0],
+                    wideband: options.wideband,
+                    conjugate_beams: options.conjugate_beams,
+                },
+                maximum_cells: 2,
+            };
+            Ok(input)
+        },
+        &host,
+        geometry.native_threads,
+    )?;
     let (catalog, cache_memory) = open_catalog(
         &options.cache_directory,
         &grid,
@@ -162,7 +224,7 @@ pub(super) fn prepare_model(
                 let entry = entry.map_err(invalid)?;
                 let name = entry.file_name();
                 let name_text = name.to_string_lossy();
-                if name_text.starts_with("CFS_") || name_text.starts_with("WTCFS_") {
+                if is_cell(&name_text) {
                     let target = retained.join(name);
                     copy_editable_table_tree(&entry.path(), &target).map_err(invalid)?;
                     check_owned(&target)?;
@@ -194,6 +256,114 @@ pub(super) fn prepare_model(
             Ok(())
         },
     )
+}
+
+fn is_cell(name: &str) -> bool {
+    name.starts_with("CFS_") || name.starts_with("WTCFS_")
+}
+
+fn has_cells(root: &Path) -> MsResult<bool> {
+    for item in std::fs::read_dir(root).map_err(invalid)? {
+        if is_cell(&item.map_err(invalid)?.file_name().to_string_lossy()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn staged_caches(root: &Path) -> MsResult<Vec<std::path::PathBuf>> {
+    let mut stages = Vec::new();
+    for item in std::fs::read_dir(root).map_err(invalid)? {
+        let item = item.map_err(invalid)?;
+        if item.file_name().to_string_lossy().starts_with(COLD_STAGE)
+            && item.file_type().map_err(invalid)?.is_dir()
+            && item.path().join(OWNED_STAGE).is_file()
+        {
+            stages.push(item.path());
+        }
+    }
+    Ok(stages)
+}
+
+fn recover_stage(root: &Path, stage: &Path) -> MsResult<()> {
+    match std::fs::read_to_string(stage.join(CELL_JOURNAL)) {
+        Ok(journal) => {
+            for name in journal.lines() {
+                if !is_cell(name) || Path::new(name).components().count() != 1 {
+                    return Err(invalid("invalid legacy A/W cache journal"));
+                }
+                let target = root.join(name);
+                if !stage.join(name).exists() && target.is_dir() {
+                    std::fs::remove_dir_all(target).map_err(invalid)?;
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(invalid(error)),
+    }
+    std::fs::remove_dir_all(stage).map_err(invalid)
+}
+
+fn ready_cache(
+    root: &Path,
+    request: impl FnOnce() -> MsResult<NativeAwRequestInput>,
+    host: &HostResources,
+    desired_workers: i32,
+) -> MsResult<NativeCacheLock> {
+    let lock = NativeCacheLock::shared(root).map_err(invalid)?;
+    if has_cells(root)? && staged_caches(root)?.is_empty() {
+        return Ok(lock);
+    }
+    drop(lock);
+    let lock = NativeCacheLock::exclusive(root).map_err(invalid)?;
+    for stage in staged_caches(root)? {
+        recover_stage(root, &stage)?;
+    }
+    if !has_cells(root)? {
+        let input = request()?;
+        let workers = if desired_workers > 1 { 2 } else { 1 };
+        let _memory = admit(
+            host,
+            &ResourcePolicy::Balanced,
+            &Demand {
+                phase: "legacy A/W cold generation",
+                memory: AwCatalog::generation_bytes(&input, workers),
+            },
+        )
+        .map_err(invalid)?;
+        let stage = tempfile::Builder::new()
+            .prefix(COLD_STAGE)
+            .tempdir_in(root)
+            .map_err(invalid)?;
+        std::fs::File::create(stage.path().join(OWNED_STAGE)).map_err(invalid)?;
+        AwCatalog::generate_legacy_vla(stage.path(), &input, workers).map_err(invalid)?;
+        promote_cells(root, stage)?;
+    }
+    drop(lock);
+    NativeCacheLock::shared(root).map_err(invalid)
+}
+
+fn promote_cells(root: &Path, stage: tempfile::TempDir) -> MsResult<()> {
+    let staged = stage.path();
+    let mut names = Vec::new();
+    for item in std::fs::read_dir(staged).map_err(invalid)? {
+        let name = item.map_err(invalid)?.file_name();
+        if is_cell(&name.to_string_lossy()) {
+            if root.join(&name).exists() {
+                return Err(invalid("legacy A/W cache gained a cell during generation"));
+            }
+            names.push(name.to_string_lossy().into_owned());
+        }
+    }
+    let pending = staged.join("journal.new");
+    std::fs::write(&pending, names.join("\n")).map_err(invalid)?;
+    std::fs::rename(pending, staged.join(CELL_JOURNAL)).map_err(invalid)?;
+    let staged = stage.keep();
+    for name in names {
+        std::fs::rename(staged.join(&name), root.join(&name)).map_err(invalid)?;
+    }
+    std::fs::remove_file(staged.join(CELL_JOURNAL)).map_err(invalid)?;
+    std::fs::remove_dir_all(staged).map_err(invalid)
 }
 
 fn angle_samples(

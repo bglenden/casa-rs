@@ -229,7 +229,6 @@ impl PyImager {
     ) -> PyResult<bool> {
         // The A/W controls are consumed by their Fourier machines. Ordinary
         // GridFT and WProjectFT do not use them.
-        let _ = (mterm, wbawp);
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -277,6 +276,8 @@ impl PyImager {
                         pa_step_deg: pastep,
                         rotation_step_deg: rotpastep,
                         conjugate_beams: conjbeams,
+                        mueller_term: mterm,
+                        wideband: wbawp,
                     },
                     [psterm, aterm],
                 )
