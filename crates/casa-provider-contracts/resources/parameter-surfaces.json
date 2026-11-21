@@ -24262,7 +24262,7 @@
             "python": {"name": "timeavg", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Time Average", "group": "Clip", "advanced": true}
           },
-          "surface_note": "Calibration automatic agents use stored integrations. MeasurementSet automatic averaging remains on #978."
+          "surface_note": "MeasurementSet TFCrop uses time averaging. Calibration automatic agents use stored integrations. MeasurementSet RFlag time averaging remains on #978."
         },
         {
           "name": "timebin",

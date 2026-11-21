@@ -91,6 +91,7 @@ impl ClipTimedRow {
 }
 
 pub(super) fn time_bin_seconds(text: &str) -> Option<f64> {
+    let text = text.split_once('\0').map_or(text, |(head, _)| head);
     let seconds = Unit::new("s").expect("seconds are a defined unit");
     Quantity::read(text)
         .ok()
@@ -379,59 +380,82 @@ impl TimeClip<'_> {
         options: ClipOptions<'_>,
         matched: &mut Vec<(usize, usize)>,
     ) -> Result<Vec<(usize, usize)>, FlaggingError> {
+        let averaged = average.reduced_visibility(self.column, channels, width, row, self.path)?;
+        let (flags, channels) = averaged
+            .bins
+            .as_ref()
+            .map_or((averaged.flags, channels), |bins| (bins.flags(), None));
+        apply_clip_array(
+            &averaged.data,
+            flags,
+            channels,
+            options,
+            self.path,
+            row,
+            matched,
+        )?;
+        let original = matched.iter().flat_map(|(plane, channel)| {
+            let channels = averaged
+                .bins
+                .as_ref()
+                .map_or(std::slice::from_ref(channel), |bins| {
+                    bins.original_channels(*channel)
+                });
+            channels.iter().map(move |&original| (*plane, original))
+        });
+        Ok(original.collect())
+    }
+}
+
+pub(super) struct TimeAveragedVisibility<'a> {
+    pub(super) data: Cow<'a, ArrayValue>,
+    pub(super) flags: &'a ArrayD<bool>,
+    pub(super) bins: Option<ChannelBins<'a>>,
+    pub(super) fourier_roundoff: Option<&'a ArrayD<f32>>,
+}
+
+impl ClipTimeAccumulator {
+    pub(super) fn reduced_visibility<'a>(
+        &'a mut self,
+        column: FlagDataColumn,
+        channels: Option<&'a [usize]>,
+        width: u32,
+        row: usize,
+        path: &str,
+    ) -> Result<TimeAveragedVisibility<'a>, FlaggingError> {
         let sum_weights = matches!(
-            self.column,
+            column,
             FlagDataColumn::Weight | FlagDataColumn::WeightSpectrum
         );
-        average.normalize(sum_weights);
-        let bins = channels.and_then(|indices| ChannelBins::new(width, indices, &average.flags));
-        let mut data = Cow::Borrowed(&average.data);
-        let mut model = average.model.as_ref().map(Cow::Borrowed);
+        self.normalize(sum_weights);
+        let bins = channels.and_then(|indices| ChannelBins::new(width, indices, &self.flags));
+        let mut data = Cow::Borrowed(&self.data);
+        let mut model = self.model.as_ref().map(Cow::Borrowed);
         if let Some(bins) = &bins {
-            let inverse_sigma = matches!(
-                self.column,
-                FlagDataColumn::Data | FlagDataColumn::FloatData | FlagDataColumn::ResidualData
-            );
-            let stats = ArrayValue::Float32(if inverse_sigma {
-                average.mass.mapv(|weight| {
-                    if weight > f32::MIN_POSITIVE {
-                        1.0 / weight.sqrt()
-                    } else {
-                        -1.0
-                    }
-                })
-            } else {
-                average.mass
-            });
+            let stats = ArrayValue::Float32(std::mem::take(&mut self.mass));
             let reduction = if sum_weights {
                 ChannelReduction::Sum
-            } else if self.column == FlagDataColumn::ModelData {
+            } else if column == FlagDataColumn::ModelData {
                 ChannelReduction::Mean
             } else {
                 ChannelReduction::Weighted {
                     spectrum: &stats,
-                    inverse_sigma,
+                    inverse_sigma: false,
                 }
             };
-            data = Cow::Owned(bins.average(&data, &average.flags, reduction));
-            model = model.map(|model| {
-                Cow::Owned(bins.average(&model, &average.flags, ChannelReduction::Mean))
-            });
+            data = Cow::Owned(bins.average(&data, &self.flags, reduction));
+            model = model
+                .map(|model| Cow::Owned(bins.average(&model, &self.flags, ChannelReduction::Mean)));
         }
         if let Some(model) = model {
-            data = Cow::Owned(subtract_model(&data, &model, row, self.path)?);
+            data = Cow::Owned(subtract_model(&data, &model, row, path)?);
         }
-        let (flags, channels) = bins
-            .as_ref()
-            .map_or((&average.flags, channels), |bins| (bins.flags(), None));
-        apply_clip_array(&data, flags, channels, options, self.path, row, matched)?;
-        let original = matched.iter().flat_map(|(plane, channel)| {
-            let channels = bins.as_ref().map_or(std::slice::from_ref(channel), |bins| {
-                bins.original_channels(*channel)
-            });
-            channels.iter().map(move |&original| (*plane, original))
-        });
-        Ok(original.collect())
+        Ok(TimeAveragedVisibility {
+            data,
+            flags: &self.flags,
+            bins,
+            fourier_roundoff: self.fourier_roundoff.as_ref(),
+        })
     }
 }
 
@@ -503,9 +527,17 @@ pub(super) fn collect_time_bin(
             let data = cells.measurements(slot, flags, row, path)?;
             let model = cells.model(slot, flags, row, path)?;
             let weights = cells.weights(slot, flags, row, path)?;
+            let roundoff = cells.fourier_residual_roundoff(slot, flags, row, path)?;
             let accumulator =
                 result.get_or_insert_with(|| ClipTimeAccumulator::new(&data, model, flags));
-            if !accumulator.add(&data, model, flags, weights.as_deref(), cells.uses_sigma()) {
+            if !accumulator.add(
+                &data,
+                model,
+                flags,
+                weights.as_deref(),
+                roundoff.as_ref(),
+                cells.uses_sigma(),
+            ) {
                 return Err(FlaggingError::MutateFlags {
                     path: path.to_string(),
                     reason: format!(
@@ -552,6 +584,7 @@ pub(super) struct ClipTimeAccumulator {
     pub(super) data: ArrayValue,
     pub(super) model: Option<ArrayValue>,
     pub(super) mass: ArrayD<f32>,
+    fourier_roundoff: Option<ArrayD<f32>>,
     started: bool,
 }
 
@@ -562,6 +595,7 @@ impl ClipTimeAccumulator {
             data: zero_samples(data),
             model: model.map(zero_samples),
             mass: ArrayD::zeros(flags.raw_dim()),
+            fourier_roundoff: None,
             started: false,
         }
     }
@@ -572,9 +606,13 @@ impl ClipTimeAccumulator {
         model: Option<&ArrayValue>,
         flags: &ArrayD<bool>,
         weights: Option<&ArrayValue>,
+        roundoff: Option<&ArrayD<f32>>,
         inverse_sigma: bool,
     ) -> bool {
-        if self.flags.shape() != flags.shape() || self.model.is_some() != model.is_some() {
+        if self.flags.shape() != flags.shape()
+            || self.model.is_some() != model.is_some()
+            || roundoff.is_some_and(|bound| bound.shape() != flags.shape())
+        {
             return false;
         }
         let Ok(flags) = flags.view().into_dimensionality::<Ix2>() else {
@@ -617,6 +655,37 @@ impl ClipTimeAccumulator {
             Some((factor, reset))
         })
         .into_dyn();
+        if roundoff.is_some() && self.fourier_roundoff.is_none() {
+            self.fourier_roundoff = Some(Array2::zeros(flags.raw_dim()).into_dyn());
+        }
+        if let Some(accumulated) = &mut self.fourier_roundoff {
+            match roundoff {
+                Some(source) => {
+                    Zip::from(accumulated)
+                        .and(source)
+                        .and(&contributions)
+                        .for_each(|acc, &value, &contribution| {
+                            if let Some((weight, reset)) = contribution {
+                                let bound = if weight > 0.0 { value } else { 0.0 };
+                                if reset {
+                                    *acc = bound;
+                                } else {
+                                    *acc = acc.max(bound);
+                                }
+                            }
+                        });
+                }
+                None => {
+                    Zip::from(accumulated)
+                        .and(&contributions)
+                        .for_each(|acc, &contribution| {
+                            if let Some((_, true)) = contribution {
+                                *acc = 0.0;
+                            }
+                        });
+                }
+            }
+        }
         add_samples(&mut self.data, data, &contributions)
             && self
                 .model
@@ -747,5 +816,97 @@ mod tests {
             physical_reads,
             [vec![vec![0, 2]], vec![vec![3, 6], vec![7]], vec![vec![1]]]
         );
+    }
+
+    #[test]
+    fn time_bin_seconds_truncates_at_nul() {
+        assert_eq!(time_bin_seconds("20s\0ignored"), Some(20.0));
+        assert_eq!(time_bin_seconds("0.5min\0ignored"), Some(30.0));
+        assert_eq!(time_bin_seconds("garbage"), None);
+    }
+
+    #[test]
+    fn fourier_roundoff_excludes_preflagged_and_zero_weight_members() {
+        use casa_types::Complex32;
+        let ones_data = |val: f32| {
+            ArrayValue::Complex32(Array2::from_elem((1, 5), Complex32::new(val, 0.0)).into_dyn())
+        };
+        let flags_for =
+            |flagged: [bool; 5]| Array2::from_shape_fn((1, 5), |(_, ch)| flagged[ch]).into_dyn();
+        let roundoff_for =
+            |vals: [f32; 5]| Array2::from_shape_fn((1, 5), |(_, ch)| vals[ch]).into_dyn();
+        let sigma_for = |vals: [f32; 5]| {
+            ArrayValue::Float32(Array2::from_shape_fn((1, 5), |(_, ch)| vals[ch]).into_dyn())
+        };
+
+        let d0 = ones_data(1.0);
+        let f0 = flags_for([true, false, false, false, true]);
+        let r0 = roundoff_for([1e6, 1e-5, 1e-5, 1e-5, 2e-5]);
+        let s0 = sigma_for([1.0, 1.0, 1.0, 1.0, 1.0]);
+        let mut acc = ClipTimeAccumulator::new(&d0, Some(&d0), &f0);
+        assert!(acc.add(&d0, Some(&d0), &f0, Some(&s0), Some(&r0), true));
+
+        let f1 = flags_for([false, true, false, false, true]);
+        let r1 = roundoff_for([1e-5, 1e6, 3e-5, 1e6, 5e-5]);
+        // Channel 3 gets zero inverse-variance weight because 1e20^2 overflows f32 / underflows to 0.
+        let s1 = sigma_for([1.0, 1.0, 1.0, 1e20, 1.0]);
+        assert!(acc.add(&d0, Some(&d0), &f1, Some(&s1), Some(&r1), true));
+
+        let combined = acc
+            .reduced_visibility(FlagDataColumn::ResidualData, None, 0, 0, "test")
+            .expect("reduced visibility");
+        let out = combined.fourier_roundoff.expect("fourier roundoff");
+        // ch 0: flagged (1e6) then unflagged (1e-5) -> reset to 1e-5
+        // ch 1: unflagged (1e-5) then flagged (1e6) -> flagged ignored, stays 1e-5
+        // ch 2: unflagged (1e-5) then unflagged (3e-5) -> max 3e-5
+        // ch 3: unflagged (1e-5, w=1) then unflagged (1e6, w=0) -> zero-weight masked, stays 1e-5
+        // ch 4: all flagged -> max(2e-5, 5e-5) = 5e-5
+        let expected = [1e-5, 1e-5, 3e-5, 1e-5, 5e-5];
+        for (ch, want) in expected.into_iter().enumerate() {
+            assert_eq!(out[[0, ch]], want, "channel {ch}");
+        }
+    }
+
+    #[test]
+    fn combined_time_and_channel_average_preserves_exact_inverse_variance_weights() {
+        use casa_types::Complex32;
+        let data = |c0: f32, c1: f32| {
+            ArrayValue::Complex32(
+                Array2::from_shape_fn((1, 2), |(_, ch)| {
+                    Complex32::new(if ch == 0 { c0 } else { c1 }, 0.0)
+                })
+                .into_dyn(),
+            )
+        };
+        let sigma = |s0: f32, s1: f32| {
+            ArrayValue::Float32(
+                Array2::from_shape_fn((1, 2), |(_, ch)| if ch == 0 { s0 } else { s1 }).into_dyn(),
+            )
+        };
+        let unflagged = Array2::from_elem((1, 2), false).into_dyn();
+        let mut acc = ClipTimeAccumulator::new(&data(0.0, 0.0), None, &unflagged);
+        assert!(acc.add(
+            &data(11.0, -1.0),
+            None,
+            &unflagged,
+            Some(&sigma(1.0, 1.0)),
+            None,
+            true,
+        ));
+        assert!(acc.add(
+            &data(1.0, -1.0),
+            None,
+            &unflagged,
+            Some(&sigma(1.0, 0.5)),
+            None,
+            true,
+        ));
+        let combined = acc
+            .reduced_visibility(FlagDataColumn::Data, Some(&[0, 1]), 2, 0, "test")
+            .expect("reduced visibility");
+        let ArrayValue::Complex32(values) = combined.data.as_ref() else {
+            panic!("expected Complex32 output");
+        };
+        assert_eq!(values.as_slice(), Some(&[Complex32::new(1.0, 0.0)][..]));
     }
 }
