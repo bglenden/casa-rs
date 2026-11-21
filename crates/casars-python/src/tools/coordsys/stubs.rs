@@ -53,27 +53,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (csys, whichin, whichout), text_signature = "($self, csys, whichin, whichout)")]
-    fn replace(
-        &self,
-        csys: &Bound<'_, PyAny>,
-        whichin: &Bound<'_, PyAny>,
-        whichout: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("replace")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (direction = None, spectral = None), text_signature = "($self, direction='', spectral='')")]
-    fn setconversiontype(
-        &self,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setconversiontype")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (refcode = None, proj = None, projpar = None, refpix = None, refval = None, incr = None, xform = None, poles = None), text_signature = "($self, refcode='', proj='', projpar=[-1.0], refpix=[-1.0], refval=[], incr=[], xform=[], poles=[])")]
     fn setdirection(
         &self,
@@ -121,16 +100,6 @@ impl PyCoordsys {
         velocities: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("setspectral")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (originshft = None, newshape = None), text_signature = "($self, originshft=[], newshape=[])")]
-    fn subimage(
-        &self,
-        originshft: Option<&Bound<'_, PyAny>>,
-        newshape: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("subimage")
     }
 
     /// Not yet implemented in casa-rs.

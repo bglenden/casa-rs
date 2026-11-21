@@ -50,7 +50,7 @@ pub(super) fn numeric_record_value(value: &Value) -> PyResult<Vec<f64>> {
     }
 }
 
-fn bool_vector(value: &Bound<'_, PyAny>) -> PyResult<Option<bool>> {
+pub(super) fn bool_vector(value: &Bound<'_, PyAny>) -> PyResult<Option<bool>> {
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
         let mut empty = true;
         for item in value.try_iter()? {

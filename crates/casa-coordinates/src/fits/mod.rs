@@ -52,3 +52,68 @@ mod obs_date;
 
 pub use coordinate_util::{from_fits_header, to_fits_header, try_to_fits_header};
 pub use header::{FitsHeader, FitsKeyword, FitsValue};
+
+/// Convert a FITS unit expression to the canonical casacore unit spelling.
+pub fn canonical_unit_name(input: &str) -> String {
+    map_unit_symbols(input, |token| match token {
+        "BEAM" => "beam",
+        "DAYS" => "d",
+        "DEGREES" | "DEG" => "deg",
+        "HZ" => "Hz",
+        "JY" => "Jy",
+        "KELVINS" | "KELVIN" => "K",
+        "KM" => "km",
+        "METERS" | "M" => "m",
+        "PASCAL" => "Pa",
+        "PIXEL" => "pixel",
+        "SECONDS" | "SEC" | "S" => "s",
+        "VOLTS" => "V",
+        "YEARS" | "YEAR" => "a",
+        _ => token,
+    })
+}
+
+// CUNIT aliases before casacore's unit parser, matching WCSLIB UNITFIX
+// (wcsutrn with ctrl=7), including S, H, and D in astronomical headers.
+fn wcs_unit_name(input: &str) -> String {
+    let translated = map_unit_symbols(input, |token| match token {
+        "Angstroms" | "angstrom" | "angstroms" => "Angstrom",
+        "arcmins" | "ARCMIN" | "ARCMINS" => "arcmin",
+        "arcsecs" | "ARCSEC" | "ARCSECS" => "arcsec",
+        "Byte" => "byte",
+        "day" | "days" | "DAY" | "D" => "d",
+        "degree" | "degrees" | "Deg" | "Degree" | "Degrees" | "DEGREE" => "deg",
+        "GHZ" => "GHz",
+        "hr" | "HR" | "H" => "h",
+        "hz" => "Hz",
+        "KHZ" => "kHz",
+        "kelvin" | "kelvins" | "Kelvin" | "Kelvins" => "K",
+        "meter" | "meters" | "metre" | "metres" | "METER" | "METRE" | "METRES" => "m",
+        "MIN" => "min",
+        "MHZ" => "MHz",
+        "Ohm" => "ohm",
+        "pascal" | "pascals" | "Pascal" | "Pascals" | "PASCALS" => "Pa",
+        "pixels" | "PIXELS" => "pixel",
+        "radian" | "radians" | "RAD" | "RADIAN" | "RADIANS" => "rad",
+        "sec" | "second" | "seconds" | "SECOND" => "s",
+        "volt" | "volts" | "Volt" | "Volts" | "VOLT" => "V",
+        "year" | "years" | "YR" => "a",
+        _ => token,
+    });
+    canonical_unit_name(&translated)
+}
+
+fn map_unit_symbols(input: &str, translate: impl Fn(&str) -> &str) -> String {
+    let mut output = String::new();
+    let mut remaining = input;
+    while !remaining.is_empty() {
+        let alphabetic = remaining.as_bytes()[0].is_ascii_alphabetic();
+        let end = remaining
+            .find(|c: char| c.is_ascii_alphabetic() != alphabetic)
+            .unwrap_or(remaining.len());
+        let token = &remaining[..end];
+        output.push_str(translate(token));
+        remaining = &remaining[end..];
+    }
+    output
+}

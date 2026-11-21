@@ -15,13 +15,12 @@ use casa_types::quanta::casacore::mvangle_radians;
 use ndarray::Array2;
 
 use crate::analysis::axes::{direction_plane_axes, stokes_for_axis};
-use crate::analysis::{
-    PixelRegion, parse_box_region, parse_image_channel_selection, parse_stokes_selection,
-};
+use crate::analysis::{PixelRegion, parse_box_region, parse_stokes_selection};
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::SubimageRegion;
 
+mod channels;
 mod insert_region;
 pub(super) mod saved;
 mod sections;
@@ -29,6 +28,7 @@ mod window_masks;
 
 pub(super) use sections::StridedSection;
 
+use channels::resolve_channels;
 use saved::{load_saved_region, parse_saved_region};
 
 #[derive(Debug, Clone)]
@@ -207,6 +207,7 @@ impl SubimageSelection {
         }
 
         let mut is_compound = false;
+        let mut is_crtf = false;
         if let Some(region) = region_arg {
             let parsed = match region {
                 SubimageRegion::Text(text) => {
@@ -228,6 +229,7 @@ impl SubimageSelection {
                 ));
             }
             is_compound = parsed.is_compound;
+            is_crtf = parsed.is_crtf;
             regions.extend(parsed.shapes);
             saved_mask = parsed.saved_mask;
             saved_bounds = parsed.saved_bounds;
@@ -267,6 +269,7 @@ impl SubimageSelection {
             &full_shape,
             chans_arg,
             channel_union.as_deref(),
+            is_crtf,
             &mut start,
             &mut shape,
         )?;
@@ -339,6 +342,7 @@ enum SavedRegionMask {
 
 struct ParsedRegion {
     is_compound: bool,
+    is_crtf: bool,
     shapes: Vec<QualifiedShape>,
     saved_mask: Option<SavedRegionMask>,
     saved_bounds: Option<(Vec<usize>, Vec<usize>)>,
@@ -370,6 +374,7 @@ fn parse_region_argument<T: ImagePixel>(
         let b = parse_single_box(box_text.trim(), full_shape, plane)?;
         return Ok(ParsedRegion {
             is_compound: false,
+            is_crtf: false,
             shapes: vec![SpatialShape::Box(b).into()],
             saved_mask: None,
             saved_bounds: None,
@@ -383,6 +388,7 @@ fn parse_region_argument<T: ImagePixel>(
         let b = parse_single_box(inner.trim(), full_shape, plane)?;
         return Ok(ParsedRegion {
             is_compound: false,
+            is_crtf: false,
             shapes: vec![SpatialShape::Box(b).into()],
             saved_mask: None,
             saved_bounds: None,
@@ -393,6 +399,7 @@ fn parse_region_argument<T: ImagePixel>(
         let b = parse_single_box(text, full_shape, plane)?;
         return Ok(ParsedRegion {
             is_compound: false,
+            is_crtf: false,
             shapes: vec![SpatialShape::Box(b).into()],
             saved_mask: None,
             saved_bounds: None,
@@ -516,6 +523,7 @@ fn parse_crtf_document<T: ImagePixel>(
     }
     Ok(ParsedRegion {
         is_compound: false,
+        is_crtf: true,
         shapes,
         saved_mask: None,
         saved_bounds: None,
@@ -704,7 +712,17 @@ fn parse_crtf_shape<T: ImagePixel>(
         )));
     };
     let keyword = trimmed[..bracket].trim().to_ascii_lowercase();
-    let body = trimmed[bracket..]
+    let geometry = &trimmed[bracket..];
+    // CASA's coordinate-pair reader consumes one adjacent character.
+    let geometry = if matches!(keyword.as_str(), "box" | "centerbox" | "poly" | "polygon") {
+        geometry
+            .strip_suffix(')')
+            .filter(|body| body.ends_with(']'))
+            .unwrap_or(geometry)
+    } else {
+        geometry
+    };
+    let body = geometry
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
         .ok_or_else(|| {
@@ -1352,56 +1370,6 @@ fn point_in_polygon_f64(x: f64, y: f64, vertices: &[[f64; 2]]) -> bool {
         prev = cur;
     }
     inside
-}
-
-fn resolve_channels<T: ImagePixel>(
-    image: &dyn ImageInterface<T>,
-    full_shape: &[usize],
-    chans_arg: Option<&str>,
-    crtf_chans: Option<&[usize]>,
-    start: &mut [usize],
-    shape: &mut [usize],
-) -> Result<(Option<usize>, Option<Vec<usize>>), ImageError> {
-    let arg_trimmed = chans_arg.map(str::trim).filter(|s| !s.is_empty());
-    if arg_trimmed.is_none() && crtf_chans.is_none() {
-        return Ok((None, None));
-    }
-    let axis = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
-        ImageError::InvalidMetadata("channel selection requires a spectral axis".into())
-    })?;
-    let mut indices = match (arg_trimmed, crtf_chans) {
-        (Some(text), None) => parse_image_channel_selection(text, full_shape[axis])?,
-        (None, Some(c)) => c.to_vec(),
-        (Some(text), Some(c)) => {
-            let from_arg = parse_image_channel_selection(text, full_shape[axis])?;
-            let intersected: Vec<usize> =
-                from_arg.into_iter().filter(|idx| c.contains(idx)).collect();
-            if intersected.is_empty() {
-                return Err(ImageError::CasaSelection(
-                    "channel selection and CRTF range have empty intersection".into(),
-                ));
-            }
-            intersected
-        }
-        (None, None) => unreachable!(),
-    };
-    indices.sort_unstable();
-    indices.dedup();
-    // Intersect with any saved-region bounds already recorded on this axis.
-    let prev_lo = start[axis];
-    let prev_hi = start[axis] + shape[axis] - 1;
-    let bounded: Vec<usize> = indices
-        .into_iter()
-        .filter(|&c| c >= prev_lo && c <= prev_hi)
-        .collect();
-    if bounded.is_empty() {
-        return Err(ImageError::CasaSelection(
-            "selected channels lie outside saved region".into(),
-        ));
-    }
-    start[axis] = bounded[0];
-    shape[axis] = bounded[bounded.len() - 1] - bounded[0] + 1;
-    Ok((Some(axis), Some(bounded)))
 }
 
 struct StokesResolution {

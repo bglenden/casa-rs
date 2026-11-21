@@ -7,6 +7,8 @@
 
 use std::str::FromStr;
 
+mod subimage;
+
 use casa_types::measures::direction_to_record;
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::epoch_to_record;
@@ -237,93 +239,6 @@ impl SpectralCoordinate {
     /// Returns an error if the unit or pixel-to-world conversion is invalid.
     pub fn world_frequency_hz(&self, pixel: f64) -> Result<f64, CoordinateError> {
         self.value_in_hz(self.to_world(&[pixel])?[0])
-    }
-
-    /// Rebuild a tabular spectral record for a unit-stride image section.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the stored coordinate or lookup table is invalid.
-    pub fn subimage_tabular_record(
-        record: &mut RecordValue,
-        start: usize,
-        length: usize,
-    ) -> Result<bool, CoordinateError> {
-        Self::subimage_tabular_record_with_stride(record, start, length, 1)
-    }
-
-    /// Rebuild a tabular spectral record for a strided image section.
-    ///
-    /// # Errors
-    /// Returns an error if the lookup table or section is invalid.
-    pub fn subimage_tabular_record_with_stride(
-        record: &mut RecordValue,
-        start: usize,
-        length: usize,
-        stride: usize,
-    ) -> Result<bool, CoordinateError> {
-        let Some(Value::Record(table)) = record.get("tabular") else {
-            return Ok(false);
-        };
-        if length == 0 || stride == 0 {
-            return Err(CoordinateError::InvalidRecord(
-                "tabular spectral image section needs a positive length and stride".into(),
-            ));
-        }
-        let table_unit = get_optional_vec_string(table, "units")
-            .and_then(|units| units.into_iter().next())
-            .unwrap_or_else(|| "Hz".into());
-        let coordinate = Self::from_record(record)?;
-        let SpectralMapping::Tabular {
-            pixel_values,
-            world_values,
-            ..
-        } = &coordinate.mapping
-        else {
-            return Ok(false);
-        };
-        let factor = coordinate
-            .unit_scale_hz
-            .ok_or_else(|| CoordinateError::InvalidRecord("invalid spectral unit".into()))?
-            / frequency_unit_scale(&table_unit).ok_or_else(|| {
-                CoordinateError::InvalidRecord("invalid tabular spectral unit".into())
-            })?;
-        let count = if world_values.len() == 1 { 1 } else { length };
-        let values = (0..count)
-            .map(|pixel| {
-                let source = pixel
-                    .checked_mul(stride)
-                    .and_then(|offset| start.checked_add(offset))
-                    .ok_or_else(|| {
-                        CoordinateError::InvalidRecord("spectral image section overflows".into())
-                    })?;
-                interpolate(pixel_values, world_values, source as f64).map(|world| world * factor)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let increment = (values[count - 1] - values[0]) / (count - 1).max(1) as f64;
-        let Some(Value::Record(table)) = record.get_mut("tabular") else {
-            unreachable!()
-        };
-        table.upsert(
-            "crval",
-            Value::Array(ArrayValue::from_f64_vec(vec![values[0]])),
-        );
-        table.upsert(
-            "cdelt",
-            Value::Array(ArrayValue::from_f64_vec(vec![increment])),
-        );
-        table.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
-        table.upsert(
-            "pixelvalues",
-            Value::Array(ArrayValue::from_f64_vec(
-                (0..count).map(|i| i as f64).collect(),
-            )),
-        );
-        table.upsert(
-            "worldvalues",
-            Value::Array(ArrayValue::from_f64_vec(values)),
-        );
-        Ok(true)
     }
 
     /// Return the spectral increment in the world frame, expressed in Hz.

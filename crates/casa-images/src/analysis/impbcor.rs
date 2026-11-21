@@ -318,7 +318,9 @@ fn write_history<T: ImagePixel>(
     } else {
         output.append_history_entries(&crate::image::image_history_rows(source)?)?;
     }
-    output.append_history_at("::impbcor", &[format!(
+    output.append_history_at("::impbcor", &[
+        concat!("version: casa-rs ", env!("CARGO_PKG_VERSION")).into(),
+        format!(
         "impbcor(imagename={:?}, pbimage={beam:?}, outfile={:?}, overwrite={}, box={:?}, region={:?}, chans={:?}, stokes={:?}, mask={:?}, mode={:?}, cutoff={}, stretch={})",
         source.display().to_string(), request.outfile.display().to_string(), request.overwrite,
         request.box_selection, request.region, request.chans, request.stokes, request.mask, request.mode,

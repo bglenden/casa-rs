@@ -2,8 +2,9 @@
 //! Prepare the legacy imager's voltage pattern on the model image.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use casa_components::{ComponentList, Flux, Polarisation, SkyComponent, SpectralKind, stokes_in};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
 use casa_images::PagedImage;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
@@ -15,12 +16,14 @@ use casa_ms::{
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::ephemeris::offset_true_angle;
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
 };
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
+use num_complex::Complex64;
 
 use super::invalid;
 use crate::execute::{load_parallactic_angle_state, single_receptor_angle};
@@ -152,12 +155,14 @@ pub struct ImagerVoltagePattern {
 }
 
 #[derive(Clone)]
-pub(super) struct PreparedVoltagePattern {
+pub(crate) struct PreparedVoltagePattern {
     pattern: Arc<Admitted<BeamPattern>>,
     centre: MDirection,
     frame: MeasFrame,
     projected_model: bool,
     squint: Option<BeamSquint>,
+    // GOFIGURE prepares circular component flux even on a radial beam.
+    component_squint: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -165,6 +170,201 @@ struct BeamSquint {
     beam: PrimaryBeam,
     reference_hz: f64,
     angle: f64,
+}
+
+struct ComponentVoltage<'a> {
+    pattern: &'a PreparedVoltagePattern,
+    component: &'a SkyComponent,
+    datum_basis: Polarisation,
+    original: Flux,
+    beam_flux: Flux,
+    stokes: [f64; 4],
+    centre: MDirection,
+    separation: f64,
+}
+
+impl ComponentVoltage<'_> {
+    fn flux_at(&self, frequency: f64, first_channel: bool) -> MsResult<[Complex64; 4]> {
+        let pattern = self.pattern.pattern();
+        let power = |separation| f64::from(pattern.power_at(separation, frequency));
+        let central = power(self.separation);
+        let mut gains = [central; 4];
+        if let Some(squint) = self.pattern.squint {
+            for (index, right) in [(0, true), (3, false)] {
+                let shift = squint.beam.squint_displacement_rad(
+                    squint.reference_hz,
+                    frequency,
+                    squint.angle,
+                    right,
+                );
+                let centre = offset_true_angle(&self.centre, shift).map_err(invalid)?;
+                gains[index] = power(angular_separation(
+                    self.component.shape().reference_direction().as_angles(),
+                    centre.as_angles(),
+                ));
+            }
+        }
+        let mut flux = self.beam_flux.clone();
+        let values = *flux.values();
+        flux.set_values(std::array::from_fn(|index| values[index] * gains[index]));
+        flux.convert_polarisation(self.original.polarisation());
+        let sample_basis = if self.pattern.component_squint && !first_channel {
+            // PBMath converts the input to circular during the first channel's
+            // application. Later channels sample that converted component.
+            Polarisation::Circular
+        } else {
+            self.original.polarisation()
+        };
+        let spectrum = stokes_in(sample_basis, self.sample_stokes(frequency)?);
+        // BeamSkyJones samples a point spectrum in the original basis,
+        // normalizes by the magnitude of the stored flux and tabulates
+        // the result. This also preserves its signed-flux behavior.
+        let values = *flux.values();
+        flux.set_values(std::array::from_fn(|index| {
+            let amplitude = self.original.values()[index].norm();
+            let scale = if amplitude > 0. {
+                amplitude.recip()
+            } else {
+                1.
+            };
+            values[index] * spectrum[index] * scale
+        }));
+        flux.convert_polarisation(self.datum_basis);
+        Ok(*flux.values())
+    }
+
+    fn sample_stokes(&self, frequency: f64) -> MsResult<[f64; 4]> {
+        let spectrum = self.component.spectrum();
+        let in_frame = |reference| {
+            MFrequency::new(frequency, FrequencyRef::LSRK)
+                .convert_to(reference, &MeasFrame::new())
+                .map(|converted| converted.hz())
+                .map_err(invalid)
+        };
+        match spectrum.kind() {
+            SpectralKind::Constant => Ok(self.stokes),
+            SpectralKind::Tabular(table) => {
+                let sample = if matches!(table.frame(), FrequencyRef::LSRK | FrequencyRef::REST) {
+                    // The scalar tabular sampler uses its reference when the
+                    // channel and table already use the same frame.
+                    spectrum.reference_frequency().hz()
+                } else {
+                    in_frame(table.frame())?
+                };
+                let frequencies = table.frequencies_hz();
+                if !frequencies
+                    .first()
+                    .zip(frequencies.last())
+                    .is_some_and(|(&first, &last)| {
+                        (first.min(last)..=first.max(last)).contains(&sample)
+                    })
+                {
+                    return Err(invalid(
+                        "component beam sample is outside the tabular spectrum",
+                    ));
+                }
+                spectrum.sample_stokes(sample, self.stokes).map_err(invalid)
+            }
+            kind => {
+                let sample = in_frame(spectrum.reference_frequency().refer())?;
+                let mut stokes = spectrum
+                    .sample_stokes(sample, self.stokes)
+                    .map_err(invalid)?;
+                if matches!(kind, SpectralKind::SpectralIndex(index) if index.stokes_indices().is_none())
+                {
+                    stokes[1..].copy_from_slice(&self.stokes[1..]);
+                }
+                Ok(stokes)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct SpectrumBufferKey {
+    source: usize,
+    window: i32,
+    epoch: u64,
+    start_channel: usize,
+    basis: Polarisation,
+}
+
+pub(crate) struct ApparentComponentSpectra {
+    values: Vec<[Complex64; 4]>,
+    _memory: casa_imaging_runtime::Reservation,
+}
+
+impl ApparentComponentSpectra {
+    pub(crate) fn component(&self, index: usize, channels: usize) -> &[[Complex64; 4]] {
+        &self.values[index * channels..(index + 1) * channels]
+    }
+}
+
+/// One apparent spectrum per component in the current legacy buffer. In
+/// particular, the buffer's epoch follows frame-dependent sky directions.
+pub(crate) struct ComponentVoltageCache {
+    pattern: PreparedVoltagePattern,
+    last: Mutex<Option<(SpectrumBufferKey, Arc<ApparentComponentSpectra>)>>,
+}
+
+impl ComponentVoltageCache {
+    pub(crate) fn new(pattern: PreparedVoltagePattern) -> Self {
+        Self {
+            pattern,
+            last: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn spectra(
+        &self,
+        components: &ComponentList,
+        frequencies: &[f64],
+        basis: Polarisation,
+        (window, epoch, start_channel): (i32, f64, usize),
+        frame: &MeasFrame,
+    ) -> MsResult<Arc<ApparentComponentSpectra>> {
+        let key = SpectrumBufferKey {
+            source: std::ptr::from_ref(components) as usize,
+            window,
+            epoch: epoch.to_bits(),
+            start_channel,
+            basis,
+        };
+        let mut last = self.last.lock().map_err(invalid)?;
+        if let Some((held, spectra)) = last.as_ref()
+            && *held == key
+        {
+            return Ok(Arc::clone(spectra));
+        }
+        *last = None;
+        let cells = components
+            .len()
+            .checked_mul(frequencies.len())
+            .ok_or_else(|| invalid("component beam spectrum exceeds addressable storage"))?;
+        let host = HostResources::detect().map_err(invalid)?;
+        let memory = admit(
+            &host,
+            &ResourcePolicy::Balanced,
+            &Demand {
+                phase: "legacy component voltage spectrum",
+                memory: (cells as u64).saturating_mul(size_of::<[Complex64; 4]>() as u64),
+            },
+        )
+        .map_err(invalid)?;
+        let mut values = Vec::with_capacity(cells);
+        for component in components.iter() {
+            let response = self.pattern.component(component, basis, frame)?;
+            for (channel, &frequency) in frequencies.iter().enumerate() {
+                values.push(response.flux_at(frequency, channel == start_channel)?);
+            }
+        }
+        let spectra = Arc::new(ApparentComponentSpectra {
+            values,
+            _memory: memory,
+        });
+        *last = Some((key, Arc::clone(&spectra)));
+        Ok(spectra)
+    }
 }
 
 /// Partition scratch rows in legacy visibility-buffer order. The first row
@@ -371,6 +571,7 @@ impl ImagerVoltagePattern {
         let main = ms.main_table();
         let mut first = None;
         let mut first_array = None;
+        let mut mixed_arrays = false;
         for row in &selected.selected_rows {
             let ScalarValue::Int32(array) =
                 main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
@@ -378,11 +579,7 @@ impl ImagerVoltagePattern {
                 return Err(invalid("ARRAY_ID must be Int32"));
             };
             let key = (*array, row.field_id, row.data_desc_id, row.time_mjd_seconds);
-            if squint && scratch && *first_array.get_or_insert(*array) != *array {
-                return Err(invalid(
-                    "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
-                ));
-            }
+            mixed_arrays |= *first_array.get_or_insert(*array) != *array;
             if first.as_ref().is_none_or(|(previous, _)| key < *previous) {
                 first = Some((key, row));
             }
@@ -404,6 +601,14 @@ impl ImagerVoltagePattern {
             })
             .transpose()?
             .flatten();
+        // PBMath1DEVLA supplies its radial fit even when dosquint was set.
+        let component_squint = squint;
+        let squint = squint && !matches!(default_beam, Some((PrimaryBeam::Evla, _)));
+        if squint && scratch && mixed_arrays {
+            return Err(invalid(
+                "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
+            ));
+        }
         let pattern = if let Some(path) = &self.table {
             legacy_radial_pattern(path, &telescope)?.pattern()
         } else {
@@ -486,6 +691,7 @@ impl ImagerVoltagePattern {
             frame,
             projected_model: telescope == "VLA" && self.table.is_none(),
             squint,
+            component_squint,
         })
     }
 }
@@ -509,6 +715,41 @@ impl PreparedVoltagePattern {
         &self.pattern.value
     }
 
+    fn component<'a>(
+        &'a self,
+        component: &'a SkyComponent,
+        datum_basis: Polarisation,
+        frame: &MeasFrame,
+    ) -> MsResult<ComponentVoltage<'a>> {
+        let direction = component.shape().reference_direction();
+        let centre = self
+            .centre
+            .convert_to(direction.refer(), frame)
+            .map_err(invalid)?;
+        let separation = angular_separation(direction.as_angles(), centre.as_angles());
+        let basis = match component.flux().polarisation() {
+            Polarisation::Stokes => datum_basis,
+            basis => basis,
+        };
+        let [i, q, u, v] = component.flux().stokes_jy_values().map_err(invalid)?;
+        let mut original = Flux::stokes_jy(i, q, u, v);
+        original.convert_polarisation(basis);
+        let mut beam_flux = original.clone();
+        if self.component_squint {
+            beam_flux.convert_polarisation(Polarisation::Circular);
+        }
+        Ok(ComponentVoltage {
+            pattern: self,
+            component,
+            datum_basis,
+            original,
+            beam_flux,
+            stokes: [i, q, u, v],
+            centre,
+            separation,
+        })
+    }
+
     #[cfg(test)]
     pub(super) fn test_pattern() -> Self {
         use casa_types::measures::direction::DirectionRef;
@@ -522,6 +763,7 @@ impl PreparedVoltagePattern {
             frame: MeasFrame::new(),
             projected_model: false,
             squint: None,
+            component_squint: false,
         }
     }
 
@@ -636,16 +878,53 @@ impl PreparedVoltagePattern {
         [nx, ny]: [usize; 2],
         centre: &MDirection,
     ) -> MsResult<Array2<f64>> {
-        let (lon0, lat0) = centre.as_angles();
+        let centre = centre.as_angles();
         Ok(Array2::from_shape_fn((ny, nx), |(y, x)| {
             let Ok([lon, lat]) = direction.pixel_to_world([x as f64, y as f64]) else {
                 return f64::INFINITY;
             };
-            let separation = ((lat - lat0) * 0.5).sin().powi(2)
-                + lat.cos() * lat0.cos() * ((lon - lon0) * 0.5).sin().powi(2);
-            2.0 * separation.clamp(0., 1.).sqrt().asin()
+            angular_separation((lon, lat), centre)
         }))
     }
+}
+
+fn angular_separation((lon, lat): (f64, f64), (lon0, lat0): (f64, f64)) -> f64 {
+    let separation = ((lat - lat0) * 0.5).sin().powi(2)
+        + lat.cos() * lat0.cos() * ((lon - lon0) * 0.5).sin().powi(2);
+    2.0 * separation.clamp(0., 1.).sqrt().asin()
+}
+
+#[cfg(test)]
+#[test]
+fn apparent_component_spectra_are_shared_by_baselines_at_one_epoch() {
+    use casa_components::{ComponentShape, SpectralModel};
+
+    let mut components = ComponentList::new();
+    components.push(SkyComponent::new(
+        Flux::stokes_jy(3., 0., 0., 0.),
+        ComponentShape::point(MDirection::from_angles(1., 0.4, DirectionRef::J2000)),
+        SpectralModel::constant(MFrequency::new(1.4e9, FrequencyRef::LSRK)),
+    ));
+    let cache = ComponentVoltageCache::new(PreparedVoltagePattern::test_pattern());
+    let frame = MeasFrame::new();
+    let sample = |time| {
+        cache
+            .spectra(
+                &components,
+                &[1.4e9, 1.5e9],
+                Polarisation::Linear,
+                (0, time, 0),
+                &frame,
+            )
+            .unwrap()
+    };
+    let first = sample(100.);
+    for _ in 0..32 {
+        assert!(Arc::ptr_eq(&first, &sample(100.)));
+    }
+    let next = sample(101.);
+    assert!(!Arc::ptr_eq(&first, &next));
+    assert_eq!(first.component(0, 2), next.component(0, 2));
 }
 
 fn pixel_centre(direction: &DirectionCoordinate, centre: &MDirection) -> MsResult<[f64; 2]> {
