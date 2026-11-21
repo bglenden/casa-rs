@@ -310,6 +310,10 @@ pub enum GainSolveError {
     #[error("polarization solve scratch I/O failed: {0}")]
     PolarizationScratch(#[source] std::io::Error),
 
+    /// The cross-hand data cannot constrain both terms of the source fit.
+    #[error("Source polarization solution is singular; try solving for D-terms only.")]
+    SingularSourcePolarization,
+
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]
     ResolveRefAnt {

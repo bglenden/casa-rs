@@ -4,6 +4,7 @@
 mod channel_samples;
 mod fit;
 mod interval;
+mod joint;
 mod output;
 mod standard;
 
@@ -13,11 +14,16 @@ use crate::session::prepare_calibration_solve;
 use std::path::PathBuf;
 
 use interval::IntervalFits;
+use joint::SourceFitMode;
 
 #[derive(Clone, Copy)]
 pub(crate) enum LeakageSolveKind {
     D,
     Df,
+    DQu,
+    DfQu,
+    DX,
+    DfX,
     Dlls,
     Dflls,
 }
@@ -25,19 +31,27 @@ pub(crate) enum LeakageSolveKind {
 impl LeakageSolveKind {
     pub(crate) fn subtype(self) -> &'static str {
         match self {
-            Self::D => "D Jones",
-            Self::Df => "Df Jones",
+            Self::D | Self::DQu | Self::DX => "D Jones",
+            Self::Df | Self::DfQu | Self::DfX => "Df Jones",
             Self::Dlls => "DLLS Jones",
             Self::Dflls => "DfLLS Jones",
         }
     }
 
     fn channelized(self) -> bool {
-        matches!(self, Self::Df | Self::Dflls)
+        matches!(self, Self::Df | Self::DfQu | Self::DfX | Self::Dflls)
     }
 
     fn iterative(self) -> bool {
-        matches!(self, Self::D | Self::Df)
+        !matches!(self, Self::Dlls | Self::Dflls)
+    }
+
+    fn source(self) -> Option<SourceFitMode> {
+        match self {
+            Self::DQu | Self::DfQu => Some(SourceFitMode::Polarization),
+            Self::DX | Self::DfX => Some(SourceFitMode::Angle),
+            _ => None,
+        }
     }
 }
 
@@ -308,7 +322,13 @@ impl LeakageInputs<'_> {
             fits.accumulate(pair, &mut active.bins, antennas)?;
         }
         Ok(fits
-            .finish(antennas, references, previous, self.request)?
+            .finish(
+                antennas,
+                references,
+                previous,
+                self.request,
+                (first.field_id, spectral_window),
+            )?
             .map(|(reference, values)| LeakageSolution {
                 spectral_window,
                 field: first.field_id,
@@ -369,9 +389,23 @@ impl LeakageInputs<'_> {
                 samples::point_visibility(self.request.stokes, correlations[index[0]], first)
             })
         };
-        let model = prediction
+        let mut model = prediction
             .or_else(|| input.model.cloned())
             .unwrap_or_else(point_model);
+        // For +QU, CASA normalizes the measured coherencies by the model's
+        // complex Stokes I and applies P to a unity model to recover the
+        // feed response to cross-hand source polarization.
+        let intensity = matches!(
+            self.request.kind.source(),
+            Some(SourceFitMode::Polarization)
+        )
+        .then(|| {
+            let intensity = (0..model.shape()[1])
+                .map(|channel| (model[[order[0], channel]] + model[[order[3], channel]]) * 0.5)
+                .collect::<Vec<_>>();
+            model.fill(Complex32::ONE);
+            intensity
+        });
         let forward = self
             .preapplied
             .model
@@ -393,9 +427,23 @@ impl LeakageInputs<'_> {
                 continue;
             }
             let slot = position / window.bin_width;
-            let weights = order.map(|corr| samples.weights[[corr, channel]]);
+            let mut data = order.map(|corr| samples.data[[corr, channel]]);
+            let mut weights = order.map(|corr| samples.weights[[corr, channel]]);
+            if let Some(intensity) = &intensity {
+                let scale = intensity[channel];
+                if scale == Complex32::ZERO || !scale.is_finite() {
+                    continue;
+                }
+                data = if scale.im == 0.0 {
+                    data.map(|value| value / scale.re)
+                } else {
+                    data.map(|value| value / scale)
+                };
+                let amplitude = scale.norm();
+                weights = weights.map(|weight| weight * (amplitude * amplitude));
+            }
             bins[slot].observe(
-                order.map(|corr| samples.data[[corr, channel]]),
+                data,
                 order.map(|corr| model[[corr, channel]]),
                 weights,
                 retain_unweighted_model,

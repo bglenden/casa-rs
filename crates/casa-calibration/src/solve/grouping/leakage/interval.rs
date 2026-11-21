@@ -5,6 +5,7 @@ use num_complex::Complex32;
 
 use super::channel_samples::ChannelSamples;
 use super::fit::LeakageFit;
+use super::joint::{SourceFit, SourceFitMode};
 use super::standard::{StandardSample, solve_channel};
 use super::{
     CoherencyMean, GainSolveError, LeakageEstimate, LeakageSolution, LeakageSolveKind,
@@ -13,7 +14,10 @@ use super::{
 
 pub(super) enum IntervalFits {
     LeastSquares(Vec<LeakageFit>),
-    Iterative(ChannelSamples),
+    Iterative {
+        samples: ChannelSamples,
+        source: Option<(SourceFitMode, SourceFit)>,
+    },
 }
 
 type ChannelEstimates = Vec<LeakageEstimate>;
@@ -22,7 +26,10 @@ type IntervalEstimates = (i32, Vec<ChannelEstimates>);
 impl IntervalFits {
     pub(super) fn new(channels: usize, antennas: usize, kind: LeakageSolveKind) -> Self {
         if kind.iterative() {
-            Self::Iterative(ChannelSamples::new(channels))
+            Self::Iterative {
+                samples: ChannelSamples::new(channels),
+                source: kind.source().map(|mode| (mode, SourceFit::default())),
+            }
         } else {
             Self::LeastSquares((0..channels).map(|_| LeakageFit::new(antennas)).collect())
         }
@@ -45,17 +52,20 @@ impl IntervalFits {
                     Self::LeastSquares(fits) => {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
-                    Self::Iterative(samples) => samples
-                        .push(
-                            channel,
-                            StandardSample {
-                                pair,
-                                cross_hands: [data[1], data[2]],
-                                model,
-                                weights: [weights[1], weights[2]],
-                            },
-                        )
-                        .map_err(GainSolveError::PolarizationScratch)?,
+                    Self::Iterative { samples, source } => {
+                        let sample = StandardSample {
+                            pair,
+                            cross_hands: [data[1], data[2]],
+                            model,
+                            weights: [weights[1], weights[2]],
+                        };
+                        if let Some((_, fit)) = source {
+                            fit.observe(&sample);
+                        }
+                        samples
+                            .push(channel, sample)
+                            .map_err(GainSolveError::PolarizationScratch)?;
+                    }
                 }
             }
         }
@@ -68,11 +78,24 @@ impl IntervalFits {
         references: &[i32],
         previous: Option<&LeakageSolution>,
         request: &LeakageSolveRequest,
+        location: (i32, i32),
     ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
             Self::LeastSquares(fits) => Ok(least_squares(fits, antennas, references, previous)),
-            Self::Iterative(samples) => {
-                Ok(iterative(samples, antennas, request)?.map(|values| (-1, values)))
+            Self::Iterative { samples, source } => {
+                if samples.is_empty() || source.as_ref().is_some_and(|(_, fit)| !fit.has_model()) {
+                    return Ok(None);
+                }
+                let multiplier = source
+                    .map(|(mode, fit)| {
+                        let multiplier = fit
+                            .finish(mode)
+                            .ok_or(GainSolveError::SingularSourcePolarization)?;
+                        mode.report(multiplier, location);
+                        Ok::<_, GainSolveError>(multiplier)
+                    })
+                    .transpose()?;
+                Ok(iterative(samples, antennas, request, multiplier)?.map(|values| (-1, values)))
             }
         }
     }
@@ -117,15 +140,22 @@ fn iterative(
     mut samples: ChannelSamples,
     antennas: usize,
     request: &LeakageSolveRequest,
+    multiplier: Option<Complex32>,
 ) -> Result<Option<Vec<ChannelEstimates>>, GainSolveError> {
     let mut gains = vec![[Complex32::ZERO; 2]; antennas];
     let mut diagnostics = vec![LeakageEstimate::default(); antennas];
     let mut converged = false;
     let mut values = Vec::with_capacity(samples.len());
     for channel in (0..samples.len()).rev() {
-        let channel_samples = samples
+        let mut channel_samples = samples
             .take(channel)
             .map_err(GainSolveError::PolarizationScratch)?;
+        if let Some(multiplier) = multiplier {
+            for sample in &mut channel_samples {
+                sample.model[1] *= multiplier;
+                sample.model[2] *= multiplier.conj();
+            }
+        }
         values.push(
             match solve_channel(
                 &channel_samples,

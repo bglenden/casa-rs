@@ -42,6 +42,10 @@ impl ChannelSamples {
         self.pending.len()
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.buffered == 0 && self.spill.is_none()
+    }
+
     pub(super) fn push(&mut self, channel: usize, sample: StandardSample) -> io::Result<()> {
         self.pending[channel].push(sample);
         self.buffered += 1;
