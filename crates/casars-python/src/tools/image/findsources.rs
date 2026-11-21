@@ -40,7 +40,7 @@ impl PyImageTool {
             Some(true) => {}
         }
         let region: RegionArgument =
-            region.map_or_else(|| Ok(Default::default()), Bound::extract)?;
+            region.map_or_else(|| Ok(Default::default()), |argument| argument.extract())?;
         let mask = mask_argument(mask)?;
         let record = py.detach(|| {
             let state = self.state();
