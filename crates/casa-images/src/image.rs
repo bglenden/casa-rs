@@ -644,6 +644,18 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
         self.put_mask(name, &ArrayD::from_elem(IxDyn(self.shape()), value))
     }
 
+    /// Creates the active pixel mask of a new output with uniform validity.
+    /// Returns the name to use for slice writes, empty for an anonymous mask.
+    ///
+    /// # Errors
+    /// The image cannot create or activate the mask.
+    fn create_filled_pixel_mask(&mut self, value: bool) -> Result<String, ImageError> {
+        let name = "mask0";
+        self.create_filled_mask(name, value)?;
+        self.set_default_mask(name)?;
+        Ok(name.to_owned())
+    }
+
     /// Whether an existing named mask accepts writes.
     fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
         Ok(self.mask_names().iter().any(|entry| entry == name))
