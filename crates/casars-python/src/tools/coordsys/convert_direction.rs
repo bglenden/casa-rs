@@ -3,13 +3,13 @@
 use casa_coordinates::CoordinateModel;
 use casa_types::Value;
 use casa_types::measures::direction::DirectionRef;
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
 
 use crate::convert::holder::DIRECTION_CODES;
 use crate::convert::value::CasaValue;
 
+use super::conversion_frames::FrameName;
 use super::inspect::numbered_coordinates;
 use super::replace::replace_at;
 use super::{CoordinateState, PyCoordsys};
@@ -43,14 +43,8 @@ fn convert_direction(state: &mut CoordinateState, frame: &str) -> PyResult<f64> 
 #[pymethods]
 impl PyCoordsys {
     #[pyo3(signature = (frame), text_signature = "($self, frame)")]
-    fn convertdirection(&self, py: Python<'_>, frame: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let frame = if let Ok(bytes) = frame.cast::<PyBytes>() {
-            String::from_utf8_lossy(bytes.as_bytes()).into_owned()
-        } else {
-            frame
-                .extract::<String>()
-                .map_err(|_| PyTypeError::new_err("argument _frame must be a string"))?
-        };
+    fn convertdirection(&self, py: Python<'_>, frame: FrameName) -> PyResult<Py<PyAny>> {
+        let frame = frame.into_name("frame")?;
         let angle = py.detach(|| convert_direction(&mut self.state(), &frame))?;
         CasaValue::record([
             ("unit", CasaValue::Text("rad".into())),

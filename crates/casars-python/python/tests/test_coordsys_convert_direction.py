@@ -38,7 +38,7 @@ def test_native_galactic_conversion_matches_projected_angular_rotation():
     np.testing.assert_array_equal(cs.names(), ["Longitude", "Latitude"])
 
 
-@pytest.mark.parametrize(("projection", "frame"), [("SIN", "GALACTIC"), ("TAN", "ECLIPTIC"), ("CAR", "GALACTIC"), ("SFL", "GALACTIC")])
+@pytest.mark.parametrize(("projection", "frame"), [("SIN", "GALACTIC"), ("SIN", "J2000"), ("TAN", "ECLIPTIC"), ("CAR", "GALACTIC"), ("SFL", "GALACTIC")])
 def test_custom_native_grid_matches_pinned_casa(casa, projection, frame):
     native = casa.coordsys().newcoordsys(direction=True, spectral=True)
     assert native.setprojection(projection)
@@ -61,6 +61,30 @@ def test_custom_native_grid_matches_pinned_casa(casa, projection, frame):
     _assert_value(actual.torecord()["spectral1"], native.torecord()["spectral1"])
     sample = native.referencepixel()["numeric"] + [0.5, 2.0, 1.5]
     np.testing.assert_allclose(actual.toworld(sample)["numeric"], native.toworld(sample)["numeric"], atol=1.e-10)
+
+
+def test_native_frame_rotation_preserves_signed_axis_maps(casa):
+    source = casa.coordsys().newcoordsys(direction=True, linear=1)
+    assert source.setunits(["deg", "deg"], "direction")
+    record = source.torecord()
+    for domain in ("pixel", "world"):
+        record[f"{domain}map0"] = np.array([-1, 0], dtype=np.int32)
+        record[f"{domain}map1"] = np.array([1], dtype=np.int32)
+    record["pixelreplace0"] = np.array([0.75, 0.0])
+    record["worldreplace0"] = np.array([12.0, 0.0])
+    states = []
+    for api in (tools, casa):
+        cs = api.coordsys()
+        assert cs.fromrecord(record)
+        angle = cs.convertdirection("GALACTIC")
+        saved = cs.torecord()
+        np.testing.assert_array_equal(saved["pixelmap0"], [-1, 0])
+        np.testing.assert_array_equal(saved["worldmap0"], [-1, 0])
+        np.testing.assert_allclose(saved["worldreplace0"], [np.deg2rad(12.0), 0.0])
+        np.testing.assert_allclose(saved["pixelreplace0"], [0.75, 0.0])
+        states.append((angle, cs.toworld([1.25, 4.0])["numeric"]))
+    _assert_value(states[0][0], states[1][0])
+    _assert_value(states[0][1], states[1][1])
 
 
 def test_rejected_rotation_preserves_the_previous_grid(casa):
