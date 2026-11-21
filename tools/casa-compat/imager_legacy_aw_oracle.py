@@ -20,15 +20,18 @@ from imager_legacy_pbw_oracle import (
 
 
 def predict(dataset, model, cache, machine, correction, *, scratch=True, limit=.05,
-            accepts=True, factory=imager, spw='0:0', wprojplanes=1, **terms):
+            accepts=True, factory=imager, spw='0:0', wprojplanes=1, empty_model=None, **terms):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
     assert tool.selectvis(field=0, spw=spw)
-    assert tool.defineimage(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
-                            phasecenter=0, stokes='IQUV', outframe='TOPO')
+    definition = dict(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
+                      phasecenter=0, stokes='IQUV', outframe='TOPO')
+    assert tool.defineimage(**definition)
     assert tool.setoptions(ftmachine=machine, wprojplanes=wprojplanes, numthreads=1,
                            cfcachedirname=str(cache), applypointingoffsets=False,
                            dopbgriddingcorrections=correction, pblimit=limit, **terms)
+    if empty_model is not None:
+        assert tool.ft(str(empty_model)) and tool.defineimage(**definition)
     assert tool.ft(str(model)) is accepts
     assert tool.done()
 
@@ -269,8 +272,68 @@ def compare_cold_multi_w(root, dataset, model, *, reference=None):
     actual = prior - data(saved, 'CORRECTED_DATA')
     assert not np.any(actual[:, 1:, :])
     errors['saved-replay'] = relative_rms(actual[:, 0, :], expected[:, 0, :])
+    errors.update(frame_converted_w_boundary(root, source, model, casa_cache, scale))
     print('multiple W planes', errors, flush=True)
     assert all(np.isfinite(error) and error < 1.e-3 for error in errors.values()), errors
+
+
+def frame_converted_w_boundary(root, dataset, model, cache, scale):
+    source, wide_model, tagged = (root / name for name in
+                                  ('topo-source.ms', 'wide-model.im', 'tagged-cache'))
+    make_input(dataset, source, scratch=True)
+    shutil.copytree(model, wide_model)
+    shutil.copytree(cache, tagged)
+    editor = table()
+    assert editor.open(str(source / 'SPECTRAL_WINDOW'), nomodify=False)
+    assert editor.putcell('MEAS_FREQ_REF', 0, 5) and editor.done()  # TOPO
+    frequency = data(source / 'SPECTRAL_WINDOW', 'CHAN_FREQ')[0, 0]
+    assert editor.open(str(source), nomodify=False)
+    uvw = editor.getcol('UVW')
+    offsets = np.array([-3.e-4, -3.e-6, -3.e-7, 3.e-7, 1.e-6, 3.e-6, 1.e-5, 3.e-4])
+    uvw[2] = (2. + np.resize(offsets, uvw.shape[1])) ** 2 / scale * 299792458. / frequency
+    assert editor.putcol('UVW', uvw) and editor.done()
+    tool = image()
+    assert tool.open(str(wide_model))
+    coordinates = tool.coordsys()
+    increment = coordinates.increment()['numeric']
+    increment[-1] = 1.e7
+    assert coordinates.setincrement(increment) and tool.setcoordsys(coordinates.torecord())
+    assert coordinates.done() and tool.done()
+    # A phase tag in plane 1 makes choosing the wrong side of the
+    # boundary observable, independently of the small change in W phase.
+    cells = sorted(tagged.glob('CFS_0_0_CF_0_1_*.im'))
+    assert len(cells) == 2
+    for path in cells:
+        assert tool.open(str(path))
+        pixels = tool.getchunk()
+        phase = np.exp(.45j * np.arange(pixels.shape[0], dtype=np.float32)).reshape((-1, 1, 1, 1))
+        assert tool.putchunk(pixels * phase) and tool.done()
+
+    outputs = {}
+    for name, factory in (('casa', casa_imager), ('native', imager)):
+        target = root / f'{name}-topo.ms'
+        make_input(source, target, scratch=True)
+        predict(target, wide_model, tagged, 'awproject', False, factory=factory,
+                wprojplanes=4, wbawp=True, empty_model=root / f'{name}-blank.im')
+        outputs[name] = data(target, 'MODEL_DATA')
+    reference = outputs['casa'][:, 0, :]
+    above = np.resize(offsets, reference.shape[1]) > 0.
+    assert np.max(np.abs(reference[:, above])) > 10.
+    assert np.max(np.abs(reference[:, ~above])) < 5.
+    np.testing.assert_array_equal(outputs['native'][:, 1:, :], outputs['casa'][:, 1:, :])
+    errors = {'native-frequency-scratch': relative_rms(outputs['native'][:, 0, :], reference)}
+
+    saved = root / 'saved-topo.ms'
+    make_input(source, saved, scratch=False)
+    predict(saved, wide_model, tagged, 'awproject', False, scratch=False, wprojplanes=4, wbawp=True)
+    prior = corrected_or_data(saved)
+    reader = ms()
+    assert reader.open(str(saved), nomodify=False)
+    assert reader.msselect({'field': '0'}) and reader.uvsub() and reader.done()
+    replay = prior - data(saved, 'CORRECTED_DATA')
+    assert not np.any(replay[:, 1:, :])
+    errors['native-frequency-saved'] = relative_rms(replay[:, 0, :], reference)
+    return errors
 
 
 def cold_case(root, dataset, model, machine, terms, *, reference=None):

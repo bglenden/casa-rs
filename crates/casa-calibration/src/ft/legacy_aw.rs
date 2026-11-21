@@ -783,8 +783,9 @@ pub(crate) fn open_catalog(
         feed_zero_angles_rad: None,
         rotation,
     };
-    let terms =
-        AwCatalog::open_legacy_casa(path, index, grid, routing, 16 << 20).map_err(invalid)?;
+    let terms = AwCatalog::open_legacy_casa(path, index, grid, routing, 16 << 20)
+        .map_err(invalid)?
+        .with_native_prediction_frequency(true);
     if terms.parallactic_angles_deg().len() != 1 {
         return Err(invalid("this legacy AW cache geometry is pending #1520"));
     }
