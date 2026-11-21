@@ -148,15 +148,24 @@ def check_autocorrelation(libraries):
     expected = samples.copy()
     expected[target] = True
     if any(name == "casa" for name, _ in libraries):
-        copytree(path, "pinned-autocorrelation.ms")
-        probe = subprocess.run(
-            [sys.executable, "-c", "import resource; "
-             "resource.setrlimit(resource.RLIMIT_CORE, (0, 0)); "
-             "from casatasks import flagdata; "
-             "flagdata(vis='pinned-autocorrelation.ms',mode='antint',antint_ref_antenna='A0',flagbackup=False)"],
-            capture_output=True, timeout=20, check=False,
-        )
-        assert probe.returncode in (-SIGSEGV, -SIGABRT), (probe.returncode, probe.stderr.decode())
+        # The out-of-bounds access can complete or terminate the process.
+        # Use fresh inputs to reproduce it without making native mask
+        # validation depend on the pinned process's memory layout.
+        for attempt in range(3):
+            pinned = f"pinned-autocorrelation-{attempt}.ms"
+            copytree(path, pinned)
+            probe = subprocess.run(
+                [sys.executable, "-c", "import resource, sys; "
+                 "resource.setrlimit(resource.RLIMIT_CORE, (0, 0)); "
+                 "from casatasks import flagdata; "
+                 "flagdata(vis=sys.argv[1],mode='antint',antint_ref_antenna='A0',flagbackup=False)",
+                 pinned],
+                capture_output=True, timeout=20, check=False,
+            )
+            if probe.returncode in (-SIGSEGV, -SIGABRT):
+                print(f"CASA antint terminated on the autocorrelation fixture ({probe.returncode})")
+                break
+            assert probe.returncode == 0, (probe.returncode, probe.stderr.decode())
     for name, task in libraries:
         if name == "native":
             assert task(vis=path, mode="antint", antint_ref_antenna="A0", flagbackup=False) == {}

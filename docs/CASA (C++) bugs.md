@@ -4097,8 +4097,8 @@ reference-baseline entries but tries to accumulate flags from five rows.
 
 Native antint uses the cross-baselines to decide whether the integration
 meets the threshold and applies that decision to all selected rows, including
-the autocorrelation. The pinned oracle checks the crash in a subprocess
-and independently verifies the complete native sample and row masks.
+the autocorrelation. The pinned oracle probes the intermittent crash in
+subprocesses and independently verifies the complete native sample and row masks.
 [Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
 
 ## Reference-antenna flag decisions can leak to later spectral windows
