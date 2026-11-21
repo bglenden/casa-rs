@@ -23,7 +23,7 @@ use casa_provider_contracts::{
     TaskFailureKind, python_repr,
 };
 use casa_task_runtime::{
-    CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
+    CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, semantic_eq,
 };
 use casa_types::quanta::Quantity;
 
@@ -842,6 +842,7 @@ fn flagdata_request(
     thresholds: &rflag::ThresholdInputs,
 ) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
+    let automatic_enabled = automatic_controls(task, mode, calibration)?;
     let spw = task_selection_text(task, "spw")?;
     let correlation = task_selection_text(task, "correlation")?;
     let clipminmax = match task.numbers("clipminmax")?.as_slice() {
@@ -914,7 +915,11 @@ fn flagdata_request(
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         tfcrop: if mode == FlagDataMode::Tfcrop {
-            tfcrop::parameters(task)?
+            if automatic_enabled {
+                tfcrop::parameters(task)?
+            } else {
+                None
+            }
         } else {
             Some(casa_ms::flagging::TfcropOptions::default())
         },
@@ -922,7 +927,7 @@ fn flagdata_request(
         freqdevscale: task.number("freqdevscale")?,
         spectralmax: task.number("spectralmax")?,
         spectralmin: task.number("spectralmin")?,
-        rflag_window: if timedev.invalid || freqdev.invalid {
+        rflag_window: if timedev.invalid || freqdev.invalid || !automatic_enabled {
             None
         } else if mode == FlagDataMode::Rflag {
             let width = match task.value("winsize") {
@@ -959,6 +964,67 @@ fn flagdata_request(
         growtime: task.number("growtime")?,
         growfreq: task.number("growfreq")?,
     })
+}
+
+fn automatic_controls(
+    task: &TaskInvocation<'_>,
+    mode: FlagDataMode,
+    calibration: bool,
+) -> Result<bool, TaskFailure> {
+    if !matches!(mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag) {
+        return Ok(true);
+    }
+    if calibration {
+        for name in ["channelavg", "timeavg"] {
+            if matches!(task.value(name), Some(ParameterValue::Array(_))) {
+                return Err(
+                    TaskFailure::execution("RecordInterface::asBool - invalid data type").at(name),
+                );
+            }
+        }
+        // The calibration iterator uses stored samples. The agent still
+        // parses its time bin when time averaging was requested.
+        if matches!(task.value("timeavg"), Some(ParameterValue::Bool(true))) {
+            return Ok(Quantity::read(&task.required_text("timebin")?).is_ok());
+        }
+        return Ok(true);
+    }
+
+    let bundle = task.session().bundle();
+    for (name, issue) in [
+        ("channelavg", 978),
+        ("chanbin", 978),
+        ("timeavg", 978),
+        ("timebin", 978),
+        ("ntime", 1616),
+        ("combinescans", 1616),
+    ] {
+        if issue == 1616 && mode != FlagDataMode::Rflag {
+            continue;
+        }
+        let binding = bundle
+            .surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == name)
+            .expect("automatic controls are in the flagdata surface");
+        let DefaultSpec::Literal { value: default } = &binding.default else {
+            unreachable!("automatic controls have literal defaults");
+        };
+        let concept = bundle
+            .catalog
+            .concept(&binding.concept)
+            .expect("validated contract");
+        if let Some(value) = task.value(name)
+            && !matches!(semantic_eq(value, default, concept), Ok(true))
+        {
+            return Err(TaskFailure::validation(format!(
+                "parameter {name:?} is not implemented by casa-rs yet (#{issue}); only CASA's default {} is accepted",
+                python_repr(default),
+            )).at(name));
+        }
+    }
+    Ok(true)
 }
 
 fn antint_min_channel_fraction(task: &TaskInvocation<'_>) -> Result<f64, TaskFailure> {
