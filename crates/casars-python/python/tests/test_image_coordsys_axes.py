@@ -89,3 +89,58 @@ def test_image_coordsys_reports_an_invalid_requested_axis(casa, axes, invalid):
             np.testing.assert_array_equal(image.shape(), [17, 19, 2, 5])
         finally:
             image.done()
+
+
+def test_image_coordsys_requires_a_world_axis_for_each_selected_pixel_axis(casa):
+    seed = casa.coordsys().newcoordsys(linear=2)
+    try:
+        record = seed.torecord()
+    finally:
+        seed.done()
+    record["worldmap0"] = np.array([-1, 0], dtype=np.int32)
+    for api in (casa, tools):
+        image = api.image()
+        selected = None
+        try:
+            assert image.fromshape(shape=[5, 7], csys=record)
+            with pytest.raises(RuntimeError, match="World axis corresponding to zero-based pixel axis 0 has been removed"):
+                image.coordsys(axes=[0])
+            selected = image.coordsys(axes=[1])
+            assert list(selected.names()) == ["LinAxis1"]
+            np.testing.assert_array_equal(selected.toworld([4.0])["numeric"], [4.0])
+        finally:
+            if selected is not None:
+                selected.done()
+            image.done()
+
+
+def test_reordered_partial_coordinate_record_survives_native_image_exchange(casa, source_record, tmp_path):
+    for writer in (casa, tools):
+        source, product = writer.image(), writer.image()
+        selected = None
+        name = str(tmp_path / f"{writer.__name__}-selected.im")
+        try:
+            assert source.fromshape(shape=[17, 19, 2, 5], csys=source_record)
+            selected = source.coordsys(axes=[3, 0])
+            assert product.fromshape(name, [5, 17], selected.torecord())
+        finally:
+            if selected is not None:
+                selected.done()
+            product.done()
+            source.done()
+        for reader in (casa, tools):
+            image = reader.image()
+            coords = None
+            try:
+                assert image.open(name)
+                coords = image.coordsys()
+                np.testing.assert_array_equal(image.shape(), [5, 17])
+                np.testing.assert_array_equal(coords.names(), ["Frequency", "Right Ascension"])
+                np.testing.assert_allclose(coords.toworld([2.0, 7.0])["numeric"], [1.403e9, 41.0], atol=1e-10)
+                record = coords.torecord()
+                np.testing.assert_array_equal(record["pixelmap1"], [1, -3])
+                np.testing.assert_array_equal(record["worldmap1"], [1, -3])
+            finally:
+                if coords is not None:
+                    coords.done()
+                image.done()
