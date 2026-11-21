@@ -195,6 +195,20 @@ compares the C++ built without the corrections with CASA's own `at` tool,
 confirming that the compiled sources are the ATM that CASA ships, and the
 port with the C++ built with them; rerun it when any of them changes.
 
+**Upstream CASA image task suites.** With CASA 6.7.6.14's Python and the native Python package and task binaries
+available, run the imported suite against both implementations:
+
+```bash
+CASA_PYTHON tools/casa-compat/upstream_image_suite.py imsubimage \
+  --casatestdata /Volumes/home/casatestdata --out target/upstream-image-tests
+```
+
+Replace `CASA_PYTHON` with the installed CASA Python executable. The task
+argument selects an imported upstream module, and `--implementation casa-rs`
+or `--implementation casa` reruns one side. The runner uses the normal native
+Python task entry point and keeps each implementation's fixture copy and
+products isolated. The output directory retains logs and JUnit results.
+
 **Simulator.** Its Metal law, `cargo nextest run -p casa-simulation --test
 backends --no-capture`, run outside the sandbox, predicts sessions on both
 backends and prints each case's `max |metal − cpu| / max |cpu|` (the T0

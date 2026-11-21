@@ -115,6 +115,27 @@ fn compound_regions_still_require_multi_region_task_support() {
 }
 
 #[test]
+fn crtf_pair_reader_consumes_one_adjacent_parenthesis() {
+    let input = PagedImage::<f32>::open(input_path("cube.im")).unwrap();
+    for (text, accepted) in [
+        ("box[[1pix,1pix],[3pix,3pix]])", true),
+        ("box[[1pix,1pix],[3pix,3pix]]))", false),
+        ("circle[[2pix,2pix],1pix])", false),
+    ] {
+        let selection = SubimagePlan::new(
+            &input,
+            None,
+            SubimageOptions {
+                region: Some(SubimageRegion::Text(text)),
+                dropdeg: false,
+                keepaxes: &[],
+            },
+        );
+        assert_eq!(selection.is_ok(), accepted, "{text}");
+    }
+}
+
+#[test]
 fn wrong_region_kind_is_rejected_for_compounds_and_their_children() {
     let input = PagedImage::<f32>::open(input_path("cube.im")).unwrap();
     let region =
