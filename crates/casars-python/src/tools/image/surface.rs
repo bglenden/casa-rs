@@ -189,7 +189,7 @@ const METHODS: &[Method] = &[
             param("beam", K::Record, EmptyRecord),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "coordmeasures",

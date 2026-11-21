@@ -37,6 +37,7 @@ mod imsubimage;
 pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use imsubimage::{ContinuumSummary, ImageContinuum};
 pub use imsubimage::{ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution};
+pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
 pub use imsubimage::{
     DecimationMethod, DecimationPixel, ImageCrop, ImageCropOptions, ImageDecimation,
     ImageDecimationOptions, ImageInsertion, ImagePad, ImagePadOptions, ImagePbcor, ImagePbcorBeam,

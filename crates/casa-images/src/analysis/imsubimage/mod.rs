@@ -7,6 +7,8 @@ mod bounding_box;
 mod collapse;
 mod continuum;
 mod convolve;
+mod convolve2d;
+pub use convolve2d::{GaussianConvolutionOptions, ImageGaussianConvolution};
 pub use collapse::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use continuum::{ContinuumSummary, ImageContinuum};
 pub use convolve::{ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution};

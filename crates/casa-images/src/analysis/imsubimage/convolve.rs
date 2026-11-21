@@ -8,6 +8,7 @@ use casa_lattices::{TraversalCursor, TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Dimension, IxDyn, Slice, Zip};
 
+use crate::convolve2d::GaussianSamples;
 use crate::image_expr::bounded_read_cursor;
 use crate::{ImageError, ImageInterface, ImagePixel, MutableImageInterface};
 
@@ -56,6 +57,37 @@ impl<T: ConvolutionPixel> ConvolutionKernel<'_, T> {
             Self::Array(array) => Ok(array
                 .slice_each_axis(|axis| slice(start[axis.axis.index()], shape[axis.axis.index()]))
                 .to_owned()),
+        }
+    }
+}
+
+enum KernelInput<'a, T: ConvolutionPixel> {
+    External(ConvolutionKernel<'a, T>),
+    Gaussian {
+        samples: GaussianSamples,
+        axes: [usize; 2],
+        shape: Vec<usize>,
+    },
+}
+
+impl<T: ConvolutionPixel> KernelInput<'_, T> {
+    fn shape(&self) -> &[usize] {
+        match self {
+            Self::External(kernel) => kernel.shape(),
+            Self::Gaussian { shape, .. } => shape,
+        }
+    }
+
+    fn read(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<T>, ImageError> {
+        match self {
+            Self::External(kernel) => kernel.read(start, shape),
+            Self::Gaussian {
+                samples,
+                axes: [x, y],
+                ..
+            } => Ok(ArrayD::from_shape_fn(IxDyn(shape), |index| {
+                T::from_f64(samples.sample(start[*x] + index[*x], start[*y] + index[*y]))
+            })),
         }
     }
 
@@ -113,25 +145,35 @@ impl ImageConvolution {
         options: ConvolutionOptions<'_>,
         output: &mut dyn MutableImageInterface<T>,
     ) -> Result<(), ImageError> {
-        let rank = kernel.shape().len();
-        if rank == 0 || kernel.shape().contains(&0) {
-            return Err(ImageError::CasaSelection(
-                "Kernel array cannot be empty".into(),
-            ));
-        }
-        let shape = &self.section.shape;
-        if rank > shape.len() {
-            return Err(ImageError::CasaSelection(
-                "Kernel lattice has more axes than the image!".into(),
-            ));
-        }
-        let workspace = KernelPlan::new(kernel, shape, options.scale)?;
-        let active = (0..shape.len())
-            .map(|axis| workspace.support.get(axis).is_some_and(|&width| width > 1))
-            .collect::<Vec<_>>();
-        let has_active = active.contains(&true);
-        let invalid_kernel = has_active && workspace.has_nonfinite()?;
+        let workspace = KernelPlan::new(
+            KernelInput::External(kernel),
+            &self.section.shape,
+            options.scale,
+            false,
+        )?;
+        let active = workspace.active(self.section.shape.len());
+        self.copy_groups(
+            image,
+            options,
+            ConvolutionGroups {
+                active: &active,
+                plane_axes: &[],
+                workspace: KernelWorkspaces::Shared(&workspace),
+            },
+            output,
+        )
+    }
 
+    pub(super) fn copy_groups<T: ConvolutionPixel>(
+        &self,
+        image: &dyn ImageInterface<T>,
+        options: ConvolutionOptions<'_>,
+        groups: ConvolutionGroups<'_, T>,
+        output: &mut dyn MutableImageInterface<T>,
+    ) -> Result<(), ImageError> {
+        let shape = &self.section.shape;
+        let active = groups.active;
+        let has_active = active.contains(&true);
         let selection = &self.section.selection;
         let unit = vec![1; shape.len()];
         let input = StridedSection {
@@ -151,23 +193,35 @@ impl ImageConvolution {
             )?,
         };
         self.section.copy_metadata(image, output)?;
-        let cursor = convolution_cursor(input.dense_shape(shape), &active)?
+        let mut cursor = convolution_cursor(input.dense_shape(shape), active)?
             .iter()
             .zip(input.stride)
             .map(|(&extent, &stride)| extent.div_ceil(stride).max(1))
             .collect::<Vec<_>>();
+        for &axis in groups.plane_axes {
+            cursor[axis] = 1;
+        }
         let group_shape = shape
             .iter()
-            .zip(&active)
+            .zip(active)
             .map(|(&length, &active)| if active { 1 } else { length })
             .collect::<Vec<_>>();
         let mut have_mask = false;
         for group in tiles(&group_shape, cursor.clone()) {
             let group = group?;
+            let selected;
+            let workspace = match groups.workspace {
+                KernelWorkspaces::Shared(workspace) => workspace,
+                KernelWorkspaces::PerPlane(function) => {
+                    selected = function(&group.position)?;
+                    &selected
+                }
+            };
+            let invalid_kernel = workspace.nonfinite;
             let inner_shape = shape
                 .iter()
                 .zip(&group.shape)
-                .zip(&active)
+                .zip(active)
                 .map(|((&length, &width), &active)| if active { length } else { width })
                 .collect::<Vec<_>>();
             let mut invalid_lanes = ArrayD::from_elem(IxDyn(&group.shape), false);
@@ -183,7 +237,7 @@ impl ImageConvolution {
                         if !sample.into().is_finite()
                             && validity.as_ref().is_none_or(|mask| mask[&index])
                         {
-                            for (pixel, &is_active) in index.slice_mut().iter_mut().zip(&active) {
+                            for (pixel, &is_active) in index.slice_mut().iter_mut().zip(active) {
                                 if is_active {
                                     *pixel = 0;
                                 }
@@ -239,13 +293,25 @@ impl ImageConvolution {
     }
 }
 
-struct KernelPlan<'a, T: ConvolutionPixel> {
-    kernel: ConvolutionKernel<'a, T>,
+pub(super) struct ConvolutionGroups<'a, T: ConvolutionPixel> {
+    pub(super) active: &'a [bool],
+    pub(super) plane_axes: &'a [usize],
+    pub(super) workspace: KernelWorkspaces<'a, T>,
+}
+
+pub(super) enum KernelWorkspaces<'a, T: ConvolutionPixel> {
+    Shared(&'a KernelPlan<'a, T>),
+    PerPlane(&'a dyn Fn(&[usize]) -> Result<KernelPlan<'static, T>, ImageError>),
+}
+
+pub(super) struct KernelPlan<'a, T: ConvolutionPixel> {
+    kernel: KernelInput<'a, T>,
     scaling: Scaling,
     center: Vec<usize>,
     first: Vec<usize>,
     support: Vec<usize>,
     cursor: Vec<usize>,
+    nonfinite: bool,
 }
 
 struct KernelPatch {
@@ -255,11 +321,25 @@ struct KernelPatch {
 
 impl<'a, T: ConvolutionPixel> KernelPlan<'a, T> {
     fn new(
-        kernel: ConvolutionKernel<'a, T>,
+        kernel: KernelInput<'a, T>,
         shape: &[usize],
         scale: f64,
+        explicit_scale: bool,
     ) -> Result<Self, ImageError> {
-        let divisor = (scale <= 0.0).then(|| kernel.sum()).transpose()?;
+        let rank = kernel.shape().len();
+        if rank == 0 || kernel.shape().contains(&0) {
+            return Err(ImageError::CasaSelection(
+                "Kernel array cannot be empty".into(),
+            ));
+        }
+        if rank > shape.len() {
+            return Err(ImageError::CasaSelection(
+                "Kernel lattice has more axes than the image!".into(),
+            ));
+        }
+        let divisor = (!explicit_scale && scale <= 0.0)
+            .then(|| kernel.sum())
+            .transpose()?;
         let scaling = divisor.map_or(Scaling::Multiply(scale), Scaling::Divide);
         let mut center = kernel
             .shape()
@@ -282,14 +362,45 @@ impl<'a, T: ConvolutionPixel> KernelPlan<'a, T> {
             .map(|(((&width, &mid), &low), &len)| width.min(mid.saturating_add(len)) - low)
             .collect::<Vec<_>>();
         let cursor = fft::limit_kernel_cursor(bounded_read_cursor(support.clone())?);
-        Ok(Self {
+        let mut plan = Self {
             kernel,
             scaling,
             center,
             first,
             support,
             cursor,
-        })
+            nonfinite: false,
+        };
+        plan.nonfinite = plan.support.iter().any(|&width| width > 1) && plan.has_nonfinite()?;
+        Ok(plan)
+    }
+
+    pub(super) fn gaussian(
+        samples: GaussianSamples,
+        axes: [usize; 2],
+        image_shape: &[usize],
+        scale: f64,
+    ) -> Result<KernelPlan<'static, T>, ImageError> {
+        let mut shape = vec![1; image_shape.len()];
+        for axis in axes {
+            shape[axis] = samples.side;
+        }
+        KernelPlan::new(
+            KernelInput::Gaussian {
+                samples,
+                axes,
+                shape,
+            },
+            image_shape,
+            scale,
+            true,
+        )
+    }
+
+    fn active(&self, rank: usize) -> Vec<bool> {
+        (0..rank)
+            .map(|axis| self.support.get(axis).is_some_and(|&width| width > 1))
+            .collect()
     }
 
     fn patches(&self) -> impl Iterator<Item = Result<KernelPatch, ImageError>> + '_ {
