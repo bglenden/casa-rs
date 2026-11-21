@@ -2,11 +2,11 @@
 
 use casa_coordinates::{Coordinate, CoordinateModel, TabularCoordinate};
 use casa_types::Value;
-use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 
 use super::inspect::numbered_coordinates;
-use super::{CoordinateState, PyCoordsys, doppler};
+use super::{CoordinateState, PyCoordsys, doppler, index_argument};
 
 struct TabularIndex(i32);
 
@@ -14,14 +14,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for TabularIndex {
     type Error = PyErr;
 
     fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        if value.is_none() {
-            return Ok(Self(-1));
-        }
-        match value.extract::<i64>() {
-            Ok(value) => Ok(Self(value as i32)),
-            Err(error) if error.is_instance_of::<PyOverflowError>(value.py()) => Ok(Self(-1)),
-            Err(_) => Err(PyTypeError::new_err("argument _which must be an integer")),
-        }
+        index_argument(&value, "which").map(Self)
     }
 }
 
