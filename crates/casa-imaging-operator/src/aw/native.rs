@@ -49,6 +49,7 @@ pub struct NativeAwPair<'a> {
 /// prepared aperture always belongs to the model its cells are asked of.
 pub struct EvlaAwWorkspace {
     model: EvlaApertureModel,
+    legacy_vla: bool,
     size: usize,
     fft: PlaneFft<f32>,
     jones: Vec<Complex32>,
@@ -92,6 +93,7 @@ impl EvlaAwWorkspace {
         let quadrant = (request.size / 2 + 1) * (request.size / 2 + 1);
         Ok(Self {
             model,
+            legacy_vla: false,
             size: request.size,
             fft: PlaneFft::<f32>::new([request.size; 2], false)
                 .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?,
@@ -106,6 +108,11 @@ impl EvlaAwWorkspace {
             depth_increment: None,
             phases: vec![Complex32::default(); quadrant],
         })
+    }
+
+    pub(super) fn with_legacy_vla_feed(mut self, legacy: bool) -> Self {
+        self.legacy_vla = legacy;
+        self
     }
 
     /// Bytes of the working planes and tables.
@@ -190,6 +197,7 @@ impl EvlaAwWorkspace {
         self.prepared = None;
         let Self {
             model,
+            legacy_vla,
             fft,
             jones,
             aperture,
@@ -197,7 +205,15 @@ impl EvlaAwWorkspace {
             rings,
             ..
         } = self;
-        fill_sky_mueller(model, request, request.frequency_hz, fft, jones, aperture)?;
+        fill_sky_mueller(
+            model,
+            request,
+            request.frequency_hz,
+            fft,
+            jones,
+            aperture,
+            *legacy_vla,
+        )?;
         fill_sky_mueller(
             model,
             request,
@@ -205,6 +221,7 @@ impl EvlaAwWorkspace {
             fft,
             jones,
             weight,
+            *legacy_vla,
         )?;
         let origin = (request.size / 2) as isize;
         let inner_half = (request.size / request.oversampling / 2) as isize;
@@ -224,7 +241,7 @@ impl EvlaAwWorkspace {
         save_edges(weight, request.size, edges);
         transform(fft, weight)?;
         restore_edges(weight, request.size, edges);
-        let weight_crop = crop_normalize(weight, request, rings)?;
+        let weight_crop = crop_normalize(weight, request, rings, *legacy_vla)?;
         self.prepared = Some((key, weight_crop));
         Ok(())
     }
@@ -322,7 +339,7 @@ impl EvlaAwWorkspace {
         for value in imaging.iter_mut() {
             *value /= peak;
         }
-        let crop = crop_normalize(imaging, request, rings)?;
+        let crop = crop_normalize(imaging, request, rings, self.legacy_vla)?;
         self.realized = Some(crop);
         Ok(self.pair().expect("both crops succeeded"))
     }
@@ -390,6 +407,7 @@ fn fill_sky_mueller(
     fft: &mut PlaneFft<f32>,
     jones: &mut [Complex32],
     output: &mut [Complex32],
+    legacy_vla: bool,
 ) -> Result<(), NativeAwGenerationError> {
     if !request.aperture {
         output.fill(Complex32::new(1.0, 0.0));
@@ -397,16 +415,18 @@ fn fill_sky_mueller(
     }
     let wavelength = SPEED_OF_LIGHT_M_PER_S / f64::from(frequency as f32);
     let cell_m = wavelength / (request.size as f64 * request.sky_increment_rad[0].abs());
-    model.fill_aperture(
-        EvlaApertureGrid::new(
-            request.size,
-            cell_m,
-            3,
-            frequency,
-            request.parallactic_angle_rad,
-        )?,
-        jones,
+    let grid = EvlaApertureGrid::new(
+        request.size,
+        cell_m,
+        3,
+        frequency,
+        request.parallactic_angle_rad,
     )?;
+    if legacy_vla {
+        model.fill_vla_l_aperture(grid, jones)?;
+    } else {
+        model.fill_aperture(grid, jones)?;
+    }
     let n = request.size * request.size;
     let normalization = sky_jones_normalization(request.size, fft, jones)?;
     let selected = if request.mueller == 0 { 0 } else { 3 };
@@ -474,6 +494,7 @@ fn crop_normalize(
     values: &mut [Complex32],
     request: EvlaAwCellRequest,
     rings: &[u16],
+    legacy_vla: bool,
 ) -> Result<(usize, usize), NativeAwGenerationError> {
     let origin = request.size / 2;
     let radius = support_radius(values, request.size, rings)
@@ -488,7 +509,8 @@ fn crop_normalize(
     }
     let extent = (request.oversampling * (support + 2)) as isize;
     let bottom = (((origin as isize - extent) / 2) * 2).max(0) as usize;
-    let top = ((((origin as isize + extent) / 2) * 2 - 1) as usize).min(request.size - 1);
+    let top = ((((origin as isize + extent) / 2) * 2 - (!legacy_vla) as isize) as usize)
+        .min(request.size - 1);
     let size = top - bottom + 1;
     let mut area = Complex32::default();
     for ix in -(support as isize)..support as isize {
@@ -764,7 +786,7 @@ mod tests {
                 *value /= peak;
             }
             let rings = ring_table(request.size);
-            let crop = crop_normalize(&mut expected, request, &rings).expect("crop");
+            let crop = crop_normalize(&mut expected, request, &rings, false).expect("crop");
             let pair = workspace.realize(request).expect("realize");
             assert_eq!(crop, (pair.imaging.size, pair.imaging.support));
             assert_eq!(

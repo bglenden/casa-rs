@@ -297,7 +297,7 @@ pub(super) fn dense_cell_padded(
 }
 
 /// The misc info `CFCell::makePersistent` writes.
-pub(super) struct CellMisc {
+pub(super) struct CellMisc<'a> {
     pub(super) sampling: f64,
     pub(super) pa_deg: f64,
     pub(super) mueller: usize,
@@ -306,6 +306,7 @@ pub(super) struct CellMisc {
     pub(super) conjugate_frequency: f64,
     pub(super) conjugate_mueller: u32,
     pub(super) diameter_m: f64,
+    pub(super) legacy_vla: Option<(&'a str, &'a SpectralCoordinate)>,
     /// The working sky increment and size the cell was generated on:
     /// private keys (`CasaRsSkyIncrement`, `CasaRsWorkingSize`) the loader
     /// checks against the image geometry so a cache is never reused for
@@ -324,7 +325,7 @@ pub(super) fn write_cell(
     plane: &NativeAwPlane<'_>,
     frequency_hz: f64,
     grid: casa_imaging_model::NativeAwGrid,
-    misc: &CellMisc,
+    misc: &CellMisc<'_>,
 ) -> Result<(), AwCatalogError> {
     let write_error = |detail: String| AwCatalogError::Write {
         path: path.to_path_buf(),
@@ -365,13 +366,19 @@ fn build_cell(
     plane: &NativeAwPlane<'_>,
     frequency_hz: f64,
     grid: casa_imaging_model::NativeAwGrid,
-    misc: &CellMisc,
+    misc: &CellMisc<'_>,
 ) -> Result<(), String> {
     let write_error = |detail: String| detail;
     let side = plane.size;
     // The uv increment of one oversampled pixel over the working field.
     let increment =
         1.0 / (grid.size as f64 * grid.sky_increment_rad[1].abs()) / grid.oversampling as f64;
+    let uv_increment = if misc.legacy_vla.is_some() {
+        grid.sky_increment_rad
+            .map(|cell| 1.0 / (side as f64 * cell))
+    } else {
+        [-increment, increment]
+    };
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(
         LinearCoordinate::new(
@@ -381,20 +388,34 @@ fn build_cell(
         )
         .with_reference_value(vec![0.0, 0.0])
         .with_reference_pixel(vec![(side / 2) as f64, (side / 2) as f64])
-        .with_increment(vec![-increment, increment]),
+        .with_increment(uv_increment.to_vec()),
     );
-    coordinates.add_coordinate(StokesCoordinate::new(vec![if misc.mueller == 0 {
+    let first_hand = misc.legacy_vla.map_or(misc.mueller == 0, |_| {
+        misc.conjugate_mueller == StokesType::LL as u32
+    });
+    coordinates.add_coordinate(StokesCoordinate::new(vec![if first_hand {
         StokesType::RR
     } else {
         StokesType::LL
     }]));
-    coordinates.add_coordinate(SpectralCoordinate::new(
-        FrequencyRef::LSRK,
-        frequency_hz,
-        1.0,
-        0.0,
-        frequency_hz,
-    ));
+    if let Some((_, spectral)) = misc.legacy_vla {
+        coordinates.add_coordinate(spectral.clone());
+        let mut record = coordinates.to_record();
+        let reference = spectral
+            .value_from_hz(frequency_hz)
+            .map_err(|error| error.to_string())?;
+        coordinates = CoordinateSystem::set_reference_value_in_record(&mut record, 3, reference)
+            .map_err(|error| error.to_string())?
+            .0;
+    } else {
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            frequency_hz,
+            1.0,
+            0.0,
+            frequency_hz,
+        ));
+    }
     let mut image = PagedImage::<Complex32>::create(vec![side, side, 1, 1], coordinates, path)
         .map_err(|error| write_error(format!("cannot create: {error}")))?;
     let mut pixels = ndarray::ArrayD::<Complex32>::zeros(ndarray::IxDyn(&[side, side, 1, 1]));
@@ -422,8 +443,21 @@ fn build_cell(
                 "ConjPoln",
                 ScalarValue::Int32(misc.conjugate_mueller as i32),
             ),
-            field("TelescopeName", ScalarValue::String("EVLA".to_string())),
-            field("BandName", ScalarValue::String(String::new())),
+            field(
+                "TelescopeName",
+                ScalarValue::String(
+                    if misc.legacy_vla.is_some() {
+                        "VLA"
+                    } else {
+                        "EVLA"
+                    }
+                    .into(),
+                ),
+            ),
+            field(
+                "BandName",
+                ScalarValue::String(misc.legacy_vla.map_or("", |(band, _)| band).into()),
+            ),
             field("Diameter", ScalarValue::Float64(misc.diameter_m)),
             field("OpCode", ScalarValue::Bool(false)),
             field(
