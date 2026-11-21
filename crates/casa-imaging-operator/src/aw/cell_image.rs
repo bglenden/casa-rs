@@ -306,7 +306,8 @@ pub(super) struct CellMisc<'a> {
     pub(super) conjugate_frequency: f64,
     pub(super) conjugate_mueller: u32,
     pub(super) diameter_m: f64,
-    pub(super) legacy_vla: Option<(&'a str, &'a SpectralCoordinate)>,
+    pub(super) telescope: &'static str,
+    pub(super) legacy_coordinates: Option<(&'a str, &'a SpectralCoordinate)>,
     /// The working sky increment and size the cell was generated on:
     /// private keys (`CasaRsSkyIncrement`, `CasaRsWorkingSize`) the loader
     /// checks against the image geometry so a cache is never reused for
@@ -373,7 +374,7 @@ fn build_cell(
     // The uv increment of one oversampled pixel over the working field.
     let increment =
         1.0 / (grid.size as f64 * grid.sky_increment_rad[1].abs()) / grid.oversampling as f64;
-    let uv_increment = if misc.legacy_vla.is_some() {
+    let uv_increment = if misc.legacy_coordinates.is_some() {
         grid.sky_increment_rad
             .map(|cell| 1.0 / (side as f64 * cell))
     } else {
@@ -390,7 +391,7 @@ fn build_cell(
         .with_reference_pixel(vec![(side / 2) as f64, (side / 2) as f64])
         .with_increment(uv_increment.to_vec()),
     );
-    let first_hand = misc.legacy_vla.map_or(misc.mueller == 0, |_| {
+    let first_hand = misc.legacy_coordinates.map_or(misc.mueller == 0, |_| {
         misc.conjugate_mueller == StokesType::LL as u32
     });
     coordinates.add_coordinate(StokesCoordinate::new(vec![if first_hand {
@@ -398,7 +399,7 @@ fn build_cell(
     } else {
         StokesType::LL
     }]));
-    if let Some((_, spectral)) = misc.legacy_vla {
+    if let Some((_, spectral)) = misc.legacy_coordinates {
         coordinates.add_coordinate(spectral.clone());
         let mut record = coordinates.to_record();
         let reference = spectral
@@ -443,20 +444,10 @@ fn build_cell(
                 "ConjPoln",
                 ScalarValue::Int32(misc.conjugate_mueller as i32),
             ),
-            field(
-                "TelescopeName",
-                ScalarValue::String(
-                    if misc.legacy_vla.is_some() {
-                        "VLA"
-                    } else {
-                        "EVLA"
-                    }
-                    .into(),
-                ),
-            ),
+            field("TelescopeName", ScalarValue::String(misc.telescope.into())),
             field(
                 "BandName",
-                ScalarValue::String(misc.legacy_vla.map_or("", |(band, _)| band).into()),
+                ScalarValue::String(misc.legacy_coordinates.map_or("", |(band, _)| band).into()),
             ),
             field("Diameter", ScalarValue::Float64(misc.diameter_m)),
             field("OpCode", ScalarValue::Bool(false)),
