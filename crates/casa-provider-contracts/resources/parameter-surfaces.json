@@ -24229,8 +24229,7 @@
             "python": {"name": "channelavg", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Channel Average", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when":
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
+          "surface_note": "MeasurementSet TFCrop uses channel averaging. Calibration automatic agents use stored channels. MeasurementSet RFlag channel averaging remains on #978."
         },
         {
           "name": "chanbin",
@@ -24246,8 +24245,7 @@
             "presentation": {"label": "Channel Bin", "group": "Clip", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata accepts per-window channel counts and maps averaged flags back to the input channels. Mstransform uses the bin width to create new visibility channels."},
-          "unimplemented": {"issue": 978, "applies_when":
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
+          "surface_note": "Calibration automatic agents use stored channel samples."
         },
         {
           "name": "timeavg",
@@ -24262,8 +24260,7 @@
             "python": {"name": "timeavg", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Time Average", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when":
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
+          "surface_note": "MeasurementSet TFCrop uses time averaging. Calibration automatic agents use stored integrations. MeasurementSet RFlag time averaging remains on #978."
         },
         {
           "name": "timebin",
@@ -24278,8 +24275,7 @@
             "python": {"name": "timebin"},
             "presentation": {"label": "Time Bin", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when":
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
+          "surface_note": "Calibration automatic agents parse this value when time averaging is requested."
         },
         {
           "name": "quackincrement",
@@ -24364,8 +24360,7 @@
             "python": {"name": "ntime", "type_hint": "str | float"},
             "presentation": {"label": "Time Chunk", "group": "Automatic", "advanced": true}
           },
-          "surface_note": "Time-averaged clipping, TFCrop and flag extension process each iterator chunk independently. Rflag chunk controls remain on #1616.",
-          "unimplemented": {"issue": 1616, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
+          "surface_note": "Time-averaged clipping, TFCrop and flag extension process each iterator chunk independently. Calibration automatic agents follow stored scan boundaries. MeasurementSet RFlag chunk controls remain on #1616."
         },
         {
           "name": "combinescans",
@@ -24379,8 +24374,7 @@
             "provider": {"field": "combinescans"},
             "python": {"name": "combinescans"},
             "presentation": {"label": "Combine Scans", "group": "Automatic", "advanced": true}
-          },
-          "unimplemented": {"issue": 1616, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
+          }
         },
         {
           "name": "timefit",
