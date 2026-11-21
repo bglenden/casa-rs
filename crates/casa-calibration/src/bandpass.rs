@@ -339,11 +339,12 @@ pub(crate) fn solve_bandpass(
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang && !rotate_model,
+        request.parang,
         use_casa_solve,
         if use_casa_solve {
             crate::solve::grouping::PriorCalibrationMode::Bandpass {
                 share_input_flags: !request.correlation_dependent_flags && !polynomial_bandpass,
+                rotate_model,
             }
         } else {
             crate::solve::grouping::PriorCalibrationMode::Data

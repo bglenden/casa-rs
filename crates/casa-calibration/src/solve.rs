@@ -461,9 +461,13 @@ pub(crate) fn solve_gain_rows(
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang && !rotate_model,
+        request.parang,
         true,
-        grouping::PriorCalibrationMode::Data,
+        grouping::PriorCalibrationMode::Gain {
+            scalar: request.gain_type == GainType::T,
+            rotate_model,
+            share_input_flags: !request.correlation_dependent_flags,
+        },
     )?;
     let requested_preaverage = request.preaverage_seconds as f32;
     let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
@@ -490,7 +494,13 @@ pub(crate) fn solve_gain_rows(
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.
             preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * 0.999),
-            correlation_dependent_flags: request.correlation_dependent_flags,
+            // Polarized preapply combines raw flags before applying priors.
+            // A newly flagged cross-hand must not invalidate parallel hands.
+            correlation_dependent_flags: request.correlation_dependent_flags
+                || context
+                    .preapplied_rows
+                    .as_ref()
+                    .is_some_and(|rows| rows.polarized),
             robust_seed: request.robustness.enabled(),
             channelized: false,
             polynomial_bandpass: false,

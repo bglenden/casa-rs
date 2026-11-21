@@ -139,21 +139,19 @@ pub(super) fn apply_row(
     row: &ApplyRowPlan,
     input: ExecutionRowInputs<'_>,
     plan: &ApplyPlan,
-    loaded: &[LoadedCalibrationTable],
-    parang: Option<&ParallacticAngleState>,
+    chain: &ApplyChain,
     geometry: Option<&mut RowGeometryCache>,
     profile: Option<&mut ApplyRowComputeProfile>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
     let Some(selection) = plan.channel_selections.get(&row.data_spw_id) else {
-        return apply_row_all_channels(row, input, plan, loaded, parang, geometry, profile);
+        return apply_row_all_channels(row, input, plan, chain, geometry, profile);
     };
     let selected = SelectedInputs::new(input, selection)?;
     let mut result = apply_row_all_channels(
         row,
         selected.inputs(input, selection),
         plan,
-        loaded,
-        parang,
+        chain,
         geometry,
         profile,
     )?;

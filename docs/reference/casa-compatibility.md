@@ -83,7 +83,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `f1688b90405d89c94fc7a1c03a32420351e47d3b`. Status counts: Default only: 0, Implemented: 1, Not implemented: 0, Partial: 20, Unassessed: 0.
+Audit baseline: `45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e`. Status counts: Default only: 0, Implemented: 1, Not implemented: 0, Partial: 20, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -91,7 +91,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 |---|---|---|---|---|---|
 | `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Single ordinary or Multi-MS input; required path, partition mutations, backups, HISTORY and returns are compared. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [oracle](#applycal-evidence-oracle), [mms-oracle](#applycal-evidence-mms-oracle), [source](#applycal-evidence-source) |
 | `field` | `''` | `''`; `field` → `field` | Partial | Default and PHASE field selection preserve unselected rows. Complete FIELD grammar and combinations remain to be CASA compared. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
-| `spw` | `''` | `''`; `spw` → `spw` | Partial | CASA window and channel grammar serves applycal, including wildcard selection, channels, strides, descending and compressed windows. Whole-window selections stay implicit. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
+| `spw` | `''` | `''`; `spw` → `spw` | Partial | CASA window and channel grammar serves applycal, including wildcard selection, channels, strides, descending and compressed windows. Whole-window selections stay implicit. [common-application](#applycal-behavior-common-application) [leakage-application](#applycal-behavior-leakage-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source), [leakage-application](#applycal-evidence-leakage-application) |
 | `intent` | `''` | `''`; `intent` → `intent` | Partial | Native STATE grammar handles exact comma-separated OBS_MODE components, patterns, quoted patterns, regexes, intersections, IDs/ranges/bounds, flagged states, and partial numeric lists. Scalar literal text is preserved, including none. Intent remains active with selectdata=False. Current same-input cases pass; full callable/coercion and cross-parameter domains remain. Bounds mask flagged states while explicit IDs/ranges may select them; empty combined bounds reject before unioning, as CASA does. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `selectdata` | `True` | `True`; `selectdata` → `selectdata` | Partial | When false, applycal accepts and ignores timerange/uvrange/antenna/scan/observation/msselect while retaining their original inputs for HISTORY. Field, SPW and intent still select. Public CASA comparisons pass; complete remaining API/coercion domains stay open. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `timerange` | `''` | `''`; `timerange` → `timerange` | Partial | The shared CASA time grammar handles exact, range, duration, bound, wildcard and explicit buffer forms. The task wrapper removes a literal outer bracket pair before parsing. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
@@ -102,13 +102,13 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `msselect` | `''` | `''`; `msselect` → `msselect` | Partial | Native TaQL selection exists; full CASA-supported forms, errors and mutation scope remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `docallib` | `False` | `False`; `docallib` → `docallib` | Partial | Native task-library activation, inactive traditional controls and original flat-spwmap HISTORY are CASA-compared, including deferred parse-error setup. Full remaining callable/coercion domains stay open with the common task acceptance. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `callib` | `''` | `''`; `callib` → `callib` | Partial | G/T/B task files follow CalLibraryGram typed/case-sensitive grammar, CWD paths, first table-level calwt, comma/newline entries, raw MS slices, buffer intent scope, field/observation/scan/antenna/SPW maps and overlap refusal. Missing axes use skip/strict rules; entirely unmapped antenna groups pass unflagged. Reach is retained but not consumed upstream. Remaining supported-family/chain and callable/state domains stay open. Literal relative library names and Multi-MS application are compared. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
-| `gaintable` | `[]` | `[]`; `gaintable` → `gaintable` | Partial | Traditional and library paths exercise supported Jones families. G/T/B/BPOLY/K, Antpos, opacity and gain-curve tables retain their coefficient, flag and weight behavior. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`path` (calibration_table)], length 0..many; scalar allowed | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
+| `gaintable` | `[]` | `[]`; `gaintable` → `gaintable` | Partial | Traditional and library paths exercise supported Jones families. G/T/B/BPOLY/K, Antpos, opacity and gain-curve tables retain their coefficient, flag and weight behavior. Leakage Jones tables use four-product calibration and leave leakage weights unchanged. [common-application](#applycal-behavior-common-application) [leakage-application](#applycal-behavior-leakage-application)<br>Catalog domain: list[`path` (calibration_table)], length 0..many; scalar allowed | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source), [leakage-application](#applycal-evidence-leakage-application) |
 | `gainfield` | `[]` | `[]`; `gainfield` → `gainfield` | Partial | Default application merges selected calibration fields in time. Numeric/name/glob/list/range forms and nearest mapping are CASA-compared, including selected-field SPW availability and nearest-field observation scope. Native restores the source-intended ambiguity error disabled by CASA sort options. Full grammar/coercion and remaining boundary combinations stay open. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `interp` | `[]` | `[]`; `interp` → `interp` | Partial | Shared native time curves implement nearest/linear/cubic, corrected natural spline, per-observation/per-scan and PD controls; B frequency curves include nearest/linear/cubic/spline, flag registration and relative frequencies. Shifted grids, scalar B PD exclusion, missing context/antenna slices and compressed-grid copies are checked. Remaining family-specific and irregular-grid/error combinations stay on #1518. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `spwmap` | `[]` | `[]`; `spwmap` → `spwmap` | Partial | Identity, scalar broadcast, partial prefixes, automatic -999 fanout and whole-list metadata validation are CASA-compared on multiple SPWs. Metadata windows without solutions use skip/strict behavior; field selection determines availability before mapping. Remaining coercion/chain and family domains remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `variant` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `calwt` | `[True]` | `[True]`; `calwt` → `calwt` | Partial | Per-table weights, single-value broadcast and short-list failure state are compared. Opacity and gain-curve terms now calibrate weights for their physical correction. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`bool`], length 0..many; scalar allowed | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
-| `parang` | `False` | `False`; `parang` → `parang` | Partial | Standalone circular and full four-correlation linear feed rotation, selected channels, input-flag propagation, trial/flag-only modes and invalid two-linear-correlation error/state match CASA. Full chain/geometry/domain combinations remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
-| `applymode` | `''` | `''`; `applymode` → `applymode` | Partial | All six modes are implemented and CASA-compared, including unavailable SPWs, flag-only preservation, selected channels, new/existing corrected data and trial validation. Empty selections error in every native mode. Full remaining parameter/error combinations stay open. [common-application](#applycal-behavior-common-application)<br>Catalog domain: ``, `calflag`, `calflagstrict`, `calonly`, `flagonly`, `flagonlystrict`, `trial` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
+| `parang` | `False` | `False`; `parang` → `parang` | Partial | Standalone circular and full four-correlation linear feed rotation, selected channels, input-flag propagation, trial/flag-only modes and invalid two-linear-correlation error/state match CASA. Full chain/geometry/domain combinations remain. [common-application](#applycal-behavior-common-application) [leakage-application](#applycal-behavior-leakage-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source), [leakage-application](#applycal-evidence-leakage-application) |
+| `applymode` | `''` | `''`; `applymode` → `applymode` | Partial | All six modes are implemented and CASA-compared, including unavailable SPWs, flag-only preservation, selected channels, new/existing corrected data and trial validation. Empty selections error in every native mode. Full remaining parameter/error combinations stay open. [common-application](#applycal-behavior-common-application) [leakage-application](#applycal-behavior-leakage-application)<br>Catalog domain: ``, `calflag`, `calflagstrict`, `calonly`, `flagonly`, `flagonlystrict`, `trial` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source), [leakage-application](#applycal-evidence-leakage-application) |
 | `flagbackup` | `True` | `True`; `flagbackup` → `flagbackup` | Partial | Backup is saved before selection/table validation in flag-writing modes, including rejected requests, matching CASA. Existing native restore checks and public backup counts pass. Full version contents/metadata and remaining API/error combinations remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 
 #### applycal interacting modes and task behavior
@@ -122,7 +122,36 @@ New calibration families remain on their owning tickets under #979. Detailed per
 
 Evidence: [oracle](#applycal-evidence-oracle), [mms-oracle](#applycal-evidence-mms-oracle), [performance](#applycal-evidence-performance).
 
+<a id="applycal-behavior-leakage-application"></a>
+##### Apply linearized and full-matrix leakage to four polarization products
+
+**Implemented** — Linear and circular four-product data with D, Df, Dgen, Dfgen, DLLS and DfLLS tables. Includes variable time and channel solutions, G/D/P order, flags, missing antennas, subselected channels, and unequal scalar and spectral weights.
+
+The permuted-correlation and malformed-table differences are documented below. Cross-hand phase families continue under #1522.
+
+Evidence: [leakage-application](#applycal-evidence-leakage-application).
+
 #### applycal deviations and unfinished work
+
+##### honor-leakage-correlation-metadata: Proposed
+
+- Inputs: A consistent linear-feed CORR_TYPE order of XX, YY, XY, YX.
+- CASA: Applies the correction to fixed slots and modifies a parallel hand.
+- casa-rs: Applies the leakage correction and flags to the products named by the MeasurementSet.
+- Rationale: The four-product layout is valid in casacore. Applying a cross-hand formula to a parallel hand changes the observed data incorrectly.
+- User impact: The native output equals permuting the canonical-order result.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [leakage-application](#applycal-evidence-leakage-application).
+
+##### reject-underspecified-leakage-shape: Proposed
+
+- Inputs: A D Jones calibration table with one complex receptor per solution.
+- CASA: Aborts with ArrayShapeError.
+- casa-rs: Raises a catchable invalid calibration shape error.
+- Rationale: Two coefficients are required for a four-product leakage correction.
+- User impact: The caller can handle the malformed caltable without losing the process.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [leakage-application](#applycal-evidence-leakage-application).
 
 #### applycal evidence
 
@@ -219,6 +248,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `06cf4d1f6da24cc8627d7d535c3b1b0ef98eac29`; CASA: `6.7.6.14`.
 - Command: `python tools/casa-compat/applycal_mms_oracle.py --work target/calibration-1518/mms-reviewed --native-bin target/calibration-1518/calibrate-mms-reviewed-debug`.
 - Receipt: `resources/casa-compat/evidence/applycal-mms-20261117.json`.
+
+<a id="applycal-evidence-leakage-application"></a>
+##### leakage-application
+
+**Same-input public-Python and casacore readback — passed.** 56 direct visibility comparisons and eight polarized MODEL_DATA gain solves passed. Maximum visibility normalized RMS was 1.45e-7 and maximum gain normalized RMS was 1.03e-7. Linear and circular four-product data with D, Df, Dgen, Dfgen, DLLS and DfLLS tables. Includes variable time and channel solutions, G/D/P order, flags, missing antennas, subselected channels, and unequal scalar and spectral weights.
+
+- [tools/casa-compat/calibration_leakage_apply_oracle.py](https://github.com/bglenden/casa-rs/blob/45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e/tools/casa-compat/calibration_leakage_apply_oracle.py)
+- Revision: `45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/calibration_leakage_apply_oracle.py --work <new-directory>`.
+- Receipt: `resources/casa-compat/evidence/leakage-application-20261121.json`.
 
 ### bandpass
 
