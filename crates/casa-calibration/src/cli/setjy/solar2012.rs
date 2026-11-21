@@ -10,6 +10,7 @@ use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::selected_model_combinations;
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+    parse_numeric_row_id_ranges,
 };
 use casa_provider_contracts::{CasaFloat, CasaValue, FloatDtype};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
@@ -19,7 +20,7 @@ use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frequency::MFrequency;
 use casa_types::measures::position::MPosition;
 
-use super::{entry, execution, model_files, record_history};
+use super::{entry, execution, model_files, record_history, requested_windows};
 use crate::attachment::OpenedMs;
 use crate::ft::setjy::solar2012::{Solar2012, bands};
 use crate::ft::write_model_scratch;
@@ -39,9 +40,11 @@ pub(super) fn run(
     let mut opened = opened
         .initialize(VisibilityDataColumn::ModelData)
         .map_err(execution)?;
+    record_history(task, path, partition);
     let engine = MsCalEngine::for_calibration(&opened.measurement_set).map_err(execution)?;
     let by_channel = task.flag("scalebychan")?;
     let ephemeris_direction = task.flag("useephemdir")?;
+    let requested = requested_windows(&opened.measurement_set, selection.spw.as_deref())?;
     let mut groups = BTreeMap::<i32, BTreeMap<i32, Vec<usize>>>::new();
     for row in &selected.selected_rows {
         groups
@@ -51,19 +54,14 @@ pub(super) fn run(
             .or_default()
             .push(row.row_index);
     }
-    let observation_id = {
-        let column = opened
-            .measurement_set
-            .main_table()
-            .column_accessor("OBSERVATION_ID")
-            .map_err(execution)?;
-        selected.row_indices().try_fold(i32::MAX, |first, row| {
-            let ScalarValue::Int32(id) = column.scalar_cell(row).map_err(execution)? else {
-                return Err(execution("expected an integer observation ID"));
-            };
-            Ok(first.min(*id))
-        })?
-    };
+    let observation_id = selection
+        .observation
+        .as_deref()
+        .map(|ids| parse_numeric_row_id_ranges(ids, "observation"))
+        .transpose()
+        .map_err(execution)?
+        .and_then(|ranges| ranges.first().map(|&(first, _)| first))
+        .unwrap_or(0);
     let mut fields = Vec::with_capacity(groups.len() + 1);
     for (field, windows) in groups {
         let prepared = model(
@@ -71,11 +69,14 @@ pub(super) fn run(
             &engine,
             field,
             observation_id,
-            &windows,
+            WindowSelection {
+                requested: &requested,
+                rows: &windows,
+            },
             by_channel,
             ephemeris_direction,
         );
-        let (models, returned, time) = match prepared {
+        let prepared = match prepared {
             Ok(model) => model,
             Err(error) => {
                 tracing::warn!(field, message = %error.message, "no 2012 Solar System flux model");
@@ -87,24 +88,24 @@ pub(super) fn run(
         let mut rows = opened.resolve(&selection).map_err(execution)?;
         rows.channel_selections.clear();
         let ms = &opened.measurement_set;
-        let prepared = VisibilityModels::from_entries(ms, &rows.selected_rows, &models)
+        let visibility = VisibilityModels::from_entries(ms, &rows.selected_rows, &prepared.models)
             .and_then(|models| models.with_calibration_field_directions(ms))
             .map_err(execution)?
-            .with_phase_centre_time(time);
+            .with_phase_centre_time(prepared.time);
         write_model_scratch(
             &mut opened.measurement_set,
             &rows,
-            &models,
+            &prepared.models,
             false,
             true,
-            Some(prepared),
+            Some(visibility),
             &mut opened.lock,
         )
         .map_err(execution)?;
-        fields.push(entry(field.to_string(), returned));
+        super::super::history::record_setjy_flux(path, prepared.history);
+        fields.push(entry(field.to_string(), prepared.returned));
     }
     opened.release().map_err(execution)?;
-    record_history(task, path, partition);
     fields.push(entry(
         "format",
         CasaValue::String {
@@ -114,18 +115,30 @@ pub(super) fn run(
     Ok(CasaValue::Dict { entries: fields })
 }
 
+struct WindowSelection<'a> {
+    requested: &'a [i32],
+    rows: &'a BTreeMap<i32, Vec<usize>>,
+}
+
+struct PreparedField {
+    models: Vec<VirtualModelEntry>,
+    returned: CasaValue,
+    time: f64,
+    history: Vec<String>,
+}
+
 fn model(
     ms: &MeasurementSet,
     engine: &MsCalEngine,
     field: i32,
     observation_id: i32,
-    rows: &BTreeMap<i32, Vec<usize>>,
+    selection: WindowSelection<'_>,
     by_channel: bool,
     use_ephemeris_direction: bool,
-) -> Result<(Vec<VirtualModelEntry>, CasaValue, f64), TaskFailure> {
+) -> Result<PreparedField, TaskFailure> {
     let fields = ms.field().map_err(execution)?;
     let name = fields.name(field as usize).map_err(execution)?;
-    let time = model_time(ms, field, rows)?;
+    let time = model_time(ms, field, selection.rows)?;
     let mut frame = engine
         .spectral_frame_observatory_direction(
             time,
@@ -165,10 +178,11 @@ fn model(
         .with_position(position)
         .with_direction(solar.direction().clone());
     let windows = ms.spectral_window().map_err(execution)?;
-    let mut models = Vec::with_capacity(rows.len());
-    let mut returned = Vec::with_capacity(rows.len() + 1);
+    let mut models = Vec::with_capacity(selection.rows.len());
+    let mut returned = Vec::with_capacity(selection.requested.len() + 1);
+    let mut history = Vec::with_capacity(selection.requested.len());
     let mut last_supported = false;
-    for (&window, selected) in rows {
+    for &window in selection.requested {
         let centers = windows.chan_freq(window as usize).map_err(execution)?;
         let width = windows.chan_width(window as usize).map_err(execution)?;
         if centers.is_empty() || centers.len() != width.len() {
@@ -191,24 +205,34 @@ fn model(
             .component(direction.clone(), &frame, &frequencies, &bands, by_channel)
             .map_err(execution)?;
         last_supported = supported;
-        let container = ComponentList::from(vec![model])
-            .to_record()
-            .map_err(execution)?;
-        models.push(VirtualModelEntry {
-            kind: VirtualModelKind::ComponentList,
-            index_combination: selected_model_combinations(ms, selected)
-                .map_err(execution)?
-                .index_combination,
-            channel_selection: vec![[
-                window,
-                0,
-                i32::try_from(centers.len()).map_err(execution)?,
-                1,
-            ]],
-            container,
-        });
+        if let Some(selected) = selection.rows.get(&window) {
+            let container = ComponentList::from(vec![model])
+                .to_record()
+                .map_err(execution)?;
+            models.push(VirtualModelEntry {
+                kind: VirtualModelKind::ComponentList,
+                index_combination: selected_model_combinations(ms, selected)
+                    .map_err(execution)?
+                    .index_combination,
+                channel_selection: vec![[
+                    window,
+                    0,
+                    i32::try_from(centers.len()).map_err(execution)?,
+                    1,
+                ]],
+                container,
+            });
+        }
         let stokes = [CasaFloat(flux), CasaFloat(0.), CasaFloat(0.), CasaFloat(0.)];
-        let flux = if rows.len() == 1 {
+        let window_label = if selection.requested.len() == 1 {
+            window.to_string()
+        } else {
+            format!("spw{window}")
+        };
+        history.push(format!(
+            " {name}: spw {window_label} Flux:[I={flux},Q=0.0,U=0.0,V=0.0] +/- [I=0.0,Q=0.0,U=0.0,V=0.0] Jy"
+        ));
+        let flux = if selection.requested.len() == 1 {
             CasaValue::List {
                 items: stokes
                     .into_iter()
@@ -235,7 +259,12 @@ fn model(
         ));
     }
     returned.push(entry("fieldName", CasaValue::String { value: name }));
-    Ok((models, CasaValue::Dict { entries: returned }, time))
+    Ok(PreparedField {
+        models,
+        returned: CasaValue::Dict { entries: returned },
+        time,
+        history,
+    })
 }
 
 fn model_time(

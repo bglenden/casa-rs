@@ -3,6 +3,7 @@
 """Compare 2012 Solar System setjy bands, models, and ephemeris directions."""
 
 import argparse
+from contextlib import chdir
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -11,6 +12,7 @@ from casatools import ms, table
 import numpy as np
 
 from bandpass_oracle import source_data
+from record_casa_returns import make_cal_ms
 from setjy_manual_oracle import add_second_window, compare, data, make_input
 from setjy_solar2010_oracle import casa, ephemeris_observation, read_scratch_in_both, rust
 
@@ -75,6 +77,7 @@ def spectral_windows(seed, root):
     with TemporaryDirectory(dir=root, prefix='spectral-windows-') as tmp:
         for by_channel in (True, False):
             outputs = []
+            sparse = []
             for writer, implementation in (('casa', casa), ('rust', rust)):
                 path = Path(tmp) / f'{writer}-{by_channel}.ms'
                 dataset(seed, path, 'Mars', 58000., 100e9, 'ALMA')
@@ -86,17 +89,33 @@ def spectral_windows(seed, root):
                 result = implementation.setjy(str(path), field='0', spw='0:0~2,1:1~3',
                                               standard=SCALE, scalebychan=by_channel)
                 assert list(result['0']) == ['0', '1', 'fieldName']
+                flux_history_matches(path, [result['0'][str(spw)]['fluxd'][0] for spw in (0, 1)])
                 model = data(path, 'MODEL_DATA')
                 np.testing.assert_array_equal(model[..., fields == 1], 1 + 0j,
                                               err_msg='unselected field')
                 assert np.any(abs(model[0, -1, (fields == 0) & (windows == 1)]) > 1.)
                 outputs.append((result, model))
+                if by_channel:
+                    assert tb.open(str(path / 'FIELD'), nomodify=False)
+                    assert tb.putcell('NAME', 1, 'Mars') and tb.done()
+                    result = implementation.setjy(str(path), field='1', spw='0,1', standard=SCALE)
+                    assert list(result['1']) == ['0', '1', 'fieldName']
+                    assert all(isinstance(result['1'][str(spw)]['fluxd'], np.ndarray)
+                               for spw in (0, 1))
+                    after = data(path, 'MODEL_DATA')
+                    np.testing.assert_array_equal(after[..., fields == 0], model[..., fields == 0])
+                    sparse.append((result, after))
             reference, actual = outputs
             for window in ('0', '1'):
                 flux = actual[0]['0'][window]['fluxd']
                 assert isinstance(flux, np.ndarray) and flux.shape == (4,)
                 np.testing.assert_allclose(flux, reference[0]['0'][window]['fluxd'], rtol=2.e-6)
             compare(f'multiple SPWs by-channel={by_channel}', actual[1], reference[1])
+            if by_channel:
+                for window in ('0', '1'):
+                    np.testing.assert_allclose(sparse[1][0]['1'][window]['fluxd'],
+                                               sparse[0][0]['1'][window]['fluxd'], rtol=2.e-6)
+                compare('explicit windows with sparse field coverage', sparse[1][1], sparse[0][1])
 
 
 def incomplete_spectrum(seed, root):
@@ -118,6 +137,29 @@ def incomplete_spectrum(seed, root):
             np.testing.assert_array_equal(model[..., -1, row_mask], 0.)
             found.append(model)
         compare('unsupported last channel retains other channels', found[1], found[0])
+
+
+def signed_width(root):
+    with TemporaryDirectory(dir=root, prefix='signed-width-') as tmp:
+        work = Path(tmp)
+        seed = work / 'one-channel.ms'
+        make_cal_ms(str(seed), channels=1, stokes='XX XY YX YY')
+        results = {}
+        for label, implementation in (('casa', casa), ('rust', rust)):
+            for width in (1e9, -1e9):
+                path = work / f'{label}-{width}.ms'
+                dataset(seed, path, 'Titan', 60000., 345.9e9, 'ALMA')
+                tb = table()
+                assert tb.open(str(path / 'SPECTRAL_WINDOW'), nomodify=False)
+                assert tb.putcell('CHAN_WIDTH', 0, [width]) and tb.done()
+                result = implementation.setjy(str(path), field='0', standard=SCALE)
+                results[label, width] = (result['0']['0']['fluxd'][0], data(path, 'MODEL_DATA'))
+        expected, model = results['casa', 1e9]
+        assert abs(results['casa', -1e9][0] / expected - 1.) > .1
+        for width in (1e9, -1e9):
+            actual, predicted = results['rust', width]
+            np.testing.assert_allclose(actual, expected, rtol=2.e-6)
+            compare(f'positive bandwidth with signed channel width {width}', predicted, model)
 
 
 def attached_field(seed, root):
@@ -194,6 +236,78 @@ def scan_and_time_selection(seed, root):
         np.testing.assert_array_equal(model[..., ~selected], initial[..., ~selected])
 
 
+def observatory_selection(seed, root):
+    with TemporaryDirectory(dir=root, prefix='observatory-') as tmp:
+        models = []
+        for writer, implementation in (('casa', casa), ('rust', rust)):
+            path = Path(tmp) / f'{writer}.ms'
+            dataset(seed, path, 'Mars', 58000., 100e9, 'Unknown observatory')
+            tb = table()
+            assert tb.open(str(path / 'OBSERVATION'), nomodify=False)
+            record = {name: tb.getcell(name, 0) for name in tb.colnames()
+                      if tb.iscelldefined(name, 0)}
+            assert tb.addrows(1)
+            for name, value in (record | {'TELESCOPE_NAME': 'ALMA'}).items():
+                assert tb.putcell(name, 1, value)
+            assert tb.done()
+            assert tb.open(str(path), nomodify=False)
+            field = tb.getcol('FIELD_ID')
+            assert tb.putcol('OBSERVATION_ID', (field == 0).astype(np.int32)) and tb.done()
+            original = data(path, 'MODEL_DATA')
+            try:
+                implementation.setjy(str(path), field='0', standard=SCALE)
+            except Exception as error:
+                assert 'No componentlist is generated' in str(error)
+            else:
+                raise AssertionError('the default must read OBSERVATION row zero')
+            np.testing.assert_array_equal(data(path, 'MODEL_DATA'), original)
+            result = implementation.setjy(str(path), field='0', standard=SCALE,
+                                          observation=1 if writer == 'casa' else '1')
+            assert result['0']['0']['fluxd'][0] > 1.
+            models.append(data(path, 'MODEL_DATA'))
+        compare('explicit observatory selection', models[1], models[0])
+
+
+def flux_history_matches(path, expected):
+    history = path / 'HISTORY'
+    messages = data(history, 'MESSAGE')
+    is_flux = ((data(history, 'APPLICATION') == 'setjy') & (data(history, 'ORIGIN') == 'setjy')
+               & (np.char.find(messages, 'Flux:[I=') >= 0))
+    fluxes = [float(text.split('Flux:[I=', 1)[1].split(',', 1)[0]) for text in messages[is_flux]]
+    np.testing.assert_allclose(fluxes, expected, rtol=2.e-6)
+    assert np.any(np.char.find(messages, 'taskname') >= 0)
+
+
+def partial_history(seed, root):
+    with TemporaryDirectory(dir=root, prefix='partial-history-') as tmp:
+        work = Path(tmp).resolve()
+        models, logged_flux = [], []
+        with chdir(work):
+            for writer, implementation in (('casa', casa), ('rust', rust)):
+                path = work / f'{writer}.ms'
+                dataset(seed.resolve(), path, 'Mars', 58000., 100e9, 'ALMA')
+                try:
+                    implementation.setjy(str(path), field='0,1', standard=SCALE)
+                except Exception as error:
+                    assert 'No componentlist is generated' in str(error)
+                else:
+                    raise AssertionError('the second field should fail to calibrate')
+                model = data(path, 'MODEL_DATA')
+                field = data(path, 'FIELD_ID')
+                assert np.any(abs(model[0, :, field == 0]) > 1.)
+                np.testing.assert_array_equal(model[..., field == 1], 1 + 0j)
+                history = path / 'HISTORY'
+                messages = data(history, 'MESSAGE')
+                flux = [float(text.split('Flux:[I=', 1)[1].split(',', 1)[0])
+                        for text in messages if 'Mars:' in text and 'Flux:[I=' in text]
+                assert len(flux) == 1 and flux[0] > 1.
+                flux_history_matches(path, flux)
+                logged_flux.append(flux)
+                models.append(model)
+        np.testing.assert_allclose(logged_flux[1], logged_flux[0], rtol=2.e-6)
+        compare('first field persists after later field failure', models[1], models[0])
+
+
 def solve_with_both_writers(seed, root, standard, epoch):
     with TemporaryDirectory(dir=root, prefix='solve-') as tmp:
         expected = {}
@@ -231,8 +345,11 @@ def main():
     paired(seed, args.root, 'Titan', 60000., 100e9)
     spectral_windows(seed, args.root)
     incomplete_spectrum(seed, args.root)
+    signed_width(args.root)
     attached_field(seed, args.root)
     scan_and_time_selection(seed, args.root)
+    observatory_selection(seed, args.root)
+    partial_history(seed, args.root)
     rejects(seed, args.root, 'Aldebaran', 58000., 100e9)
     rejects(seed, args.root, 'Mars', 58000., 1.4e9)
     rejects(seed, args.root, 'Mars', 58000., 100e9, telescope='Unknown observatory')
