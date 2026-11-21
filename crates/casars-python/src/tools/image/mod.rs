@@ -50,6 +50,7 @@ mod region_read;
 mod replace_masked;
 mod serialization;
 mod slice;
+mod smoothing;
 mod statistics;
 mod stubs;
 mod subimage;

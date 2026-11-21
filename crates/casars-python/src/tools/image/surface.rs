@@ -88,7 +88,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("brightnessunit", &[], R::Any, Yes),
     method(
@@ -584,7 +584,7 @@ const METHODS: &[Method] = &[
             param("dmethod", K::Text, Text("copy")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("haslock", &[], R::Any, Yes),
     method(
