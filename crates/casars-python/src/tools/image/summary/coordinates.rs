@@ -3,7 +3,9 @@
 use std::fmt::Write;
 
 use casa_coordinates::display::format_stream_value;
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, SpectralCoordinate};
+use casa_coordinates::{
+    Coordinate, CoordinateModel, CoordinateSystem, QualityType, SpectralCoordinate,
+};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::PositionRef;
@@ -139,7 +141,7 @@ const HEADERS: [&str; 11] = [
 struct ReportRow {
     order: (usize, usize),
     fields: [String; HEADERS.len()],
-    stokes: bool,
+    labels_only: bool,
 }
 
 fn rows(
@@ -207,7 +209,7 @@ fn rows(
                     },
                     format!(" {}", units[local]),
                 ],
-                stokes: false,
+                labels_only: false,
             };
             let mut velocity_row = None;
             match model {
@@ -245,7 +247,20 @@ fn rows(
                             .map_or("?", |kind| kind.name())
                             .to_owned()
                     };
-                    row.stokes = true;
+                    row.labels_only = true;
+                }
+                CoordinateModel::Quality(quality) => {
+                    row.fields[7] = if pixel.is_some() {
+                        quality
+                            .values()
+                            .iter()
+                            .map(|label| label.name())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    } else {
+                        QualityType::from_world(reference).name().into()
+                    };
+                    row.labels_only = true;
                 }
                 CoordinateModel::Spectral(spectral) => {
                     velocity_row = spectral_row(
@@ -329,7 +344,7 @@ fn spectral_row(
     Ok(Some(ReportRow {
         order: (axis, offset + 1),
         fields,
-        stokes: false,
+        labels_only: false,
     }))
 }
 
@@ -433,7 +448,7 @@ pub(super) fn report(
     let widths = std::array::from_fn(|column| {
         let content = rows
             .iter()
-            .filter(|row| !row.stokes || column < 8)
+            .filter(|row| !row.labels_only || column < 8)
             .map(|row| row.fields[column].chars().count())
             .max()
             .unwrap_or(0);
@@ -446,7 +461,7 @@ pub(super) fn report(
         if index != 0 {
             report.push('\n');
         }
-        write_table_row(&mut report, &row.fields, &widths, row.stokes);
+        write_table_row(&mut report, &row.fields, &widths, row.labels_only);
     }
     Ok(report)
 }
@@ -455,14 +470,14 @@ fn write_table_row(
     report: &mut String,
     fields: &[impl AsRef<str>; HEADERS.len()],
     widths: &[usize; HEADERS.len()],
-    stokes: bool,
+    labels_only: bool,
 ) {
     for (column, (field, &width)) in fields.iter().zip(widths).enumerate() {
         let field = field.as_ref();
         match column {
             0..=3 => write!(report, "{field:<width$}").unwrap(),
             4..=7 => write!(report, "{field:>width$}").unwrap(),
-            _ if stokes => break,
+            _ if labels_only => break,
             10 => report.push_str(field),
             _ => write!(report, "{field:>width$}").unwrap(),
         }

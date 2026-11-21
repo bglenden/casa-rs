@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use casa_coordinates::display::{format_stream_value, format_stream_value_with_precision};
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, StokesType,
+    Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, QualityType, StokesType,
 };
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::doppler::DopplerRef;
@@ -320,8 +320,8 @@ fn coordinate_rows(
     } else {
         fixed[local]
     };
-    if let CoordinateModel::Stokes(stokes) = model {
-        fields[5] = if pixel.is_some() {
+    let labels = match model {
+        CoordinateModel::Stokes(stokes) => Some(if pixel.is_some() {
             stokes
                 .stokes()
                 .iter()
@@ -334,7 +334,24 @@ fn coordinate_rows(
                 .ok()
                 .and_then(|world| StokesType::from_code(world[local] as i32))
                 .map_or_else(|| "?".into(), |label| label.name().into())
-        };
+        }),
+        CoordinateModel::Quality(quality) => Some(if pixel.is_some() {
+            quality
+                .values()
+                .iter()
+                .map(|label| label.name())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            model.to_world(fixed).ok().map_or_else(
+                || "?".into(),
+                |world| QualityType::from_world(world[local]).name().into(),
+            )
+        }),
+        _ => None,
+    };
+    if let Some(labels) = labels {
+        fields[5] = labels;
         return Ok(vec![AxisRow {
             fields,
             visible: true,

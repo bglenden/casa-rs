@@ -8,7 +8,8 @@
 //! record's coordinates are found where the record places them.
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, QualityCoordinate, QualityType,
+    StokesCoordinate, StokesType,
 };
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -290,6 +291,17 @@ pub(super) fn section_record_reference_pixels(
         let Some(Value::Record(coordinate_record)) = record.get_mut(&coordinate.field) else {
             continue;
         };
+        if coordinate_record.get("quality").is_some() {
+            if let [Some(axis)] = coordinate.pixel_axes.as_slice() {
+                section_quality_labels(
+                    coordinate_record,
+                    start[*axis],
+                    shape[*axis],
+                    stride.map_or(1, |stride| stride[*axis]),
+                )?;
+            }
+            continue;
+        }
         if coordinate.field.starts_with("spectral")
             && let Some(Some(axis)) = coordinate.pixel_axes.first()
             && casa_coordinates::SpectralCoordinate::subimage_tabular_record_with_stride(
@@ -311,6 +323,62 @@ pub(super) fn section_record_reference_pixels(
             }
         }
     }
+    Ok(())
+}
+
+/// Keep the planes selected by the image section in a native Quality subrecord.
+///
+/// # Errors
+/// The stride must be positive and every selected plane must have a label.
+pub fn section_quality_labels(
+    record: &mut RecordValue,
+    start: usize,
+    count: usize,
+    stride: usize,
+) -> Result<(), ImageError> {
+    if stride == 0 {
+        return Err(ImageError::InvalidMetadata(
+            "Quality image section requires a positive stride".into(),
+        ));
+    }
+    let quality = QualityCoordinate::from_record(record)?;
+    let labels: Vec<_> = quality
+        .values()
+        .iter()
+        .copied()
+        .skip(start)
+        .step_by(stride)
+        .take(count)
+        .collect();
+    if labels.len() != count {
+        return Err(ImageError::InvalidMetadata(
+            "Quality axis has fewer planes than the image section".into(),
+        ));
+    }
+    write_quality_labels(record, &labels)
+}
+
+/// Replace the plane labels and reference values of a native Quality subrecord.
+///
+/// # Errors
+/// An empty label list cannot describe a Quality coordinate.
+pub fn write_quality_labels(
+    record: &mut RecordValue,
+    labels: &[QualityType],
+) -> Result<(), ImageError> {
+    let first = labels.first().ok_or_else(|| {
+        ImageError::InvalidMetadata("A Quality axis requires at least one plane".into())
+    })?;
+    record.upsert(
+        "quality",
+        ArrayValue::from_string_vec(labels.iter().map(|kind| kind.name().to_owned()).collect())
+            .into(),
+    );
+    record.upsert(
+        "crval",
+        ArrayValue::from_f64_vec(vec![f64::from(first.code())]).into(),
+    );
+    record.upsert("crpix", ArrayValue::from_f64_vec(vec![0.0]).into());
     Ok(())
 }
 

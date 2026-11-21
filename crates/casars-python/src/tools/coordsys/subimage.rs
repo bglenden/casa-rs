@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_coordinates::tabular::TabularEdit;
-use casa_coordinates::{Coordinate, CoordinateModel, RecordCoordinate, StokesCoordinate};
+use casa_coordinates::{Coordinate, CoordinateModel, RecordCoordinate};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError};
@@ -68,38 +68,39 @@ fn origin_input(input: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<f32>> {
         .collect()
 }
 
-fn select_stokes(
-    coordinate: &StokesCoordinate,
+fn select_discrete<T: Copy>(
+    labels: &[T],
+    field: &str,
     record: &mut RecordValue,
     origin: f32,
     count: Option<i32>,
+    describe: impl Fn(T) -> (&'static str, i32),
 ) -> PyResult<()> {
     let origin = (f64::from(origin) + 0.5) as i32;
     let start = usize::try_from(origin).map_err(|_| raised("Illegal origin shift"))?;
-    let stokes = coordinate
-        .stokes()
+    let labels = labels
         .get(start..)
-        .filter(|stokes| !stokes.is_empty())
+        .filter(|labels| !labels.is_empty())
         .ok_or_else(|| raised("Illegal origin shift"))?;
     let count = count
         .filter(|&count| count > 0)
-        .map_or(stokes.len(), |count| count as usize);
-    let selected = stokes
+        .map_or(labels.len(), |count| count as usize);
+    let selected = labels
         .get(..count)
         .ok_or_else(|| raised("New shape is invalid"))?;
     record.upsert(
-        "stokes",
+        field,
         Value::Array(ArrayValue::from_string_vec(
             selected
                 .iter()
-                .map(|stokes| stokes.name().to_string())
+                .map(|&kind| describe(kind).0.to_owned())
                 .collect(),
         )),
     );
     record.upsert(
         "crval",
         Value::Array(ArrayValue::from_f64_vec(vec![f64::from(
-            selected[0].code(),
+            describe(selected[0]).1,
         )])),
     );
     Ok(())
@@ -141,7 +142,26 @@ fn shift_coordinate(
     match model {
         CoordinateModel::Stokes(coordinate) => {
             if let Some(axis) = placement.pixel_axes[0] {
-                select_stokes(coordinate, stored, origin[axis], shape.get(axis).copied())?;
+                select_discrete(
+                    coordinate.stokes(),
+                    "stokes",
+                    stored,
+                    origin[axis],
+                    shape.get(axis).copied(),
+                    |label| (label.name(), label.code()),
+                )?;
+            }
+        }
+        CoordinateModel::Quality(coordinate) => {
+            if let Some(axis) = placement.pixel_axes[0] {
+                select_discrete(
+                    coordinate.values(),
+                    "quality",
+                    stored,
+                    origin[axis],
+                    shape.get(axis).copied(),
+                    |label| (label.name(), label.code()),
+                )?;
             }
         }
         CoordinateModel::Spectral(coordinate) => {

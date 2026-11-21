@@ -8502,6 +8502,23 @@ such as `21cm`, and records it as `0.21 Hz`. It can also store an infinite
 rest frequency. casa-rs rejects these inputs while preserving the prior
 spectral coordinate.
 
+## Reflected Quality pixels keep their original labels in CASA
+
+For a Float image of shape `[3, 2]` with a linear axis and a Quality axis
+ordered `DATA, ERROR`, CASA 6.7.6.14's `image.transpose(order="-10")` places
+the error pixels first but labels them `DATA`. casa-rs reverses the labels
+with the pixels and retains their association after reopening the image.
+
+## FITS export can abort on an image with a native Quality coordinate
+
+Exporting a Float native image with a two-plane Quality coordinate
+(`DATA` and `ERROR`) with `image.tofits` terminates pinned CASA 6.7.6.14
+with a floating-point exception. With the Quality axis removed from the
+public layout and the `ERROR` plane fixed in the record, export terminates
+with a segmentation fault. casa-rs raises a Python error and preserves the
+image in both cases. Its single-HDU FITS writer cannot represent the data
+and error semantics of a native Quality coordinate.
+
 ## An empty nested list crashes `coordsys.convertmany`
 
 CASA 6.7.6.14 exits with a segmentation fault when a two-axis coordinate

@@ -4,7 +4,7 @@ use casa_coordinates::display::{
     format_latitude_dms_with_precision, format_longitude_hours_with_precision,
     format_stream_value_with_precision,
 };
-use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
+use casa_coordinates::{CoordinateModel, CoordinateType, QualityType, StokesType};
 use casa_types::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
@@ -323,6 +323,7 @@ impl<'a> Values<'a> {
         let unit = &self.units[axis];
         Ok(match self.coordinate {
             CoordinateModel::Stokes(_) => stokes(value),
+            CoordinateModel::Quality(_) => QualityType::from_world(value).name().into(),
             CoordinateModel::Direction(direction) => direction_text(
                 direction.direction_ref(),
                 if direction.longitude_axis().is_none() {
@@ -454,6 +455,9 @@ impl<'a> Values<'a> {
             CoordinateModel::Direction(_) => Err(invalid("casacore::MDirection")),
             CoordinateModel::Spectral(_) => Err(invalid("MFrequency")),
             CoordinateModel::Stokes(_) => Err(invalid("Stokes")),
+            CoordinateModel::Quality(_) => Err(PyRuntimeError::new_err(
+                "Cannot handle Coordinates of type Quality",
+            )),
         }
     }
 }
@@ -538,7 +542,7 @@ fn world_reference(
 fn scientific_coordinate(coordinate: &CoordinateModel) -> bool {
     !matches!(
         coordinate.coordinate_type(),
-        CoordinateType::Direction | CoordinateType::Stokes
+        CoordinateType::Direction | CoordinateType::Stokes | CoordinateType::Quality
     )
 }
 

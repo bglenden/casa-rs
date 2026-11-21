@@ -132,6 +132,11 @@ pub fn try_to_fits_header(
             }
             (CoordinateModel::Spectral(_), [axis]) => emit_spectral(model, &mut h, *axis)?,
             (CoordinateModel::Stokes(_), [axis]) => emit_stokes(model, &mut h, *axis),
+            (CoordinateModel::Quality(_), _) => {
+                return Err(CoordinateError::UnsupportedAxisLayout(
+                    "FITS export cannot represent a native Quality coordinate".into(),
+                ));
+            }
             (_, []) => continue,
             (CoordinateModel::Linear(linear), _) if axes.len() != pixel.len() => {
                 let kept: Vec<_> = pixel

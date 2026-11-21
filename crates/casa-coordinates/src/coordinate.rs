@@ -2,7 +2,7 @@
 //! Core coordinate trait and type enumeration.
 //!
 //! The [`Coordinate`] trait defines the interface that every concrete
-//! coordinate type (linear, direction, spectral, Stokes, tabular) must
+//! coordinate type (linear, direction, spectral, Stokes, tabular, quality) must
 //! implement. [`CoordinateType`] is a simple discriminant used by
 //! [`CoordinateSystem`](crate::CoordinateSystem) to locate coordinates
 //! by kind without downcasting.
@@ -13,10 +13,11 @@ use casa_types::RecordValue;
 
 use crate::error::CoordinateError;
 use crate::{
-    DirectionCoordinate, LinearCoordinate, SpectralCoordinate, StokesCoordinate, TabularCoordinate,
+    DirectionCoordinate, LinearCoordinate, QualityCoordinate, SpectralCoordinate, StokesCoordinate,
+    TabularCoordinate,
 };
 
-/// Discriminant for the five coordinate kinds supported by casacore.
+/// Discriminant for the coordinate kinds supported by casacore.
 ///
 /// This enum corresponds to C++ `Coordinate::Type` and is used by
 /// [`CoordinateSystem::find_coordinate`](crate::CoordinateSystem::find_coordinate)
@@ -33,6 +34,8 @@ pub enum CoordinateType {
     Stokes,
     /// A 1-axis coordinate defined by a lookup table.
     Tabular,
+    /// A 1-axis data/error quality coordinate.
+    Quality,
 }
 
 impl fmt::Display for CoordinateType {
@@ -43,6 +46,7 @@ impl fmt::Display for CoordinateType {
             Self::Spectral => f.write_str("Spectral"),
             Self::Stokes => f.write_str("Stokes"),
             Self::Tabular => f.write_str("Tabular"),
+            Self::Quality => f.write_str("Quality"),
         }
     }
 }
@@ -55,6 +59,7 @@ pub enum CoordinateModel {
     Spectral(Box<SpectralCoordinate>),
     Stokes(StokesCoordinate),
     Tabular(TabularCoordinate),
+    Quality(QualityCoordinate),
 }
 
 macro_rules! dispatch_coordinate {
@@ -65,6 +70,7 @@ macro_rules! dispatch_coordinate {
             CoordinateModel::Spectral(value) => value.$method($($argument),*),
             CoordinateModel::Stokes(value) => value.$method($($argument),*),
             CoordinateModel::Tabular(value) => value.$method($($argument),*),
+            CoordinateModel::Quality(value) => value.$method($($argument),*),
         }
     };
 }
@@ -130,6 +136,7 @@ coordinate_model_from!(LinearCoordinate, Linear);
 coordinate_model_from!(DirectionCoordinate, Direction);
 coordinate_model_from!(StokesCoordinate, Stokes);
 coordinate_model_from!(TabularCoordinate, Tabular);
+coordinate_model_from!(QualityCoordinate, Quality);
 
 impl From<SpectralCoordinate> for CoordinateModel {
     fn from(value: SpectralCoordinate) -> Self {
@@ -146,13 +153,14 @@ impl sealed::Sealed for DirectionCoordinate {}
 impl sealed::Sealed for SpectralCoordinate {}
 impl sealed::Sealed for StokesCoordinate {}
 impl sealed::Sealed for TabularCoordinate {}
+impl sealed::Sealed for QualityCoordinate {}
 
 /// The interface shared by all coordinate types.
 ///
 /// Every concrete coordinate (e.g. [`LinearCoordinate`](crate::LinearCoordinate),
 /// [`DirectionCoordinate`](crate::DirectionCoordinate)) implements this trait.
 /// [`CoordinateSystem`](crate::CoordinateSystem) stores the closed
-/// [`CoordinateModel`] enum; this trait only shares behavior among the five
+/// [`CoordinateModel`] enum; this trait only shares behavior among the
 /// concrete coordinate types.
 ///
 /// The pixel-to-world and world-to-pixel methods follow the conventions of

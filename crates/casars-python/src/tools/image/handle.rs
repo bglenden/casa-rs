@@ -263,11 +263,12 @@ impl ImageHandle {
         })
     }
 
-    pub(super) fn set_coordinate_record(&mut self, record: RecordValue) -> PyResult<()> {
+    pub(super) fn set_coordinate_record(&mut self, mut record: RecordValue) -> PyResult<()> {
         with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised),
             Storage::Temp { image, record: current, .. } => {
                 let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
+                coordinates.normalize_quality_records(&mut record).map_err(raised)?;
                 image.set_coordinates(coordinates).map_err(raised)?;
                 *current = record;
                 Ok(())
