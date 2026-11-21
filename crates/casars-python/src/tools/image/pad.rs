@@ -151,7 +151,7 @@ impl PyImageTool {
                 }
                 if !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
                     return Err(raised(format!(
-                        "Exception: File {outfile} exists, and the user does not want to remove it.."
+                        "Replaceable flag is false and there is already a file or directory named {outfile} so the output image will not be written"
                     )));
                 }
             }

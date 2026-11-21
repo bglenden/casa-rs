@@ -160,15 +160,19 @@ def test_pad_return_and_rejected_edits_preserve_images(casa, tmp_path):
         child.done()
         for options, error, message in (
             ({"npixels": 0}, RuntimeError, "npixels must be greater than zero"),
-            ({"npixels": 1.5}, TypeError, ""),
+            ({"npixels": 1.5}, TypeError, None),
             ({"box": "0,0,2,2"}, RuntimeError, "box and regionPtr"),
-            ({"outfile": output}, RuntimeError, "exists"),
+            ({"outfile": output}, RuntimeError, "Replaceable flag is false.*already a file or directory"),
         ):
             with pytest.raises(error, match=message):
                 parent.pad(**options)
         assert child.open(output)
         np.testing.assert_array_equal(child.getchunk(), kept)
         child.done()
+        replaced = parent.pad(output, overwrite=True, padmask=True)
+        np.testing.assert_array_equal(replaced.getchunk(), np.pad(source, ((1, 1), (1, 1))))
+        assert replaced.getchunk(getmask=True).all()
+        replaced.done()
         product = parent.pad(region=None, box="0,0,2,2", npixels=True)
         assert product.shape().tolist() == [5, 5]
         product.done()
@@ -205,3 +209,20 @@ def test_nan_fill_and_selectors_on_absent_axes_match_casa(casa):
         finally:
             product.done()
             parent.done()
+
+
+def test_analytic_temporary_padding_with_a_numpy_width():
+    data = np.arange(12, dtype=np.float32).reshape(3, 4)
+    source = tools.image()
+    assert source.fromarray(pixels=data)
+    product = source.pad(npixels=np.int64(3), value=np.float64(-7.))
+    try:
+        assert product.shape().tolist() == [9, 10]
+        np.testing.assert_array_equal(product.getchunk(), np.pad(data, 3, constant_values=-7.))
+        expected = np.pad(np.ones_like(data, dtype=bool), 3)
+        np.testing.assert_array_equal(product.getchunk(getmask=True), expected)
+        assert product.maskhandler("get") == ["T"]
+        assert product.maskhandler("default") == [""]
+    finally:
+        product.done()
+        source.done()
