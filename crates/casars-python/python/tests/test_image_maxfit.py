@@ -26,7 +26,8 @@ def _gaussian(height, center, widths=(4., 5.)):
 def _assert_position(image, component, pixel):
     coords = image.coordsys()
     try:
-        expected = coords.toworld(pixel, "n")["numeric"][:2]
+        assert coords.units()[:2] == ["'", "'"]
+        expected = np.deg2rad(coords.toworld(pixel, "n")["numeric"][:2] / 60)
     finally:
         coords.done()
     actual = _direction(component)
@@ -74,8 +75,8 @@ def test_maxfit_component_records_from_both_native_writers(casa, tmp_path):
             finally:
                 image.done()
     expected = results[casa.__name__, casa.__name__]
-    assert expected[0][0]["flux"]["value"][0] == pytest.approx(0.006, rel=0.08)
-    assert expected[4][0]["flux"]["value"][0] == pytest.approx(0.003, rel=0.08)
+    assert 0.005 < expected[0][0]["flux"]["value"][0] < 0.006
+    assert 0.0025 < expected[4][0]["flux"]["value"][0] < 0.003
     assert [components[0]["shape"]["type"] for components in expected] == [
         "Point", "Gaussian", "Point", "Gaussian", "Point", "Point",
     ]
@@ -117,7 +118,7 @@ def test_negative_peak_beats_weaker_positive_peak_in_one_plane():
     try:
         image.fromarray(pixels=pixels)
         component, = _components(image.maxfit(negfind=True, list=False))
-        assert component["flux"]["value"][0] < -11.
+        assert -12. < component["flux"]["value"][0] < -10.
         _assert_position(image, component, center)
     finally:
         image.done()

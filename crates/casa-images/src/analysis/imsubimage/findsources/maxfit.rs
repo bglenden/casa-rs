@@ -98,10 +98,8 @@ pub fn fit_image_maximum(
         selection,
         mask: None,
     };
-    let ranking = if options.negative {
-        PeakRanking::Absolute
-    } else {
-        PeakRanking::Positive
+    let ranking = PeakRanking::Maximum {
+        signed: options.negative,
     };
     let peak = peaks::search(&reader, &plan, &section, 1, 0.1, ranking)?
         .pop()
@@ -165,6 +163,8 @@ fn brightest_pixel(
     };
     let mut maximum = f32::NEG_INFINITY;
     let mut position = None::<Vec<usize>>;
+    let magnitude = |value: f32| if negative { value.abs() } else { value };
+    let mut local = vec![0; section.shape.len()];
     for block in section.cursors(bounded_read_cursor(section.shape.to_vec())?) {
         let block = block?;
         let start = section.source_start(&block.position);
@@ -172,26 +172,54 @@ fn brightest_pixel(
             continue;
         }
         let (values, mask) = reader.read(&start, &block.shape, section.stride)?;
-        for (index, &value) in values.indexed_iter() {
-            let magnitude = if negative { value.abs() } else { value };
-            if !magnitude.is_finite()
-                || magnitude < maximum
-                || mask.as_ref().is_some_and(|mask| !mask[&index])
-            {
-                continue;
-            }
+        let mut keep = |magnitude: f32, local: &[usize]| {
             let candidate = block
                 .position
                 .iter()
-                .zip(index.slice())
+                .zip(local)
                 .map(|(&base, &offset)| base + offset);
             if magnitude > maximum
                 || position.as_ref().is_some_and(|previous| {
-                    candidate.clone().rev().lt(previous.iter().rev().copied())
+                    magnitude == maximum
+                        && candidate.clone().rev().lt(previous.iter().rev().copied())
                 })
             {
                 maximum = magnitude;
                 position = Some(candidate.collect());
+            }
+        };
+        // Native tiles and FITS sections commonly have axis zero contiguous.
+        // In that order the first tied pixel already has the lowest subscript.
+        let contiguous = values.view().reversed_axes();
+        let contiguous_mask = mask.as_ref().map(|mask| mask.view().reversed_axes());
+        if let Some(pixels) = contiguous.as_slice()
+            && contiguous_mask
+                .as_ref()
+                .is_none_or(|mask| mask.is_standard_layout())
+        {
+            let valid = contiguous_mask.as_ref().and_then(|mask| mask.as_slice());
+            let mut best = f32::NEG_INFINITY;
+            let mut offset = 0;
+            for (index, &pixel) in pixels.iter().enumerate() {
+                let value = magnitude(pixel);
+                if value > best && value.is_finite() && valid.is_none_or(|mask| mask[index]) {
+                    best = value;
+                    offset = index;
+                }
+            }
+            if best.is_finite() {
+                for (coordinate, &length) in local.iter_mut().zip(&block.shape) {
+                    *coordinate = offset % length;
+                    offset /= length;
+                }
+                keep(best, &local);
+            }
+            continue;
+        }
+        for (index, &value) in values.indexed_iter() {
+            let value = magnitude(value);
+            if value.is_finite() && mask.as_ref().is_none_or(|mask| mask[&index]) {
+                keep(value, index.slice());
             }
         }
     }

@@ -14,7 +14,7 @@ pub(super) struct Peak {
 pub(super) enum PeakRanking {
     Positive,
     Signed,
-    Absolute,
+    Maximum { signed: bool },
 }
 
 struct Row {
@@ -60,7 +60,11 @@ pub(super) fn search(
     cutoff: f64,
     ranking: PeakRanking,
 ) -> Result<Vec<Peak>, ImageError> {
-    let signed = !matches!(ranking, PeakRanking::Positive);
+    let signed = matches!(
+        ranking,
+        PeakRanking::Signed | PeakRanking::Maximum { signed: true }
+    );
+    let maximum = matches!(ranking, PeakRanking::Maximum { .. });
     let width = plan.shape[0];
     let height = plan.shape[1];
     if height < 4 {
@@ -103,7 +107,14 @@ pub(super) fn search(
                     active[2].pixels[x],
                 ]
                 .into_iter()
-                .any(|other| magnitude <= f64::from(other).abs())
+                .any(|other| {
+                    let other = f64::from(other);
+                    if maximum {
+                        magnitude < if signed { other.abs() } else { other }
+                    } else {
+                        magnitude <= other.abs()
+                    }
+                })
             {
                 continue;
             }
@@ -117,7 +128,7 @@ pub(super) fn search(
             let sample = std::array::from_fn(|row| {
                 std::array::from_fn(|column| sign * f64::from(active[row].pixels[start + column]))
             });
-            let Some((height, [ox, oy])) = quadratic(sample) else {
+            let Some((height, [ox, oy])) = quadratic(sample, maximum) else {
                 continue;
             };
             let magnitude = if signed { height.abs() } else { height };
@@ -127,7 +138,7 @@ pub(super) fn search(
             let position = peaks
                 .iter()
                 .position(|peak| {
-                    let previous = if matches!(ranking, PeakRanking::Absolute) {
+                    let previous = if maximum && signed {
                         peak.height.abs()
                     } else {
                         peak.height
@@ -160,7 +171,7 @@ pub(super) fn search(
     Ok(peaks)
 }
 
-fn quadratic(sample: [[f64; 3]; 3]) -> Option<(f64, [f64; 2])> {
+fn quadratic(sample: [[f64; 3]; 3], require_maximum: bool) -> Option<(f64, [f64; 2])> {
     // Weighted normal matrix for [1, y, x, y², x², yx] on a 3×3 window.
     // The center, face and corner weights are 1, 1/2 and 1/4.
     const NORMAL: [[f64; 6]; 6] = [
@@ -182,6 +193,9 @@ fn quadratic(sample: [[f64; 3]; 3]) -> Option<(f64, [f64; 2])> {
     }
     let [a, b, c, d, e, f] = solve_symmetric_ldlt_casacore(NORMAL, rhs)?.map(|value| value as f32);
     let determinant = f * f - 4. * d * e;
+    if require_maximum && (d >= 0. || e >= 0. || determinant >= 0.) {
+        return None;
+    }
     let x = f64::from(2. * c * d - b * f) / f64::from(determinant);
     let y = f64::from(2. * b * e - c * f) / f64::from(determinant);
     if x.abs() > 1. || y.abs() > 1. || !x.is_finite() || !y.is_finite() {
