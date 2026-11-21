@@ -212,6 +212,12 @@ impl<T: ImagePixel> TempImage<T> {
         None
     }
 
+    pub(crate) fn set_pixel_cache_budget(&mut self, bytes: usize) -> Result<(), ImageError> {
+        self.lattice
+            .set_maximum_cache_size_pixels((bytes / std::mem::size_of::<T>()).max(1))?;
+        Ok(())
+    }
+
     /// Reads the full pixel array.
     pub fn get(&self) -> Result<ArrayD<T>, ImageError> {
         Ok(self.pixel_source().get()?)

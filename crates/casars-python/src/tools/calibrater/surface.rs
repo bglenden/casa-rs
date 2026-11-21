@@ -128,8 +128,8 @@ const METHODS: &[Method] = &[
             param("listfile", K::Text, D::Text("")),
             param("pagerows", K::Int, D::Int(50)),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Implemented,
     ),
     Method {
         mutating: true,
@@ -180,8 +180,8 @@ const METHODS: &[Method] = &[
             param("ny", K::Int, D::Int(1)),
             param("psfile", K::Text, D::Text("")),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Implemented,
     ),
     method(
         "posangcal",

@@ -1019,7 +1019,10 @@ def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
         completion = run("listcal", **values)
     except (TypeError, ValueError) as error:
         raise AssertionError(str(error)) from error
-    report = loads(completion.stdout)["result"]
+    _present_listcal(loads(completion.stdout)["result"])
+
+
+def _present_listcal(report: Mapping[str, Any]) -> None:
     if report["listfile"] is not None:
         print(f"Writing output to file: {report['listfile']}")
         return

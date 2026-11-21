@@ -415,9 +415,72 @@ pub(super) fn publish_image_pair(
         .transpose()
         .map_err(raised)?;
     let mut locks = BTreeMap::new();
+    let installed = install_images(
+        [companion, primary].into_iter().flatten(),
+        overwrite,
+        &registry,
+        &mut locks,
+    )?;
+
+    match target
+        .as_deref()
+        .map(|path| AttachedImage::open_created(&mut registry, path))
+        .transpose()
+    {
+        Ok(native) => Ok(native.or(temporary).expect("image result")),
+        Err(error) => Err(installed
+            .into_iter()
+            .rev()
+            .fold(error, |error, product| product.restore(error))),
+    }
+}
+
+pub(super) fn publish_new_images<const N: usize>(
+    outputs: [&str; N],
+    build: impl FnOnce([Option<&Path>; N]) -> PyResult<()>,
+) -> PyResult<()> {
+    let stages = outputs
+        .into_iter()
+        .map(StagedImage::allocate)
+        .collect::<PyResult<Vec<_>>>()?;
+    let check = || {
+        for (index, stage) in stages.iter().enumerate() {
+            for previous in &stages[..index] {
+                check_distinct(stage.as_ref(), previous.as_ref())?;
+            }
+        }
+        Ok::<_, PyErr>(())
+    };
+    check()?;
+    for stage in stages.iter().flatten() {
+        if stage.target.symlink_metadata().is_ok() {
+            return Err(raised(format!("File {} already exists", stage.requested)));
+        }
+    }
+    build(std::array::from_fn(|index| {
+        stages[index].as_ref().map(|stage| stage.product.as_path())
+    }))?;
+    let registry = attachment::registry();
+    check()?;
+    let _product_locks = stages
+        .iter()
+        .flatten()
+        .map(|stage| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
+        .collect::<PyResult<Vec<_>>>()?;
+    let mut locks = BTreeMap::new();
+    install_images(stages.into_iter().flatten(), false, &registry, &mut locks)?;
+    Ok(())
+}
+
+fn install_images(
+    stages: impl IntoIterator<Item = StagedImage>,
+    overwrite: bool,
+    registry: &attachment::OpenImages,
+    locks: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> PyResult<Vec<InstalledImage>> {
     let mut prepared = Vec::new();
-    for stage in [companion, primary].into_iter().flatten() {
-        let existed = stage.check(overwrite, &registry, &mut locks)?;
+    for stage in stages {
+        let existed = stage.check(overwrite, registry, locks)?;
         prepared.push((stage, existed));
     }
     let mut installed: Vec<InstalledImage> = Vec::new();
@@ -433,17 +496,7 @@ pub(super) fn publish_image_pair(
         }
     }
 
-    match target
-        .as_deref()
-        .map(|path| AttachedImage::open_created(&mut registry, path))
-        .transpose()
-    {
-        Ok(native) => Ok(native.or(temporary).expect("image result")),
-        Err(error) => Err(installed
-            .into_iter()
-            .rev()
-            .fold(error, |error, product| product.restore(error))),
-    }
+    Ok(installed)
 }
 
 impl PyImageTool {

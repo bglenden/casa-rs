@@ -8792,3 +8792,27 @@ is no footprint mask. The diagnostic assumes it exists when reporting
 the circle size. Casa-rs computes the documented circular statistic
 and clips the window at the image's edges, returning counts of 9 in
 the interior, 6 at an edge, and 4 in a corner for an unmasked image.
+
+## Image FFT can use the wrong explicit axis or abort on a coupled coordinate
+
+CASA 6.7.6.14 indexes its array of requested FFT axes with the requested
+axis value itself. On a 7 × 8 linear image, `image.fft(axes=[1], complex=...)`
+can transform the first axis. The requested value 1 is outside the one-entry
+list. Casa-rs transforms the requested second axis and rejects axes outside
+the image's rank before creating outputs.
+
+CASA can also terminate the process when only one axis of a coupled
+linear coordinate is selected. A 7 × 8 image with linear transform
+`[[1, 0.2], [0.5, 1]]` and `fft(axes=[0], complex=...)` reproduces it.
+The linear-coordinate Fourier operation rejects the partial inversion,
+after which the tool dereferences the absent coordinate. Casa-rs returns
+the coordinate error and leaves the output destinations untouched.
+
+For a Fourier transform of a linear frequency or time coordinate, CASA
+6.7.6.14 labels the output in seconds or hertz and uses the input's
+unconverted increment. A four-pixel axis with 2 MHz spacing produces
+`0.125 s`, while the same axis expressed as 2,000,000 Hz produces
+`1.25e-7 s`. A four-pixel axis spaced by 2 ms likewise produces
+`0.125 Hz` instead of 125 Hz. Casa-rs converts the spacing to hertz or
+seconds before taking the reciprocal so equivalent inputs give the same
+Fourier coordinates.

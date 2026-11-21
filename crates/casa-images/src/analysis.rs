@@ -49,6 +49,7 @@ pub use imsubimage::{
 pub use imsubimage::{DecompositionOptions, ImageDecomposition, decompose_image};
 pub use imsubimage::{DeviationOptions, ImageDeviation};
 pub use imsubimage::{FindSourcesOptions, find_image_sources};
+pub use imsubimage::{FourierOptions, FourierPixel, ImageFourier};
 pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
 mod list_log;
 mod planes;
