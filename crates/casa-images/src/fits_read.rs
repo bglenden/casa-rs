@@ -6,7 +6,8 @@
 use std::path::Path;
 
 use casa_coordinates::{
-    CoordinateSystem, FitsHeader, FitsValue, ProjectionType, fits::from_fits_header,
+    CoordinateError, CoordinateSystem, FitsHeader, FitsValue, ProjectionType,
+    fits::{coordinate_util::fallback_fits_linear_coordinates, from_fits_header},
 };
 use casa_types::ArrayD;
 use fitsio::{FitsFile, hdu::HduInfo, images::ImageType as FitsImageType};
@@ -111,33 +112,7 @@ pub fn read_fits_image(fitsimage: impl AsRef<Path>) -> Result<FitsImage, ImageEr
 /// separators, powers and the case of non-FITS names (notably SI prefixes).
 pub(crate) fn brightness_unit(header: &FitsHeader) -> String {
     let input = header.get_string("BUNIT").unwrap_or("");
-    let mut output = String::new();
-    let mut remaining = input;
-    while !remaining.is_empty() {
-        let alphabetic = remaining.as_bytes()[0].is_ascii_alphabetic();
-        let end = remaining
-            .find(|c: char| c.is_ascii_alphabetic() != alphabetic)
-            .unwrap_or(remaining.len());
-        let token = &remaining[..end];
-        output.push_str(match token {
-            "BEAM" => "beam",
-            "DAYS" => "d",
-            "DEGREES" | "DEG" => "deg",
-            "HZ" => "Hz",
-            "JY" => "Jy",
-            "KELVINS" | "KELVIN" => "K",
-            "KM" => "km",
-            "METERS" | "M" => "m",
-            "PASCAL" => "Pa",
-            "PIXEL" => "pixel",
-            "SECONDS" | "SEC" | "S" => "s",
-            "VOLTS" => "V",
-            "YEARS" | "YEAR" => "a",
-            _ => token,
-        });
-        remaining = &remaining[end..];
-    }
-    output
+    casa_coordinates::fits::canonical_unit_name(input)
 }
 
 /// An open FITS file's primary HDU, with its shape, header and coordinates
@@ -168,7 +143,12 @@ impl PrimaryHdu {
         };
         let shape = read_fits_axis_shape(&mut fits, &hdu)?;
         let header = read_primary_fits_header(&mut fits, &hdu, &shape)?;
-        let coordinates = from_fits_header(&header, &shape)?;
+        let coordinates = match from_fits_header(&header, &shape) {
+            Err(CoordinateError::InvalidFitsAxisUnit { .. }) => {
+                fallback_fits_linear_coordinates(&shape)
+            }
+            result => result?,
+        };
         Ok(Self {
             fits,
             hdu,

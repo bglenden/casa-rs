@@ -43,6 +43,15 @@ pub enum CoordinateError {
     #[error("invalid coordinate record: {0}")]
     InvalidRecord(String),
 
+    /// A linear FITS axis declares a unit that casacore cannot parse.
+    #[error("invalid FITS axis unit CUNIT{axis}={unit:?}")]
+    InvalidFitsAxisUnit {
+        /// FITS axis number, starting at one.
+        axis: usize,
+        /// Unit value from the FITS header.
+        unit: String,
+    },
+
     /// A valid casacore coordinate-system record whose axis maps casa-rs
     /// cannot represent: a coordinate's axes out of its own order or not
     /// adjacent, world axes ordered unlike the pixel axes, or removed axes
