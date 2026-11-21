@@ -373,3 +373,48 @@ def test_convolve2d_wide_undersampled_beam_uses_discrete_samples(casa, source_pa
         finally:
             result.done()
             source.done()
+
+
+def test_convolve2d_nondefault_axes_and_strided_masked_region(casa, tmp_path):
+    shape = (17, 4, 19)
+    values = np.zeros(shape, dtype=np.float32)
+    values[3, 1, 6] = 5.
+    values[3, 2, 6] = 7.
+    spatial = np.ones(shape[:2], dtype=np.float32)
+    spatial[5, 1] = 0.
+    manager = casa.regionmanager()
+    region = manager.box([1, 0, 2], [15, 3, 18], [2, 1, 2])
+    manager.done()
+    selection = np.s_[1:16:2, :, 2:19:2]
+    selected_shape = values[selection].shape
+    expected = np.zeros(selected_shape)
+    footprint = pixel_gaussian((selected_shape[0], selected_shape[2]), (1, 2), 4., 2., 30., False)
+    expected[:, 1, :] = 5. * footprint
+    expected[:, 2, :] = 7. * footprint
+    mask = np.broadcast_to(spatial[..., None] != 0., shape)[selection]
+    for api in (casa, tools):
+        source = api.image()
+        path = str(tmp_path / f"{api.__name__}-mask.im")
+        mask_image = api.image()
+        mask_pixels = np.broadcast_to(spatial[..., None], shape).copy()
+        assert mask_image.fromarray(path, mask_pixels, linear=True)
+        mask_image.done()
+        assert source.fromarray(pixels=values, linear=True)
+        result = source.convolve2d(
+            axes=[2, 0], major="4pix", minor="2pix", pa="30deg",
+            scale=1., region=region, mask=f"'{path}' > 0", stretch=True,
+        )
+        original_coordinates = source.coordsys()
+        selected_coordinates = result.coordsys()
+        try:
+            np.testing.assert_allclose(result.getchunk(), expected, rtol=2e-5, atol=9e-7)
+            np.testing.assert_array_equal(result.getchunk(getmask=True), mask)
+            np.testing.assert_allclose(
+                selected_coordinates.toworld([1., 1., 2.])["numeric"],
+                original_coordinates.toworld([3., 1., 6.])["numeric"],
+            )
+        finally:
+            selected_coordinates.done()
+            original_coordinates.done()
+            result.done()
+            source.done()

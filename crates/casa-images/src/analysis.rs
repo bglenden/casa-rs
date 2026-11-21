@@ -37,7 +37,6 @@ mod imsubimage;
 pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use imsubimage::{ContinuumSummary, ImageContinuum};
 pub use imsubimage::{ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution};
-pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
 pub use imsubimage::{
     DecimationMethod, DecimationPixel, ImageCrop, ImageCropOptions, ImageDecimation,
     ImageDecimationOptions, ImageInsertion, ImagePad, ImagePadOptions, ImagePbcor, ImagePbcorBeam,
@@ -47,6 +46,7 @@ pub use imsubimage::{
     ensure_outfile_does_not_alias_input, put_image_region, reduce_subimage_coordinate_record,
     replace_masked_complex_pixels, replace_masked_real_pixels, validate_put_region_shapes,
 };
+pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
 mod list_log;
 mod planes;
 mod projection_header;
