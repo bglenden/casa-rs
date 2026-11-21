@@ -479,6 +479,27 @@ fn check_removal(axis: usize, naxes: usize, replacement: f64) -> Result<(), Coor
     Ok(())
 }
 
+fn convert_local_world_offsets(
+    model: &CoordinateModel,
+    values: &mut [f64],
+    absolute: bool,
+) -> Result<(), CoordinateError> {
+    match model {
+        CoordinateModel::Stokes(_) => Ok(()),
+        CoordinateModel::Direction(direction) => direction.convert_world_offset(values, absolute),
+        _ => {
+            for (value, reference) in values.iter_mut().zip(model.reference_value()) {
+                if absolute {
+                    *value += reference;
+                } else {
+                    *value -= reference;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 impl CoordinateSystem {
     pub(super) fn nonconsecutive_maps(&self) -> Option<&AxisMaps> {
         self.maps.as_deref().filter(|maps| !maps.concatenated)
@@ -549,6 +570,41 @@ impl CoordinateSystem {
             axes.scatter(&local(model), &mut result);
         }
         result
+    }
+
+    /// Convert between absolute worlds and offsets from the reference
+    /// coordinate, using each model's units (radians for directions).
+    ///
+    /// # Errors
+    /// Returns an error if the vector has the wrong rank or a direction
+    /// cannot be converted.
+    pub fn convert_world_offsets(
+        &self,
+        world: &mut [f64],
+        absolute: bool,
+    ) -> Result<(), CoordinateError> {
+        if world.len() != self.n_world_axes() {
+            return Err(CoordinateError::DimensionMismatch {
+                expected: self.n_world_axes(),
+                got: world.len(),
+            });
+        }
+        if let Some(maps) = self.nonconsecutive_maps() {
+            for (model, placement) in self.coordinates.iter().zip(&maps.placements) {
+                let hidden = placement.coordinate_world_replacements(model)?;
+                let mut values = placement.world.gather(world, &hidden);
+                convert_local_world_offsets(model, &mut values, absolute)?;
+                placement.world.scatter(&values, world);
+            }
+        } else {
+            let mut rest = world;
+            for model in &self.coordinates {
+                let (values, next) = rest.split_at_mut(model.n_world_axes());
+                convert_local_world_offsets(model, values, absolute)?;
+                rest = next;
+            }
+        }
+        Ok(())
     }
 
     /// The fields and maps of this system's record, in this system's

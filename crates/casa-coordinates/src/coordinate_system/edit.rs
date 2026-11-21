@@ -3,8 +3,37 @@
 
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
-use super::CoordinateSystem;
+use super::{CoordinateSystem, RecordCoordinate};
 use crate::{Coordinate, CoordinateError, CoordinateType, ProjectionType};
+
+fn read_edit_layout(record: &RecordValue) -> Result<CoordinateSystem, CoordinateError> {
+    match CoordinateSystem::from_record(record) {
+        Err(CoordinateError::UnsupportedAxisLayout(_)) => {
+            CoordinateSystem::from_mapped_record(record)
+        }
+        result => result,
+    }
+}
+
+fn recorded_axis(
+    coordinates: &[RecordCoordinate],
+    axis: usize,
+    pixel: bool,
+    naxes: usize,
+) -> Result<(&RecordCoordinate, usize), CoordinateError> {
+    coordinates
+        .iter()
+        .find_map(|coordinate| {
+            let axes = if pixel {
+                &coordinate.pixel_axes
+            } else {
+                &coordinate.world_axes
+            };
+            let local = axes.iter().position(|&placed| placed == Some(axis))?;
+            Some((coordinate, local))
+        })
+        .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })
+}
 
 /// Casacore's Projection constructor resizes a short vector without copying
 /// its original contents. Vectors already long enough retain all entries.
@@ -368,8 +397,9 @@ impl CoordinateSystem {
             DirectionRef, MDirection, casa_direction_frame_name,
         };
         use std::str::FromStr;
-        let system = Self::from_record(record)?;
-        if Self::record_coordinates(record)?
+        let system = read_edit_layout(record)?;
+        if system
+            .coordinates_in_record(record)?
             .iter()
             .filter(|coordinate| coordinate.field.starts_with("direction"))
             .count()
@@ -427,7 +457,7 @@ impl CoordinateSystem {
                 Value::Scalar(ScalarValue::String(conversion.as_str().into())),
             );
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, Some(old.as_str().to_string())))
     }
@@ -445,7 +475,8 @@ impl CoordinateSystem {
         pixel_axis: usize,
         names: &[String],
     ) -> Result<(Self, Vec<String>), CoordinateError> {
-        let coordinates = Self::record_coordinates(record)?;
+        let system = read_edit_layout(record)?;
+        let coordinates = system.coordinates_in_record(record)?;
         if coordinates
             .iter()
             .filter(|coordinate| coordinate.field.starts_with("stokes"))
@@ -506,7 +537,7 @@ impl CoordinateSystem {
             &coordinate.field,
             Value::Record(crate::StokesCoordinate::new(types).to_record()),
         );
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, old_names))
     }
@@ -525,8 +556,9 @@ impl CoordinateSystem {
         record: &mut RecordValue,
         projection: &str,
     ) -> Result<(Self, Option<String>), CoordinateError> {
-        let system = Self::from_record(record)?;
-        if Self::record_coordinates(record)?
+        let system = read_edit_layout(record)?;
+        if system
+            .coordinates_in_record(record)?
             .iter()
             .filter(|coordinate| coordinate.field.starts_with("direction"))
             .count()
@@ -569,7 +601,7 @@ impl CoordinateSystem {
             Value::Array(ArrayValue::from_f64_vec(parameters)),
         );
         refresh_direction_pole(direction)?;
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, Some(old)))
     }
@@ -589,7 +621,7 @@ impl CoordinateSystem {
     ) -> Result<(Self, Option<String>), CoordinateError> {
         use casa_types::measures::frequency::CasaFrequencyFrame;
         use std::str::FromStr;
-        let system = Self::from_record(record)?;
+        let system = read_edit_layout(record)?;
         let (field, spectral) = Self::first_spectral_in_record(record)?
             .ok_or_else(|| CoordinateError::InvalidRecord("no spectral coordinate".into()))?;
         let old = if spectral.has_undefined_frame() {
@@ -634,7 +666,7 @@ impl CoordinateSystem {
                 Value::Scalar(ScalarValue::String(canonical.into())),
             );
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, Some(old)))
     }
@@ -652,35 +684,51 @@ impl CoordinateSystem {
         pixel_axis: usize,
         unit: &str,
     ) -> Result<(Self, String), CoordinateError> {
+        Self::set_axis_unit(record, pixel_axis, unit, true)
+    }
+
+    /// Update the unit addressed by a public world axis while retaining the
+    /// coordinate's original native record and maps.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, unit, or coordinate record.
+    pub fn set_world_axis_unit_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        unit: &str,
+    ) -> Result<(Self, String), CoordinateError> {
+        Self::set_axis_unit(record, world_axis, unit, false)
+    }
+
+    fn set_axis_unit(
+        record: &mut RecordValue,
+        axis: usize,
+        unit: &str,
+        pixel: bool,
+    ) -> Result<(Self, String), CoordinateError> {
         use casa_types::quanta::casacore::casacore_unit;
-        let system = Self::from_record(record)?;
-        let old = (0..system.n_coordinates())
-            .flat_map(|index| {
-                let coordinate = system.coordinate(index);
-                match coordinate {
-                    crate::CoordinateModel::Direction(direction) => direction.visible_world_units(),
-                    _ => coordinate.axis_units(),
-                }
-            })
-            .nth(pixel_axis)
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes: system.n_pixel_axes(),
-            })?;
-        let coordinates = Self::record_coordinates(record)?;
-        let (coordinate, local_axis) = coordinates
-            .iter()
-            .find_map(|coordinate| {
-                coordinate
-                    .pixel_axes
-                    .iter()
-                    .position(|axis| *axis == Some(pixel_axis))
-                    .map(|axis| (coordinate, axis))
-            })
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes: system.n_pixel_axes(),
-            })?;
+        let system = read_edit_layout(record)?;
+        let naxes = if pixel {
+            system.n_pixel_axes()
+        } else {
+            system.n_world_axes()
+        };
+        let world = if pixel {
+            system.pixel_axis_to_world_axis(axis)
+        } else {
+            Some(axis)
+        };
+        let (index, local) = world
+            .and_then(|world| system.world_axis_owner(world))
+            .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })?;
+        let model = system.coordinate(index);
+        let old = match model {
+            crate::CoordinateModel::Direction(direction) => direction.visible_world_units(),
+            _ => model.axis_units(),
+        }[local]
+            .clone();
+        let coordinates = system.coordinates_in_record(record)?;
+        let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
         if coordinate.field.starts_with("stokes") {
             return Ok((system, old));
         }
@@ -783,7 +831,7 @@ impl CoordinateSystem {
             })?;
             *axis_unit = unit.into();
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         for index in 0..system.n_coordinates() {
             if let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
                 && direction.increment().iter().any(|value| !value.is_normal())
@@ -835,7 +883,7 @@ impl CoordinateSystem {
                 .expect("selected frequency exists") = value;
         }
         spectral.upsert("restfreq", Value::Scalar(ScalarValue::Float64(value)));
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, old))
     }
@@ -852,28 +900,46 @@ impl CoordinateSystem {
         pixel_axis: usize,
         name: &str,
     ) -> Result<(Self, String), CoordinateError> {
-        let system = Self::from_record(record)?;
-        let old = (0..system.n_coordinates())
-            .flat_map(|index| system.coordinate(index).axis_names())
-            .nth(pixel_axis)
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes: system.n_pixel_axes(),
-            })?;
-        let coordinates = Self::record_coordinates(record)?;
-        let (coordinate, local_axis) = coordinates
-            .iter()
-            .find_map(|coordinate| {
-                coordinate
-                    .pixel_axes
-                    .iter()
-                    .position(|axis| *axis == Some(pixel_axis))
-                    .map(|axis| (coordinate, axis))
-            })
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes: system.n_pixel_axes(),
-            })?;
+        Self::set_axis_name(record, pixel_axis, name, true)
+    }
+
+    /// Update the name addressed by a public world axis while retaining the
+    /// coordinate's original native record and maps.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, name, or coordinate record.
+    pub fn set_world_axis_name_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        name: &str,
+    ) -> Result<(Self, String), CoordinateError> {
+        Self::set_axis_name(record, world_axis, name, false)
+    }
+
+    fn set_axis_name(
+        record: &mut RecordValue,
+        axis: usize,
+        name: &str,
+        pixel: bool,
+    ) -> Result<(Self, String), CoordinateError> {
+        let system = read_edit_layout(record)?;
+        let naxes = if pixel {
+            system.n_pixel_axes()
+        } else {
+            system.n_world_axes()
+        };
+        let world = if pixel {
+            system.pixel_axis_to_world_axis(axis)
+        } else {
+            Some(axis)
+        };
+        let (index, local) = world
+            .and_then(|world| system.world_axis_owner(world))
+            .ok_or(CoordinateError::AxisOutOfRange { index: axis, naxes })?;
+        let model = system.coordinate(index);
+        let old = model.axis_names()[local].clone();
+        let coordinates = system.coordinates_in_record(record)?;
+        let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
         let mut updated = record.clone();
         let Some(Value::Record(target)) = updated.get_mut(&coordinate.field) else {
             return Err(CoordinateError::InvalidRecord(
@@ -906,7 +972,7 @@ impl CoordinateSystem {
             })?;
             *axis_name = name.into();
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         *record = updated;
         Ok((system, old))
     }
@@ -933,7 +999,7 @@ impl CoordinateSystem {
         pixel_axis: usize,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
-        Self::set_axis_scalar_in_record(record, pixel_axis, "crpix", value)
+        Self::set_axis_scalar_in_record(record, pixel_axis, "crpix", value, true)
     }
 
     /// Update an axis increment in its stored world unit, preserving axis maps.
@@ -948,7 +1014,7 @@ impl CoordinateSystem {
         pixel_axis: usize,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
-        Self::set_axis_scalar_in_record(record, pixel_axis, "cdelt", value)
+        Self::set_axis_scalar_in_record(record, pixel_axis, "cdelt", value, true)
     }
 
     /// Update an axis reference value in its stored world unit, preserving
@@ -963,39 +1029,53 @@ impl CoordinateSystem {
         pixel_axis: usize,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
-        Self::set_axis_scalar_in_record(record, pixel_axis, "crval", value)
+        Self::set_axis_scalar_in_record(record, pixel_axis, "crval", value, true)
+    }
+
+    /// Update a public world axis's reference value in its declared unit.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, value, or coordinate record.
+    pub fn set_world_reference_value_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        value: f64,
+    ) -> Result<(Self, f64), CoordinateError> {
+        Self::set_axis_scalar_in_record(record, world_axis, "crval", value, false)
+    }
+
+    /// Update a public world axis's increment in its declared unit.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid axis, value, or coordinate record.
+    pub fn set_world_increment_in_record(
+        record: &mut RecordValue,
+        world_axis: usize,
+        value: f64,
+    ) -> Result<(Self, f64), CoordinateError> {
+        Self::set_axis_scalar_in_record(record, world_axis, "cdelt", value, false)
     }
 
     fn set_axis_scalar_in_record(
         record: &mut RecordValue,
-        pixel_axis: usize,
+        axis: usize,
         field: &str,
         value: f64,
+        pixel: bool,
     ) -> Result<(Self, f64), CoordinateError> {
         if !value.is_finite() {
             return Err(CoordinateError::InvalidRecord(
                 "coordinate value must be finite".into(),
             ));
         }
-        let coordinates = Self::record_coordinates(record)?;
-        let naxes = coordinates
-            .iter()
-            .flat_map(|coordinate| coordinate.pixel_axes.iter().flatten())
-            .max()
-            .map_or(0, |axis| axis + 1);
-        let (coordinate, local_axis) = coordinates
-            .iter()
-            .find_map(|coordinate| {
-                coordinate
-                    .pixel_axes
-                    .iter()
-                    .position(|axis| *axis == Some(pixel_axis))
-                    .map(|axis| (coordinate, axis))
-            })
-            .ok_or(CoordinateError::AxisOutOfRange {
-                index: pixel_axis,
-                naxes,
-            })?;
+        let system = read_edit_layout(record)?;
+        let coordinates = system.coordinates_in_record(record)?;
+        let naxes = if pixel {
+            system.n_pixel_axes()
+        } else {
+            system.n_world_axes()
+        };
+        let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
         let direction_fields: Vec<String> = coordinates
             .iter()
             .filter(|entry| entry.field.starts_with("direction"))
@@ -1029,22 +1109,19 @@ impl CoordinateSystem {
             }
         }
         if coordinate.field.starts_with("stokes") {
-            let system = Self::from_record(record)?;
-            let old = (0..system.n_coordinates())
-                .flat_map(|index| {
-                    let coordinate = system.coordinate(index);
-                    match field {
-                        "crpix" => coordinate.reference_pixel(),
-                        "cdelt" => coordinate.increment(),
-                        _ => coordinate.reference_value(),
-                    }
-                })
-                .nth(pixel_axis)
-                .ok_or(CoordinateError::AxisOutOfRange {
-                    index: pixel_axis,
-                    naxes,
-                })?;
-            return Ok((system, old));
+            let owner = if pixel {
+                system.pixel_axis_owner(axis)
+            } else {
+                system.world_axis_owner(axis)
+            };
+            let (index, local) = owner.expect("validated public coordinate axis");
+            let coordinate = system.coordinate(index);
+            let values = match field {
+                "crpix" => coordinate.reference_pixel(),
+                "cdelt" => coordinate.increment(),
+                _ => coordinate.reference_value(),
+            };
+            return Ok((system, values[local]));
         }
         if field == "cdelt" && value == 0.0 {
             return Err(CoordinateError::InvalidRecord(
@@ -1062,7 +1139,7 @@ impl CoordinateSystem {
             if field == "crval" {
                 rebuild_directions(&mut updated, &direction_fields)?;
             }
-            let system = Self::from_record(&updated)?;
+            let system = read_edit_layout(&updated)?;
             *record = updated;
             return Ok((system, old));
         }
@@ -1075,7 +1152,7 @@ impl CoordinateSystem {
             if field == "crval" {
                 rebuild_directions(&mut updated, &direction_fields)?;
             }
-            let system = Self::from_record(&updated)?;
+            let system = read_edit_layout(&updated)?;
             *record = updated;
             return Ok((system, old));
         }
@@ -1127,7 +1204,7 @@ impl CoordinateSystem {
         if field == "crval" {
             rebuild_directions(&mut updated, &direction_fields)?;
         }
-        let system = Self::from_record(&updated)?;
+        let system = read_edit_layout(&updated)?;
         for index in 0..system.n_coordinates() {
             // WCSLIB accepts latitudes up to 1e-10 degrees beyond a pole.
             let pole_limit =
@@ -1158,273 +1235,4 @@ impl CoordinateSystem {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
-    };
-
-    #[test]
-    fn direction_frame_edit_preserves_an_implicit_conversion_frame() {
-        use crate::{DirectionCoordinate, Projection, ProjectionType};
-        use casa_types::measures::direction::DirectionRef;
-        let mut original = CoordinateSystem::new();
-        original.add_coordinate(DirectionCoordinate::new(
-            DirectionRef::J2000,
-            Projection::new(ProjectionType::SIN),
-            [0.0, 0.0],
-            [-1e-4, 1e-4],
-            [2.0, 2.0],
-        ));
-        let mut record = original.to_record();
-        let Some(Value::Record(direction)) = record.get_mut("direction0") else {
-            panic!("direction")
-        };
-        direction.remove("conversionSystem");
-        let (updated, old) =
-            CoordinateSystem::set_direction_reference_in_record(&mut record, "GAL").unwrap();
-        assert_eq!(old.as_deref(), Some("J2000"));
-        let crate::CoordinateModel::Direction(direction) = updated.coordinate(0) else {
-            panic!("direction")
-        };
-        assert_eq!(direction.direction_ref(), DirectionRef::GALACTIC);
-        assert_eq!(direction.conversion_direction_ref(), DirectionRef::J2000);
-        let restored = CoordinateSystem::from_record(&record).unwrap();
-        let crate::CoordinateModel::Direction(direction) = restored.coordinate(0) else {
-            panic!("direction")
-        };
-        assert_eq!(direction.conversion_direction_ref(), DirectionRef::J2000);
-        let before = record.clone();
-        assert!(
-            CoordinateSystem::set_direction_reference_in_record(&mut record, "JMEAN")
-                .unwrap_err()
-                .to_string()
-                .contains("#977")
-        );
-        assert_eq!(record, before);
-    }
-
-    #[test]
-    fn projection_edit_refuses_multiple_direction_coordinates_without_mutation() {
-        use crate::{DirectionCoordinate, Projection, ProjectionType};
-        use casa_types::measures::direction::DirectionRef;
-        let direction = || {
-            DirectionCoordinate::new(
-                DirectionRef::J2000,
-                Projection::new(ProjectionType::SIN),
-                [0.0, 0.0],
-                [-0.01, 0.01],
-                [0.0, 0.0],
-            )
-        };
-        let mut system = CoordinateSystem::new();
-        system.add_coordinate(direction());
-        system.add_coordinate(direction());
-        let mut record = system.to_record();
-        let before = record.clone();
-        let error =
-            CoordinateSystem::set_direction_projection_in_record(&mut record, "TAN").unwrap_err();
-        assert!(error.to_string().contains("#977"));
-        assert_eq!(record, before);
-    }
-
-    #[test]
-    fn unit_edits_select_and_rescale_the_active_rest_frequency() {
-        assert_eq!(
-            crate::spectral::closest_rest_frequency(&[2., 3.], 2.5),
-            Some(0)
-        );
-        let mut system = CoordinateSystem::new();
-        system.add_coordinate(
-            SpectralCoordinate::new(
-                casa_types::measures::frequency::FrequencyRef::LSRK,
-                1.,
-                1.,
-                0.,
-                1.,
-            )
-            .with_rest_frequencies(vec![1., 2., 3.])
-            .with_unit("GHz"),
-        );
-        let mut record = system.to_record();
-        let Some(Value::Record(spectral)) = record.get_mut("spectral0") else {
-            panic!("missing spectral coordinate")
-        };
-        spectral.upsert("restfreq", Value::Scalar(ScalarValue::Float64(2.1)));
-        let (updated, old) =
-            CoordinateSystem::set_axis_unit_in_record(&mut record, 0, "Hz").unwrap();
-        assert_eq!(old, "GHz");
-        let crate::CoordinateModel::Spectral(spectral) = updated.coordinate(0) else {
-            panic!("not spectral")
-        };
-        assert_eq!(spectral.rest_frequency(), 2e9);
-        assert_eq!(spectral.rest_frequencies(), &[1e9, 2e9, 3e9]);
-        let Some(Value::Record(spectral)) = record.get_mut("spectral0") else {
-            unreachable!()
-        };
-        spectral.upsert("restfreq", Value::Scalar(ScalarValue::Float64(-1.)));
-        let before = record.clone();
-        assert!(CoordinateSystem::set_axis_unit_in_record(&mut record, 0, "Hz").is_err());
-        assert_eq!(record, before);
-    }
-
-    #[test]
-    fn rest_frequency_edits_preserve_other_entries_and_reject_bad_lists() {
-        let mut system = CoordinateSystem::new();
-        system.add_coordinate(
-            SpectralCoordinate::new(
-                casa_types::measures::frequency::FrequencyRef::LSRK,
-                1.,
-                1.,
-                0.,
-                1.,
-            )
-            .with_rest_frequencies(vec![1., 2., 3.]),
-        );
-        let mut record = system.to_record();
-        let Some(Value::Record(spectral)) = record.get_mut("spectral0") else {
-            panic!("missing spectral coordinate")
-        };
-        spectral.upsert("restfreq", Value::Scalar(ScalarValue::Float64(2.)));
-        let (updated, old) =
-            CoordinateSystem::set_rest_frequency_in_record(&mut record, 4.).unwrap();
-        assert_eq!(old, 2.);
-        let crate::CoordinateModel::Spectral(spectral) = updated.coordinate(0) else {
-            panic!("not spectral")
-        };
-        assert_eq!(spectral.rest_frequencies(), &[1., 4., 3.]);
-        for numeric in [
-            Value::Array(ArrayValue::from_i32_vec(vec![1, 2])),
-            Value::Scalar(ScalarValue::Int32(2)),
-        ] {
-            let Some(Value::Record(spectral)) = record.get_mut("spectral0") else {
-                unreachable!()
-            };
-            spectral.upsert("restfreqs", numeric);
-            spectral.upsert("restfreq", Value::Scalar(ScalarValue::Int32(2)));
-            let (updated, old) =
-                CoordinateSystem::set_rest_frequency_in_record(&mut record, 5.).unwrap();
-            assert_eq!(old, 2.);
-            let crate::CoordinateModel::Spectral(spectral) = updated.coordinate(0) else {
-                panic!("not spectral")
-            };
-            assert_eq!(spectral.rest_frequency(), 5.);
-        }
-        for invalid in [
-            Value::Scalar(ScalarValue::String("bad".into())),
-            Value::Array(ArrayValue::Float64(
-                ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[1, 2]), vec![1., 2.]).unwrap(),
-            )),
-        ] {
-            let Some(Value::Record(spectral)) = record.get_mut("spectral0") else {
-                unreachable!()
-            };
-            spectral.upsert("restfreqs", invalid);
-            let before = record.clone();
-            assert!(CoordinateSystem::set_rest_frequency_in_record(&mut record, 5.).is_err());
-            assert_eq!(record, before);
-        }
-    }
-
-    #[test]
-    fn tabular_axis_names_update_both_record_forms() {
-        let mut system = CoordinateSystem::new();
-        system.add_coordinate(TabularCoordinate::new(
-            vec![0., 1.],
-            vec![2., 3.],
-            "original",
-            "Hz",
-        ));
-        let mut record = system.to_record();
-        let Some(Value::Record(tabular)) = record.get_mut("tabular0") else {
-            panic!("missing coordinate")
-        };
-        tabular.upsert("name", Value::Scalar(ScalarValue::String("old".into())));
-        let (system, old) =
-            CoordinateSystem::set_axis_name_in_record(&mut record, 0, "new").unwrap();
-        assert_eq!(old, "old");
-        assert_eq!(system.coordinate(0).axis_names(), vec!["new"]);
-        let Some(Value::Record(tabular)) = record.get_mut("tabular0") else {
-            panic!("missing coordinate")
-        };
-        assert_eq!(
-            tabular.get("axes"),
-            Some(&Value::Array(ArrayValue::from_string_vec(vec![
-                "new".into()
-            ])))
-        );
-        tabular.remove("axes");
-        let (system, old) =
-            CoordinateSystem::set_axis_name_in_record(&mut record, 0, "last").unwrap();
-        assert_eq!(old, "new");
-        assert_eq!(system.coordinate(0).axis_names(), vec!["last"]);
-        let (updated, old) =
-            CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 9.).unwrap();
-        assert_eq!(old, 0.0);
-        assert_eq!(updated.coordinate(0).to_world(&[0.0]).unwrap(), vec![-7.0]);
-        let mut spectral = CoordinateSystem::new();
-        spectral.add_coordinate(
-            SpectralCoordinate::from_tabular(
-                casa_types::measures::frequency::FrequencyRef::LSRK,
-                vec![0., 1.],
-                vec![2., 3.],
-                2.,
-                1.,
-                0.,
-                2.,
-            )
-            .unwrap(),
-        );
-        let mut record = spectral.to_record();
-        let (updated, old) =
-            CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 9.).unwrap();
-        assert_eq!(old, 0.0);
-        assert_eq!(updated.coordinate(0).reference_pixel(), vec![0.0]);
-        assert_eq!(updated.coordinate(0).to_world(&[0.0]).unwrap(), vec![-7.0]);
-    }
-
-    #[test]
-    fn reference_pixel_edits_follow_transposed_maps_and_are_atomic() {
-        let mut original = CoordinateSystem::new();
-        original.add_coordinate(LinearCoordinate::new(
-            1,
-            vec!["x".into()],
-            vec!["pix".into()],
-        ));
-        original.add_coordinate(LinearCoordinate::new(
-            1,
-            vec!["y".into()],
-            vec!["pix".into()],
-        ));
-        let mut record = original.to_record();
-        for (key, axis) in [
-            ("pixelmap0", 1),
-            ("worldmap0", 1),
-            ("pixelmap1", 0),
-            ("worldmap1", 0),
-        ] {
-            record.upsert(key, Value::Array(ArrayValue::from_i32_vec(vec![axis])));
-        }
-        let maps = record.clone();
-        let (updated, old) =
-            CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 7.5).unwrap();
-        assert_eq!(old, 0.0);
-        assert_eq!(updated.coordinate(0).reference_pixel(), vec![7.5]);
-        assert_eq!(updated.coordinate(1).reference_pixel(), vec![0.0]);
-        for key in ["pixelmap0", "pixelmap1", "worldmap0", "worldmap1"] {
-            assert_eq!(record.get(key), maps.get(key));
-        }
-        let before = record.clone();
-        assert!(CoordinateSystem::set_reference_pixel_in_record(&mut record, 2, 1.0).is_err());
-        assert_eq!(record, before);
-        let mut stokes = CoordinateSystem::new();
-        stokes.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
-        let mut record = stokes.to_record();
-        let before = record.clone();
-        let (unchanged, old) =
-            CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 1.0).unwrap();
-        assert_eq!(old, 0.0);
-        assert_eq!(unchanged.pixel_axis_type(0), Some(CoordinateType::Stokes));
-        assert_eq!(record, before);
-    }
-}
+mod tests;
