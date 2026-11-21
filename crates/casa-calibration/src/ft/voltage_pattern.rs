@@ -161,6 +161,8 @@ pub(crate) struct PreparedVoltagePattern {
     frame: MeasFrame,
     projected_model: bool,
     squint: Option<BeamSquint>,
+    // GOFIGURE prepares circular component flux even on a radial beam.
+    component_squint: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -206,7 +208,7 @@ impl ComponentVoltage<'_> {
         let values = *flux.values();
         flux.set_values(std::array::from_fn(|index| values[index] * gains[index]));
         flux.convert_polarisation(self.original.polarisation());
-        let sample_basis = if self.pattern.squint.is_some() && !first_channel {
+        let sample_basis = if self.pattern.component_squint && !first_channel {
             // PBMath converts the input to circular during the first channel's
             // application. Later channels sample that converted component.
             Polarisation::Circular
@@ -569,6 +571,7 @@ impl ImagerVoltagePattern {
         let main = ms.main_table();
         let mut first = None;
         let mut first_array = None;
+        let mut mixed_arrays = false;
         for row in &selected.selected_rows {
             let ScalarValue::Int32(array) =
                 main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
@@ -576,11 +579,7 @@ impl ImagerVoltagePattern {
                 return Err(invalid("ARRAY_ID must be Int32"));
             };
             let key = (*array, row.field_id, row.data_desc_id, row.time_mjd_seconds);
-            if squint && scratch && *first_array.get_or_insert(*array) != *array {
-                return Err(invalid(
-                    "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
-                ));
-            }
+            mixed_arrays |= *first_array.get_or_insert(*array) != *array;
             if first.as_ref().is_none_or(|(previous, _)| key < *previous) {
                 first = Some((key, row));
             }
@@ -602,6 +601,14 @@ impl ImagerVoltagePattern {
             })
             .transpose()?
             .flatten();
+        // PBMath1DEVLA supplies its radial fit even when dosquint was set.
+        let component_squint = squint;
+        let squint = squint && !matches!(default_beam, Some((PrimaryBeam::Evla, _)));
+        if squint && scratch && mixed_arrays {
+            return Err(invalid(
+                "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
+            ));
+        }
         let pattern = if let Some(path) = &self.table {
             legacy_radial_pattern(path, &telescope)?.pattern()
         } else {
@@ -684,6 +691,7 @@ impl ImagerVoltagePattern {
             frame,
             projected_model: telescope == "VLA" && self.table.is_none(),
             squint,
+            component_squint,
         })
     }
 }
@@ -727,7 +735,7 @@ impl PreparedVoltagePattern {
         let mut original = Flux::stokes_jy(i, q, u, v);
         original.convert_polarisation(basis);
         let mut beam_flux = original.clone();
-        if self.squint.is_some() {
+        if self.component_squint {
             beam_flux.convert_polarisation(Polarisation::Circular);
         }
         Ok(ComponentVoltage {
@@ -755,6 +763,7 @@ impl PreparedVoltagePattern {
             frame: MeasFrame::new(),
             projected_model: false,
             squint: None,
+            component_squint: false,
         }
     }
 
