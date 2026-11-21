@@ -31,18 +31,45 @@ pub(crate) struct TaskRegridOptions<'a> {
     pub(crate) decimate: i64,
     pub(crate) replicate: bool,
     pub(crate) method: RegridMethod,
+    pub(crate) image_tool: Option<ImageToolSampling>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ImageToolSampling {
+    pub(crate) force: bool,
+    pub(crate) convert_reference: bool,
+}
+
+impl TaskRegridOptions<'_> {
+    fn force(&self) -> bool {
+        self.image_tool.is_some_and(|options| options.force)
+    }
+
+    fn convert_reference(&self) -> bool {
+        self.image_tool
+            .is_none_or(|options| options.convert_reference)
+    }
 }
 
 pub(crate) fn regrid_task<T: RegridPixel>(
-    input: &impl ImageInterface<T>,
+    input: &dyn ImageInterface<T>,
     template: &RegridTemplate,
     options: TaskRegridOptions<'_>,
 ) -> Result<Regridded<T>, ImageError> {
     let input_shape = input.shape();
     let frame = frame::observation_frame(input.coordinates());
     let resized = requested_shape(options.shape, input_shape)?;
-    let all_axes = use_default_axes(input, template, options.axes, resized.is_none());
-    let chosen = requested_axes(options.axes, all_axes, input_shape.len())?;
+    let all_axes = if options.image_tool.is_some() {
+        options.axes.is_empty() || options.axes == [-1]
+    } else {
+        use_default_axes(input, template, options.axes, resized.is_none())
+    };
+    let chosen = requested_axes(
+        options.axes,
+        all_axes,
+        input_shape.len(),
+        options.image_tool.is_some(),
+    )?;
     let mut shape = resized.clone().unwrap_or_else(|| input_shape.to_vec());
     let ordered = index_coordinates(input.coordinates());
     let target_order = index_coordinates(&template.coordinates);
@@ -164,7 +191,10 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                     &selected,
                     all_axes || after_singleton,
                 )?;
-                if old_dimensions != dimensions || !same_direction_grid(ours, theirs) {
+                if options.force()
+                    || old_dimensions != dimensions
+                    || !same_direction_grid(ours, theirs)
+                {
                     apply_direction(
                         &mut result,
                         [axes[0], axes[1]],
@@ -263,7 +293,7 @@ fn validate_omitted_coordinate(
 }
 
 fn use_default_axes<T: ImagePixel>(
-    source: &impl ImageInterface<T>,
+    source: &dyn ImageInterface<T>,
     target: &RegridTemplate,
     axes: &[i64],
     infer_shape: bool,
@@ -297,7 +327,7 @@ fn regrid_linear_coordinate<T: RegridPixel>(
         if options.decimate < 0 {
             return Err(invalid("decimate must be nonnegative"));
         }
-        if input_lengths != lengths || !same_linear_grid(input, target) {
+        if options.force() || input_lengths != lengths || !same_linear_grid(input, target) {
             apply_linear_plane(
                 result,
                 [*x, *y],
@@ -332,7 +362,7 @@ fn regrid_linear_coordinate<T: RegridPixel>(
 
 fn regrid_spectral_coordinate<T: RegridPixel>(
     result: &mut Regridded<T>,
-    input: &impl ImageInterface<T>,
+    input: &dyn ImageInterface<T>,
     axis: usize,
     (ours, theirs): (&SpectralCoordinate, &SpectralCoordinate),
     dimensions: [usize; 2],
@@ -361,7 +391,8 @@ fn regrid_spectral_coordinate<T: RegridPixel>(
     };
     let source: CoordinateModel = ours.clone().into();
     let target: CoordinateModel = coordinate.clone().into();
-    if old_length != length
+    if options.force()
+        || old_length != length
         || !same_axes(&source, &target, &[length])
         || ours.world_frequency_ref() != theirs.world_frequency_ref()
     {
@@ -370,7 +401,7 @@ fn regrid_spectral_coordinate<T: RegridPixel>(
             dimensions,
             options.replicate,
             velocity,
-            frame,
+            options.convert_reference().then_some(frame),
         )?;
         apply_one_axis(result, axis, length, positions, options.method);
     }
@@ -411,7 +442,12 @@ fn index_coordinates(
         .collect()
 }
 
-fn requested_axes(axes: &[i64], all: bool, ndim: usize) -> Result<Vec<bool>, ImageError> {
+fn requested_axes(
+    axes: &[i64],
+    all: bool,
+    ndim: usize,
+    unique: bool,
+) -> Result<Vec<bool>, ImageError> {
     let mut mask = vec![all; ndim];
     if !all {
         for &axis in axes {
@@ -419,6 +455,9 @@ fn requested_axes(axes: &[i64], all: bool, ndim: usize) -> Result<Vec<bool>, Ima
                 .ok()
                 .and_then(|i| mask.get_mut(i))
                 .ok_or_else(|| invalid("regridding axis is outside the input image"))?;
+            if unique && *axis {
+                return Err(invalid("Specified pixel axes are not unique"));
+            }
             *axis = true;
         }
     }
@@ -582,7 +621,7 @@ fn spectral_positions(
     [input_count, output_count]: [usize; 2],
     replicate: bool,
     velocity: Option<[VelocityGrid; 2]>,
-    frame: &MeasFrame,
+    frame: Option<&MeasFrame>,
 ) -> Result<Vec<Option<f64>>, ImageError> {
     if input_count > 1 && velocity.is_none() {
         let bounds = |coordinate: &SpectralCoordinate, count: usize| {
@@ -615,10 +654,13 @@ fn spectral_positions(
                 return Ok(pixel.is_finite().then_some(pixel));
             }
             let frequency = target.world_frequency_hz(channel as f64)?;
-            let input_frequency = MFrequency::new(frequency, target.world_frequency_ref())
-                .convert_to(input.world_frequency_ref(), frame)
-                .map_err(|error| invalid(error.to_string()))?
-                .hz();
+            let input_frequency = match frame {
+                Some(frame) => MFrequency::new(frequency, target.world_frequency_ref())
+                    .convert_to(input.world_frequency_ref(), frame)
+                    .map_err(|error| invalid(error.to_string()))?
+                    .hz(),
+                None => frequency,
+            };
             Ok(input
                 .pixel_at_frequency_hz(input_frequency)
                 .ok()
@@ -682,8 +724,12 @@ fn apply_direction<T: RegridPixel>(
     } else {
         // Casacore's inter-coordinate conversion uses native frames, while
         // toWorldMany and toPixelMany retain each coordinate's conversion layer.
-        let from = target.direction_ref();
         let to = input.direction_ref();
+        let from = if options.convert_reference() {
+            target.direction_ref()
+        } else {
+            to
+        };
         let decimate = options.decimate.max(0) as usize;
         let project = |pixel| {
             let world = target.pixel_to_world(pixel).ok()?;
@@ -760,7 +806,7 @@ fn apply_linear_axes<T: RegridPixel>(
         let old_length = result.data.shape()[axis];
         // casacore aligns the selected axis's units and retains earlier conversions.
         factors[local] = linear_axis_unit_factor(&input_units[local], &target_units[local], axis)?;
-        if same_grid && length == old_length {
+        if !options.force() && same_grid && length == old_length {
             continue;
         }
         // The coordinate transform uses the full local model. Keep its other

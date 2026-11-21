@@ -8,7 +8,8 @@ use num_complex::Complex;
 
 use crate::ImagePixel;
 
-pub(crate) trait RegridPixel:
+/// Pixel arithmetic for separable and two-dimensional image interpolation.
+pub trait RegridPixel:
     ImagePixel
     + Copy
     + Add<Output = Self>
@@ -16,10 +17,14 @@ pub(crate) trait RegridPixel:
     + Mul<Self::Real, Output = Self>
     + Div<Self::Real, Output = Self>
 {
+    /// Scalar arithmetic precision used by the stored pixel type.
     type Real: NdFloat;
+    /// The number of independent scalar components in a pixel.
     const COMPONENTS: usize;
 
+    /// The requested real or imaginary component converted to f64.
     fn component(self, index: usize) -> f64;
+    /// Replace the requested component, preserving the other component.
     fn with_component(self, index: usize, value: f64) -> Self;
 }
 

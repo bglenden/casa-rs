@@ -58,13 +58,12 @@ mod pixel;
 mod spectral;
 mod task;
 
-pub(crate) use pixel::RegridPixel;
+pub use pixel::RegridPixel;
 pub(crate) use task::{
-    TaskRegridOptions, frame_from_template, regrid_direction_frame, regrid_task,
+    ImageToolSampling, TaskRegridOptions, frame_from_template, regrid_direction_frame, regrid_task,
 };
 
-/// casacore's `Interpolate2D` methods that `imregrid` and the image tool's
-/// `regrid` offer, Lanczos aside.
+/// Interpolation kernels used for native regridding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RegridMethod {
     /// The nearest pixel.
@@ -73,9 +72,20 @@ pub enum RegridMethod {
     Linear,
     /// Bicubic interpolation (Numerical Recipes' `bcucof`).
     Cubic,
+    /// Six-sample Lanczos kernel on each direction axis.
+    Lanczos,
 }
 
 impl RegridMethod {
+    pub(crate) fn from_image_tool(method: &str) -> Result<Self, ImageError> {
+        let upper = method.to_ascii_uppercase();
+        if upper.starts_with("LA") || upper.starts_with('Z') {
+            Ok(Self::Lanczos)
+        } else {
+            Self::from_casa(method)
+        }
+    }
+
     /// The method `method` names, as casacore's
     /// `Interpolate2D::stringToMethod` reads it: by its first letter, of
     /// any case, with `la…` and `z…` for Lanczos.
@@ -836,6 +846,7 @@ impl Plane<'_> {
             RegridMethod::Nearest => self.nearest(at),
             RegridMethod::Linear => self.linear(at),
             RegridMethod::Cubic => self.cubic(at),
+            RegridMethod::Lanczos => self.lanczos(at),
         }
     }
 
@@ -864,6 +875,46 @@ impl Plane<'_> {
         linear_sample(self.shape, at, |i, j| {
             self.good(i, j).then(|| self.at(i, j))
         })
+    }
+
+    fn lanczos(&self, [px, py]: [f64; 2]) -> Option<f64> {
+        const RADIUS: isize = 3;
+        let nx = self.shape[0] as isize;
+        let ny = self.shape[1] as isize;
+        let a = px.floor() as isize;
+        let b = py.floor() as isize;
+        let support_x = ((px - 2.) as isize).max(0)..=((px + 3.) as isize).min(nx - 1);
+        let support_y = ((py - 2.) as isize).max(0)..=((py + 3.) as isize).min(ny - 1);
+        for j in support_y {
+            if support_x
+                .clone()
+                .any(|i| !self.good(i as usize, j as usize))
+            {
+                return None;
+            }
+        }
+        if a < RADIUS || a >= nx - RADIUS || b < RADIUS || b >= ny - RADIUS {
+            return Some(0.0);
+        }
+        let weight = |distance: f64| {
+            let sinc = |x: f64| {
+                let x = x * std::f64::consts::PI;
+                if x == 0.0 { 1.0 } else { x.sin() / x }
+            };
+            if distance.abs() < RADIUS as f64 {
+                sinc(distance) * sinc(distance / RADIUS as f64)
+            } else {
+                0.0
+            }
+        };
+        let mut sum = 0.0;
+        for i in a - RADIUS + 1..=a + RADIUS {
+            let x = weight(px - i as f64);
+            for j in b - RADIUS + 1..=b + RADIUS {
+                sum += self.at(i as usize, j as usize) * x * weight(py - j as f64);
+            }
+        }
+        Some(sum)
     }
 
     /// `Interpolate2D::interpCubic`: bicubic on the 4 × 4 pixels from
@@ -1041,6 +1092,7 @@ mod tests {
                 decimate: 0,
                 replicate: false,
                 method: RegridMethod::Nearest,
+                image_tool: None,
             },
         )
         .unwrap();

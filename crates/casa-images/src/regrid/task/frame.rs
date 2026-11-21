@@ -144,6 +144,7 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
             decimate,
             replicate: false,
             method,
+            image_tool: None,
         },
         &frame,
     )?;
