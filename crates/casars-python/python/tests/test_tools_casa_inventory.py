@@ -60,7 +60,7 @@ IMPLEMENTED["coordsys"] = {
     "torelmany", "toworld", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
-    "boxcar", "collapse", "continuumsub", "convolve", "convolve2d", "decompose", "deviation", "fft", "findsources", "fitcomponents", "fitprofile", "hanning",
+    "boxcar", "collapse", "continuumsub", "convolve", "convolve2d", "decompose", "deviation", "fft", "findsources", "fitcomponents", "fitprofile", "hanning", "histograms",
     "maxfit",
     "pad", "pbcor", "transpose",
     "getprofile", "getslice",

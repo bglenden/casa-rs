@@ -30,22 +30,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (axes = None, region = None, mask = None, nbins = None, includepix = None, cumu = None, log = None, stretch = None), text_signature = "($self, axes=[-1], region={}, mask='', nbins=25, includepix=[-1.0], cumu=False, log=False, stretch=False)")]
-    fn histograms(
-        &self,
-        axes: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        nbins: Option<&Bound<'_, PyAny>>,
-        includepix: Option<&Bound<'_, PyAny>>,
-        cumu: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("histograms")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (moments = None, axis = None, region = None, mask = None, method = None, smoothaxes = None, smoothtypes = None, smoothwidths = None, includepix = None, excludepix = None, peaksnr = None, stddev = None, doppler = None, outfile = None, smoothout = None, overwrite = None, drop = None, stretch = None), text_signature = "($self, moments=[0], axis=-10, region={}, mask='', method=[], smoothaxes=[-1], smoothtypes=[], smoothwidths=[0.0], includepix=[-1.0], excludepix=[-1.0], peaksnr=3.0, stddev=0.0, doppler='RADIO', outfile='', smoothout='', overwrite=False, drop=True, stretch=False)")]
     fn moments(
         &self,

@@ -3933,6 +3933,12 @@ physical columns. The paired fixture holds complex DATA within the requested
 range and puts signed floats outside it. CASA flags the samples from the
 float column. casa-rs computes the range from the requested complex DATA.
 
+The same iterator substitution affects TFCrop's `DATA` and `RESIDUAL_DATA`
+fits. A fixture with distinct spikes in the complex and float columns shows
+that CASA flags the float source. Native TFCrop keeps the complex source and
+matches the CASA masks for a control containing only complex observations.
+[TFCrop source oracle](../tools/casa-compat/flagdata_tfcrop_sources_oracle.py)
+
 With `datacolumn="FLOAT_DATA", clipzeros=True`, CASA also flags finite
 negative values outside the zero tolerance. casa-rs applies the zero
 tolerance to the magnitude of each sample. An explicit inside or outside
@@ -9074,6 +9080,14 @@ For a region retaining channels 1, 3 and 5, CASA returns samples at
 those channels but numbers the `planes` array 1, 2 and 3. The same
 contiguous numbers appear in `coords` when pixel units are requested.
 Casa-rs reports the original sampled pixel numbers.
+
+### `image.histograms` can abort on duplicate axes
+
+On a 5 × 3 Float image with `axes=[1, 1]`, CASA 6.7.6.14 aborts
+inside the lattice collapse. It checks each axis in isolation and
+passes a duplicated axis to the tile iterator. Casa-rs raises a Python
+error for duplicate axes and keeps the image attached and its pixels
+intact.
 
 ### `image.maxfit` can select the wrong channel or crash on an all-masked image
 
