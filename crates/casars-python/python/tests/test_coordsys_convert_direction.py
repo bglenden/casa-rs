@@ -91,6 +91,16 @@ def test_native_frame_rotation_preserves_signed_axis_maps(casa):
     _assert_value(states[0][1], states[1][1])
 
 
+def test_exact_negative_pixel_meridian_returns_positive_half_turn(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(direction=True)
+        assert cs.setunits(["deg", "deg"])
+        assert cs.setreferencevalue([0.0, -30.0])
+        assert cs.setincrement([1.0, -1.0])
+        angle = cs.convertdirection("J2000")
+        assert angle == {"unit": "rad", "value": np.pi}
+
+
 def test_rejected_rotation_preserves_the_previous_grid(casa):
     for api in (tools, casa):
         cs = api.coordsys().newcoordsys(linear=1)

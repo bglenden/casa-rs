@@ -55,6 +55,16 @@ impl DirectionCoordinate {
             ));
         }
         let angle = (y / length).clamp(-1.0, 1.0).acos();
-        Ok((converted, if x > 0.0 { -angle } else { angle }))
+        // WCSLIB's degree trigonometry gives zero at the negative meridian.
+        // Radian roundoff at that meridian must leave the half-turn positive.
+        let on_meridian = angle == std::f64::consts::PI && x.abs() <= 8.0 * f64::EPSILON * length;
+        Ok((
+            converted,
+            if x > 0.0 && !on_meridian {
+                -angle
+            } else {
+                angle
+            },
+        ))
     }
 }
