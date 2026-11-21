@@ -346,7 +346,7 @@ mod tests {
             phase: 0.7,
             plane,
             spectral,
-            cf: CfKey { group: cf, cube: 0 },
+            cf: CfKey::new(cf, 0),
             gradient,
         }
     }
@@ -948,10 +948,10 @@ mod tests {
                     phase: 0.0,
                     plane: 0,
                     spectral: spectral[(draw >> 1) as usize % 3],
-                    cf: CfKey {
-                        group: u16::try_from((draw >> 3) % u64::from(keys)).expect("a key"),
-                        cube: 0,
-                    },
+                    cf: CfKey::new(
+                        u16::try_from((draw >> 3) % u64::from(keys)).expect("a key"),
+                        0,
+                    ),
                     gradient: gradients[(draw >> 7) as usize % 3],
                 },
                 &[Complex32::default(); 4],

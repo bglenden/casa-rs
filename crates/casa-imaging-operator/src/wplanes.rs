@@ -529,10 +529,10 @@ impl WPlanes {
 
 impl ConvolutionFunctionSet for WPlanes {
     fn key(&self, _row: &RowContext, _freq_hz: f64, w_lambda: f64) -> CfKey {
-        CfKey {
-            group: u16::try_from(self.plane_of(w_lambda)).expect("plane index fits u16"),
-            cube: 0,
-        }
+        CfKey::new(
+            u16::try_from(self.plane_of(w_lambda)).expect("plane index fits u16"),
+            0,
+        )
     }
 
     fn taps<'s>(&'s self, key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
