@@ -102,7 +102,9 @@ def test_exact_negative_pixel_meridian_returns_positive_half_turn(casa):
 
 
 def test_square_pixel_check_absorbs_pc_row_scale(casa):
-    source = casa.coordsys().newcoordsys(direction=True).torecord()
+    original = casa.coordsys().newcoordsys(direction=True)
+    assert original.setunits(["rad", "rad"])
+    source = original.torecord()
     original_step = source["direction0"]["cdelt"].copy()
     source["direction0"]["pc"] = np.diag([2.0, 1.0])
     for api in (tools, casa):
