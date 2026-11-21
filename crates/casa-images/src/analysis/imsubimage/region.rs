@@ -362,6 +362,28 @@ struct ParsedRegion {
     stride: Option<Vec<usize>>,
 }
 
+fn saved_region_source(text: &str) -> Option<(&Path, &str)> {
+    let (path, name) = text.rsplit_once(':')?;
+    let name = name.trim();
+    let path = Path::new(path);
+    (!path.as_os_str().is_empty() && !name.is_empty() && path.is_dir()).then_some((path, name))
+}
+
+pub(super) fn external_region_path(text: &str) -> Option<&Path> {
+    let text = text.trim();
+    if let Some((path, _)) = saved_region_source(text) {
+        return Some(path);
+    }
+    if text.starts_with("box:")
+        || (text.starts_with("pixelbox(") && text.ends_with(')'))
+        || looks_like_four_ints(text)
+    {
+        return None;
+    }
+    let path = Path::new(text);
+    path.is_file().then_some(path)
+}
+
 fn parse_region_argument<T: ImagePixel>(
     image: &dyn ImageInterface<T>,
     text: &str,
@@ -369,18 +391,8 @@ fn parse_region_argument<T: ImagePixel>(
     plane: [usize; 2],
     text_origin: Option<&dyn ImageInterface<T>>,
 ) -> Result<ParsedRegion, ImageError> {
-    if let Some((img_path_str, reg_name)) = text.rsplit_once(':')
-        && !img_path_str.is_empty()
-        && !reg_name.trim().is_empty()
-        && Path::new(img_path_str).is_dir()
-    {
-        return load_saved_region(
-            Path::new(img_path_str),
-            reg_name.trim(),
-            image.coordinates(),
-            full_shape,
-            plane,
-        );
+    if let Some((path, name)) = saved_region_source(text) {
+        return load_saved_region(path, name, image.coordinates(), full_shape, plane);
     }
 
     if let Some(box_text) = text.strip_prefix("box:") {

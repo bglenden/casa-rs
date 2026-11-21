@@ -3933,6 +3933,12 @@ physical columns. The paired fixture holds complex DATA within the requested
 range and puts signed floats outside it. CASA flags the samples from the
 float column. casa-rs computes the range from the requested complex DATA.
 
+The same iterator substitution affects TFCrop's `DATA` and `RESIDUAL_DATA`
+fits. A fixture with distinct spikes in the complex and float columns shows
+that CASA flags the float source. Native TFCrop keeps the complex source and
+matches the CASA masks for a control containing only complex observations.
+[TFCrop source oracle](../tools/casa-compat/flagdata_tfcrop_sources_oracle.py)
+
 With `datacolumn="FLOAT_DATA", clipzeros=True`, CASA also flags finite
 negative values outside the zero tolerance. casa-rs applies the zero
 tolerance to the magnitude of each sample. An explicit inside or outside
@@ -4497,6 +4503,35 @@ low-resolution crop at that offset with zero padding before CASA's Fourier
 combination gives an independent reference. Native feathering of the original
 crop agrees with it to a normalized RMS of `1.93e-7`. CASA's direct regrid
 of the crop differs from that reference by `6.01e-4` (#977).
+
+## `feather` uses direction increments as radians
+
+In CASA 6.7.6.14, `StokesImageUtil::MakeGaussianPSF` uses the numeric
+direction increments as radians when sampling the restoring beam for
+`feather`. The increments still carry the coordinate's declared units.
+With a 64 × 64 × 1 × 4 cube, 1 arcminute pixels, and beam major axes of
+3 and 8 arcminutes, storing the direction units as arcminutes makes the
+crossover kernel an impulse. CASA returns the low-resolution image
+multiplied by the beam-area ratio `(3/8)^2`. Expressing the same grid in
+radians retains the high-resolution signal. The two CASA products differ
+by 0.476 normalized RMS relative to the radian result.
+
+casa-rs samples the beam using direction increments in radians. On those
+inputs its two products agreed within `7e-8` normalized RMS, and the native
+product agreed with the radian CASA result within `7e-7`. The
+`direction_units_do_not_change_the_fourier_combination` regression uses
+the pinned CASA radian reference with the same physical grid stored in
+arcminutes (#977).
+
+## `imregrid` can terminate after a direction pixel axis is removed
+
+In CASA 6.7.6.14, make the right-ascension axis degenerate and drop it with
+`imsubimage(dropdeg=True)`. Copy the product and shift the Declination
+reference pixel by 0.25 in the copy. With the recorded `dropdeg_ra.image`
+fixture, `imregrid(axes=[0], decimate=1)` from the original to the shifted
+template terminates CASA with a bus error after creating the output mask.
+casa-rs returns a recoverable error and leaves the output absent. The
+coordinate layer can still open and transform both input grids (#977).
 
 ## `tb.copyrows` adds the rows before it finds a cell it cannot convert, and wraps integers
 
@@ -9038,3 +9073,35 @@ fixed gives a different center in CASA after its peak and sample values
 are scaled from 1 to 10⁻¹⁵. The velocity center shifts by about
 0.0175 km/s. Casa-rs scales the solver's damping to its curvature and
 fits the same physical center at both intensities.
+
+### `image.getprofile` can return values on a different axis than requested
+
+On a 4 × 5 × 1 × 7 image, CASA 6.7.6.14 returns the right pixels for
+a region selecting channels 1 through 5, but with `frame="BARY"` its
+reported frequencies come from channels 0 through 4. The conversion
+uses the original coordinate system with channel numbers starting at
+zero. Casa-rs converts the actual selected channels and pairs their
+coordinates with the corresponding reduced samples.
+
+A declination profile on the same image can fail an
+`AlwaysAssert newWorldOrder.nelements() == nWorldAxes()` when a world
+unit is requested. Casa-rs keeps the selected declination axis and
+evaluates its coordinates along the spatially collapsed image grid.
+
+With `spectype="beta"` and `unit="m"`, CASA reports its unchanged
+frequency values while labeling them as meters. Casa-rs rejects
+relativistic velocity with a wavelength unit, as it does for radio
+and optical velocity.
+
+For a region retaining channels 1, 3 and 5, CASA returns samples at
+those channels but numbers the `planes` array 1, 2 and 3. The same
+contiguous numbers appear in `coords` when pixel units are requested.
+Casa-rs reports the original sampled pixel numbers.
+
+### `image.histograms` can abort on duplicate axes
+
+On a 5 × 3 Float image with `axes=[1, 1]`, CASA 6.7.6.14 aborts
+inside the lattice collapse. It checks each axis in isolation and
+passes a duplicated axis to the tile iterator. Casa-rs raises a Python
+error for duplicate axes and keeps the image attached and its pixels
+intact.

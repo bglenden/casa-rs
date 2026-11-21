@@ -18,8 +18,13 @@ mod decimate;
 mod decompose;
 mod deviation;
 mod findsources;
+mod getprofile;
+pub use getprofile::{
+    ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile,
+};
 mod fitcomponents;
 mod fitprofile;
+mod histogram;
 pub use fitcomponents::{
     ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
     fit_image_components,
@@ -28,6 +33,7 @@ pub use fitprofile::{
     ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
     ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
 };
+pub use histogram::{HistogramOptions, HistogramPixel, image_histogram};
 mod fourier;
 pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};
 pub use deviation::{DeviationOptions, ImageDeviation};
@@ -91,6 +97,16 @@ use super::lel_mask::{evaluate_mask, evaluate_strided_mask};
 pub enum SubimageRegion<'a> {
     Text(&'a str),
     Record(&'a RecordValue),
+}
+
+impl<'a> SubimageRegion<'a> {
+    /// File or image holding this region when it is stored outside the fitted image.
+    pub fn external_path(self) -> Option<&'a Path> {
+        match self {
+            Self::Text(text) => self::region::external_region_path(text),
+            Self::Record(_) => None,
+        }
+    }
 }
 
 /// Region and degenerate-axis choices for image section extraction.

@@ -542,7 +542,7 @@ const METHODS: &[Method] = &[
             param("logfile", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getregion",
@@ -600,7 +600,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "history",

@@ -1043,19 +1043,31 @@ fn data_column(
     ) {
         return Ok(FlagDataColumn::Data);
     }
-    match text.to_ascii_uppercase().as_str() {
+    let tfcrop_ms = mode == FlagDataMode::Tfcrop && !calibration;
+    let accepts_ms_sources = mode == FlagDataMode::Clip || tfcrop_ms;
+    let source = if tfcrop_ms {
+        text.split_once('\0').map_or(text, |(head, _)| head)
+    } else {
+        text
+    };
+    match source.to_ascii_uppercase().as_str() {
         "DATA" => Ok(FlagDataColumn::Data),
-        "CORRECTED" | "CORRECTED_DATA" => Ok(FlagDataColumn::CorrectedData),
-        "FLOAT_DATA" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::FloatData),
-        "MODEL" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::ModelData),
-        "RESIDUAL" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::Residual),
-        "RESIDUAL_DATA" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::ResidualData),
-        "WEIGHT" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::Weight),
-        "WEIGHT_SPECTRUM" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::WeightSpectrum),
+        "CORRECTED" => Ok(FlagDataColumn::CorrectedData),
+        "CORRECTED_DATA" if !tfcrop_ms => Ok(FlagDataColumn::CorrectedData),
+        "FLOAT_DATA" if accepts_ms_sources => Ok(FlagDataColumn::FloatData),
+        "MODEL" if accepts_ms_sources => Ok(FlagDataColumn::ModelData),
+        "RESIDUAL" if accepts_ms_sources => Ok(FlagDataColumn::Residual),
+        "RESIDUAL_DATA" if accepts_ms_sources => Ok(FlagDataColumn::ResidualData),
+        "WEIGHT" if accepts_ms_sources => Ok(FlagDataColumn::Weight),
+        "WEIGHT_SPECTRUM" if accepts_ms_sources => Ok(FlagDataColumn::WeightSpectrum),
         "CPARAM" if calibration => Ok(FlagDataColumn::Cparam),
         "FPARAM" if calibration => Ok(FlagDataColumn::Fparam),
         "PARAMERR" if calibration => Ok(FlagDataColumn::ParamErr),
         "SNR" if calibration => Ok(FlagDataColumn::Snr),
+        _ if tfcrop_ms => Err(TaskFailure::validation(
+            "Failed to parse parameters for mode tfcrop",
+        )
+        .at("datacolumn")),
         "MODEL" | "RESIDUAL" | "RESIDUAL_DATA" | "FLOAT_DATA" | "WEIGHT_SPECTRUM" | "WEIGHT"
         | "FPARAM" | "CPARAM" | "PARAMERR" | "SNR" => Err(not_yet("datacolumn", text)),
         _ if mode == FlagDataMode::Clip => Err(TaskFailure::validation(

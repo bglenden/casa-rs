@@ -121,7 +121,7 @@ fn grouped_flags(
             .is_some_and(|schema| schema.contains_column(request.data_column.name()));
         match (request.mode, valid) {
             (FlagDataMode::Tfcrop, true) => {
-                apply_tfcrop_flags(table, &selected.rows, channels, request)?
+                apply_tfcrop_flags(table, &selected.rows, channels, request, None)?
             }
             (FlagDataMode::Rflag, true) => {
                 apply_rflag_flags(table, &selected.rows, channels, request, !persist)?

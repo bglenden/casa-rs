@@ -38,7 +38,9 @@ mod fits_export;
 mod fits_header;
 mod fits_import;
 mod fits_rename;
+mod getprofile;
 mod handle;
+mod histograms;
 mod imagecalc;
 mod insert;
 mod lifecycle;
@@ -67,6 +69,7 @@ mod stubs;
 mod subimage;
 mod summary;
 pub(crate) mod surface;
+mod text_output;
 mod transpose;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};

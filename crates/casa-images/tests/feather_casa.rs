@@ -53,6 +53,17 @@ fn run(workspace: &Path, values: &Value) -> Output {
     process.wait_with_output().unwrap()
 }
 
+fn assert_casa_pixels(pixels: &ArrayD<f32>, expected: &Value, case: &str) {
+    let (mut squared_error, mut squared_reference) = (0.0, 0.0);
+    for (i, &value) in pixels.view().reversed_axes().iter().enumerate() {
+        let reference = expected[i].as_f64().unwrap();
+        squared_error += (f64::from(value) - reference).powi(2);
+        squared_reference += reference.powi(2);
+    }
+    let nrms = (squared_error / squared_reference).sqrt();
+    assert!(nrms < 2e-6, "{case} normalized RMS error {nrms}");
+}
+
 #[test]
 fn mixed_beams_use_the_plane_area_ratios_and_allow_explicit_overwrite_refusal() {
     let workspace = tempfile::tempdir().unwrap();
@@ -270,14 +281,7 @@ fn dish_filters_match_casa() {
             |mask| mask.view().reversed_axes().iter().copied().collect(),
         );
         assert_eq!(json!(mask), expected["mask"], "{name}");
-        let (mut squared_error, mut squared_reference) = (0.0, 0.0);
-        for (i, &value) in data.view().reversed_axes().iter().enumerate() {
-            let reference = expected["pixels"][i].as_f64().unwrap();
-            squared_error += (f64::from(value) - reference).powi(2);
-            squared_reference += reference.powi(2);
-        }
-        let nrms = (squared_error / squared_reference).sqrt();
-        assert!(nrms < 2e-6, "{name} normalized RMS error {nrms}");
+        assert_casa_pixels(&data, &expected["pixels"], name);
     }
     let output = workspace.path().join("default.out/table.dat");
     let before = fs::read(&output).unwrap();
@@ -290,4 +294,35 @@ fn dish_filters_match_casa() {
     );
     assert!(!reply.status.success());
     assert_eq!(fs::read(output).unwrap(), before);
+}
+
+#[test]
+fn direction_units_do_not_change_the_fourier_combination() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/feather");
+    let record: Value = serde_json::from_str(include_str!("data/feather/expected.json")).unwrap();
+    assert_eq!(record["casa_version"], "6.7.6.14");
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["high.im", "low.im"] {
+        let path = workspace.path().join(name);
+        copy_images(&fixtures.join(name), &path);
+        let mut image = PagedImage::<f32>::open(path).unwrap();
+        image.set_axis_unit(0, "'").unwrap();
+        image.set_axis_unit(1, "'").unwrap();
+        image.save().unwrap();
+    }
+    let output = run(
+        workspace.path(),
+        &json!({"imagename": "combined.im", "highres": "high.im", "lowres": "low.im"}),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let combined = PagedImage::<f32>::open(workspace.path().join("combined.im")).unwrap();
+    assert_casa_pixels(
+        &combined.get().unwrap(),
+        &record["cases"]["default"]["product"]["pixels"],
+        "arcminute grid against CASA's physical radian grid",
+    );
 }
