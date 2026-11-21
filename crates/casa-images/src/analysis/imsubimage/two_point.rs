@@ -236,7 +236,7 @@ impl<'a> ImageTwoPoint<'a> {
             let pixels = collapse_plane(pixels, self.axes);
             let valid = valid.map(|valid| collapse_plane(valid, self.axes));
             let (values, valid) =
-                plan.measure(pixels.view(), valid.as_ref().map(ndarray::ArrayBase::view))?;
+                plan.measure(pixels.view(), valid.as_ref().map(|mask| mask.view()))?;
             let values = values
                 .into_shape_with_order(IxDyn(&output_plane_shape))
                 .expect("lag plane shape");
