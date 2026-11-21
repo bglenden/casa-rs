@@ -75,16 +75,13 @@ impl<'a> ImageDeviation<'a> {
         let sky_index = coordinates
             .find_coordinate(CoordinateType::Direction)
             .ok_or_else(|| invalid("Coordinate system has no direction coordinate"))?;
-        let [Some(x), Some(y)] = coordinates
-            .coordinate_pixel_axes(sky_index)
-            .and_then(|axes| axes.try_into().ok())
-            .ok_or_else(|| invalid("A direction coordinate with two pixel axes is required"))?
-        else {
+        let mapped_axes = coordinates.coordinate_pixel_axes(sky_index);
+        let Some([Some(x), Some(y)]) = mapped_axes.as_deref() else {
             return Err(invalid(
                 "A direction coordinate with two pixel axes is required",
             ));
         };
-        let axes = [x, y];
+        let axes = [*x, *y];
         let mut anchor = vec![0.; image.ndim()];
         let reference = coordinates.reference_pixel();
         for (entry, axis) in axes.into_iter().enumerate() {

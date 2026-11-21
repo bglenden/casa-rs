@@ -74,25 +74,81 @@ fn history_variant(value: &Variant) -> String {
     }
 }
 
-fn parse_anchor(anchor: &Variant) -> PyResult<Option<[i64; 2]>> {
-    match anchor {
-        Variant::Text(token) if token == "ref" => Ok(None),
-        Variant::Text(token) => Err(raised(format!("Unsupported value for anchor: {token}"))),
-        Variant::Empty => Ok(None),
-        Variant::Numbers(pair) => {
-            let pair: [f64; 2] = pair
-                .as_slice()
-                .try_into()
-                .map_err(|_| raised("anchor must have exactly two integer values"))?;
-            if pair
-                .iter()
-                .any(|&v| !v.is_finite() || v.fract() != 0. || v.abs() >= i64::MAX as f64)
-            {
-                return Err(raised("anchor must have exactly two integer values"));
-            }
-            Ok(Some(pair.map(|i| i as i64)))
+struct AnchorArgument {
+    history: String,
+    selection: Result<Option<[i64; 2]>, String>,
+}
+
+impl Default for AnchorArgument {
+    fn default() -> Self {
+        Self {
+            history: r#""ref""#.into(),
+            selection: Ok(None),
         }
-        _ => Err(raised("Unsupported type for anchor")),
+    }
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for AnchorArgument {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if let Ok(token) = value.extract::<String>() {
+            return Ok(Self {
+                history: format!("{token:?}"),
+                selection: if token == "ref" {
+                    Ok(None)
+                } else {
+                    Err(format!("Unsupported value for anchor: {token}"))
+                },
+            });
+        }
+        let variant: Variant = value.extract()?;
+        if variant.is_empty_sequence() {
+            return Ok(Self {
+                history: "[]".into(),
+                selection: Ok(None),
+            });
+        }
+        let items = value
+            .try_iter()
+            .ok()
+            .map(|items| items.collect::<PyResult<Vec<_>>>())
+            .transpose()?;
+        if let Some(items) = items
+            .as_ref()
+            .filter(|items| items.iter().all(|item| item.is_instance_of::<PyBool>()))
+        {
+            let flags = items
+                .iter()
+                .map(|item| {
+                    if item.is_truthy().unwrap_or_default() {
+                        "true"
+                    } else {
+                        "false"
+                    }
+                })
+                .collect::<Vec<_>>();
+            return Ok(Self {
+                history: format!("[{}]", flags.join(",")),
+                selection: Ok(None),
+            });
+        }
+        let integers = items.and_then(|items| {
+            items
+                .iter()
+                .map(|item| item.extract::<i64>().ok())
+                .collect::<Option<Vec<_>>>()
+        });
+        Ok(Self {
+            history: history_variant(&variant),
+            selection: match (variant, integers) {
+                (Variant::Numbers(_), Some(values)) => values
+                    .try_into()
+                    .map(Some)
+                    .map_err(|_| "anchor must have exactly two integer values".to_owned()),
+                _ => Err("Unsupported type for anchor".to_owned()),
+            },
+        })
     }
 }
 
@@ -103,7 +159,7 @@ struct Request<'a> {
     overwrite: bool,
     stretch: bool,
     grid: IntList,
-    anchor: Variant,
+    anchor: AnchorArgument,
     xlength: LengthArgument,
     ylength: LengthArgument,
     interp: &'a str,
@@ -159,7 +215,7 @@ impl Request<'_> {
             mask: Some(&self.mask),
             stretch: self.stretch,
             grid: grid.map(|entry| entry as usize),
-            anchor: parse_anchor(&self.anchor)?,
+            anchor: self.anchor.selection.as_ref().copied().map_err(raised)?,
             x_length: self.xlength.parse("xlength")?,
             y_length: (!self.ylength.is_empty())
                 .then(|| self.ylength.parse("ylength"))
@@ -235,7 +291,7 @@ impl Request<'_> {
             .map(i64::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        let anchor = history_variant(anchor);
+        let anchor = &anchor.history;
         let xlength = history_variant(&xlength.value);
         let ylength = history_variant(&ylength.value);
         format!(
@@ -248,7 +304,7 @@ impl Request<'_> {
 impl PyImageTool {
     /// Create an image of local statistics sampled across each direction plane.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (outfile="", region=RegionArgument::default(), mask=None, overwrite=false, stretch=false, grid=IntList::of(&[1, 1]), anchor=None, xlength=LengthArgument::default(), ylength=LengthArgument::default(), interp="cubic", stattype="sigma", statalg="classic", zscore=-1.0, maxiter=-1), text_signature = "($self, outfile='', region='', mask='', overwrite=False, stretch=False, grid=[1, 1], anchor='ref', xlength='1pix', ylength='1pix', interp='cubic', stattype='sigma', statalg='classic', zscore=-1.0, maxiter=-1)")]
+    #[pyo3(signature = (outfile="", region=RegionArgument::empty_text(), mask=None, overwrite=false, stretch=false, grid=IntList::of(&[1, 1]), anchor=AnchorArgument::default(), xlength=LengthArgument::default(), ylength=LengthArgument::default(), interp="cubic", stattype="sigma", statalg="classic", zscore=-1.0, maxiter=-1), text_signature = "($self, outfile='', region='', mask='', overwrite=False, stretch=False, grid=[1, 1], anchor='ref', xlength='1pix', ylength='1pix', interp='cubic', stattype='sigma', statalg='classic', zscore=-1.0, maxiter=-1)")]
     fn deviation(
         &self,
         py: Python<'_>,
@@ -258,7 +314,7 @@ impl PyImageTool {
         #[pyo3(from_py_with = require_bool)] overwrite: bool,
         #[pyo3(from_py_with = require_bool)] stretch: bool,
         grid: IntList,
-        anchor: Option<Variant>,
+        anchor: AnchorArgument,
         xlength: LengthArgument,
         ylength: LengthArgument,
         interp: &str,
@@ -280,7 +336,7 @@ impl PyImageTool {
                 overwrite,
                 stretch,
                 grid,
-                anchor: anchor.unwrap_or_else(|| Variant::Text("ref".into())),
+                anchor,
                 xlength,
                 ylength,
                 interp,
