@@ -40,7 +40,7 @@ def read_component(dataset):
     return record, record['container']['component0']
 
 
-def compare_components(actual_ms, expected_ms):
+def compare_components(actual_ms, expected_ms, *, rtol=1e-12):
     actual, actual_component = read_component(actual_ms)
     expected, expected_component = read_component(expected_ms)
     for key in ('type', 'version', 'indexcombination', 'channelselection'):
@@ -48,14 +48,14 @@ def compare_components(actual_ms, expected_ms):
     assert expected['channelselection'][0, 2] > 3
     assert actual_component['shape']['type'] == expected_component['shape']['type'] == 'Point'
     np.testing.assert_allclose(actual_component['flux']['value'], expected_component['flux']['value'],
-                               rtol=1e-12, atol=1e-12)
+                               rtol=rtol, atol=1e-12)
     actual_spectrum = actual_component['spectrum']
     expected_spectrum = expected_component['spectrum']
     assert actual_spectrum['type'] == expected_spectrum['type']
     assert actual_spectrum['frequency']['refer'] == expected_spectrum['frequency']['refer']
 
 
-def verify_case(seed, root, name, options, *, return_rtol=1e-12):
+def verify_case(seed, root, name, options, *, standard='manual', return_rtol=1e-12):
     reference_model = None
     for scratch in (True, False):
         datasets = []
@@ -64,8 +64,10 @@ def verify_case(seed, root, name, options, *, return_rtol=1e-12):
             target = root / f'{name}-{engine}-{scratch}.ms'
             make_input(seed, target, scratch=scratch)
             before = perf_counter()
-            result = task(vis=str(target), field='0', spw='0:0~2', standard='manual',
-                          usescratch=scratch, **options)
+            params = dict(vis=str(target), field='0', spw='0:0~2', usescratch=scratch)
+            if standard is not None:
+                params['standard'] = standard
+            result = task(**params, **options)
             print(name, engine, 'scratch', scratch, 'seconds', perf_counter() - before, flush=True)
             returns.append(result)
             datasets.append(target)
@@ -75,7 +77,7 @@ def verify_case(seed, root, name, options, *, return_rtol=1e-12):
             reference_model = data(expected, 'MODEL_DATA')
             compare(name + ' scratch visibility', data(actual, 'MODEL_DATA'), reference_model)
             continue
-        compare_components(actual, expected)
+        compare_components(actual, expected, rtol=return_rtol)
         for engine, tool in (('casa', casa_ms), ('rust', rust_ms)):
             for target in datasets:
                 read_copy = root / (target.stem + '-read-' + engine + '.ms')
