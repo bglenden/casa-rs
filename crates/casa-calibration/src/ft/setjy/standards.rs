@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Calibrator flux polynomials from the runtime VLA standards tables.
+//! Fixed and time-dependent calibrator flux polynomials.
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,22 @@ use time::{Date, Month};
 use crate::ft::invalid;
 use crate::interpolation::{self, Curve};
 
+pub(crate) mod fixed;
 mod sources;
+
+use fixed::{FixedScale, FixedSpectrum};
+
+#[derive(Clone, Copy)]
+pub(crate) enum FluxScale {
+    Table(CatalogScale),
+    Fixed(FixedScale),
+}
+
+impl FluxScale {
+    pub(crate) fn time_interpolation(self) -> bool {
+        matches!(self, Self::Table(scale) if scale.time_interpolation())
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CatalogScale {
@@ -23,7 +38,7 @@ pub(crate) enum CatalogScale {
 }
 
 impl CatalogScale {
-    pub(crate) fn time_interpolation(self) -> bool {
+    fn time_interpolation(self) -> bool {
         self != Self::ScaifeHeald2012
     }
 
@@ -37,9 +52,18 @@ impl CatalogScale {
 }
 
 pub(crate) struct FluxCatalog {
-    scale: CatalogScale,
     cone_table: Option<PathBuf>,
-    coefficients: Table,
+    coefficients: Coefficients,
+}
+
+enum Coefficients {
+    Table(TabulatedCoefficients),
+    Fixed(FixedScale),
+}
+
+struct TabulatedCoefficients {
+    scale: CatalogScale,
+    table: Box<Table>,
     epochs: Vec<f64>,
 }
 
@@ -49,7 +73,12 @@ pub(crate) enum CatalogMatch<'a> {
     MissingCoefficients(&'static str),
 }
 
-pub(crate) struct CalibratorSpectrum<'a> {
+pub(crate) enum CalibratorSpectrum<'a> {
+    Table(TabulatedSpectrum<'a>),
+    Fixed(FixedSpectrum),
+}
+
+pub(crate) struct TabulatedSpectrum<'a> {
     scale: CatalogScale,
     coefficients: Vec<Vec<f32>>,
     epochs: &'a [f64],
@@ -58,26 +87,22 @@ pub(crate) struct CalibratorSpectrum<'a> {
 }
 
 impl FluxCatalog {
-    pub(crate) fn open(scale: CatalogScale) -> MsResult<Self> {
+    pub(crate) fn open(scale: FluxScale) -> MsResult<Self> {
         let candidates = MeasuresRuntime::discover_candidates().map_err(invalid)?;
         let roots: Vec<_> = candidates
             .into_iter()
             .map(|candidate| candidate.path.join("nrao/VLA/standards"))
             .collect();
         let cone_table = find_table("fluxcalibrator.data", &roots);
-        let path = find_table(scale.table(), &roots).ok_or_else(|| {
-            invalid(format!(
-                "VLA flux standard table {} was not found",
-                scale.table()
-            ))
-        })?;
-        let coefficients = Table::open(TableOptions::new(path))?;
-        let epochs = read_epochs(&coefficients)?;
+        let coefficients = match scale {
+            FluxScale::Table(scale) => {
+                Coefficients::Table(TabulatedCoefficients::open(scale, &roots)?)
+            }
+            FluxScale::Fixed(scale) => Coefficients::Fixed(scale),
+        };
         Ok(Self {
-            scale,
             cone_table,
             coefficients,
-            epochs,
         })
     }
 
@@ -91,6 +116,41 @@ impl FluxCatalog {
         let Some(name) = sources::identify(field, direction, self.cone_table.as_deref())? else {
             return Ok(CatalogMatch::UnknownSource);
         };
+        match &self.coefficients {
+            Coefficients::Table(coefficients) => {
+                coefficients.spectrum(name, time_mjd, interpolation)
+            }
+            Coefficients::Fixed(scale) => Ok(match scale.spectrum(name) {
+                Some(spectrum) => CatalogMatch::Spectrum(CalibratorSpectrum::Fixed(spectrum)),
+                None => CatalogMatch::UnknownSource,
+            }),
+        }
+    }
+}
+
+impl TabulatedCoefficients {
+    fn open(scale: CatalogScale, roots: &[PathBuf]) -> MsResult<Self> {
+        let path = find_table(scale.table(), roots).ok_or_else(|| {
+            invalid(format!(
+                "VLA flux standard table {} was not found",
+                scale.table()
+            ))
+        })?;
+        let table = Box::new(Table::open(TableOptions::new(path))?);
+        let epochs = read_epochs(&table)?;
+        Ok(Self {
+            scale,
+            table,
+            epochs,
+        })
+    }
+
+    fn spectrum(
+        &self,
+        name: &'static str,
+        time_mjd: f64,
+        interpolation: Curve,
+    ) -> MsResult<CatalogMatch<'_>> {
         let name = if name == "0133-3629" {
             "J0133-3629"
         } else {
@@ -98,14 +158,14 @@ impl FluxCatalog {
         };
         let column_name = format!("{name}_coeffs");
         if self
-            .coefficients
+            .table
             .schema()
             .and_then(|schema| schema.column(&column_name))
             .is_none()
         {
             return Ok(CatalogMatch::MissingCoefficients(name));
         }
-        let column = self.coefficients.column_accessor(&column_name)?;
+        let column = self.table.column_accessor(&column_name)?;
         let variable =
             self.scale.time_interpolation() && matches!(name, "3C48" | "3C138" | "3C147");
         let count = if variable { self.epochs.len() } else { 1 };
@@ -124,18 +184,29 @@ impl FluxCatalog {
                 ))),
             })
             .collect::<MsResult<_>>()?;
-        Ok(CatalogMatch::Spectrum(CalibratorSpectrum {
-            scale: self.scale,
-            coefficients,
-            epochs: &self.epochs[..count],
-            time_mjd,
-            interpolation,
-        }))
+        Ok(CatalogMatch::Spectrum(CalibratorSpectrum::Table(
+            TabulatedSpectrum {
+                scale: self.scale,
+                coefficients,
+                epochs: &self.epochs[..count],
+                time_mjd,
+                interpolation,
+            },
+        )))
     }
 }
 
 impl CalibratorSpectrum<'_> {
     pub(crate) fn flux(&self, frequency_hz: f64) -> f64 {
+        match self {
+            Self::Table(spectrum) => spectrum.flux(frequency_hz),
+            Self::Fixed(spectrum) => spectrum.flux(frequency_hz),
+        }
+    }
+}
+
+impl TabulatedSpectrum<'_> {
+    fn flux(&self, frequency_hz: f64) -> f64 {
         if self.scale == CatalogScale::ScaifeHeald2012 {
             let log_freq = (frequency_hz / 150e6).log10();
             let coefficients = &self.coefficients[0];
@@ -148,15 +219,8 @@ impl CalibratorSpectrum<'_> {
             return f64::from(coefficients[0]) * 10_f64.powf(log_flux);
         }
         let log_freq = (frequency_hz * 1e-9).log10();
-        let value = |row: usize| {
-            let log_flux = self.coefficients[row]
-                .iter()
-                .rev()
-                .fold(0., |acc, &coefficient| {
-                    acc * log_freq + f64::from(coefficient)
-                });
-            10_f64.powf(log_flux) as f32
-        };
+        let value =
+            |row: usize| 10_f64.powf(log_polynomial(&self.coefficients[row], log_freq)) as f32;
         if self.epochs.len() == 1 {
             return f64::from(value(0));
         }
@@ -193,6 +257,12 @@ impl CalibratorSpectrum<'_> {
             .0,
         )
     }
+}
+
+fn log_polynomial(coefficients: &[f32], log_frequency: f64) -> f64 {
+    coefficients.iter().rev().fold(0., |acc, &coefficient| {
+        acc * log_frequency + f64::from(coefficient)
+    })
 }
 
 fn find_table(name: &str, roots: &[PathBuf]) -> Option<PathBuf> {
