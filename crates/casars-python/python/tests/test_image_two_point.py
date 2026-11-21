@@ -239,3 +239,26 @@ def test_two_point_uses_mapped_axes_and_keeps_other_axes(casa, tmp_path, order, 
                 mapped.done()
             output.done()
             source.done()
+
+
+@pytest.mark.parametrize("masked", [True, False])
+def test_two_point_handles_singleton_sky_axis_and_an_empty_pair_set(casa, tmp_path, masked):
+    data = _ramp((1,7))
+    expected = _expected_ramp(data.shape, 1)
+    for api in (casa, tools):
+        source, output = api.image(), api.image()
+        path = str(tmp_path/f"{api.__name__}-singleton.im")
+        try:
+            assert source.fromarray(pixels=data)
+            if masked:
+                assert source.putregion(pixelmask=np.zeros(data.shape, dtype=bool))
+            assert source.twopointcorrelation(path) is True
+            assert output.open(path)
+            assert output.shape().tolist() == list(expected.shape)
+            np.testing.assert_array_equal(output.getchunk(getmask=True),
+                                          np.full(expected.shape, not masked, dtype=bool))
+            if not masked:
+                np.testing.assert_array_equal(output.getchunk(), expected)
+        finally:
+            output.done()
+            source.done()
