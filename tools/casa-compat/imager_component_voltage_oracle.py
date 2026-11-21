@@ -9,7 +9,7 @@ import shutil
 from tempfile import TemporaryDirectory
 
 import casatasks
-from casatools import componentlist, imager as casa_imager, ms as casa_ms, table, vpmanager
+from casatools import componentlist, imager as casa_imager, measures, ms as casa_ms, table, vpmanager
 import numpy as np
 
 from calibration_ft_oracle import coordinates
@@ -35,7 +35,9 @@ def predict(factory, dataset, component, *, model=None, scratch=True,
     pattern = {} if vptable is None else {'usedefaultvp': False, 'vptable': str(vptable)}
     assert tool.setvp(dovp=beam, dosquint=squint, **pattern)
     options = {} if model is None else {'model': str(model)}
-    assert tool.ft(complist=str(component), **options) and tool.done()
+    if component is not None:
+        options['complist'] = str(component)
+    assert tool.ft(**options) and tool.done()
 
 
 def compare(results, name, actual, expected):
@@ -90,6 +92,67 @@ def virtual_exchange(root, seed, component, expected, results):
                     expected)
 
 
+def spectral_controls(root, seed, results):
+    ra, dec = coordinates(seed)
+    polarized = root / 'polarized-index.cl'
+    source(polarized, seed, [3.7, .4, -.6, -.8], -.81)
+    scratch_pair(root, seed, polarized, results, 'polarized-index')
+    for name in ('tabular', 'linear'):
+        point = root / f'{name}.cl'
+        tool = componentlist()
+        assert tool.addcomponent(dir=f'J2000 {ra + .003}rad {dec - .002}rad',
+                                 flux=[3.7, .8, .9, -.6], freq='1.55GHz')
+        if name == 'tabular':
+            assert tool.setspectrum(0, type='tabular', tabularfreqs=[1.35e9, 1.4e9, 1.55e9, 1.7e9],
+                                    tabularflux=[2., 5., 3.7, 2.], tabularframe='LSRK')
+        else:
+            assert tool.convertfluxpol(0, 'Linear')
+        assert tool.rename(str(point)) and tool.done()
+        scratch_pair(root, seed, point, results, name, squint=name == 'linear')
+        if name == 'linear':
+            scratch_pair(root, seed, point, results, 'linear-selected', squint=True, spw='0:23')
+
+
+def azel_control(root, seed, results):
+    shifted = root / 'shifted.ms'
+    make_input(seed, shifted, scratch=True)
+    writer = table()
+    assert writer.open(str(shifted), nomodify=False)
+    time = writer.getcol('TIME')
+    first = time == time.min()
+    for column in ('TIME', 'TIME_CENTROID'):
+        values = writer.getcol(column)
+        values[~first] += 600.
+        assert writer.putcol(column, values)
+    assert writer.done()
+    ra, dec = coordinates(seed)
+    tool = measures()
+    assert tool.doframe(tool.observatory('VLA'))
+    assert tool.doframe(tool.epoch('UTC', f'{time.min()}s'))
+    local = tool.measure(tool.direction('J2000', f'{ra}rad', f'{dec}rad'), 'AZEL')
+    az, el = (local[key]['value'] for key in ('m0', 'm1'))
+    point = root / 'local.cl'
+    cl = componentlist()
+    assert cl.addcomponent(dir=f'AZEL {az + .003}rad {el - .002}rad', flux=3.7, freq='1.55GHz')
+    assert cl.rename(str(point)) and cl.done()
+    result = scratch_pair(root, shifted, point, results, 'azel-epochs')
+    early = np.abs(result[..., first]).max()
+    late = np.abs(result[..., ~first]).max()
+    assert early > 1. and late < .7 * early, (early, late)
+
+
+def compound_control(root, seed, component, model, tapered, results):
+    combined = scratch_pair(root, seed, component, results, 'image-and-component', model=model)
+    image_only = scratch_pair(root, seed, None, results, 'image-only', model=model)
+    covered = np.abs(image_only) > 1.e-3
+    uncovered = ~covered.any(axis=(0, 2))
+    assert covered.any() and uncovered.any()
+    assert np.min(np.max(np.abs(tapered[:, uncovered, :]), axis=(0, 2))) > 1.
+    for actual in (combined, data(root / 'image-and-component-native.ms', 'MODEL_DATA')):
+        np.testing.assert_allclose(actual[covered], image_only[covered], atol=1.e-5)
+        np.testing.assert_allclose(actual[:, uncovered, :], tapered[:, uncovered, :], atol=1.e-5)
+
+
 def run(root, seed, model):
     assert casatasks.version_string() == '6.7.6.14'
     root.mkdir(parents=True)
@@ -117,13 +180,15 @@ def run(root, seed, model):
         assert manager.saveastable(str(beam_table))
         custom = scratch_pair(work, seed, positive, results, 'custom-component', vptable=beam_table)
         assert relative_rms(custom, tapered) > .1
-        scratch_pair(work, seed, positive, results, 'image-and-component', model=model)
+        compound_control(work, seed, positive, model, tapered, results)
         active = scratch_pair(work, seed, positive, results, 'selected-channel', spw='0:23')
         np.testing.assert_allclose(active[:, 23, :], tapered[:, 23, :], rtol=1e-4, atol=1e-6)
         one = work / 'one-physical-channel.ms'
         casatasks.mstransform(str(seed), str(one), spw='0:23', datacolumn='data')
         assert data(one / 'SPECTRAL_WINDOW', 'CHAN_FREQ').size == 1
         scratch_pair(work, one, signed, results, 'signed-single-channel')
+        spectral_controls(work, seed, results)
+        azel_control(work, seed, results)
         virtual_exchange(work, seed, positive, plain, results)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 

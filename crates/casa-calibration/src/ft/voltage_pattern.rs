@@ -2,9 +2,9 @@
 //! Prepare the legacy imager's voltage pattern on the model image.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use casa_components::{Flux, Polarisation, SkyComponent};
+use casa_components::{ComponentList, Flux, Polarisation, SkyComponent, SpectralKind, stokes_in};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
 use casa_images::PagedImage;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
@@ -16,6 +16,7 @@ use casa_ms::{
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::ephemeris::offset_true_angle;
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
@@ -169,18 +170,19 @@ struct BeamSquint {
     angle: f64,
 }
 
-pub(crate) struct ComponentVoltage<'a> {
+struct ComponentVoltage<'a> {
     pattern: &'a PreparedVoltagePattern,
     component: &'a SkyComponent,
     datum_basis: Polarisation,
     original: Flux,
     beam_flux: Flux,
+    stokes: [f64; 4],
     centre: MDirection,
     separation: f64,
 }
 
 impl ComponentVoltage<'_> {
-    pub(crate) fn flux_at(&self, frequency: f64) -> MsResult<[Complex64; 4]> {
+    fn flux_at(&self, frequency: f64, first_channel: bool) -> MsResult<[Complex64; 4]> {
         let pattern = self.pattern.pattern();
         let power = |separation| f64::from(pattern.power_at(separation, frequency));
         let central = power(self.separation);
@@ -204,10 +206,14 @@ impl ComponentVoltage<'_> {
         let values = *flux.values();
         flux.set_values(std::array::from_fn(|index| values[index] * gains[index]));
         flux.convert_polarisation(self.original.polarisation());
-        let spectrum = self
-            .component
-            .flux_in(frequency, self.original.polarisation())
-            .map_err(invalid)?;
+        let sample_basis = if self.pattern.squint.is_some() && !first_channel {
+            // PBMath converts the input to circular during the first channel's
+            // application. Later channels sample that converted component.
+            Polarisation::Circular
+        } else {
+            self.original.polarisation()
+        };
+        let spectrum = stokes_in(sample_basis, self.sample_stokes(frequency)?);
         // BeamSkyJones samples a point spectrum in the original basis,
         // normalizes by the magnitude of the stored flux and tabulates
         // the result. This also preserves its signed-flux behavior.
@@ -223,6 +229,139 @@ impl ComponentVoltage<'_> {
         }));
         flux.convert_polarisation(self.datum_basis);
         Ok(*flux.values())
+    }
+
+    fn sample_stokes(&self, frequency: f64) -> MsResult<[f64; 4]> {
+        let spectrum = self.component.spectrum();
+        let in_frame = |reference| {
+            MFrequency::new(frequency, FrequencyRef::LSRK)
+                .convert_to(reference, &MeasFrame::new())
+                .map(|converted| converted.hz())
+                .map_err(invalid)
+        };
+        match spectrum.kind() {
+            SpectralKind::Constant => Ok(self.stokes),
+            SpectralKind::Tabular(table) => {
+                let sample = if matches!(table.frame(), FrequencyRef::LSRK | FrequencyRef::REST) {
+                    // The scalar tabular sampler uses its reference when the
+                    // channel and table already use the same frame.
+                    spectrum.reference_frequency().hz()
+                } else {
+                    in_frame(table.frame())?
+                };
+                let frequencies = table.frequencies_hz();
+                if !frequencies
+                    .first()
+                    .zip(frequencies.last())
+                    .is_some_and(|(&first, &last)| {
+                        (first.min(last)..=first.max(last)).contains(&sample)
+                    })
+                {
+                    return Err(invalid(
+                        "component beam sample is outside the tabular spectrum",
+                    ));
+                }
+                spectrum.sample_stokes(sample, self.stokes).map_err(invalid)
+            }
+            kind => {
+                let sample = in_frame(spectrum.reference_frequency().refer())?;
+                let mut stokes = spectrum
+                    .sample_stokes(sample, self.stokes)
+                    .map_err(invalid)?;
+                if matches!(kind, SpectralKind::SpectralIndex(index) if index.stokes_indices().is_none())
+                {
+                    stokes[1..].copy_from_slice(&self.stokes[1..]);
+                }
+                Ok(stokes)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct SpectrumBufferKey {
+    source: usize,
+    window: i32,
+    epoch: u64,
+    start_channel: usize,
+    basis: Polarisation,
+}
+
+pub(crate) struct ApparentComponentSpectra {
+    values: Vec<[Complex64; 4]>,
+    _memory: casa_imaging_runtime::Reservation,
+}
+
+impl ApparentComponentSpectra {
+    pub(crate) fn component(&self, index: usize, channels: usize) -> &[[Complex64; 4]] {
+        &self.values[index * channels..(index + 1) * channels]
+    }
+}
+
+/// One apparent spectrum per component in the current legacy buffer. In
+/// particular, the buffer's epoch follows frame-dependent sky directions.
+pub(crate) struct ComponentVoltageCache {
+    pattern: PreparedVoltagePattern,
+    last: Mutex<Option<(SpectrumBufferKey, Arc<ApparentComponentSpectra>)>>,
+}
+
+impl ComponentVoltageCache {
+    pub(crate) fn new(pattern: PreparedVoltagePattern) -> Self {
+        Self {
+            pattern,
+            last: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn spectra(
+        &self,
+        components: &ComponentList,
+        frequencies: &[f64],
+        basis: Polarisation,
+        (window, epoch, start_channel): (i32, f64, usize),
+        frame: &MeasFrame,
+    ) -> MsResult<Arc<ApparentComponentSpectra>> {
+        let key = SpectrumBufferKey {
+            source: std::ptr::from_ref(components) as usize,
+            window,
+            epoch: epoch.to_bits(),
+            start_channel,
+            basis,
+        };
+        let mut last = self.last.lock().map_err(invalid)?;
+        if let Some((held, spectra)) = last.as_ref()
+            && *held == key
+        {
+            return Ok(Arc::clone(spectra));
+        }
+        *last = None;
+        let cells = components
+            .len()
+            .checked_mul(frequencies.len())
+            .ok_or_else(|| invalid("component beam spectrum exceeds addressable storage"))?;
+        let host = HostResources::detect().map_err(invalid)?;
+        let memory = admit(
+            &host,
+            &ResourcePolicy::Balanced,
+            &Demand {
+                phase: "legacy component voltage spectrum",
+                memory: (cells as u64).saturating_mul(size_of::<[Complex64; 4]>() as u64),
+            },
+        )
+        .map_err(invalid)?;
+        let mut values = Vec::with_capacity(cells);
+        for component in components.iter() {
+            let response = self.pattern.component(component, basis, frame)?;
+            for (channel, &frequency) in frequencies.iter().enumerate() {
+                values.push(response.flux_at(frequency, channel == start_channel)?);
+            }
+        }
+        let spectra = Arc::new(ApparentComponentSpectra {
+            values,
+            _memory: memory,
+        });
+        *last = Some((key, Arc::clone(&spectra)));
+        Ok(spectra)
     }
 }
 
@@ -568,15 +707,16 @@ impl PreparedVoltagePattern {
         &self.pattern.value
     }
 
-    pub(crate) fn component<'a>(
+    fn component<'a>(
         &'a self,
         component: &'a SkyComponent,
         datum_basis: Polarisation,
+        frame: &MeasFrame,
     ) -> MsResult<ComponentVoltage<'a>> {
         let direction = component.shape().reference_direction();
         let centre = self
             .centre
-            .convert_to(direction.refer(), &self.frame)
+            .convert_to(direction.refer(), frame)
             .map_err(invalid)?;
         let separation = angular_separation(direction.as_angles(), centre.as_angles());
         let basis = match component.flux().polarisation() {
@@ -596,6 +736,7 @@ impl PreparedVoltagePattern {
             datum_basis,
             original,
             beam_flux,
+            stokes: [i, q, u, v],
             centre,
             separation,
         })
@@ -742,6 +883,39 @@ fn angular_separation((lon, lat): (f64, f64), (lon0, lat0): (f64, f64)) -> f64 {
     let separation = ((lat - lat0) * 0.5).sin().powi(2)
         + lat.cos() * lat0.cos() * ((lon - lon0) * 0.5).sin().powi(2);
     2.0 * separation.clamp(0., 1.).sqrt().asin()
+}
+
+#[cfg(test)]
+#[test]
+fn apparent_component_spectra_are_shared_by_baselines_at_one_epoch() {
+    use casa_components::{ComponentShape, SpectralModel};
+
+    let mut components = ComponentList::new();
+    components.push(SkyComponent::new(
+        Flux::stokes_jy(3., 0., 0., 0.),
+        ComponentShape::point(MDirection::from_angles(1., 0.4, DirectionRef::J2000)),
+        SpectralModel::constant(MFrequency::new(1.4e9, FrequencyRef::LSRK)),
+    ));
+    let cache = ComponentVoltageCache::new(PreparedVoltagePattern::test_pattern());
+    let frame = MeasFrame::new();
+    let sample = |time| {
+        cache
+            .spectra(
+                &components,
+                &[1.4e9, 1.5e9],
+                Polarisation::Linear,
+                (0, time, 0),
+                &frame,
+            )
+            .unwrap()
+    };
+    let first = sample(100.);
+    for _ in 0..32 {
+        assert!(Arc::ptr_eq(&first, &sample(100.)));
+    }
+    let next = sample(101.);
+    assert!(!Arc::ptr_eq(&first, &next));
+    assert_eq!(first.component(0, 2), next.component(0, 2));
 }
 
 fn pixel_centre(direction: &DirectionCoordinate, centre: &MDirection) -> MsResult<[f64; 2]> {

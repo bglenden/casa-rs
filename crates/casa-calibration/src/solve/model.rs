@@ -23,7 +23,7 @@ use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 
-use crate::ft::PreparedVoltagePattern;
+use crate::ft::{ComponentVoltageCache, PreparedVoltagePattern};
 
 use super::grouping::{BucketedRow, SelectedSolveRow, VisibilityBuffer};
 use super::{GainSolveCombine, GainSolveError, GainSolveModelSource, get_i32};
@@ -43,7 +43,7 @@ pub(super) struct ModelInputs {
     model_buffers: BTreeMap<usize, Arc<ModelBuffer>>,
     single_dish_pointings: HashMap<PointingQuery, BTreeMap<usize, MDirection>>,
     single_dish_feeds: FeedOffsets,
-    component_voltage: Option<PreparedVoltagePattern>,
+    component_voltage: Option<ComponentVoltageCache>,
 }
 
 struct ModelBuffer {
@@ -195,7 +195,7 @@ impl ModelInputs {
     }
 
     pub(super) fn set_component_voltage(&mut self, voltage: PreparedVoltagePattern) {
-        self.component_voltage = Some(voltage);
+        self.component_voltage = Some(ComponentVoltageCache::new(voltage));
     }
 
     fn load_geometry(
@@ -494,13 +494,19 @@ impl ModelInputs {
             .unwrap_or(row.time_seconds);
         let field = field_direction(ms, engine, row.field_id as usize, phase_time)
             .map_err(|source| read_error(ms, source))?;
-        let frame = MeasFrame::new()
-            .with_epoch(MEpoch::from_mjd(
-                row.time_seconds / 86400.0,
-                engine.time_reference(),
-            ))
-            .with_position(engine.observatory_position().clone())
-            .with_direction(field.clone());
+        let frame = if self.component_voltage.is_some() {
+            engine
+                .spectral_frame_observatory_direction(row.time_seconds, field.clone())
+                .map_err(|source| read_error(ms, source))?
+        } else {
+            MeasFrame::new()
+                .with_epoch(MEpoch::from_mjd(
+                    row.time_seconds / 86400.0,
+                    engine.time_reference(),
+                ))
+                .with_position(engine.observatory_position().clone())
+                .with_direction(field.clone())
+        };
         let uvw = uvw(ms, row.row_index)?;
         let (frequencies, frequency_ref) = &self.frequencies[&row.data_spw_id];
         let shape = [correlations.len(), frequencies.len()];
@@ -592,45 +598,98 @@ impl ModelInputs {
                     continue;
                 }
             };
-            let (basis, offset) = component_basis(correlations)?;
-            for component in components.iter() {
-                let projection =
-                    UvwMachine::with_frame(component.shape().reference_direction(), &field, &frame)
-                        .map_err(model_error)?;
-                let (rotated, phase) = projection.convert_projected([-uvw[0], -uvw[1], uvw[2]]);
-                let baseline = [-rotated[0], -rotated[1], rotated[2]];
-                let voltage = self
-                    .component_voltage
-                    .as_ref()
-                    .map(|voltage| voltage.component(component, basis))
-                    .transpose()
-                    .map_err(model_error)?;
-                for (channel, &frequency) in frequencies.iter().enumerate() {
-                    let visibility = if let Some(voltage) = &voltage {
-                        let flux = voltage.flux_at(frequency).map_err(model_error)?;
-                        let scale = component
-                            .transform()
-                            .and_then(|shape| shape.at_baseline(baseline).at_frequency(frequency))
-                            .map_err(model_error)?;
-                        flux.map(|value| value * scale)
-                    } else {
-                        component
-                            .visibility(baseline, frequency, basis)
-                            .map_err(model_error)?
-                    };
-                    let rotation = Complex64::from_polar(
-                        1.0,
-                        std::f64::consts::TAU * phase * frequency / 299_792_458.0,
-                    );
-                    for (correlation, &code) in correlations.iter().enumerate() {
-                        let value = visibility[(code - offset) as usize] * rotation;
-                        model[[correlation, channel]] +=
-                            Complex32::new(value.re as f32, value.im as f32);
-                    }
+            self.add_component_prediction(components, grid_row(), &mut model)?;
+        }
+        Ok(Some(model))
+    }
+    fn add_component_prediction(
+        &self,
+        components: &ComponentList,
+        sample: FourierRow<'_>,
+        model: &mut ArrayD<Complex32>,
+    ) -> Result<(), GainSolveError> {
+        let FourierRow {
+            ms,
+            row,
+            correlations,
+            frequencies,
+            engine,
+            field,
+            frame,
+            uvw,
+            scratch_channels,
+            ..
+        } = sample;
+        let (basis, offset) = component_basis(correlations)?;
+        let antenna_frame = if self.component_voltage.is_some() {
+            // ComponentFTMachine rotates baselines in the antenna-zero
+            // frame. BeamSkyJones uses the observatory frame separately.
+            Some(
+                engine
+                    .antenna_frame(row.time_seconds, 0)
+                    .map_err(|source| read_error(ms, source))?,
+            )
+        } else {
+            None
+        };
+        let projection_frame = antenna_frame.as_ref().unwrap_or(frame);
+        let spectra = if let Some(voltage) = &self.component_voltage {
+            let start = scratch_channels.map_or(0, |channels| channels[1] as usize);
+            Some(
+                voltage
+                    .spectra(
+                        components,
+                        frequencies,
+                        basis,
+                        (row.data_spw_id, row.time_seconds, start),
+                        frame,
+                    )
+                    .map_err(model_error)?,
+            )
+        } else {
+            None
+        };
+        for (index, component) in components.iter().enumerate() {
+            let projection = UvwMachine::with_frame(
+                component.shape().reference_direction(),
+                field,
+                projection_frame,
+            )
+            .map_err(model_error)?;
+            let (rotated, phase) = projection.convert_projected([-uvw[0], -uvw[1], uvw[2]]);
+            let baseline = [-rotated[0], -rotated[1], rotated[2]];
+            let apparent = spectra
+                .as_ref()
+                .map(|spectra| {
+                    let shape = component.transform()?.at_baseline(baseline);
+                    Ok::<_, casa_components::ComponentError>((
+                        spectra.component(index, frequencies.len()),
+                        shape,
+                    ))
+                })
+                .transpose()
+                .map_err(model_error)?;
+            for (channel, &frequency) in frequencies.iter().enumerate() {
+                let visibility = if let Some((flux, shape)) = &apparent {
+                    let scale = shape.at_frequency(frequency).map_err(model_error)?;
+                    flux[channel].map(|value| value * scale)
+                } else {
+                    component
+                        .visibility(baseline, frequency, basis)
+                        .map_err(model_error)?
+                };
+                let rotation = Complex64::from_polar(
+                    1.0,
+                    std::f64::consts::TAU * phase * frequency / 299_792_458.0,
+                );
+                for (correlation, &code) in correlations.iter().enumerate() {
+                    let value = visibility[(code - offset) as usize] * rotation;
+                    model[[correlation, channel]] +=
+                        Complex32::new(value.re as f32, value.im as f32);
                 }
             }
         }
-        Ok(Some(model))
+        Ok(())
     }
 }
 
