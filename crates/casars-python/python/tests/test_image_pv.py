@@ -407,7 +407,10 @@ def test_pv_keeps_independent_native_world_order(casa, tmp_path):
             coords = product.coordsys()
             try:
                 assert coords.names() == ["Frequency", "Offset", "Stokes"]
-                assert coords.axiscoordinatetypes() == ["Linear", "Stokes", "Spectral"]
+                assert coords.axiscoordinatetypes() == ["Spectral", "Linear", "Stokes"]
+                spectral = coords.findcoordinate("spectral")
+                np.testing.assert_array_equal(spectral["pixel"], [2])
+                np.testing.assert_array_equal(spectral["world"], [0])
                 np.testing.assert_array_equal(product.getchunk(), data[4:17, 7])
                 world = coords.toworld([2., 1., 4.], "n")["numeric"]
                 np.testing.assert_allclose(world, [1.415002e9, -240.000166, 2.], rtol=2e-6)
@@ -415,3 +418,21 @@ def test_pv_keeps_independent_native_world_order(casa, tmp_path):
                 coords.done()
         finally:
             product.done()
+
+
+def test_pv_wide_strip_crosses_multiple_sampling_tiles(casa):
+    x, y, pol, chan = np.ogrid[:192, :215, :1, :2]
+    data = (x + 2*y + .03125*y*y + 100*chan).astype(np.float32)
+    expected = data[8:180, 42:173].mean(axis=1, dtype=np.float64)
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            product = source.pv(start=[8, 107], end=[179, 107], width=131)
+            try:
+                assert product.getchunk(getmask=True).all()
+                np.testing.assert_allclose(product.getchunk(), expected, rtol=2e-6, atol=2e-5)
+            finally:
+                product.done()
+        finally:
+            source.done()
