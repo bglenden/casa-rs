@@ -8386,3 +8386,10 @@ sampled spectral values `[13, 18] Hz`.
 CASA also reads byte-swapped NumPy origin arrays as native-endian bytes.
 For example, `np.array(1.5, dtype=">f8")` applies a zero-pixel shift on a
 little-endian host. casa-rs reads the declared byte order.
+
+## A rejected combined conversion-frame request changes the direction frame
+
+CASA 6.7.6.14 applies the direction conversion in `coordsys.setconversiontype`
+before it validates the requested spectral frame. With `direction="GALACTIC"`
+and `spectral="invalid"`, the call raises after changing the direction
+conversion. casa-rs preserves both conversion layers when the call fails.
