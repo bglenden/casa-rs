@@ -147,6 +147,64 @@ def test_image_fft_transforms_direction_and_linear_frequency(casa, tmp_path):
             source.done()
 
 
+def test_image_fft_default_sky_axes_follow_a_transposed_cube(casa, tmp_path):
+    values = np.zeros((7, 8, 2), dtype=np.float32)
+    values[3, 4] = [2., 5.]
+    values[4, 5] = [1., 3.]
+    for index, api in enumerate((casa, tools)):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        transposed = source.transpose(order=201)
+        try:
+            path = str(tmp_path / f"transposed-{index}.im")
+            assert transposed.fft(complex=path)
+            output = api.image()
+            assert output.open(path)
+            try:
+                np.testing.assert_allclose(output.getchunk(), _fft(values, (0, 1)).transpose(2, 0, 1),
+                                           rtol=6e-7, atol=6e-7)
+                coords = output.coordsys()
+                try:
+                    assert list(coords.names()) == ["Stokes", "UU", "VV"]
+                    assert list(coords.units()) == ["", "lambda", "lambda"]
+                    np.testing.assert_array_equal(coords.referencepixel()["numeric"], [0., 3., 4.])
+                finally:
+                    coords.done()
+            finally:
+                output.done()
+        finally:
+            transposed.done()
+            source.done()
+
+
+def test_image_fft_stretches_a_named_mask_before_transforming(casa, tmp_path):
+    values = np.zeros((7, 8, 2), dtype=np.float32)
+    values[3, 4] = [2., 5.]
+    values[4, 5] = [90., 300.]
+    mask = np.ones((7, 8), dtype=np.float32)
+    mask[4, 5] = 0.
+    mask_path = str(tmp_path / "mask.im")
+    operand = casa.image()
+    assert operand.fromarray(mask_path, mask)
+    operand.done()
+    for index, api in enumerate((casa, tools)):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        try:
+            path = str(tmp_path / f"stretched-{index}.im")
+            assert source.fft(complex=path, mask=f'"{mask_path}" > 0', stretch=True)
+            output = api.image()
+            assert output.open(path)
+            try:
+                np.testing.assert_array_equal(output.getchunk(), np.broadcast_to([2., 5.], values.shape))
+                np.testing.assert_array_equal(output.getchunk(getmask=True),
+                                              np.broadcast_to(mask[:, :, None] != 0., values.shape))
+            finally:
+                output.done()
+        finally:
+            source.done()
+
+
 def test_image_fft_transforms_only_a_selected_linear_axis_after_cropping(casa, tmp_path):
     values = np.arange(12 * 15, dtype=np.float32).reshape(12, 15)
     regions = casa.regionmanager()
