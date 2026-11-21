@@ -16,6 +16,23 @@ use tempfile::TempDir;
 
 use super::handle::{raised, same_file_identity};
 
+pub(super) fn check_path_relationship(source: &Path, target: &Path, name: &str) -> PyResult<()> {
+    if target.starts_with(source) {
+        return Err(raised(format!(
+            "Directory::move error on {} to {name}: Invalid argument",
+            source.display()
+        )));
+    }
+    if source.starts_with(target) {
+        return Err(raised(format!(
+            "Cannot rename image {} to {} because the destination contains the source image",
+            source.display(),
+            target.display()
+        )));
+    }
+    Ok(())
+}
+
 pub(super) enum NativeTableMove {
     Renamed(Option<TempDir>),
     Copied {

@@ -18,8 +18,7 @@ use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
 use super::handle::{ImageHandle, raised};
-use super::native_rename::move_native_table;
-use super::stub;
+use super::native_rename::{check_path_relationship, move_native_table};
 
 pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
@@ -455,9 +454,7 @@ impl AttachedImage {
                 live_coordinates: self.live_coordinates.clone(),
             });
         }
-        if target.starts_with(source) || source.starts_with(&target) {
-            return Err(stub("rename").unwrap_err());
-        }
+        check_path_relationship(source, &target, name)?;
         let replaces_link = target_metadata
             .as_ref()
             .is_some_and(|entry| entry.is_symlink());

@@ -8089,6 +8089,13 @@ original table to a private staging directory before copying, keeps the
 published image readable, and reports the staging path if cleanup fails.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+With `parent/source.im` attached, calling
+`ia.rename("parent", overwrite=True)` can delete the source table and
+unrelated files in `parent` before CASA 6.7.6.14 reports an error. The same
+loss occurs when `parent` is itself a native image table. casa-rs rejects
+the relationship before deleting either path. The failed call closes the
+attachment as CASA does. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

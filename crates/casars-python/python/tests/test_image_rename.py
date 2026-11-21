@@ -86,6 +86,57 @@ def test_rename_attachment_failures(tmp_path, backend):
     assert tool.done()
 
 
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_rename_rejects_a_destination_inside_the_source(tmp_path, backend):
+    image = _backend(backend).image()
+    source = tmp_path / "source.im"
+    target = source / "nested.im"
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    try:
+        assert image.fromarray(str(source), pixels)
+        history = image.history()
+        with pytest.raises(RuntimeError, match="Directory::move error.*Invalid argument"):
+            image.rename(str(target))
+        assert not image.isopen()
+        assert not target.exists()
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+        assert image.history() == history
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("target_kind", ["directory", "table"])
+def test_rename_refuses_to_overwrite_a_directory_containing_the_source(tmp_path, target_kind):
+    image = tools.image()
+    target = tmp_path / "containing.im"
+    source = target / "source.im"
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    try:
+        if target_kind == "table":
+            assert image.fromarray(str(target), pixels + 50)
+            assert image.done()
+        else:
+            target.mkdir()
+        sibling = target / "unrelated"
+        sibling.write_text("keep", encoding="utf-8")
+        assert image.fromarray(str(source), pixels)
+        history = image.history()
+        with pytest.raises(RuntimeError, match="destination contains the source image"):
+            image.rename(str(target), overwrite=True)
+        assert not image.isopen()
+        assert sibling.read_text(encoding="utf-8") == "keep"
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+        assert image.history() == history
+        if target_kind == "table":
+            assert image.done()
+            assert image.open(str(target))
+            np.testing.assert_array_equal(image.getchunk(), pixels + 50)
+    finally:
+        image.done()
+
+
 def test_rename_refuses_a_move_while_another_tool_is_attached(tmp_path):
     old, new = tmp_path / "shared.im", tmp_path / "renamed.im"
     first, second = tools.image(), tools.image()
