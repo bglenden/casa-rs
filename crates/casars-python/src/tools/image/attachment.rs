@@ -202,6 +202,7 @@ impl AttachedImage {
         let opened = Self {
             image,
             key: Some(key.to_path_buf()),
+            registered: false,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
@@ -424,6 +425,7 @@ impl AttachedImage {
             return Ok(Self {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
+                registered: self.registered,
                 beam_view: Mutex::new(self.beam_view().clone()),
                 retained_inputs: Vec::new(),
                 operand_paths: Vec::new(),
@@ -505,6 +507,7 @@ impl AttachedImage {
         Ok(Self {
             image,
             key: Some(target),
+            registered: true,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
