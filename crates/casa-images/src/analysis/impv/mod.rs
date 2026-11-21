@@ -249,37 +249,6 @@ where
     Ok((result, valid))
 }
 
-#[cfg(test)]
-mod tests {
-    use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType};
-    use casa_types::measures::direction::DirectionRef;
-    use ndarray::IxDyn;
-
-    use super::{ArrayD, geometry, sample};
-
-    #[test]
-    fn pv_offset_stays_on_the_longitude_axis_after_latitude_is_removed() {
-        let direction = DirectionCoordinate::new(
-            DirectionRef::J2000,
-            Projection::new(ProjectionType::SIN),
-            [0.0, 0.0],
-            [-1e-5, 1e-5],
-            [0.0, 0.0],
-        );
-        let strip = geometry::Strip::new(&direction, [[2.0, 3.0], [7.0, 3.0]], [10, 8], 1).unwrap();
-        let pixels = ArrayD::from_shape_fn(IxDyn(&[8, 10, 2]), |index| {
-            (50 * index[0] + index[1] + 500 * index[2]) as f32
-        });
-        let (result, mask) = sample(&pixels, None, [1, 0], &strip).unwrap();
-        assert_eq!(result.shape(), [6, 2]);
-        let expected = ArrayD::from_shape_fn(IxDyn(&[6, 2]), |index| {
-            (152 + index[0] + 500 * index[1]) as f32
-        });
-        assert_eq!(result, expected);
-        assert!(mask.iter().all(|valid| *valid));
-    }
-}
-
 fn output_coordinates<T: ImagePixel>(
     image: &PagedImage<T>,
     selection: &SubimageSelection,
@@ -432,4 +401,35 @@ fn check_destination(destination: &Path, request: &ImpvRequest) -> Result<(), Im
 
 fn output_io(error: io::Error) -> ImageError {
     ImageError::Io(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType};
+    use casa_types::measures::direction::DirectionRef;
+    use ndarray::IxDyn;
+
+    use super::{ArrayD, geometry, sample};
+
+    #[test]
+    fn pv_offset_stays_on_the_longitude_axis_after_latitude_is_removed() {
+        let direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, 0.0],
+            [-1e-5, 1e-5],
+            [0.0, 0.0],
+        );
+        let strip = geometry::Strip::new(&direction, [[2.0, 3.0], [7.0, 3.0]], [10, 8], 1).unwrap();
+        let pixels = ArrayD::from_shape_fn(IxDyn(&[8, 10, 2]), |index| {
+            (50 * index[0] + index[1] + 500 * index[2]) as f32
+        });
+        let (result, mask) = sample(&pixels, None, [1, 0], &strip).unwrap();
+        assert_eq!(result.shape(), [6, 2]);
+        let expected = ArrayD::from_shape_fn(IxDyn(&[6, 2]), |index| {
+            (152 + index[0] + 500 * index[1]) as f32
+        });
+        assert_eq!(result, expected);
+        assert!(mask.iter().all(|valid| *valid));
+    }
 }

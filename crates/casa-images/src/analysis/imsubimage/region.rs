@@ -692,32 +692,6 @@ fn spectral_coordinate(coordinates: &CoordinateSystem) -> Result<&SpectralCoordi
     ))
 }
 
-#[cfg(test)]
-mod mapped_tests {
-    use casa_coordinates::LinearCoordinate;
-    use casa_types::measures::frequency::FrequencyRef;
-
-    use super::{CoordinateSystem, SpectralCoordinate, parse_spectral_endpoint};
-
-    #[test]
-    fn spectral_selection_uses_the_owning_coordinate_with_independent_axis_orders() {
-        let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(LinearCoordinate::new(1, Vec::new(), Vec::new()));
-        coordinates.add_coordinate(SpectralCoordinate::new(
-            FrequencyRef::TOPO,
-            1.4e9,
-            2e6,
-            0.0,
-            0.0,
-        ));
-        coordinates.transpose_axes(&[0, 1], &[1, 0]).unwrap();
-        assert_eq!(
-            parse_spectral_endpoint("1.404GHz", &coordinates, 0, None).unwrap(),
-            2
-        );
-    }
-}
-
 fn parse_crtf_shape<T: ImagePixel>(
     image: &dyn ImageInterface<T>,
     stmt: &str,
@@ -1481,4 +1455,30 @@ fn resolve_stokes(
         indices: Some(bounded),
         selected: Some(kept),
     })
+}
+
+#[cfg(test)]
+mod mapped_tests {
+    use casa_coordinates::LinearCoordinate;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    use super::{CoordinateSystem, SpectralCoordinate, parse_spectral_endpoint};
+
+    #[test]
+    fn spectral_selection_uses_the_owning_coordinate_with_independent_axis_orders() {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(LinearCoordinate::new(1, Vec::new(), Vec::new()));
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::TOPO,
+            1.4e9,
+            2e6,
+            0.0,
+            0.0,
+        ));
+        coordinates.transpose_axes(&[0, 1], &[1, 0]).unwrap();
+        assert_eq!(
+            parse_spectral_endpoint("1.404GHz", &coordinates, 0, None).unwrap(),
+            2
+        );
+    }
 }

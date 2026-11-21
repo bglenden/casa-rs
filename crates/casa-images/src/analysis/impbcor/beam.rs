@@ -145,23 +145,6 @@ fn align<T>(
     pixels
 }
 
-#[cfg(test)]
-mod tests {
-    use ndarray::array;
-
-    use super::align;
-
-    #[test]
-    fn primary_beam_matches_target_longitude_and_latitude_order() {
-        let pixels = array![[1, 2, 3], [4, 5, 6]].into_dyn();
-        let aligned = align(pixels, Some(([0, 1], [1, 0])), 3);
-        assert_eq!(
-            aligned,
-            array![[[1], [4]], [[2], [5]], [[3], [6]]].into_dyn()
-        );
-    }
-}
-
 fn direction(system: &CoordinateSystem) -> Result<&DirectionCoordinate, ImageError> {
     match system
         .find_coordinate(CoordinateType::Direction)
@@ -217,4 +200,21 @@ fn matching_direction(
             .iter()
             .zip(right.pc_matrix())
             .all(|(&a, &b)| near(a, b, linear_tolerance))
+}
+
+#[cfg(test)]
+mod tests {
+    use ndarray::array;
+
+    use super::align;
+
+    #[test]
+    fn primary_beam_matches_target_longitude_and_latitude_order() {
+        let pixels = array![[1, 2, 3], [4, 5, 6]].into_dyn();
+        let aligned = align(pixels, Some(([0, 1], [1, 0])), 3);
+        assert_eq!(
+            aligned,
+            array![[[1], [4]], [[2], [5]], [[3], [6]]].into_dyn()
+        );
+    }
 }
