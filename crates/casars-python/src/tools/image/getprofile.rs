@@ -22,7 +22,7 @@ use crate::tools::coordsys::profile_frequency_frame;
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
 use super::data_compat::record_to_py;
-use super::handle::{ImageHandle, raised, with_storage};
+use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::{RegionArgument, require_bool};
 
 struct ReadRequest<'a> {
@@ -64,7 +64,7 @@ impl PyImageTool {
             };
             match *attachment.lock() {
                 ImageHandle::Float(_) | ImageHandle::Complex(_) => Ok(()),
-                _ => Err(raised("getprofile does not support this image pixel type")),
+                _ => Err(raised("getprofile does not support images with double precision pixel values")),
             }
         })?;
         let axis = usize::try_from(axis).map_err(|_| raised("Axis must be greater than 0"))?;
@@ -107,7 +107,7 @@ impl ReadRequest<'_> {
             ImageHandle::Complex(storage) => with_storage!(
                 storage, image => self.compute(attachment, source, image.as_ref())
             ),
-            _ => Err(raised("getprofile does not support this image pixel type")),
+            _ => Err(raised("getprofile does not support images with double precision pixel values")),
         })
     }
 

@@ -214,3 +214,35 @@ def test_casa_native_source_writer_reader_matrix(casa, tmp_path):
                 assert measured["yUnit"] == "K"
             finally:
                 consumer.done()
+
+
+def test_transposed_spectral_axis_and_fully_masked_input(casa):
+    data, mask = _data()
+    for api in (casa, tools):
+        image = _attached(api, data, mask)
+        transposed = image.transpose(order="3012")
+        try:
+            actual = transposed.getprofile(axis=0, unit="GHz")
+            expected = image.getprofile(axis=3, unit="GHz")
+            _compare(actual, expected)
+            assert image.putregion(pixelmask=np.zeros(data.shape, dtype=bool))
+            for function in ("mean", "zero"):
+                with pytest.raises(RuntimeError, match="All selected pixels are masked"):
+                    image.getprofile(3, function=function)
+        finally:
+            transposed.done()
+            image.done()
+
+
+def test_double_precision_images_remain_attached_on_refusal(casa):
+    data, _ = _data()
+    for api in (casa, tools):
+        image = api.image()
+        assert image.fromarray(pixels=data, type="d")
+        try:
+            with pytest.raises(RuntimeError, match="double precision pixel values"):
+                image.getprofile(3)
+            assert image.pixeltype() == "double"
+            np.testing.assert_array_equal(image.getchunk(), data)
+        finally:
+            image.done()
