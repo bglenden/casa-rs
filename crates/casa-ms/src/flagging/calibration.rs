@@ -325,28 +325,90 @@ pub(super) fn automatic_projection(
     request: &FlagDataRequest,
     samples: &[Sample],
 ) -> Result<CalibrationProjection, FlaggingError> {
-    let expression = request
+    use correlation::{CLIP_OPERATORS, ClipMetric, RECEPTOR_PRODUCTS, STOKES_PRODUCTS};
+
+    let mut expression = request
         .correlation
         .as_deref()
         .unwrap_or("")
         .trim()
         .to_ascii_uppercase();
-    let planes = samples
+    let available = samples
         .iter()
         .map(|sample| sample.corr + 1)
         .max()
         .unwrap_or_default();
     let real = request.data_column.is_real();
-    let no_planes = CalibrationProjection {
-        metric: correlation::ClipMetric::Amplitude,
-        planes: Some(Vec::new()),
+    let requested_metric = |expression: &str| {
+        CLIP_OPERATORS
+            .iter()
+            .find_map(|(name, metric)| expression.contains(name).then_some(*metric))
     };
-    // CASA's RFlag mapper requires a prefix when ALL is supplied explicitly
-    // for a complex calibration column.
-    if request.mode == FlagDataMode::Rflag && !real && expression == "ALL" {
-        return Ok(no_planes);
+    if expression.is_empty() {
+        expression = if real { "REAL ALL" } else { "ABS ALL" }.to_owned();
+    } else if real {
+        match requested_metric(&expression) {
+            Some(ClipMetric::Real)
+                if !CLIP_OPERATORS[1..]
+                    .iter()
+                    .any(|(name, _)| expression.contains(name)) => {}
+            Some(_) => {
+                let products = expression
+                    .split_once('_')
+                    .or_else(|| expression.split_once(' '))
+                    .map_or("", |(_, products)| products);
+                expression = format!("REAL {products}");
+            }
+            None => expression = format!("REAL {expression}"),
+        }
+    } else if request.mode == FlagDataMode::Tfcrop && requested_metric(&expression).is_none() {
+        expression = format!("ABS {expression}");
     }
-    Ok(projection(&expression, planes, real)?.unwrap_or(no_planes))
+    let metric = requested_metric(&expression);
+    let projection = |planes| CalibrationProjection {
+        metric: metric.unwrap_or(ClipMetric::Amplitude),
+        planes: Some(planes),
+    };
+    let products = ["SOL1", "SOL2", "SOL3", "SOL4"];
+    if expression.contains("ALL")
+        && let Some(metric) = metric
+    {
+        return Ok(projection(if metric == ClipMetric::Imaginary {
+            Vec::new()
+        } else {
+            (0..available.min(products.len())).collect()
+        }));
+    }
+    // The agent checks visibility correlations and Stokes names before
+    // calibration solution names. The calibration mapper has no such products.
+    if RECEPTOR_PRODUCTS
+        .into_iter()
+        .chain(STOKES_PRODUCTS)
+        .any(|name| expression.contains(name))
+    {
+        return Ok(projection(Vec::new()));
+    }
+    let requested = products
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| expression.contains(*name))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if requested.is_empty() && available != 0 {
+        return Err(unknown_calibration_polarization(&expression));
+    }
+    Ok(projection(
+        requested
+            .into_iter()
+            .filter(|&index| index < available)
+            .collect(),
+    ))
+}
+
+fn unknown_calibration_polarization(expression: &str) -> FlaggingError {
+    selection_error(format!(
+        "Unknown polarization requested, ({expression}) supported types are: XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
+    ))
 }
 
 fn projection(
@@ -380,9 +442,7 @@ fn projection(
         } else {
             expression.to_string()
         };
-        selection_error(format!(
-            "Unknown polarization requested, ({text}) supported types are: XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
-        ))
+        unknown_calibration_polarization(&text)
     };
     if explicit.is_some() && products.is_empty() {
         return Err(error());

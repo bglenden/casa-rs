@@ -1594,8 +1594,7 @@ fn apply_rflag_flags(
     let projection = is_calibration_table(ms)
         .then(|| calibration::automatic_projection(request, &samples))
         .transpose()?;
-    // RFlag uses the selected stored complex products rather than the scalar
-    // metric used by TFCrop and clip.
+    // RFlag reads the selected stored complex products directly.
     let loaded_ms = started.elapsed().as_millis();
     let groups = if projection.is_some() {
         ordered_autoflag_groups(ms, selected_rows, &samples, request)?
@@ -1618,6 +1617,7 @@ fn apply_rflag_flags(
     }
 
     let mut thresholds = RFlagThresholds::default();
+    let mut calibration_cutoffs = Vec::new();
     let mut threshold_ms = 0;
     let mut time_flags = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
@@ -1642,8 +1642,27 @@ fn apply_rflag_flags(
                 &mut freq_flags,
             );
         }
-        thresholds.timedev.extend(chunk_thresholds.timedev);
-        thresholds.freqdev.extend(chunk_thresholds.freqdev);
+        if projection.is_some() {
+            let ([observation, array, scan, field, window], _) = chunk[0].0;
+            let cutoff = chunk_thresholds.representative_pair();
+            calibration_cutoffs.push(cutoff);
+            trace_flagdata(|| {
+                json!({
+                    "mode": "rflag",
+                    "calibration_buffer": {
+                        "observation": observation,
+                        "array": array,
+                        "scan": scan,
+                        "field": field,
+                        "spw": window,
+                    },
+                    "timedev": cutoff.0,
+                    "freqdev": cutoff.1,
+                })
+            });
+        } else {
+            thresholds = chunk_thresholds;
+        }
     }
     let mut modified = union_masks(&time_flags, &freq_flags);
     if request.extendflags {
@@ -1685,7 +1704,15 @@ fn apply_rflag_flags(
         apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms, true)?;
     let applied_ms = started.elapsed().as_millis();
     changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
-    changes.thresholds = Some(thresholds.representative_pair());
+    changes.thresholds = if projection.is_some() {
+        calibration_cutoffs.first().copied().filter(|cutoff| {
+            calibration_cutoffs
+                .iter()
+                .all(|candidate| candidate == cutoff)
+        })
+    } else {
+        Some(thresholds.representative_pair())
+    };
     trace_flagdata(|| {
         json!({
             "mode": "rflag",
@@ -3041,19 +3068,24 @@ struct RFlagThresholds {
 
 impl RFlagThresholds {
     fn scaled(mut self, request: &FlagDataRequest, calibration: bool) -> Self {
-        // The calibration agent skips a fitted zero cutoff during flagging.
-        let applied = |threshold: f64, scale: f64| {
-            if calibration && threshold == 0.0 && scale > 0.0 {
-                -1.0
+        // CASA uses -1 for an unavailable applied cutoff. A negative scalar
+        // skips the fitted cutoff, and a negative scale skips the prepass
+        // histogram. CASA scales its sentinel together with defined cutoffs.
+        let applied = |threshold: f64, supplied: Option<f64>, scale: f64| {
+            if calibration
+                && !supplied.is_some_and(|value| value > 0.0)
+                && (threshold == 0.0 || scale < 0.0 || supplied.is_some_and(|value| value < 0.0))
+            {
+                -scale
             } else {
                 threshold * scale
             }
         };
         for value in self.timedev.values_mut() {
-            *value = applied(*value, request.timedevscale);
+            *value = applied(*value, request.timedev, request.timedevscale);
         }
         for value in self.freqdev.values_mut() {
-            *value = applied(*value, request.freqdevscale);
+            *value = applied(*value, request.freqdev, request.freqdevscale);
         }
         self
     }

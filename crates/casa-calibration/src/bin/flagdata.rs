@@ -62,6 +62,7 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     let mode = task.required_text("mode")?;
+    tfcrop::integer_setting(task, "winsize")?;
     if mode == "antint" {
         antint_min_channel_fraction(task)?;
     }
@@ -810,7 +811,10 @@ fn flagdata_request(
         rflag_window: if mode == FlagDataMode::Rflag {
             let width = match task.value("winsize") {
                 // The task's agent record uses its default for NumPy integers.
-                Some(ParameterValue::NumpyScalar { .. }) => Some(3),
+                Some(ParameterValue::NumpyScalar {
+                    dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+                    ..
+                }) => Some(3),
                 _ => tfcrop::integer_setting(task, "winsize")?,
             };
             width

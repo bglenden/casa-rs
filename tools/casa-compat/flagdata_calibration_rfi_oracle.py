@@ -3,6 +3,7 @@
 """Compare automatic calibration-table flagging and RFlag reports with CASA."""
 import argparse
 from contextlib import chdir
+from json import loads
 import os
 from pathlib import Path
 import shutil
@@ -34,10 +35,16 @@ def cases(column):
     yield 'rflag-calculate-channels', dict(rflag, spw='0:3~7')
     yield 'rflag-calculate-plane', dict(rflag, correlation='SOL2')
     yield 'rflag-calculate-operator', dict(rflag, correlation='REAL_SOL1')
+    yield 'rflag-calculate-compound', dict(rflag, correlation='REAL_SOL1,REAL_SOL2')
+    yield 'rflag-calculate-partly-unavailable', dict(rflag, correlation='SOL1,SOL3')
+    yield 'rflag-calculate-unavailable-operator', dict(rflag, correlation='REAL_SOL3')
     yield 'rflag-calculate-imaginary', dict(rflag, correlation='IMAG_SOL1')
     yield 'rflag-calculate-unavailable-plane', dict(rflag, correlation='SOL3')
     yield 'rflag-calculate-undecorated-all', dict(rflag, correlation='ALL')
     yield 'rflag-calculate-bool-window', dict(rflag, winsize=True)
+    yield 'rflag-calculate-numpy-bool-window', dict(rflag, winsize=np.bool_(True))
+    yield 'rflag-apply-numpy-float-window', dict(rflag, action='apply', winsize=np.float32(3))
+    yield 'manual-invalid-window', dict(mode='manual', winsize=3.5)
     yield 'rflag-calculate-nonpositive-thresholds', dict(rflag, timedev=0.0, freqdev=-1.0)
 
 
@@ -116,7 +123,7 @@ def main():
     root = args.work.resolve()
     root.mkdir()
     os.environ['CASARS_FLAGDATA_BIN'] = str(args.native_bin.resolve())
-    from casars.tasks import flagdata as native
+    from casars.tasks import flagdata as native, run as run_native
     assert casa.version_string() == '6.7.6.14'
     comparisons, edits, safe_refusals = 0, 0, 0
     with chdir(root):
@@ -130,6 +137,8 @@ def main():
             matrix.extend([
                 (scoped, 'rflag-scan-thresholds', rflag, 1),
                 (scoped, 'rflag-field-report', dict(rflag, action='calculate'), 0),
+                (scoped, 'rflag-negative-threshold', dict(rflag, freqdev=-1.0), 0),
+                (scoped, 'rflag-negative-scale', dict(rflag, freqdevscale=-1.0), None),
             ])
             if column == 'CPARAM':
                 phase = time_fixture(source, column, root / 'phase.cal', phase=True)
@@ -138,6 +147,8 @@ def main():
                 matrix.extend([
                     (phase, 'tfcrop-phase-amplitude', tfcrop, 0),
                     (phase, 'tfcrop-phase-real', dict(tfcrop, correlation='REAL_SOL1'), 11),
+                    (phase, 'tfcrop-phase-compound', dict(tfcrop, correlation='REAL_SOL1,REAL_SOL2'), 11),
+                    (phase, 'tfcrop-phase-mixed-operators', dict(tfcrop, correlation='ABS_SOL1,ARG_SOL2'), 1),
                 ])
             for source_table, name, settings, changed_count in matrix:
                 expected, actual = [root / f'{engine}-{column}-{name}.cal' for engine in ('casa', 'native')]
@@ -180,8 +191,13 @@ def main():
                 assert_flags(timed, prior)
                 preserved(timed, metadata)
                 safe_refusals += 1
+            diagnostic = root / f'diagnostic-{column}.cal'
+            shutil.copytree(scoped, diagnostic)
+            combined = loads(run_native('flagdata', vis=str(diagnostic), flagbackup=False,
+                                       **rflag).stdout)['result']
+            assert combined['freqdev'] is None and combined['timedev'] is None
     print(f'{comparisons} paired automatic calibration cases and {edits} changed cells. '
-          f'{safe_refusals} safe refusals verified.')
+          f'{safe_refusals} safe refusals and both per-buffer diagnostic controls verified.')
 
 
 if __name__ == '__main__':
