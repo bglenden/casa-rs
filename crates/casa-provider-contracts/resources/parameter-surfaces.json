@@ -17319,7 +17319,12 @@
             }
           },
           "required_when": {
-            "kind": "always"
+            "kind": "equals",
+            "parameter": "listmodels",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
           },
           "active_when": {
             "kind": "always"

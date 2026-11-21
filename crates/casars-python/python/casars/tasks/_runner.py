@@ -247,6 +247,11 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             raise
     if name == "listcal":
         return _call_listcal(values, arguments)
+    if name == "setjy" and arguments["listmodels"]:
+        completion = run(name, **values)
+        for candidate in loads(completion.stdout)["result"]["models"]:
+            print(candidate)
+        return completion.value
     if name == "calstat":
         _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
         for parameter in ("axis", "datacolumn"):

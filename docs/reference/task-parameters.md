@@ -845,7 +845,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required when listmodels=false | Input | Input MeasurementSet path or paths. |
 | <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal spw selector text. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
