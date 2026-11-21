@@ -104,6 +104,13 @@ def test_padding_selects_before_adding_the_border(casa, tmp_path, selection):
         source = str(tmp_path / f"section-{api.__name__}.im")
         assert parent.fromarray(source, data)
         if selection == "named":
+            for channel in range(4):
+                for polarization in range(2):
+                    assert parent.setrestoringbeam(
+                        major=f"{3 + channel + polarization / 10}arcsec",
+                        minor="2arcsec", pa="23deg",
+                        channel=channel, polarization=polarization,
+                    )
             kwargs = {"region": "", "box": "1,1,3,3", "chans": "1~2", "stokes": "Q"}
             selected = data[1:4, 1:4, 1:2, 1:3]
         elif selection == "strided":
@@ -127,6 +134,11 @@ def test_padding_selects_before_adding_the_border(casa, tmp_path, selection):
             mask = np.broadcast_to(data[:, :, :, :1] > 100, data.shape) if selection == "stretch" else np.ones_like(selected, dtype=bool)
             np.testing.assert_array_equal(product.getchunk(), np.pad(selected, border))
             np.testing.assert_array_equal(product.getchunk(getmask=True), np.pad(mask, border))
+            if selection == "named":
+                for channel in range(2):
+                    output_beam = product.restoringbeam(channel=channel, polarization=0)
+                    source_beam = parent.restoringbeam(channel=channel + 1, polarization=1)
+                    assert output_beam == source_beam
         finally:
             product.done()
             parent.done()
