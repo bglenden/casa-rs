@@ -6,7 +6,13 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use casa_coordinates::{
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
+    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
+};
 use casa_images::{AnyPagedImage, ImagePixel, PagedImage};
+use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+use ndarray::{ArrayD, IxDyn};
 use serde_json::{Value, json};
 
 fn copy_inputs(source: &Path, destination: &Path) {
@@ -23,6 +29,200 @@ fn copy_inputs(source: &Path, destination: &Path) {
             fs::copy(entry.path(), target).unwrap();
         }
     }
+}
+
+fn execute(workspace: &Path, values: &Value) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_imregrid"))
+        .args(["--json-run", "-"])
+        .current_dir(workspace)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            json!({"surface": "imregrid", "values": values})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn make_ramp(
+    path: &Path,
+    channels: usize,
+    x_reference: f64,
+    display: DirectionRef,
+    increment: f64,
+    rest: Vec<f64>,
+) {
+    let mut coords = CoordinateSystem::new();
+    coords.add_coordinate(
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.4],
+            [-0.004, 0.004],
+            [x_reference, 15.],
+        )
+        .with_conversion_direction_ref(display),
+    );
+    coords.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coords.add_coordinate(
+        SpectralCoordinate::new(FrequencyRef::LSRK, 1.415e9, increment, 0., rest[0])
+            .with_rest_frequencies(rest),
+    );
+    let shape = [30, 30, 1, channels];
+    let mut image = PagedImage::<f32>::create(shape.to_vec(), coords, path).unwrap();
+    let pixels = ArrayD::from_shape_fn(IxDyn(&shape), |index| (index[0] + 2 * index[1]) as f32);
+    image.put_slice(&pixels, &[0; 4]).unwrap();
+    image.save().unwrap();
+}
+
+#[test]
+fn regridding_a_shifted_grid_uses_display_conversion_layers() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    make_ramp(
+        &root.join("input.im"),
+        4,
+        15.,
+        DirectionRef::J2000,
+        1000.,
+        vec![1.42e9],
+    );
+    make_ramp(
+        &root.join("template.im"),
+        4,
+        16.,
+        DirectionRef::B1950,
+        1000.,
+        vec![1.42e9],
+    );
+    let reply = execute(
+        root,
+        &json!({"imagename":"input.im", "template":"template.im", "output":"output.im", "axes":[0,1], "decimate":0}),
+    );
+    assert!(
+        reply.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reply.stdout)
+    );
+    let image = PagedImage::<f32>::open(root.join("output.im")).unwrap();
+    let value = image.get_at(&[15, 15, 0, 0]).unwrap();
+    assert!((value - 45.661_076).abs() < 1e-3, "{value}");
+}
+
+#[test]
+fn degenerate_spectral_selection_defaults_to_the_shifted_sky_grid() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    make_ramp(
+        &root.join("input.im"),
+        4,
+        15.,
+        DirectionRef::J2000,
+        1000.,
+        vec![1.42e9],
+    );
+    make_ramp(
+        &root.join("template.im"),
+        1,
+        16.,
+        DirectionRef::J2000,
+        1000.,
+        vec![1.42e9],
+    );
+    let reply = execute(
+        root,
+        &json!({"imagename":"input.im", "template":"template.im", "output":"output.im", "axes":[3], "decimate":0}),
+    );
+    assert!(
+        reply.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reply.stdout)
+    );
+    let image = PagedImage::<f32>::open(root.join("output.im")).unwrap();
+    assert_eq!(image.coordinates().reference_pixel()[0], 16.);
+    assert_eq!(image.get_at(&[15, 15, 0, 0]).unwrap(), 44.);
+    assert_eq!(image.shape(), [30, 30, 1, 4]);
+}
+
+#[test]
+fn radio_velocity_grid_keeps_exact_scale_and_the_input_rest_frequency_list() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    make_ramp(
+        &root.join("input.im"),
+        4,
+        15.,
+        DirectionRef::J2000,
+        1000.,
+        vec![1.42e9, 1.52e9],
+    );
+    make_ramp(
+        &root.join("template.im"),
+        4,
+        15.,
+        DirectionRef::J2000,
+        500.,
+        vec![1.42e9],
+    );
+    let reply = execute(
+        root,
+        &json!({"imagename":"input.im", "template":"template.im", "output":"output.im", "axes":[3], "decimate":0}),
+    );
+    assert!(
+        reply.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reply.stdout)
+    );
+    let image = PagedImage::<f32>::open(root.join("output.im")).unwrap();
+    let coordinates = image.coordinates();
+    let index = coordinates
+        .find_coordinate(CoordinateType::Spectral)
+        .unwrap();
+    let CoordinateModel::Spectral(axis) = coordinates.coordinate(index) else {
+        panic!("spectral axis")
+    };
+    assert_eq!(axis.increment(), [500.]);
+    assert_eq!(axis.rest_frequencies(), [1.42e9, 1.52e9]);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_open_logtable_blocks_image_replacement() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    for name in ["input.im", "template.im", "output.im"] {
+        make_ramp(
+            &root.join(name),
+            4,
+            15.,
+            DirectionRef::J2000,
+            1000.,
+            vec![1.42e9],
+        );
+    }
+    let history = root.join("output.im/logtable");
+    let before = fs::read(history.join("table.dat")).unwrap();
+    let open = casa_tables::TableUseLock::acquire(&history).unwrap();
+    let reply = execute(
+        root,
+        &json!({"imagename":"input.im", "template":"template.im", "output":"output.im", "overwrite":true, "decimate":0}),
+    );
+    let message = String::from_utf8_lossy(&reply.stdout);
+    assert!(
+        !reply.status.success() && message.contains("logtable"),
+        "{message}"
+    );
+    assert!(open.matches_directory(&history));
+    assert_eq!(fs::read(history.join("table.dat")).unwrap(), before);
 }
 
 #[test]
@@ -42,25 +242,7 @@ fn regrid_products_match_casa() {
         });
         let mut values = case["params"].clone();
         values["output"] = json!(output);
-        let mut child = Command::new(env!("CARGO_BIN_EXE_imregrid"))
-            .args(["--json-run", "-"])
-            .current_dir(workspace.path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(
-                json!({"surface": "imregrid", "values": values})
-                    .to_string()
-                    .as_bytes(),
-            )
-            .unwrap();
-        let reply = child.wait_with_output().unwrap();
+        let reply = execute(workspace.path(), &values);
         let message = String::from_utf8_lossy(&reply.stdout);
         let Some(expected) = case.get("product") else {
             assert!(!reply.status.success(), "{name}: {message}");

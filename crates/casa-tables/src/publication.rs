@@ -5,6 +5,41 @@
 use std::ffi::CString;
 use std::path::Path;
 
+use crate::{TableError, TableWriteLock};
+
+/// Lock an existing casacore table and its physical subtables for replacement.
+/// Keep the returned guards alive through publication.
+///
+/// # Errors
+/// Returns an error for unreadable paths or any live table in the tree.
+pub fn lock_table_tree_for_replacement(root: &Path) -> Result<Vec<TableWriteLock>, TableError> {
+    let mut pending = vec![root.to_owned()];
+    let mut locks = Vec::new();
+    while let Some(directory) = pending.pop() {
+        let io_error = |error: std::io::Error| TableError::LockIo {
+            path: directory.display().to_string(),
+            message: error.to_string(),
+        };
+        if directory == root || directory.join("table.dat").is_file() {
+            let lock = TableWriteLock::acquire_to_reread(&directory, 1)?;
+            if lock.is_multi_used() {
+                return Err(TableError::LockFailed {
+                    path: directory.display().to_string(),
+                    message: "table is open in another process".into(),
+                });
+            }
+            locks.push(lock);
+        }
+        for entry in directory.read_dir().map_err(io_error)? {
+            let entry = entry.map_err(io_error)?;
+            if entry.file_type().map_err(io_error)?.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    Ok(locks)
+}
+
 /// Check write access to an existing publication path as the current process.
 ///
 /// # Errors
