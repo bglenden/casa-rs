@@ -1159,6 +1159,27 @@ fn parse_stokes(
     Ok(StokesCoordinate::new(stokes))
 }
 
+/// Construct the linear coordinate system that casacore's FITS image
+/// converter uses when it cannot interpret the supplied WCS.
+pub fn fallback_fits_linear_coordinates(shape: &[usize]) -> CoordinateSystem {
+    let mut coordinates = CoordinateSystem::new();
+    let ndim = shape.len();
+    coordinates.add_coordinate(
+        LinearCoordinate::new(
+            ndim,
+            (0..ndim).map(|axis| format!("linear{axis}")).collect(),
+            vec!["km".into(); ndim],
+        )
+        .with_reference_pixel(
+            shape
+                .iter()
+                .map(|&length| length.div_ceil(2) as f64)
+                .collect(),
+        ),
+    );
+    coordinates
+}
+
 /// Parses a single linear axis from the FITS header.
 fn parse_linear_single(
     h: &FitsHeader,
@@ -1170,10 +1191,14 @@ fn parse_linear_single(
         .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing CRVAL{axis}")))?;
     let cdelt = h.get_float(&format!("CDELT{axis}")).unwrap_or(1.0);
     let crpix = h.get_float(&format!("CRPIX{axis}")).unwrap_or(1.0) - 1.0;
-    let unit = h
-        .get_string(&format!("CUNIT{axis}"))
-        .unwrap_or("")
-        .to_string();
+    let unit = h.get_string(&format!("CUNIT{axis}")).unwrap_or("");
+    let normalized = super::wcs_unit_name(unit);
+    if casa_types::quanta::Unit::new(&normalized).is_err() {
+        return Err(CoordinateError::InvalidFitsAxisUnit {
+            axis,
+            unit: unit.into(),
+        });
+    }
 
     let name = if ctype.is_empty() {
         format!("Linear{axis}")
@@ -1181,7 +1206,7 @@ fn parse_linear_single(
         ctype.to_string()
     };
 
-    Ok(LinearCoordinate::new(1, vec![name], vec![unit])
+    Ok(LinearCoordinate::new(1, vec![name], vec![normalized])
         .with_reference_value(vec![crval])
         .with_reference_pixel(vec![crpix])
         .with_increment(vec![cdelt]))

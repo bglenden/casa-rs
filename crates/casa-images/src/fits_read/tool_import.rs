@@ -6,8 +6,11 @@ use std::sync::mpsc;
 use std::thread;
 
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
-    fits::coordinate_util::{align_fits_pc_rows, from_fits_header_with_axis_order},
+    Coordinate, CoordinateError, CoordinateModel, CoordinateSystem, FitsHeader, FitsValue,
+    LinearCoordinate,
+    fits::coordinate_util::{
+        align_fits_pc_rows, fallback_fits_linear_coordinates, from_fits_header_with_axis_order,
+    },
 };
 use casa_lattices::{Lattice, LatticeError, TraversalCursorIter, TraversalSpec};
 use casa_types::measures::{
@@ -155,20 +158,31 @@ impl FitsToolImport {
             has_wcs |= header.get(&format!("CTYPE{axis}")).is_some();
         }
         let aligned = align_fits_pc_rows(&header, shape.len());
-        let (coordinate_header, world_order) =
+        let (coordinate_header, mut world_order) =
             aligned.as_ref().map_or((&header, None), |(header, order)| {
                 (header, Some(order.as_slice()))
             });
+        let mut use_fallback = false;
         let (mut coordinates, axis_order) =
-            from_fits_header_with_axis_order(coordinate_header, &shape)?;
-        if !has_wcs {
+            match from_fits_header_with_axis_order(coordinate_header, &shape) {
+                Err(CoordinateError::InvalidFitsAxisUnit { .. }) => {
+                    use_fallback = true;
+                    world_order = None;
+                    (
+                        fallback_fits_linear_coordinates(&shape),
+                        (0..shape.len()).collect(),
+                    )
+                }
+                result => result?,
+            };
+        if !has_wcs && !use_fallback {
             let ndim = shape.len();
             coordinates = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
             coordinates.add_coordinate(
                 LinearCoordinate::new(ndim, vec![String::new(); ndim], vec![String::new(); ndim])
                     .with_reference_pixel(vec![-1.0; ndim]),
             );
-        } else if group_linear_axes {
+        } else if group_linear_axes && !use_fallback {
             coordinates = group_linear_wcs(&coordinates, &axis_order, coordinate_header);
         }
         let obs = coordinates.obs_info_mut();
@@ -181,8 +195,9 @@ impl FitsToolImport {
         if obs.date.is_none() {
             obs.date = Some(MEpoch::from_mjd(0.0, EpochRef::LAST));
         }
-        if let [Some(x), Some(y), Some(z)] =
-            ["OBSGEO-X", "OBSGEO-Y", "OBSGEO-Z"].map(|key| header.get_float(key))
+        if !use_fallback
+            && let [Some(x), Some(y), Some(z)] =
+                ["OBSGEO-X", "OBSGEO-Y", "OBSGEO-Z"].map(|key| header.get_float(key))
         {
             obs.telescope_position = Some(MPosition::new_itrf(x, y, z));
         }
@@ -1111,6 +1126,91 @@ mod section_tests {
     use fitsio::images::{ImageDescription, ImageType};
 
     use super::*;
+
+    #[test]
+    fn invalid_linear_axis_unit_uses_casacore_fallback_coordinates() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("invalid-unit.fits");
+        let mut file = FitsFile::create(&path)
+            .with_custom_primary(&ImageDescription {
+                data_type: ImageType::Float,
+                dimensions: &[4, 3],
+            })
+            .open()
+            .unwrap();
+        let hdu = file.primary_hdu().unwrap();
+        hdu.write_key(&mut file, "CTYPE1", "index axis").unwrap();
+        hdu.write_key(&mut file, "CUNIT1", "index").unwrap();
+        hdu.write_key(&mut file, "CRVAL1", 0.0).unwrap();
+        hdu.write_key(&mut file, "OBSGEO-X", 6378137.0).unwrap();
+        hdu.write_key(&mut file, "OBSGEO-Y", 0.0).unwrap();
+        hdu.write_key(&mut file, "OBSGEO-Z", 0.0).unwrap();
+        drop(file);
+
+        let imported = FitsToolImport::open(&path, 0, 0).unwrap();
+        let direct = PrimaryHdu::open(&path).unwrap();
+        for coordinates in [imported.coordinates(), &direct.coordinates] {
+            let CoordinateModel::Linear(coordinate) = coordinates.coordinate(0) else {
+                panic!("expected fallback linear coordinate");
+            };
+            assert_eq!(coordinates.n_coordinates(), 1);
+            assert_eq!(coordinate.axis_names(), ["linear0", "linear1"]);
+            assert_eq!(coordinate.axis_units(), ["km", "km"]);
+            assert_eq!(coordinate.reference_pixel(), [2., 2.]);
+            assert_eq!(coordinate.to_world(&[3., 4.]).unwrap(), [1., 2.]);
+            assert!(coordinates.obs_info().telescope_position.is_none());
+        }
+    }
+
+    #[test]
+    fn fits_unit_alias_preserves_linear_and_celestial_coordinates() {
+        use crate::fits_read::read_fits_image;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("unit-alias.fits");
+        let mut file = FitsFile::create(&path)
+            .with_custom_primary(&ImageDescription {
+                data_type: ImageType::Float,
+                dimensions: &[3, 4, 4],
+            })
+            .open()
+            .unwrap();
+        let hdu = file.primary_hdu().unwrap();
+        for (key, value) in [
+            ("CTYPE1", "RA---SIN"),
+            ("CTYPE2", "DEC--SIN"),
+            ("CTYPE3", "ANGLE"),
+            ("CUNIT3", "DEGREE"),
+        ] {
+            hdu.write_key(&mut file, key, value).unwrap();
+        }
+        for (key, value) in [
+            ("CRVAL1", 15.0),
+            ("CRVAL2", 27.0),
+            ("CRVAL3", 13.0),
+            ("CDELT1", -0.01),
+            ("CDELT2", 0.01),
+            ("CDELT3", 2.5),
+            ("CRPIX3", 2.0),
+        ] {
+            hdu.write_key(&mut file, key, value).unwrap();
+        }
+        drop(file);
+        let imported = FitsToolImport::open(&path, 0, 0).unwrap();
+        let direct = read_fits_image(&path).unwrap();
+        for coordinates in [imported.coordinates(), &direct.coordinates] {
+            assert!(matches!(
+                coordinates.coordinate(0),
+                CoordinateModel::Direction(_)
+            ));
+            let CoordinateModel::Linear(coordinate) = coordinates.coordinate(1) else {
+                panic!("expected FITS linear coordinate");
+            };
+            assert_eq!(coordinate.axis_names(), ["ANGLE"]);
+            assert_eq!(coordinate.axis_units(), ["deg"]);
+            assert_eq!(coordinate.to_world(&[2.]).unwrap(), [15.5]);
+        }
+    }
 
     #[test]
     fn reads_logical_axes_of_a_tile_compressed_cube() {
