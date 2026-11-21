@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_coordinates::tabular::TabularEdit;
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate, StokesCoordinate,
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate,
+    StokesCoordinate, TabularCoordinate,
 };
 use casa_images::analysis::{
     ImageRegionSection, reduce_subimage_coordinate_record, section_quality_labels,
@@ -15,7 +17,6 @@ use crate::convert::value::CasaValue;
 use crate::tools::table::values;
 
 use super::handle::raised;
-use super::stub;
 
 pub(super) struct Selection {
     pub start: Vec<usize>,
@@ -63,7 +64,6 @@ impl Selection {
         mut record: RecordValue,
         original: &CoordinateSystem,
         image_shape: &[usize],
-        method: &str,
     ) -> PyResult<RecordValue> {
         for (axis, &source_length) in image_shape.iter().enumerate() {
             let (number, within_coord) = original
@@ -101,10 +101,11 @@ impl Selection {
                 {
                     continue;
                 }
-                if kind == CoordinateType::Tabular {
-                    return Err(stub(method).unwrap_err());
-                }
                 if shift == 0 && step == 1 {
+                    continue;
+                }
+                if let CoordinateModel::Tabular(table) = coord {
+                    self.section_tabular(&mut record, table, axis)?;
                     continue;
                 }
                 let cdelt = coord.increment()[within_coord];
@@ -132,6 +133,43 @@ impl Selection {
             return Ok(record);
         }
         self.project_coordinates(&record)
+    }
+
+    fn section_tabular(
+        &self,
+        record: &mut RecordValue,
+        table: &TabularCoordinate,
+        axis: usize,
+    ) -> PyResult<()> {
+        let mut table = table.clone();
+        let shift = self.start[axis];
+        let step = self.stride[axis];
+        // casacore sets the reference pixel before scaling the increment.
+        let reference = (table.reference_pixel()[0] - shift as f64) / step as f64;
+        let increment = table.increment()[0] * step as f64;
+        table
+            .edit_live_reference(TabularEdit::ReferencePixel(reference))
+            .map_err(raised)?;
+        if step != 1 {
+            table
+                .edit_live_reference(TabularEdit::Increment(increment))
+                .map_err(raised)?;
+        }
+        let field = CoordinateSystem::record_coordinates(record)
+            .map_err(raised)?
+            .into_iter()
+            .find(|coordinate| coordinate.pixel_axes.contains(&Some(axis)))
+            .ok_or_else(|| raised("Tabular coordinate is missing from the image record"))?
+            .field;
+        let Some(Value::Record(stored)) = record.get_mut(&field) else {
+            return Err(raised(
+                "Tabular coordinate is missing from the image record",
+            ));
+        };
+        for parameter in CoordinateModel::Tabular(table).to_record().fields() {
+            stored.upsert(parameter.name.clone(), parameter.value.clone());
+        }
+        Ok(())
     }
 
     fn crop_tabular_spectral(&self, record: &mut RecordValue, axis: usize) -> PyResult<bool> {

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_coordinates::CoordinateSystem;
+use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_images::analysis::{ImageRegionSection, SubimageRegion};
 use casa_images::{
     ImageInterface, ImagePixel, MutableImageInterface, PagedImage, image::image_history_rows,
@@ -18,6 +18,7 @@ use crate::convert::Variant;
 use crate::tools::table::casa_record;
 
 use super::PyImageTool;
+use super::attachment::AttachedImage;
 use super::beams::{axis_length, image_info, image_info_record, plane_axes, subset_beam_record};
 use super::copy_region::Selection;
 use super::create::publish_image;
@@ -246,12 +247,8 @@ impl CopyImage<'_> {
         }
         let coordinates = original.coordinates();
         let info = selected_image_info(original, &selection)?;
-        let record = selection.coordinates(
-            original.coordinate_record(),
-            coordinates,
-            original.shape(),
-            self.method,
-        )?;
+        let record =
+            selection.coordinates(original.coordinate_record(), coordinates, original.shape())?;
         let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
         let mask = if self.mask.is_empty() {
             None
@@ -394,13 +391,25 @@ impl CopyImage<'_> {
                 ));
             }
         }
-        publish_image(self.outfile, self.overwrite, |path| {
+        let mut live_coordinates = None;
+        let mut output = publish_image(self.outfile, self.overwrite, |path| {
             let mut image = original.lock();
             original.require_lock(&mut image, casa_tables::LockType::Read)?;
             let copied = self.build(&image, path, history, origin.as_ref())?;
             image.release_requested_lock()?;
+            if copied
+                .coordinates()
+                .find_coordinate(CoordinateType::Tabular)
+                .is_some()
+            {
+                live_coordinates = AttachedImage::capture_live_coordinates(&copied)?;
+            }
             Ok(copied)
-        })
+        })?;
+        if let Some((record, system)) = live_coordinates {
+            output.keep_live_coordinates(record, system);
+        }
+        Ok(output)
     }
 }
 
