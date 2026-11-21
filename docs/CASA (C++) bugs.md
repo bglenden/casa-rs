@@ -7303,6 +7303,9 @@ cross-hand normalized RMS residual of 0.209 against the planted measurements.
 Casa-rs resolves the rank deficiency with the requested first-receptor
 reference constraint in the fit and gives a residual of 8.60e-7. Both fits
 preserve the requested zero first receptor on the reference antenna.
+CASA also shifts the numeric values of flagged cells when changing
+reference antennas. Casa-rs writes zero to flagged cells. The paired
+test compares flags and valid coefficients and applies both products.
 [Paired oracle](../tools/casa-compat/polcal_leakage_solve_oracle.py)
 
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA

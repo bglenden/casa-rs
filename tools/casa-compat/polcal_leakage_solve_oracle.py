@@ -7,12 +7,13 @@ import inspect
 from pathlib import Path
 
 import casatasks as casa
-from casatools import calibrater
+from casatools import calibrater, table as table_tool
 import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_leakage_apply_oracle import CHANNELS, GAIN, LEAKAGE, make_table, result
 from calibration_smoothcal_oracle import opened
+from gaincal_delay_oracle import duplicate_rows
 from record_casa_returns import make_cal_ms
 
 
@@ -65,7 +66,11 @@ def compare_table(reference, candidate):
             np.testing.assert_array_equal(got.getcol(column), want.getcol(column), err_msg=column)
         for column in ('TIME', 'INTERVAL'):
             np.testing.assert_allclose(got.getcol(column), want.getcol(column), atol=2e-5, rtol=0.)
-        expected, actual = want.getcol('CPARAM'), got.getcol('CPARAM')
+        valid = ~want.getcol('FLAG')
+        # CASA applies the reference offset to flagged cells as well. The
+        # native writer stores zero in cells that neither reader consumes.
+        np.testing.assert_array_equal(got.getcol('CPARAM')[~valid], 0.)
+        expected, actual = want.getcol('CPARAM')[valid], got.getcol('CPARAM')[valid]
         error = np.linalg.norm(actual-expected) / np.linalg.norm(expected)
         assert error < 1e-3, ('CPARAM', error)
         assert np.isfinite(actual).all()
@@ -143,6 +148,93 @@ def compare_basis(root, basis, native):
     compare_apply(root/'callib', vis, products, native, [gains])
 
 
+def review_discriminators(root, native):
+    root.mkdir()
+    vis, leak, _, stokes, sky = plant(root, 'XX XY YX YY')
+    model = put_observations(vis, sky, [])
+    data = put_observations(vis, sky, [leak])
+    two_windows = root/'two-windows.ms'
+    copy_ms(vis, two_windows)
+    tool = table_tool()
+    assert duplicate_rows(tool, two_windows/'SPECTRAL_WINDOW') == 1
+    assert duplicate_rows(tool, two_windows/'DATA_DESCRIPTION') == 1
+    count = duplicate_rows(tool, two_windows)
+    with opened(two_windows/'DATA_DESCRIPTION', True) as table:
+        table.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    with opened(two_windows/'SPECTRAL_WINDOW', True) as table:
+        table.putcell('CHAN_FREQ', 1, table.getcell('CHAN_FREQ', 0) + 30e6)
+        table.putcell('REF_FREQUENCY', 1, table.getcell('REF_FREQUENCY', 0) + 30e6)
+    with opened(two_windows, True) as table:
+        table.putcol('DATA_DESC_ID', np.ones(count, np.int32), count, count)
+        first = np.array([1., 1.2, 1.4, 1.6, 2.8, 3., 3.2, 3.4], np.float32)
+        for offset, scale in ((0, first), (count, np.roll(first, 4))):
+            table.putcol('DATA', model + (data - model) * scale[None, :, None], offset, count)
+    solve_case(root/'different-channel-selections', two_windows, native, stokes,
+               poltype='Dflls', spw='0:0~1,1:4~5', combine='spw')
+    solve_case(root/'different-scalar-widths', two_windows, native, stokes,
+               spw='0:0~2,1:4~5', combine='spw')
+    with opened(two_windows, True) as table:
+        table.putcell('ANTENNA2', count, table.getcell('ANTENNA1', count))
+    for label, api in [('casa', casa), ('native', native)]:
+        product = root/f'{label}-autocorrelations-only.cal'
+        try:
+            api.polcal(str(two_windows), str(product), spw='1', poltype='Dlls',
+                       smodel=stokes, msselect='ANTENNA1==ANTENNA2')
+        except RuntimeError:
+            assert not product.exists()
+        else:
+            raise AssertionError(f'{label} accepted an autocorrelation-only selection')
+
+    with opened(vis, True) as table:
+        left, right, times, fields = (table.getcol(col) for col
+                                      in ('ANTENNA1', 'ANTENNA2', 'TIME', 'FIELD_ID'))
+        low_weight = (left == 4) | (right == 4)
+        sigma = np.ones_like(table.getcol('SIGMA'))
+        sigma[:, low_weight] = np.sqrt(1e7)
+        table.putcol('SIGMA', sigma)
+        table.putcol('WEIGHT', 1. / sigma**2)
+    solve_case(root/'low-weight-antenna', vis, native, stokes, refant='')
+
+    with opened(vis, True) as table:
+        table.putcol('SIGMA', np.ones_like(sigma))
+        table.putcol('WEIGHT', np.ones_like(sigma))
+        flags = table.getcol('FLAG')
+        flags[:, :, ((left == 0) | (right == 0)) & (times >= times.min() + 3600)] = True
+        table.putcol('FLAG', flags)
+    products = solve_case(root/'reference-continuity', vis, native, stokes,
+                          refant='A0,A2', solint='3600s')
+    with opened(products['native']) as table:
+        np.testing.assert_array_equal(np.unique(table.getcol('ANTENNA2')), [0, 2])
+        a2 = table.getcol('ANTENNA1') == 2
+        first_receptor = table.getcol('CPARAM')[0, 0, a2]
+        assert abs(first_receptor[0]) > .01
+        np.testing.assert_allclose(first_receptor, first_receptor[0], atol=1e-6, rtol=0.)
+    compare_apply(root/'reference-continuity', vis, products, native, [])
+
+    # Three integrations per group at 0, 12 and 21 seconds. Only the
+    # second and third integrations share the baseline's rolling average.
+    _, integration = np.unique(times, return_inverse=True)
+    phase = integration % 3
+    with opened(vis, True) as table:
+        new_times = times.min() + 50 * (integration // 3) + np.array([0., 12., 21.])[phase]
+        table.putcol('TIME', new_times)
+        table.putcol('TIME_CENTROID', new_times)
+        table.putcol('INTERVAL', np.ones_like(times))
+        table.putcol('EXPOSURE', np.ones_like(times))
+        table.putcol('FLAG', np.zeros_like(flags))
+    sky[0] *= np.array([.8, 1.7, .6], np.float32)[phase]
+    sky[3] *= np.array([1.2, .8, 1.7], np.float32)[phase]
+    model = put_observations(vis, sky, [])
+    data = put_observations(vis, sky, [leak])
+    with opened(vis, True) as table:
+        scale = np.array([.5, 2., 1.], np.float32)[phase]
+        scale[fields != 0] *= 1.6
+        table.putcol('DATA', model + (data - model) * scale[None, None, :])
+    solve_case(root/'rolling-preaverage', vis, native, [], refant='', preavg=10.)
+    solve_case(root/'preaverage-separated-fields', vis, native, [], field='', refant='',
+               combine='field,scan', preavg=0.)
+
+
 def rank_deficient(root, native):
     root.mkdir()
     vis, leak, _, stokes, sky = plant(root, 'XX XY YX YY')
@@ -206,6 +298,7 @@ def main():
     compare_basis(root/'linear', 'XX XY YX YY', tasks)
     compare_basis(root/'circular', 'RR RL LR LL', tasks)
     rank_deficient(root/'rank-deficient', tasks)
+    review_discriminators(root/'review', tasks)
 
 
 if __name__ == '__main__':

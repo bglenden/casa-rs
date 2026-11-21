@@ -61,14 +61,6 @@ pub(super) fn write(
             (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
         ])
         .map_err(|error| error.to_string())?;
-    let bin_widths = if request.kind.channelized() {
-        channel_bin_widths
-    } else {
-        solutions
-            .iter()
-            .map(|interval| (interval.spectral_window, interval.channels.len().max(1)))
-            .collect()
-    };
     let windows = solutions
         .iter()
         .map(|interval| interval.spectral_window)
@@ -76,7 +68,7 @@ pub(super) fn write(
     crate::bandpass::write_solution_spectral_windows(
         &writer.output_path().join("SPECTRAL_WINDOW"),
         &windows,
-        &bin_widths,
+        &channel_bin_widths,
         selected_rows,
         request.combine.spectral_windows,
     )

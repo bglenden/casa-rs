@@ -393,7 +393,7 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         selection.observation = None;
         selection.msselect = None;
     }
-    if matches!(task.surface(), "gaincal" | "bandpass") {
+    if matches!(task.surface(), "gaincal" | "bandpass" | "polcal") {
         // The public task always adds this predicate, including when the
         // optional selectors are disabled.
         selection.msselect = Some(match selection.msselect {

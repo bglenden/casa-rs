@@ -52,7 +52,6 @@ pub(crate) struct LeakageSolution {
     pub(crate) scan: i32,
     pub(crate) time: f64,
     pub(crate) reference: i32,
-    pub(crate) channels: Vec<usize>,
     /// Channel-major solutions with one pair of leakage terms per antenna.
     pub(crate) values: Vec<Vec<Option<[Complex32; 2]>>>,
 }
@@ -95,6 +94,37 @@ pub(crate) fn solve_leakage(
             .filter(|_| request.kind.channelized()),
     )
     .map_err(|error| error.to_string())?;
+    let mut windows = BTreeMap::new();
+    for row in &context.rows {
+        if let std::collections::btree_map::Entry::Vacant(entry) = windows.entry(row.data_spw_id) {
+            let data = main_cell(ms, row.row_index, "DATA").map_err(error)?;
+            if data.shape().len() != 2 {
+                return Err(unsupported_shape("DATA", data).to_string());
+            }
+            let channels = selected_channels(row.channel_selection.as_ref(), data.shape()[1])
+                .map_err(error)?;
+            let bin_width = if request.kind.channelized() {
+                channel_bin_widths
+                    .get(&row.data_spw_id)
+                    .copied()
+                    .unwrap_or(1)
+            } else {
+                channels.len().max(1)
+            };
+            entry.insert(WindowChannels {
+                channels,
+                bin_width,
+            });
+        }
+    }
+    if request.combine.spectral_windows
+        && let Some(first) = windows.values().next()
+        && windows
+            .values()
+            .any(|window| window.count() != first.count())
+    {
+        return Err("Cannot combine spectral windows with different channel counts".into());
+    }
     let preapplied = context
         .preapplied_rows
         .as_ref()
@@ -105,18 +135,52 @@ pub(crate) fn solve_leakage(
         models: &models,
         preapplied,
         spectral_weights,
-        channel_bin_widths: &channel_bin_widths,
+        windows: &windows,
     };
-    let mut solutions = Vec::new();
-    for rows in ordered.chunk_by(|a, b| a.1 == b.1 && a.2 == b.2) {
+    let mut intervals = ordered
+        .chunk_by(|a, b| a.1 == b.1 && a.2 == b.2)
+        .collect::<Vec<_>>();
+    intervals.sort_by(|a, b| {
+        interval_window(a)
+            .cmp(&interval_window(b))
+            .then_with(|| a[0].0.time_seconds.total_cmp(&b[0].0.time_seconds))
+    });
+    let mut references = Vec::new();
+    if context.refant_id >= 0 {
+        references.extend([context.refant_id, context.refant_id]);
+        references.extend(context.refant_alternates.iter().copied());
+        references.extend(
+            super::super::refant_distance_order(ms, *references.last().expect("primary antenna"))
+                .map_err(error)?,
+        );
+    }
+    let mut previous: Option<usize> = None;
+    let mut solutions: Vec<LeakageSolution> = Vec::new();
+    for rows in intervals {
+        let previous_interval = previous
+            .and_then(|index| solutions.get(index))
+            .filter(|solution| solution.spectral_window == interval_window(rows));
         if let Some(solution) = setup
-            .solve_interval(rows, context.available_antennas.len(), context.refant_id)
+            .solve_interval(
+                rows,
+                context.available_antennas.len(),
+                &references,
+                previous_interval,
+            )
             .map_err(error)?
         {
+            if solution.reference >= 0 {
+                references[1] = solution.reference;
+                previous = Some(solutions.len());
+            }
             solutions.push(solution);
         }
     }
-    output::write(ms, request, &context.rows, &solutions, channel_bin_widths)
+    let bin_widths = windows
+        .iter()
+        .map(|(&id, window)| (id, window.bin_width))
+        .collect();
+    output::write(ms, request, &context.rows, &solutions, bin_widths)
 }
 
 struct LeakageInputs<'a> {
@@ -125,41 +189,54 @@ struct LeakageInputs<'a> {
     models: &'a super::super::model::ModelInputs,
     preapplied: &'a PreappliedRows,
     spectral_weights: SpectralWeights,
-    channel_bin_widths: &'a BTreeMap<i32, usize>,
+    windows: &'a BTreeMap<i32, WindowChannels>,
 }
 
-type BaselineAverages = BTreeMap<(i32, i32, i32), Vec<CoherencyMean>>;
+struct WindowChannels {
+    channels: Vec<usize>,
+    bin_width: usize,
+}
+
+impl WindowChannels {
+    fn count(&self) -> usize {
+        self.channels.len().div_ceil(self.bin_width)
+    }
+}
+
+struct BaselineAverages {
+    start: f64,
+    bins: Vec<CoherencyMean>,
+}
+
+fn interval_window(rows: &[BucketedRow<'_>]) -> i32 {
+    rows.iter()
+        .map(|(row, _, _)| row.data_spw_id)
+        .min()
+        .expect("nonempty solve interval")
+}
 
 impl LeakageInputs<'_> {
     fn solve_interval(
         &self,
         rows: &[BucketedRow<'_>],
         antennas: usize,
-        reference: i32,
+        references: &[i32],
+        previous: Option<&LeakageSolution>,
     ) -> Result<Option<LeakageSolution>, GainSolveError> {
         let first = rows[0].0;
-        let data = match self.preapplied.data.get(&first.row_index) {
-            Some(preapplied) => &preapplied.corrected_data,
-            None => main_cell(self.ms, first.row_index, "DATA")?,
-        };
-        if data.shape().len() != 2 {
-            return Err(unsupported_shape("DATA", data));
-        }
-        let channels = selected_channels(first.channel_selection.as_ref(), data.shape()[1])?;
-        let bin_width = if self.request.kind.channelized() {
-            self.channel_bin_widths
-                .get(&first.data_spw_id)
-                .copied()
-                .unwrap_or(1)
+        let spectral_window = interval_window(rows);
+        let count = self.windows[&spectral_window].count();
+        let requested = if self.request.preaverage_seconds < 0.0 {
+            300.0
         } else {
-            channels.len().max(1)
+            self.request.preaverage_seconds
         };
-        let count = channels.len().div_ceil(bin_width);
+        // For preavg=0 CASA averages throughout the enclosing solint.
+        let span = (requested > f64::from(f32::EPSILON)).then_some(0.999 * requested);
         let mut fits = (0..count)
             .map(|_| LeakageFit::new(antennas))
             .collect::<Vec<_>>();
-        let mut averages = BaselineAverages::new();
-        let mut current_bin = None;
+        let mut averages = BTreeMap::new();
         let mut time = WeightedTime::default();
         for batch in rows.chunks(256) {
             let indices = batch
@@ -185,77 +262,102 @@ impl LeakageInputs<'_> {
                 false,
             )?;
             for (index, &(row, _, _)) in batch.iter().enumerate() {
-                let bin = self.averaging_bin(first.time_seconds, row);
-                if current_bin != Some(bin) {
-                    accumulate_averages(std::mem::take(&mut averages), &mut fits, antennas);
-                    current_bin = Some(bin);
+                let pair = [row.antenna1, row.antenna2];
+                let active = averages
+                    .entry((row.field_id, row.data_desc_id, pair))
+                    .or_insert_with(|| BaselineAverages {
+                        start: row.time_seconds,
+                        bins: vec![CoherencyMean::default(); count],
+                    });
+                if span.is_some_and(|span| row.time_seconds - active.start > span) {
+                    accumulate_averages(pair, &mut active.bins, &mut fits, antennas);
+                    active.start = row.time_seconds;
                 }
-                let key = (row.data_spw_id, row.antenna1, row.antenna2);
-                let bins = averages
-                    .entry(key)
-                    .or_insert_with(|| vec![CoherencyMean::default(); count]);
-                let weight = self.average_row(row, (&input, index), &channels, bin_width, bins)?;
+                let weight = self.average_row(
+                    row,
+                    (&input, index),
+                    &self.windows[&row.data_spw_id],
+                    &mut active.bins,
+                )?;
                 time.observe(row.time_centroid_seconds, weight);
             }
         }
-        accumulate_averages(averages, &mut fits, antennas);
+        for ((_, _, pair), mut active) in averages {
+            accumulate_averages(pair, &mut active.bins, &mut fits, antennas);
+        }
+        let reference = references
+            .iter()
+            .copied()
+            .find(|&antenna| {
+                fits.iter().any(|fit| fit.has_antenna(antenna))
+                    && previous.is_none_or(|previous| {
+                        previous.values.iter().any(|channel| {
+                            channel.get(antenna as usize).is_some_and(Option::is_some)
+                        })
+                    })
+            })
+            .unwrap_or(-1);
         let mut nonempty = false;
         let mut values = Vec::with_capacity(count);
-        for fit in fits {
-            let channel = fit.solve(reference).unwrap_or_else(|| vec![None; antennas]);
+        for (channel_index, fit) in fits.into_iter().enumerate() {
+            let reference_value = previous
+                .and_then(|previous| previous.values.get(channel_index))
+                .and_then(|solutions| solutions.get(reference as usize))
+                .copied()
+                .flatten()
+                .map_or(Complex32::ZERO, |[first, _]| first);
+            let mut channel = fit
+                .solve(reference, reference_value)
+                .unwrap_or_else(|| vec![None; antennas]);
             nonempty |= channel.iter().any(Option::is_some);
+            if !references.is_empty() && reference < 0 {
+                channel.fill(None);
+            }
             values.push(channel);
         }
         Ok(nonempty.then(|| LeakageSolution {
-            spectral_window: first.data_spw_id,
+            spectral_window,
             field: first.field_id,
             observation: first.observation_id,
             scan: first.scan_number,
             time: time.mean().unwrap_or(first.time_seconds),
             reference,
-            channels,
             values,
         }))
-    }
-
-    fn averaging_bin(&self, begin: f64, row: &SelectedSolveRow) -> u64 {
-        let requested = if self.request.preaverage_seconds < 0.0 {
-            300.0
-        } else {
-            self.request.preaverage_seconds
-        };
-        match self.request.interval {
-            GainSolveInterval::Integration => row.time_seconds.to_bits(),
-            _ => {
-                // genericGatherAndSolve averages up to solint when preavg is
-                // zero or exceeds it. Each bucket here already lies in solint.
-                if requested > f64::from(f32::EPSILON) {
-                    ((row.time_seconds - begin) / requested) as u64
-                } else {
-                    0
-                }
-            }
-        }
     }
 
     fn average_row(
         &self,
         row: &SelectedSolveRow,
         batch: (&SolveInputBatch, usize),
-        channels: &[usize],
-        bin_width: usize,
+        window: &WindowChannels,
         bins: &mut [CoherencyMean],
     ) -> Result<f64, GainSolveError> {
-        let prior = self.preapplied.data.get(&row.row_index);
+        let correlations = correlation_types_for_ddid(self.ms, row.data_desc_id)?;
+        let order = coherency_order(row.data_desc_id, &correlations).map_err(prior_error)?;
+        let prior = self
+            .preapplied
+            .data_prior
+            .as_ref()
+            .map(|prior| {
+                prior
+                    .correct(
+                        row.row_index,
+                        &correlations,
+                        input_cell(self.ms, row.row_index, batch, "DATA")?,
+                        input_cell(self.ms, row.row_index, batch, "FLAG")?,
+                    )
+                    .map_err(prior_error)
+            })
+            .transpose()?
+            .flatten();
         let input = read_row_inputs(
             self.ms,
             row,
-            prior,
+            prior.as_ref(),
             self.models.reads_column(row.field_id),
             batch,
         )?;
-        let correlations = correlation_types_for_ddid(self.ms, row.data_desc_id)?;
-        let order = coherency_order(row.data_desc_id, &correlations).map_err(prior_error)?;
         let raw_flags = if self.models.uses_fourier(row.field_id) {
             match input_cell(self.ms, row.row_index, batch, "FLAG")? {
                 ArrayValue::Bool(flags) => flags,
@@ -287,13 +389,13 @@ impl LeakageInputs<'_> {
         let flags = flags.as_ref().unwrap_or(input.flags.as_ref());
         let samples = input.samples();
         let mut total = 0.0;
-        for (position, &channel) in channels.iter().enumerate() {
+        for (position, &channel) in window.channels.iter().enumerate() {
             if channel >= samples.data.shape()[1]
                 || order.iter().any(|&corr| flags[[corr, channel]])
             {
                 continue;
             }
-            let slot = position / bin_width;
+            let slot = position / window.bin_width;
             let weights = order.map(|corr| samples.weights[[corr, channel]]);
             bins[slot].observe(
                 order.map(|corr| samples.data[[corr, channel]]),
@@ -316,19 +418,19 @@ fn prior_error(source: crate::ApplyExecutionError) -> GainSolveError {
     }
 }
 
-/// Ordered solve rows release the averaged coherencies at each time boundary.
-fn accumulate_averages(averages: BaselineAverages, fits: &mut [LeakageFit], antennas: usize) {
-    for ((_, left, right), bins) in averages {
-        let (Ok(left), Ok(right)) = (usize::try_from(left), usize::try_from(right)) else {
-            continue;
-        };
-        if left >= antennas || right >= antennas {
-            continue;
-        }
-        for (fit, mean) in fits.iter_mut().zip(bins) {
-            if let Some((data, model, weights)) = mean.finish() {
-                fit.add_baseline([left, right], data, model, weights);
-            }
+fn accumulate_averages(
+    pair: [i32; 2],
+    bins: &mut [CoherencyMean],
+    fits: &mut [LeakageFit],
+    antennas: usize,
+) {
+    let pair = pair.map(|antenna| antenna as usize);
+    if pair.iter().any(|&antenna| antenna >= antennas) {
+        return;
+    }
+    for (fit, mean) in fits.iter_mut().zip(bins) {
+        if let Some((data, model, weights)) = std::mem::take(mean).finish() {
+            fit.add_baseline(pair, data, model, weights);
         }
     }
 }

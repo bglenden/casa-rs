@@ -80,7 +80,7 @@ pub(crate) use chain::has_leakage;
 use chain::{ApplyChain, ApplyStep};
 use channels::{DataChannelGrid, apply_row};
 pub(crate) use solve_priors::{
-    ForwardModelApply, PreappliedRows, PriorSolveBoundary, evaluate_solve_priors,
+    PreappliedRows, PriorSolveBoundary, SolvePriorApply, evaluate_solve_priors,
 };
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
@@ -620,12 +620,7 @@ fn for_each_apply_row(
     })?;
     let chain = ApplyChain::load(ms, plan, forward_model)?;
 
-    let any_calwt = plan.apply_mode.writes_corrected_data()
-        && plan
-            .calibration_tables
-            .iter()
-            .zip(&chain.tables)
-            .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
+    let any_calwt = applies_preview_weights(plan, &chain);
     let mut columns = vec!["FLAG"];
     if !forward_model {
         columns.push(VisibilityDataColumn::Data.name());
@@ -676,21 +671,13 @@ fn for_each_apply_row(
             }
         })?;
         let shared;
-        let original_flags = if share_input_flags
-            && let ArrayValue::Bool(flags) = input_flags
-            && flags.ndim() == 2
-        {
-            let mut flags = flags.clone();
-            for mut channel in flags.axis_iter_mut(ndarray::Axis(1)) {
-                if channel.iter().any(|&flag| flag) {
-                    channel.fill(true);
-                }
-            }
-            shared = ArrayValue::Bool(flags);
-            &shared
-        } else {
-            input_flags
-        };
+        let original_flags =
+            if share_input_flags && let Some(flags) = shared_channel_flags(input_flags) {
+                shared = flags;
+                &shared
+            } else {
+                input_flags
+            };
         let units;
         let data = if let Some(index) = data_index {
             main_rows.array_at(index).map_err(|source| {
@@ -792,6 +779,31 @@ fn for_each_apply_row(
     }
 
     Ok(())
+}
+
+fn applies_preview_weights(plan: &ApplyPlan, chain: &ApplyChain) -> bool {
+    plan.apply_mode.writes_corrected_data()
+        && plan
+            .calibration_tables
+            .iter()
+            .zip(&chain.tables)
+            .any(|(table, loaded)| table.calwt && loaded.supports_calwt)
+}
+
+fn shared_channel_flags(flags: &ArrayValue) -> Option<ArrayValue> {
+    let ArrayValue::Bool(flags) = flags else {
+        return None;
+    };
+    if flags.ndim() != 2 {
+        return None;
+    }
+    let mut flags = flags.clone();
+    for mut channel in flags.axis_iter_mut(ndarray::Axis(1)) {
+        if channel.iter().any(|&flag| flag) {
+            channel.fill(true);
+        }
+    }
+    Some(ArrayValue::Bool(flags))
 }
 
 fn read_plot_weights(

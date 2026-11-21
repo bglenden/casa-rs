@@ -81,33 +81,57 @@ pub fn solve_least_squares<const N: usize>(rows: &[([f64; N], f64)]) -> Option<[
     fit.as_slice().try_into().ok()
 }
 
-/// Solve complex normal equations from a row-major square matrix and right-hand side.
-/// Apply the casacore normal-equation collinearity scale and return the
-/// minimum-norm solution and numerical rank when coefficients are underdetermined.
+/// Solve Hermitian normal equations and report the number of independent pivots.
+/// Dependent coefficients are set to zero unless the caller supplies a constraint.
 #[must_use]
 pub fn solve_complex_normal_equations(
-    coefficients: &[num_complex::Complex64],
-    observations: &[num_complex::Complex64],
+    mut coefficients: Vec<num_complex::Complex64>,
+    mut observations: Vec<num_complex::Complex64>,
 ) -> Option<(Vec<num_complex::Complex64>, usize)> {
+    use num_complex::Complex64;
+
     let size = observations.len();
     if size == 0 || coefficients.len() != size.checked_mul(size)? {
         return None;
     }
-    let normal = DMatrix::from_row_slice(size, size, coefficients);
-    let vector = DVector::from_column_slice(observations);
-    let decomposition = normal.svd(true, true);
-    let largest = decomposition.singular_values.max();
-    // LSQFit compares a squared normal-equation pivot divided by the
-    // original diagonal against 1e-12. Normal-equation singular values
-    // below this scale are not supported by the measured coherencies.
-    let tolerance = (largest * size as f64 * f64::EPSILON).max(largest.sqrt() * 1.0e-6);
-    let rank = decomposition
-        .singular_values
-        .iter()
-        .filter(|&&value| value > tolerance)
-        .count();
-    let solution = decomposition.solve(&vector, tolerance).ok()?;
-    Some((solution.as_slice().to_vec(), rank))
+    let diagonal = (0..size)
+        .map(|index| coefficients[index * size + index].re)
+        .collect::<Vec<_>>();
+    let mut independent = Vec::new();
+    for (index, &original) in diagonal.iter().enumerate() {
+        let (_, remaining) = coefficients.split_at_mut(index * size);
+        let (row, trailing) = remaining.split_at_mut(size);
+        let pivot = row[index].re;
+        // LSQFit compares a squared pivot to its own original diagonal.
+        // A smaller visibility weight need not make a coefficient dependent.
+        if !pivot.is_finite() || !original.is_finite() {
+            return None;
+        }
+        if pivot <= original.sqrt() * 1.0e-6 {
+            continue;
+        }
+        independent.push(index);
+        let rhs = observations[index];
+        for (offset, current) in trailing.chunks_exact_mut(size).enumerate() {
+            let factor = current[index] / pivot;
+            observations[index + offset + 1] -= factor * rhs;
+            for (value, &source) in current[index + 1..].iter_mut().zip(&row[index + 1..]) {
+                *value -= factor * source;
+            }
+        }
+    }
+    let mut solution = vec![Complex64::ZERO; size];
+    for &index in independent.iter().rev() {
+        let row = &coefficients[index * size..(index + 1) * size];
+        let residual = observations[index]
+            - row[index + 1..]
+                .iter()
+                .zip(&solution[index + 1..])
+                .map(|(coefficient, value)| coefficient * value)
+                .sum::<Complex64>();
+        solution[index] = residual / row[index].re;
+    }
+    Some((solution, independent.len()))
 }
 
 /// Solve a symmetric system with casacore `LSQFit` ordering.
