@@ -166,8 +166,8 @@ impl Window {
                 }
             }
             cross[..used].sort_unstable_by(f32::total_cmp);
-            for pair in cross[..used].chunks_exact(2) {
-                append(row, pair[0], pair[1]);
+            for &[lo, hi] in cross[..used].as_chunks::<2>().0 {
+                append(row, lo, hi);
             }
         }
         if rows.iter().all(Vec::is_empty) {
