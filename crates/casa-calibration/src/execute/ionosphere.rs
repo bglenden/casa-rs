@@ -4,6 +4,7 @@
 use std::sync::Mutex;
 
 use casa_types::measures::calculate_igrf_at_shell_offset;
+use casa_types::measures::epoch::{EpochRef, MEpoch};
 
 use super::*;
 use crate::gencal::tecim::{DEFAULT_HEIGHT_KM, HEIGHT_KEYWORD};
@@ -14,8 +15,19 @@ pub(super) struct Ionosphere {
 }
 
 impl Ionosphere {
-    pub(super) fn read(table: &Table, path: &Path) -> Result<Self, ApplyExecutionError> {
-        let height = match table.keywords().get(HEIGHT_KEYWORD) {
+    pub(super) fn read(
+        table: &Table,
+        path: &Path,
+        traditional: bool,
+    ) -> Result<Self, ApplyExecutionError> {
+        // FJones::setApply reads the keyword. CLPatchPanel setup calls the
+        // base setCallib path and keeps the default magnetic shell height.
+        let keyword = if traditional {
+            table.keywords().get(HEIGHT_KEYWORD)
+        } else {
+            None
+        };
+        let height = match keyword {
             Some(Value::Scalar(ScalarValue::Float64(height))) => *height,
             Some(Value::Scalar(ScalarValue::Float32(height))) => f64::from(*height),
             None => DEFAULT_HEIGHT_KM,
@@ -61,11 +73,12 @@ impl Ionosphere {
             source,
         };
         let direction = engine
-            .observation_direction_j2000(row.time_seconds, row.field_id as usize)
+            .reference_phase_direction(row.field_id as usize, row.time_seconds)
             .map_err(failed)?;
         let frame = engine
             .antenna_frame(row.time_seconds, antenna as usize)
-            .map_err(failed)?;
+            .map_err(failed)?
+            .with_epoch(MEpoch::from_mjd_seconds(row.time_seconds, EpochRef::UTC));
         let sample = calculate_igrf_at_shell_offset(self.height_m, &direction, &frame)
             .map_err(|error| failed(error.into()))?;
         let field_gauss = sample.los_field_nt * 1e-5;
@@ -104,6 +117,7 @@ impl Ionosphere {
             .then(|| polarization::coherency_order(row.data_desc_id, output.correlation_types))
             .transpose()?;
         let sign = if forward { 1. } else { -1. };
+        let write_flags = output.apply_mode.writes_flags();
         for (channel, &frequency) in context
             .data_channels
             .frequencies_hz
@@ -122,7 +136,7 @@ impl Ionosphere {
                     .into_iter()
                     .zip(parang::rotate_linear(samples, rotations))
                 {
-                    invalid |= output.flags[[index, channel]];
+                    invalid |= write_flags && output.flags[[index, channel]];
                     output.corrected[[index, channel]] = dispersion * value;
                 }
             } else {
@@ -135,7 +149,7 @@ impl Ionosphere {
                         unit_phase(sign * (phases[0][a] - phases[1][b]));
                 }
             }
-            if invalid && output.apply_mode.writes_flags() {
+            if invalid && write_flags {
                 for index in 0..output.correlation_types.len() {
                     if !output.flags[[index, channel]] {
                         output.flags[[index, channel]] = true;

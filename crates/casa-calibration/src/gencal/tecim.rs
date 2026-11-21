@@ -7,6 +7,7 @@ use casa_images::PagedImage;
 use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
+use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::ionospheric_pierce_point;
 use ndarray::ArrayD;
 
@@ -84,7 +85,8 @@ fn solution_rows(
         for antenna in 0..engine.num_antennas() {
             let frame = engine
                 .antenna_frame(sample.time, antenna)
-                .map_err(invalid)?;
+                .map_err(invalid)?
+                .with_epoch(MEpoch::from_mjd_seconds(sample.time, EpochRef::UTC));
             let point = ionospheric_pierce_point(height_m, &direction, &frame).map_err(invalid)?;
             let [x, y, z] = point.as_itrf();
             let longitude = y.atan2(x).to_degrees();
@@ -179,7 +181,14 @@ fn samples(ms: &MeasurementSet) -> Result<Vec<Sample>, GencalError> {
 struct TecImage {
     image: PagedImage<f32>,
     absolute_time: bool,
-    block: Option<([usize; 3], ArrayD<f32>)>,
+    increment: [f64; 3],
+    block: Option<TecBlock>,
+}
+
+struct TecBlock {
+    start: [usize; 3],
+    world: Vec<f64>,
+    pixels: ArrayD<f32>,
 }
 
 impl TecImage {
@@ -194,9 +203,23 @@ impl TecImage {
                 "TEC image must have longitude, latitude and time axes with at least two pixels each",
             ));
         }
+        let coordinates_system = image.coordinates();
+        let mut increment = [0.; 3];
+        for (axis, step) in increment.iter_mut().enumerate() {
+            let (owner, local) = coordinates_system
+                .world_axis_owner(axis)
+                .ok_or_else(|| invalid("TEC image is missing a world axis"))?;
+            *step = coordinates_system.coordinate(owner).increment()[local];
+            if !step.is_finite() || *step == 0. {
+                return Err(invalid(
+                    "TEC image axes must have finite nonzero increments",
+                ));
+            }
+        }
         Ok(Self {
             image,
             absolute_time: coordinates[2] > 0.,
+            increment,
             block: None,
         })
     }
@@ -204,7 +227,6 @@ impl TecImage {
     fn sample(&mut self, world: [f64; 3]) -> Result<f32, GencalError> {
         let pixel = self.image.coordinates().to_pixel(&world).map_err(invalid)?;
         let mut start = [0; 3];
-        let mut fraction = [0.; 3];
         for axis in 0..3 {
             let corner = pixel[axis].trunc();
             if !corner.is_finite()
@@ -216,18 +238,22 @@ impl TecImage {
                 )));
             }
             start[axis] = corner as usize;
-            fraction[axis] = f64::from((pixel[axis] - corner) as f32);
         }
-        if self
-            .block
-            .as_ref()
-            .is_none_or(|(corner, _)| *corner != start)
-        {
+        if self.block.as_ref().is_none_or(|block| block.start != start) {
             let pixels = self.image.get_slice(&start, &[2; 3]).map_err(invalid)?;
-            self.block = Some((start, pixels));
+            let point = start.map(|index| index as f64);
+            let world = self.image.coordinates().to_world(&point).map_err(invalid)?;
+            self.block = Some(TecBlock {
+                start,
+                world,
+                pixels,
+            });
         }
-        let values = &self.block.as_ref().expect("TEC interpolation block").1;
-        let [x, y, t] = fraction;
+        let block = self.block.as_ref().expect("TEC interpolation block");
+        let values = &block.pixels;
+        let [x, y, t] = std::array::from_fn(|axis| {
+            f64::from(((world[axis] - block.world[axis]) / self.increment[axis]) as f32)
+        });
         let plane = |time| {
             ((1. - x) * (1. - y) * f64::from(values[[0, 0, time]])
                 + x * (1. - y) * f64::from(values[[1, 0, time]])

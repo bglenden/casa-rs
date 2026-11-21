@@ -9578,3 +9578,12 @@ Casa-rs rejects a factor that cannot yield a finite positive single-precision
 gain, and any accumulation that overflows or underflows to zero. If the caller supplied a calibration table
 to update, the original table remains intact. The Jy/K oracle tests the two
 invalid factors and checks the existing table after the rejection.
+
+## A flagged F Jones coefficient can leave unflagged visibilities
+
+In CASA 6.7.6.14, a flagged TEC coefficient for the last antenna in a circular-feed
+`F Jones` table leaves that antenna's Jones matrix at its nominal identity with
+both receptors marked valid. Applying the table leaves its baselines
+unflagged even though a correction is missing. Casa-rs flags the affected
+correlations when the apply mode writes flags and retains the valid antenna's
+correction. The TEC oracle exercises this difference using a CASA-written table.

@@ -929,7 +929,7 @@ fn build_table_plan(
             effective_spec = k_antpos_spwmap_spec(spec, &applicable_data_spw_ids);
             &effective_spec
         }
-        "F Jones" => {
+        "F Jones" if spec.callibrary.is_none() => {
             effective_spec = ApplyCalibrationTableSpec {
                 spwmap: vec![0],
                 ..spec.clone()

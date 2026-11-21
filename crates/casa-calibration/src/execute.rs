@@ -4492,7 +4492,13 @@ fn load_parameters(
     let leakage = polarization::Leakage::from_subtype(&table_plan.summary.table_subtype);
     let tec = table_plan.summary.table_subtype == "F Jones";
     let ionosphere = tec
-        .then(|| ionosphere::Ionosphere::read(&table, &table_plan.spec.path))
+        .then(|| {
+            ionosphere::Ionosphere::read(
+                &table,
+                &table_plan.spec.path,
+                table_plan.spec.callibrary.is_none(),
+            )
+        })
         .transpose()?;
     let cross_hand_phase = polarization::is_cross_hand_phase(&table_plan.summary.table_subtype);
     let supports_calwt = (table_plan.summary.parameter_family
