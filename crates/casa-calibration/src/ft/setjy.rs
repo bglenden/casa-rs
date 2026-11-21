@@ -11,6 +11,7 @@ use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::invalid;
 
+pub(crate) mod image;
 pub(crate) mod standards;
 
 pub(crate) struct ManualFlux {
@@ -116,12 +117,15 @@ impl ManualFlux {
         ))
     }
 
-    fn at_frequency(&self, frequency: &MFrequency, frame: &MeasFrame) -> MsResult<[f64; 4]> {
-        const C_METRES_PER_SECOND: f64 = 299_792_458.;
-        let [i, q, u, v] = self.flux_jy;
+    pub(crate) fn intensity_jy(&self) -> f64 {
+        self.flux_jy[0]
+    }
+
+    pub(crate) fn intensity_at(&self, frequency: &MFrequency, frame: &MeasFrame) -> MsResult<f64> {
+        let i = self.intensity_jy();
         let f = frequency.hz();
         let f0 = self.reference.hz();
-        let i_at_f = if self.spectral_index.len() > 1 {
+        Ok(if self.spectral_index.len() > 1 {
             let logarithm = (f / f0).log10();
             i * 10_f64.powf(logarithm * polynomial(&self.spectral_index, logarithm))
         } else {
@@ -130,7 +134,15 @@ impl ManualFlux {
                 .convert_to(self.reference.refer(), frame)
                 .map_err(invalid)?;
             i * (converted.hz() / f0).powf(alpha)
-        };
+        })
+    }
+
+    fn at_frequency(&self, frequency: &MFrequency, frame: &MeasFrame) -> MsResult<[f64; 4]> {
+        const C_METRES_PER_SECOND: f64 = 299_792_458.;
+        let [i, q, u, v] = self.flux_jy;
+        let f = frequency.hz();
+        let f0 = self.reference.hz();
+        let i_at_f = self.intensity_at(frequency, frame)?;
         let linear_model = !self.fraction.is_empty() && !self.angle.is_empty();
         let (q_at_f, u_at_f) = if !linear_model {
             (q, u)

@@ -2,6 +2,7 @@
 //! Manual calibrator point models on the shared calibration task front end.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use casa_components::{ComponentList, SkyComponent};
 use casa_ms::derived::engine::MsCalEngine;
@@ -23,6 +24,7 @@ use casa_types::measures::frequency::{CasaFrequencyFrame, FrequencyRef, MFrequen
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::attachment::OpenedMs;
+use crate::ft::image::ImageModel;
 use crate::ft::setjy::standards::fixed::FixedScale;
 use crate::ft::setjy::standards::{
     CalibratorSpectrum, CatalogMatch, CatalogScale, FluxCatalog, FluxScale,
@@ -33,6 +35,7 @@ use crate::interpolation::Curve;
 
 mod fluxdict;
 mod model_files;
+mod resolved;
 
 enum FluxParameters {
     Manual(ManualFlux),
@@ -42,7 +45,13 @@ enum FluxParameters {
     },
 }
 
-type FieldModels = BTreeMap<i32, Vec<VirtualModelEntry>>;
+#[derive(Default)]
+struct FieldModel {
+    entries: Vec<VirtualModelEntry>,
+    image: Option<ImageModel>,
+}
+
+type FieldModels = BTreeMap<i32, FieldModel>;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if task.flag("listmodels")? {
@@ -105,27 +114,28 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     // Imager::sjy_make_visibilities selects all channels of each chosen SPW.
     selected.channel_selections.clear();
     let spws = requested_windows(&opened.measurement_set, selection.spw.as_deref())?;
+    let image = model_files::task_image(task)?;
     let (models, fluxes, completed) = prepare(
         &opened.measurement_set,
         &selected,
         &flux,
         &spws,
         task.flag("scalebychan")?,
+        image.as_deref().map(|path| (path, scratch)),
     )?;
-    let partially_written = !completed && models.values().any(|entries| !entries.is_empty());
+    let has_models = models.values().any(|model| !model.entries.is_empty());
+    let partially_written = !completed && has_models;
     if scratch {
         opened = opened
             .initialize(VisibilityDataColumn::ModelData)
             .map_err(execution)?;
         // An unrecognized calibrator reports unit flux and leaves any
         // existing scratch cells alone.
-        if (!completed || models.values().any(Vec::is_empty))
-            && models.values().any(|entries| !entries.is_empty())
-        {
+        if (!completed || models.values().any(|model| model.entries.is_empty())) && has_models {
             selection.field = Some(
                 models
                     .iter()
-                    .filter(|(_, entries)| !entries.is_empty())
+                    .filter(|(_, model)| !model.entries.is_empty())
                     .map(|(field, _)| field.to_string())
                     .collect::<Vec<_>>()
                     .join(","),
@@ -155,7 +165,10 @@ fn publish_models(
     scratch: bool,
 ) -> Result<(), TaskFailure> {
     if scratch {
-        let entries: Vec<_> = models.into_values().flatten().collect();
+        let entries: Vec<_> = models
+            .values()
+            .flat_map(|model| model.entries.iter().cloned())
+            .collect();
         write_model_scratch(
             &mut opened.measurement_set,
             selected,
@@ -168,16 +181,21 @@ fn publish_models(
         .map_err(execution)?;
     } else {
         // Fields can place records in different tables, depending on SOURCE_ID.
-        for (field, entries) in models.into_iter().rev() {
-            VirtualModelPublication::default()
-                .replace_windows_holding(
-                    &mut opened.measurement_set,
-                    &entries,
-                    &mut opened.lock,
-                    field,
-                    spws,
-                )
-                .map_err(execution)?;
+        for (field, mut model) in models.into_iter().rev() {
+            let mut publication = VirtualModelPublication::default();
+            let published = publication.replace_windows_holding(
+                &mut opened.measurement_set,
+                &model.entries,
+                &mut opened.lock,
+                field,
+                spws,
+            );
+            if publication.may_reference_images()
+                && let Some(image) = &mut model.image
+            {
+                image.retain();
+            }
+            published.map_err(execution)?;
         }
     }
     Ok(())
@@ -213,9 +231,6 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
         Some("Stevens-Reynolds 2016") => Some(FluxScale::Fixed(FixedScale::StevensReynolds2016)),
         _ => return Err(pending("standard")),
     };
-    if task.text("model")?.is_some_and(|model| !model.is_empty()) {
-        return Err(pending("model"));
-    }
     if !matches!(task.value("fluxdict"), Some(ParameterValue::Table(_))) {
         return Err(TaskFailure::validation("fluxdict must be a dictionary").at("fluxdict"));
     }
@@ -333,6 +348,7 @@ fn prepare(
     flux: &FluxParameters,
     spws: &[i32],
     by_channel: bool,
+    image: Option<(&Path, bool)>,
 ) -> Result<(FieldModels, CasaValue, bool), TaskFailure> {
     let mut groups = BTreeMap::<i32, BTreeMap<i32, Vec<usize>>>::new();
     for row in &selected.selected_rows {
@@ -386,8 +402,9 @@ fn prepare(
             }
             FluxParameters::Manual(_) => None,
         };
-        let entries = models.entry(field).or_default();
+        let model = models.entry(field).or_default();
         let mut field_flux = BTreeMap::new();
+        let mut first_jy = None;
         for &spw in spws {
             let all_hz = windows.chan_freq(spw as usize).map_err(execution)?;
             let frequency_frame = windows
@@ -395,13 +412,27 @@ fn prepare(
                 .map_err(execution)?;
             let num_channels = i32::try_from(all_hz.len()).map_err(execution)?;
             let planned = selected_frequencies(all_hz, frequency_frame, by_channel)?;
-            let (component, stokes) =
-                point_model(flux, spectrum.as_ref(), &direction, &planned, &frame)?;
+            let (component, stokes) = if image.is_some() {
+                (
+                    None,
+                    [
+                        spectrum
+                            .as_ref()
+                            .map_or(1., |spectrum| spectrum.flux(planned[0].hz())),
+                        0.,
+                        0.,
+                        0.,
+                    ],
+                )
+            } else {
+                point_model(flux, spectrum.as_ref(), &direction, &planned, &frame)?
+            };
+            first_jy.get_or_insert(stokes[0]);
             if let (Some(rows), Some(component)) = (windows_for_field.get(&spw), component) {
                 let container = ComponentList::from(vec![component])
                     .to_record()
                     .map_err(execution)?;
-                entries.push(VirtualModelEntry {
+                model.entries.push(VirtualModelEntry {
                     kind: VirtualModelKind::ComponentList,
                     index_combination: selected_model_combinations(ms, rows)
                         .map_err(execution)?
@@ -423,6 +454,25 @@ fn prepare(
                     )],
                 },
             );
+        }
+        if let Some((path, scratch)) = image {
+            let params = resolved::ImageParameters {
+                path,
+                by_channel,
+                scratch,
+            };
+            use resolved::ResolvedFlux;
+            let flux = match (flux, spectrum.as_ref().zip(first_jy)) {
+                (FluxParameters::Manual(manual), _) if manual.intensity_jy() != 0. => {
+                    ResolvedFlux::Manual(manual)
+                }
+                (_, Some((spectrum, jy))) => ResolvedFlux::Catalog(spectrum, jy),
+                _ => ResolvedFlux::Unscaled,
+            };
+            model.image = params.prepare(ms, selected, &frame, field, flux)?;
+            if let Some(image) = &model.image {
+                model.entries.push(image.entry.clone());
+            }
         }
         field_flux.insert("fieldName".into(), CasaValue::String { value: name });
         returned.insert(
