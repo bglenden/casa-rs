@@ -3996,7 +3996,7 @@ task grows to the neighboring selected channels 1 and 5, as CASA does with
 the explicit channel list `0:1;3;5;7`.
 [Extension oracle](../tools/casa-compat/flagdata_extend_oracle.py)
 
-## Clip channel averaging can abort on a strided selection
+## Clip and TFCrop channel averaging can abort on a strided selection
 
 In CASA 6.7.6.14, `flagdata(mode="clip", channelavg=True, chanbin=2,
 spw="0:0~3^2", correlation="XX")` aborts with `ArraySlicerError` on a
@@ -4005,6 +4005,13 @@ works. Native flagdata groups the actual selected channels, averages the
 two samples and sets new flags on channels 0 and 2 when the bin meets the
 clip range. The channel clip oracle checks the mask independently from
 the input samples and from CASA with the equivalent explicit selection.
+
+TFCrop reproduces the same abort with `flagdimension="time"`,
+`channelavg=True`, `chanbin=2` and `spw="0:8~23^2"` on a 32-channel
+window. The independently injected broadband impulse flags just channels
+8, 10, 12, 14, 16, 18, 20 and 22 on that integration. The native strided
+selection and CASA's equivalent explicit channel list produce the same
+physical mask. [TFCrop channel averaging oracle](../tools/casa-compat/flagdata_tfcrop_channelavg_oracle.py)
 
 ## Clip channel averaging can flag nonzero data as zero
 

@@ -868,7 +868,11 @@ fn flagdata_request(
         clipzeros: task.flag("clipzeros")?,
         clipminmax,
         clipoutside,
-        clip_channel_bins: clip_channel_bins(task, mode, channel_bins)?,
+        clip_channel_bins: if calibration && mode != FlagDataMode::Clip {
+            None
+        } else {
+            channel_averaging_bins(task, mode, channel_bins)?
+        },
         clip_time_bin: clip_time_bin(task, mode)?,
         time_chunk: None,
         combinescans: task.flag("combinescans")?,
@@ -972,12 +976,12 @@ fn clip_time_bin(
     }
 }
 
-fn clip_channel_bins(
+fn channel_averaging_bins(
     task: &TaskInvocation<'_>,
     mode: FlagDataMode,
     channel_bins: Vec<u32>,
 ) -> Result<Option<Vec<u32>>, TaskFailure> {
-    if mode != FlagDataMode::Clip {
+    if !matches!(mode, FlagDataMode::Clip | FlagDataMode::Tfcrop) {
         return Ok(None);
     }
     match task.value("channelavg") {
