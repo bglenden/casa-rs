@@ -19,6 +19,7 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::str::FromStr;
 
+mod mixed;
 mod reference_frame;
 
 use casa_types::measures::MeasFrame;
@@ -69,6 +70,8 @@ pub struct DirectionCoordinate {
     /// Celestial coordinates of the native pole [alpha_p, delta_p] in radians.
     /// Computed from crval, longpole, latpole, and theta_0.
     native_pole: [f64; 2],
+    /// Native angles to search when only one sky coordinate is supplied.
+    mix_ranges: [[f64; 2]; 2],
     /// The angle units the coordinate is stored and presented in, as
     /// casacore's `worldAxisUnits` (CASA's images use `'`, `deg` or `rad`);
     /// it computes in radians whatever they are.
@@ -249,6 +252,7 @@ impl DirectionCoordinate {
             longpole,
             latpole,
             native_pole,
+            mix_ranges: [[-PI, PI], [-FRAC_PI_2, FRAC_PI_2]],
             world_units: ["rad".into(), "rad".into()],
             world_names: None,
             removed_axis: None,

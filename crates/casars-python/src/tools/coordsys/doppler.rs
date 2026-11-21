@@ -99,7 +99,7 @@ fn spectral_shift(values: &mut [f64], freq_unit: &str, velocity: &Quantity) -> P
     Ok(())
 }
 
-struct VelocityConversion {
+pub(super) struct VelocityConversion {
     rest_hz: f64,
     hz_per_unit: f64,
     velocity_scale: f64,
@@ -187,6 +187,19 @@ pub(in crate::tools) fn stored_velocity_settings(
 }
 
 impl VelocityConversion {
+    pub(super) fn for_spectral_axis(
+        spectral: &SpectralCoordinate,
+        unit: &Unit,
+        convention: DopplerRef,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            rest_hz: spectral.rest_frequency_hz().map_err(raised)?,
+            hz_per_unit: spectral.value_in_hz(1.0).map_err(raised)?,
+            velocity_scale: unit.val().factor / C_MPS,
+            convention,
+        })
+    }
+
     fn new(
         state: &CoordinateState,
         spectral: &SpectralCoordinate,
@@ -221,7 +234,7 @@ impl VelocityConversion {
         })
     }
 
-    fn frequency_to_velocity(&self, frequency: f64) -> PyResult<f64> {
+    pub(super) fn frequency_to_velocity(&self, frequency: f64) -> PyResult<f64> {
         if !frequency.is_finite() || self.rest_hz <= 0.0 {
             return Ok(f64::NAN);
         }
@@ -236,7 +249,7 @@ impl VelocityConversion {
         Ok(velocity.value() / self.velocity_scale)
     }
 
-    fn velocity_to_frequency(&self, velocity: f64) -> PyResult<f64> {
+    pub(super) fn velocity_to_frequency(&self, velocity: f64) -> PyResult<f64> {
         let beta = MDoppler::new(velocity * self.velocity_scale, self.convention)
             .convert_to(DopplerRef::BETA, &MeasFrame::new())
             .map_err(raised)?;

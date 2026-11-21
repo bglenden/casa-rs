@@ -13,6 +13,7 @@ pub(super) use doppler::stored_velocity_settings;
 mod frame_metadata;
 mod inspect;
 mod linear_transform;
+mod mixed_transform;
 mod observation;
 mod ordering;
 mod projection;

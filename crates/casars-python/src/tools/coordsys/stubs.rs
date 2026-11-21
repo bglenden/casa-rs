@@ -15,38 +15,6 @@ use super::{PyCoordsys, stub};
 )]
 impl PyCoordsys {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (coordin, absin = None, dopplerin = None, unitsin = None, absout = None, dopplerout = None, unitsout = None, shape = None), text_signature = "($self, coordin, absin=[True], dopplerin='radio', unitsin=['Native'], absout=[True], dopplerout='radio', unitsout=['Native'], shape=[-1])")]
-    fn convert(
-        &self,
-        coordin: &Bound<'_, PyAny>,
-        absin: Option<&Bound<'_, PyAny>>,
-        dopplerin: Option<&Bound<'_, PyAny>>,
-        unitsin: Option<&Bound<'_, PyAny>>,
-        absout: Option<&Bound<'_, PyAny>>,
-        dopplerout: Option<&Bound<'_, PyAny>>,
-        unitsout: Option<&Bound<'_, PyAny>>,
-        shape: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("convert")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (coordin = None, absin = None, dopplerin = None, unitsin = None, absout = None, dopplerout = None, unitsout = None, shape = None), text_signature = "($self, coordin=[], absin=[True], dopplerin='radio', unitsin=['Native'], absout=[True], dopplerout='radio', unitsout=['Native'], shape=[-1])")]
-    fn convertmany(
-        &self,
-        coordin: Option<&Bound<'_, PyAny>>,
-        absin: Option<&Bound<'_, PyAny>>,
-        dopplerin: Option<&Bound<'_, PyAny>>,
-        unitsin: Option<&Bound<'_, PyAny>>,
-        absout: Option<&Bound<'_, PyAny>>,
-        dopplerout: Option<&Bound<'_, PyAny>>,
-        unitsout: Option<&Bound<'_, PyAny>>,
-        shape: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("convertmany")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (refcode = None, proj = None, projpar = None, refpix = None, refval = None, incr = None, xform = None, poles = None), text_signature = "($self, refcode='', proj='', projpar=[-1.0], refpix=[-1.0], refval=[], incr=[], xform=[], poles=[])")]
     fn setdirection(
         &self,
