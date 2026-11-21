@@ -31,12 +31,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (frame), text_signature = "($self, frame)")]
-    fn convertdirection(&self, frame: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("convertdirection")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (coordin = None, absin = None, dopplerin = None, unitsin = None, absout = None, dopplerout = None, unitsout = None, shape = None), text_signature = "($self, coordin=[], absin=[True], dopplerin='radio', unitsin=['Native'], absout=[True], dopplerout='radio', unitsout=['Native'], shape=[-1])")]
     fn convertmany(
         &self,

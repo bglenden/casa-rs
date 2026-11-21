@@ -19,6 +19,8 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::str::FromStr;
 
+mod reference_frame;
+
 use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::quanta::{Quantity, Unit};
@@ -1068,14 +1070,21 @@ impl Coordinate for DirectionCoordinate {
 
 impl DirectionCoordinate {
     fn full_axis_names(&self) -> [String; 2] {
-        self.world_names
-            .clone()
-            .unwrap_or_else(|| match self.direction_ref {
-                DirectionRef::GALACTIC | DirectionRef::SUPERGAL => {
-                    ["Longitude".into(), "Latitude".into()]
-                }
-                _ => ["Right Ascension".into(), "Declination".into()],
-            })
+        self.world_names.clone().unwrap_or_else(|| {
+            let names = match self.direction_ref {
+                DirectionRef::J2000
+                | DirectionRef::JMEAN
+                | DirectionRef::APP
+                | DirectionRef::B1950
+                | DirectionRef::B1950Vla
+                | DirectionRef::BMEAN
+                | DirectionRef::BTRUE
+                | DirectionRef::ICRS => ["Right Ascension", "Declination"],
+                DirectionRef::HADEC => ["Hour Angle", "Declination"],
+                _ => ["Longitude", "Latitude"],
+            };
+            names.map(str::to_owned)
+        })
     }
 
     pub(crate) fn to_record(&self) -> RecordValue {
