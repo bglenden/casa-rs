@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{ImageInfo, PagedImage};
+use casa_imaging_operator::WPlaneCount;
 use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
 use casa_ms::{
     MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry,
@@ -20,7 +21,10 @@ use crate::model_columns::has_column;
 use crate::solve::grouping::VisibilityModels;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
-use super::image::{ImageModel, TaylorTerm, image_reference_frequency, prepare_configured_images};
+use super::image::{
+    ImageModel, TaylorTerm, WStatistics, automatic_w_planes, image_reference_frequency,
+    prepare_configured_images,
+};
 use super::imager_definition::{ImagerDefinitionRequest, model_tile_shape};
 use super::imager_sources::ModelSources;
 use super::legacy_pbw::pointing::LegacyEpOffsets;
@@ -109,6 +113,7 @@ struct PartialBatch {
     scratch: bool,
     completed: usize,
     moving_anchor: Option<MovingSourceAnchor>,
+    group_w_planes: Option<WPlaneCount>,
 }
 
 struct PredictionInputs {
@@ -465,8 +470,12 @@ impl ImagerPrediction {
                 }
             }
         }
+        let group_w_planes = match &self.partial_batch {
+            Some(batch) => batch.group_w_planes,
+            None => self.attached_w_planes(inputs, model)?,
+        };
         for (index, input) in inputs.iter().enumerate().skip(first) {
-            let result = self.predict_to(input, model, scratch, &mut moving_anchor);
+            let result = self.predict_to(input, model, scratch, &mut moving_anchor, group_w_planes);
             if !matches!(result, Ok(true)) {
                 if index > 0 || self.pending_publication.is_some() {
                     self.partial_batch = Some(PartialBatch {
@@ -475,6 +484,7 @@ impl ImagerPrediction {
                         scratch,
                         completed: index,
                         moving_anchor,
+                        group_w_planes,
                     });
                 }
                 return result;
@@ -482,6 +492,36 @@ impl ImagerPrediction {
         }
         self.partial_batch = None;
         Ok(true)
+    }
+
+    fn attached_w_planes(
+        &self,
+        inputs: &[CalibrationAttachment],
+        model: ImagerPredictionModel<'_>,
+    ) -> Result<Option<WPlaneCount>, AttachmentError> {
+        if inputs.len() < 2
+            || model.images.is_empty()
+            || !matches!(self.options.gridder, ImagerGridder::AutoWProject)
+            || !self.apply_voltage_pattern
+            || self.voltage_pattern.is_none()
+            || !self.supports_voltage_batches()
+        {
+            return Ok(None);
+        }
+        // The legacy multi-MS iterator measures the geometry across all
+        // enrolled inputs. Hold each MAIN lock while reading its selection.
+        let mut statistics = WStatistics::new();
+        for input in inputs {
+            input.with_write(|ms, selection, _| {
+                statistics
+                    .add_selection(ms, selection)
+                    .map_err(AttachmentError::PredictionPreparation)
+            })?;
+        }
+        statistics
+            .plane_count()
+            .map(Some)
+            .map_err(AttachmentError::PredictionPreparation)
     }
 
     /// Predict with the source images and components retained by a live sky equation.
@@ -544,6 +584,7 @@ impl ImagerPrediction {
             model,
             attachment.options().use_scratch,
             &mut None,
+            None,
         )
     }
 
@@ -553,6 +594,7 @@ impl ImagerPrediction {
         model: ImagerPredictionModel<'_>,
         scratch: bool,
         moving_anchor: &mut Option<MovingSourceAnchor>,
+        group_w_planes: Option<WPlaneCount>,
     ) -> Result<bool, AttachmentError> {
         if self.ambiguous_scratch_write {
             return Err(invalid(
@@ -586,6 +628,10 @@ impl ImagerPrediction {
             if scratch && !has_column(ms, ModelData) {
                 return Ok(false);
             }
+            let mut settings = self.options;
+            if let Some(planes) = group_w_planes {
+                settings.gridder = ImagerGridder::WProject(planes);
+            }
             let supported_voltage_geometry = self.supports_voltage_batches();
             let apply_sky_voltage = self.apply_voltage_pattern && self.voltage_pattern.is_some();
             if apply_sky_voltage && (supported_voltage_geometry || self.voltage_angle_increment != TAU) {
@@ -595,13 +641,12 @@ impl ImagerPrediction {
                     )));
                 }
                 if scratch {
-                    let mut settings = self.options;
                     if matches!(settings.gridder, ImagerGridder::AutoWProject)
                         && !model.images.is_empty()
                     {
                         // CASA chooses the W-plane geometry once for the
                         // visibility selection, before any beam refresh.
-                        let planes = super::image::automatic_w_planes(ms, selection)
+                        let planes = automatic_w_planes(ms, selection)
                             .map_err(AttachmentError::PredictionPreparation)?;
                         settings.gridder = ImagerGridder::WProject(planes);
                     }
@@ -639,7 +684,7 @@ impl ImagerPrediction {
                 }
             }
             let Some(PreparedPrediction { mut components, mut images, .. }) =
-                self.prepare(ms, selection, (selection, self.options), &model, scratch)
+                self.prepare(ms, selection, (selection, settings), &model, scratch)
                     .map_err(AttachmentError::PredictionPreparation)?
             else {
                 return Ok(false);
