@@ -43,7 +43,7 @@ pub(super) fn kernels(
         }
         selected.push(axis);
     }
-    if widths.is_empty() || types.first().is_none_or(|name| name.is_empty()) {
+    if types.first().is_none_or(|name| name.is_empty()) {
         return Ok(Vec::new());
     }
     if types.len() != selected.len() {

@@ -509,7 +509,7 @@ impl NamedImageStages {
             .first()
             .and_then(Option::as_ref)
             .map(|(stage, _)| stage.target.clone());
-        self.publish_transaction(false, |registry| {
+        self.publish_transaction(false, true, |registry| {
             primary
                 .as_deref()
                 .map(|path| AttachedImage::open_created(registry, path))
@@ -526,12 +526,13 @@ impl NamedImageStages {
         allow_missing: bool,
         finish: impl FnOnce() -> PyResult<()>,
     ) -> PyResult<()> {
-        self.publish_transaction(allow_missing, |_| finish())
+        self.publish_transaction(allow_missing, false, |_| finish())
     }
 
     fn publish_transaction<T>(
         mut self,
         allow_missing: bool,
+        open_primary: bool,
         finish: impl FnOnce(&mut attachment::OpenImages) -> PyResult<T>,
     ) -> PyResult<T> {
         if allow_missing {
@@ -552,6 +553,9 @@ impl NamedImageStages {
         let _product_locks = self
             .stages
             .iter()
+            // Opening the returned image takes its staged image lock itself,
+            // just as the paired publisher does for its primary product.
+            .skip(usize::from(open_primary))
             .flatten()
             .map(|(stage, _)| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
             .collect::<PyResult<Vec<_>>>()?;

@@ -69,7 +69,9 @@ impl PyImageTool {
             Some(Variant::Texts(names)) => names,
             _ => Vec::new(),
         };
-        let widths = smoothwidths.map_or_else(|| vec![0.], |value| value.0);
+        let widths = smoothwidths
+            .filter(|value| !value.0.is_empty())
+            .map_or_else(|| vec![0.], |value| value.0);
         let include = includepix.map_or_else(|| vec![-1.], |value| value.0);
         let exclude = excludepix.map_or_else(|| vec![-1.], |value| value.0);
         let parsed = if doppler.eq_ignore_ascii_case("TRUE") {

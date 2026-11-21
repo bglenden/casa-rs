@@ -77,7 +77,7 @@ def test_public_moment_numbers(casa, number):
     {"smoothaxes": [3], "smoothtypes": ["gaussian"], "smoothwidths": [2.], "includepix": [2., 7.]},
     {"smoothaxes": [3], "smoothtypes": ["hanning"], "includepix": [2., 7.]},
     {"smoothaxes": [0, 3], "smoothtypes": ["boxcar", "hanning"], "smoothwidths": [3.], "includepix": [.1, 10.]},
-    {"smoothaxes": [3], "smoothtypes": ["hanning"], "smoothwidths": []},
+    {"smoothaxes": [3], "smoothtypes": ["hanning"], "smoothwidths": [], "includepix": [2., 7.]},
 ])
 def test_moment_method_axis_and_velocity_variants(casa, options):
     results = []
@@ -287,6 +287,7 @@ def test_moments_rejects_invalid_requests_without_replacing_a_product(tmp_path):
             {"moments": []}, {"moments": [12]}, {"moments": [4]},
             {"axis": 4}, {"includepix": [1., 2.], "excludepix": [3., 4.]},
             {"smoothaxes": [3], "smoothtypes": ["boxcar"], "smoothwidths": [3.]},
+            {"smoothaxes": [3], "smoothtypes": ["gaussian"], "smoothwidths": [0.], "includepix": [2., 7.]},
         ):
             with pytest.raises(RuntimeError):
                 image.moments(outfile=output_path, overwrite=True, **options)
@@ -339,7 +340,8 @@ def test_stokes_reduction_refuses_incompatible_beam_metadata(casa, tmp_path, dro
             path = tmp_path / f"{api.__name__}.im"
             with pytest.raises(RuntimeError, match="Number of polarizations"):
                 image.moments([8], axis=2, drop=drop, outfile=str(path))
-            assert not path.exists()
+            if api is tools:
+                assert not path.exists()
             assert image.isopen()
         finally:
             image.done()

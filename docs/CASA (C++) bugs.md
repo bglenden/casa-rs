@@ -9136,6 +9136,16 @@ weighted and maximum-coordinate moments and the output reference
 pixel. Casa-rs preserves the world coordinates evaluated at the
 original selected pixels.
 
+Collapsing the Stokes axis of a cube with distinct restoring beams
+per polarization raises a restoring-beam error in both implementations.
+CASA can create the named output directory before it raises. Casa-rs
+checks the beam count before publishing any output image.
+
+With a Gaussian smoothing width of zero and an inclusion interval,
+CASA can produce a moment image with no valid samples because the
+smoothing kernel is undefined. Casa-rs rejects the zero width before
+allocating or publishing an output.
+
 On an entirely masked Float direction image, default `image.maxfit`
 can dereference an absent maximum and terminate the CASA Python
 process. Casa-rs raises a Python error and preserves the image.
