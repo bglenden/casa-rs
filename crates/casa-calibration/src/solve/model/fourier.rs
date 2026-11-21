@@ -269,7 +269,7 @@ impl PreparedFourierModel {
                     &polarization,
                     axis.first_hz(),
                     conjugate,
-                    Some(legacy_aw::record_rotation(terms[0]).map_err(model_error)?),
+                    legacy_aw::record_rotation(terms[0]).map_err(model_error)?,
                     true,
                 )
                 .map_err(model_error)?;
