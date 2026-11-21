@@ -66,7 +66,7 @@ def test_regrid_defaults_preserve_four_pixel_types_and_native_writer_readers(cas
         source = writer.image()
         path = str(tmp_path / f"{writer.__name__}-{kind}.im")
         try:
-            assert source.fromshape(shape=data.shape, type=kind)
+            assert source.fromshape(shape=list(data.shape), type=kind)
             assert source.putchunk(data)
             assert source.putregion(pixelmask=valid)
             if kind in ("f", "c"):
@@ -125,8 +125,8 @@ def test_regrid_shifted_sky_plane_and_interpolation(casa, method):
         np.testing.assert_array_equal(results[1][0][region], data[region])
 
 
-@pytest.mark.parametrize("asvelocity", [False, True])
-def test_regrid_spectral_interpolation_and_target_coordinates(casa, asvelocity):
+@pytest.mark.parametrize("asvelocity,method", [(False, "linear"), (True, "linear"), (False, "lanczos")])
+def test_regrid_spectral_interpolation_and_target_coordinates(casa, asvelocity, method):
     data = _ramp()
     results = []
     for api in (casa, tools):
@@ -134,7 +134,7 @@ def test_regrid_spectral_interpolation_and_target_coordinates(casa, asvelocity):
         try:
             assert source.fromarray(pixels=data)
             target = _record(source, "spectral", [.5])
-            result = source.regrid(csys=target, axes=[3], asvelocity=asvelocity, decimate=-1)
+            result = source.regrid(csys=target, axes=[3], asvelocity=asvelocity, decimate=-1, method=method)
             try:
                 results.append(_read(result))
                 np.testing.assert_allclose(result.getchunk()[..., 1:], data[..., 1:] - 5, atol=2e-5)
@@ -155,9 +155,12 @@ def test_regrid_region_dropdeg_and_replicated_direction(casa):
         source = api.image()
         try:
             assert source.fromarray(pixels=data)
+            same = _record(source)
+            with pytest.raises(RuntimeError):
+                source.regrid(region=region, decimate=1)
             products = [
-                source.regrid(region=region, decimate=1),
-                source.regrid(shape=[14, 18, 7], decimate=2, axes=[0, 1], dropdeg=True),
+                source.regrid(csys=same, region=region, decimate=1),
+                source.regrid(csys=same, shape=[14, 18, 7], decimate=2, axes=[0, 1], dropdeg=True),
                 source.regrid(csys=_record(source, "direction", [.5, .5]), axes=[0, 1], decimate=2, replicate=True),
             ]
             try:
@@ -185,7 +188,7 @@ def test_regrid_rejected_axes_and_coordinates_preserve_the_destination(casa, tmp
             for arguments in (
                 {"axes": [0, 0], "decimate": 1},
                 {"axes": [20], "decimate": 1},
-                {"csys": {"invalid": 1}},
+                {"csys": {"direction0": 5}},
                 {"method": "sinc"},
                 {"shape": [0, 12, 1, 7], "axes": [0, 1], "decimate": 1},
             ):
@@ -197,3 +200,75 @@ def test_regrid_rejected_axes_and_coordinates_preserve_the_destination(casa, tmp
         finally:
             output.done()
             source.done()
+
+
+def test_regrid_an_empty_target_leaves_the_input_grid_unchanged(casa):
+    data = _ramp()
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            result = source.regrid(csys={"unused": 1}, shape=[-2, 3], force=True)
+            try:
+                np.testing.assert_array_equal(result.getchunk(), data)
+                assert result.maskhandler("get") == ["T"]
+            finally:
+                result.done()
+        finally:
+            source.done()
+
+
+def test_regrid_converts_the_requested_sky_frame_and_honors_doref(casa):
+    data = _ramp()
+    results = []
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            coords = source.coordsys()
+            try:
+                assert coords.setreferencecode("GALACTIC", type="direction", adjust=True)
+                target = coords.torecord()
+            finally:
+                coords.done()
+            result = source.regrid(csys=target, axes=[0, 1], decimate=1)
+            try:
+                observed = result.coordsys()
+                try:
+                    assert observed.referencecode("direction") == ["GALACTIC"]
+                finally:
+                    observed.done()
+                results.append(_read(result))
+            finally:
+                result.done()
+            with pytest.raises(RuntimeError):
+                source.regrid(csys=target, axes=[0, 1], decimate=1, doref=False)
+        finally:
+            source.done()
+    _compare(results[1], results[0], tolerance=1e-3)
+
+
+def test_regrid_stretches_expression_mask_on_the_input_grid(casa, tmp_path):
+    data = _ramp()
+    selected = np.broadcast_to(np.arange(data.shape[0])[:, None, None, None] >= 10, (*data.shape[:2], 1, 1))
+    valid = np.broadcast_to(selected, data.shape)
+    for api in (casa, tools):
+        source = api.image()
+        mask = api.image()
+        path = tmp_path / f"{api.__name__}-regrid-mask.im"
+        try:
+            assert source.fromarray(pixels=data)
+            assert mask.fromarray(str(path), pixels=selected.astype(np.float32))
+            mask.done()
+            expression = f'"{path}" > 0'
+            with pytest.raises(RuntimeError):
+                source.regrid(mask=expression)
+            result = source.regrid(mask=expression, stretch=True)
+            try:
+                np.testing.assert_array_equal(result.getchunk(getmask=True), valid)
+                np.testing.assert_array_equal(result.getchunk()[valid], data[valid])
+            finally:
+                result.done()
+        finally:
+            source.done()
+            mask.done()

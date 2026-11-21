@@ -86,7 +86,11 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     let mut result = Regridded {
         data: input.get()?,
         mask: input
-            .default_mask()?
+            .get_mask_slice(
+                &vec![0; input_shape.len()],
+                input_shape,
+                &vec![1; input_shape.len()],
+            )?
             .unwrap_or_else(|| ArrayD::from_elem(IxDyn(input_shape).f(), true)),
         coordinates: input.coordinates().clone(),
         template_coordinates: false,
@@ -110,6 +114,15 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         });
         let input_lengths: Vec<_> = axes.iter().map(|&axis| input_shape[axis]).collect();
         let Some((other, theirs)) = target else {
+            if options.image_tool.is_some()
+                && !all_axes
+                && chosen[first]
+                && ours.coordinate_type() == CoordinateType::Stokes
+            {
+                return Err(invalid(
+                    "cannot regrid a Stokes axis missing from the template",
+                ));
+            }
             validate_omitted_coordinate(
                 ours.coordinate_type(),
                 !all_axes && chosen[first],
@@ -260,7 +273,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         };
         result.coordinates.replace_coordinate(index, coordinate);
     }
-    if all_axes && !found {
+    if options.image_tool.is_none() && all_axes && !found {
         return Err(invalid("Found no axes to regrid"));
     }
     if !result.mask.iter().any(|&bit| bit) {

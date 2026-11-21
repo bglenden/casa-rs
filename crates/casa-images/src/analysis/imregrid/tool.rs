@@ -22,7 +22,7 @@ use crate::{ImageError, ImageInfo, ImageInterface, TempImage};
 pub struct ImageRegridOptions<'a> {
     /// Destination pixel lengths, or the source shape when omitted.
     pub shape: &'a [i64],
-    /// The target CASA coordinate record, or the source coordinates.
+    /// Target CASA coordinates. An empty target retains each input axis at its current length.
     pub target: Option<&'a RecordValue>,
     /// Pixel axes to regrid, or the compatible nondegenerate axes by default.
     pub axes: &'a [i64],
@@ -91,7 +91,7 @@ pub fn regrid_image<T: RegridPixel>(
         .collect::<Result<Vec<_>, _>>()?;
     let target = match options.target {
         Some(record) => CoordinateSystem::from_record(record)?,
-        None => input.coordinates().clone(),
+        None => CoordinateSystem::new(),
     };
     let info = ImageInfo::from_record(beam_record)?;
     let all_axes = options.axes.is_empty() || options.axes == [-1];
