@@ -354,8 +354,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except TaskParameterError as error:
             completion = error.completion
-            if (completion.parameter == "datacolumn"
-                    and completion.message == "Failed to parse parameters for mode clip"):
+            if (completion.parameter == "datacolumn" and completion.message in (
+                    "Failed to parse parameters for mode clip",
+                    "Failed to parse parameters for mode tfcrop",
+            )):
                 raise ValueError(completion.message) from error
             if completion.parameter in ("vis", "outfile"):
                 raise ValueError(completion.message) from error
@@ -369,6 +371,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise KeyError("nreport") from error
             if completion.parameter == "datacolumn" and column_vector:
                 raise AttributeError(f"'{column_vector}' object has no attribute 'upper'") from error
+            if (completion.parameter in ("maxnpieces", "halfwin")
+                    and completion.message == ("<built-in function agentflagger_parseagentparameters>"
+                                               " returned a result with an exception set")):
+                raise SystemError(completion.message) from error
             if completion.message == f"argument _{completion.parameter} must be a string":
                 raise TypeError(completion.message) from error
             if completion.parameter == "ntime":
@@ -576,7 +582,8 @@ def _coerce_flagdata_options(
     cint = (int, np.int32, np.int64)
     errors = _flagging_choice_errors("flagdata", values)
     column_vector = _coerce_flagdata_column(values, argument_text, errors)
-    for parameter in ("tolerance", "lowerlimit", "upperlimit", "minchanfrac", "growtime", "growfreq"):
+    for parameter in ("tolerance", "lowerlimit", "upperlimit", "minchanfrac", "growtime", "growfreq",
+                      "timecutoff", "freqcutoff"):
         if parameter in values:
             value = values[parameter]
             if value is None:
@@ -593,6 +600,23 @@ def _coerce_flagdata_options(
             errors["extendpols"] = ["must be of cVariant type"]
         elif isinstance(value, (np.ndarray, np.int32, np.int64, np.float32, np.float64)):
             argument_text["extendpols"] = str(value)
+    for parameter, default in (("maxnpieces", 7), ("halfwin", 1)):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["null value not allowed"]
+        elif not isinstance(value, cint):
+            errors[parameter] = ["must be of cInt type"]
+        elif isinstance(value, (np.int32, np.int64)):
+            argument_text[parameter] = str(value)
+            values[parameter] = default
+        elif not isinstance(value, bool):
+            value = int(value)
+            # The agent reads a 32-bit record value, while commands keep the Python integer.
+            if not -(2**31) <= value < 2**31:
+                argument_text[parameter] = str(value)
+            values[parameter] = max(-(2**63), min(value, 2**63 - 1))
     if "addantenna" in values:
         value = values["addantenna"]
         if value is None:
@@ -683,6 +707,10 @@ def _coerce_flagdata_options(
         ("cmdreason", str, "cStr"),
         ("outfile", str, "cStr"),
         ("antint_ref_antenna", str, "cStr"),
+        ("timefit", str, "cStr"),
+        ("freqfit", str, "cStr"),
+        ("flagdimension", str, "cStr"),
+        ("usewindowstats", str, "cStr"),
         ("flagbackup", bool, "cBool"),
         ("savepars", bool, "cBool"),
         ("overwrite", bool, "cBool"),

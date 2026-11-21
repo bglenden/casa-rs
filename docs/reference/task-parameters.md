@@ -1129,10 +1129,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>freqcutoff</code> | <code>parameter.freqcutoff@r1</code> | <code>float</code> | <code>3.0</code>; optional | Automatic | TFCrop frequency cutoff in robust sigma units. |
 | <code>timefit</code> | <code>flagdata.timefit@r1</code> | <code>string</code> | <code>"line"</code>; optional | Automatic | Fit tfcrop makes along time: 'line' or 'poly'. |
 | <code>freqfit</code> | <code>flagdata.freqfit@r1</code> | <code>string</code> | <code>"poly"</code>; optional | Automatic | Fit tfcrop makes along frequency: 'line' or 'poly'. |
-| <code>maxnpieces</code> | <code>flagdata.maxnpieces@r1</code> | <code>integer</code> | <code>7</code>; optional | Automatic | Number of pieces in tfcrop's piecewise polynomial fits. |
+| <code>maxnpieces</code> | <code>flagdata.maxnpieces@r2</code> | <code>variant</code> | <code>7</code>; optional | Automatic | Number of pieces in tfcrop's piecewise polynomial fits. |
 | <code>flagdimension</code> | <code>flagdata.flagdimension@r1</code> | <code>string</code> | <code>"freqtime"</code>; optional | Automatic | Directions tfcrop flags along: 'freq', 'time', 'freqtime' or 'timefreq'. |
 | <code>usewindowstats</code> | <code>flagdata.usewindowstats@r1</code> | <code>string</code> | <code>"none"</code>; optional | Automatic | Sliding-window statistics tfcrop adds: 'none', 'sum', 'std' or 'both'. |
-| <code>halfwin</code> | <code>flagdata.halfwin@r1</code> | <code>integer</code> | <code>1</code>; optional | Automatic | Half-width of tfcrop's sliding window. |
+| <code>halfwin</code> | <code>flagdata.halfwin@r2</code> | <code>variant</code> | <code>1</code>; optional | Automatic | Half-width of tfcrop's sliding window. |
 | <code>extendflags</code> | <code>parameter.extendflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Extend | Run post-extension after automatic flagging. |
 | <code>winsize</code> | <code>flagdata.winsize@r1</code> | <code>integer</code> | <code>3</code>; optional | Automatic | Number of time steps in rflag's sliding window. |
 | <code>timedev</code> | <code>parameter.timedev@r2</code> | <code>optional&lt;float&gt; (states: , none)</code> | <code>""</code>; optional | Automatic | Explicit RFlag time threshold.<br><em>Surface:</em> One threshold for every field and window, scaled by timedevscale; '', 'none' or [] lets rflag compute it. |

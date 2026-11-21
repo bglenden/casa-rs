@@ -1031,9 +1031,7 @@ def flagdata(
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``inpfile``, ``reason``, ``tbuff``, ``channelavg``, ``chanbin``,
-    ``timeavg``, ``timebin``, ``combinescans``, ``timefit``, ``freqfit``,
-    ``maxnpieces``, ``flagdimension``, ``usewindowstats``, ``halfwin``,
-    ``winsize``, ``savepars``.
+    ``timeavg``, ``timebin``, ``combinescans``, ``winsize``, ``savepars``.
     Accepted only at CASA's default, where CASA reads them, until #1616:
     ``ntime``.
     """
