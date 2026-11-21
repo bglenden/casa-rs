@@ -88,3 +88,40 @@ def test_scalar_and_coerced_order_arguments(casa, method, order):
         cs = implementation.coordsys().newcoordsys(linear=1)
         assert getattr(cs, method)(order=order)
         assert cs.naxes() == 1
+
+
+def test_transpose_keeps_a_hidden_slot_and_reorder_restores_its_coordinate(casa):
+    original = casa.coordsys().newcoordsys(linear=2, tabular=True)
+    assert original.setreferencepixel([0.5, 1.5, 2.0])
+    assert original.setreferencevalue([3.0, 17.0, 31.0])
+    record = original.torecord()
+    for domain in ("world", "pixel"):
+        record[f"{domain}map0"] = np.array([-1, 0], dtype=np.int32)
+        record[f"{domain}map1"] = np.array([1], dtype=np.int32)
+    left, right = (api.coordsys() for api in (tools, casa))
+    for implementation in (left, right):
+        assert implementation.fromrecord(record)
+        assert implementation.transpose([1, 0])
+        assert implementation.naxes() == 2
+    compare(left, right, [[2.25, 1.0]])
+    np.testing.assert_array_equal(left.torecord()["worldmap0"], [-1, 1])
+    for implementation in (left, right):
+        assert implementation.reorder([0, 1])
+        assert implementation.naxes() == 3
+    compare(left, right, [[0.0, 1.0, 2.25]])
+
+
+def test_transpose_keeps_a_sampled_tabular_coordinate_live():
+    cs = tools.coordsys().newcoordsys(linear=1, tabular=True)
+    record = cs.torecord()
+    record["tabular1"]["pixelvalues"] = np.array([0.0, 2.0, 5.0])
+    record["tabular1"]["worldvalues"] = np.array([10.0, 14.0, 30.0])
+    assert cs.fromrecord(record)
+    matrix = np.array([[2.0]])
+    assert cs.setlineartransform("tabular", matrix)
+    assert cs.transpose([1, 0])
+    np.testing.assert_array_equal(cs.lineartransform("tabular"), matrix)
+    np.testing.assert_array_equal(cs.toworld([1.0, 5.0])["numeric"], [14.0, 5.0])
+    reloaded = tools.coordsys()
+    assert reloaded.fromrecord(cs.torecord())
+    np.testing.assert_array_equal(reloaded.toworld([1.0, 5.0])["numeric"], [14.0, 5.0])
