@@ -169,6 +169,10 @@ impl Curve {
         }
     }
 
+    pub(super) fn is_linear(&self) -> bool {
+        self.lines.is_empty() && !matches!(self.spectral, Some((SpectralPolynomial::PowerLog, _)))
+    }
+
     pub(super) fn valid_widths(&self, parameters: &[f64]) -> bool {
         self.lines
             .iter()

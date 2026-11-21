@@ -314,9 +314,8 @@ def test_explicit_nonspectral_axis_and_spectral_selection(casa, tmp_path):
         assert fit["valid"].all()
         assert "direction" not in fit
         assert fit["xUnit"] == "rad"
-        ds = im.coordsys()
-        increment = abs(ds.increment()["numeric"][0])
-        ds.done()
+        # The input's default direction coordinate has one arcminute pixels.
+        increment = np.deg2rad(1. / 60.)
         np.testing.assert_allclose(fit["gs"]["amp"], 8., atol=2e-6)
         np.testing.assert_allclose(fit["gs"]["fwhm"], 5.1 * increment, atol=1e-8)
     finally:

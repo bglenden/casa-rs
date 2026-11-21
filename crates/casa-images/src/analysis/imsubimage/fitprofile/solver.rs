@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_numerics::{invert_symmetric_positive_definite, solve_symmetric_positive_definite};
+use casa_numerics::{
+    invert_symmetric_positive_definite, solve_symmetric_positive_definite,
+    solve_weighted_least_squares,
+};
 
 use super::curve::Curve;
 
@@ -32,6 +35,17 @@ pub(super) fn solve(curve: &Curve, samples: &[Sample]) -> Option<Solution> {
     let mut score = cost(curve, &values, samples);
     if !score.is_finite() {
         return None;
+    }
+    if curve.is_linear() && !free.is_empty() {
+        let values = linear_solution(curve, values, &free, samples)?;
+        let score = cost(curve, &values, samples);
+        let errors = uncertainty(curve, &values, &free, samples, score);
+        return Some(Solution {
+            values,
+            errors,
+            iterations: 1,
+            converged: true,
+        });
     }
     let mut damping = 0.001;
     let mut iterations = 0;
@@ -71,23 +85,76 @@ pub(super) fn solve(curve: &Curve, samples: &[Sample]) -> Option<Solution> {
         }
         damping *= 10.;
     }
-    let mut errors = vec![0.; values.len()];
-    if converged && !free.is_empty() {
-        let (normal, _) = normal_equations(curve, &values, &free, samples);
-        let variance = score / (samples.len() - free.len()) as f64;
-        let covariance = invert_symmetric_positive_definite(&normal, free.len());
-        for (column, &parameter) in free.iter().enumerate() {
-            errors[parameter] = covariance.as_ref().map_or(f64::NAN, |covariance| {
-                (covariance[column * (free.len() + 1)] * variance).sqrt()
-            });
-        }
-    }
+    let errors = if converged && !free.is_empty() {
+        uncertainty(curve, &values, &free, samples, score)
+    } else {
+        vec![0.; values.len()]
+    };
     Some(Solution {
         values,
         errors,
         iterations,
         converged,
     })
+}
+
+fn linear_solution(
+    curve: &Curve,
+    mut values: Vec<f64>,
+    free: &[usize],
+    samples: &[Sample],
+) -> Option<Vec<f64>> {
+    let mut slopes = vec![0.; values.len()];
+    let mut scale = vec![0_f64; free.len()];
+    let mut rows: Vec<_> = samples
+        .iter()
+        .map(|sample| {
+            curve.gradient(&values, sample.x, &mut slopes);
+            let basis = free
+                .iter()
+                .zip(&mut scale)
+                .map(|(&parameter, scale)| {
+                    let slope = slopes[parameter];
+                    *scale = scale.max(slope.abs());
+                    slope
+                })
+                .collect::<Vec<_>>();
+            let residual = sample.y - curve.fitted_value(&values, sample.x);
+            (basis, residual, sample.weight)
+        })
+        .collect();
+    if scale.iter().any(|&value| value == 0. || !value.is_finite()) {
+        return None;
+    }
+    for (basis, _, _) in &mut rows {
+        for (value, scale) in basis.iter_mut().zip(&scale) {
+            *value /= scale;
+        }
+    }
+    let solution = solve_weighted_least_squares(&rows, free.len())?;
+    for ((&parameter, step), scale) in free.iter().zip(solution).zip(scale) {
+        values[parameter] += step / scale;
+    }
+    Some(values)
+}
+
+fn uncertainty(
+    curve: &Curve,
+    values: &[f64],
+    free: &[usize],
+    samples: &[Sample],
+    score: f64,
+) -> Vec<f64> {
+    let mut errors = vec![0.; values.len()];
+    let (normal, _) = normal_equations(curve, values, free, samples);
+    let variance = score / (samples.len() - free.len()) as f64;
+    let covariance = invert_symmetric_positive_definite(&normal, free.len());
+    for (column, &parameter) in free.iter().enumerate() {
+        errors[parameter] = covariance.as_ref().map_or(f64::NAN, |covariance| {
+            (covariance[column * (free.len() + 1)] * variance).sqrt()
+        });
+    }
+    errors
 }
 
 fn cost(curve: &Curve, parameters: &[f64], samples: &[Sample]) -> f64 {

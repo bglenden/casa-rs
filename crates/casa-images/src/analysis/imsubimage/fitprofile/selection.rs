@@ -4,7 +4,7 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateType;
 use casa_types::{ArrayD, RecordValue};
-use ndarray::IxDyn;
+use ndarray::{AxisDescription, Slice};
 
 use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInterface};
@@ -202,21 +202,30 @@ impl ProfileLaneReader<'_> {
             });
         }
         let block = self.cached.as_ref().expect("profile block populated");
-        let mut offset: Vec<_> = position
+        let offset: Vec<_> = position
             .iter()
             .zip(&block.origin)
             .map(|(&pixel, &start)| pixel - start)
             .collect();
-        let axis = self.selection.axis;
-        let length = self.selection.plan.shape[axis];
-        let mut values = Vec::with_capacity(length);
-        let mut valid = Vec::with_capacity(length);
-        for channel in 0..length {
-            offset[axis] = channel;
-            let index = IxDyn(&offset);
-            valid.push(block.mask.as_ref().is_none_or(|mask| mask[index.clone()]));
-            values.push(block.pixels[index]);
-        }
+        let slice = |dimension: AxisDescription| {
+            let axis = dimension.axis.index();
+            if axis == self.selection.axis {
+                Slice::from(..)
+            } else {
+                let pixel = offset[axis] as isize;
+                Slice::new(pixel, Some(pixel + 1), 1)
+            }
+        };
+        let values: Vec<_> = block
+            .pixels
+            .slice_each_axis(slice)
+            .iter()
+            .copied()
+            .collect();
+        let valid = block.mask.as_ref().map_or_else(
+            || vec![true; values.len()],
+            |mask| mask.slice_each_axis(slice).iter().copied().collect(),
+        );
         Ok(Lane {
             values,
             valid,
