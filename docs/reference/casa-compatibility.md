@@ -61,6 +61,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
 | uvmodelfit | uvmodelfit | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | uvsub | uvsub | yes | 2 | 2 | 0 | 0 | 0 | 0 |
+| wvrgcal | wvrgcal | yes | 24 | 24 | 0 | 0 | 0 | 0 |
 
 ## Tasks
 
@@ -3975,6 +3976,111 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
+### wvrgcal
+
+- CASA source: `casatasks/wvrgcal.py`, 24 parameters
+- Implementation: `casatasks/private/task_wvrgcal.py`, `wvrgcal` (line 8): 4 return statements, 15 raise statements
+  - returns at line 417: `taskrval`
+  - returns at line 421: `taskrval`
+  - returns at line 425: `taskrval`
+  - returns at line 428: `taskrval`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 24, in CASA's order: yes
+- Defaults that differ: none
+
+#### wvrgcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `21eea39f94e248c733060694b7e746d6db08e1cb`. Status counts: Default only: 0, Implemented: 24, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | One input MeasurementSet path. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `path` (measurement_set) | [parameter-options](#wvrgcal-evidence-parameter-options), [two-seeds-and-application](#wvrgcal-evidence-two-seeds-and-application) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Create a CASA-readable T Jones calibration table and refuse existing destinations. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `path` (calibration_table) | [parameter-options](#wvrgcal-evidence-parameter-options), [two-seeds-and-application](#wvrgcal-evidence-two-seeds-and-application) |
+| `toffset` | `0.0` | `0.0`; `toffset` → `toffset` | Implemented | Shift radiometer timestamps by this many seconds. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `float` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `segsource` | `True` | `True`; `segsource` → `segsource` | Implemented | Fit atmospheric coefficients separately for each contiguous source group. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `bool` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `sourceflag` | `[]` | `[]`; `sourceflag` → `sourceflag` | Implemented | Exclude these source names from the path solutions. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `tie` | `[]` | `[]`; `tie` → `tie` | Implemented | Comma-separated groups of source names or IDs that share a fit. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `nsol` | `1` | `1`; `nsol` → `nsol` | Implemented | Number of fits for unsegmented data. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `integer` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `disperse` | `False` | `False`; `disperse` → `disperse` | Implemented | Apply the frequency-dependent wet-path dispersion correction. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `bool` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `wvrflag` | `[]` | `[]`; `wvrflag` → `wvrflag` | Implemented | Replace radiometer data for the specified antenna names or IDs. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `statfield` | `''` | `''`; `statfield` → `statfield` | Implemented | Limit reported statistics to this field name or ID. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `string` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `statsource` | `''` | `''`; `statsource` → `statsource` | Implemented | Limit reported statistics to this source name. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `string` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `smooth` | `''` | `''`; `smooth` → `smooth` | Implemented | Mean smoothing interval for the output calibration table, such as 10s. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `string` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `scale` | `1.0` | `1.0`; `scale` → `scale` | Implemented | Multiply the wet path by this factor before converting it to phase. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `float` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `spw` | `[]` | `[]`; `spw` → `spw` | Implemented | Write corrections for these spectral-window IDs. An empty list selects all. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `wvrspw` | `[]` | `[]`; `wvrspw` → `wvrspw` | Implemented | Read radiometer data from these four-channel spectral windows. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `reversespw` | `''` | `''`; `reversespw` → `reversespw` | Implemented | Reverse the phase sign on selected spectral windows. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `string` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `cont` | `False` | `False`; `cont` → `cont` | Implemented | Fit the atmospheric continuum opacity in one fixed-interval solution. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `bool` | [parameter-options](#wvrgcal-evidence-parameter-options), [two-seeds-and-application](#wvrgcal-evidence-two-seeds-and-application) |
+| `maxdistm` | `500.0` | `500.0`; `maxdistm` → `maxdistm` | Implemented | Maximum distance in meters from an antenna to a replacement radiometer. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `float` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `minnumants` | `2` | `2`; `minnumants` → `minnumants` | Implemented | Minimum number of eligible neighboring radiometers for replacement. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `integer` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `mingoodfrac` | `0.8` | `0.8`; `mingoodfrac` → `mingoodfrac` | Implemented | Minimum good fraction required to use an antenna’s measured temperatures. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `float` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `usefieldtab` | `False` | `False`; `usefieldtab` → `usefieldtab` | Implemented | Use the FIELD direction in place of recorded POINTING elevations. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `bool` | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `refant` | `[]` | `[]`; `refant` → `refant` | Implemented | Preferred reference antenna names or IDs in order. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `offsetstable` | `''` | `''`; `offsetstable` → `offsetstable` | Implemented | Subtract temperatures from this matching radiometer offsets table. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `path` (table) | [parameter-options](#wvrgcal-evidence-parameter-options) |
+| `rseed` | `0` | `0`; `rseed` → `rseed` | Implemented | Seed the atmospheric fit. Zero selects CASA’s default seed. [phase](#wvrgcal-behavior-phase)<br>Catalog domain: `integer` | [parameter-options](#wvrgcal-evidence-parameter-options), [two-seeds-and-application](#wvrgcal-evidence-two-seeds-and-application) |
+
+#### wvrgcal interacting modes and task behavior
+
+<a id="wvrgcal-behavior-phase"></a>
+##### Radiometer phase correction
+
+**Implemented** — Native CASA-readable T Jones gains from seeded water-vapour retrievals, atmospheric paths and spectral-window phase conversion. Includes task reports, direct logging, smoothing and antenna replacement.
+
+The compact fixtures have been compared with CASA 6.7.6.14. The recorded ALMA case is pending under #1531.
+
+Evidence: [two-seeds-and-application](#wvrgcal-evidence-two-seeds-and-application), [parameter-options](#wvrgcal-evidence-parameter-options), [recorded-alma](#wvrgcal-evidence-recorded-alma).
+
+#### wvrgcal deviations and unfinished work
+
+##### sparse-window-phase-reversal: Previously agreed
+
+- Record: [WVR global phase reversal can miss sparse spectral-window selections](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-global-phase-reversal-can-miss-sparse-spectral-window-selections)
+- Inputs: A direct wvr.gcal invocation with global phase reversal and a sparse spectral-window selection.
+- CASA: CASA 6.7.6.14 can leave selected windows unchanged when the selected position differs from the actual ID.
+- casa-rs: Reverse the phase of every selected spectral-window ID.
+- Rationale: Match the documented phase operation and the algebraic conjugation of the ordinary gains.
+- User impact: A sparse output selection produces the same reversed phases as the corresponding subset of an all-window reversal.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [parameter-options](#wvrgcal-evidence-parameter-options).
+
+#### wvrgcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="wvrgcal-evidence-two-seeds-and-application"></a>
+##### two-seeds-and-application
+
+**Seeded WVR phase, CASA applycal and solver preapply — passed.** Two ordinary seeds, four applycal pairings and four preapply pairings passed. Compare the nominal T Jones table, continuum table and log, corrected visibilities and recovery of injected gains across both engines.
+
+- [tools/casa-compat/wvrgcal_oracle.py](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/tools/casa-compat/wvrgcal_oracle.py)
+- Revision: `21eea39f94e248c733060694b7e746d6db08e1cb`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_oracle.py --work <new-directory>`.
+- Receipt: `resources/casa-compat/evidence/wvr-calibration-20261121.json`.
+
+<a id="wvrgcal-evidence-parameter-options"></a>
+##### parameter-options
+
+**Multi-source WVR and publication options — passed.** 19 paired cases and the zero-evidence retry passed. Maximum gain normalized RMS 1.92e-09. Compare selected products and antenna reports with the installed task or tool on the same input. Exercise offsets, source controls, flags, dispersion, smoothing, references and failure paths.
+
+- [tools/casa-compat/wvrgcal_options_oracle.py](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/tools/casa-compat/wvrgcal_options_oracle.py)
+- Revision: `21eea39f94e248c733060694b7e746d6db08e1cb`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --work <new-directory>`.
+- Receipt: `resources/casa-compat/evidence/wvr-calibration-20261121.json`.
+
+<a id="wvrgcal-evidence-recorded-alma"></a>
+##### recorded-alma
+
+**Recorded ALMA data — planned.** Compare CASA and native WVR on uid___A002_X8ca70c_X5_shortened.ms on the Mac mini. This requires tailnet access.
+
+- [tools/casa-compat/wvrgcal_options_oracle.py](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/tools/casa-compat/wvrgcal_options_oracle.py)
+
 ## Tools
 
 Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (`crates/casars-python/python/tests/data/casa_<class>_signatures.json`), which the Python tests hold the classes to. A reviewed class has a file under `resources/casa-compat/semantics/tools/` giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (`simulator`, `componentlist`, `measures`, `quanta` and `simutil`) are reviewed in #1053, and `image`, `coordsys`, `table`, `msmetadata` and `ms` in #1025.
@@ -3994,6 +4100,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 23 | 6 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 54 | 1 | 2 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
+| [wvr](#wvr) | `casars.tools` | 1 | yes | 1 | 0 | 0 | 0 | 0 | 0 |
 
 ### agentflagger
 
@@ -6967,3 +7074,70 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `514f31e98d393a8e68c4287583701e1b9a523aed`; CASA: `6.7.6.14`.
 - Command: `CASA_RS_SIMUTIL_GRAPHICS_RECEIPT=OUT/helper-artists.jsonl pytest -q crates/casars-python/python/tests/test_simutil_graphics.py crates/casars-python/python/tests/test_plot_document.py crates/casars-python/python/tests/test_simobserve_graphics.py crates/casars-python/python/tests/test_simutil.py crates/casars-python/python/tests/test_simutil_diagnostics.py ; CASA_RS_GRAPHICS_DEBUG_DIR=OUT/native cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture ; python tools/simulation/check_simobserve_rendering.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/rendered ; CASAPY tools/simulation/check_quick_psf_casa.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/psf-cpp.json`.
 - Receipt: `resources/casa-compat/evidence/simulation-figures-20261114.json`.
+
+### wvr
+
+#### wvr method implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
+
+Audit baseline: `21eea39f94e248c733060694b7e746d6db08e1cb`. Status counts: Implemented: 1, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+
+| CASA method | CASA parameters | Implementation | Scope | Evidence |
+|---|---|---|---|---|
+| `gcal` | `vis='', output='', toffset=0.0, nsol=1, segsource=False, reverse=False, reversespw=[], disperse=False, cont=False, wvrflag='', sourceflag=[], statfield=[], statsource=[], tie=[], smooth=1, scale=1.0, maxdistm=500.0, minnumants=2, mingoodfrac=0.8, usefieldtab=False, spw=[], wvrspw=[], refant='', offsets='', rseed=0, logfile='wvrgcal.log'` | Implemented | Generate and optionally replace a CASA-compatible WVR T Jones table. Write the named diagnostic log and return the CASA integer completion status. [phase](#wvr-behavior-phase) | [two-seeds-and-application](#wvr-evidence-two-seeds-and-application), [parameter-options](#wvr-evidence-parameter-options) |
+
+#### wvr interacting modes and tool behavior
+
+<a id="wvr-behavior-phase"></a>
+##### Radiometer phase correction
+
+**Implemented** — Native CASA-readable T Jones gains from seeded water-vapour retrievals, atmospheric paths and spectral-window phase conversion. Includes task reports, direct logging, smoothing and antenna replacement.
+
+The compact fixtures have been compared with CASA 6.7.6.14. The recorded ALMA case is pending under #1531.
+
+Evidence: [two-seeds-and-application](#wvr-evidence-two-seeds-and-application), [parameter-options](#wvr-evidence-parameter-options), [recorded-alma](#wvr-evidence-recorded-alma).
+
+#### wvr deviations and unfinished work
+
+##### sparse-window-phase-reversal: Previously agreed
+
+- Record: [WVR global phase reversal can miss sparse spectral-window selections](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-global-phase-reversal-can-miss-sparse-spectral-window-selections)
+- Inputs: A direct wvr.gcal invocation with global phase reversal and a sparse spectral-window selection.
+- CASA: CASA 6.7.6.14 can leave selected windows unchanged when the selected position differs from the actual ID.
+- casa-rs: Reverse the phase of every selected spectral-window ID.
+- Rationale: Match the documented phase operation and the algebraic conjugation of the ordinary gains.
+- User impact: A sparse output selection produces the same reversed phases as the corresponding subset of an all-window reversal.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [parameter-options](#wvr-evidence-parameter-options).
+
+#### wvr evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="wvr-evidence-two-seeds-and-application"></a>
+##### two-seeds-and-application
+
+**Seeded WVR phase, CASA applycal and solver preapply — passed.** Two ordinary seeds, four applycal pairings and four preapply pairings passed. Compare the nominal T Jones table, continuum table and log, corrected visibilities and recovery of injected gains across both engines.
+
+- [tools/casa-compat/wvrgcal_oracle.py](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/tools/casa-compat/wvrgcal_oracle.py)
+- Revision: `21eea39f94e248c733060694b7e746d6db08e1cb`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_oracle.py --work <new-directory>`.
+- Receipt: `resources/casa-compat/evidence/wvr-calibration-20261121.json`.
+
+<a id="wvr-evidence-parameter-options"></a>
+##### parameter-options
+
+**Multi-source WVR and publication options — passed.** 19 paired cases and the zero-evidence retry passed. Maximum gain normalized RMS 1.92e-09. Compare selected products and antenna reports with the installed task or tool on the same input. Exercise offsets, source controls, flags, dispersion, smoothing, references and failure paths.
+
+- [tools/casa-compat/wvrgcal_options_oracle.py](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/tools/casa-compat/wvrgcal_options_oracle.py)
+- Revision: `21eea39f94e248c733060694b7e746d6db08e1cb`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --work <new-directory>`.
+- Receipt: `resources/casa-compat/evidence/wvr-calibration-20261121.json`.
+
+<a id="wvr-evidence-recorded-alma"></a>
+##### recorded-alma
+
+**Recorded ALMA data — planned.** Compare CASA and native WVR on uid___A002_X8ca70c_X5_shortened.ms on the Mac mini. This requires tailnet access.
+
+- [tools/casa-compat/wvrgcal_options_oracle.py](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/tools/casa-compat/wvrgcal_options_oracle.py)

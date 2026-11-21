@@ -17389,6 +17389,443 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.toffset",
+      "semantic_revision": 1,
+      "casa_name": "toffset",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Shift radiometer timestamps by this many seconds.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.segsource",
+      "semantic_revision": 1,
+      "casa_name": "segsource",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Fit atmospheric coefficients separately for each contiguous source group.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.sourceflag",
+      "semantic_revision": 1,
+      "casa_name": "sourceflag",
+      "value_domain": {
+        "kind": "array",
+        "element": {"kind": "string"},
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Exclude these source names from the path solutions.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.tie",
+      "semantic_revision": 1,
+      "casa_name": "tie",
+      "value_domain": {
+        "kind": "array",
+        "element": {"kind": "string"},
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Comma-separated groups of source names or IDs that share a fit.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.nsol",
+      "semantic_revision": 1,
+      "casa_name": "nsol",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of fits for unsegmented data.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.disperse",
+      "semantic_revision": 1,
+      "casa_name": "disperse",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Apply the frequency-dependent wet-path dispersion correction.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.wvrflag",
+      "semantic_revision": 1,
+      "casa_name": "wvrflag",
+      "value_domain": {
+        "kind": "array",
+        "element": {"kind": "string"},
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Replace radiometer data for the specified antenna names or IDs.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.statfield",
+      "semantic_revision": 1,
+      "casa_name": "statfield",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Limit reported statistics to this field name or ID.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.statsource",
+      "semantic_revision": 1,
+      "casa_name": "statsource",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Limit reported statistics to this source name.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.smooth",
+      "semantic_revision": 1,
+      "casa_name": "smooth",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Mean smoothing interval for the output calibration table, such as 10s.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.scale",
+      "semantic_revision": 1,
+      "casa_name": "scale",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Multiply the wet path by this factor before converting it to phase.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.spw",
+      "semantic_revision": 7,
+      "casa_name": "spw",
+      "value_domain": {
+        "kind": "array",
+        "element": {"kind": "integer"},
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Write corrections for these spectral-window IDs. An empty list selects all.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.wvrspw",
+      "semantic_revision": 1,
+      "casa_name": "wvrspw",
+      "value_domain": {
+        "kind": "array",
+        "element": {"kind": "integer"},
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Read radiometer data from these four-channel spectral windows.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.reversespw",
+      "semantic_revision": 1,
+      "casa_name": "reversespw",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Reverse the phase sign on selected spectral windows.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.cont",
+      "semantic_revision": 1,
+      "casa_name": "cont",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Fit the atmospheric continuum opacity in one fixed-interval solution.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.maxdistm",
+      "semantic_revision": 1,
+      "casa_name": "maxdistm",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Maximum distance in meters from an antenna to a replacement radiometer.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.minnumants",
+      "semantic_revision": 1,
+      "casa_name": "minnumants",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Minimum number of eligible neighboring radiometers for replacement.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.mingoodfrac",
+      "semantic_revision": 1,
+      "casa_name": "mingoodfrac",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Minimum good fraction required to use an antenna\u2019s measured temperatures.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.usefieldtab",
+      "semantic_revision": 1,
+      "casa_name": "usefieldtab",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use the FIELD direction in place of recorded POINTING elevations.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.refant",
+      "semantic_revision": 1,
+      "casa_name": "refant",
+      "value_domain": {
+        "kind": "array",
+        "element": {"kind": "string"},
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Preferred reference antenna names or IDs in order.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.offsetstable",
+      "semantic_revision": 1,
+      "casa_name": "offsetstable",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Subtract temperatures from this matching radiometer offsets table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "wvr.rseed",
+      "semantic_revision": 1,
+      "casa_name": "rseed",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Seed the atmospheric fit. Zero selects CASA\u2019s default seed.",
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

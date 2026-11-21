@@ -73,6 +73,7 @@ mod uvsub;
 mod weather;
 mod weight_spectra;
 mod writer;
+mod wvr;
 
 pub use flagdata_model::flagdata_model;
 pub use ft::predictcomp::{
@@ -89,6 +90,10 @@ pub use ft::{
 pub use statwt::{
     StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
     StatWtSummary, StatWtTimeBin, estimate_statwt, statwt_weight_range,
+};
+pub use wvr::{
+    WvrAntennaReport, WvrError, WvrReport, WvrRequest, WvrSelectors, execute_wvr,
+    execute_wvr_with_log, resolve_wvr_selectors,
 };
 
 pub use uvsub::{
