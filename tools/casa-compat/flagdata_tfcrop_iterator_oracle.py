@@ -120,11 +120,47 @@ def check_saved_commands(libraries):
         assert commands[0] == commands[1], commands
 
 
+def check_selected_time_extension(libraries):
+    source = "time-extension-source.ms"
+    copytree("source.ms", source)
+    integration, baseline = labels(source)
+    seeded_rows = baseline & (integration >= 20) & (integration < 25)
+    extended_rows = baseline & (integration >= 20) & (integration < 30)
+    seeded, original_rows = flags(source)
+    seeded[seeded_rows, 10, 0] = True
+    with table(source, readonly=False, ack=False) as main:
+        main.putcol("DATA", np.ones_like(main.getcol("DATA")))
+        main.putcol("FLAG", seeded)
+    for combine in (False, True):
+        expected = seeded.copy()
+        expected[extended_rows if combine else seeded_rows, 10, :] = True
+        for name, task in libraries:
+            path = f"time-extension-{name}-{combine}.ms"
+            copytree(source, path)
+            original, auxiliary = snapshot(path), auxiliary_content(path)
+            options = dict(vis=path, mode="tfcrop", antenna="0&1", spw="0:8~15", datacolumn="data",
+                           ntime="100s", combinescans=combine, extendflags=True)
+            assert task(action="calculate", **options) == {}
+            if name == "native":
+                calculated = tasks.run("flagdata", action="calculate", **options)
+                assert loads(calculated.stdout)["result"]["changed_samples"] == expected.sum() - seeded.sum()
+            assert_preserved(path, original, auxiliary)
+            assert task(**options) == {}
+            samples, rows = flags(path)
+            np.testing.assert_array_equal(samples, expected, err_msg=str(options))
+            np.testing.assert_array_equal(rows, original_rows)
+            prior, prior_rows = flags(str(Path(path + ".flagversions", "flags.flagdata_1")))
+            np.testing.assert_array_equal(prior, seeded)
+            np.testing.assert_array_equal(prior_rows, original_rows)
+    return 2
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     libraries = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
     with TemporaryDirectory(prefix="flagdata-tfcrop-iterator-") as root, chdir(root):
         count = check_cases(libraries)
+        count += check_selected_time_extension(libraries)
         check_saved_commands(libraries)
     print(f"{count} TFCrop iterator products and saved commands verified")
 
