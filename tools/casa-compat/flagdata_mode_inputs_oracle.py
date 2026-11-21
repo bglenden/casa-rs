@@ -3,13 +3,16 @@
 """Compare flagging task argument rejection and data-column scope."""
 
 from contextlib import chdir
+import os
 from pathlib import Path
 from shutil import copytree
 from tempfile import TemporaryDirectory
 from time import time
+from unittest.mock import patch
 
 import casatasks
 from casacore.tables import table
+from casatools import ctsys
 import numpy as np
 
 from casars import tasks
@@ -79,6 +82,29 @@ def check_inactive_columns():
     return len(cases)
 
 
+def check_data_root():
+    results = []
+    previous = ctsys.getpath()
+    try:
+        for name, library in (("casa", casatasks), ("native", tasks)):
+            root = Path(name).resolve()
+            root.mkdir()
+            path = root / "nested.ms"
+            copytree("source.ms", path)
+            ctsys.setpath([str(root), *previous])
+            before = snapshot(str(path))
+            with patch.dict(os.environ, {"CASA_RS_MEASURESPATH": str(root)}):
+                results.append(library.flagdata(vis="nested.ms", mode="summary"))
+                assert library.flagmanager(vis="nested.ms") == {"MS": str(path)}
+            assert Path(str(path) + ".flagversions", "FLAG_VERSION_LIST").read_bytes() == b""
+            for actual, expected in zip(snapshot(str(path)), before, strict=True):
+                for actual_cell, expected_cell in zip(actual, expected, strict=True):
+                    np.testing.assert_array_equal(actual_cell, expected_cell)
+        assert results[0] == results[1] and results[0]["total"] > 0
+    finally:
+        ctsys.setpath(previous)
+
+
 def check_active_column_errors():
     cases = (
         ("clip", "apply", "", ["DATA"], AttributeError, "list"),
@@ -90,16 +116,20 @@ def check_active_column_errors():
         ("clip", "apply", "", "", ValueError, None),
         ("clip", "apply", "", " DATA ", ValueError, None),
         ("clip", "apply", "", "$invalid", ValueError, None),
+        ("clip", "apply", "", np.array("DATA"), AttributeError, "numpy.ndarray",
+         {"correlation": ["XX"]}),
+        ("manual", "apply", "report", ["DATA"], TypeError, None, {"field": ["0"]}),
     )
-    for index, (mode, action, display, column, error, container) in enumerate(cases):
+    for index, (mode, action, display, column, error, container, *other_options) in enumerate(cases):
         errors = []
         for library in (casatasks, tasks):
             path = f"{index}-{library.__name__}.ms"
             copytree("source.ms", path)
             before, auxiliary = snapshot(path), auxiliary_content(path)
+            extra = other_options[0] if other_options else {}
             errors.append(assert_failure(library.flagdata, error,
                                          dict(vis=path, mode=mode, action=action,
-                                              display=display, datacolumn=column)))
+                                              display=display, datacolumn=column, **extra)))
             for actual, expected in zip(snapshot(path), before, strict=True):
                 for actual_cell, expected_cell in zip(actual, expected, strict=True):
                     np.testing.assert_array_equal(actual_cell, expected_cell)
@@ -109,10 +139,17 @@ def check_active_column_errors():
                 samples, rows = flags(str(backup))
                 np.testing.assert_array_equal(samples, np.stack([row[1] for row in before]))
                 np.testing.assert_array_equal(rows, [row[0] for row in before])
+                roots, content = auxiliary_content(path)
+                assert roots[:2] == auxiliary[0][:2]
+                assert {file: digest for file, digest in content.items() if file.is_relative_to(path)} == auxiliary[1]
             else:
                 assert_preserved(path, before, auxiliary)
-        detail = (f"'{container}' object has no attribute 'upper'" if container
-                  else "Failed to parse parameters for mode clip")
+        if container:
+            detail = f"'{container}' object has no attribute 'upper'"
+        elif error is TypeError:
+            detail = "argument _field must be a string"
+        else:
+            detail = "Failed to parse parameters for mode clip"
         assert errors[0] == errors[1] == detail
     return len(cases)
 
@@ -123,8 +160,9 @@ def main():
         make_cal_ms("source.ms", channels=4, scan_seconds=20)
         schema = check_wrong_schema()
         inactive = check_inactive_columns()
+        check_data_root()
         active = check_active_column_errors()
-    print(f"{schema} schema rejections, {inactive} inactive data-column products, and {active} active failures verified")
+    print(f"{schema} schema rejections, {inactive} inactive data-column products, {active} active failures, and data-root lookup verified")
 
 
 if __name__ == "__main__":

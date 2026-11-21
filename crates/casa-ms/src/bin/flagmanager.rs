@@ -38,8 +38,8 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = FlagManagerTaskRequest {
         vis: vis.clone(),
         mode: task.required_text("mode")?.to_ascii_lowercase(),
-        versionname: task.text("versionname")?,
-        oldname: task.text("oldname")?,
+        versionname: task.text("versionname")?.filter(|name| !name.is_empty()),
+        oldname: task.text("oldname")?.filter(|name| !name.is_empty()),
         comment: task.text("comment")?,
         merge: task_flag_merge(task, "merge")?,
     };
@@ -91,6 +91,17 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
         "restore" => {
             let name = require_version("Illegal versionname: ''")?;
             initialize_flag_versions(&ms).map_err(failed)?;
+            if !list_flag_versions(&ms)
+                .map_err(failed)?
+                .iter()
+                .skip(1)
+                .any(|entry| entry.name == name)
+            {
+                return Err(
+                    failed(casa_ms::FlaggingError::MissingFlagVersion { version: name })
+                        .at("versionname"),
+                );
+            }
             restore_flag_version(&mut ms, &name, request.merge).map_err(|error| match error {
                 casa_ms::FlaggingError::MissingFlagVersion { .. } => {
                     failed(error).at("versionname")

@@ -59,21 +59,61 @@ def check_merges(task, vis):
     sidecar = Path(f"{vis}.flagversions")
     catalog = sidecar / "FLAG_VERSION_LIST"
     initial_catalog = catalog.read_bytes()
-    for merge in ("replace", "or", "and", "", "OR", "unrecognized", "$literal"):
+    for merge in ("replace", "or", "and", "", "OR", "unrecognized"):
         working = set_flags(vis, 1, shared_row=4)
-        assert task(vis=str(vis), mode="restore", versionname="first", merge=merge) is None
-        if merge == "or":
-            expected = tuple(np.logical_or(a, b) for a, b in zip(saved, working, strict=True))
-        elif merge == "and":
-            expected = tuple(np.logical_and(a, b) for a, b in zip(saved, working, strict=True))
+        if task is tasks.flagmanager and merge not in ("replace", "or", "and"):
+            try:
+                task(vis=str(vis), mode="restore", versionname="first", merge=merge)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"restore accepted an unknown merge choice {merge!r}")
+            expected = working
         else:
-            expected = saved
+            assert task(vis=str(vis), mode="restore", versionname="first", merge=merge) is None
+            if merge == "or":
+                expected = tuple(np.logical_or(a, b) for a, b in zip(saved, working, strict=True))
+            elif merge == "and":
+                expected = tuple(np.logical_and(a, b) for a, b in zip(saved, working, strict=True))
+            else:
+                expected = saved
         assert_flags(vis, expected)
         assert_flags(sidecar / "flags.first", saved)
         assert catalog.read_bytes() == initial_catalog
         assert versions(task, vis) == {0: {"name": "first", "comment": "retained"}}
-    assert task(vis=str(vis), mode="save", versionname="copy", merge="unrecognized") is None
-    assert_flags(sidecar / "flags.copy", saved)
+
+
+def check_literal_lookup(task, vis):
+    make_cal_ms(str(vis), channels=4, scan_seconds=20)
+    sidecar = Path(f"{vis}.flagversions")
+    catalog = sidecar / "FLAG_VERSION_LIST"
+    saved = set_flags(vis, 0, shared_row=4)
+    for name in ("seed", "none", "auto"):
+        assert task(vis=str(vis), mode="save", versionname=name) is None
+        assert_flags(sidecar / f"flags.{name}", saved)
+    for name in ("none", "auto"):
+        set_flags(vis, 1, shared_row=4)
+        assert task(vis=str(vis), mode="restore", versionname=name) is None
+        assert_flags(vis, saved)
+    assert task(vis=str(vis), mode="rename", oldname="none", versionname="renamed") is None
+    assert_flags(sidecar / "flags.renamed", saved)
+
+    working = set_flags(vis, 1, shared_row=4)
+    for name in (" seed ", "seed"):
+        if name == "seed":
+            # An orphaned on-disk version is not a member of the catalog.
+            catalog.write_bytes(b"")
+        before = catalog.read_bytes()
+        try:
+            task(vis=str(vis), mode="restore", versionname=name)
+        except RuntimeError as error:
+            assert type(error) is RuntimeError
+            assert str(error) == f"Flag version {name} does not exist"
+        else:
+            raise AssertionError(name)
+        assert_flags(vis, working)
+        assert_flags(sidecar / "flags.seed", saved)
+        assert catalog.read_bytes() == before
 
 
 def main():
@@ -82,7 +122,8 @@ def main():
         for task, prefix in ((casatasks.flagmanager, "reference"), (tasks.flagmanager, "native")):
             check_catalog(task, prefix)
             check_merges(task, Path(f"{prefix}-merge.ms"))
-    print("Seven flag-version catalog cases, seven restore choices and fallback save checked against CASA 6.7.6.14")
+            check_literal_lookup(task, Path(f"{prefix}-lookup.ms"))
+    print("Catalog initialization, six restore choices, and literal version lookup verified with CASA 6.7.6.14")
 
 
 if __name__ == "__main__":

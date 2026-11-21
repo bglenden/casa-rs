@@ -894,7 +894,7 @@ def flagmanager(
     versionname: str = ...,
     oldname: str = ...,
     comment: str = ...,
-    merge: str = ...,
+    merge: Literal['and', 'or', 'replace'] = ...,
 ) -> Any:
     ...
 

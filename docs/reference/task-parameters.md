@@ -1143,10 +1143,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
 | <code>mode</code> | <code>flagmanager.mode@r1</code> | <code>choice (5 values)</code> | <code>"list"</code>; optional | Operation | Flag-version operation. |
-| <code>versionname</code> | <code>parameter.versionname@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Target flag-version name. |
-| <code>oldname</code> | <code>parameter.oldname@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Existing flag-version name for rename. |
+| <code>versionname</code> | <code>parameter.versionname@r2</code> | <code>string</code> | <code>""</code>; optional | Operation | Target flag-version name. |
+| <code>oldname</code> | <code>parameter.oldname@r2</code> | <code>string</code> | <code>""</code>; optional | Operation | Existing flag-version name for rename. |
 | <code>comment</code> | <code>parameter.comment@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Comment stored with saved or renamed versions. |
-| <code>merge</code> | <code>parameter.merge@r2</code> | <code>string</code> | <code>"replace"</code>; optional | Operation | Merge policy for save and restore operations. |
+| <code>merge</code> | <code>parameter.merge@r1</code> | <code>choice (3 values)</code> | <code>"replace"</code>; optional | Operation | Merge policy for save and restore operations. |
 
 <a id="surface-impbcor"></a>
 

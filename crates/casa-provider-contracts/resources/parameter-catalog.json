@@ -4742,20 +4742,25 @@
     },
     {
       "id": "parameter.merge",
-      "semantic_revision": 2,
+      "semantic_revision": 1,
       "casa_name": "merge",
       "value_domain": {
-        "kind": "string"
+        "kind": "choice",
+        "values": [
+          "and",
+          "or",
+          "replace"
+        ]
       },
       "normalization": {
-        "kind": "casa_field"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Merge policy for save and restore operations.",
-        "details": "The exact strings 'and' and 'or' merge masks. Other strings use replacement.",
+        "details": null,
         "examples": [
           "replace"
         ]
@@ -5146,13 +5151,13 @@
     },
     {
       "id": "parameter.oldname",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "oldname",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -7482,13 +7487,13 @@
     },
     {
       "id": "parameter.versionname",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "versionname",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,

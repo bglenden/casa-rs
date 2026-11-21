@@ -231,7 +231,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name in ("flagdata", "flagmanager"):
         vis = arguments["vis"]
         if vis is not None and not isinstance(vis, (list, tuple)):
-            _validate_required_path(values, "vis", vis)
+            _validate_required_path(values, "vis", vis, search_data=True)
     if name == "plotms":
         return _call_plotms(values, arguments)
     if name == "importfits":

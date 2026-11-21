@@ -63,18 +63,15 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         Err(error)
     })?;
-    check_correlation_argument(task, &action)?;
     let mode = task.required_text("mode")?;
     let display_option = task.required_text("display")?;
-    if column.is_none()
-        && (matches!(mode.as_str(), "clip" | "tfcrop" | "rflag")
-            || (!display_option.is_empty() && matches!(action.as_str(), "apply" | "calculate")))
-    {
+    if column.is_none() && matches!(mode.as_str(), "clip" | "tfcrop" | "rflag") {
         backup_before_failed_apply(task, &action)?;
         return Err(
             TaskFailure::execution("'list' object has no attribute 'upper'").at("datacolumn"),
         );
     }
+    check_correlation_argument(task, &action)?;
     let save_parameters = task.flag("savepars")? && mode != "summary";
     let channel_bins = channel_bin_widths(task)?;
     let calculate = match action.as_str() {
@@ -122,6 +119,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             Err(error)
         })?;
     request.time_chunk = time_chunk;
+    request.display_column_is_scalar = display_option.is_empty() || column.is_some();
     if matches!(display_option.as_str(), "data" | "report" | "both") {
         tracing::warn!(display = %display_option, "running flagdata with its headless provider");
     }
@@ -151,6 +149,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         FlaggingError::MissingClipColumn => {
             TaskFailure::validation(error.to_string()).at("datacolumn")
+        }
+        FlaggingError::DisplayColumnVector => {
+            TaskFailure::execution(error.to_string()).at("datacolumn")
         }
         FlaggingError::InvalidClipChannelBins => {
             TaskFailure::execution(error.to_string()).at("chanbin")
@@ -593,6 +594,7 @@ fn flagdata_request(
         action,
         autocorr: task.flag("autocorr")?,
         data_column: data_column(column, mode)?,
+        display_column_is_scalar: true,
         flagbackup: task.flag("flagbackup")?,
         summary_options: FlagSummaryOptions {
             spwchan: task.flag("spwchan")?,
@@ -1010,6 +1012,8 @@ mod tests {
         let request = request_for(&[
             "--vis",
             "in.ms",
+            "--mode",
+            "clip",
             "--datacolumn",
             "corrected",
             "--quackmode",

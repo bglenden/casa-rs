@@ -24988,7 +24988,7 @@
           "name": "versionname",
           "concept": {
             "id": "parameter.versionname",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {
@@ -25018,7 +25018,7 @@
             },
             "provider": {
               "field": "versionname",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "versionname",
@@ -25037,7 +25037,7 @@
           "name": "oldname",
           "concept": {
             "id": "parameter.oldname",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 3,
           "default": {
@@ -25067,7 +25067,7 @@
             },
             "provider": {
               "field": "oldname",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "oldname",
@@ -25135,7 +25135,7 @@
           "name": "merge",
           "concept": {
             "id": "parameter.merge",
-            "semantic_revision": 2
+            "semantic_revision": 1
           },
           "order": 5,
           "default": {

@@ -1018,7 +1018,7 @@ def flagmanager(
     versionname: str = '',
     oldname: str = '',
     comment: str = '',
-    merge: str = 'replace',
+    merge: Literal['and', 'or', 'replace'] = 'replace',
 ) -> Any:
     """Manage MeasurementSet flag-version snapshots.
 
