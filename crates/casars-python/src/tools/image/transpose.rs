@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_images::analysis::{copy_transposed_image, ensure_outfile_does_not_alias_input};
+use casa_images::analysis::{
+    copy_transposed_image, ensure_outfile_does_not_alias_input, replace_stokes_axis_in_record,
+};
 use casa_images::image::image_history_rows;
 use casa_images::{ImageBeamSet, ImageInterface, MutableImageInterface};
 use casa_types::quanta::casacore::casacore_unit;
@@ -46,20 +48,19 @@ impl FromPyObject<'_, '_> for TransposeOrder {
         if let Ok(value) = value.extract::<i64>() {
             return Ok(Self::Integer(value));
         }
-        if value.is_instance_of::<PyList>()
+        if (value.is_instance_of::<PyList>()
             || value.is_instance_of::<PyTuple>()
-            || value.is_instance_of::<PyUntypedArray>()
+            || value.is_instance_of::<PyUntypedArray>())
+            && let Ok(items) = value.try_iter()
         {
-            if let Ok(items) = value.try_iter() {
-                let items = items.collect::<PyResult<Vec<_>>>()?;
-                if !items.is_empty()
-                    && let Some(names) = items.iter().map(text).collect::<Option<Vec<_>>>()
-                {
-                    return Ok(Self::Names(names));
-                }
-                if !items.is_empty() && items.iter().all(|item| item.extract::<i64>().is_ok()) {
-                    return Ok(Self::Unsupported("intvec"));
-                }
+            let items = items.collect::<PyResult<Vec<_>>>()?;
+            if !items.is_empty()
+                && let Some(names) = items.iter().map(text).collect::<Option<Vec<_>>>()
+            {
+                return Ok(Self::Names(names));
+            }
+            if !items.is_empty() && items.iter().all(|item| item.extract::<i64>().is_ok()) {
+                return Ok(Self::Unsupported("intvec"));
             }
         }
         Ok(Self::Unsupported(match value.extract::<Variant>()? {
@@ -77,6 +78,7 @@ impl FromPyObject<'_, '_> for TransposeOrder {
 struct AxisOrder {
     /// Old pixel index at each new pixel axis.
     axes: Vec<usize>,
+    world_axes: Vec<usize>,
     /// Whether an old image axis is counted from its far edge.
     reversed: Vec<bool>,
 }
@@ -131,6 +133,7 @@ impl TransposeOrder {
                 }
                 let mut seen = vec![None; rank];
                 let mut axes = Vec::with_capacity(rank);
+                let mut world_axes = Vec::with_capacity(rank);
                 for name in requested {
                     let flip = name.starts_with('-');
                     let name = name.strip_prefix('-').unwrap_or(name).to_ascii_lowercase();
@@ -164,10 +167,18 @@ impl TransposeOrder {
                             names[index]
                         )));
                     }
-                    reversed[index] = flip;
-                    axes.push(index);
+                    let pixel = coordinates.world_axis_to_pixel_axis(index).ok_or_else(|| {
+                        raised(format!("World axis {name} has no image pixel axis"))
+                    })?;
+                    reversed[pixel] = flip;
+                    axes.push(pixel);
+                    world_axes.push(index);
                 }
-                axes
+                return Ok(AxisOrder {
+                    axes,
+                    world_axes,
+                    reversed,
+                });
             }
             Self::Unsupported(kind) => {
                 return Err(raised(format!(
@@ -175,7 +186,11 @@ impl TransposeOrder {
                 )));
             }
         };
-        Ok(AxisOrder { axes, reversed })
+        Ok(AxisOrder {
+            world_axes: axes.clone(),
+            axes,
+            reversed,
+        })
     }
 
     fn history(&self) -> String {
@@ -230,6 +245,7 @@ fn numeric_order(digits: &str, rank: usize) -> PyResult<Vec<usize>> {
 }
 
 fn reversed_coordinates(
+    active: &CoordinateSystem,
     mut record: RecordValue,
     shape: &[usize],
     order: &AxisOrder,
@@ -249,14 +265,10 @@ fn reversed_coordinates(
         if let CoordinateModel::Stokes(stokes) = model {
             let labels = stokes
                 .stokes()
-                .iter()
-                .rev()
-                .map(|value| value.name().to_owned())
-                .collect();
-            let Some(Value::Record(coordinate)) = record.get_mut(field) else {
-                return Err(raised("Missing Stokes coordinate"));
-            };
-            coordinate.upsert("stokes", Value::Array(ArrayValue::from_string_vec(labels)));
+                .get(..shape[axis])
+                .ok_or_else(|| raised("Image Stokes planes exceed their coordinate labels"))?;
+            let labels = labels.iter().rev().copied().collect::<Vec<_>>();
+            replace_stokes_axis_in_record(&mut record, field, &labels).map_err(raised)?;
             continue;
         }
         if reflect_samples(&mut record, field, model, shape[axis])? {
@@ -296,8 +308,32 @@ fn reversed_coordinates(
         }
     }
     let mut result = CoordinateSystem::from_mapped_record(&record).map_err(raised)?;
+    let active_placements = active.coordinates_in_record(&record).map_err(raised)?;
+    for (index, placement) in placements.iter().enumerate() {
+        if placement
+            .pixel_axes
+            .iter()
+            .flatten()
+            .any(|&axis| order.reversed[axis])
+        {
+            continue;
+        }
+        let Some(live) = active_placements
+            .iter()
+            .position(|entry| entry.field == placement.field)
+        else {
+            continue;
+        };
+        let live = active.coordinate(live);
+        let restored = result.coordinate(index);
+        if live.n_pixel_axes() == restored.n_pixel_axes()
+            && live.n_world_axes() == restored.n_world_axes()
+        {
+            result.replace_coordinate(index, live.clone());
+        }
+    }
     result
-        .transpose_axes(&order.axes, &order.axes)
+        .transpose_axes(&order.world_axes, &order.axes)
         .map_err(raised)?;
     let maps = result.to_record();
     for field in maps.fields() {
@@ -434,14 +470,15 @@ fn flip_beam_planes(
 
 fn make_output(
     input: &dyn ImageInterface<f32>,
+    active: &CoordinateSystem,
     record: RecordValue,
     beams: &BeamView,
     order: &AxisOrder,
     path: Option<&Path>,
-) -> PyResult<Storage<f32>> {
-    let (coordinates, record) = reversed_coordinates(record, input.shape(), order)?;
+) -> PyResult<(Storage<f32>, RecordValue, CoordinateSystem)> {
+    let (coordinates, record) = reversed_coordinates(active, record, input.shape(), order)?;
     let shape = order.axes.iter().map(|&axis| input.shape()[axis]).collect();
-    let mut product = Storage::create(shape, coordinates, path, None).map_err(raised)?;
+    let mut product = Storage::create(shape, coordinates.clone(), path, None).map_err(raised)?;
     with_storage!(&mut product, output => {
         copy_transposed_image(input, output.as_mut(), &order.axes, &order.reversed).map_err(raised)?;
         output.set_units_string(input.units().to_owned()).map_err(raised)?;
@@ -452,10 +489,12 @@ fn make_output(
         output.set_image_info_record(info).map_err(raised)
     })?;
     match &mut product {
-        Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised)?,
-        Storage::Temp { record: stored, .. } => *stored = record,
+        Storage::Paged(image) => image
+            .set_coordinate_record(record.clone())
+            .map_err(raised)?,
+        Storage::Temp { record: stored, .. } => stored.clone_from(&record),
     }
-    Ok(product)
+    Ok((product, record, coordinates))
 }
 
 struct OutputName(String);
@@ -483,7 +522,11 @@ impl PyImageTool {
             let state = self.state();
             let attachment = state.image.as_ref().ok_or_else(|| raised("No image specified to transpose"))?;
             let outfile = &outfile.0;
-            publish_image(outfile, false, |path| {
+            if !outfile.is_empty() && Path::new(outfile).symlink_metadata().is_ok() {
+                return Err(raised(format!("File {outfile} exists but overwrite is false so it cannot be overwritten")));
+            }
+            let mut live_coordinates = None;
+            let mut product = publish_image(outfile, false, |path| {
                 let mut handle = attachment.lock();
                 if !outfile.is_empty() {
                     for input in handle.path().into_iter().chain(attachment.operand_paths().iter().map(PathBuf::as_path)) {
@@ -495,13 +538,14 @@ impl PyImageTool {
                 }
                 attachment.require_pixel_read_lock(&mut handle)?;
                 let make = || {
-                    let record = handle.coordinate_record();
+                    let (active, record) = attachment.coordinate_view(&handle);
                     let beams = attachment.beam_view().clone();
                     let ImageHandle::Float(storage) = &*handle else {
                         unreachable!("pixel type was checked");
                     };
-                    let axes = order.axes(handle.coordinates(), handle.shape().len())?;
-                    let result = storage.with_float_view(|image| make_output(image, record, &beams, &axes, path))?;
+                    let axes = order.axes(active, handle.shape().len())?;
+                    let (result, record, coordinates) = storage.with_float_view(|image|
+                        make_output(image, active, record, &beams, &axes, path))?;
                     let original_history = match storage {
                         Storage::Paged(image) => image_history_rows(image.name().expect("native path")).map_err(raised)?,
                         Storage::Temp { image, .. } => image.history_rows().to_vec(),
@@ -514,12 +558,17 @@ impl PyImageTool {
                         output.record_history("transpose", format!("ia.transpose(outfile={outfile:?}, order={order})"))?;
                     }
                     output.save().map_err(raised)?;
+                    live_coordinates = Some((record, coordinates));
                     Ok(output)
                 };
                 let result = make();
                 let release = attachment.release_requested_lock(&mut handle);
                 result.and_then(|output| release.map(|()| output))
-            })
+            })?;
+            if let Some((record, coordinates)) = live_coordinates {
+                product.keep_live_coordinates(record, coordinates);
+            }
+            Ok::<_, PyErr>(product)
         })?;
         Py::new(py, Self::attached(output))
     }

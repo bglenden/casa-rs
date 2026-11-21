@@ -225,3 +225,93 @@ def test_invalid_orders_and_outfile_collision_preserve_inputs(casa, tmp_path):
                 complex_image.transpose(order=201)
         finally:
             complex_image.done()
+
+
+def test_reflection_trims_stokes_labels_to_the_physical_planes(casa):
+    cs = casa.coordsys().newcoordsys(direction=True, stokes="I,Q,U,V", spectral=True)
+    image = tools.image()
+    assert image.fromshape("", [4, 5, 2, 6], cs.torecord())
+    try:
+        product = image.transpose(order="01-23")
+        try:
+            output = product.coordsys()
+            assert list(output.stokes()) == ["Q", "I"]
+            assert output.referencevalue()["numeric"][2] == 2.0
+            saved = output.torecord()
+            assert saved["stokes1"]["crval"][0] == 2.0
+            assert saved["worldreplace1"][0] == 2.0
+        finally:
+            product.done()
+    finally:
+        image.done()
+
+
+def test_named_reflection_uses_the_physical_axis_on_independent_maps(casa):
+    cs = casa.coordsys().newcoordsys(stokes="I,Q", spectral=True)
+    assert cs.setreferencepixel([0.0, 0.0])
+    assert cs.setreferencevalue([1.0, 1.4e9])
+    assert cs.setincrement([1.0, 2e6])
+    record = cs.torecord()
+    record["worldmap0"] = np.array([1], dtype=np.int32)
+    record["worldmap1"] = np.array([0], dtype=np.int32)
+    pixels = np.array([[1, 2, 3], [10, 20, 30]], dtype=np.float32)
+    image = tools.image()
+    assert image.fromarray("", pixels, csys=record)
+    try:
+        output = image.transpose(order=["-Frequency", "Stokes"])
+        try:
+            np.testing.assert_array_equal(output.getchunk(), [[3, 30], [2, 20], [1, 10]])
+            assert output.coordsys().names() == ["Frequency", "Stokes"]
+            np.testing.assert_allclose(output.toworld([0, 0])["numeric"], [1.404e9, 1.0], rtol=0, atol=1e-6)
+        finally:
+            output.done()
+    finally:
+        image.done()
+
+
+def test_named_product_preserves_the_live_rebin_coordinate(casa, tmp_path):
+    cs = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    frequency = np.array([1, 1.1, 1.4, 2.1, 2.2, 2.5, 2.6]) * 1e9
+    assert cs.setspectral(frequencies={"value": frequency, "unit": "Hz"})
+    region = casa.regionmanager().box([0, 0, 0], [3, 3, 6])
+    for api in (tools, casa):
+        src = api.image()
+        assert src.fromshape("", [4, 4, 7], cs.torecord())
+        try:
+            rebinned = src.rebin(str(tmp_path / f"{api.__name__}-rebin.im"), [1, 1, 3], region=region)
+            path = str(tmp_path / f"{api.__name__}-out.im")
+            try:
+                output = rebinned.transpose(path, order=201)
+                try:
+                    assert output.coordsys().referencepixel()["numeric"][0] == pytest.approx(-1 / 3)
+                finally:
+                    output.done()
+                reopened = api.image()
+                assert reopened.open(path)
+                try:
+                    assert reopened.coordsys().referencepixel()["numeric"][0] == pytest.approx(0)
+                finally:
+                    reopened.done()
+            finally:
+                rebinned.done()
+        finally:
+            src.done()
+
+
+def test_existing_output_is_reported_before_lazy_fits_open(tmp_path):
+    src, _ = source_image(tools)
+    path = tmp_path / "source.fits"
+    try:
+        assert src.tofits(outfile=str(path))
+    finally:
+        src.done()
+    assert src.open(str(path))
+    existing = tmp_path / "preserved.im"
+    existing.write_text("preserve the existing output")
+    path.unlink()
+    try:
+        with pytest.raises(RuntimeError, match="exists"):
+            src.transpose(str(existing), 201)
+        assert existing.read_text() == "preserve the existing output"
+    finally:
+        src.done()

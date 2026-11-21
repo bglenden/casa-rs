@@ -8536,3 +8536,8 @@ For a six-pixel tabular axis with pixels `[0, 1, 3, 5]` and worlds
 `[100, 101, 111, 120]`, the reflected pixel 1 represents the original
 pixel 4. CASA reports 119 there. casa-rs reflects the lookup grid and
 reports the original interpolated value of 115.5.
+
+If an image has pixel axes `[Stokes, Frequency]` and world axes
+`[Frequency, Stokes]`, CASA 6.7.6.14 reflects Stokes pixels for the named
+order `["-Frequency", "Stokes"]`. casa-rs resolves the names through the
+world-to-pixel mapping, so this order reflects the frequency planes.

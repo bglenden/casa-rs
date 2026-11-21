@@ -3582,7 +3582,7 @@ pub(crate) fn slice_mask_array(
     Ok(view.to_owned())
 }
 
-fn validate_new_mask_name(name: &str, existing: &[String]) -> Result<(), ImageError> {
+pub(crate) fn validate_new_mask_name(name: &str, existing: &[String]) -> Result<(), ImageError> {
     if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
         return Err(ImageError::InvalidMetadata(format!(
             "Invalid mask name {name}"
