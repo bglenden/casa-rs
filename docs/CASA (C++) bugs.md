@@ -7940,6 +7940,23 @@ beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
 of the pixels being copied.
 
+## `imregrid` can attach new linear coordinates to unshifted data
+
+CASA 6.7.6.14 can copy pixels and masks unchanged when regridding a leading
+axis of a three-axis linear coordinate at the same shape. The
+`same_shape_linear_shift` case in
+`crates/casa-images/tests/data/imregrid/expected.json` changes the first
+axis's reference value by 0.25 m on a 7 × 6 × 5 image. CASA reports the new
+reference value but retains the source samples. In casacore's
+`LinearCoordinate::near`, the exclusion loop marks consecutive entries
+instead of the indexes in the supplied exclusion list. The comparison can
+therefore skip the axis being regridded.
+
+Casa-rs samples the shifted grid and updates the mask. For unit-spaced
+pixels, the first two samples with values 0 and 1 yield 0.25 at output pixel
+zero. The last sample lies outside the input and is masked. The fixture
+records both CASA's actual product and the independently calculated shift.
+
 ## Legacy MosaicFT rejects split voltage-pattern image records
 
 The CASA 6.7.6.14 legacy `HetArrayConvFunc::findAntennaSizes` checks
