@@ -75,10 +75,20 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     validate_input_paths(task, &request)?;
 
     // CASA's immath returns True.
+    let mut result = immath(&request);
+    let warnings = result
+        .as_mut()
+        .map(|summary| std::mem::take(&mut summary.beam_warnings))
+        .unwrap_or_default();
     image_task_returning(
         CasaValue::Bool { value: true },
-        immath(&request).map(ImageAnalysisTaskResult::Immath),
+        result.map(ImageAnalysisTaskResult::Immath),
     )
+    .map(|success| {
+        warnings
+            .into_iter()
+            .fold(success, TaskSuccess::with_output_line)
+    })
 }
 
 fn validate_input_paths(

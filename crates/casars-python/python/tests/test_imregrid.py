@@ -84,7 +84,8 @@ Path('readback.json').write_text(json.dumps(outputs, allow_nan=False))
     assert actual.keys() == cases.keys()
     for name, product in actual.items():
         case = cases[name]
-        reference = case["product"]
+        # Use the analytic result for the documented same-shape linear shift.
+        reference = case.get("corrected_product", case["product"])
         metadata = case.get("preserved_input_metadata", reference)
         for field in ("shape", "names", "units", "direction_frame", "mask"):
             assert product[field] == reference[field], (name, field)
