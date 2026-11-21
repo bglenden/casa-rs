@@ -92,6 +92,7 @@ fn regrid_products_match_casa() {
             continue;
         };
         assert!(reply.status.success(), "{name}: {message}");
+        let expected = case.get("corrected_product").unwrap_or(expected);
         let metadata = case.get("preserved_input_metadata").unwrap_or(expected);
         match AnyPagedImage::open(path).unwrap() {
             AnyPagedImage::Float32(image) => {
