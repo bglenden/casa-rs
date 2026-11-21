@@ -94,9 +94,11 @@ def test_quality_errors_metadata_and_selected_subimage(casa):
     _assert_value(cs.torecord()["quality0"], before["quality0"])
     _assert_value(cs.torecord()["quality0"], reference.torecord()["quality0"])
     assert cs.convert([1], unitsin=["pix"], unitsout=["Hz"]).tolist() == [2.]
-    assert cs.setnames(["Error plane"])
-    assert list(cs.names()) == ["Error plane"]
-    assert reference.setnames(["Error plane"])
+    for api in (cs, reference):
+        with pytest.raises(RuntimeError, match="names vector must be of length nWorldAxes"):
+            api.setnames(["Error plane"])
+        assert api.setnames(["QualityPlane"])
+        assert list(api.names()) == ["QualityPlane"]
     for origin, count, labels in [(0.49, [1], ["DATA"]), (0.6, [1], ["ERROR"]), (1.0, [], ["ERROR"])]:
         narrowed = cs.subimage([origin], count)
         _assert_value(narrowed["quality0"], reference.subimage([origin], count)["quality0"])
@@ -121,7 +123,8 @@ def test_native_writer_reader_pairs_keep_labels_and_values(casa, tmp_path):
             image = reader.image()
             assert image.open(name)
             try:
-                _assert_value(image.getchunk(), data)
+                assert image.pixeltype() == "float"
+                _assert_value(image.getchunk(), data.astype(np.float64))
                 coords = image.coordsys()
                 try:
                     assert coords.summary(list=False) == expected_report
@@ -146,8 +149,13 @@ def test_fits_export_refuses_to_discard_quality_planes(tmp_path):
         with pytest.raises(RuntimeError, match="FITS export cannot represent a native Quality"):
             source.tofits(str(path))
         assert not path.exists()
-        _assert_value(source.getchunk(), data)
-        assert source.coordsys().toworld([1])["numeric"].tolist() == [2.]
+        assert source.pixeltype() == "float"
+        _assert_value(source.getchunk(), data.astype(np.float64))
+        coords = source.coordsys()
+        try:
+            assert coords.toworld([1])["numeric"].tolist() == [2.]
+        finally:
+            coords.done()
     finally:
         source.done()
 
