@@ -124,6 +124,79 @@ def test_pinned_casa_requires_explicit_import_of_gzip_fits(oracle, gzip_fits):
         image.done()
 
 
+@pytest.mark.parametrize("kind, reason", [
+    ("unrecognized", "Unable to open image"),
+    ("false-simple", "Unable to open image"),
+    ("corrupt-header", "Error opening FITS input"),
+    ("shifted-equals", "Error opening FITS input"),
+    ("unspaced-value", "Error reading initial record"),
+    ("header-only", "No data in the zeroth or first extension"),
+    ("missing-primary-record", "No data in the zeroth or first extension"),
+    ("short-primary-record", "Error reading initial record"),
+    ("short-extension-record", "No data in the zeroth or first extension"),
+    ("later-image", "No data in the zeroth or first extension"),
+])
+def test_direct_fits_rejects_invalid_initial_image_before_attachment(tmp_path, oracle, kind, reason):
+    primary = _hdu(True, [1, 2, 3, 4])
+    empty = _hdu(True, None)
+    extension = _hdu(False, [5, 6, 7, 8])
+    contents = {
+        "unrecognized": b"plain text\n",
+        "false-simple": _card("SIMPLE", False) + primary[80:],
+        "corrupt-header": primary.replace(b"NAXIS2", b"OTHER2", 1),
+        "shifted-equals": b"SIMPLE = T".ljust(80) + primary[80:],
+        "unspaced-value": b"SIMPLE  =T".ljust(80) + primary[80:2888],
+        "header-only": empty,
+        "missing-primary-record": primary[:2880],
+        "short-primary-record": primary[:2888],
+        "short-extension-record": empty + extension[:2888],
+        "later-image": empty + _hdu(False, None) + extension,
+    }[kind]
+    path = tmp_path / f"{kind}.fits"
+    path.write_bytes(contents)
+    for api in (oracle, tools):
+        for method in ("open", "newimage", "newimagefromfile", "fromimage", "newimagefromimage"):
+            image = api.image()
+            try:
+                assert image.fromarray(pixels=[7., 11., 13.])
+                with pytest.raises(RuntimeError, match=reason):
+                    getattr(image, method)(infile=str(path))
+                assert image.isopen() == (method != "open")
+                if image.isopen():
+                    np.testing.assert_array_equal(image.getchunk(), [7., 11., 13.])
+            finally:
+                image.done()
+    assert path.read_bytes() == contents
+
+
+def test_explicit_fits_import_can_select_an_image_after_two_empty_hdus(tmp_path, oracle):
+    path = tmp_path / "later.fits"
+    path.write_bytes(_hdu(True, None) + _hdu(False, None) + _hdu(False, [5, 6, 7, 8]))
+    for api in (oracle, tools):
+        image = api.image()
+        try:
+            assert image.fromfits(infile=str(path), whichhdu=-1)
+            np.testing.assert_array_equal(image.getchunk(), [[5., 7.], [6., 8.]])
+        finally:
+            image.done()
+
+
+def test_direct_fits_open_only_requires_the_initial_data_record(tmp_path, oracle):
+    path = tmp_path / "one-record.fits"
+    cards = [
+        ("SIMPLE", True), ("BITPIX", 16), ("NAXIS", 2), ("NAXIS1", 256), ("NAXIS2", 256),
+    ]
+    header = b"".join(_card(name, value) for name, value in cards) + b"END".ljust(80)
+    path.write_bytes(header.ljust(2880) + bytes(2880))
+    for api in (oracle, tools):
+        image = api.image()
+        try:
+            assert image.open(str(path))
+            np.testing.assert_array_equal(image.shape(), [256, 256])
+        finally:
+            image.done()
+
+
 def test_subimage_cannot_replace_its_direct_fits_source(tmp_path):
     source = tmp_path / "image.fits"
     content = _hdu(True, [1, 2, 3, 4])
