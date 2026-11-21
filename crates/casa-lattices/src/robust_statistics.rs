@@ -16,7 +16,10 @@
 //! its name, the reciprocal of the probit at 3/4, the factor that makes
 //! the median absolute deviation estimate a Gaussian sigma.
 
-use crate::statistics::{RunningStats, Statistic};
+use crate::statistics::{
+    OrderStatsSummary, RunningStats, Statistic, framework_order_summary, quartiles_and_median,
+    selection_median,
+};
 
 /// The MAD-to-sigma factor casacore names `C::probit_3_4`.
 const PROBIT_3_4: f64 = 1.482602218505602;
@@ -263,10 +266,8 @@ pub fn compute_robust_stats(
             if *fence < 0.0 {
                 return Ok(RobustStats::Sample(classical_stats(sample)));
             }
-            let mut sorted: Vec<f64> = sample.iter().map(|point| point.value).collect();
-            sorted.sort_by(|left, right| left.total_cmp(right));
-            let q1 = framework_quantile(&sorted, 0.25);
-            let q3 = framework_quantile(&sorted, 0.75);
+            let mut values: Vec<f64> = sample.iter().map(|point| point.value).collect();
+            let [q1, _, q3] = quartiles_and_median(&mut values);
             let span = q3 - q1;
             let (low, high) = (q1 - fence * span, q3 + fence * span);
             let kept: Vec<SamplePoint> = sample
@@ -403,12 +404,18 @@ fn classical_stats(sample: &[SamplePoint]) -> RobustSampleStats {
 
 /// The classical statistics of a bare value sample, without positions.
 fn classical_stats_of_values(values: &[f64]) -> RobustSampleStats {
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|left, right| left.total_cmp(right));
     let npts = values.len();
     let mut moments = RunningStats::default();
+    let first = values.first().copied().unwrap_or(f64::NAN);
+    let (mut min, mut max) = (first, first);
     for &value in values {
         moments.push(value);
+        if value.total_cmp(&min).is_lt() {
+            min = value;
+        }
+        if value.total_cmp(&max).is_gt() {
+            max = value;
+        }
     }
     let [sum, sumsq, mean, rms, sigma] = if npts == 0 {
         [0.0, 0.0, f64::NAN, f64::NAN, 0.0]
@@ -422,16 +429,17 @@ fn classical_stats_of_values(values: &[f64]) -> RobustSampleStats {
         ]
         .map(|statistic| moments.finish(statistic))
     };
-    let median = averaging_median(&sorted);
-    let mut deviations: Vec<f64> = values.iter().map(|value| (value - median).abs()).collect();
-    deviations.sort_by(|left, right| left.total_cmp(right));
-    let medabsdevmed = averaging_median(&deviations);
-    let q1 = framework_quantile(&sorted, 0.25);
-    let q3 = framework_quantile(&sorted, 0.75);
+    let OrderStatsSummary {
+        median,
+        q1,
+        q3,
+        quartile,
+        mad: medabsdevmed,
+    } = framework_order_summary(&mut values.to_vec());
     RobustSampleStats {
         npts: npts as f64,
-        min: sorted.first().copied().unwrap_or(f64::NAN),
-        max: sorted.last().copied().unwrap_or(f64::NAN),
+        min,
+        max,
         sum,
         sumsq,
         mean,
@@ -441,42 +449,16 @@ fn classical_stats_of_values(values: &[f64]) -> RobustSampleStats {
         medabsdevmed,
         q1,
         q3,
-        quartile: q3 - q1,
+        quartile,
         minpos: None,
         maxpos: None,
         chauvenet_iterations: None,
     }
 }
 
-/// The framework's median: the middle value, or the average of the two
-/// middle values of an even sample.
-fn averaging_median(sorted: &[f64]) -> f64 {
-    let n = sorted.len();
-    if n == 0 {
-        return f64::NAN;
-    }
-    if n.is_multiple_of(2) {
-        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
-    } else {
-        sorted[n / 2]
-    }
-}
-
-/// The framework's quantile at `q`: the value at index `ceil(q * n) - 1`
-/// of the sorted sample, without interpolation.
-fn framework_quantile(sorted: &[f64], q: f64) -> f64 {
-    let n = sorted.len();
-    if n == 0 {
-        return f64::NAN;
-    }
-    let index = (q * n as f64).ceil() as isize - 1;
-    sorted[index.clamp(0, n as isize - 1) as usize]
-}
-
 fn sample_median(sample: &[SamplePoint]) -> f64 {
-    let mut sorted: Vec<f64> = sample.iter().map(|point| point.value).collect();
-    sorted.sort_by(|left, right| left.total_cmp(right));
-    averaging_median(&sorted)
+    let mut values: Vec<f64> = sample.iter().map(|point| point.value).collect();
+    selection_median(&mut values)
 }
 
 fn sample_mean(sample: &[SamplePoint]) -> f64 {
@@ -563,22 +545,6 @@ fn biweight_location_scale(
         scale = scale_sums(initial_location, scale, low, high);
     }
     Ok((location, scale))
-}
-
-fn selection_median(values: &mut [f64]) -> f64 {
-    let mid = values.len() / 2;
-    let even = values.len().is_multiple_of(2);
-    let (lower, median, _) = values.select_nth_unstable_by(mid, f64::total_cmp);
-    if even {
-        let lower_middle = lower
-            .iter()
-            .copied()
-            .max_by(f64::total_cmp)
-            .expect("two central values");
-        (lower_middle + *median) / 2.0
-    } else {
-        *median
-    }
 }
 
 /// The maximum z-score Chauvenet's criterion allows for a sample of
@@ -774,12 +740,12 @@ mod tests {
 
     #[test]
     fn framework_quantiles_and_median() {
-        let sorted: Vec<f64> = (0..8).map(|value| value as f64).collect();
-        assert_eq!(framework_quantile(&sorted, 0.25), 1.0);
-        assert_eq!(framework_quantile(&sorted, 0.75), 5.0);
-        assert_eq!(averaging_median(&sorted), 3.5);
-        let odd: Vec<f64> = (0..7).map(|value| value as f64).collect();
-        assert_eq!(averaging_median(&odd), 3.0);
+        let stats = classical_stats_of_values(&[7.0, 0.0, 2.0, 1.0, 6.0, 4.0, 5.0, 3.0]);
+        assert_eq!([stats.q1, stats.median, stats.q3], [1.0, 3.5, 5.0]);
+        assert_eq!(
+            sample_median(&sample(&[6.0, 4.0, 0.0, 2.0, 3.0, 5.0, 1.0])),
+            3.0
+        );
     }
 
     #[test]
