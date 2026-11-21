@@ -120,6 +120,26 @@ fn matrix(rows: &[ParameterValue]) -> ThresholdInput {
     }
 }
 
+pub(super) fn list_threshold_value(
+    value: &ParameterValue,
+    name: &str,
+) -> Result<ParameterValue, TaskFailure> {
+    let ParameterValue::String(text) = value else {
+        return Err(TaskFailure::execution(
+            "stat: path should be string, bytes, os.PathLike or integer, not float",
+        )
+        .at("flag-list-threshold-type"));
+    };
+    if let Ok(value) = serde_json::from_str(&super::python_literal::to_json(text))
+        && let Some(value) = ParameterValue::from_plain_json(&value)
+    {
+        return Ok(value);
+    }
+    Ok(read_file(text, name)?
+        .file_argument
+        .unwrap_or_else(|| ParameterValue::Array(Vec::new())))
+}
+
 fn read_file(path: &str, name: &str) -> Result<ThresholdInput, TaskFailure> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
@@ -139,7 +159,7 @@ fn read_file(path: &str, name: &str) -> Result<ThresholdInput, TaskFailure> {
             // CASA emits a one-line Python dictionary with single-quoted keys
             // and a nested numeric array. Parse the data without evaluation.
             let mut record = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
-                &threshold_json(line),
+                &super::python_literal::to_json(line),
             )
             .ok()?;
             record.remove(name)
@@ -165,72 +185,33 @@ fn read_file(path: &str, name: &str) -> Result<ThresholdInput, TaskFailure> {
     Ok(input)
 }
 
-// Translate the Python literal spelling used in threshold records. The JSON
-// decoder still checks the structure, and no expressions are evaluated.
-fn threshold_json(line: &str) -> String {
-    let mut output = String::with_capacity(line.len());
-    let mut chars = line.chars().peekable();
-    let mut quote = None;
-    let mut previous = None;
-    while let Some(character) = chars.next() {
-        if let Some(delimiter) = quote {
-            match character {
-                '\\' => {
-                    if let Some(escaped) = chars.next() {
-                        if escaped != '\'' {
-                            output.push('\\');
-                        }
-                        output.push(escaped);
-                    } else {
-                        output.push('\\');
-                    }
-                }
-                character if character == delimiter => {
-                    quote = None;
-                    output.push('"');
-                }
-                '"' => output.push_str("\\\""),
-                _ => output.push(character),
-            }
-        } else {
-            match character {
-                '\'' | '"' => {
-                    quote = Some(character);
-                    output.push('"');
-                }
-                '#' => break,
-                ',' if matches!(
-                    chars.clone().find(|ch| !ch.is_whitespace()),
-                    Some(']' | '}')
-                ) => {}
-                '.' => {
-                    if !previous.is_some_and(|ch: char| ch.is_ascii_digit()) {
-                        output.push('0');
-                    }
-                    output.push('.');
-                    if !chars.peek().is_some_and(char::is_ascii_digit) {
-                        output.push('0');
-                    }
-                }
-                '+' if !matches!(previous, Some('e' | 'E')) => {}
-                _ => output.push(character),
-            }
-        }
-        previous = Some(character);
-    }
-    output
-}
-
 pub(super) fn write_files(
     task: &TaskInvocation<'_>,
     report: &RFlagThresholdReport,
+) -> Result<(), TaskFailure> {
+    write_agent_files(
+        report,
+        "Rflag",
+        0,
+        [task.value("timedev"), task.value("freqdev")],
+    )
+}
+
+pub(super) fn write_agent_files(
+    report: &RFlagThresholdReport,
+    agent_name: &str,
+    index: usize,
+    inputs: [Option<&ParameterValue>; 2],
 ) -> Result<(), TaskFailure> {
     if report.timedev.is_empty() && report.freqdev.is_empty() {
         return Ok(());
     }
     let mut outputs = Vec::new();
-    for (name, rows) in [("timedev", &report.timedev), ("freqdev", &report.freqdev)] {
-        let path = output_path(task.value(name), name);
+    for ((name, rows), input) in [("timedev", &report.timedev), ("freqdev", &report.freqdev)]
+        .into_iter()
+        .zip(inputs)
+    {
+        let path = output_path(input, name, index);
         let parent = path
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
@@ -239,7 +220,7 @@ pub(super) fn write_files(
         let mut output = tempfile::NamedTempFile::new_in(parent).map_err(failure)?;
         let data = serde_json::to_string(rows)
             .map_err(|error| TaskFailure::execution(error.to_string()).at(name))?;
-        writeln!(output, "{{'name':'Rflag','{name}':{data}}}\n").map_err(failure)?;
+        writeln!(output, "{{'name':'{agent_name}','{name}':{data}}}\n").map_err(failure)?;
         outputs.push((name, path, output));
     }
     for (name, path, output) in outputs {
@@ -259,7 +240,7 @@ fn file_failure(error: std::io::Error, path: &Path, name: &str) -> TaskFailure {
     TaskFailure::execution(path.display().to_string()).at(spelling)
 }
 
-fn output_path(input: Option<&ParameterValue>, name: &str) -> PathBuf {
+fn output_path(input: Option<&ParameterValue>, name: &str, index: usize) -> PathBuf {
     if let Some(ParameterValue::String(path)) = input {
         let number_only = path.replace('.', "");
         if !path.is_empty()
@@ -269,7 +250,7 @@ fn output_path(input: Option<&ParameterValue>, name: &str) -> PathBuf {
             return PathBuf::from(path);
         }
     }
-    PathBuf::from(format!("rflag_output_thresholds_{name}0.txt"))
+    PathBuf::from(format!("rflag_output_thresholds_{name}{index}.txt"))
 }
 
 pub(super) fn saved_threshold(
