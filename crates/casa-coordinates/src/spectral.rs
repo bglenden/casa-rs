@@ -7,7 +7,10 @@
 
 use std::str::FromStr;
 
+mod channel_samples;
 mod subimage;
+
+pub use channel_samples::SpectralNativeType;
 
 use casa_types::measures::direction_to_record;
 use casa_types::measures::doppler::DopplerRef;
@@ -98,6 +101,8 @@ pub struct SpectralCoordinate {
     rest_frequencies: Vec<f64>,
     /// Doppler convention used by this coordinate when expressing velocities.
     velocity_convention: DopplerRef,
+    /// Preferred spectral representation written to CASA coordinate records.
+    native_type: SpectralNativeType,
     /// Pixel-to-world mapping state.
     mapping: SpectralMapping,
     /// Native WCS (or live sampled) linear transform.
@@ -132,6 +137,7 @@ impl SpectralCoordinate {
             rest_frequency,
             rest_frequencies: vec![rest_frequency],
             velocity_convention: DopplerRef::RADIO,
+            native_type: SpectralNativeType::Frequency,
             mapping: SpectralMapping::Linear {
                 crval,
                 cdelt,
@@ -171,6 +177,7 @@ impl SpectralCoordinate {
             rest_frequency,
             rest_frequencies: vec![rest_frequency],
             velocity_convention: DopplerRef::RADIO,
+            native_type: SpectralNativeType::Frequency,
             mapping: SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
@@ -625,6 +632,9 @@ impl SpectralCoordinate {
             coord = coord.with_conversion(conversion.frequency_ref, conversion.frame);
         }
         coord.undefined_frame = undefined_frame;
+        if let Some(code) = get_optional_i32(rec, "nativeType") {
+            coord.native_type = SpectralNativeType::from_code(code);
+        }
         // C++ `restoreRestFrequencies` clamps the optional list and selects
         // the listed frequency nearest the saved `restfreq` selector.
         if let Some(field) = rec.get("restfreqs") {
@@ -801,7 +811,10 @@ impl SpectralCoordinate {
             "velType",
             Value::Scalar(ScalarValue::Int32(self.velocity_convention.casacore_code())),
         );
-        rec.upsert("nativeType", Value::Scalar(ScalarValue::Int32(0)));
+        rec.upsert(
+            "nativeType",
+            Value::Scalar(ScalarValue::Int32(self.native_type as i32)),
+        );
         rec.upsert("velUnit", Value::Scalar(ScalarValue::String("km/s".into())));
         rec.upsert("waveUnit", Value::Scalar(ScalarValue::String("mm".into())));
         rec.upsert(

@@ -8402,3 +8402,10 @@ CASA 6.7.6.14 applies the direction conversion in `coordsys.setconversiontype`
 before it validates the requested spectral frame. With `direction="GALACTIC"`
 and `spectral="invalid"`, the call raises after changing the direction
 conversion. casa-rs preserves both conversion layers when the call fails.
+
+## Rebuilding a sampled spectral axis can relabel its rest frequency
+
+CASA 6.7.6.14 passes the old rest-frequency number to the new `setspectral`
+table in Hz. If the old coordinate declares MHz, a rest frequency of
+`1420.405751786 MHz` becomes `1420.405751786 Hz`. casa-rs converts the active
+rest frequency to Hz before building the new frequency or velocity table.

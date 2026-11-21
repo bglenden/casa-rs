@@ -86,6 +86,6 @@ pub use fits::{FitsHeader, FitsKeyword, FitsValue};
 pub use linear::LinearCoordinate;
 pub use obs_info::ObsInfo;
 pub use projection::{Projection, ProjectionType};
-pub use spectral::SpectralCoordinate;
+pub use spectral::{SpectralCoordinate, SpectralNativeType};
 pub use stokes::{StokesCoordinate, StokesType};
 pub use tabular::TabularCoordinate;

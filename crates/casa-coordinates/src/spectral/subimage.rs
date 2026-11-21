@@ -3,8 +3,8 @@
 
 use casa_types::{ArrayValue, RecordValue, Value};
 
+use crate::CoordinateError;
 use crate::tabular::scaled_world;
-use crate::{CoordinateError, TabularCoordinate};
 
 use super::{
     SpectralCoordinate, SpectralMapping, frequency_unit_scale, get_optional_vec_string, interpolate,
@@ -45,38 +45,21 @@ impl SpectralCoordinate {
             ));
         }
         let count = length as usize;
-        let allocate = || -> Result<Vec<f64>, CoordinateError> {
-            let mut samples = Vec::new();
-            samples.try_reserve_exact(count).map_err(|_| {
-                CoordinateError::InvalidRecord(
-                    "cannot allocate the spectral subimage samples".into(),
-                )
-            })?;
-            Ok(samples)
-        };
-        let mut pixels = allocate()?;
-        let mut worlds = allocate()?;
+        let mut worlds = Vec::new();
+        worlds.try_reserve_exact(count).map_err(|_| {
+            CoordinateError::InvalidRecord("cannot allocate the spectral subimage samples".into())
+        })?;
         for channel in 0..count {
             let pixel = f64::from(origin + channel as f32);
             let world = interpolate(pixel_values, world_values, pixel)?;
             let frequency = self.value_in_hz(scaled_world(world, *crval, self.linear_transform))?;
-            pixels.push(channel as f64);
             worlds.push(frequency);
         }
-        TabularCoordinate::validate_samples(&pixels, &worlds)?;
-        let first = worlds[0];
-        let increment = (worlds[count - 1] - first) / (count - 1).max(1) as f64;
-        let mut result = Self::from_tabular(
-            self.frequency_ref,
-            pixels,
-            worlds,
-            first,
-            increment,
-            0.0,
-            self.rest_frequency_hz()?,
-        )?;
+        let mut result =
+            Self::from_channel_frequencies(self.frequency_ref, worlds, self.rest_frequency_hz()?)?;
         result.conversion = self.conversion.clone();
         result.undefined_frame = self.undefined_frame;
+        result.native_type = self.native_type;
         Ok(Some(result))
     }
 

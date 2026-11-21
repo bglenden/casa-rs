@@ -1,0 +1,132 @@
+"""Public sampled spectral edits and native velocity metadata."""
+
+import numpy as np
+import pytest
+
+from casars import tools
+from test_image_workflow import _assert_value
+
+
+@pytest.fixture(scope="module")
+def casa():
+    api = pytest.importorskip("casatools")
+    assert api.version_string().replace("-", ".") == "6.7.6.14"
+    return api
+
+
+def samples(values, unit):
+    return {"value": np.array(values, dtype=float), "unit": unit}
+
+
+def test_frequency_table_uses_physical_channel_values():
+    cs = tools.coordsys().newcoordsys(spectral=True)
+    assert cs.setspectral(refcode="bar", frequencies=["1.4GHz", "1420MHz", "1.50GHz"])
+    assert cs.getconversiontype("spectral", False) == "BARY"
+    np.testing.assert_allclose(cs.toworld([1.5])["numeric"], [1.46e9])
+    np.testing.assert_allclose(cs.topixel([1.46e9])["numeric"], [1.5])
+    assert cs.setspectral(frequencies={"value": 15.0, "unit": "Hz"})
+    np.testing.assert_allclose(cs.toworld([20.0])["numeric"], [15.0])
+    np.testing.assert_allclose(cs.topixel([61.0])["numeric"], [0.0])
+
+
+@pytest.mark.parametrize(("convention", "spec_type", "doppler_code"), [("RADIO", 1, 0), ("OPTICAL", 2, 1), ("BETA", 1, 3)])
+def test_sampled_velocity_matches_independent_relations(casa, convention, spec_type, doppler_code):
+    velocity = np.array([0.0, 10000.0, 30000.0])
+    speed = velocity / 299792458.0
+    rest = 1.42e9
+    scale = {
+        "RADIO": 1.0 - speed,
+        "OPTICAL": 1.0 / (1.0 + speed),
+        "BETA": np.sqrt((1.0 - speed) / (1.0 + speed)),
+    }[convention]
+    expected = rest * scale
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(spectral=True)
+        assert cs.setspectral(restfreq="1.42GHz", velocities=samples(velocity, "m/s"), doppler=convention)
+        record = cs.torecord()["spectral0"]
+        assert record["nativeType"] == spec_type
+        assert record["velType"] == doppler_code
+        np.testing.assert_allclose(record["tabular"]["worldvalues"], expected, atol=1.e-6, rtol=0.0)
+        midpoint = (expected[1] + expected[2]) / 2.0
+        np.testing.assert_allclose(cs.toworld([1.5])["numeric"], [midpoint], atol=1.e-6, rtol=0.0)
+        np.testing.assert_allclose(cs.topixel([midpoint])["numeric"], [1.5], atol=1.e-9)
+
+
+def test_native_relabelling_and_active_rest_frequency_keep_the_existing_grid(casa):
+    source = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    assert source.setconversiontype(spectral="BARY")
+    record = source.torecord()
+    record["spectral1"]["restfreqs"] = np.array([1.40e9, 1.42e9, 1.45e9])
+    record["spectral1"]["restfreq"] = 1.42e9
+    for api in (tools, casa):
+        cs = api.coordsys()
+        assert cs.fromrecord(record)
+        assert cs.setspectral(refcode="topo")
+        assert cs.getconversiontype("spectral", False) == "TOPO"
+        assert cs.getconversiontype("spectral") == "TOPO"
+        assert cs.setspectral(restfreq=1.425e9)
+        spec = cs.torecord()["spectral1"]
+        np.testing.assert_allclose(spec["restfreqs"], [1.40e9, 1.425e9, 1.45e9])
+        assert spec["restfreq"] == pytest.approx(1.425e9)
+        _assert_value(spec["wcs"], record["spectral1"]["wcs"])
+
+
+def test_different_rest_frequency_storage_units_remain_physical(casa):
+    for api, multiplier in ((tools, 1.e6), (casa, 1.0)):
+        cs = api.coordsys().newcoordsys(spectral=True)
+        assert cs.setunits(["MHz"])
+        old_rest = cs.torecord()["spectral0"]["restfreq"]
+        assert cs.setspectral(frequencies=samples([1400.0, 1410.0, 1425.0], "MHz"))
+        spectral = cs.torecord()["spectral0"]
+        assert spectral["unit"] == "Hz"
+        assert spectral["restfreq"] == pytest.approx(old_rest * multiplier)
+        np.testing.assert_allclose(spectral["tabular"]["worldvalues"], [1.4e9, 1.41e9, 1.425e9])
+
+
+def test_ignored_and_refused_arguments_leave_the_coordinate_usable(casa, caplog):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(spectral=True)
+        before = cs.torecord()
+        assert cs.setspectral()
+        assert cs.setspectral(frequencies=[1.0, 2.0])
+        assert cs.setspectral(frequencies={"unit": "Hz", "value": np.array([1, 2])})
+        assert cs.setspectral(frequencies={"unit": "Hz", "value": np.array([[1.0, 2.0]])})
+        assert cs.setspectral(refcode="BARY", restfreq="1.5GHz", doppler="RADIO")
+        assert cs.setspectral(
+            frequencies=samples([1., 3.], "Hz"), velocities=samples([0., 1.], "km/s")
+        ) is False
+        for parameters, message in (
+            ({"refcode": "absent"}, "Invalid frequency reference"),
+            ({"frequencies": samples([1., 3.], "m")}, "Illegal unit for frequencies"),
+            ({"velocities": samples([0., 1.], "km/s")}, "must specify the doppler type"),
+            ({"velocities": samples([0., 1.], "km/s"), "doppler": "bogus"}, "Invalid doppler"),
+            ({"velocities": samples([1., 3.], "Hz"), "doppler": "RADIO"}, "Illegal unit for velocities"),
+        ):
+            with pytest.raises(RuntimeError, match=message):
+                cs.setspectral(**parameters)
+        _assert_value(cs.torecord(), before)
+    assert "You cannot give both frequencies and velocities" in caplog.text
+
+
+def test_velocity_axis_survives_all_native_writer_reader_pairs(casa, tmp_path):
+    rest = 1.42e9
+    expected = rest / (1 + 20_000.0 / 299792458.0)
+    for writer in (tools, casa):
+        cs = writer.coordsys().newcoordsys(spectral=True)
+        assert cs.setspectral(restfreq=rest, velocities=samples([0.0, 20.0, 50.0], "km/s"), doppler="OPTICAL")
+        path = str(tmp_path / f"{writer.__name__}.im")
+        image = writer.image()
+        assert image.fromshape(path, [3], cs.torecord())
+        image.done()
+        for reader in (tools, casa):
+            image = reader.image()
+            assert image.open(path)
+            try:
+                coords = image.coordsys()
+                spectral = coords.torecord()["spectral0"]
+                assert spectral["nativeType"] == 2
+                assert spectral["velType"] == 1
+                np.testing.assert_allclose(coords.toworld([1.0])["numeric"], [expected], atol=1.e-6, rtol=0.0)
+                np.testing.assert_allclose(coords.topixel([expected])["numeric"], [1.0], atol=1.e-9)
+            finally:
+                image.done()
