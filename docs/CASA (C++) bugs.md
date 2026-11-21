@@ -8130,6 +8130,24 @@ the flags and uses the literal `-1` key for the wildcard field. The
 calibration flagdata oracle runs the CASA call in a separate process and
 verifies the native report and unchanged input.
 
+## Calibration command lists can abort or flag beyond an unmatched selector
+
+CASA 6.7.6.14 aborts with a vector allocation error when an antenna
+integration command names the physical CPARAM or FPARAM column in a
+calibration flag list. Casa-rs raises a ValueError identifying the required
+visibility input and preserves the table's flags. The single-task
+`mode='antint'` call on these tables raises CASA's agent-configuration error.
+
+In a multi-command list, an antenna or field name that matches no calibration
+rows can cause CASA to flag the whole table. Casa-rs rejects the selector
+before publishing staged edits. The calibration command-list oracle verifies
+both the unmatched-antenna refusal and the antenna-integration crash case.
+
+On an FPARAM table, a local `antenna='!A1' spw='0:1'` command followed by a
+summary can flag only A1. Used alone, the same command can leave all flags
+unchanged. Casa-rs flags the selected channel for antennas other than A1 in
+both cases. The oracle checks each mask against the original table.
+
 ## PlotMS shows the excluded antenna on a GSPLINE plot
 
 On a GSPLINE table with antennas A0 through A4, CASA 6.7.6.14 and

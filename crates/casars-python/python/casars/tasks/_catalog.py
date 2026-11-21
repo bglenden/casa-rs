@@ -952,9 +952,9 @@ def flagdata(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     mode: Literal['antint', 'clip', 'elevation', 'extend', 'list', 'manual', 'manualflag', 'quack', 'rflag', 'shadow', 'summary', 'tfcrop', 'unflag'] = 'manual',
     autocorr: bool = False,
-    inpfile: str = '',
-    reason: str = 'any',
-    tbuff: float = 0.0,
+    inpfile: str | list[str] = '',
+    reason: str | list[str] = 'any',
+    tbuff: float | list[float] = 0.0,
     spw: str | list[str] = '',
     field: str | list[str] = '',
     antenna: str | list[str] = '',
@@ -1029,8 +1029,6 @@ def flagdata(
     """Run native CASA-style MeasurementSet flagging.
 
     CASA's ``flagdata``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #978:
-    ``inpfile``, ``reason``, ``tbuff``, ``savepars``.
     """
     return _call_casa(flagdata, locals())
 

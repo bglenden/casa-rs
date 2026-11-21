@@ -469,6 +469,9 @@ pub enum FlaggingError {
     /// A mode cannot configure its agent for a calibration table.
     #[error("Failed to parse parameters for mode {0}")]
     UnsupportedCalibrationAgent(&'static str),
+    /// The upstream antenna integration agent aborts on calibration tables.
+    #[error("antint requires a MeasurementSet with visibility rows")]
+    CalibrationAntint,
 
     /// A requested clipping column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode clip")]
@@ -842,6 +845,28 @@ pub fn flagdata_path_with_model(
             source,
         })?;
     flagdata_with_persistence(&mut ms, request, persist, model_factory)
+}
+
+/// Execute a sequence of calibration flagging agents on one table view.
+/// Earlier commands are visible to subsequent agents and summaries. A
+/// calculate-only run discards its staged flags, and an apply run saves the
+/// combined changed rows after all commands have completed. An entry is
+/// absent when CASA cannot configure that agent and continues the program.
+/// With multiple commands, selection is local to each agent and a time
+/// range gates the calibration buffers at their first integration.
+pub fn flagdata_calibration_program(
+    mut table: MeasurementSet,
+    requests: &[FlagDataRequest],
+    write_flags: bool,
+    local_selection: bool,
+) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
+    if !is_calibration_table(&table) {
+        return Err(FlaggingError::MutateFlags {
+            path: display_ms_path(&table),
+            reason: "calibration flag commands require a calibration table".to_owned(),
+        });
+    }
+    calibration::run_program(&mut table, requests, write_flags, local_selection)
 }
 
 fn report_after(
