@@ -60,6 +60,9 @@ pub use imsubimage::{
     ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
     ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
 };
+pub use imsubimage::{
+    ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile,
+};
 mod list_log;
 mod planes;
 mod projection_header;

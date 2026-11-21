@@ -6,6 +6,7 @@ mod axis_labels;
 mod construction;
 pub(super) use construction::{append_coordinate, validate_coordinate_indices};
 mod conversion_frames;
+pub(super) use conversion_frames::profile_frequency_frame;
 mod convert_direction;
 mod direction_edit;
 mod doppler;
