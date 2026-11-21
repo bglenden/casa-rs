@@ -45,6 +45,9 @@ impl Columns {
             return Ok(Self::Memory(statistics.into_iter().map(load).collect()));
         }
         let mut lattice = TempLattice::new(lattice_shape, policy.clone())?;
+        // Statistic columns are written and read in order. Keep their
+        // temporary tile cache from retaining the whole result in memory.
+        lattice.set_cache_size_in_tiles(2)?;
         let mut start = vec![0; rank + 1];
         for (column, statistic) in statistics.into_iter().enumerate() {
             start[rank] = column;

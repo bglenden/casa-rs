@@ -23,12 +23,13 @@ impl Rows {
         if !disk {
             return Ok(Self::Memory(Vec::with_capacity(rows)));
         }
-        let table = TempLattice::new(
+        let mut table = TempLattice::new(
             vec![COLS, rows],
             TempStoragePolicy::Paged {
                 scratch: ScratchSpace::SystemTemp,
             },
         )?;
+        table.set_cache_size_in_tiles(2)?;
         Ok(Self::Paged {
             table: Box::new(table),
             block: Vec::with_capacity(COLS * BLOCK_ROWS),
