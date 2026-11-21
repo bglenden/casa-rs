@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use casa_coordinates::CoordinateSystem;
+use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Axis, IxDyn};
 
@@ -209,9 +209,18 @@ impl ProfileProducts {
                 let mut image = create(output.shape.clone(), &output.coordinates, path)?;
                 image.set_units(fit.source.units())?;
                 image.set_misc_info(fit.source.misc_info())?;
-                if fit.options.multifit {
-                    image.set_image_info(&plan.image_info)?;
+                let mut info = plan.image_info.clone();
+                if !fit.options.multifit
+                    && info.beam_set.is_multi()
+                    && [CoordinateType::Spectral, CoordinateType::Stokes]
+                        .into_iter()
+                        .filter_map(|kind| fit.source.find_axis(kind))
+                        .any(|axis| axis != fit.selection.axis && plan.shape[axis] > 1)
+                {
+                    let beam = *info.beam_set.beam(0, 0);
+                    info.beam_set.set_all(beam);
                 }
+                image.set_image_info(&info)?;
                 let spectrum = Some(SpectrumProduct { image, mask: None });
                 if matches!(product.kind, Kind::Model) {
                     output.model = spectrum;
@@ -233,6 +242,17 @@ impl ProfileProducts {
         if self.model.is_none() && self.residual.is_none() {
             return Ok(());
         }
+        let mut shape = vec![1; self.shape.len()];
+        shape[axis] = data.values.len();
+        let dims = IxDyn(&shape);
+        if outcome.is_none() {
+            let values = array(dims.clone(), data.values.clone());
+            let mask = array(dims, data.valid.clone());
+            for output in [&mut self.model, &mut self.residual].into_iter().flatten() {
+                output.put(&values, &mask, position)?;
+            }
+            return Ok(());
+        }
         let fit = outcome.filter(|outcome| outcome.valid);
         let solution = fit.and_then(|fit| {
             fit.solution.as_ref().map(|(curve, solution)| {
@@ -242,9 +262,6 @@ impl ProfileProducts {
                     .collect::<Vec<_>>()
             })
         });
-        let mut shape = vec![1; self.shape.len()];
-        shape[axis] = data.values.len();
-        let dims = IxDyn(&shape);
         let values = solution.unwrap_or_else(|| vec![f64::NAN; data.values.len()]);
         let mask = array(
             dims.clone(),

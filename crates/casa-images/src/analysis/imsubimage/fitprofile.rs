@@ -250,13 +250,14 @@ impl<'a> ImageProfileFit<'a> {
 
     /// Fit the selected profiles and write requested output products to staged paths.
     ///
+    /// Returns the result record and its five fit count history messages.
     /// Some solution images are absent when no profile converges. Model, residual,
     /// and sigma products are filled in bounded image sections. The caller publishes
     /// any completed staged products at their requested destinations.
     ///
     /// # Errors
     /// Input reads, mask or sigma preparation, native metadata or output writes failed.
-    pub fn fit(self, staged: &[Option<&Path>]) -> Result<RecordValue, ImageError> {
+    pub fn fit(self, staged: &[Option<&Path>]) -> Result<(RecordValue, [String; 5]), ImageError> {
         let axis = ProfileAxis::new(&self.selection, self.models.spectral_polynomial.is_some())?;
         let plane_mask = self.selection.selected_planes(self.options.planes)?;
         let reader = self.selection.reader(
@@ -290,6 +291,7 @@ impl<'a> ImageProfileFit<'a> {
             1
         };
         let mut previous = Vec::<(Vec<usize>, Vec<f64>)>::new();
+        let mut attempts = 0;
         for lane_number in 0..lanes {
             let position = self.selection.position(lane_number);
             let world_pixel = self.world_pixel(&position);
@@ -304,6 +306,7 @@ impl<'a> ImageProfileFit<'a> {
                 &previous,
             )?;
             if let Some(outcome) = &outcome {
+                attempts += 1;
                 results.attempted[IxDyn(&position)] = outcome.attempted;
                 results.direction(&position, axis.direction(&world_pixel));
                 if let Some((curve, solution)) = &outcome.solution {
@@ -326,17 +329,27 @@ impl<'a> ImageProfileFit<'a> {
             }
             products.write_spectrum(&position, self.selection.axis, &data, outcome.as_ref())?;
         }
-        let converged = results.converged.iter().any(|&value| value);
+        let count = |flags: &casa_types::ArrayD<bool>| flags.iter().filter(|&&flag| flag).count();
+        let succeeded = count(&results.succeeded);
+        let converged = count(&results.converged);
+        let valid = count(&results.valid);
+        let summary = [
+            format!("Number of profiles       = {lanes}"),
+            format!("Number of fits attempted = {attempts}"),
+            format!("Number succeeded         = {succeeded}"),
+            format!("Number converged         = {converged}"),
+            format!("Number valid             = {valid}"),
+        ];
         let record = results.finish(&axis.unit, self.source.units(), axis.has_direction());
         products.finish(
             &self,
             staged,
             &record,
-            converged,
+            converged > 0,
             sigma.as_ref(),
             &axis.unit,
         )?;
-        Ok(record)
+        Ok((record, summary))
     }
 
     fn world_pixel(&self, position: &[usize]) -> Vec<f64> {

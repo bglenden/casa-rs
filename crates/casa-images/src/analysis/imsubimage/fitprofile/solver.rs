@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_numerics::solve_symmetric_positive_definite;
+use casa_numerics::{invert_symmetric_positive_definite, solve_symmetric_positive_definite};
 
 use super::curve::Curve;
 
@@ -75,14 +75,11 @@ pub(super) fn solve(curve: &Curve, samples: &[Sample]) -> Option<Solution> {
     if converged && !free.is_empty() {
         let (normal, _) = normal_equations(curve, &values, &free, samples);
         let variance = score / (samples.len() - free.len()) as f64;
-        let mut unit = vec![0.; free.len()];
+        let covariance = invert_symmetric_positive_definite(&normal, free.len());
         for (column, &parameter) in free.iter().enumerate() {
-            unit[column] = 1.;
-            errors[parameter] = solve_symmetric_positive_definite(&normal, &unit)
-                .map_or(f64::NAN, |covariance| {
-                    (covariance[column] * variance).sqrt()
-                });
-            unit[column] = 0.;
+            errors[parameter] = covariance.as_ref().map_or(f64::NAN, |covariance| {
+                (covariance[column * (free.len() + 1)] * variance).sqrt()
+            });
         }
     }
     Some(Solution {
@@ -109,25 +106,15 @@ fn normal_equations(
     let count = free.len();
     let mut normal = vec![0.; count * count];
     let mut rhs = vec![0.; count];
-    let mut scratch = parameters.to_vec();
-    let mut derivative = vec![0.; count];
+    let mut slopes = vec![0.; parameters.len()];
     for row in samples {
         let residual = row.y - curve.fitted_value(parameters, row.x);
-        for (&parameter, slope) in free.iter().zip(&mut derivative) {
-            let center = parameters[parameter];
-            let step = 1e-5 * center.abs().max(1.);
-            scratch[parameter] = center + step;
-            let plus = curve.fitted_value(&scratch, row.x);
-            scratch[parameter] = center - step;
-            let minus = curve.fitted_value(&scratch, row.x);
-            scratch[parameter] = center;
-            *slope = (plus - minus) / (2. * step);
-        }
-        for (i, &slope) in derivative.iter().enumerate() {
-            let weighted = row.weight * slope;
+        curve.gradient(parameters, row.x, &mut slopes);
+        for (i, &parameter) in free.iter().enumerate() {
+            let weighted = row.weight * slopes[parameter];
             rhs[i] += weighted * residual;
-            for j in 0..=i {
-                normal[i * count + j] += weighted * derivative[j];
+            for (j, &parameter) in free[..=i].iter().enumerate() {
+                normal[i * count + j] += weighted * slopes[parameter];
             }
         }
     }

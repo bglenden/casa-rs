@@ -10,11 +10,12 @@ use casa_images::analysis::{
 };
 use casa_images::{Image, ImageInterface};
 use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
-use ndarray::{IxDyn, ShapeBuilder};
+use ndarray::{Dimension, IxDyn, ShapeBuilder};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::convert::{DoubleList, IntList, StringList, Variant, quantity};
+use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
@@ -22,6 +23,11 @@ use super::create::NamedImageStages;
 use super::data_compat::record_to_py;
 use super::handle::{ImageHandle, raised};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
+
+struct FitReport {
+    record: RecordValue,
+    logs: Vec<LogLine>,
+}
 
 struct ProfileRequest<'a> {
     selection: [&'a str; 3],
@@ -173,35 +179,50 @@ impl PyImageTool {
             append,
             logresults,
         };
-        let record = py.detach(|| {
+        let result = py.detach(|| {
             let state = self.state();
             match &state.image {
                 Some(source) => request.run(source, state.history),
-                None => Ok(RecordValue::default()),
+                None => Ok(FitReport {
+                    record: RecordValue::default(),
+                    logs: Vec::new(),
+                }),
             }
         })?;
-        profile_record(py, record)
+        emit(py, "casars.tools.image", &result.logs)?;
+        profile_record(py, result.record)
     }
 }
 
 impl ProfileRequest<'_> {
-    fn run(self, attachment: &AttachedImage, history: bool) -> PyResult<RecordValue> {
+    fn run(self, attachment: &AttachedImage, history: bool) -> PyResult<FitReport> {
         let sigma = match &self.sigma {
             SigmaArgument::Path(path) => Some(Image::open(path).map_err(raised)?),
             _ => None,
         };
-        let (stages, record) = read_locked(attachment, |source| match source {
+        validate_log(self.logfile)?;
+        let (stages, record, summary) = read_locked(attachment, |source| match source {
             ImageHandle::Float(storage) => storage.with_float_view(|image| {
                 self.compute(attachment, source, image, sigma.as_ref(), history)
             }),
             _ => Err(raised("This method only supports Float valued images")),
         })?;
         stages.publish(true)?;
-        if !self.logfile.is_empty() {
-            let text = self.log_text(&record);
-            write_log(self.logfile, &text, self.append)?;
+        let mut logs: Vec<_> = summary.iter().cloned().map(LogLine::info).collect();
+        if self.logresults || !self.logfile.is_empty() {
+            let details = self.log_text(&record);
+            if !self.logfile.is_empty() {
+                write_log(
+                    self.logfile,
+                    &format!("{}\n\n{details}", summary.join("\n")),
+                    self.append,
+                )?;
+            }
+            if self.logresults {
+                logs.push(LogLine::info(details));
+            }
         }
-        Ok(record)
+        Ok(FitReport { record, logs })
     }
 
     fn compute(
@@ -211,7 +232,7 @@ impl ProfileRequest<'_> {
         image: &dyn ImageInterface<f32>,
         sigma: Option<&Image>,
         history: bool,
-    ) -> PyResult<(NamedImageStages, RecordValue)> {
+    ) -> PyResult<(NamedImageStages, RecordValue, [String; 5])> {
         let mut beam_record = image.image_info().map_err(raised)?.to_record();
         attachment.beam_view().apply_to(&mut beam_record);
         let [pixel_box, channels, stokes] = self.selection;
@@ -259,31 +280,40 @@ impl ProfileRequest<'_> {
         )?;
         let output_is_spectrum: Vec<_> = fit
             .destinations()
-            .map(|name| self.outputs.spectra.contains(&name))
+            .map(|name| self.outputs.spectra.contains(&name) || self.outputs.sigma == name)
             .collect();
         let stages = NamedImageStages::new(fit.destinations(), false)?;
         let paths = stages.paths();
-        let record = fit.fit(&paths).map_err(raised)?;
-        for path in paths
-            .into_iter()
-            .zip(output_is_spectrum)
-            .filter_map(|(path, is_spectrum)| path.filter(|_| is_spectrum))
+        let (record, summary) = fit.fit(&paths).map_err(raised)?;
         {
-            let mut image = Image::open(path).map_err(raised)?;
-            image
-                .append_history_entries(&source.history_entries()?)
-                .map_err(raised)?;
-            if history {
+            let mut paths = paths
+                .into_iter()
+                .zip(output_is_spectrum)
+                .filter_map(|(path, with_history)| path.filter(|_| with_history))
+                .peekable();
+            let prior = if paths.peek().is_some() {
+                source.history_entries()?
+            } else {
+                Vec::new()
+            };
+            for path in paths {
+                let mut image = Image::open(path).map_err(raised)?;
+                image.append_history_entries(&prior).map_err(raised)?;
+                if history {
+                    image
+                        .append_history_at(
+                            "::image::fitprofile",
+                            &["Ran ia.fitprofile".into(), self.history_call()],
+                        )
+                        .map_err(raised)?;
+                }
                 image
-                    .append_history_at(
-                        "::image::fitprofile",
-                        &["Ran ia.fitprofile".into(), self.history_call()],
-                    )
+                    .append_history_at("::ImageProfileFitter::fit", &summary)
                     .map_err(raised)?;
+                image.save().map_err(raised)?;
             }
-            image.save().map_err(raised)?;
         }
-        Ok((stages, record))
+        Ok((stages, record, summary))
     }
 
     fn history_call(&self) -> String {
@@ -306,18 +336,42 @@ impl ProfileRequest<'_> {
     }
 
     fn log_text(&self, record: &RecordValue) -> String {
-        let summary = ["attempted", "succeeded", "converged", "valid"].map(|field| {
-            let count = match record.get(field) {
-                Some(Value::Array(ArrayValue::Bool(values))) => {
-                    values.iter().filter(|&&value| value).count()
+        use std::fmt::Write as _;
+
+        let mut text = format!("Input parameters ---\n{}\n", self.history_call());
+        let Some(Value::Array(ArrayValue::Bool(valid))) = record.get("valid") else {
+            return text;
+        };
+        for (pixel, &ok) in valid.indexed_iter() {
+            let position = pixel.slice();
+            let _ = writeln!(
+                text,
+                "Fit at pixel {position:?}\n    Valid: {}",
+                if ok { "YES" } else { "NO" }
+            );
+            if !ok {
+                continue;
+            }
+            for field in record.fields() {
+                let Value::Record(model) = &field.value else {
+                    continue;
+                };
+                let _ = writeln!(text, "    {}", field.name);
+                for field in model.fields() {
+                    let Value::Array(ArrayValue::Float64(values)) = &field.value else {
+                        continue;
+                    };
+                    let mut index = position.to_vec();
+                    index.push(0);
+                    let count = values.shape()[values.ndim() - 1];
+                    let _ = write!(text, "        {}", field.name);
+                    for component in 0..count {
+                        index[position.len()] = component;
+                        let _ = write!(text, "  {:.8e}", values[IxDyn(&index)]);
+                    }
+                    text.push('\n');
                 }
-                _ => 0,
-            };
-            format!("Number of {field} fits: {count}")
-        });
-        let mut text = format!("{}\n{}\n", self.history_call(), summary.join("\n"));
-        if self.logresults {
-            text.push_str(&format!("{record:?}\n"));
+            }
         }
         text
     }
@@ -416,6 +470,27 @@ fn validate_paths<'a, 'b>(
             .chain(outputs[..index].iter().copied())
         {
             ensure_artifacts_do_not_overlap(path, other).map_err(raised)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_log(path: &str) -> PyResult<()> {
+    if let Some(path) = nonempty(path).map(Path::new) {
+        if path.is_dir() {
+            return Err(raised(format!(
+                "Log destination {} is a directory",
+                path.display()
+            )));
+        }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+            && !parent.is_dir()
+        {
+            return Err(raised(format!(
+                "Log directory {} does not exist",
+                parent.display()
+            )));
         }
     }
     Ok(())

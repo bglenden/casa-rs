@@ -1,0 +1,287 @@
+"""Spectral fitting and native image products against CASA 6.7.6.14."""
+
+import numpy as np
+import pytest
+
+from casars import tools
+
+
+@pytest.fixture(scope="module")
+def casa():
+    api = pytest.importorskip("casatools")
+    assert api.version_string().replace("-", ".") == "6.7.6.14"
+    return api
+
+
+def _line(x, amplitude, center, width, kind="g"):
+    distance = (x - center) / width
+    if kind == "l":
+        return amplitude / (1 + 4 * distance ** 2)
+    return amplitude * np.exp(-4 * np.log(2) * distance ** 2)
+
+
+def _cube(data, shape=(2, 2)):
+    return np.broadcast_to(data, (*shape, len(data))).astype(np.float32, copy=True)
+
+
+def _fit(api, data, csys=None, **arguments):
+    im = api.image()
+    try:
+        assert im.fromarray(pixels=data, **({} if csys is None else {"csys": csys}))
+        return im.fitprofile(multifit=True, logresults=False, **arguments)
+    finally:
+        im.done()
+
+
+def _read(api, path):
+    im = api.image()
+    try:
+        assert im.open(str(path))
+        return (im.getchunk(), im.getchunk(getmask=True), im.brightnessunit(),
+                im.toworld([0] * len(im.shape()))["numeric"], im.history())
+    finally:
+        im.done()
+
+
+def _compare_records(native, expected, *, compare_direction=True):
+    assert native.keys() == expected.keys()
+    for name in ("attempted", "succeeded", "converged", "valid"):
+        assert native[name].dtype == expected[name].dtype == np.bool_
+        np.testing.assert_array_equal(native[name], expected[name])
+    for name in ("ncomps", "niter"):
+        assert native[name].dtype == expected[name].dtype == np.int64
+        assert native[name].shape == expected[name].shape
+    np.testing.assert_array_equal(native["ncomps"], expected["ncomps"])
+    np.testing.assert_array_equal(native["type"], expected["type"])
+    if compare_direction and "direction" in expected:
+        assert native["direction"].dtype.kind == "U"
+        np.testing.assert_array_equal(native["direction"], expected["direction"])
+    for name in ("xUnit", "yUnit"):
+        assert native[name] == expected[name]
+    for name, model in expected.items():
+        if isinstance(model, dict):
+            assert native[name].keys() == model.keys()
+            for key, value in model.items():
+                if isinstance(value, str):
+                    assert native[name][key] == value
+                else:
+                    assert native[name][key].dtype == value.dtype == np.float64
+                    np.testing.assert_allclose(native[name][key], value, rtol=.002, atol=4e-7)
+
+
+@pytest.mark.parametrize("kind,form", [
+    ("g", "scalar"), ("g", "tuple"), ("g", "automatic"), ("g", "file"), ("l", "scalar"),
+])
+def test_line_models_and_estimate_forms(casa, tmp_path, kind, form):
+    x = np.arange(45.)
+    h, c, w = 6.7, 22.4, 4.9
+    noise = .011 * np.sin(x * 2.)
+    data = _cube(_line(x, h, c, w, kind) + .28 - .004 * x + noise)
+    kwargs = {"poly": 1}
+    if form == "scalar":
+        kwargs.update(pampest=5.7, pcenterest=23.1, pfwhmest=4., pfunc=kind)
+    elif form == "tuple":
+        kwargs.update(pampest=(5.7,), pcenterest=(23.1,), pfwhmest=(4.,), pfunc=["Gu"])
+    elif form == "file":
+        estimates = tmp_path / "estimates.txt"
+        estimates.write_text("# A slightly perturbed peak\n5.9,23.1,5.2\n")
+        kwargs["estimates"] = str(estimates)
+    expected = _fit(casa, data, **kwargs)
+    native = _fit(tools, data, **kwargs)
+    _compare_records(native, expected)
+    model = native[f"{kind}s"]
+    increment = 299792.458 * 1000 / 1420405751.786
+    assert model["amp"][0, 0, 0, 0] == pytest.approx(h, rel=.002)
+    assert model["fwhm"][0, 0, 0, 0] == pytest.approx(increment * w, rel=.002)
+    assert model["ampErr"][0, 0, 0, 0] > 0
+    purpose = np.sqrt(np.pi/(4*np.log(2))) if kind == "g" else np.pi / 2
+    assert model["integral"][0, 0, 0, 0] == pytest.approx(h * w * increment * purpose, rel=.004)
+
+
+def test_multiplet_ties_and_fixed_parameters(casa, tmp_path):
+    x = np.arange(51.)
+    data = _cube(_line(x, 7., 14.3, 5.) + _line(x, 2.2, 30., 3., "l")
+                 + _line(x, 6., 21., 2.) + _line(x, 3., 37., 3.) + .24)
+    arguments = dict(
+        pampest=[6., 2.], pcenterest=[14., 29.], pfwhmest=[5., 2.8],
+        pfix=["f", ""], pfunc=["G", "L"], gmncomps=2,
+        gmampest=[5., 2.5], gmcenterest=[21.1, 37.1], gmfwhmest=[2.2, 3.3],
+        gmampcon=.5, gmcentercon=16., gmfwhmcon=1.5, poly=0, box="0,0,0,0",
+    )
+    reference = _fit(casa, data, **arguments)
+    native = _fit(tools, data, **arguments, amp=str(tmp_path / "amp"))
+    _compare_records(native, reference)
+    np.testing.assert_array_equal(
+        native["type"][0, 0, 0], ["GAUSSIAN MULTIPLET", "GAUSSIAN", "LORENTZIAN", "POLYNOMIAL"],
+    )
+    assert native["gs"]["fwhmErr"].item() == 0.
+    gm = native["gm0"]
+    np.testing.assert_allclose(gm["amp"].ravel(), [6., 3.], atol=2e-6)
+    assert gm["centerErr"].ravel()[0] == gm["centerErr"].ravel()[1]
+    assert gm["fwhm"].ravel()[1] == pytest.approx(1.5 * gm["fwhm"].ravel()[0])
+    for name, value in [("amp_0", 7.), ("amp_ls_0", 2.2), ("amp_gm_0", 6.), ("amp_gm_1", 3.)]:
+        for reader in (casa, tools):
+            record = _read(reader, tmp_path / name)
+            assert record[0].item() == pytest.approx(value, abs=1e-6)
+
+
+def test_native_product_matrix_and_minimum_masked_points(casa, tmp_path):
+    pixels = _cube(2. + .5 * np.arange(11.), (3, 2))
+    mask = np.ones(pixels.shape, dtype=bool)
+    mask[0, 0, 4:] = False
+    mask[1, 0, :] = False
+    mask[0, 1, 1] = False
+    attempts = mask.sum(axis=-1, keepdims=True) >= 9
+    expected_residual = np.where(attempts, 0., pixels)
+    for writer in (casa, tools):
+        name = writer.__name__
+        source = writer.image()
+        path = tmp_path / f"{name}.im"
+        assert source.fromarray(str(path), pixels)
+        assert source.setbrightnessunit("K")
+        assert source.setrestoringbeam(major="5arcsec", minor="3arcsec", pa="14deg")
+        assert source.setmiscinfo({"provenance": 58})
+        assert source.putregion(pixelmask=mask)
+        history = source.history()
+        outputs = {k: str(tmp_path / f"{name}-{k}.im") for k in ("model", "residual", "outsigma")}
+        fit = source.fitprofile(
+            multifit=True, ngauss=0, poly=1, minpts=9, logresults=False,
+            sigma=np.where(np.arange(11) == 3, 0., 2.), planes=list(range(8)), **outputs,
+        )
+        np.testing.assert_array_equal(fit["attempted"], attempts)
+        np.testing.assert_array_equal(fit["valid"], attempts)
+        np.testing.assert_array_equal(source.getchunk(), pixels)
+        np.testing.assert_array_equal(source.getchunk(getmask=True), mask)
+        assert source.history() == history
+        assert source.done()
+        for reader in (casa, tools):
+            for label, expected in [("model", pixels), ("residual", expected_residual)]:
+                product = reader.image()
+                assert product.open(outputs[label])
+                try:
+                    assert product.brightnessunit() == "K"
+                    assert product.miscinfo()["provenance"] == 58
+                    assert product.restoringbeam()["major"]["value"] == pytest.approx(5.)
+                    np.testing.assert_allclose(product.getchunk(), expected, atol=3e-6)
+                    np.testing.assert_array_equal(product.getchunk(getmask=True), mask)
+                    assert product.history()[-1] == "Number valid             = 4"
+                finally:
+                    product.done()
+            data, valid, unit, _, history = _read(reader, outputs["outsigma"])
+            assert data.shape == pixels.shape
+            assert unit == ""
+            assert valid.all()
+            np.testing.assert_array_equal(data[2, 0], np.where(np.arange(11) == 3, 0., 1.))
+            assert history[-1] == "Number valid             = 4"
+
+
+@pytest.mark.parametrize("form", ["vector", "array", "native"])
+def test_sigma_inverse_variance(casa, tmp_path, form):
+    n = 51
+    weights = np.where(np.arange(n)==0,10.,1.)
+    values = np.where(np.arange(n)==0,11.,1.)
+    if form == "native":
+        sigma = tmp_path / "sigma.im"
+        maker = casa.image()
+        assert maker.fromarray(str(sigma), _cube(weights))
+        assert maker.done()
+        sigma = str(sigma)
+    elif form == "array":
+        sigma = _cube(weights)
+    else:
+        sigma = weights.tolist()
+    for api in (casa, tools):
+        path = tmp_path / f"{api.__name__}.model"
+        result = _fit(api, _cube(values), ngauss=0, poly=0, sigma=sigma, model=str(path))
+        assert result["valid"].all()
+        model, _, _, _, _ = _read(tools, path)
+        expected = np.dot(values, 1 / weights**2) / np.sum(1 / weights**2)
+        np.testing.assert_allclose(model, expected, atol=3e-7)
+
+
+def _freq_cube(api):
+    frequencies = 1.3e9 + np.arange(41) * 15e6
+    x = frequencies / 1e9
+    cube = (7.5 * x ** (-.61 + .19 * np.log(x))).reshape(1, 1, -1)
+    coords = api.coordsys()
+    assert coords.newcoordsys(direction=True, spectral=True)
+    assert coords.setreferencepixel([0, 0, 0])
+    assert coords.setreferencevalue(value=[0., 0., frequencies[0]])
+    assert coords.setincrement(value=[-1e-4, 1e-4, 15e6])
+    record = coords.torecord()
+    assert coords.done()
+    return cube, record
+
+
+@pytest.mark.parametrize("kind,divisor", [
+    ("plp", []), ("plp", 1e9), ("PLP", "1GHz"), ("ltp", 1e9),
+    ("ltp", {"value": 1.0, "unit": "GHz"}),
+])
+def test_spectral_polynomial_coefficients_and_native_products(casa, tmp_path, kind, divisor):
+    results = []
+    for api in (casa, tools):
+        cube, csys = _freq_cube(api)
+        prefix = tmp_path / api.__name__
+        model = str(prefix) + ".model"
+        residual = str(prefix) + ".residual"
+        solution = str(prefix) + ".coeff"
+        error = str(prefix) + ".err"
+        result = _fit(
+            api, cube, csys, spxtype=kind, spxest=[4.5, -.61, .1],
+            spxfix=[False, True, False], div=divisor,
+            model=model, residual=residual, spxsol=solution, spxerr=error,
+        )
+        results.append(result)
+        is_log = kind == "ltp"
+        expected = [np.log(7.5) if is_log else 7.5, -.61, .19]
+        fit = result[kind.lower()]
+        np.testing.assert_allclose(fit["solution"].ravel(), expected, atol=6e-7)
+        assert fit["error"].ravel()[1] == 0.
+        for reader in (casa, tools):
+            saved, mask, _, axis, _ = _read(reader, model)
+            np.testing.assert_allclose(saved, np.log(cube) if is_log else cube, atol=8e-7)
+            assert mask.all()
+            assert axis[-1] == pytest.approx(1.3e9)
+            np.testing.assert_allclose(_read(reader, residual)[0], 0., atol=6e-7)
+            for index, value in enumerate(expected):
+                pixels, mask, unit, world, _ = _read(reader, f"{solution}_{index}")
+                assert pixels.item() == pytest.approx(value, abs=6e-7)
+                assert mask.item()
+                assert unit == ""
+                assert world[-1] == pytest.approx(1.6e9)
+                uncertainty = _read(reader, f"{error}_{index}")[0].item()
+                assert uncertainty == pytest.approx(fit["error"].ravel()[index], rel=1e-6)
+    _compare_records(*results[::-1])
+
+
+def test_fully_fixed_log_spectrum_is_evaluated(tmp_path):
+    cube, csys = _freq_cube(tools)
+    model = tmp_path / "fixed.model"
+    fixed = [np.log(7.5), -.61, .19]
+    result = _fit(tools, cube, csys, spxtype="ltp", spxest=fixed, spxfix=[True] * 3,
+                  div="1GHz", model=str(model))
+    assert result["valid"].item()
+    assert result["niter"].item() == 0
+    np.testing.assert_array_equal(result["ltp"]["solution"].ravel(), fixed)
+    np.testing.assert_array_equal(result["ltp"]["error"], 0.)
+    np.testing.assert_allclose(_read(tools, model)[0], np.log(cube), atol=1.2e-7)
+
+
+def test_collapsed_profile_uses_selected_world_center_and_skips_solution_images(tmp_path):
+    image = tools.image()
+    x = np.arange(31.)
+    pixels = _cube(_line(x, 7., 15., 5.), (4, 6))
+    assert image.fromarray(pixels=pixels)
+    model, amp = tmp_path / "center.model", tmp_path / "ignored.amp"
+    world = image.toworld([1.5, 2.5, 0])["numeric"]
+    try:
+        result = image.fitprofile(pampest=6., pcenterest=15., pfwhmest=5.,
+                                  model=str(model), amp=str(amp))
+        assert result["valid"].item()
+        assert not (tmp_path / "ignored.amp_0").exists()
+        data, mask, _, coordinate, _ = _read(tools, model)
+        np.testing.assert_allclose(data, pixels[:1, :1], atol=6e-7)
+        assert mask.all()
+        np.testing.assert_allclose(coordinate, world, atol=2e-9)
+    finally:
+        image.done()

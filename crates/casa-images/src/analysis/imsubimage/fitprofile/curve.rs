@@ -130,6 +130,45 @@ impl Curve {
                 .sum::<f64>()
     }
 
+    /// Accumulate the slopes of the model with respect to the independent
+    /// parameters. Contributions from tied lines share the same slope slot.
+    pub(super) fn gradient(&self, parameters: &[f64], x: f64, slopes: &mut [f64]) {
+        slopes.fill(0.);
+        for line in &self.lines {
+            let [amplitude, center, width] = line.parameters(parameters);
+            let z = (x - center) / width;
+            let shape = line.shape(z);
+            let (center_slope, width_slope) = if shape == 0. {
+                (0., 0.)
+            } else {
+                let center = match line.kind {
+                    LineKind::Gaussian => amplitude * shape * (8. * LN_2) * z / width,
+                    LineKind::Lorentzian => amplitude * shape * shape * 8. * z / width,
+                };
+                (center, center * z)
+            };
+            for (binding, part) in line.values.iter().zip([shape, center_slope, width_slope]) {
+                slopes[binding.index] += part * binding.factor;
+            }
+        }
+        if let Some(range) = &self.polynomial {
+            polynomial_gradient(&mut slopes[range.clone()], 1., x);
+        }
+        if let Some((kind, range)) = &self.spectral {
+            let coefficients = &parameters[range.clone()];
+            let gradient = &mut slopes[range.clone()];
+            match kind {
+                SpectralPolynomial::PowerLog => {
+                    let t = x.ln();
+                    let normalization = (t * evaluate_polynomial(&coefficients[1..], t)).exp();
+                    gradient[0] = normalization;
+                    polynomial_gradient(&mut gradient[1..], coefficients[0] * normalization * t, t);
+                }
+                SpectralPolynomial::LogTransformed => polynomial_gradient(gradient, 1., x),
+            }
+        }
+    }
+
     pub(super) fn valid_widths(&self, parameters: &[f64]) -> bool {
         self.lines
             .iter()
@@ -149,10 +188,13 @@ impl Line {
 
     fn value(&self, parameters: &[f64], x: f64) -> f64 {
         let [peak, center, width] = self.parameters(parameters);
-        let z = (x - center) / width;
+        peak * self.shape((x - center) / width)
+    }
+
+    fn shape(&self, z: f64) -> f64 {
         match self.kind {
-            LineKind::Gaussian => peak * (-4. * LN_2 * z * z).exp(),
-            LineKind::Lorentzian => peak / (1. + 4. * z * z),
+            LineKind::Gaussian => (-4. * LN_2 * z * z).exp(),
+            LineKind::Lorentzian => 1. / (1. + 4. * z * z),
         }
     }
 
@@ -171,4 +213,11 @@ fn evaluate_polynomial(coefficients: &[f64], argument: f64) -> f64 {
         .iter()
         .rev()
         .fold(0., |value, &coefficient| value * argument + coefficient)
+}
+
+fn polynomial_gradient(gradient: &mut [f64], mut power: f64, x: f64) {
+    for slope in gradient {
+        *slope = power;
+        power *= x;
+    }
 }
