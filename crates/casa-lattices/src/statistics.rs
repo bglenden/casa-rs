@@ -365,9 +365,8 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
 
     /// Switch to a different lattice, resetting all data-selection state.
     ///
-    /// The current execution policy is preserved so callers can keep a
-    /// workload-specific performance preference while retargeting the
-    /// statistics object to a different lattice.
+    /// The execution and cache storage policies are preserved while
+    /// retargeting the statistics object to a different lattice.
     pub fn set_new_lattice(&mut self, lattice: &'a dyn Lattice<T>) {
         self.lattice = lattice;
         self.axes = None;

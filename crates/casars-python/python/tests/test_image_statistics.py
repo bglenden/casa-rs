@@ -139,6 +139,22 @@ def test_statistics_disk_tracks_a_rejected_edit_and_an_accepted_edit():
         image.done()
 
 
+def test_statistics_disk_reads_columns_across_multiple_robust_result_blocks():
+    x, y = np.ogrid[:5, :537]
+    pixels = (x + 2*y).astype(np.float32)
+    image = tools.image()
+    try:
+        assert image.fromarray(pixels=pixels)
+        options = dict(axes=[0], algorithm="hinges", fence=1.5, robust=True)
+        actual = image.statistics(disk=True, **options)
+        _assert_value(actual, image.statistics(disk=False, **options))
+        np.testing.assert_array_equal(actual["npts"], np.full(537, 5.))
+        np.testing.assert_array_equal(actual["sum"], 10 + 10*np.arange(537))
+        np.testing.assert_array_equal(actual["median"], 2 + 2*np.arange(537))
+    finally:
+        image.done()
+
+
 @pytest.mark.parametrize("bitpix,blank", [(16, -999), (-32, np.nan)])
 def test_statistics_on_attached_fits_matches_casa_and_excludes_blanks(casa, tmp_path, bitpix, blank):
     path = tmp_path / "masked.fits"
