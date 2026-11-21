@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "plotms",
   "casa_version": "6.7.6.14",
-  "audit_revision": "e775bd07a6e5b9ebfbb4b812844564b063dc78e9",
+  "audit_revision": "b60d8a6a140bd6f0a29177584db5ff91244f5d12",
   "parameters": {
     "vis": {
       "scope": "Input MS or CalTable (blank for none)",
@@ -17,7 +17,8 @@
     "caltable": {
       "scope": "Input CalTable (blank for none)",
       "evidence": [
-        "paired"
+        "paired",
+        "legacy-calibration"
       ],
       "behaviors": [
         "table"
@@ -1031,34 +1032,37 @@
   "behaviors": [
     {
       "id": "table",
-      "title": "Read current-format calibrations",
+      "title": "Read MeasurementSets and calibration tables",
       "status": "Partial",
-      "scope": "Open a current casacore calibration table through vis or caltable, preserving the public None return and input-path checks.",
+      "scope": "Open casacore MeasurementSets and current, BPOLY and GSPLINE calibration tables through vis or caltable, preserving the public None return and input-path checks.",
       "evidence": [
-        "paired"
+        "paired",
+        "legacy-calibration"
       ],
-      "gap": "Legacy BPOLY and GSPLINE table loading and the remaining MS plotting paths are open."
+      "gap": "Remaining MeasurementSet plotting paths are open under #1032 and #215."
     },
     {
       "id": "selection",
       "title": "Select solution samples",
       "status": "Partial",
-      "scope": "Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors.",
+      "scope": "Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC.",
       "evidence": [
         "paired",
-        "selectors"
+        "selectors",
+        "legacy-calibration"
       ],
-      "gap": "Further legacy formats and MS plotting paths remain open."
+      "gap": "Remaining MeasurementSet selection paths are open under #1032 and #215."
     },
     {
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata.",
       "evidence": [
         "paired",
         "selectors",
-        "callibrary"
+        "callibrary",
+        "legacy-calibration"
       ],
       "gap": "Pointing-coordinate axes and advanced per-axis MS data columns are open."
     },
@@ -1097,10 +1101,11 @@
       "id": "export",
       "title": "Save and publish selected plot products",
       "status": "Partial",
-      "scope": "Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.",
+      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.",
       "evidence": [
         "paired",
-        "callibrary"
+        "callibrary",
+        "legacy-calibration"
       ],
       "gap": "More export, multi-plot state and interactive display forms remain open."
     },
@@ -1116,7 +1121,7 @@
         "remaining",
         "callibrary"
       ],
-      "gap": "The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215."
+      "gap": "Remaining shared PlotMS forms are tracked in #1032 and #215."
     }
   ],
   "decisions": [
@@ -1145,6 +1150,19 @@
       "evidence": [
         "selectors"
       ]
+    },
+    {
+      "id": "gspline-negative-antenna",
+      "state": "Proposed",
+      "inputs": "A five-antenna GSPLINE table plotted with antenna=\"!A2\".",
+      "casa": "Displays only antenna A2, despite negation.",
+      "ours": "Displays A0, A1, A3 and A4.",
+      "rationale": "Honor the documented antenna exclusion instead of passing the excluded ID to the plot cache.",
+      "impact": "The displayed antenna membership follows the source-row filter.",
+      "record": "PlotMS shows the excluded antenna on a GSPLINE plot",
+      "evidence": [
+        "legacy-calibration"
+      ]
     }
   ],
   "evidence": {
@@ -1159,12 +1177,13 @@
       "receipt": "resources/casa-compat/evidence/plotms-calibration-20261119.json",
       "links": [
         "tools/casa-compat/plotms_calibration_oracle.py"
-      ]
+      ],
+      "source_revision": "e775bd07a6e5b9ebfbb4b812844564b063dc78e9"
     },
     "remaining": {
       "kind": "Remaining calibration PlotMS workflow comparisons",
       "state": "planned",
-      "scope": "Advanced calibration table and MS plotting under #1526, #1032 and #215.",
+      "scope": "Shared PlotMS rendering, MeasurementSet workflows and interactive controls under #1032 and #215.",
       "result": "Requires additional native behavior and paired evidence.",
       "links": []
     },
@@ -1234,6 +1253,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-callibrary-20261119.json",
       "links": [
         "https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py"
+      ]
+    },
+    "legacy-calibration": {
+      "kind": "Same-input legacy calibration PlotMS comparison",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on the same persisted BPOLY and GSPLINE tables with receptor-dependent gains, surviving and flagged receptors, and source-row selection.",
+      "result": "20 text exports, 31,696 points, exact headers and metadata, and 2,080 rendered coordinates matched. Maximum ordinate normalized RMS 3.78525e-07. Four invalid requests were refused by both engines. The negated-antenna diagnostic confirms the CASA bug and native selection behavior. The input tables and associated MeasurementSet were unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "b60d8a6a140bd6f0a29177584db5ff91244f5d12",
+      "source_revision": "b60d8a6a140bd6f0a29177584db5ff91244f5d12",
+      "command": "casa-python tools/casa-compat/plotms_legacy_calibration_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-legacy-calibration-20261121.json",
+      "links": [
+        "tools/casa-compat/plotms_legacy_calibration_oracle.py"
       ]
     }
   }
