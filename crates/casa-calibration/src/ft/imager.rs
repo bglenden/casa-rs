@@ -754,6 +754,14 @@ impl ImagerPrediction {
             .as_ref()
             .filter(|_| self.apply_voltage_pattern && !mosaic)
             .filter(|_| !model.images.is_empty() || (scratch && !model.incremental));
+        if self.voltage_squint
+            && pattern.is_some_and(|pattern| pattern.table.is_some())
+            && !self.supports_voltage_batches()
+        {
+            return Err(invalid(
+                "custom voltage-pattern squint for this legacy Fourier mode is pending #1520",
+            ));
+        }
         if scratch
             && pattern.is_some()
             && model.components.is_some()

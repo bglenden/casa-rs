@@ -7,6 +7,7 @@ use casa_numerics::PrimaryBeam;
 use casa_tables::{Table, TableOptions};
 use casa_types::{
     RecordValue, ScalarValue, Value,
+    measures::direction_from_record,
     quanta::{Quantity, Unit},
 };
 
@@ -240,6 +241,37 @@ pub fn radial_pattern(record: &RecordValue) -> Result<PrimaryBeam, VoltagePatter
             "saved radial law {name} (#1307)"
         ))),
     }
+}
+
+/// Read a stored radial pattern's squint in tangent-angle radians and Hz.
+/// An omitted or zero direction leaves the beam centre unchanged.
+///
+/// # Errors
+/// A supplied direction or reference frequency is invalid.
+pub fn radial_squint(record: &RecordValue) -> Result<Option<([f64; 2], f64)>, VoltagePatternError> {
+    let Some(direction) = record.get("squintdir") else {
+        return Ok(None);
+    };
+    let Value::Record(direction) = direction else {
+        return Err(VoltagePatternError::read(
+            "squintdir must be a direction record",
+        ));
+    };
+    let direction = direction_from_record(direction).map_err(VoltagePatternError::read)?;
+    // PBMath reads a signed tangent offset, even when the direction was
+    // serialized with its longitude in [0, 2π).
+    let [x, y, _] = direction.cosines();
+    let offset = [y.atan2(x), direction.latitude_rad()];
+    if offset == [0.; 2] {
+        return Ok(None);
+    }
+    let frequency = quantity(record, "squintreffreq", "Hz")?;
+    if !offset.iter().all(|value| value.is_finite()) || !frequency.is_finite() || frequency <= 0. {
+        return Err(VoltagePatternError::read(
+            "invalid radial beam squint or reference frequency",
+        ));
+    }
+    Ok(Some((offset, frequency)))
 }
 
 fn quantity(record: &RecordValue, field: &str, unit: &str) -> Result<f64, VoltagePatternError> {
