@@ -134,10 +134,11 @@ pub(super) fn parse_crtf_document<T: ImagePixel>(
                 .into(),
         ));
     }
+    let copy_text = origin_shape.is_some();
     let projection = text_origin
+        .filter(|origin| !copy_text || !same_direction(origin, image.coordinates()))
         .map(|origin| insert_region::Projection::new(origin, image.coordinates()))
         .transpose()?;
-    let copy_text = origin_shape.is_some();
     for raw_stmt in text.split(|character| character == '\n' || (!copy_text && character == ';')) {
         let stmt = raw_stmt.trim();
         if stmt.is_empty() || stmt.starts_with('#') {
@@ -343,4 +344,12 @@ fn planes_overlap(
         }
         Err(error) => Err(error),
     }
+}
+
+fn same_direction(origin: &CoordinateSystem, input: &CoordinateSystem) -> bool {
+    let record = |coordinates: &CoordinateSystem| {
+        coordinates.find_coordinate(CoordinateType::Direction)
+            .map(|index| coordinates.coordinate(index).to_record())
+    };
+    record(origin).zip(record(input)).is_some_and(|(left, right)| left == right)
 }
