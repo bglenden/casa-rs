@@ -702,16 +702,15 @@ impl ImagerVoltagePattern {
         let squint_law = if squint {
             match (custom.as_ref(), default_beam) {
                 (Some(custom), _) => custom.squint,
-                // PBMath1DEVLA supplies its radial fit when squint is requested.
-                (None, Some((PrimaryBeam::Evla, _))) => None,
-                (None, Some((beam, reference_hz))) if telescope == "VLA" && beam.squints() => {
+                (None, Some((beam, reference_hz)))
+                    if beam.squint_displacement_rad(reference_hz, reference_hz, 0., true)
+                        != [0.; 2] =>
+                {
                     Some(BeamSquintLaw::Telescope { beam, reference_hz })
                 }
-                _ => {
-                    return Err(invalid(
-                        "this legacy voltage-pattern squint is pending #1520",
-                    ));
-                }
+                // CASA accepts GOFIGURE for the other default profiles and
+                // its dish-diameter fallback, which have no physical offset.
+                (None, _) => None,
             }
         } else {
             None
@@ -723,7 +722,7 @@ impl ImagerVoltagePattern {
         }
         let projected_model = custom.as_ref().is_some_and(|custom| custom.projected_image)
             || (telescope == "VLA" && self.table.is_none())
-            || matches!(squint_law, Some(BeamSquintLaw::Table { .. }));
+            || squint_law.is_some();
         let pattern = if let Some(custom) = custom {
             custom.pattern
         } else {
