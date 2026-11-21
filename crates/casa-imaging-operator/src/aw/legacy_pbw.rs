@@ -172,6 +172,17 @@ impl LegacyPbWConvolution {
         self
     }
 
+    /// Restore the W coordinate of a transform saved during cache generation.
+    /// # Errors
+    /// The scale must be finite and positive.
+    pub fn with_w_scale(mut self, scale: f64) -> Result<Self, OperatorError> {
+        if !scale.is_finite() || scale <= 0. {
+            return Err(invalid("invalid legacy PB/W scale"));
+        }
+        self.w_scale = scale;
+        Ok(self)
+    }
+
     fn rotation(&self, key: CfKey) -> (f64, f64) {
         let bits = (u32::from(key.group) << 16) | u32::from(key.cube);
         let angle = f64::from(f32::from_bits(bits)) - self.reference_angle_rad;
