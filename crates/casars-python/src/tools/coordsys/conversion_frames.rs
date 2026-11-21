@@ -18,6 +18,10 @@ use super::{CoordinateState, PyCoordsys, default_spectral_conversion};
 pub(super) struct FrameName(Option<String>);
 
 impl FrameName {
+    pub(super) fn radio_default() -> Self {
+        Self(Some("radio".into()))
+    }
+
     pub(super) fn direction_default() -> Self {
         Self(Some("direction".into()))
     }

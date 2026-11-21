@@ -8502,6 +8502,13 @@ such as `21cm`, and records it as `0.21 Hz`. It can also store an infinite
 rest frequency. casa-rs rejects these inputs while preserving the prior
 spectral coordinate.
 
+## An empty nested list crashes `coordsys.convertmany`
+
+CASA 6.7.6.14 exits with a segmentation fault when a two-axis coordinate
+system receives `convertmany([[], []])`. The equivalent NumPy array with
+shape `(2, 0)` returns an empty double array of that shape. casa-rs returns
+the same empty array for both representations.
+
 ## Invalid slice indices can terminate `image.getslice`
 
 On a `[7, 8, 3]` image, CASA 6.7.6.14 aborts on `getslice([0, 2],

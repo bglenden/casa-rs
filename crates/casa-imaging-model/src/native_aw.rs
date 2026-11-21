@@ -272,13 +272,21 @@ impl NativeAwRequestInput {
                         .any(|previous| previous.spectral_window == group.spectral_window)
                 })
         };
+        let bad_angles = if legacy_vla {
+            let mut seen = HashSet::with_capacity(pa_values.len());
+            pa_values
+                .iter()
+                .any(|value| !value.is_finite() || !seen.insert(value.to_bits()))
+        } else {
+            !strictly_sorted(pa_values)
+        };
         if self.antenna_diameter_m != 25.0
             || !strictly_sorted(w_values)
             || w_values[0] < 0.0
             || !self.w_increment.is_finite()
             || self.w_increment < 0.0
             || (self.w_increment == 0.0 && w_values.len() > 1)
-            || !strictly_sorted(pa_values)
+            || bad_angles
             || !self.reference_frequency_hz.is_finite()
             || self.reference_frequency_hz <= 0.0
             || mueller_elements.iter().any(|m| !matches!(m, 0 | 15))

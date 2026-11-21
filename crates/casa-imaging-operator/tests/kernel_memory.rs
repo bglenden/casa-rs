@@ -620,8 +620,61 @@ fn an_aw_catalog_holds_at_most_its_charge() {
             4,
         )
         .expect("generate");
-        catalog_holds_at_most_its_charge(root.path());
+        catalog_holds_at_most_its_charge(|bound| aw_open(root.path(), bound));
     }
+}
+
+/// Each rotated legacy block retains its own base's frequency and W planes.
+#[test]
+fn a_legacy_multi_pa_catalog_holds_at_most_its_charge() {
+    if !alone("a_legacy_multi_pa_catalog_holds_at_most_its_charge") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("cache directory");
+    let mut request = aw_request_with(64, 2, 2);
+    request.pa_values = vec![0.45, -0.2];
+    request.maximum_cells *= 2;
+    let spectral = casa_coordinates::SpectralCoordinate::new(
+        casa_types::measures::frequency::FrequencyRef::TOPO,
+        1.4e9,
+        2.4e4,
+        0.,
+        1.42e9,
+    );
+    AwCatalog::generate_legacy_vla(root.path(), &request, "test", &spectral, 2).expect("generate");
+    let routing = PolarizationRouting::from_saved_planes(
+        &[Correlation::RR, Correlation::LL],
+        &[
+            PolarizationCoordinate::CircularRr,
+            PolarizationCoordinate::CircularLl,
+        ],
+    )
+    .expect("routing");
+    let indexing = AwIndexing {
+        conjugate_beams: false,
+        image_reference_hz: 1.5e9,
+        pa_tolerance_rad: 0.2,
+        feed_zero_angles_rad: None,
+        rotation: Some(casa_imaging_operator::AwPaRotation {
+            step_rad: 0.01,
+            require_repeatable_schedule: false,
+            samples: std::sync::Arc::new([
+                (1., 0.45),
+                (2., 0.5),
+                (3., -0.2),
+                (4., -0.14),
+                (5., 0.5),
+            ]),
+        }),
+    };
+    let geometry = geometry(64, 1.0e-4, GridPadding::None);
+    catalog_holds_at_most_its_charge(|bound| {
+        let catalog =
+            AwCatalog::open_legacy_casa(root.path(), indexing.clone(), &geometry, &routing, bound)
+                .expect("legacy catalog");
+        assert_eq!(catalog.groups(), (2 + 2) * 2 * 2);
+        catalog
+    });
 }
 
 /// Open the catalog generated into `root`, at most `bound` bytes of cells
@@ -654,11 +707,11 @@ fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 2]) {
     assert!(catalog.prediction_taps(key, prediction).half_support()[0] > 0);
 }
 
-/// Open the catalog in `root` and fetch every group through one worker's
+/// Open the catalog and fetch every group through one worker's
 /// holds, with a bound below one group and one above every group.
-fn catalog_holds_at_most_its_charge(root: &std::path::Path) {
+fn catalog_holds_at_most_its_charge(open: impl Fn(usize) -> AwCatalog) {
     let open_and_fetch = |bound: usize| {
-        let catalog = aw_open(root, bound);
+        let catalog = open(bound);
         let mut holds = [CellHold::new(), CellHold::new()];
         for group in 0..catalog.groups() {
             fetch(&catalog, group, &mut holds);

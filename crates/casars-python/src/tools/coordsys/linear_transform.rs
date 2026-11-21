@@ -331,6 +331,7 @@ impl CoordinateState {
             }
         }
         drop(matrices);
+        coordinates.retain_direction_mix_ranges(&self.coordinates);
         self.record = record;
         self.coordinates = coordinates;
         Ok(())

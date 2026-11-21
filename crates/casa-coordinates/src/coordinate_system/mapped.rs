@@ -8,6 +8,8 @@ use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
 
 use super::record_axes::{check_numbering, live_coordinate, read_models};
 use super::{CoordinateSystem, RecordCoordinate, coordinate_record_entries, record_basename};
+
+mod mixed;
 use crate::coordinate::CoordinateModel;
 use crate::direction::convert_value_to_unit;
 use crate::error::CoordinateError;

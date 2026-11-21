@@ -66,7 +66,7 @@ const METHODS: &[Method] = &[
             param("shape", K::Ints, Ints(&[-1])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "convertdirection",
@@ -87,7 +87,7 @@ const METHODS: &[Method] = &[
             param("shape", K::Ints, Ints(&[-1])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "coordinatetype",
