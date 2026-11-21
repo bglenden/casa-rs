@@ -1,5 +1,10 @@
 """Native table rename semantics through the image tool."""
 
+import getpass
+import os
+import re
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -84,6 +89,190 @@ def test_rename_attachment_failures(tmp_path, backend):
         tool.rename(target)
     assert tool.isopen()
     assert tool.done()
+
+
+def _rename_source(api, directory, storage):
+    image = api.image()
+    native = directory / "source.im"
+    values = np.arange(12, dtype=np.float32).reshape(3, 4)
+    assert image.fromarray(str(native), values)
+    if storage == "native":
+        return image, native, values
+    fits = native.with_suffix(".fits")
+    assert image.tofits(str(fits))
+    assert image.done()
+    assert image.open(str(fits))
+    return image, fits, values
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("reader_backend", ["casa", "casars"])
+@pytest.mark.parametrize("storage", ["native", "fits"])
+@pytest.mark.parametrize("spelling", ["simple", "braced", "nested", "named-home", "undefined"])
+def test_rename_expands_the_destination_and_keeps_the_user_spelling(
+    tmp_path, monkeypatch, backend, reader_backend, storage, spelling,
+):
+    reader_api = _backend(reader_backend)
+    monkeypatch.chdir(tmp_path)
+    dest = tmp_path / "expanded"
+    dest.mkdir()
+    (tmp_path / "$CASARS_RENAME_DIRECTORY").mkdir()
+    monkeypatch.setenv("CASARS_RENAME_DIRECTORY", str(dest))
+    monkeypatch.setenv("CASARS_RENAME_NESTED", "$CASARS_RENAME_DIRECTORY")
+    monkeypatch.delenv("CASARS_RENAME_LITERAL", raising=False)
+    image, source, values = _rename_source(_backend(backend), tmp_path, storage)
+    target = dest / f"target{source.suffix}"
+    arguments = {
+        "simple": f"$CASARS_RENAME_DIRECTORY/{target.name}",
+        "braced": "$" + "{CASARS_RENAME_DIRECTORY}/" + target.name,
+        "nested": f"$CASARS_RENAME_NESTED/{target.name}",
+    }
+    try:
+        if spelling == "named-home":
+            prefix = f"~{getpass.getuser()}"
+            home = os.path.expanduser(prefix)
+            if home == prefix or not Path(home).is_dir():
+                pytest.skip("the account has no resolvable home directory")
+            arguments[spelling] = f"{prefix}/{os.path.relpath(target, home)}"
+        elif spelling == "undefined":
+            target = tmp_path / "$CASARS_RENAME_LITERAL" / target.name
+            target.parent.mkdir()
+            arguments[spelling] = str(target)
+        argument = arguments[spelling]
+        assert image.rename(argument)
+        assert not source.exists() and target.exists()
+        assert not (tmp_path / "$CASARS_RENAME_DIRECTORY" / target.name).exists()
+        assert image.name() == str(target)
+        np.testing.assert_array_equal(image.getchunk(), values)
+        assert image.history()[-3:] == [
+            "Ran ia.rename", f'ia.rename(name="{argument}", overwrite=false)',
+            f"original name was {source}",
+        ]
+        assert image.done()
+        reader = reader_api.image()
+        try:
+            assert reader.open(str(target))
+            np.testing.assert_array_equal(reader.getchunk(), values)
+        finally:
+            reader.done()
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("storage", ["native", "fits"])
+def test_expanded_rename_errors_leave_both_paths_intact(tmp_path, monkeypatch, backend, storage):
+    image, source, values = _rename_source(_backend(backend), tmp_path, storage)
+    dest = tmp_path / "expanded"
+    dest.mkdir()
+    target = dest / f"target{source.suffix}"
+    target.write_bytes(b"existing data")
+    monkeypatch.setenv("CASARS_RENAME_DIRECTORY", str(dest))
+    monkeypatch.setenv("CASARS_RENAME_CYCLE", "$CASARS_RENAME_CYCLE")
+    collision = f"$CASARS_RENAME_DIRECTORY/{target.name}"
+    missing = f"$CASARS_RENAME_DIRECTORY/missing/{target.name}"
+    try:
+        for argument, diagnostic in (
+            (collision, rf"File {re.escape(collision)} exists"),
+            (missing, rf"{re.escape(str(dest / 'missing'))} is not writable"),
+            (f"$CASARS_RENAME_CYCLE/{target.name}", "recursive environment variable"),
+        ):
+            with pytest.raises(RuntimeError, match=diagnostic):
+                image.rename(argument)
+            assert not image.isopen()
+            assert source.exists()
+            assert target.read_bytes() == b"existing data"
+            assert image.open(str(source))
+            np.testing.assert_array_equal(image.getchunk(), values)
+        assert image.rename(collision, overwrite=True)
+        assert not source.exists()
+        assert image.name() == str(target)
+        np.testing.assert_array_equal(image.getchunk(), values)
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_rename_checks_the_attachment_before_expanding_the_name(tmp_path, monkeypatch, backend):
+    monkeypatch.setenv("CASARS_RENAME_CYCLE", "$CASARS_RENAME_CYCLE")
+    argument = "$CASARS_RENAME_CYCLE/target.im"
+    image = _backend(backend).image()
+    try:
+        assert image.rename(argument) is False
+        assert image.fromshape(shape=[2, 2])
+        with pytest.raises(RuntimeError, match="cannot be renamed"):
+            image.rename(argument)
+        assert not image.isopen()
+        assert image.fromshape(str(tmp_path / "double.im"), [2, 2], type="d")
+        with pytest.raises(RuntimeError, match="double precision"):
+            image.rename(argument)
+        assert image.isopen()
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("storage", ["native", "fits"])
+def test_rename_refuses_a_destination_with_two_possible_parents(tmp_path, monkeypatch, storage):
+    left = tmp_path / "lexical"
+    right = tmp_path / "physical"
+    left.mkdir()
+    nested = right / "nested"
+    nested.mkdir(parents=True)
+    (left / "alias").symlink_to(nested, target_is_directory=True)
+    monkeypatch.setenv("CASARS_RENAME_DIRECTORY", str(left))
+    image, source, values = _rename_source(tools, tmp_path, storage)
+    name = f"target{source.suffix}"
+    target = right / name
+    target.write_bytes(b"existing data")
+    try:
+        history = image.history()
+        with pytest.raises(RuntimeError, match="resolves to a different directory"):
+            image.rename(f"$CASARS_RENAME_DIRECTORY/alias/../{name}", overwrite=True)
+        assert not image.isopen()
+        assert target.read_bytes() == b"existing data"
+        assert not (left / name).exists()
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), values)
+        assert image.history() == history
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("storage", ["native", "fits"])
+def test_rename_rejects_a_terminal_parent_component(tmp_path, storage):
+    parent = tmp_path / "parent"
+    victim = parent / "victim"
+    victim.mkdir(parents=True)
+    (victim / "alias").symlink_to(parent, target_is_directory=True)
+    marker = victim / "keep"
+    marker.write_bytes(b"existing data")
+    image, source, values = _rename_source(tools, tmp_path, storage)
+    try:
+        with pytest.raises(RuntimeError, match="ends with"):
+            image.rename(str(victim / "alias" / ".."), overwrite=True)
+        assert not image.isopen()
+        assert marker.read_bytes() == b"existing data"
+        assert (victim / "alias").is_symlink()
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), values)
+    finally:
+        image.done()
+
+
+def test_fits_rename_keeps_the_directory_requirement_of_a_trailing_slash(tmp_path):
+    (tmp_path / "sub").mkdir()
+    target = tmp_path / "keep.fits"
+    target.write_bytes(b"existing data")
+    image, source, values = _rename_source(tools, tmp_path, "fits")
+    try:
+        with pytest.raises(RuntimeError, match="RegularFile::move"):
+            image.rename(f"{tmp_path}/sub/../keep.fits/", overwrite=True)
+        assert not image.isopen()
+        assert target.read_bytes() == b"existing data"
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), values)
+    finally:
+        image.done()
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])

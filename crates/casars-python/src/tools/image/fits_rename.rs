@@ -5,15 +5,18 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
+use casa_tables::lexical_absolute;
 use casa_tables::publication::{check_write_access, rename_without_replacing};
 use pyo3::prelude::*;
 
 use super::attachment::AttachedImage;
 use super::handle::{raised, same_file_snapshot};
+use super::lifecycle::rename_destination;
 
 pub(super) fn rename(
     old_name: &Path,
     name: &str,
+    expanded: &str,
     overwrite: bool,
     history: bool,
 ) -> PyResult<AttachedImage> {
@@ -36,8 +39,8 @@ pub(super) fn rename(
         )));
     }
 
-    let requested = Path::new(name);
-    let output = std::path::absolute(requested).map_err(raised)?;
+    let requested = Path::new(expanded);
+    let output = rename_destination(expanded, name)?;
     if !overwrite && output.symlink_metadata().is_ok() {
         return Err(raised(format!(
             "Exception: File {name} exists, and the user does not want to remove it.."
@@ -99,7 +102,7 @@ pub(super) fn rename(
         }
     }
 
-    let attachment = AttachedImage::open(&output)
+    let attachment = AttachedImage::open(&lexical_absolute(&output))
         .map_err(|_| raised(format!("Exception: Unable to open image {name}.")))?;
     if history {
         attachment.lock().append_history_at(

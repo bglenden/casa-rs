@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use casa_images::ImagePixelType;
 use casa_tables::lexical_absolute;
@@ -15,8 +15,8 @@ use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
 use super::handle::raised;
 
-pub(super) fn input_path<'a>(py: Python<'_>, infile: &'a str) -> PyResult<Cow<'a, str>> {
-    let expanded = expand_path(infile)
+pub(super) fn resolve_image_path<'a>(py: Python<'_>, name: &'a str) -> PyResult<Cow<'a, str>> {
+    let expanded = expand_path(name)
         .ok_or_else(|| raised("Path::expandName: recursive environment variable"))?;
     if expanded
         .strip_prefix('~')
@@ -29,6 +29,31 @@ pub(super) fn input_path<'a>(py: Python<'_>, infile: &'a str) -> PyResult<Cow<'a
         return Ok(Cow::Owned(resolved));
     }
     Ok(expanded)
+}
+
+pub(super) fn rename_destination(expanded: &str, name: &str) -> PyResult<PathBuf> {
+    let destination = std::path::absolute(expanded).map_err(raised)?;
+    if destination.components().next_back() == Some(Component::ParentDir) {
+        return Err(raised(format!(
+            "Cannot rename to {name} because its path ends with '..'"
+        )));
+    }
+    let lexical = lexical_absolute(&destination);
+    if destination != lexical
+        && let Some(physical_parent) = destination
+            .parent()
+            .and_then(|path| path.canonicalize().ok())
+        && lexical
+            .parent()
+            .and_then(|path| path.canonicalize().ok())
+            .as_ref()
+            != Some(&physical_parent)
+    {
+        return Err(raised(format!(
+            "Cannot rename to {name} because its path resolves to a different directory after removing '..'"
+        )));
+    }
+    Ok(destination)
 }
 
 pub(super) fn open_image(infile: &str, expanded: &str) -> PyResult<AttachedImage> {
@@ -48,7 +73,7 @@ pub(super) fn open_image(infile: &str, expanded: &str) -> PyResult<AttachedImage
 impl PyImageTool {
     #[pyo3(signature = (infile, cache = true), text_signature = "($self, infile, cache=True)")]
     fn open(&self, py: Python<'_>, infile: String, cache: bool) -> PyResult<bool> {
-        let expanded = input_path(py, &infile);
+        let expanded = resolve_image_path(py, &infile);
         py.detach(|| {
             let mut state = self.state();
             state.image = None;
@@ -64,7 +89,7 @@ impl PyImageTool {
     }
 
     fn newimagefromfile(&self, py: Python<'_>, infile: &str) -> PyResult<Py<Self>> {
-        let expanded = input_path(py, infile)?;
+        let expanded = resolve_image_path(py, infile)?;
         let image = py.detach(|| open_image(infile, expanded.as_ref()))?;
         Py::new(py, Self::attached(image))
     }
@@ -135,6 +160,7 @@ impl PyImageTool {
 
     #[pyo3(signature = (name, overwrite=false), text_signature = "($self, name, overwrite=False)")]
     fn rename(&self, py: Python<'_>, name: &str, overwrite: bool) -> PyResult<bool> {
+        let expanded = resolve_image_path(py, name);
         py.detach(|| {
             let mut state = self.state();
             let Some(current) = state.image.as_ref() else {
@@ -142,7 +168,7 @@ impl PyImageTool {
             };
             current.lock().check_single_precision("rename")?;
             let current = state.image.take().expect("an attached image");
-            state.image = Some(current.rename(name, overwrite, state.history)?);
+            state.image = Some(current.rename(name, expanded, overwrite, state.history)?);
             Ok(true)
         })
     }
