@@ -19,7 +19,10 @@ use fitsio::images::ImageType as FitsImageType;
 use ndarray::{Dimension, IxDyn, ShapeBuilder, Zip};
 
 mod axes;
+mod channel_selection;
 pub use axes::{replace_stokes_axis_in_record, section_quality_labels, write_quality_labels};
+pub use channel_selection::parse_image_channel_selection;
+pub(in crate::analysis) use channel_selection::{ChannelSpan, parse_image_channel_spans};
 mod custom_values;
 mod exportfits;
 mod extrema;
@@ -32,6 +35,7 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::{ContinuumSummary, ImageContinuum};
+pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use imsubimage::{
     DecimationMethod, DecimationPixel, ImageCrop, ImageCropOptions, ImageDecimation,
     ImageDecimationOptions, ImageInsertion, ImagePad, ImagePadOptions, ImagePbcor, ImagePbcorBeam,
@@ -3460,95 +3464,6 @@ pub(super) fn parse_box_region(
         }
     }
     Ok(PixelRegion::Boxes(boxes))
-}
-
-/// Parse a CASA image-channel selector and resolve it against one spectral axis.
-pub fn parse_image_channel_selection(
-    text: &str,
-    axis_len: usize,
-) -> Result<Vec<usize>, ImageError> {
-    let mut indices = Vec::new();
-    for segment in text
-        .split([',', ';'])
-        .filter(|segment| !segment.trim().is_empty())
-    {
-        let segment = segment.trim();
-        let (range, stride) = match segment.split_once('^') {
-            Some((range, stride)) => {
-                let stride = stride.trim().parse::<usize>().map_err(|error| {
-                    ImageError::InvalidMetadata(format!(
-                        "invalid channel stride {segment:?}: {error}"
-                    ))
-                })?;
-                if stride == 0 {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "channel stride must be positive: {segment:?}"
-                    )));
-                }
-                (range.trim(), stride)
-            }
-            None => (segment, 1),
-        };
-        if let Some((lhs, rhs)) = range.split_once('~') {
-            let start = lhs.trim().parse::<usize>().map_err(|error| {
-                ImageError::InvalidMetadata(format!("invalid channel range {segment:?}: {error}"))
-            })?;
-            let end = rhs.trim().parse::<usize>().map_err(|error| {
-                ImageError::InvalidMetadata(format!("invalid channel range {segment:?}: {error}"))
-            })?;
-            if end < start {
-                return Err(ImageError::InvalidMetadata(format!(
-                    "channel range end precedes start: {segment:?}"
-                )));
-            }
-            indices.extend((start..=end).step_by(stride));
-        } else {
-            if stride != 1 {
-                return Err(ImageError::InvalidMetadata(format!(
-                    "channel stride requires a range: {segment:?}"
-                )));
-            }
-            // CASA's channel specification also accepts comparisons:
-            // the channels past, at least, before, or at most a bound.
-            if let Some((op, number)) = channel_comparison(range) {
-                let limit = number.parse::<usize>().map_err(|_| {
-                    ImageError::CasaSelection(format!(
-                        "In channel specification, {number} is not an integer in {segment}."
-                    ))
-                })?;
-                indices.extend((0..axis_len).filter(|&channel| match op {
-                    ">" => channel > limit,
-                    ">=" => channel >= limit,
-                    "<" => channel < limit,
-                    _ => channel <= limit,
-                }));
-            } else {
-                indices.push(range.parse::<usize>().map_err(|error| {
-                    ImageError::InvalidMetadata(format!("invalid channel {segment:?}: {error}"))
-                })?);
-            }
-        }
-    }
-    if indices.is_empty() || indices.iter().any(|index| *index >= axis_len) {
-        return Err(ImageError::ShapeMismatch {
-            expected: vec![axis_len],
-            got: indices,
-        });
-    }
-    indices.sort_unstable();
-    indices.dedup();
-    Ok(indices)
-}
-
-/// A channel-specification comparison segment: `>`, `>=`, `<` or `<=`
-/// followed by its bound, as CASA's `ParameterParser` reads them.
-fn channel_comparison(segment: &str) -> Option<(&'static str, &str)> {
-    for op in [">=", "<=", ">", "<"] {
-        if let Some(number) = segment.strip_prefix(op) {
-            return Some((op, number.trim()));
-        }
-    }
-    None
 }
 
 /// CASA imstat's `flux` over the selection, as casacore's

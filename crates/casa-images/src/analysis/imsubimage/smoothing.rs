@@ -11,11 +11,9 @@ use crate::{ImageError, ImageInfo, ImageInterface, MutableImageInterface};
 
 use super::super::axes::StridedSection;
 use super::super::lel_mask::PreparedMask;
-use super::decimate::{
-    DecimationMethod, DecimationPixel, apply_decimation, implicit_decimation_axes,
-};
+use super::decimate::{DecimationMethod, DecimationPixel, apply_decimation};
 use super::read_window::PixelSections;
-use super::region::SubimageSelection;
+use super::region::{SubimageSelection, implicit_positional_axes};
 use super::{SubimagePlan, SubimageRegion};
 
 const MAX_TILE_SAMPLES: usize = 256 * 1024;
@@ -183,7 +181,7 @@ impl<'a> ImageSmoothing<'a> {
         if matches!(options.kernel, SmoothingKernel::Boxcar(_))
             && options.decimate.is_some()
             && shape[axis] > 1
-            && let Some(axes) = implicit_decimation_axes(image)
+            && let Some(axes) = implicit_positional_axes(image)
         {
             for index in axes {
                 shape[index] = 1;

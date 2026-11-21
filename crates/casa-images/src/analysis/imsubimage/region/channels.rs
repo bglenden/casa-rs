@@ -3,7 +3,7 @@
 
 use casa_coordinates::CoordinateType;
 
-use crate::analysis::parse_image_channel_selection;
+use crate::analysis::{ChannelSpan, parse_image_channel_spans};
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 pub(super) fn resolve_channels<T: ImagePixel>(
@@ -14,50 +14,88 @@ pub(super) fn resolve_channels<T: ImagePixel>(
     is_crtf: bool,
     start: &mut [usize],
     shape: &mut [usize],
-) -> Result<(Option<usize>, Option<Vec<usize>>), ImageError> {
+) -> Result<(Option<usize>, Vec<ChannelSpan>), ImageError> {
     let arg_trimmed = chans_arg.map(str::trim).filter(|s| !s.is_empty());
     if arg_trimmed.is_none() && crtf_chans.is_none() {
-        return Ok((None, None));
+        return Ok((None, Vec::new()));
     }
     let axis = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
         ImageError::InvalidMetadata("channel selection requires a spectral axis".into())
     })?;
-    let mut indices = match (arg_trimmed, crtf_chans) {
-        (Some(text), None) => parse_image_channel_selection(text, full_shape[axis])?,
-        (None, Some(c)) => c.to_vec(),
-        (Some(text), Some(c)) => {
-            let from_arg = parse_image_channel_selection(text, full_shape[axis])?;
-            let intersected: Vec<usize> =
-                from_arg.into_iter().filter(|idx| c.contains(idx)).collect();
-            if intersected.is_empty() {
-                return Err(ImageError::CasaSelection(
-                    "channel selection and CRTF range have empty intersection".into(),
-                ));
-            }
-            intersected
-        }
-        (None, None) => unreachable!(),
+    let requested = arg_trimmed
+        .map(|text| parse_image_channel_spans(text, full_shape[axis]))
+        .transpose()?;
+    let mut spans = match crtf_chans {
+        None => requested.expect("one channel selection"),
+        Some(channels) => channels
+            .iter()
+            .copied()
+            .filter(|&channel| {
+                requested
+                    .as_ref()
+                    .is_none_or(|requested| requested.iter().any(|span| span.contains(channel)))
+            })
+            .map(|channel| ChannelSpan {
+                first: channel,
+                last: channel,
+                step: 1,
+            })
+            .collect(),
     };
-    indices.sort_unstable();
-    indices.dedup();
-    if is_crtf && arg_trimmed.is_some() && indices.windows(2).any(|pair| pair[1] - pair[0] != 1) {
+    if spans.is_empty() && arg_trimmed.is_some() && crtf_chans.is_some() {
+        return Err(ImageError::CasaSelection(
+            "channel selection and CRTF range have empty intersection".into(),
+        ));
+    }
+    spans.sort_unstable_by_key(|span| span.first);
+    if is_crtf && arg_trimmed.is_some() && !spans.is_empty() && has_gaps(&spans) {
         return Err(ImageError::CasaSelection(
             "Overriding spectral specification must be limited to a single channel range".into(),
         ));
     }
     // Intersect with any saved-region bounds already recorded on this axis.
-    let prev_lo = start[axis];
-    let prev_hi = start[axis] + shape[axis] - 1;
-    let bounded: Vec<usize> = indices
+    let first = start[axis];
+    let last = first + shape[axis] - 1;
+    spans = spans
         .into_iter()
-        .filter(|&c| c >= prev_lo && c <= prev_hi)
+        .filter_map(|span| span.clipped(first, last))
         .collect();
-    if bounded.is_empty() {
+    spans.sort_unstable_by_key(|span| span.first);
+    let Some(first) = spans.first() else {
         return Err(ImageError::CasaSelection(
             "selected channels lie outside saved region".into(),
         ));
+    };
+    start[axis] = first.first;
+    shape[axis] = upper_bound(&spans) - first.first + 1;
+    if !has_gaps(&spans) {
+        spans.clear();
     }
-    start[axis] = bounded[0];
-    shape[axis] = bounded[bounded.len() - 1] - bounded[0] + 1;
-    Ok((Some(axis), Some(bounded)))
+    Ok((Some(axis), spans))
+}
+
+fn upper_bound(spans: &[ChannelSpan]) -> usize {
+    spans
+        .iter()
+        .map(|span| span.last)
+        .max()
+        .expect("one channel span")
+}
+
+fn has_gaps(spans: &[ChannelSpan]) -> bool {
+    if spans.len() == 1 {
+        return spans[0].step > 1 && spans[0].first != spans[0].last;
+    }
+    if spans.iter().all(|span| span.step == 1) {
+        let mut end = spans[0].last;
+        for span in &spans[1..] {
+            if span.first > end.saturating_add(1) {
+                return true;
+            }
+            end = end.max(span.last);
+        }
+        return false;
+    }
+    (spans[0].first..=upper_bound(spans))
+        .any(|channel| !spans.iter().any(|span| span.contains(channel)))
 }

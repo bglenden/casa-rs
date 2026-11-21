@@ -4,7 +4,6 @@
 use casa_coordinates::CoordinateSystem;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{RecordValue, ScalarValue, Value};
-use ndarray::{ArrayD, IxDyn};
 
 use crate::analysis::world_axes_for_plane;
 use crate::saved_region::{
@@ -30,13 +29,11 @@ pub(super) fn decode_polygon(
 ) -> Result<ParsedRegion, ImageError> {
     let (axes, plane) = polygon_plane(name, record, coords, shape)?;
     let (start, shape) = plane.section(shape, axes);
-    let [x, y] = axes;
-    let mask = ArrayD::from_shape_fn(IxDyn(&shape), |index| plane.mask[[index[x], index[y]]]);
     Ok(ParsedRegion {
         is_compound: false,
         is_crtf: false,
         shapes: Vec::new(),
-        saved_mask: Some(SavedRegionMask::Cropped(mask)),
+        saved_mask: Some(SavedRegionMask::Polygon { axes, plane }),
         saved_bounds: Some((start, shape)),
         stride: None,
     })

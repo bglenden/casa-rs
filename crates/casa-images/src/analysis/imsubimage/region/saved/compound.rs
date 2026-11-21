@@ -3,12 +3,13 @@
 
 use casa_coordinates::CoordinateSystem;
 use casa_types::{RecordValue, Value};
-use ndarray::{Array2, ArrayD, Dimension, IxDyn};
 
 use crate::ImageError;
-use crate::saved_region::{compound_children, native_region_kind};
+use crate::saved_region::{PolygonPixelPlane, compound_children, native_region_kind};
 
-use super::super::{ParsedRegion, SavedRegionMask, resolve_spatial_and_saved_bounds};
+use super::super::{
+    ParsedRegion, SavedRegionMask, SpatialShape, resolve_spatial_and_saved_bounds, shape_contains,
+};
 use super::relative::polygon_plane;
 use super::{decode_wc_box, decode_wc_box_axes, parse_saved_region, wc_pixel_axes};
 
@@ -20,7 +21,7 @@ enum Operation {
     Complement,
 }
 
-struct Region {
+pub(in crate::analysis::imsubimage::region) struct Region {
     start: Vec<usize>,
     end: Vec<usize>,
     axes: Vec<usize>,
@@ -28,8 +29,13 @@ struct Region {
 }
 
 enum Selection {
-    Primitive {
-        spatial: Option<([usize; 2], Array2<bool>)>,
+    Spatial {
+        axes: [usize; 2],
+        shapes: Vec<SpatialShape>,
+    },
+    Polygon {
+        axes: [usize; 2],
+        plane: PolygonPixelPlane,
     },
     Compound(Operation, Vec<Region>),
     Extension {
@@ -56,19 +62,12 @@ pub(super) fn decode(
         .zip(&region.end)
         .map(|(&start, &end)| end - start)
         .collect::<Vec<_>>();
-    let mut pixel = region.start.clone();
-    let mask = ArrayD::from_shape_fn(IxDyn(&shape), |local| {
-        for ((global, &start), &index) in pixel.iter_mut().zip(&region.start).zip(local.slice()) {
-            *global = start + index;
-        }
-        region.contains(&mut pixel, plane)
-    });
     Ok(ParsedRegion {
         is_compound: true,
         is_crtf: false,
         shapes: Vec::new(),
-        saved_bounds: Some((region.start, shape)),
-        saved_mask: Some(SavedRegionMask::Cropped(mask)),
+        saved_bounds: Some((region.start.clone(), shape)),
+        saved_mask: Some(SavedRegionMask::Compound(region)),
         stride: None,
     })
 }
@@ -119,8 +118,9 @@ fn compile(
                 start,
                 end,
                 axes,
-                selection: Selection::Primitive {
-                    spatial: Some(([x, y], local.mask)),
+                selection: Selection::Polygon {
+                    axes: [x, y],
+                    plane: local,
                 },
             });
         }
@@ -151,8 +151,9 @@ fn compile(
                 start: resolved.start,
                 end,
                 axes,
-                selection: Selection::Primitive {
-                    spatial: resolved.spatial_mask.map(|pixels| (plane, pixels)),
+                selection: Selection::Spatial {
+                    axes: plane,
+                    shapes: resolved.spatial_shapes,
                 },
             });
         }
@@ -345,7 +346,34 @@ fn compile_concatenation(
 }
 
 impl Region {
-    fn contains(&self, pixel: &mut [usize], [x, y]: [usize; 2]) -> bool {
+    pub(in crate::analysis::imsubimage::region) fn overlaps(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+    ) -> bool {
+        if start
+            .iter()
+            .zip(shape)
+            .zip(self.start.iter().zip(&self.end))
+            .any(|((&start, &length), (&min, &end))| start >= end || start + length <= min)
+        {
+            return false;
+        }
+        match &self.selection {
+            Selection::Compound(Operation::Union, children) => {
+                children.iter().any(|child| child.overlaps(start, shape))
+            }
+            Selection::Compound(Operation::Intersection, children) => {
+                children.iter().all(|child| child.overlaps(start, shape))
+            }
+            Selection::Compound(Operation::Difference, children) => {
+                children[0].overlaps(start, shape)
+            }
+            _ => true,
+        }
+    }
+
+    pub(in crate::analysis::imsubimage::region) fn contains(&self, pixel: &mut [usize]) -> bool {
         if pixel
             .iter()
             .zip(self.start.iter().zip(&self.end))
@@ -353,43 +381,43 @@ impl Region {
         {
             return false;
         }
-        let plane = [x, y];
         match &self.selection {
-            Selection::Primitive { spatial } => spatial.as_ref().is_none_or(|([x, y], mask)| {
-                mask[[pixel[*x] - self.start[*x], pixel[*y] - self.start[*y]]]
-            }),
-            Selection::Extension { child, stretch } => {
-                contains_stretched(child, stretch, pixel, plane)
+            Selection::Spatial {
+                axes: [x, y],
+                shapes,
+            } => {
+                shapes.is_empty()
+                    || shapes
+                        .iter()
+                        .any(|shape| shape_contains(shape, pixel[*x], pixel[*y]))
             }
+            Selection::Polygon {
+                axes: [x, y],
+                plane,
+            } => plane.contains(pixel[*x], pixel[*y]),
+            Selection::Extension { child, stretch } => contains_stretched(child, stretch, pixel),
             Selection::Concatenation { axis, children } => {
                 let plane_index = pixel[*axis] - self.start[*axis];
-                children[plane_index].contains(pixel, plane)
+                children[plane_index].contains(pixel)
             }
             Selection::Compound(operation, children) => match operation {
-                Operation::Union => children.iter().any(|child| child.contains(pixel, plane)),
-                Operation::Intersection => {
-                    children.iter().all(|child| child.contains(pixel, plane))
-                }
+                Operation::Union => children.iter().any(|child| child.contains(pixel)),
+                Operation::Intersection => children.iter().all(|child| child.contains(pixel)),
                 Operation::Difference => {
-                    children[0].contains(pixel, plane) && !children[1].contains(pixel, plane)
+                    children[0].contains(pixel) && !children[1].contains(pixel)
                 }
-                Operation::Complement => !children[0].contains(pixel, plane),
+                Operation::Complement => !children[0].contains(pixel),
             },
         }
     }
 }
 
-fn contains_stretched(
-    child: &Region,
-    stretch: &[(usize, usize)],
-    pixel: &mut [usize],
-    plane: [usize; 2],
-) -> bool {
+fn contains_stretched(child: &Region, stretch: &[(usize, usize)], pixel: &mut [usize]) -> bool {
     let Some((&(axis, source), rest)) = stretch.split_first() else {
-        return child.contains(pixel, plane);
+        return child.contains(pixel);
     };
     let saved = std::mem::replace(&mut pixel[axis], source);
-    let included = contains_stretched(child, rest, pixel, plane);
+    let included = contains_stretched(child, rest, pixel);
     pixel[axis] = saved;
     included
 }

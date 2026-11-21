@@ -8082,6 +8082,24 @@ pattern uses a zero-valued imaginary image owned by the same grid.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
 [`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
 
+## Image collapse can abort or shift a wrapped longitude by 180 degrees
+
+CASA 6.7.6.14 aborts for negative or duplicate axes, for example
+`ia.collapse("sum", [-1])` and `ia.collapse("sum", [0, 0])`. casa-rs
+raises a Python error before replacing the output.
+
+On a default 4 × 4 direction image, `ia.collapse("sum", [0, 1])` also
+averages longitudes on opposite sides of the 0-degree meridian as ordinary
+numbers. CASA reports a longitude near 180 degrees for a footprint centered
+about half an arcminute from the meridian. casa-rs unwraps both endpoints around the interior sky position before
+averaging, so the result remains on the selected footprint. This also
+keeps the midpoint on fields broader than 180 degrees.
+
+CASA 6.7.6.14 also segfaults collapsing a Stokes–Frequency image whose
+native record puts Frequency at pixel axis 1 and world axis 0. casa-rs
+resolves `axes="Frequency"` through the native world-to-pixel map and
+collapses the corresponding pixel axis.
+
 ## Continuum subtraction leaves a partial product for aliased outputs
 
 CASA 6.7.6.14 accepts the same initially absent path for `outline` and
@@ -8604,3 +8622,26 @@ With `listmodels=True` and `standard="Butler-JPL-Horizons 2010"`, CASA
 `AttributeError`. The object names are already defined in the task.
 casa-rs displays that list and returns the empty listing result without
 opening a MeasurementSet. [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## A resolved setjy model uses the wrong manual spectral law
+
+In CASA 6.7.6.14, `setjy(standard="manual", model="3C286_L.im",`
+`fluxdensity=2.4, spix=-0.74, reffreq="1.41GHz")` writes zero
+visibilities in the 1.413 GHz VLA band. With `spix=0`, `scalebychan=True`
+and the default 1 GHz reference, CASA incorrectly gives the image a
+frequency-dependent amplitude. The resolved-image branch evaluates the
+spectral polynomial at a frequency in Hz and uses the result as a power
+of the frequency ratio. casa-rs evaluates the documented polynomial in
+`log10(f / f0)`, as used by the manual point-source model. It normalizes
+the existing image morphology to that intensity per channel or at the
+representative frequency for constant scaling. [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## CASA uvsub drops the second feed basis of a resolved virtual model
+
+In CASA 6.7.6.14, an MS with RR/LL on one window and XX/YY on the next can
+hold two valid `SetJyGridFT` records for a resolved IQUV image. `ms.uvsub`
+uses the first window's circular model and subtracts zero on the linear
+window, even when CASA itself wrote both records. Scratch `setjy` predicts
+nonzero visibilities on both windows. casa-rs reads either writer's
+records and applies the matching Fourier grid on each window.
+[#1519](https://github.com/bglenden/casa-rs/issues/1519)
