@@ -58,6 +58,7 @@ pub(crate) enum PriorCalibrationMode {
         rotate_model: bool,
     },
     Leakage,
+    CrossHand,
 }
 
 pub(crate) fn load_preapplied_rows(
@@ -113,6 +114,9 @@ pub(crate) fn load_preapplied_rows(
         } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags),
         PriorCalibrationMode::Leakage => {
             evaluate_solve_priors(ms, plan, PriorSolveBoundary::Leakage, true)
+        }
+        PriorCalibrationMode::CrossHand => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::CrossHand, true)
         }
     };
     preapplied

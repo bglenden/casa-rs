@@ -204,6 +204,13 @@ pub(super) fn leakage_request(
         "Dfgen+QU" => LeakageSolveKind::DfGenQu,
         "Dgen+X" => LeakageSolveKind::DGenX,
         "Dfgen+X" => LeakageSolveKind::DfGenX,
+        "Xf" => LeakageSolveKind::Xf,
+        "Xj" => LeakageSolveKind::Xj,
+        "X" => {
+            return Err(TaskFailure::execution(
+                "Can't do selfGatherAndSolve for X Mueller",
+            ));
+        }
         "Dlls" => LeakageSolveKind::Dlls,
         "Dflls" => LeakageSolveKind::Dflls,
         _ => {
@@ -229,7 +236,11 @@ pub(super) fn leakage_request(
         preaverage_seconds: task.number("preavg")?,
         min_baselines: task.integer("minblperant")?.max(0) as usize,
         min_snr: task.number("minsnr")? as f32,
-        refant: bandpass_refant(&task.required_text("refant")?),
+        refant: if kind.cross_hand() {
+            bandpass_refant("")
+        } else {
+            bandpass_refant(&task.required_text("refant")?)
+        },
         append: task.flag("append")?,
     })
 }

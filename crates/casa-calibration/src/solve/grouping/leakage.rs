@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Group polarized samples and solve known-source leakage.
+//! Group polarized samples for the native polcal task.
 
 mod channel_samples;
+mod cross_hand;
 mod fit;
 mod general;
 mod interval;
@@ -33,6 +34,8 @@ pub(crate) enum LeakageSolveKind {
     DfGenX,
     Dlls,
     Dflls,
+    Xj,
+    Xf,
 }
 
 impl LeakageSolveKind {
@@ -44,6 +47,8 @@ impl LeakageSolveKind {
             Self::DfGen | Self::DfGenQu | Self::DfGenX => "Dfgen Jones",
             Self::Dlls => "DLLS Jones",
             Self::Dflls => "DfLLS Jones",
+            Self::Xj => "X Jones",
+            Self::Xf => "Xf Jones",
         }
     }
 
@@ -57,11 +62,16 @@ impl LeakageSolveKind {
                 | Self::DfGenQu
                 | Self::DfGenX
                 | Self::Dflls
+                | Self::Xf
         )
     }
 
     fn iterative(self) -> bool {
-        !matches!(self, Self::Dlls | Self::Dflls)
+        !matches!(self, Self::Dlls | Self::Dflls | Self::Xj | Self::Xf)
+    }
+
+    pub(crate) fn cross_hand(self) -> bool {
+        matches!(self, Self::Xj | Self::Xf)
     }
 
     fn source(self) -> Option<SourceFitMode> {
@@ -122,7 +132,7 @@ pub(crate) struct LeakageEstimate {
     snr: [f32; 2],
 }
 
-pub(crate) fn solve_leakage(
+pub(crate) fn solve_polarization(
     ms: &MeasurementSet,
     request: &LeakageSolveRequest,
 ) -> Result<usize, String> {
@@ -134,7 +144,11 @@ pub(crate) fn solve_leakage(
         &request.priors,
         true,
         true,
-        PriorCalibrationMode::Leakage,
+        if request.kind.cross_hand() {
+            PriorCalibrationMode::CrossHand
+        } else {
+            PriorCalibrationMode::Leakage
+        },
     )
     .map_err(error)?;
     let ordered = bucketed_rows(
@@ -441,7 +455,7 @@ impl LeakageInputs<'_> {
             .preapplied
             .model
             .as_ref()
-            .expect("P Jones is on the model side of D");
+            .expect("polarization solves apply P Jones to the sky model");
         let (model, flags) = forward
             .corrupt(row.row_index, &correlations, model, &input.flags)
             .map_err(prior_error)?;
@@ -460,6 +474,7 @@ impl LeakageInputs<'_> {
             let slot = position / window.bin_width;
             let mut data = order.map(|corr| samples.data[[corr, channel]]);
             let mut weights = order.map(|corr| samples.weights[[corr, channel]]);
+            let model = order.map(|corr| model[[corr, channel]]);
             if let Some(intensity) = &intensity {
                 let scale = intensity[channel];
                 if scale == Complex32::ZERO || !scale.is_finite() {
@@ -472,13 +487,18 @@ impl LeakageInputs<'_> {
                 };
                 let amplitude = scale.norm();
                 weights = weights.map(|weight| weight * (amplitude * amplitude));
+            } else if self.request.kind.cross_hand() {
+                for (corr, model) in model.into_iter().enumerate() {
+                    let amplitude = model.norm();
+                    if amplitude > 0.0 {
+                        let normalized = super::super::kernel::complex32_to_64(data[corr])
+                            / super::super::kernel::complex32_to_64(model);
+                        data[corr] = Complex32::new(normalized.re as f32, normalized.im as f32);
+                        weights[corr] *= amplitude * amplitude;
+                    }
+                }
             }
-            bins[slot].observe(
-                data,
-                order.map(|corr| model[[corr, channel]]),
-                weights,
-                retain_unweighted_model,
-            );
+            bins[slot].observe(data, model, weights, retain_unweighted_model);
             total += weights
                 .into_iter()
                 .filter(|weight| weight.is_finite() && *weight > 0.0)

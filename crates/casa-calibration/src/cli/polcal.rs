@@ -5,7 +5,7 @@ use casa_ms::MeasurementSet;
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
-use crate::solve::grouping::leakage::solve_leakage;
+use crate::solve::grouping::leakage::solve_polarization;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let vis = task.input_path("vis")?;
@@ -19,7 +19,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     let ms = MeasurementSet::open(&vis)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
-    let rows = solve_leakage(&ms, &request).map_err(TaskFailure::execution)?;
+    let rows = solve_polarization(&ms, &request).map_err(TaskFailure::execution)?;
     TaskSuccess::new(
         CasaValue::None,
         &serde_json::json!({ "solution_rows": rows }),

@@ -43,11 +43,12 @@ pub(super) fn write(
     )
     .map_err(|error| error.to_string())?;
     let mut written = 0;
+    let receptors = if request.kind.cross_hand() { 1 } else { 2 };
     for interval in solutions {
         let antennas = interval.values.first().map_or(0, Vec::len);
         for antenna in 0..antennas {
             writer
-                .append(solution_row(interval, antenna))
+                .append(solution_row(interval, antenna, receptors))
                 .map_err(|error| error.to_string())?;
             written += 1;
         }
@@ -77,8 +78,8 @@ pub(super) fn write(
     Ok(written)
 }
 
-fn solution_row(interval: &LeakageSolution, antenna: usize) -> RecordValue {
-    let shape = IxDyn(&[2, interval.values.len()]).f();
+fn solution_row(interval: &LeakageSolution, antenna: usize, receptors: usize) -> RecordValue {
+    let shape = IxDyn(&[receptors, interval.values.len()]).f();
     let complex = ArrayD::from_shape_fn(shape.clone(), |index| {
         interval.values[index[1]][antenna].gain[index[0]]
     });
