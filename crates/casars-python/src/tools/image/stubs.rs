@@ -30,25 +30,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, shape = None, pa = None, region = None, mask = None, method = None, decimate = None, replicate = None, dropdeg = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', shape=[-1], pa=[], region={}, mask='', method='cubic', decimate=0, replicate=False, dropdeg=False, overwrite=False, stretch=False)")]
-    fn rotate(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        shape: Option<&Bound<'_, PyAny>>,
-        pa: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        method: Option<&Bound<'_, PyAny>>,
-        decimate: Option<&Bound<'_, PyAny>>,
-        replicate: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("rotate")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, axes = None, types = None, widths = None, scale = None, region = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', axes=[-1], types=[''], widths=[], scale=-1.0, region={}, mask='', overwrite=False, stretch=False)")]
     fn sepconvolve(
         &self,
