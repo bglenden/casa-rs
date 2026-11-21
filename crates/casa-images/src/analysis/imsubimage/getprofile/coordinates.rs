@@ -102,7 +102,7 @@ impl<'a> ProfileCoordinate<'a> {
                 None
             }
         });
-        let axis_name = output.world_axis_names()[world_axis].clone();
+        let axis_name = model.axis_names()[local].clone();
         Ok(Self {
             input,
             output,
