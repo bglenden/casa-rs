@@ -57,7 +57,6 @@ pub struct SkyModel {
     /// centre) on the model's pixels.
     coordinates: CoordinateSystem,
     /// Plane 0's spectral world value in the coordinate system's own unit.
-    first_spectral_world: f64,
     /// The most the image's tile cache holds once a plane is read
     /// ([`Self::cache_bytes`]).
     cache_bytes: u64,
@@ -228,6 +227,18 @@ impl SkyModel {
             || coordinates.find_coordinate(CoordinateType::Direction) != Some(0)
             || coordinates.find_coordinate(CoordinateType::Stokes) != Some(1)
             || coordinates.find_coordinate(CoordinateType::Spectral) != Some(2)
+            || coordinates
+                .coordinate_pixel_axes(0)
+                .expect("existing coordinate")
+                != [Some(0), Some(1)]
+            || coordinates
+                .coordinate_pixel_axes(1)
+                .expect("existing coordinate")
+                != [Some(2)]
+            || coordinates
+                .coordinate_pixel_axes(2)
+                .expect("existing coordinate")
+                != [Some(3)]
         {
             return Err(PredictError::InvalidModel(
                 "axes must be direction, Stokes and spectral, in that order".into(),
@@ -276,10 +287,11 @@ impl SkyModel {
         let [nx, ny, planes] = [shape[0], shape[1], shape[3]];
         let cache_bytes = cache_bound(&shape, image.tile_shape());
         let increment = coordinates.coordinate(0).increment();
-        let centre = coordinates.to_world(&[(nx / 2) as f64, (ny / 2) as f64, 0.0, 0.0])?;
+        let spectral = coordinates.coordinate(2).to_world(&[0.0])?[0];
         let CoordinateModel::Direction(direction) = coordinates.coordinate(0) else {
             unreachable!()
         };
+        let centre = direction.pixel_to_world([(nx / 2) as f64, (ny / 2) as f64])?;
         let tangent =
             MDirection::from_angles(centre[0], centre[1], direction.conversion_direction_ref());
         let distance_m = match image.misc_info().get("distance") {
@@ -322,10 +334,9 @@ impl SkyModel {
             increment_rad: [increment[0], increment[1]],
             frame: MeasFrame::new(),
             tangent,
-            first_frequency_hz: centre[3] * hz_per_unit,
+            first_frequency_hz: spectral * hz_per_unit,
             frequency_increment_hz: coordinates.coordinate(2).increment()[0] * hz_per_unit,
             coordinates,
-            first_spectral_world: centre[3],
             cache_bytes,
             distance_m,
         })
@@ -426,13 +437,10 @@ impl SkyModel {
     }
 
     pub(super) fn pixel_of_native(&self, direction: [f64; 2]) -> Result<[f64; 2], PredictError> {
-        let pixel = self.coordinates.to_pixel(&[
-            direction[0],
-            direction[1],
-            self.coordinates.coordinate(1).to_world(&[0.])?[0],
-            self.first_spectral_world,
-        ])?;
-        Ok([pixel[0], pixel[1]])
+        let CoordinateModel::Direction(coordinate) = self.coordinates.coordinate(0) else {
+            unreachable!("validated sky model direction")
+        };
+        Ok(coordinate.world_to_pixel(direction)?)
     }
 
     /// The offset of a J2000 pointing from pixel `(nx/2, ny/2)` along the
@@ -564,7 +572,6 @@ impl SkyModel {
             first_frequency_hz: self.first_frequency_hz,
             frequency_increment_hz: self.frequency_increment_hz,
             coordinates: self.coordinates.clone(),
-            first_spectral_world: self.first_spectral_world,
             cache_bytes: 0,
             distance_m: self.distance_m,
         })
@@ -602,4 +609,51 @@ fn cache_bound(shape: &[usize], tile: &[usize]) -> u64 {
 fn hz_per_unit(unit: &str) -> Option<f64> {
     let hz = Unit::new("Hz").ok()?;
     Quantity::new(1.0, unit).ok()?.get_value_in(&hz).ok()
+}
+
+#[cfg(test)]
+mod axis_map_tests {
+    use super::*;
+    use casa_coordinates::{
+        Projection, ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
+    };
+    use casa_types::measures::frequency::FrequencyRef;
+
+    #[test]
+    fn native_model_uses_local_direction_and_spectral_values() {
+        let work = tempfile::tempdir().unwrap();
+        let direction = casa_coordinates::DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, -0.4],
+            [-0.001, 0.001],
+            [2.0, 2.0],
+        );
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(direction);
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1.4e9,
+            1.0e6,
+            0.0,
+            0.0,
+        ));
+        coordinates
+            .transpose_axes(&[0, 1, 3, 2], &[0, 1, 2, 3])
+            .unwrap();
+        let shape = vec![4, 4, 1, 2];
+        let pixels = ndarray::ArrayD::from_elem(ndarray::IxDyn(&shape), 1.0_f32);
+        let path = work.path().join("world-permuted.image");
+        let mut image = PagedImage::<f32>::create(shape, coordinates, &path).unwrap();
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.set_units("Jy/pixel").unwrap();
+        image.save().unwrap();
+        drop(image);
+        let model = SkyModel::open(path).unwrap();
+        assert_eq!(model.plane_frequency_hz(0), 1.4e9);
+        assert_eq!(model.plane_frequency_hz(1), 1.401e9);
+        let pixel = model.pixel_of_native([1.0, -0.4]).unwrap();
+        assert!((pixel[0] - 2.0).abs() < 1e-12 && (pixel[1] - 2.0).abs() < 1e-12);
+    }
 }

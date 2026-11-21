@@ -47,6 +47,7 @@ use crate::{
     read_fits_image,
 };
 
+pub use self::coords::reduce_subimage_coordinate_record;
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
 use self::region::SubimageSelection;
 use super::axes::StridedSection;

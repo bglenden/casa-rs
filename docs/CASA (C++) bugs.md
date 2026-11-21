@@ -8196,6 +8196,21 @@ has no retained kernel images.
 [`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
+## Legacy A/W can read beyond its channel-to-kernel map
+
+With wideband legacy `awproject` or `mawproject` in CASA 6.7.6.14,
+`selectvis(spw='0:0;3')` spans four visibility channels. `CFBuffer::initMaps`
+overwrites each spectral window's map with the last range's entries. Here
+the last range defines one entry. `AWVisResampler::GridToData` indexes the
+map with the compact visibility channel number, leaving indices beyond
+the first entry without a defined kernel selection.
+
+Casa-rs follows the last range for indices within the map and looks up
+the cell nearest the physical channel frequency for later indices.
+Perturbing the two cache frequencies independently confirms that both
+engines use the last range's kernel at index zero in either range order.
+[`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py)
+
 ## `image.insert` aborts for a source that misses along one axis
 
 CASA 6.7.6.14 terminates with SIGABRT and `Slicer error:end<start` for a
@@ -8321,3 +8336,17 @@ CASA 6.7.6.14 indexes the world-unit vector with pixel positions in
 `["","rad"]` and Stokes units `["rad"]`. The empty unit belongs to Stokes.
 casa-rs uses the coordinate's world axes and reports `["rad","rad"]`
 for direction and `[""]` for Stokes. See #1002 and #1819.
+
+## FITS import with independently placed spectral and Stokes axes
+
+CASA 6.7.6.14 writes a two-axis image with Stokes followed by frequency
+in pixel order and frequency followed by Stokes in world order. The
+FITS PC matrix has zero diagonal and unit off-diagonal terms. The
+same CASA build segfaults in `image.fromfits` when opening its output.
+
+casa-rs pairs the world rows with their pixel columns using the PC
+matrix before parsing the local coordinate models. Imported pixels
+keep the FITS array order and the native record retains the original
+world order. The regression reads files written by CASA and by casa-rs
+and independently checks which pixel step moves each world coordinate.
+See #1002 and #1823.

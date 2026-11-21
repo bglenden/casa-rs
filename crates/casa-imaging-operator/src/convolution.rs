@@ -606,6 +606,18 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// live here.
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey;
 
+    /// Prediction cell for a native channel. Legacy A/W can look up the
+    /// visibility buffer's channel index independently of its frequency.
+    fn prediction_key(
+        &self,
+        row: &RowContext,
+        freq_hz: f64,
+        w_lambda: f64,
+        _channel: usize,
+    ) -> CfKey {
+        self.key(row, freq_hz, w_lambda)
+    }
+
     /// Check that a selected row can be keyed before any of its samples
     /// enter the grid or prediction. Imported AW caches require PA coverage.
     ///

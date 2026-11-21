@@ -227,13 +227,21 @@ fn export_fits_typed<T: ExportFitsPixel>(
         let coordinates = image.coordinates();
         let output_axis = |axis| plan.old_to_new.get(axis - 1).copied().flatten();
         header_items.extend(tool_header::projection_parameters(coordinates, output_axis));
-        let mut original_axis = 1;
         for index in 0..coordinates.n_coordinates() {
             let coordinate = coordinates.coordinate(index);
             if let CoordinateModel::Stokes(stokes) = coordinate
-                && let Some(axis) = output_axis(original_axis)
+                && let [Some(world)] = coordinates
+                    .coordinate_world_axes(index)
+                    .expect("existing coordinate")
+                    .as_slice()
+                && let [Some(pixel)] = coordinates
+                    .coordinate_pixel_axes(index)
+                    .expect("existing coordinate")
+                    .as_slice()
+                && let Some(axis) = output_axis(world + 1)
+                && let Some(pixel) = output_axis(pixel + 1)
             {
-                for (key, value) in tool_header::stokes_axis_keywords(stokes, axis)? {
+                for (key, value) in tool_header::stokes_axis_keywords(stokes, axis, pixel)? {
                     if let Some((_, existing)) =
                         header_items.iter_mut().find(|(name, _)| *name == key)
                     {
@@ -243,7 +251,6 @@ fn export_fits_typed<T: ExportFitsPixel>(
                     }
                 }
             }
-            original_axis += coordinate.n_pixel_axes();
         }
         tool_header::image_export_cards(image, &info, &header_items)?
     } else {
@@ -451,13 +458,9 @@ impl ExportAxisPlan {
         tool_order: bool,
     ) -> Result<Self, ImageError> {
         let ndim = image_shape.len();
-        let mut orig_types = Vec::with_capacity(ndim);
-        for ci in 0..coordinates.n_coordinates() {
-            let coord = coordinates.coordinate(ci);
-            for _ in 0..coord.n_pixel_axes() {
-                orig_types.push(coord.coordinate_type());
-            }
-        }
+        let orig_types: Vec<_> = (0..coordinates.n_pixel_axes())
+            .map(|axis| coordinates.pixel_axis_type(axis).expect("dense pixel axes"))
+            .collect();
         if orig_types.len() != ndim {
             return Err(ImageError::InvalidMetadata(format!(
                 "coordinate system has {} axes for image shape {image_shape:?}",
@@ -511,7 +514,6 @@ impl ExportAxisPlan {
         let mut old_to_new = vec![None; ndim];
         let mut output_shape = Vec::with_capacity(kept.len());
         let mut kept_types = Vec::with_capacity(kept.len());
-        let mut output_spectral_axis = None;
 
         for (new_idx, &orig_axis) in kept.iter().enumerate() {
             let new_1 = new_idx + 1;
@@ -519,11 +521,28 @@ impl ExportAxisPlan {
             output_shape.push(image_shape[orig_axis]);
             let ct = orig_types[orig_axis];
             kept_types.push(ct);
-            if ct == CoordinateType::Spectral && output_spectral_axis.is_none() {
-                output_spectral_axis = Some(new_1);
-            }
         }
 
+        if kept.iter().any(|&pixel| {
+            coordinates
+                .pixel_axis_to_world_axis(pixel)
+                .is_some_and(|world| old_to_new.get(world).is_none_or(Option::is_none))
+        }) {
+            return Err(ImageError::InvalidMetadata(
+                "FITS axes cannot be dropped across distinct pixel and world placements".into(),
+            ));
+        }
+        let output_spectral_axis = coordinates
+            .find_coordinate(CoordinateType::Spectral)
+            .and_then(|coordinate| {
+                coordinates
+                    .coordinate_world_axes(coordinate)
+                    .expect("existing coordinate")
+                    .into_iter()
+                    .flatten()
+                    .next()
+            })
+            .and_then(|axis| old_to_new.get(axis).copied().flatten());
         Ok(Self {
             kept_orig_axes: kept,
             output_shape,
@@ -1386,115 +1405,4 @@ fn write_beams_extension(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::image::ImageHistoryEntry;
-    use casa_coordinates::{
-        DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
-        StokesType,
-    };
-    use casa_types::measures::direction::DirectionRef;
-    use casa_types::measures::frequency::FrequencyRef;
-
-    #[test]
-    fn export_axis_plan_places_spectral_before_stokes_when_stokeslast() {
-        let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(DirectionCoordinate::new(
-            DirectionRef::J2000,
-            Projection::new(ProjectionType::SIN),
-            [1.0, 0.5],
-            [-1.0e-6, 1.0e-6],
-            [4.0, 5.0],
-        ));
-        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
-        coordinates.add_coordinate(SpectralCoordinate::new(
-            FrequencyRef::LSRK,
-            372.0e9,
-            1.0e6,
-            0.0,
-            372.0e9,
-        ));
-
-        let plan = ExportAxisPlan::build(
-            &coordinates,
-            &[10, 11, 1, 7],
-            false,
-            false,
-            true,
-            false,
-            false,
-        )
-        .unwrap();
-        assert_eq!(plan.kept_orig_axes, vec![0, 1, 3, 2]);
-        assert_eq!(plan.output_shape, vec![10, 11, 7, 1]);
-        let base_header = try_to_fits_header(&coordinates, &[10, 11, 1, 7]).unwrap();
-        let keywords = build_export_keywords(&coordinates, &base_header, &plan, false, false, None)
-            .unwrap()
-            .into_iter()
-            .collect::<HashMap<_, _>>();
-        assert_eq!(
-            keywords.get("CTYPE3"),
-            Some(&FitsValue::String("FREQ".to_string()))
-        );
-        assert_eq!(
-            keywords.get("CTYPE4"),
-            Some(&FitsValue::String("STOKES".to_string()))
-        );
-    }
-
-    #[test]
-    fn wrap_history_utf8_bytes_and_write_fits_logical_key() {
-        let accented = "a".repeat(71) + "éb";
-        let chunks = wrap_fits_history_text(&accented);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0], "a".repeat(71));
-        assert_eq!(chunks[1], ">éb");
-        assert!(chunks.iter().all(|c| c.len() <= 72));
-
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("logical.fits");
-        let desc = ImageDescription {
-            data_type: FitsImageType::Float,
-            dimensions: &[2, 2],
-        };
-        {
-            let mut fits = FitsFile::create(&path)
-                .with_custom_primary(&desc)
-                .open()
-                .unwrap();
-            let hdu = fits.primary_hdu().unwrap();
-            write_fits_key(&hdu, &mut fits, "FLAGT", &FitsValue::Logical(true)).unwrap();
-            write_fits_key(&hdu, &mut fits, "FLAGF", &FitsValue::Logical(false)).unwrap();
-            write_history_cards(
-                &mut fits,
-                &[
-                    ImageHistoryEntry {
-                        time_mjd_seconds: -1.0,
-                        priority: String::new(),
-                        location: String::new(),
-                        message: "line1\nline2".to_string(),
-                    },
-                    ImageHistoryEntry {
-                        time_mjd_seconds: 5_000_000_000.0,
-                        priority: "WARN".to_string(),
-                        location: "multi".to_string(),
-                        message: accented,
-                    },
-                ],
-            )
-            .unwrap();
-            hdu.write_image(&mut fits, &[0.0_f32; 4]).unwrap();
-        }
-        let raw = fs::read(&path).unwrap();
-        let text = String::from_utf8_lossy(&raw);
-        assert!(text.contains("FLAGT   =                    T"));
-        assert!(text.contains("FLAGF   =                    F"));
-        let entries = crate::image::image_history_entries(&path).unwrap();
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].message, "line1");
-        assert_eq!(entries[1].message, "line2");
-        assert_eq!(entries[2].location, "::multi");
-        // CFITSIO `ffphis` scrubs non-ASCII FITS card bytes (`é` -> `"  "`) while keeping pairing intact.
-        assert_eq!(entries[2].message, format!("{}  b", "a".repeat(71)));
-    }
-}
+mod tests;

@@ -27,31 +27,26 @@ impl LegacyEpOffsets {
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
     ) -> MsResult<Self> {
-        let first = selected
-            .selected_rows
-            .first()
-            .ok_or_else(|| invalid("no rows selected for legacy pointing offsets"))?;
-        let offsets = Self::open(path, ms.antenna()?.row_count(), first.spectral_window_id)?;
+        if selected.selected_rows.is_empty() {
+            return Err(invalid("no rows selected for legacy pointing offsets"));
+        }
+        let offsets = Self::open(
+            path,
+            ms.antenna()?.row_count(),
+            ms.spectral_window()?.row_count(),
+        )?;
         offsets.check_selection(selected)?;
         Ok(offsets)
     }
 
     pub(in crate::ft) fn check_selection(&self, selected: &ResolvedMsSelection) -> MsResult<()> {
-        let Some(first) = selected.selected_rows.first() else {
-            return Ok(());
-        };
         for row in &selected.selected_rows {
-            if row.spectral_window_id != first.spectral_window_id {
-                return Err(invalid(
-                    "legacy pointing offsets for this spectral-window layout are pending #1520",
-                ));
-            }
             self.baseline_offset([row.antenna1_id, row.antenna2_id], row.time_mjd_seconds)?;
         }
         Ok(())
     }
 
-    fn open(path: &Path, antennas: usize, spw: i32) -> MsResult<Self> {
+    fn open(path: &Path, antennas: usize, window_count: usize) -> MsResult<Self> {
         let table = Table::open(TableOptions::new(path))?;
         let info = table.info();
         if info.table_type != "Calibration" || info.sub_type != "EP Jones" || table.row_count() == 0
@@ -65,36 +60,7 @@ impl LegacyEpOffsets {
             .get("CAL_DESC")
             .and_then(Value::as_table_ref)
             .ok_or_else(|| invalid("legacy EP table has no CAL_DESC table link"))?;
-        let description = Table::open(TableOptions::new(add_directory(description_name, path)))?;
-        if description.row_count() != 1 {
-            return Err(invalid(
-                "legacy pointing offsets for this spectral-window layout are pending #1520",
-            ));
-        }
-        let window = description
-            .cell_accessor(0, "SPECTRAL_WINDOW_ID")?
-            .array()?;
-        let matches_window = match window {
-            ArrayValue::Int32(values) => values.len() == 1 && values.iter().next() == Some(&spw),
-            ArrayValue::Int64(values) => {
-                values.len() == 1 && values.iter().next() == Some(&i64::from(spw))
-            }
-            _ => false,
-        };
-        if !matches_window {
-            return Err(invalid(
-                "legacy pointing offsets for this spectral-window layout are pending #1520",
-            ));
-        }
-        let samples = table.row_count();
-        let slots = samples
-            .checked_div(antennas)
-            .filter(|count| count * antennas == samples)
-            .ok_or_else(|| {
-                invalid("legacy EP table does not match the MeasurementSet antenna count")
-            })?;
         let host = HostResources::detect().map_err(invalid)?;
-        let mut offsets = Self::empty(antennas, slots, &host)?;
         let _reading = admit(
             &host,
             &ResourcePolicy::Balanced,
@@ -106,17 +72,38 @@ impl LegacyEpOffsets {
             },
         )
         .map_err(invalid)?;
+        let description = Table::open(TableOptions::new(add_directory(description_name, path)))?;
+        let active = pointing_description(&description, window_count)?;
+        let desc_ids = table.column_accessor("CAL_DESC_ID")?.scalar_cells_owned()?;
+        let mut indices = Vec::new();
+        for (index, value) in desc_ids.into_iter().enumerate() {
+            let id = match value {
+                Some(ScalarValue::Int32(value)) => usize::try_from(value).ok(),
+                Some(ScalarValue::Int64(value)) => usize::try_from(value).ok(),
+                _ => None,
+            };
+            let id = id
+                .filter(|&id| id < description.row_count())
+                .ok_or_else(|| {
+                    invalid("legacy EP CAL_DESC_ID must reference a calibration description")
+                })?;
+            if id == active {
+                indices.push(index);
+            }
+        }
+        let samples = indices.len();
+        let slots = samples
+            .checked_div(antennas)
+            .filter(|&count| count > 0 && count * antennas == samples)
+            .ok_or_else(|| {
+                invalid("legacy EP table has incomplete spectral-window-zero antenna solutions")
+            })?;
+        let mut offsets = Self::empty(antennas, slots, &host)?;
         let mut rows = Vec::with_capacity(samples);
         let gains = table.column_accessor("GAIN")?;
-        for first in (0..table.row_count()).step_by(256) {
-            let indices: Vec<_> = (first..(first + 256).min(table.row_count())).collect();
-            let cells = gains.array_cells_owned_uncached(&indices)?;
+        for indices in indices.chunks(256) {
+            let cells = gains.array_cells_owned_uncached(indices)?;
             for (&row, value) in indices.iter().zip(cells) {
-                if integer(&table, row, "CAL_DESC_ID")? != 0 {
-                    return Err(invalid(
-                        "legacy pointing offsets for this calibration description are pending #1520",
-                    ));
-                }
                 let ScalarValue::Float64(epoch) = table.cell_accessor(row, "TIME")?.scalar()?
                 else {
                     return Err(invalid("legacy EP TIME must be Float64"));
@@ -315,6 +302,31 @@ impl LegacyEpOffsets {
             upper - 1
         }
     }
+}
+
+fn pointing_description(table: &Table, window_count: usize) -> MsResult<usize> {
+    let mut active = None;
+    for row in 0..table.row_count() {
+        let window = table.cell_accessor(row, "SPECTRAL_WINDOW_ID")?.array()?;
+        let id = match window {
+            ArrayValue::Int32(values) => values.iter().next().map(|&id| i64::from(id)),
+            ArrayValue::Int64(values) => values.iter().next().copied(),
+            _ => None,
+        };
+        let id = id
+            .and_then(|id| usize::try_from(id).ok())
+            .filter(|&id| id < window_count)
+            .ok_or_else(|| invalid("legacy EP CAL_DESC refers to an unknown spectral window"))?;
+        // EPJones::nearest reads currSpw(), which the legacy imager keeps
+        // at zero even as it advances to another visibility spectral window.
+        if id == 0 && active.replace(row).is_some() {
+            return Err(invalid(
+                "legacy EP has multiple descriptions for spectral window zero",
+            ));
+        }
+    }
+    active
+        .ok_or_else(|| invalid("legacy EP has no calibration description for spectral window zero"))
 }
 
 fn integer(table: &Table, row: usize, name: &str) -> MsResult<i64> {

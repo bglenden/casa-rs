@@ -7,7 +7,7 @@ use std::thread;
 
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
-    fits::coordinate_util::from_fits_header_with_axis_order,
+    fits::coordinate_util::{align_fits_pc_rows, from_fits_header_with_axis_order},
 };
 use casa_lattices::{Lattice, LatticeError, TraversalCursorIter, TraversalSpec};
 use casa_types::measures::{
@@ -154,7 +154,13 @@ impl FitsToolImport {
             }
             has_wcs |= header.get(&format!("CTYPE{axis}")).is_some();
         }
-        let (mut coordinates, axis_order) = from_fits_header_with_axis_order(&header, &shape)?;
+        let aligned = align_fits_pc_rows(&header, shape.len());
+        let (coordinate_header, world_order) =
+            aligned.as_ref().map_or((&header, None), |(header, order)| {
+                (header, Some(order.as_slice()))
+            });
+        let (mut coordinates, axis_order) =
+            from_fits_header_with_axis_order(coordinate_header, &shape)?;
         if !has_wcs {
             let ndim = shape.len();
             coordinates = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
@@ -163,7 +169,7 @@ impl FitsToolImport {
                     .with_reference_pixel(vec![-1.0; ndim]),
             );
         } else if group_linear_axes {
-            coordinates = group_linear_wcs(&coordinates, &axis_order, &header);
+            coordinates = group_linear_wcs(&coordinates, &axis_order, coordinate_header);
         }
         let obs = coordinates.obs_info_mut();
         if obs.observer.is_empty() {
@@ -180,7 +186,8 @@ impl FitsToolImport {
         {
             obs.telescope_position = Some(MPosition::new_itrf(x, y, z));
         }
-        let coordinate_record = fits_coordinate_record(&coordinates, &axis_order, &header)?;
+        let coordinate_record =
+            fits_coordinate_record(&coordinates, &axis_order, world_order, coordinate_header)?;
         let coordinates = CoordinateSystem::from_record(&coordinate_record).map_err(|error| {
             if matches!(
                 error,
@@ -771,6 +778,7 @@ fn read_linear_wcs(header: &FitsHeader, axes: &[usize]) -> (Array2<f64>, Vec<f64
 fn fits_coordinate_record(
     coordinates: &CoordinateSystem,
     axis_order: &[usize],
+    world_order: Option<&[usize]>,
     header: &FitsHeader,
 ) -> Result<RecordValue, ImageError> {
     let original = coordinates.to_record();
@@ -805,9 +813,14 @@ fn fits_coordinate_record(
                 let value = if matches!(field, "pixelmap" | "worldmap")
                     && let Value::Array(ArrayValue::Int32(map)) = value
                 {
-                    Value::Array(ArrayValue::Int32(
-                        map.mapv(|axis| axis_order[axis as usize] as i32),
-                    ))
+                    Value::Array(ArrayValue::Int32(map.mapv(|axis| {
+                        let pixel = axis_order[axis as usize];
+                        if field == "worldmap" {
+                            world_order.map_or(pixel, |order| order[pixel]) as i32
+                        } else {
+                            pixel as i32
+                        }
+                    })))
                 } else {
                     value.clone()
                 };

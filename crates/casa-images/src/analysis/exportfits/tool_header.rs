@@ -415,10 +415,11 @@ fn linear_fallback(
     coords: &CoordinateSystem,
     rank: usize,
 ) -> Result<BTreeMap<String, FitsValue>, ImageError> {
-    if coords.n_world_axes() != rank {
+    if coords.n_world_axes() != rank
+        || (0..rank).any(|axis| coords.pixel_axis_to_world_axis(axis) != Some(axis))
+    {
         return Err(header_creation_error());
     }
-    let mut axis = 1;
     let mut wcs = BTreeMap::new();
     for index in 0..coords.n_coordinates() {
         let coordinate = coords.coordinate(index);
@@ -435,7 +436,16 @@ fn linear_fallback(
         };
         let names = coordinate.axis_names();
         let pixels = coordinate.reference_pixel();
-        for local in 0..coordinate.n_pixel_axes() {
+        for (local, axis) in coords
+            .coordinate_pixel_axes(index)
+            .expect("existing coordinate")
+            .into_iter()
+            .enumerate()
+        {
+            let Some(axis) = axis else {
+                continue;
+            };
+            let axis = axis + 1;
             let mut name = names[local].to_ascii_uppercase();
             let mut unit = units[local].clone();
             truncate_bytes(&mut name, 8);
@@ -449,7 +459,6 @@ fn linear_fallback(
             ] {
                 wcs.insert(format!("{key}{axis}"), value);
             }
-            axis += 1;
         }
     }
     Ok(wcs)
@@ -462,9 +471,11 @@ fn normalize_wcs(
     if !wcs.contains_key("RESTFRQ") {
         wcs.remove("SPECSYS");
     }
-    let mut axis = 1;
     for index in 0..coords.n_coordinates() {
         let coordinate = coords.coordinate(index);
+        let axes = coords
+            .coordinate_world_axes(index)
+            .expect("existing coordinate");
         match coordinate {
             CoordinateModel::Direction(direction) => {
                 let frame = direction.direction_ref();
@@ -486,9 +497,12 @@ fn normalize_wcs(
                     _ => ("??LN", "??LT"),
                 };
                 let projection = direction.projection().name();
-                for (offset, name) in [longitude, latitude].into_iter().enumerate() {
+                for (axis, name) in axes.iter().zip([longitude, latitude]) {
+                    let Some(axis) = axis else {
+                        continue;
+                    };
                     wcs.insert(
-                        format!("CTYPE{}", axis + offset),
+                        format!("CTYPE{}", axis + 1),
                         FitsValue::String(format!("{name}-{projection}")),
                     );
                 }
@@ -509,11 +523,17 @@ fn normalize_wcs(
                 }
             }
             CoordinateModel::Stokes(stokes) => {
-                wcs.extend(stokes_axis_keywords(stokes, axis)?);
+                if let [Some(axis)] = axes.as_slice()
+                    && let [Some(pixel)] = coords
+                        .coordinate_pixel_axes(index)
+                        .expect("existing coordinate")
+                        .as_slice()
+                {
+                    wcs.extend(stokes_axis_keywords(stokes, axis + 1, pixel + 1)?);
+                }
             }
             _ => {}
         }
-        axis += coordinate.n_pixel_axes();
     }
     for (key, value) in wcs.iter_mut() {
         if matches!(split_axis_keyword(key), Some(("CTYPE" | "CUNIT", _)))
@@ -539,13 +559,14 @@ pub(super) fn wrapped_beam_position_angle(angle: f64) -> f64 {
 pub(super) fn stokes_axis_keywords(
     stokes: &StokesCoordinate,
     axis: usize,
+    pixel: usize,
 ) -> Result<[(String, FitsValue); 3], ImageError> {
     let (reference, increment) =
         fits_stokes_axis(stokes.stokes()).ok_or_else(header_creation_error)?;
     Ok([
         (format!("CRVAL{axis}"), FitsValue::Float(reference)),
         (format!("CDELT{axis}"), FitsValue::Float(increment)),
-        (format!("CRPIX{axis}"), FitsValue::Float(1.0)),
+        (format!("CRPIX{pixel}"), FitsValue::Float(1.0)),
     ])
 }
 
@@ -554,11 +575,14 @@ pub(super) fn projection_parameters(
     output_axis: impl Fn(usize) -> Option<usize>,
 ) -> Vec<(String, FitsValue)> {
     let mut result = Vec::new();
-    let mut offset = 0;
     for index in 0..coords.n_coordinates() {
         let axis = coords.coordinate(index);
         if let CoordinateModel::Direction(direction) = axis
-            && let Some(latitude_axis) = output_axis(offset + 2)
+            && let [_, Some(latitude)] = coords
+                .coordinate_world_axes(index)
+                .expect("existing coordinate")
+                .as_slice()
+            && let Some(latitude_axis) = output_axis(latitude + 1)
         {
             let projection = direction.projection();
             let params = projection.parameters();
@@ -574,7 +598,6 @@ pub(super) fn projection_parameters(
                 ));
             }
         }
-        offset += axis.n_pixel_axes();
     }
     result
 }

@@ -245,3 +245,37 @@ def test_fitsheader_groups_history_once_per_row_and_keeps_misc_card_names(casa):
         outputs.append(header)
         image.done()
     _assert_value(outputs[1], outputs[0])
+
+
+def test_fitsheader_preserves_projection_with_independent_world_axes(casa, tmp_path):
+    path = str(tmp_path / "world-transposed.im")
+    writer = casa.image()
+    assert writer.fromshape(path, [4, 5])
+    cs = writer.coordsys()
+    record = cs.torecord()
+    record["worldmap0"] = [1, 0]
+    assert writer.setcoordsys(record)
+    assert cs.done()
+    assert writer.done()
+    outputs = []
+    for factory in (casa.image, tools.image):
+        image = factory()
+        try:
+            assert image.open(path)
+            header = image.fitsheader()
+            cards = image.fitsheader(True)
+            matrix = {}
+            for index in range(0, len(cards), 80):
+                card = cards[index:index + 80]
+                match = re.match(r"PC\s*0*(\d+)_(?:0*)(\d+)\s*=\s*([^/ ]+)", card)
+                if match:
+                    world, pixel, value = match.groups()
+                    matrix[int(world), int(pixel)] = float(value)
+            outputs.append((header, matrix))
+        finally:
+            image.done()
+    (reference, expected_pc), (observed, actual_pc) = outputs
+    for field in ("CTYPE", "CRPIX", "CRVAL", "CDELT"):
+        _assert_value(observed[field], reference[field])
+    assert observed["CTYPE"].tolist() == ["DEC--SIN", "RA---SIN"]
+    assert actual_pc == expected_pc == {(1, 1): 0.0, (1, 2): 1.0, (2, 1): 1.0, (2, 2): 0.0}

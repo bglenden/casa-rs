@@ -1,7 +1,41 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::*;
+use crate::CoordinateType;
 use crate::fits::header::FitsHeader;
+
+#[test]
+fn fits_readback_keeps_a_rotated_direction_and_a_separately_placed_frequency() {
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, -0.3],
+            [-1.0e-3, 1.0e-3],
+            [1.0, 2.0],
+        )
+        .with_pc_matrix(ndarray::array![[1.0, 0.3], [-0.2, 1.0]]),
+    );
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.4e9,
+        1.0e6,
+        3.0,
+        1.42e9,
+    ));
+    coordinates.transpose_axes(&[2, 0, 1], &[0, 1, 2]).unwrap();
+    let shape = [5, 6, 7];
+    let header = try_to_fits_header(&coordinates, &shape).unwrap();
+    let restored = from_fits_header(&header, &shape).unwrap();
+    for pixel in [[1.0, 2.0, 3.0], [3.5, 4.0, 1.5], [0.0, 1.25, 6.0]] {
+        let expected = coordinates.to_world(&pixel).unwrap();
+        let actual = restored.to_world(&pixel).unwrap();
+        for (expected, actual) in expected.into_iter().zip(actual) {
+            assert!((expected - actual).abs() <= 1e-12 * expected.abs().max(1.0));
+        }
+    }
+}
 
 /// Helper: build a typical 4-axis coordinate system (RA+Dec+Freq+Stokes).
 fn make_4axis_cs() -> CoordinateSystem {
