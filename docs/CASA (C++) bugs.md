@@ -8654,3 +8654,17 @@ and then tests the original string against zero. casa-rs uses the
 parsed MJD to decide whether to include `refdate` in the request and
 keeps the supplied calendar date in the component list provenance.
 [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## Convolution can produce isolated infinities in an otherwise undefined plane
+
+CASA 6.7.6.14 spreads an unmasked NaN through the FFT axes in
+`image.convolve`. The validity mask and planes along degenerate kernel
+axes are independent. For an unmasked infinity, a four-pixel input
+`[1, 1, 1, inf]` with kernel `[1, 0, 0]` and `scale=1` produces
+`[nan, nan, inf, nan]`. The surviving infinity depends on the transform
+and padding. Casa-rs returns NaN throughout the affected plane when
+convolution mixes a valid nonfinite value, so the result is consistent
+across direct accumulation, FFT blocks, and tile sizes. A kernel with no
+active axes still applies the scalar coefficient with IEEE arithmetic.
+Masked samples contribute zero and the output retains the selected input
+validity.

@@ -35,6 +35,19 @@ pub(super) fn registry() -> MutexGuard<'static, OpenImages> {
     ATTACHED.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+pub(super) fn read_locked<T>(
+    attachment: &AttachedImage,
+    read: impl FnOnce(&ImageHandle) -> PyResult<T>,
+) -> PyResult<T> {
+    let mut handle = attachment.lock();
+    attachment.require_pixel_read_lock(&mut handle)?;
+    let staged = read(&handle);
+    let release = attachment.release_requested_lock(&mut handle);
+    let result = staged?;
+    release?;
+    Ok(result)
+}
+
 pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,

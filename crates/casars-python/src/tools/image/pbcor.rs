@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PySlice, PyString, PyTuple};
 
 use super::PyImageTool;
-use super::attachment::AttachedImage;
+use super::attachment::{AttachedImage, read_locked};
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
 use super::create::publish_image;
@@ -378,19 +378,6 @@ fn output_history(dest: &mut Storage<f32>, origin: &str, message: &str) -> PyRes
 
 fn text_option(text: &str) -> Option<&str> {
     (!text.is_empty()).then_some(text)
-}
-
-fn read_locked<T>(
-    attachment: &AttachedImage,
-    read: impl FnOnce(&ImageHandle) -> PyResult<T>,
-) -> PyResult<T> {
-    let mut handle = attachment.lock();
-    attachment.require_pixel_read_lock(&mut handle)?;
-    let staged = read(&handle);
-    let release = attachment.release_requested_lock(&mut handle);
-    let result = staged?;
-    release?;
-    Ok(result)
 }
 
 fn float_view<T>(
