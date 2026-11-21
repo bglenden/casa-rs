@@ -13,7 +13,8 @@ from casatasks import imregrid, version_string
 from casatools import coordsys, image
 
 INPUTS = ("cube.im", "template.im", "single.im", "masked.im", "transposed.im", "cube_pol.im", "template_pol.im", "double.im",
-          "complex.im", "dcomplex.im", "complex_sfl.im")
+          "complex.im", "dcomplex.im", "complex_sfl.im", "linear.im", "linear_template.im",
+          "linear_cube.im", "linear_cube_template.im")
 CASES = {
     "frequency": {},
     "velocity": {"asvelocity": True},
@@ -47,6 +48,13 @@ CASES = {
     "double_frame_refused": {"imagename": "double.im", "template": "GALACTIC"},
     "dcomplex_frequency": {"imagename": "dcomplex.im", "axes": [3], "interpolation": "cubic"},
     "dcomplex_spatial": {"imagename": "dcomplex.im", "axes": [0, 1]},
+    "linear_plane": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0, 1]},
+    "linear_default_decimation": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0, 1], "decimate": 10},
+    "linear_cube_first_axis": {"imagename": "linear_cube.im", "template": "linear_cube_template.im", "axes": [0]},
+    "linear_cube_two_axes": {"imagename": "linear_cube.im", "template": "linear_cube_template.im", "axes": [2, 0]},
+    "linear_cube_replicate": {"imagename": "linear_cube.im", "template": "linear_cube_template.im", "axes": [2, 0], "replicate": True},
+    "one_linear_axis": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0]},
+    "replicate_linear_plane": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0, 1], "replicate": True},
 }
 
 
@@ -152,7 +160,7 @@ def snapshot(path):
                 "shape": shape,
                 "names": cs.names(),
                 "units": cs.units(),
-                "direction_frame": cs.referencecode("direction")[0],
+                "direction_frame": cs.referencecode("direction")[0] if "Direction" in cs.coordinatetype() else None,
                 "reference_pixel": plain(cs.referencepixel()["numeric"]),
                 "reference_value": plain(cs.referencevalue()["numeric"]),
                 "increment": plain(cs.increment()["numeric"]),
@@ -172,6 +180,57 @@ def snapshot(path):
         ia.done()
 
 
+def make_linear():
+    for name, shape, units, increments, reference in [
+        ("linear.im", (7, 6), ["m", "s"], [1.0, 2.0], [0.0, 0.0]),
+        ("linear_template.im", (4, 4), ["km", "ms"], [0.00125, 1500.0], [0.00025, 1000.0]),
+        ("linear_cube.im", (7, 6, 5), ["m", "s", "Hz"], [1., 2., 10.], [0., 0., 0.]),
+        ("linear_cube_template.im", (4, 6, 3), ["km", "s", "kHz"], [0.00125, 2., 0.0125], [0.00025, 0., 0.005]),
+    ]:
+        cs = coordsys().newcoordsys(linear=len(shape))
+        ia = image()
+        try:
+            assert cs.setunits(units, type="linear", overwrite=True)
+            assert cs.setincrement(increments, type="linear")
+            assert cs.setreferencevalue(reference, type="linear")
+            if name == "linear_template.im":
+                assert cs.setlineartransform(type="linear", value=[[1.0, 0.125], [-0.1, 1.0]])
+            elif name == "linear_cube_template.im":
+                assert cs.setlineartransform(type="linear", value=[[1., 0., .05], [0., 1., 0.], [.1, 0., 1.]])
+            axes = np.indices(shape, dtype=np.float32)
+            pixels = sum(10 ** index * grid for index, grid in enumerate(axes))
+            assert ia.fromarray(name, pixels, csys=cs.torecord())
+            assert ia.setbrightnessunit("Jy/pixel")
+            if name in ("linear.im", "linear_cube.im"):
+                assert ia.putregion(pixelmask=(sum(axes) != 7))
+        finally:
+            cs.done()
+            ia.done()
+
+
+def same_shape_linear_shift():
+    template = imregrid(imagename="linear_cube.im", template="get")
+    template["csys"]["linear0"]["crval"][0] += 0.25
+    return {"imagename": "linear_cube.im", "template": template, "axes": [0]}
+
+
+def linear_shift_product(copied):
+    original = snapshot("linear_cube.im")
+    # CASA attaches the new WCS while retaining the old samples.
+    assert copied["pixels"] == original["pixels"]
+    assert copied["mask"] == original["mask"]
+    assert copied["pixel0_world"][0] == original["pixel0_world"][0] + 0.25
+    shape = tuple(original["shape"])
+    pixels = np.array(original["pixels"]).reshape(shape, order="F")
+    mask = np.array(original["mask"]).reshape(shape, order="F")
+    shifted = np.zeros(shape)
+    valid = np.zeros(shape, dtype=bool)
+    shifted[:-1] = 0.75 * pixels[:-1] + 0.25 * pixels[1:]
+    valid[:-1] = mask[:-1] & mask[1:]
+    return {**copied, "pixels": shifted.ravel(order="F").tolist(),
+            "mask": valid.ravel(order="F").tolist()}
+
+
 def run_cases():
     cube("cube.im", (14, 12, 1, 5), 1.4e9, 2e6, 1.42e9)
     cube("template.im", (12, 10, 1, 4), 1.401e9, 2.3e6, 1.421e9, shifted=True)
@@ -181,6 +240,7 @@ def run_cases():
     cube("template_pol.im", (12, 10, 2, 4), 1.401e9, 2.3e6, 1.421e9, shifted=True, polarizations=["Q", "U"])
     make_double()
     make_complex()
+    make_linear()
     dictionary = imregrid(imagename="template.im", template="get")
     reference = imregrid(imagename="cube.im", template="get")
     def edit(direction=None, spectral=None):
@@ -197,6 +257,7 @@ def run_cases():
         return record
 
     extra = {
+        "same_shape_linear_shift": same_shape_linear_shift(),
         "dictionary": {"template": dictionary, "shape": [3, 4]},
         "b1950_same_numerical_grid": {"template": edit(direction={"system": "B1950", "conversionSystem": "B1950"}), "axes": [0, 1]},
         "optical_velocity": {"template": edit(spectral={"velType": 1, "wcs": {"crval": 1.402e9}}), "axes": [3], "asvelocity": True},
@@ -223,6 +284,8 @@ def run_cases():
                 assert snapshot(product) == snapshot(case["existing"])
         else:
             case["product"] = snapshot(product)
+            if name == "same_shape_linear_shift":
+                case["corrected_product"] = linear_shift_product(case["product"])
             if name == "singleton":
                 original = snapshot("single.im")
                 case["preserved_input_metadata"] = {key: original[key] for key in ("brightness", "beam")}

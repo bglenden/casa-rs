@@ -80,7 +80,7 @@ pub(super) fn load(
     let memory = reserve("legacy PB/W cache image", retained)?;
     let _read_memory = reserve("legacy PB/W cache read", cache_bytes.saturating_mul(2))?;
     let samples = kernel.get().map_err(model_error)?;
-    let terms = LegacyPbWConvolution::new(
+    let mut terms = LegacyPbWConvolution::new(
         samples,
         sampling,
         support,
@@ -91,6 +91,12 @@ pub(super) fn load(
     )
     .map_err(model_error)?
     .with_antenna_pointing(pointing);
+    let scale = "casars_legacy_pbw_w_scale";
+    if record.get(scale).is_some() {
+        let scale = record_number(record, scale)
+            .ok_or_else(|| model_error("legacy PB/W recipe has an invalid W scale"))?;
+        terms = terms.with_w_scale(scale).map_err(model_error)?;
+    }
     Ok((terms, memory))
 }
 

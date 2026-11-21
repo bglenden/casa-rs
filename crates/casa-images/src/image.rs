@@ -464,43 +464,41 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
 
     /// Returns the coordinate type for each image axis.
     fn axis_types(&self) -> Vec<CoordinateType> {
-        let mut types = Vec::with_capacity(self.ndim());
-        for i in 0..self.coordinates().n_coordinates() {
-            let coord = self.coordinates().coordinate(i);
-            let coord_type = coord.coordinate_type();
-            for _ in 0..coord.n_pixel_axes() {
-                types.push(coord_type);
-            }
-        }
-        while types.len() < self.ndim() {
-            types.push(CoordinateType::Linear);
-        }
-        types
+        let coords = self.coordinates();
+        (0..self.ndim().max(coords.n_pixel_axes()))
+            .map(|axis| {
+                coords
+                    .pixel_axis_owner(axis)
+                    .map_or(CoordinateType::Linear, |(index, _)| {
+                        coords.coordinate(index).coordinate_type()
+                    })
+            })
+            .collect()
     }
 
     /// Returns the axis names for the image.
     fn axis_names(&self) -> Vec<String> {
-        let mut names = Vec::with_capacity(self.ndim());
-        for i in 0..self.coordinates().n_coordinates() {
-            names.extend(self.coordinates().coordinate(i).axis_names());
-        }
-        while names.len() < self.ndim() {
-            names.push(format!("Axis{}", names.len()));
-        }
-        names
+        let coords = self.coordinates();
+        (0..self.ndim().max(coords.n_pixel_axes()))
+            .map(|axis| {
+                coords
+                    .pixel_axis_owner(axis)
+                    .and_then(|(index, local)| {
+                        coords.coordinate(index).axis_names().into_iter().nth(local)
+                    })
+                    .unwrap_or_else(|| format!("Axis{axis}"))
+            })
+            .collect()
     }
 
     /// Finds the first axis belonging to a given coordinate type.
     fn find_axis(&self, coord_type: CoordinateType) -> Option<usize> {
-        let mut offset = 0;
-        for i in 0..self.coordinates().n_coordinates() {
-            let coord = self.coordinates().coordinate(i);
-            if coord.coordinate_type() == coord_type {
-                return Some(offset);
-            }
-            offset += coord.n_pixel_axes();
-        }
-        None
+        let coords = self.coordinates();
+        (0..coords.n_pixel_axes()).find(|&axis| {
+            coords
+                .pixel_axis_owner(axis)
+                .is_some_and(|(index, _)| coords.coordinate(index).coordinate_type() == coord_type)
+        })
     }
 
     /// Finds an axis by case-insensitive name prefix.
@@ -1428,7 +1426,9 @@ impl<T: ImagePixel> PagedImage<T> {
         let Some((field, _)) = CoordinateSystem::first_spectral_in_record(record)? else {
             return Ok(None);
         };
-        Ok(CoordinateSystem::record_coordinates(record)?
+        Ok(self
+            .coords
+            .coordinates_in_record(record)?
             .into_iter()
             .find(|coordinate| coordinate.field == field)
             .and_then(|coordinate| coordinate.pixel_axes.into_iter().next().flatten()))

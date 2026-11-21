@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Single W-plane convolution in the legacy EP solver's nPBWProjectFT.
+//! Generate the original nPBWProjectFT aperture and W convolution cells.
 
 use num_complex::Complex32;
 
@@ -11,22 +11,36 @@ use crate::weighting::SPEED_OF_LIGHT_M_PER_S;
 const SCREEN: usize = 2048;
 const SAMPLING: usize = 20;
 
-/// The legacy one-plane EP convolution and its average primary beam.
+/// The legacy EP convolution planes and their common average primary beam.
 pub struct LegacyEpConvolution {
     /// Fourier-cell oversampling.
     pub sampling: usize,
-    /// The support radius in visibility-grid pixels.
-    pub support: usize,
+    /// Support radius in visibility-grid pixels, in W-plane order.
+    pub support: Vec<usize>,
     /// The side of the stored convolution after cropping to support.
     pub kernel_side: usize,
-    /// Imaging and weight planes in x-contiguous order. The legacy EP
-    /// request uses the same Mueller element for each correlation.
-    pub kernels: [Vec<Complex32>; 2],
+    /// Imaging and weight cells for each W plane in x-contiguous order.
+    pub kernels: Vec<[Vec<Complex32>; 2]>,
     /// Unsquinted beam on the input image geometry, x-contiguous.
     pub average_beam: Vec<f32>,
 }
 
+/// The W-plane support and reusable aperture screens before output allocation.
+pub struct LegacyEpWPlanePlan {
+    average_beam: Vec<f32>,
+    screens: [Vec<Complex32>; 2],
+    sky_peaks: [usize; 2],
+    first_imaging: Vec<Complex32>,
+    support: Vec<usize>,
+    fft: PlaneFft<f32>,
+    sky_cell_rad: [f64; 2],
+    w_scale: f64,
+}
+
 impl LegacyEpConvolution {
+    /// Working memory for the Jones aperture and convolution FFT screens.
+    pub const SCREEN_WORKSPACE_BYTES: u64 = 256 << 20;
+
     /// Form the nPBWProjectFT cells for the original VLA L-band feed.
     ///
     /// `frequency_hz` is the highest channel in the first visibility buffer.
@@ -70,7 +84,7 @@ impl LegacyEpConvolution {
                 *value /= peak;
             }
         }
-        let support = kernel_support(&kernels[0])?;
+        let support = kernel_support(&kernels[0], 1e-4)?;
         let radius = (support + 1) * SAMPLING;
         let kernel_side = radius * 2 + 1;
         let integral = sampled_integral(&kernels[0], support);
@@ -87,9 +101,9 @@ impl LegacyEpConvolution {
         }
         Ok(Self {
             sampling: SAMPLING,
-            support,
+            support: vec![support],
             kernel_side,
-            kernels: [imaging, weights],
+            kernels: vec![[imaging, weights]],
             average_beam,
         })
     }
@@ -188,6 +202,178 @@ impl LegacyEpConvolution {
     }
 }
 
+impl LegacyEpWPlanePlan {
+    /// Measure the support of the cold legacy PB/W cells. The caller admits
+    /// the aperture, FFT scratch and the materialized output independently.
+    /// # Errors
+    /// The aperture or image geometry is invalid, or a cell has no support.
+    pub fn new(
+        aperture: &EvlaApertureModel,
+        image_side: usize,
+        cell_rad: [f64; 2],
+        frequency_hz: f64,
+        angle_rad: f64,
+        plane_count: usize,
+    ) -> Result<Self, OperatorError> {
+        if !(2..=usize::from(u16::MAX)).contains(&plane_count) {
+            return Err(invalid("legacy cold PB/W requires at least two W planes"));
+        }
+        let frequency_hz = f64::from(frequency_hz as f32);
+        let average_beam =
+            aperture_beam(aperture, image_side, cell_rad[0], frequency_hz, angle_rad)?
+                .power(false)?
+                .into_iter()
+                .map(|value| value.re)
+                .collect();
+        let sky_cell_rad =
+            cell_rad.map(|cell| cell * (SAMPLING * image_side) as f64 / SCREEN as f64);
+        let mut aperture =
+            aperture_beam(aperture, SCREEN, sky_cell_rad[0], frequency_hz, angle_rad)?;
+        let screens = [aperture.power(true)?, aperture.power(false)?];
+        drop(aperture);
+        let sky_peaks = screens.each_ref().map(|screen| peak_index(screen));
+        let mut fft = PlaneFft::new([SCREEN, SCREEN], false)?;
+        let mut first_imaging = screens[0].clone();
+        fft.transform(&mut first_imaging, false)?;
+        let width = (plane_count - 1) as f64;
+        let w_scale = f64::from((width * width) as f32) / (0.25 / cell_rad[0].abs());
+        if !w_scale.is_finite() || w_scale <= 0. {
+            return Err(invalid("invalid legacy EP cold W scale"));
+        }
+        let mut support = Vec::with_capacity(plane_count);
+        let first_peak = centre(&first_imaging);
+        for plane in 0..plane_count {
+            let peak = if plane == 0 {
+                first_peak
+            } else {
+                // The FFT centre is the sum of the projected screen. Only
+                // the inner window differs from the W=0 screen.
+                first_peak
+                    + w_phases(sky_cell_rad, w_scale, plane)
+                        .map(|(index, phase)| screens[0][index] * (phase - 1.))
+                        .sum::<Complex32>()
+            };
+            // CASA searches plane zero even for the threshold from plane W.
+            support.push(kernel_support(&first_imaging, peak.norm() * 1e-4)?);
+        }
+        Ok(Self {
+            average_beam,
+            screens,
+            sky_peaks,
+            first_imaging,
+            support,
+            fft,
+            sky_cell_rad,
+            w_scale,
+        })
+    }
+
+    /// Additional storage required for all cropped imaging and weight cells.
+    pub fn retained_kernel_bytes(&self) -> u64 {
+        let side = (2 * self.crop_radius() + 1) as u64;
+        side.saturating_pow(2)
+            .saturating_mul(self.support.len() as u64)
+            .saturating_mul((2 * size_of::<Complex32>()) as u64)
+            .saturating_add((self.support.len() * 128) as u64)
+    }
+
+    /// The W coordinate used during the tool call that generated the cache.
+    pub fn w_scale(&self) -> f64 {
+        self.w_scale
+    }
+
+    fn crop_radius(&self) -> usize {
+        (self.support.iter().copied().max().unwrap_or(0) + 1) * SAMPLING
+    }
+
+    /// Transform and crop the cells using their common canvas.
+    /// # Errors
+    /// A Fourier transform failed, or the plane's normalization is invalid.
+    pub fn build(mut self) -> Result<LegacyEpConvolution, OperatorError> {
+        let radius = self.crop_radius();
+        let mut first_weights = self.screens[1].clone();
+        self.fft.transform(&mut first_weights, false)?;
+        let peaks = [centre(&self.first_imaging), centre(&first_weights)];
+        if peaks
+            .iter()
+            .any(|peak| !peak.re.is_finite() || peak.re <= 0.)
+        {
+            return Err(invalid("legacy EP convolution has no positive peak"));
+        }
+        let mut kernels = Vec::with_capacity(self.support.len());
+        let mut imaging = std::mem::take(&mut self.first_imaging);
+        let mut weight = first_weights;
+        for (plane, &support) in self.support.iter().enumerate() {
+            let mut normalization = peaks;
+            if plane > 0 {
+                imaging.copy_from_slice(&self.screens[0]);
+                weight.copy_from_slice(&self.screens[1]);
+                for (index, phase) in w_phases(self.sky_cell_rad, self.w_scale, plane) {
+                    imaging[index] *= phase;
+                    weight[index] *= phase;
+                }
+                // Dividing by the projected complex sky peak before FFT
+                // is equivalent to removing its phase from the result.
+                for (cell, grid) in [&imaging, &weight].into_iter().enumerate() {
+                    let peak = self.sky_peaks[cell];
+                    normalization[cell] *= grid[peak] / self.screens[cell][peak];
+                }
+                self.fft.transform(&mut imaging, false)?;
+                self.fft.transform(&mut weight, false)?;
+            }
+            let [mut imaging, mut weights] = [&imaging, &weight].map(|grid| crop(grid, radius));
+            for value in &mut imaging {
+                *value /= normalization[0];
+            }
+            let integral = sample_cropped(&imaging, 2 * radius + 1, support)?;
+            if !integral.is_finite() || integral <= 0. {
+                return Err(invalid("legacy EP convolution integral is not positive"));
+            }
+            for value in &mut imaging {
+                *value /= integral;
+            }
+            for value in &mut weights {
+                *value /= normalization[1] * integral * integral;
+            }
+            kernels.push([imaging, weights]);
+        }
+        Ok(LegacyEpConvolution {
+            sampling: SAMPLING,
+            support: self.support,
+            kernel_side: 2 * radius + 1,
+            kernels,
+            average_beam: self.average_beam,
+        })
+    }
+}
+
+fn centre(screen: &[Complex32]) -> Complex32 {
+    screen[(SCREEN / 2) * SCREEN + SCREEN / 2]
+}
+
+fn w_phases(
+    [dx, dy]: [f64; 2],
+    scale: f64,
+    plane: usize,
+) -> impl Iterator<Item = (usize, Complex32)> {
+    let half_window = (SCREEN / SAMPLING / 2) as isize;
+    let origin = (SCREEN / 2) as isize;
+    let index = plane as f64;
+    let phase_factor = std::f64::consts::TAU * index * index / scale;
+    (-half_window..half_window).flat_map(move |y| {
+        let m_squared = (y as f64 * dy).powi(2);
+        (-half_window..half_window).filter_map(move |x| {
+            let radius_squared = (x as f64 * dx).powi(2) + m_squared;
+            (radius_squared < 1.).then(|| {
+                let phase = phase_factor * ((1. - radius_squared).sqrt() - 1.);
+                let (sin, cos) = phase.sin_cos();
+                let index = (origin + y) as usize * SCREEN + (origin + x) as usize;
+                (index, Complex32::new(cos as f32, sin as f32))
+            })
+        })
+    })
+}
+
 struct ApertureBeam {
     size: usize,
     jones: Vec<Complex32>,
@@ -244,7 +430,7 @@ impl ApertureBeam {
     }
 }
 
-fn kernel_support(kernel: &[Complex32]) -> Result<usize, OperatorError> {
+fn kernel_support(kernel: &[Complex32], threshold: f32) -> Result<usize, OperatorError> {
     let origin = SCREEN as f64 * 0.5;
     for radius in (2..=SCREEN / 4).rev() {
         // The original repeatedly sweeps the same circle at angles 2πi/R.
@@ -252,7 +438,7 @@ fn kernel_support(kernel: &[Complex32]) -> Result<usize, OperatorError> {
             let (sin, cos) = (std::f64::consts::TAU * step as f64 / radius as f64).sin_cos();
             let x = (origin + radius as f64 * sin) as usize;
             let y = (origin + radius as f64 * cos) as usize;
-            if kernel[y * SCREEN + x].norm() > 1e-4 {
+            if kernel[y * SCREEN + x].norm() > threshold {
                 return Ok((radius + SAMPLING / 2) / SAMPLING + 1);
             }
         }
@@ -283,6 +469,39 @@ fn sampled_integral(kernel: &[Complex32], support: usize) -> f32 {
     sum
 }
 
+fn sample_cropped(kernel: &[Complex32], side: usize, support: usize) -> Result<f32, OperatorError> {
+    // CASA uses the peak's X coordinate for both sampling axes.
+    let origin = peak_index(kernel) % side;
+    let radius = support * SAMPLING;
+    debug_assert!(radius >= SAMPLING);
+    if origin < radius || origin + radius - SAMPLING >= side {
+        return Err(invalid(
+            "legacy EP convolution peak is outside its sampling area",
+        ));
+    }
+    let bounds = origin - radius..origin + radius;
+    let mut integral = 0.;
+    for y in bounds.clone().step_by(SAMPLING) {
+        for x in bounds.clone().step_by(SAMPLING) {
+            integral += kernel[y * side + x].re;
+        }
+    }
+    Ok(integral)
+}
+
+fn peak_index(samples: &[Complex32]) -> usize {
+    let mut peak = 0.;
+    let mut best = 0;
+    for (index, sample) in samples.iter().enumerate() {
+        let magnitude = sample.norm_sqr();
+        if magnitude > peak {
+            peak = magnitude;
+            best = index;
+        }
+    }
+    best
+}
+
 fn invalid(reason: &'static str) -> OperatorError {
     OperatorError::ConvolutionFunction { reason }
 }
@@ -296,6 +515,18 @@ mod tests {
     use ndarray::Axis;
 
     use super::*;
+
+    #[test]
+    fn strided_integral_uses_the_last_sample_for_its_edge_check() {
+        let side = 161;
+        let mut kernel = vec![Complex32::from(1.); side * side];
+        let interior = 110 * side + 110;
+        kernel[interior] = Complex32::from(2.);
+        assert_eq!(sample_cropped(&kernel, side, 3).unwrap(), 37.);
+        kernel[interior] = Complex32::from(1.);
+        kernel[121 * side + 121] = Complex32::from(2.);
+        assert!(sample_cropped(&kernel, side, 3).is_err());
+    }
 
     #[test]
     #[ignore = "requires the installed CASA VLA EP reference cache and VLA.surface"]
@@ -314,10 +545,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            (cold.sampling, cold.support, cold.kernel_side),
+            (cold.sampling, cold.support[0], cold.kernel_side),
             (20, 3, 161)
         );
-        for (name, obtained) in ["CF0_0", "CFWT0_0"].into_iter().zip(cold.kernels) {
+        let [imaging, weights] = cold.kernels.into_iter().next().unwrap();
+        for (name, obtained) in [("CF0_0", imaging), ("CFWT0_0", weights)] {
             let image = PagedImage::<Complex32>::open(root.join(name)).unwrap();
             let pixels = image.get().unwrap();
             let pixels = pixels.index_axis(Axis(2), 0);

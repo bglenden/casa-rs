@@ -6,8 +6,8 @@ mod frame;
 pub(crate) use frame::{frame_from_template, regrid_direction_frame};
 
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, SpectralCoordinate,
-    StokesCoordinate,
+    Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, LinearCoordinate,
+    SpectralCoordinate, StokesCoordinate,
 };
 use casa_types::ArrayD;
 use casa_types::measures::{
@@ -15,6 +15,7 @@ use casa_types::measures::{
     doppler::{DopplerRef, MDoppler},
     frequency::MFrequency,
 };
+use casa_types::quanta::{Quantity, Unit};
 use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::{
@@ -159,49 +160,44 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 }
                 CoordinateModel::Direction(theirs.clone())
             }
-            (CoordinateModel::Spectral(ours), CoordinateModel::Spectral(theirs)) => {
-                if lengths[0] == 1 && input_lengths[0] == 1 {
-                    CoordinateModel::Spectral(ours.clone())
-                } else if lengths[0] == 1 {
-                    return Err(invalid(
-                        "a spectral interpolation requires multiple output channels",
-                    ));
-                } else {
-                    if input.image_info()?.beam_set.is_multi() {
-                        return Err(invalid(
-                            "an image with multiple beams cannot be regridded along the spectral axis",
-                        ));
-                    }
-                    let dimensions = [input_lengths[0], lengths[0]];
-                    let (coordinate, velocity) = if options.as_velocity && input_lengths[0] > 1 {
-                        let (coordinate, grids) = velocity_regrid(ours, theirs, dimensions)?;
-                        (coordinate, Some(grids))
-                    } else {
-                        (theirs.as_ref().clone(), None)
-                    };
-                    let coordinate = CoordinateModel::Spectral(Box::new(coordinate));
-                    if input_lengths != lengths
-                        || !same_axes(
-                            &CoordinateModel::Spectral(ours.clone()),
-                            &coordinate,
-                            lengths,
-                        )
-                        || ours.world_frequency_ref() != theirs.world_frequency_ref()
-                    {
-                        let CoordinateModel::Spectral(target) = &coordinate else {
-                            unreachable!()
-                        };
-                        let positions = spectral_positions(
-                            (ours, target),
-                            dimensions,
-                            options.replicate,
-                            velocity,
-                            &frame,
-                        )?;
-                        apply_one_axis(&mut result, first, lengths[0], positions, options.method);
-                    }
-                    coordinate
+            (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) if n_axes == 2 => {
+                let dimensions = [lengths[0], lengths[1]];
+                if options.decimate < 0 {
+                    return Err(invalid("decimate must be nonnegative"));
                 }
+                if input_lengths != lengths || !same_linear_grid(ours, theirs) {
+                    apply_linear_plane(
+                        &mut result,
+                        first,
+                        input.units(),
+                        (ours, theirs),
+                        dimensions,
+                        &options,
+                    )?;
+                }
+                CoordinateModel::Linear(theirs.clone())
+            }
+            (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) => {
+                apply_linear_axes(
+                    &mut result,
+                    first,
+                    lengths,
+                    &selected,
+                    (ours, theirs),
+                    &options,
+                )?;
+                CoordinateModel::Linear(theirs.clone())
+            }
+            (CoordinateModel::Spectral(ours), CoordinateModel::Spectral(theirs)) => {
+                regrid_spectral_coordinate(
+                    &mut result,
+                    input,
+                    first,
+                    (ours, theirs),
+                    [input_lengths[0], lengths[0]],
+                    &options,
+                    &frame,
+                )?
             }
             _ if n_axes == 1 => {
                 let coordinates = (0..lengths[0])
@@ -236,6 +232,61 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         return Err(invalid("All output pixels are masked"));
     }
     Ok(result)
+}
+
+fn regrid_spectral_coordinate<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    input: &impl ImageInterface<T>,
+    axis: usize,
+    (ours, theirs): (&SpectralCoordinate, &SpectralCoordinate),
+    dimensions: [usize; 2],
+    options: &TaskRegridOptions<'_>,
+    frame: &MeasFrame,
+) -> Result<CoordinateModel, ImageError> {
+    let [old_length, length] = dimensions;
+    if old_length == 1 && length == 1 {
+        return Ok(ours.clone().into());
+    }
+    if length == 1 {
+        return Err(invalid(
+            "a spectral interpolation requires multiple output channels",
+        ));
+    }
+    if input.image_info()?.beam_set.is_multi() {
+        return Err(invalid(
+            "an image with multiple beams cannot be regridded along the spectral axis",
+        ));
+    }
+    let (coordinate, velocity) = if options.as_velocity && old_length > 1 {
+        let (coordinate, grids) = velocity_regrid(ours, theirs, dimensions)?;
+        (coordinate, Some(grids))
+    } else {
+        (theirs.clone(), None)
+    };
+    let source: CoordinateModel = ours.clone().into();
+    let target: CoordinateModel = coordinate.clone().into();
+    if old_length != length
+        || !same_axes(&source, &target, &[length])
+        || ours.world_frequency_ref() != theirs.world_frequency_ref()
+    {
+        let positions = spectral_positions(
+            (ours, &coordinate),
+            dimensions,
+            options.replicate,
+            velocity,
+            frame,
+        )?;
+        apply_one_axis(result, axis, length, positions, options.method);
+    }
+    Ok(target)
+}
+
+fn same_linear_grid(input: &LinearCoordinate, output: &LinearCoordinate) -> bool {
+    input.reference_pixel() == output.reference_pixel()
+        && input.reference_value() == output.reference_value()
+        && input.increment() == output.increment()
+        && input.axis_units() == output.axis_units()
+        && input.pc_matrix() == output.pc_matrix()
 }
 
 fn same_direction_grid(input: &DirectionCoordinate, output: &DirectionCoordinate) -> bool {
@@ -503,16 +554,7 @@ fn apply_direction<T: RegridPixel>(
     let scale = jy_per_pixel_scale(units, input, target);
     let input_shape = [result.data.shape()[axis], result.data.shape()[axis + 1]];
     let grid = if options.replicate {
-        (0..shape[1])
-            .flat_map(|y| {
-                (0..shape[0]).map(move |x| {
-                    Some([
-                        replicated_position(x, input_shape[0], shape[0]),
-                        replicated_position(y, input_shape[1], shape[1]),
-                    ])
-                })
-            })
-            .collect()
+        replicated_grid(input_shape, shape)
     } else {
         let from = target.conversion_direction_ref();
         let to = input.conversion_direction_ref();
@@ -534,11 +576,148 @@ fn apply_direction<T: RegridPixel>(
             coarse_positions(shape, decimate, project)
         }
     };
+    apply_plane(result, axis, shape, &grid, options.method, scale);
+    Ok(())
+}
+
+fn replicated_grid(input: [usize; 2], output: [usize; 2]) -> Vec<Option<[f64; 2]>> {
+    (0..output[1])
+        .flat_map(|y| {
+            (0..output[0]).map(move |x| {
+                Some([
+                    replicated_position(x, input[0], output[0]),
+                    replicated_position(y, input[1], output[1]),
+                ])
+            })
+        })
+        .collect()
+}
+
+fn linear_axis_unit_factor(input: &str, target: &str, axis: usize) -> Result<f64, ImageError> {
+    if input == target {
+        return Ok(1.0);
+    }
+    let factor = || Quantity::new(1.0, target)?.get_value_in(&Unit::new(input)?);
+    factor().map_err(|error| invalid(format!("linear regrid axis {axis}: {error}")))
+}
+
+fn apply_linear_axes<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    first: usize,
+    lengths: &[usize],
+    selected: &[bool],
+    (input, target): (&LinearCoordinate, &LinearCoordinate),
+    options: &TaskRegridOptions<'_>,
+) -> Result<(), ImageError> {
+    let mut axes: Vec<_> = (0..lengths.len()).filter(|&axis| selected[axis]).collect();
+    axes.sort_by_key(|&axis| {
+        options
+            .axes
+            .iter()
+            .position(|&i| i == (first + axis) as i64)
+            .unwrap_or(axis)
+    });
+    let input_units = input.axis_units();
+    let target_units = target.axis_units();
+    let mut factors = vec![1.0; lengths.len()];
+    let mut target_pixel = target.reference_pixel();
+    let same_grid = same_linear_grid(input, target);
+    for local in axes {
+        let axis = first + local;
+        let length = lengths[local];
+        let old_length = result.data.shape()[axis];
+        // casacore aligns the selected axis's units and retains earlier conversions.
+        factors[local] = linear_axis_unit_factor(&input_units[local], &target_units[local], axis)?;
+        if same_grid && length == old_length {
+            continue;
+        }
+        let reference_pixel = target_pixel[local];
+        let positions = (0..length)
+            .map(|pixel| {
+                if options.replicate {
+                    return Some(replicated_position(pixel, old_length, length));
+                }
+                target_pixel[local] = pixel as f64;
+                let mut world = target.to_world(&target_pixel).ok()?;
+                world
+                    .iter_mut()
+                    .zip(&factors)
+                    .for_each(|(value, factor)| *value *= factor);
+                let pixel = input.to_pixel(&world).ok()?[local];
+                pixel.is_finite().then_some(pixel)
+            })
+            .collect();
+        target_pixel[local] = reference_pixel;
+        apply_one_axis(result, axis, length, positions, options.method);
+    }
+    Ok(())
+}
+
+fn apply_linear_plane<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    axis: usize,
+    brightness: &str,
+    (input, target): (&LinearCoordinate, &LinearCoordinate),
+    shape: [usize; 2],
+    options: &TaskRegridOptions<'_>,
+) -> Result<(), ImageError> {
+    let input_units = input.axis_units();
+    let target_units = target.axis_units();
+    let factors = [
+        linear_axis_unit_factor(&input_units[0], &target_units[0], axis)?,
+        linear_axis_unit_factor(&input_units[1], &target_units[1], axis + 1)?,
+    ];
+    let grid = if options.replicate {
+        replicated_grid(
+            [result.data.shape()[axis], result.data.shape()[axis + 1]],
+            shape,
+        )
+    } else {
+        let project = |pixel: [f64; 2]| {
+            let mut world = target.to_world(&pixel).ok()?;
+            world
+                .iter_mut()
+                .zip(factors)
+                .for_each(|(value, factor)| *value *= factor);
+            let pixel = input.to_pixel(&world).ok()?;
+            let [x, y] = pixel.as_slice() else {
+                return None;
+            };
+            (x.is_finite() && y.is_finite()).then_some([*x, *y])
+        };
+        let decimate = options.decimate.max(0) as usize;
+        if decimate > 1 {
+            coarse_positions(shape, decimate, project)
+        } else {
+            (0..shape[1])
+                .flat_map(|y| (0..shape[0]).map(move |x| project([x as f64, y as f64])))
+                .collect()
+        }
+    };
+    let scale = if brightness.eq_ignore_ascii_case("Jy/pixel") {
+        let old = input.increment();
+        let new = target.increment();
+        (new[0] * factors[0] / old[0] * (new[1] * factors[1] / old[1])).abs()
+    } else {
+        1.0
+    };
+    apply_plane(result, axis, shape, &grid, options.method, scale);
+    Ok(())
+}
+
+fn apply_plane<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    axis: usize,
+    shape: [usize; 2],
+    positions: &[Option<[f64; 2]>],
+    method: RegridMethod,
+    scale: f64,
+) {
     let sampling = DirectionSampling {
         axes: [axis; 2],
         shape,
-        positions: &grid,
-        method: options.method,
+        positions,
+        method,
         scale,
     };
     (result.data, result.mask) = sample_direction_planes(
@@ -550,7 +729,6 @@ fn apply_direction<T: RegridPixel>(
         T::with_component,
     );
     result.scale = scale;
-    Ok(())
 }
 
 fn coarse_positions(

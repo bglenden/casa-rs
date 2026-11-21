@@ -182,15 +182,9 @@ fn format_summary(
 }
 
 fn spectral_at_axis(coords: &CoordinateSystem, axis: usize) -> Option<&SpectralCoordinate> {
-    let mut offset = 0;
-    for index in 0..coords.n_coordinates() {
-        let coordinate = coords.coordinate(index);
-        if offset == axis
-            && let CoordinateModel::Spectral(spectral) = coordinate
-        {
-            return Some(spectral);
-        }
-        offset += coordinate.n_pixel_axes();
+    let (index, _) = coords.pixel_axis_owner(axis)?;
+    if let CoordinateModel::Spectral(spectral) = coords.coordinate(index) {
+        return Some(spectral);
     }
     None
 }
