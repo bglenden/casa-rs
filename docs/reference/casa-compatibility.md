@@ -837,26 +837,26 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `a2f2ca7c89075becc36bf44cb9a11a8734bd393d`. Status counts: Default only: 0, Implemented: 11, Not implemented: 0, Partial: 1, Unassessed: 2.
+Audit baseline: `93fa3061e84c7359e18c837ec22aff1089989540`. Status counts: Default only: 0, Implemented: 14, Not implemented: 0, Partial: 0, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
 | CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
 |---|---|---|---|---|---|
-| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Input MeasurementSet geometry, metadata and table sources, including SYSPOWER and CALDEVICE. Jy/K service requests also read observing metadata. TEC samples observed pointings in antenna frames. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
-| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | CASA-readable output, cumulative corrections, and validation before replacing an existing table. Jy/K replaces the file atomically with accumulated receptor gains. TEC replaces an existing table only after the complete product is available. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: `path` (calibration_table) | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
-| `caltype` | `''` | `''`; `caltype` → `caltype` | Partial | Eleven routine prior types, five switched-power types, Jy/K and TEC. EOP remains in #1535. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: ``, `amp`, `antpos`, `antposvla`, `eff`, `eop`, `evlagain`, `gc`, `gceff`, `jyperk`, `mbd`, `opac`, `ph`, `rq`, `sbd`, `swp/rq`, `swpow`, `swpwts`, `tecim`, `tsys` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
-| `infile` | `''` | `''`; `infile` → `infile` | Unassessed | VLA gain curves, ALMA position JSON, Jy/K factor CSV and native CASA TEC images. EOP file input remains in #1535. [positions](#gencal-behavior-positions) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: `string` | [vla-priors](#gencal-evidence-vla-priors), [manual-positions](#gencal-evidence-manual-positions), [alma-service](#gencal-evidence-alma-service), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Input MeasurementSet geometry, metadata and table sources, including SYSPOWER and CALDEVICE. Jy/K service requests also read observing metadata. TEC samples observed pointings in antenna frames. EOP reads the recorded Earth orientation per observation, antenna positions, and phase centres. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | CASA-readable output, cumulative corrections, and validation before replacing an existing table. Jy/K replaces the file atomically with accumulated receptor gains. TEC replaces an existing table only after the complete product is available. EOP publishes CASA-readable Fringe Jones tables and protects an existing destination when no new calibration is available. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: `path` (calibration_table) | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
+| `caltype` | `''` | `''`; `caltype` → `caltype` | Implemented | Eleven routine prior types, five switched-power types, Jy/K, TEC and EOP. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: ``, `amp`, `antpos`, `antposvla`, `eff`, `eop`, `evlagain`, `gc`, `gceff`, `jyperk`, `mbd`, `opac`, `ph`, `rq`, `sbd`, `swp/rq`, `swpow`, `swpwts`, `tecim`, `tsys` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
+| `infile` | `''` | `''`; `infile` → `infile` | Implemented | VLA gain curves, ALMA position JSON, Jy/K factor CSV, native CASA TEC images, IERS C04 and USNO EOP-MOD 2.0 and 2.1. The EOP default uses the installed measured IERS table. [positions](#gencal-behavior-positions) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: `string` | [vla-priors](#gencal-evidence-vla-priors), [manual-positions](#gencal-evidence-manual-positions), [alma-service](#gencal-evidence-alma-service), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
 | `endpoint` | `'asdm'` | `'asdm'`; `endpoint` → `endpoint` | Implemented | Select the ASDM, interpolation or model-fit endpoint for Jy/K. [jyperk](#gencal-behavior-jyperk)<br>Catalog domain: `string` | [jyperk](#gencal-evidence-jyperk) |
 | `timeout` | `180` | `180`; `timeout` → `timeout` | Implemented | Seconds allowed for the Jy/K HTTP connection, headers and response body. [jyperk](#gencal-behavior-jyperk)<br>Catalog domain: `integer` | [jyperk](#gencal-evidence-jyperk) |
 | `retry` | `3` | `3`; `retry` → `retry` | Implemented | Number of attempts for a Jy/K HTTP request. [jyperk](#gencal-behavior-jyperk)<br>Catalog domain: `integer` | [jyperk](#gencal-evidence-jyperk) |
 | `retry_wait_time` | `5` | `5`; `retry_wait_time` → `retry_wait_time` | Implemented | Seconds to wait between failed Jy/K HTTP attempts. [jyperk](#gencal-behavior-jyperk)<br>Catalog domain: `integer` | [jyperk](#gencal-evidence-jyperk) |
 | `ant_pos_time_limit` | `0` | `0`; `ant_pos_time_limit` → `ant_pos_time_limit` | Implemented | Automatic VLA correction lookup, with a strict archive-day cutoff and the whole-second posting boundary. [positions](#gencal-behavior-positions)<br>Catalog domain: `integer` | [vla-archive](#gencal-evidence-vla-archive) |
-| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral-window selection and output axes. Switched-power modes validate the selector and derive their grid from SYSPOWER. Jy/K uses this selector for service factors. Factor files provide their own selection. TEC validates the selector then derives the full solution grid and publishes it on SPW 0. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
-| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Ordered IDs and expressions, all-antenna defaults, and applicable automatic lookup. Switched-power modes validate the selector and keep the full antenna grid. Jy/K takes antenna selectors from its factor source. TEC validates the selector then derives corrections for all antennas. [positions](#gencal-behavior-positions) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
-| `pol` | `''` | `''`; `pol` → `pol` | Unassessed | Ordered receptor behavior for the applicable routine types. Both receptors are generated in the five switched-power modes. Jy/K takes receptor labels from its factor source. The F Jones table stores one line-of-sight coefficient per antenna for both receptors. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
-| `parameter` | `[]` | `[]`; `parameter` → `parameter` | Implemented | Scalar or vector corrections, CASA cycling and family-specific units. The five switched-power modes derive values from the MS subtables. Jy/K gains come from the factor source. TEC uses a sole value as the shell height in kilometres. Other vector lengths select the 450 km default. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
-| `uniform` | `True` | `True`; `uniform` → `uniform` | Implemented | Both antenna-grid policies for scalar and spectral SYSCAL. Switched-power modes consistently use the full antenna grid. Jy/K fills the same G Jones grid for both settings. The TEC table follows the full antenna and time grid for either setting. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim)<br>Catalog domain: `bool` | [tsys](#gencal-evidence-tsys), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral-window selection and output axes. Switched-power modes validate the selector and derive their grid from SYSPOWER. Jy/K uses this selector for service factors. Factor files provide their own selection. TEC validates the selector then derives the full solution grid and publishes it on SPW 0. EOP writes the windows present in each scan. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Ordered IDs and expressions, all-antenna defaults, and applicable automatic lookup. Switched-power modes validate the selector and keep the full antenna grid. Jy/K takes antenna selectors from its factor source. TEC validates the selector then derives corrections for all antennas. EOP writes the antennas present in each scan. [positions](#gencal-behavior-positions) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
+| `pol` | `''` | `''`; `pol` → `pol` | Implemented | Ordered receptor behavior for the applicable routine types. Both receptors are generated in the five switched-power modes. Jy/K takes receptor labels from its factor source. The F Jones table stores one line-of-sight coefficient per antenna for both receptors. EOP writes the same phase, delay and rate in both receptors. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
+| `parameter` | `[]` | `[]`; `parameter` → `parameter` | Implemented | Scalar or vector corrections, CASA cycling and family-specific units. The five switched-power modes derive values from the MS subtables. Jy/K gains come from the factor source. TEC uses a sole value as the shell height in kilometres. Other vector lengths select the 450 km default. EOP derives values from the change in Earth orientation. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
+| `uniform` | `True` | `True`; `uniform` → `uniform` | Implemented | Both antenna-grid policies for scalar and spectral SYSCAL. Switched-power modes consistently use the full antenna grid. Jy/K fills the same G Jones grid for both settings. The TEC table follows the full antenna and time grid for either setting. EOP keeps its observation and scan grid for either setting. [tables](#gencal-behavior-tables) [switched-power](#gencal-behavior-switched-power) [jyperk](#gencal-behavior-jyperk) [tecim](#gencal-behavior-tecim) [eop](#gencal-behavior-eop)<br>Catalog domain: `bool` | [tsys](#gencal-evidence-tsys), [switched-power](#gencal-evidence-switched-power), [jyperk](#gencal-evidence-jyperk), [tecim](#gencal-evidence-tecim), [eop](#gencal-evidence-eop) |
 
 #### gencal interacting modes and task behavior
 
@@ -892,7 +892,7 @@ Evidence: [switched-power](#gencal-evidence-switched-power).
 
 **Implemented** — Read receptor-specific CSV factors and generate CASA-readable G Jones tables with cumulative positive gains. Compare queries, calibrated tables and fallback for ASDM, interpolation and model fit. Test the public ASDM service separately.
 
-TEC and EOP generation remain in #1535.
+Dedicated dataset-scale performance validation remains in #979.
 
 Evidence: [jyperk](#gencal-evidence-jyperk).
 
@@ -905,11 +905,20 @@ Dedicated dataset-scale performance validation remains in #979.
 
 Evidence: [tecim](#gencal-evidence-tecim).
 
+<a id="gencal-behavior-eop"></a>
+##### Earth-orientation corrections and fringe rate
+
+**Implemented** — Calculate phase, delay and rate from recorded Earth orientation and IERS or USNO updates. Use recorded observation and scan geometry, including attached ephemerides. Apply CASA-readable Fringe Jones tables to data and solver inputs.
+
+Dedicated dataset-scale performance validation remains in #979.
+
+Evidence: [eop](#gencal-evidence-eop).
+
 #### gencal deviations and unfinished work
 
 ##### safe-whole-axis-selection: Previously agreed
 
-- Record: [Explicit gencal wildcards can index outside the calibration array](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/docs/CASA%20%28C%2B%2B%29%20bugs.md#explicit-gencal-wildcards-can-index-outside-the-calibration-array)
+- Record: [Explicit gencal wildcards can index outside the calibration array](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md#explicit-gencal-wildcards-can-index-outside-the-calibration-array)
 - Inputs: An explicit whole-axis wildcard, a negated antenna index, or an empty legacy VLA antenna selection.
 - CASA: Some of these selections abort the process when they index a nonexistent table element.
 - casa-rs: Whole-axis selections broadcast, and invalid negative antenna indices raise a task error.
@@ -920,7 +929,7 @@ Evidence: [tecim](#gencal-evidence-tecim).
 
 ##### safe-scalar-opacity: Previously agreed
 
-- Record: [Opacity priors can index a nonexistent second receptor](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/docs/CASA%20%28C%2B%2B%29%20bugs.md#opacity-priors-can-index-a-nonexistent-second-receptor)
+- Record: [Opacity priors can index a nonexistent second receptor](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md#opacity-priors-can-index-a-nonexistent-second-receptor)
 - Inputs: A scalar opacity table with a second-receptor or two-receptor selection.
 - CASA: Indexes a nonexistent second receptor and terminates the task process.
 - casa-rs: Raises a task error and preserves the existing product.
@@ -931,7 +940,7 @@ Evidence: [tecim](#gencal-evidence-tecim).
 
 ##### safe-switched-power-input: Previously agreed
 
-- Record: [A one-receptor SYSPOWER shape aborts switched-power calibration](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-one-receptor-syspower-shape-aborts-switched-power-calibration)
+- Record: [A one-receptor SYSPOWER shape aborts switched-power calibration](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-one-receptor-syspower-shape-aborts-switched-power-calibration)
 - Inputs: One receptor per SYSPOWER measurement or a SYSPOWER timestamp between visibility scans.
 - CASA: A malformed receptor shape aborts. An empty scan match is dereferenced and returned 0 in the oracle.
 - casa-rs: Refuses malformed shapes before publication and assigns unknown scan -1 to timestamps without a matching scan.
@@ -942,7 +951,7 @@ Evidence: [tecim](#gencal-evidence-tecim).
 
 ##### finite-jyperk-gains: Previously agreed
 
-- Record: [Invalid Jy/K factors can publish unflagged nonfinite gains](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/docs/CASA%20%28C%2B%2B%29%20bugs.md#invalid-jyk-factors-can-publish-unflagged-nonfinite-gains)
+- Record: [Invalid Jy/K factors can publish unflagged nonfinite gains](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md#invalid-jyk-factors-can-publish-unflagged-nonfinite-gains)
 - Inputs: Zero or negative factors, or repeated factors exceeding the representable gain range.
 - CASA: Can publish unflagged nonfinite or zero complex gains.
 - casa-rs: Refuses the correction before publishing either a fresh or updated product.
@@ -953,7 +962,7 @@ Evidence: [tecim](#gencal-evidence-tecim).
 
 ##### flag-incomplete-tec: Previously agreed
 
-- Record: [A flagged F Jones coefficient can leave unflagged visibilities](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-flagged-f-jones-coefficient-can-leave-unflagged-visibilities)
+- Record: [A flagged F Jones coefficient can leave unflagged visibilities](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-flagged-f-jones-coefficient-can-leave-unflagged-visibilities)
 - Inputs: A circular-feed F Jones table with the last antenna flagged at every epoch.
 - CASA: Leaves that antenna with a unity gain and unflagged baseline outputs.
 - casa-rs: Flags baselines with an unavailable correction when the apply mode writes flags.
@@ -961,6 +970,28 @@ Evidence: [tecim](#gencal-evidence-tecim).
 - User impact: Valid solutions continue to apply using CASA science and flags.
 - Owner decision: Standing CASA bug policy in AGENTS.md.
 - Evidence: [tecim](#gencal-evidence-tecim).
+
+##### preserve-empty-eop-destination: Previously agreed
+
+- Record: [An empty EOP result can delete an existing calibration table](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md#an-empty-eop-result-can-delete-an-existing-calibration-table)
+- Inputs: An existing Fringe Jones table and a missing input file or input without matching Earth orientation updates.
+- CASA: Removes the destination during cleanup.
+- casa-rs: Keeps the existing table and only publishes a complete replacement.
+- Rationale: Preserve prior calibration products on input failures.
+- User impact: A missing input still raises FileNotFoundError. No matching Earth orientation leaves a diagnostic and preserves any prior product.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [eop](#gencal-evidence-eop).
+
+##### bracket-all-eop-samples: Previously agreed
+
+- Record: [EOP interpolation can ignore later daily samples](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md#eop-interpolation-can-ignore-later-daily-samples)
+- Inputs: An observing epoch after the fourth day in a daily Earth orientation series.
+- CASA: Caps the upper sample index at three and extrapolates from earlier samples.
+- casa-rs: Brackets the observing epoch using the available samples.
+- Rationale: Prevent a stale polar-motion or UT1 correction despite available matching data.
+- User impact: The seven-epoch fixture agrees with an independent ERFA delay calculation.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [eop](#gencal-evidence-eop).
 
 #### gencal evidence
 
@@ -971,7 +1002,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Specified G Jones and K Jones corrections — passed.** 31 recorded case groups passed. 31 comparisons cover ordered selectors, both calibration families, precision and cumulative updates. An incompatible grid preserves all 12 existing solutions.
 
-- [tools/casa-compat/calibration_gencal_specify_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/calibration_gencal_specify_oracle.py)
+- [tools/casa-compat/calibration_gencal_specify_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/calibration_gencal_specify_oracle.py)
 - Revision: `31ed10ad3054053ea218b83ef68fdec3c4719610`; CASA: `6.7.6.14`.
 - Command: `python tools/casa-compat/calibration_gencal_specify_oracle.py --work <empty-work-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
@@ -981,7 +1012,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **VLA gain curves and efficiency — passed.** 25 recorded case groups passed. 25 comparisons cover standard, explicit and embedded curve data, sparse antennas and gains with and without weight calibration. Sixteen tables agree exactly.
 
-- [tools/casa-compat/calibration_gencal_gaincurve_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/calibration_gencal_gaincurve_oracle.py)
+- [tools/casa-compat/calibration_gencal_gaincurve_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/calibration_gencal_gaincurve_oracle.py)
 - Revision: `900221a72c0c57229a02328b01fe935464a99a98`; CASA: `6.7.6.14`.
 - Command: `python tools/casa-compat/calibration_gencal_gaincurve_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms> --gaincurves <GainCurves>`.
 - Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
@@ -991,7 +1022,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Scalar and spectral system temperatures — passed.** 14 recorded case groups passed. 14 comparisons cover both uniform settings, selected image-channel weights, floating-point temperatures, retuned windows and safety of linked SYSCAL inputs.
 
-- [tools/casa-compat/calibration_gencal_tsys_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/calibration_gencal_tsys_oracle.py)
+- [tools/casa-compat/calibration_gencal_tsys_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/calibration_gencal_tsys_oracle.py)
 - Revision: `d9d24a3fdab9ab18735b68cb7aa6704527784825`; CASA: `6.7.6.14`.
 - Command: `python tools/casa-compat/calibration_gencal_tsys_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>`.
 - Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
@@ -1001,7 +1032,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Zenith-opacity priors — passed.** 16 recorded case groups passed. 16 comparisons cover spectral windows, ordered antennas, receptor behavior, cumulative updates and cross-application. Eleven calibration tables agree exactly.
 
-- [tools/casa-compat/calibration_gencal_opacity_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/calibration_gencal_opacity_oracle.py)
+- [tools/casa-compat/calibration_gencal_opacity_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/calibration_gencal_opacity_oracle.py)
 - Revision: `8f5f9c14021326b9bcc2c11fd83ec368d77f39ac`; CASA: `6.7.6.14`.
 - Command: `python tools/casa-compat/calibration_gencal_opacity_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>`.
 - Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
@@ -1011,7 +1042,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Manual antenna coordinates and ALMA files — passed.** 24 recorded case groups passed. 24 comparisons cover direct ITRF and legacy VLA coordinates, ALMA JSON, moving field reference epochs, forced SPW zero and shared input protection. Thirteen tables agree exactly.
 
-- [tools/casa-compat/calibration_gencal_antpos_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/calibration_gencal_antpos_oracle.py)
+- [tools/casa-compat/calibration_gencal_antpos_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/calibration_gencal_antpos_oracle.py)
 - Revision: `c953d400699acd7e35faa2cc446c3751927312b6`; CASA: `6.7.6.14`.
 - Command: `python tools/casa-compat/calibration_gencal_antpos_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>`.
 - Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
@@ -1021,7 +1052,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Frozen and live VLA archive correction — passed.** 7 recorded case groups passed. Frozen comparisons cover correction dates, moves, a day cutoff, service failures and the 2016B tropospheric keyword. The live archive yielded the same 3 mm eastward component for ea01 in both products.
 
-- [tools/casa-compat/calibration_gencal_evla_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/calibration_gencal_evla_oracle.py)
+- [tools/casa-compat/calibration_gencal_evla_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/calibration_gencal_evla_oracle.py)
 - Revision: `dc16c0d90b3ec79dbc50d317fe293b0d661ec20c`; CASA: `6.7.6.14`.
 - Command: `python tools/casa-compat/calibration_gencal_evla_oracle.py --work <empty-work-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
@@ -1031,7 +1062,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Frozen and live ALMA position service — passed.** 30 recorded case groups passed. The two clients send matching valid queries, select hosts in the same order, and produce matching antenna data and request metadata. The live case agrees on all ten antennas. Cross-engine files produce exact gencal tables.
 
-- [tools/casa-compat/calibration_getantposalma_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/calibration_getantposalma_oracle.py)
+- [tools/casa-compat/calibration_getantposalma_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/calibration_getantposalma_oracle.py)
 - Revision: `dc16c0d90b3ec79dbc50d317fe293b0d661ec20c`; CASA: `6.7.6.14`.
 - Command: `python tools/casa-compat/calibration_getantposalma_oracle.py --work <empty-work-directory> --native-bin <calibrate> --live`.
 - Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
@@ -1059,8 +1090,8 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Pinned CASA task products and writer-reader interchange — passed.** Weighted application and solver preapply pass through all four writer-reader pairs. Separate live ASDM test agrees for SPW 17. Read receptor-specific CSV factors and generate CASA-readable G Jones tables with cumulative positive gains. Compare queries, calibrated tables and fallback for ASDM, interpolation and model fit. Test the public ASDM service separately.
 
-- [tools/casa-compat/gencal_jyperk_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/gencal_jyperk_oracle.py)
-- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- [tools/casa-compat/gencal_jyperk_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/gencal_jyperk_oracle.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 - Revision: `0886835f74c8d8215774fd93b1577fad093d9321`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<native-bin> casa-python tools/casa-compat/gencal_jyperk_oracle.py <new-dir>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1969`.
@@ -1070,10 +1101,21 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Pinned F Jones generation, weighted application and solver preapply — passed.** LOS TEC normalized RMS below 7e-8. Corrected visibility and solver preapply RMS below 3.2e-5 across matched writer-reader combinations. Native Float TEC images with daily and absolute time, nonidentity transforms, signed shell heights, public tasks, calibration libraries, flag handling and both feed bases.
 
-- [tools/casa-compat/gencal_tecim_oracle.py](https://github.com/bglenden/casa-rs/blob/a2f2ca7c89075becc36bf44cb9a11a8734bd393d/tools/casa-compat/gencal_tecim_oracle.py)
+- [tools/casa-compat/gencal_tecim_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/gencal_tecim_oracle.py)
 - Revision: `a2f2ca7c89075becc36bf44cb9a11a8734bd393d`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<native-bin> casa-python tools/casa-compat/gencal_tecim_oracle.py <new-dir>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1970`.
+
+<a id="gencal-evidence-eop"></a>
+##### eop
+
+**Pinned Fringe Jones generation, application and solver preapply — passed.** Phase and delay agreed exactly for the four source variants and the moving target fixture. Rate normalized RMS stayed below 4.1e-8. Corrected visibility and solver preapply RMS stayed below 9.3e-7 across all four writer-reader pairs. Four input sources, short C04 lines, descending channels, attached ephemerides, observation isolation, atomic publication, a late-epoch ERFA control, and a rate-only off-epoch control.
+
+- [tools/casa-compat/gencal_eop_oracle.py](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/tools/casa-compat/gencal_eop_oracle.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/93fa3061e84c7359e18c837ec22aff1089989540/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- Revision: `93fa3061e84c7359e18c837ec22aff1089989540`; CASA: `6.7.6.14`.
+- Command: `CASARS_GENCAL_BIN=<calibrate> CASARS_APPLYCAL_BIN=<calibrate> CASARS_GAINCAL_BIN=<calibrate> casa-python tools/casa-compat/gencal_eop_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1971`.
 
 ### getantposalma
 
