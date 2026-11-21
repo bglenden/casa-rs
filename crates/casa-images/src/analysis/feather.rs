@@ -13,9 +13,9 @@ use casa_types::{ArrayD, Value};
 use ndarray::{Array2, IxDyn, ShapeBuilder, Zip};
 use num_complex::Complex32;
 
-use super::axes::{direction_plane_axes, other_axes};
-use super::planes::{PlaneAt, unravel_index};
+use super::axes::direction_plane_axes;
 use super::{SPEED_OF_LIGHT_M_S, ensure_outfile_does_not_alias_input, patch_saved_coords_keyword};
+use crate::plane::PlaneIndex;
 use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 use crate::{
     AnyPagedImage, FeatherRequest, FeatherSummary, GaussianBeam, ImageBeamSet, ImageError,
@@ -85,11 +85,7 @@ fn feather_typed(
     }
     // Feathered in the direction plane, wherever its axes are.
     let direction = direction_plane_axes(high)?;
-    let others = other_axes(high_shape.len(), direction);
-    let other_shape = others
-        .iter()
-        .map(|&axis| high_shape[axis])
-        .collect::<Vec<_>>();
+    let planes = PlaneIndex::new(&high_shape, direction);
     let nx = high_shape[direction[0]];
     let ny = high_shape[direction[1]];
     let common = high_beams
@@ -101,25 +97,13 @@ fn feather_typed(
         [CoordinateType::Spectral, CoordinateType::Stokes].map(|kind| high.find_axis(kind));
     let mut output_data = ArrayD::<f32>::zeros(IxDyn(&high_shape).f());
     let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&high_shape).f(), true);
-    for plane in 0..other_shape.iter().product() {
-        let at = PlaneAt {
-            axes: direction,
-            others: &others,
-            values: &unravel_index(plane, &other_shape),
-        };
+    for plane in 0..planes.count() {
         let plane_filter;
         let transfer = if let Some(common) = &common {
             common
         } else {
-            let [channel, stokes] = beam_axes.map(|axis| {
-                axis.and_then(|axis| {
-                    others
-                        .iter()
-                        .position(|&other| other == axis)
-                        .map(|i| at.values[i])
-                })
-                .unwrap_or(0)
-            });
+            let [channel, stokes] =
+                beam_axes.map(|axis| axis.map_or(0, |axis| planes.pixel(plane, axis)));
             let hi_beam = plane_beam(high_beams, channel, stokes)?;
             let lo_beam = plane_beam(low_beams, channel, stokes)?;
             plane_filter = plane_transfer(
@@ -131,10 +115,14 @@ fn feather_typed(
             )?;
             &plane_filter
         };
-        let high_plane = at.extract(&high_data);
-        let low_plane = at.extract(&low_data);
-        let high_fft = centered_fft2(&high_plane.mapv(|value| Complex32::new(value, 0.0)));
-        let low_fft = centered_fft2(&low_plane.mapv(|value| Complex32::new(value, 0.0)));
+        let high_plane = planes
+            .view(plane, &high_data)
+            .mapv(|value| Complex32::new(value, 0.0));
+        let low_plane = planes
+            .view(plane, &low_data)
+            .mapv(|value| Complex32::new(value, 0.0));
+        let high_fft = centered_fft2(&high_plane);
+        let low_fft = centered_fft2(&low_plane);
         let mut combined = Array2::<Complex32>::zeros((nx, ny));
         for x in 0..nx {
             for y in 0..ny {
@@ -146,8 +134,10 @@ fn feather_typed(
                 combined[(x, y)] = high_fft[(x, y)] * high_weight + low_value * transfer.low_scale;
             }
         }
-        let image_plane = centered_ifft2(&combined).mapv(|value| value.re);
-        at.put(&mut output_data, &image_plane);
+        let image_plane = centered_ifft2(&combined);
+        Zip::from(planes.view_mut(plane, &mut output_data))
+            .and(&image_plane)
+            .for_each(|out, value| *out = value.re);
     }
     clear_masked_pixels(&mut output_data, high_mask.as_ref().or(low_mask.as_ref()));
     for mask in [high_mask.as_ref(), low_mask.as_ref()]

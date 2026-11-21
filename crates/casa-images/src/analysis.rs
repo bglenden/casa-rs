@@ -65,7 +65,6 @@ pub use imsubimage::{
     ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile,
 };
 mod list_log;
-mod planes;
 mod projection_header;
 mod quantity_input;
 mod schema;
