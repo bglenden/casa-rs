@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::ffi::{CStr, c_long};
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -65,6 +67,41 @@ impl FitsToolImport {
         Self::open_impl(path, which_rep, which_hdu, false)
     }
 
+    /// Open the FITS image used by the direct image attachment and copy tools.
+    ///
+    /// CASA's direct reader accepts an image in the primary or first extension
+    /// and requires the first physical data record. The explicit importer may
+    /// select any image HDU. CFITSIO also opens externally compressed images.
+    ///
+    /// # Errors
+    /// Returns an error for an unrecognized input, missing initial record,
+    /// absent image HDU, or invalid metadata.
+    pub fn open_attachment(path: &Path) -> Result<Self, ImageError> {
+        let length = attachment_file_length(path)?;
+        let mut fits = FitsFile::open(path).map_err(|_| {
+            if length.is_some() {
+                ImageError::CasaSelection(format!(
+                    "FITSImgParser::setup - {} Error opening FITS input.",
+                    path.display()
+                ))
+            } else {
+                unable_to_open_image(path)
+            }
+        })?;
+        let count = if length.is_some() {
+            2
+        } else {
+            fits.num_hdus().map_err(fits_error)?
+        };
+        let hdu = (0..count)
+            .find_map(|index| fits.hdu(index).ok().filter(has_image_data))
+            .ok_or_else(|| missing_attachment_data(path))?;
+        if let Some(length) = length {
+            validate_initial_image_record(path, &mut fits, hdu.number, length)?;
+        }
+        Self::read_metadata(fits, hdu, 0, false)
+    }
+
     /// Read the first FITS image using the linear WCS layout of CASA's image concatenator.
     ///
     /// # Errors
@@ -102,6 +139,15 @@ impl FitsToolImport {
                 .filter(has_image_data)
         }
         .ok_or_else(missing_hdu)?;
+        Self::read_metadata(fits, hdu, which_rep, group_linear_axes)
+    }
+
+    fn read_metadata(
+        mut fits: FitsFile,
+        hdu: FitsHdu,
+        which_rep: usize,
+        group_linear_axes: bool,
+    ) -> Result<Self, ImageError> {
         let HduInfo::ImageInfo {
             ref shape,
             image_type,
@@ -384,6 +430,96 @@ impl FitsToolImport {
         }
         Ok(())
     }
+}
+
+const FITS_RECORD_BYTES: u64 = 2880;
+
+/// Raw FITS has a physical length. CFITSIO detects compressed streams by
+/// their magic bytes and handles their decompressed record boundaries.
+fn attachment_file_length(path: &Path) -> Result<Option<u64>, ImageError> {
+    let unrecognized = |_| unable_to_open_image(path);
+    let mut file = File::open(path).map_err(unrecognized)?;
+    let mut first_card = [0; 80];
+    file.read_exact(&mut first_card[..2])
+        .map_err(unrecognized)?;
+    if matches!(
+        first_card[..2],
+        [0x1f, 0x8b | 0x1e | 0x9d | 0xa0] | [b'P', b'K'] | [b'B', b'Z']
+    ) {
+        return Ok(None);
+    }
+    let length = file.metadata().map_err(unrecognized)?.len();
+    if length < FITS_RECORD_BYTES {
+        return Err(unable_to_open_image(path));
+    }
+    file.read_exact(&mut first_card[2..])
+        .map_err(unrecognized)?;
+    // ImageOpener recognizes SIMPLE followed by '=' and 'T', with any
+    // number of intervening spaces. FITSImgParser then parses the card.
+    let first_value = first_card[6..]
+        .iter()
+        .copied()
+        .filter(|&byte| byte != b' ')
+        .take(2);
+    if !first_card.starts_with(b"SIMPLE") || !first_value.eq(*b"=T") {
+        return Err(unable_to_open_image(path));
+    }
+    if first_card[8] == b'=' && first_card[9] != b' ' {
+        return Err(initial_record_error(path));
+    }
+    Ok(Some(length))
+}
+
+fn unable_to_open_image(path: &Path) -> ImageError {
+    ImageError::CasaSelection(format!(
+        "Exception: Unable to open image {}.",
+        path.display()
+    ))
+}
+
+fn initial_record_error(path: &Path) -> ImageError {
+    ImageError::CasaSelection(format!(
+        "FITSImgParser::setup - {} Error reading initial record -- exiting.",
+        path.display()
+    ))
+}
+
+fn missing_attachment_data(path: &Path) -> ImageError {
+    ImageError::CasaSelection(format!(
+        "No data in the zeroth or first extension of {}",
+        path.display()
+    ))
+}
+
+fn validate_initial_image_record(
+    path: &Path,
+    fits: &mut FitsFile,
+    hdu: usize,
+    length: u64,
+) -> Result<(), ImageError> {
+    let mut start = 0;
+    let mut status = 0;
+    // SAFETY: the file is open on the selected image HDU. CFITSIO writes
+    // the data offset and status to the two live output pointers.
+    unsafe {
+        fitsio::sys::ffghadll(
+            fits.as_raw(),
+            std::ptr::null_mut(),
+            &mut start,
+            std::ptr::null_mut(),
+            &mut status,
+        );
+    }
+    check_status(status).map_err(fits_error)?;
+    let start = u64::try_from(start).map_err(|_| missing_attachment_data(path))?;
+    let available = length.saturating_sub(start);
+    if available >= FITS_RECORD_BYTES {
+        return Ok(());
+    }
+    if hdu == 0 && available != 0 {
+        return Err(initial_record_error(path));
+    }
+    Err(missing_attachment_data(path))
 }
 
 fn is_tile_compressed(header: &FitsHeader) -> bool {

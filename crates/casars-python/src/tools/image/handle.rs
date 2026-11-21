@@ -129,7 +129,7 @@ pub(super) fn same_file_snapshot(expected: &Metadata, actual: &Metadata) -> bool
 impl ImageHandle {
     pub(super) fn open(path: &Path) -> Result<Self, ImageError> {
         if path.is_file() {
-            return Self::open_fits(path, FitsToolImport::open(path, 0, -1)?);
+            return Self::open_fits(path, FitsToolImport::open_attachment(path)?);
         }
         AnyPagedImage::open(path).map(Self::from_paged)
     }
