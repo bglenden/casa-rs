@@ -58,7 +58,9 @@ pub(crate) enum PriorCalibrationMode {
         rotate_model: bool,
     },
     Leakage,
-    CrossHand { share_input_flags: bool },
+    CrossHand {
+        share_input_flags: bool,
+    },
     PositionAngle,
 }
 

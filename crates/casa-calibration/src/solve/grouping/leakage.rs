@@ -13,10 +13,10 @@ mod parallactic_fit;
 mod standard;
 
 use super::*;
+use crate::SelectedData;
 use crate::execute::{ParallacticAngleState, coherency_order, load_parallactic_angle_state};
 use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{IntervalStages, SolveStats, SolveStatsBuilder};
-use crate::SelectedData;
 use std::path::PathBuf;
 
 use interval::IntervalFits;
@@ -135,6 +135,7 @@ pub(crate) struct LeakageSolveRequest {
     pub(crate) priors: Vec<ApplyCalibrationTableSpec>,
     pub(crate) parang: bool,
     pub(crate) correlation_dependent_flags: bool,
+    pub(crate) solve_mode: GainSolveMode,
     pub(crate) interval: GainSolveInterval,
     pub(crate) frequency_interval: Option<crate::BandpassFrequencyInterval>,
     pub(crate) combine: GainSolveCombine,
@@ -170,6 +171,8 @@ pub(crate) struct PolarizationSolveOutcome {
     pub(crate) source: BTreeMap<String, BTreeMap<i32, Complex32>>,
     pub(crate) selected: SelectedData,
     pub(crate) gain_stats: Option<SolveStats>,
+    pub(crate) solved_fields: BTreeSet<i32>,
+    pub(crate) solved_windows: BTreeSet<i32>,
 }
 
 pub(crate) fn solve_polarization(
@@ -298,17 +301,10 @@ pub(crate) fn solve_polarization(
                 context.available_antennas.len(),
                 &references,
                 previous_interval,
+                gain_stats.as_mut(),
             )
             .map_err(error)?
         {
-            if let Some(stats) = &mut gain_stats {
-                stats.interval(&IntervalStages {
-                    spw_id: solution.spectral_window,
-                    antennas: &context.available_antennas,
-                    with_data: vec![context.available_antennas.clone(); 2],
-                    constrained: BTreeSet::new(),
-                });
-            }
             if solution.reference >= 0 {
                 references[1] = solution.reference;
                 previous = Some(solutions.len());
@@ -344,6 +340,11 @@ pub(crate) fn solve_polarization(
         source,
         selected: context.selected_data,
         gain_stats: gain_stats.map(SolveStatsBuilder::finish),
+        solved_fields: solutions.iter().map(|interval| interval.field).collect(),
+        solved_windows: solutions
+            .iter()
+            .map(|interval| interval.spectral_window)
+            .collect(),
     })
 }
 
@@ -375,10 +376,25 @@ struct BaselineAverages {
 }
 
 impl BaselineAverages {
-    fn finish_time(&mut self, solution_time: &mut WeightedTime) {
+    fn finish_time(&mut self, solution_time: &mut WeightedTime, mode: GainSolveMode) {
         // SDBList reduces each baseline's Float weight spectrum before
         // converting its aggregate weight to Double.
-        let weight = f64::from(self.bins.iter().flat_map(|bin| bin.weights).sum::<f32>());
+        let weight = if mode == GainSolveMode::Phase {
+            self.bins
+                .iter()
+                .flat_map(|bin| bin.data.into_iter().zip(bin.weights))
+                .map(|(sum, weight)| {
+                    if weight > 0.0 {
+                        parallactic_fit::solve_sample(mode, sum / weight, weight).1
+                    } else {
+                        weight
+                    }
+                })
+                .sum::<f32>()
+        } else {
+            self.bins.iter().flat_map(|bin| bin.weights).sum::<f32>()
+        };
+        let weight = f64::from(weight);
         if self.centroid.mean().is_some() {
             solution_time.observe_mean(self.centroid, weight);
         } else if weight > 0.0 {
@@ -402,6 +418,7 @@ impl LeakageInputs<'_> {
         antennas: usize,
         references: &[i32],
         previous: Option<&LeakageSolution>,
+        gain_stats: Option<&mut SolveStatsBuilder>,
     ) -> Result<Option<LeakageSolution>, GainSolveError> {
         let first = rows[0].0;
         let spectral_window = interval_window(rows);
@@ -410,8 +427,10 @@ impl LeakageInputs<'_> {
         let requested = if self.request.preaverage_seconds < 0.0 {
             match kind {
                 LeakageSolveKind::PosAng => 30.0,
-                LeakageSolveKind::Xj | LeakageSolveKind::Xf
-                | LeakageSolveKind::XY | LeakageSolveKind::XYf => 0.0,
+                LeakageSolveKind::Xj
+                | LeakageSolveKind::Xf
+                | LeakageSolveKind::XY
+                | LeakageSolveKind::XYf => 0.0,
                 _ => 300.0,
             }
         } else {
@@ -421,9 +440,10 @@ impl LeakageInputs<'_> {
         let span = (requested > f64::from(f32::EPSILON)).then_some(0.999 * requested);
         let circular = kind.intensity_normalized()
             && correlation_types_for_ddid(self.ms, first.data_desc_id)?.contains(&5);
-        let mut fits = IntervalFits::new(count, antennas, kind, circular);
+        let mut fits = IntervalFits::new(count, antennas, kind, circular, self.request.solve_mode);
         let mut averages = BTreeMap::new();
         let mut time = WeightedTime::default();
+        let mut unflagged_antennas = BTreeSet::new();
         for batch in rows.chunks(256) {
             let indices = batch
                 .iter()
@@ -464,8 +484,11 @@ impl LeakageInputs<'_> {
                         centroid: WeightedTime::default(),
                     });
                 if span.is_some_and(|span| row.time_seconds - active.segment.start > span) {
+                    if gain_stats.is_some() && active.bins.iter().any(|bin| bin.unflagged) {
+                        unflagged_antennas.extend(pair);
+                    }
                     if kind.cross_hand() {
-                        active.finish_time(&mut time);
+                        active.finish_time(&mut time, self.request.solve_mode);
                     }
                     let segment = BaselineSegment {
                         emission: row.time_seconds,
@@ -491,10 +514,25 @@ impl LeakageInputs<'_> {
             }
         }
         for ((_, _, pair), mut active) in averages {
+            if gain_stats.is_some() && active.bins.iter().any(|bin| bin.unflagged) {
+                unflagged_antennas.extend(pair);
+            }
             if kind.cross_hand() {
-                active.finish_time(&mut time);
+                active.finish_time(&mut time, self.request.solve_mode);
             }
             fits.accumulate(pair, &mut active.bins, antennas, active.segment)?;
+        }
+        if let Some(stats) = gain_stats {
+            let expected = rows
+                .iter()
+                .flat_map(|(row, _, _)| [row.antenna1, row.antenna2])
+                .collect();
+            stats.interval(&IntervalStages {
+                spw_id: spectral_window,
+                antennas: &expected,
+                with_data: vec![unflagged_antennas.clone(), unflagged_antennas],
+                constrained: BTreeSet::new(),
+            });
         }
         Ok(fits
             .finish(

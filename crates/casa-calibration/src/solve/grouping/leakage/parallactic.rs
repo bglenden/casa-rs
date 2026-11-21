@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, HashMap};
 use crate::execute::ParallacticAngleState;
 
 use super::channel_samples::{ChannelSamples, ScratchSample};
-use super::parallactic_fit::{Segment, SegmentChannel, solve};
-use super::{CoherencyMean, Complex32, GainSolveError, prior_error};
+use super::parallactic_fit::{Segment, SegmentChannel, solve, solve_sample};
+use super::{CoherencyMean, Complex32, GainSolveError, GainSolveMode, prior_error};
 
 #[derive(Clone, Copy)]
 pub(super) struct BaselineSegment {
@@ -34,15 +34,22 @@ struct SegmentRows {
 pub(super) struct ParallacticAverages {
     circular: bool,
     gain_phase: bool,
+    mode: GainSolveMode,
     segments: BTreeMap<(u64, i32, i32), SegmentRows>,
     rows: ChannelSamples<PhaseSample>,
 }
 
 impl ParallacticAverages {
-    pub(super) fn new(channels: usize, circular: bool, gain_phase: bool) -> Self {
+    pub(super) fn new(
+        channels: usize,
+        circular: bool,
+        gain_phase: bool,
+        mode: GainSolveMode,
+    ) -> Self {
         Self {
             circular,
             gain_phase,
+            mode,
             segments: BTreeMap::new(),
             rows: ChannelSamples::new(channels),
         }
@@ -74,12 +81,14 @@ impl ParallacticAverages {
             if let Some((data, model, weights)) = mean.finish(false)
                 && (weights[1] > 0.0 || weights[2] > 0.0)
             {
+                let [(xy, wx), (yx, wy)] =
+                    [1, 2].map(|corr| solve_sample(self.mode, data[corr], weights[corr]));
                 let sample = PhaseSample {
                     segment: segment.id as u32,
                     antennas,
-                    data: [data[1], data[2]],
+                    data: [xy, yx],
                     model: [model[1], model[2]],
-                    weights: [weights[1], weights[2]],
+                    weights: [wx, wy],
                 };
                 self.rows
                     .push(channel, sample)
@@ -141,7 +150,11 @@ impl ParallacticAverages {
                 channels: vec![SegmentChannel::default(); channels],
             });
         }
-        let required = if self.circular || self.gain_phase { 2 } else { 3 };
+        let required = if self.circular || self.gain_phase {
+            2
+        } else {
+            3
+        };
         if samples.len() < required {
             if self.gain_phase {
                 return Err(GainSolveError::InsufficientGainPhaseSegments);

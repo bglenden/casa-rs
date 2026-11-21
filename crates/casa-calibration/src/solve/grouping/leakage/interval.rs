@@ -10,8 +10,8 @@ use super::joint::{SourceFit, SourceFitMode};
 use super::parallactic::{BaselineSegment, ParallacticAverages};
 use super::standard::{LeakageAlgebra, StandardSample, solve_channel};
 use super::{
-    CoherencyMean, GainSolveError, LeakageEstimate, LeakageSolution, LeakageSolveKind,
-    LeakageSolveRequest, ParallacticAngleState,
+    CoherencyMean, GainSolveError, GainSolveMode, LeakageEstimate, LeakageSolution,
+    LeakageSolveKind, LeakageSolveRequest, ParallacticAngleState,
 };
 
 pub(super) enum IntervalFits {
@@ -34,9 +34,15 @@ impl IntervalFits {
         antennas: usize,
         kind: LeakageSolveKind,
         circular: bool,
+        mode: GainSolveMode,
     ) -> Self {
         if kind.parallactic() {
-            Self::Parallactic(ParallacticAverages::new(channels, circular, kind.gain_phase()))
+            Self::Parallactic(ParallacticAverages::new(
+                channels,
+                circular,
+                kind.gain_phase(),
+                mode,
+            ))
         } else if kind.cross_hand() {
             let measurement = match (kind, circular) {
                 (LeakageSolveKind::PosAng, true) => Measurement::CircularAngle,
@@ -137,7 +143,11 @@ impl IntervalFits {
                         let estimate = LeakageEstimate {
                             gain: [
                                 phase.unwrap_or(Complex32::ONE),
-                                if gain_phase { Complex32::ONE } else { Complex32::ZERO },
+                                if gain_phase {
+                                    Complex32::ONE
+                                } else {
+                                    Complex32::ZERO
+                                },
                             ],
                             valid: [phase.is_some(), gain_phase && phase.is_some()],
                             ..LeakageEstimate::default()

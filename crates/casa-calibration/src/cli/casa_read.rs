@@ -238,6 +238,11 @@ pub(super) fn leakage_request(
         priors: chain(task, Chain::Solve)?,
         parang: !gain || task.flag("parang")?,
         correlation_dependent_flags: gain && task.flag("corrdepflags")?,
+        solve_mode: if gain {
+            calmode(task)?
+        } else {
+            GainSolveMode::AmplitudePhase
+        },
         interval: parse_time_solint(time)?,
         frequency_interval: parse_frequency_solint(frequency)?,
         combine: combine(task)?,

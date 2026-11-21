@@ -86,6 +86,8 @@ def compare_basis(root, basis, api):
     put_observations(vis, flux, [planted])
     solve(root/'preaveraged-centroid', vis, api, [], poltype='Xf', preavg=0.,
           time_tolerance=1e-4)
+    solve(root/'default-full-preaverage', vis, api, [], poltype='Xf', preavg=-1.,
+          time_tolerance=1e-4)
 
     data = put_observations(vis, sky, [planted])
     with opened(vis, True) as ms:

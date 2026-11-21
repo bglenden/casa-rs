@@ -7350,6 +7350,11 @@ case in the circular basis already raises a singular-fit error.
 Casa-rs detects the rank deficiency of the linear source fit and raises a
 catchable error before writing an unconstrained calibration table.
 
+The separate `gaincal` `XY+QU` modes accept two preaveraged segments in
+CASA, which can produce a numerical Q/U estimate even though the source
+model has three unknowns. Casa-rs reports the same singular-fit error when
+those two segments leave the source model underdetermined.
+
 With broad angle coverage and a real polarized input, the shallow or steep
 line fit can also receive an exactly constant imaginary or real component.
 CASA's `Xfparang+QU` returns a phase 90 degrees away from the planted one
