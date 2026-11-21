@@ -828,8 +828,6 @@ def gencal(
     """Generate a calibration table such as antpos, gceff, or opac.
 
     CASA's ``gencal``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #979:
-    ``infile``, ``pol``.
     """
     return _call_casa(gencal, locals())
 
