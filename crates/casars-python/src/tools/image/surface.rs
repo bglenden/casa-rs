@@ -88,7 +88,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("brightnessunit", &[], R::Any, Yes),
     method(
@@ -126,7 +126,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("commonbeam", &[], R::Any, Yes),
     method(
@@ -141,7 +141,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "convertflux",
@@ -169,7 +169,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "convolve2d",
@@ -189,7 +189,7 @@ const METHODS: &[Method] = &[
             param("beam", K::Record, EmptyRecord),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "coordmeasures",
@@ -256,8 +256,8 @@ const METHODS: &[Method] = &[
             param("convcriteria", K::Float, Float(0.0001)),
             param("stretch", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Yes,
     ),
     method(
         "deconvolvecomponentlist",
@@ -279,14 +279,14 @@ const METHODS: &[Method] = &[
         "deviation",
         &[
             param("outfile", K::Text, Text("")),
-            param("region", K::Text, Text("")),
+            param("region", K::Any, Text("")),
             param("mask", K::Text, Text("")),
             param("overwrite", K::Bool, Bool(false)),
             param("stretch", K::Bool, Bool(false)),
             param("grid", K::Ints, Ints(&[1, 1])),
-            param("anchor", K::Text, Text("ref")),
-            param("xlength", K::Text, Text("1pix")),
-            param("ylength", K::Text, Text("1pix")),
+            param("anchor", K::Any, Text("ref")),
+            param("xlength", K::Any, Text("1pix")),
+            param("ylength", K::Any, Text("1pix")),
             param("interp", K::Text, Text("cubic")),
             param("stattype", K::Text, Text("sigma")),
             param("statalg", K::Text, Text("classic")),
@@ -294,7 +294,7 @@ const METHODS: &[Method] = &[
             param("maxiter", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "dohistory",
@@ -325,7 +325,7 @@ const METHODS: &[Method] = &[
             param("complex", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "findsources",
@@ -339,7 +339,7 @@ const METHODS: &[Method] = &[
             param("negfind", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fitcomponents",
@@ -368,7 +368,7 @@ const METHODS: &[Method] = &[
             param("summary", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fitprofile",
@@ -569,7 +569,7 @@ const METHODS: &[Method] = &[
             param("method", K::Text, Text("linear")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "hanning",
@@ -584,7 +584,7 @@ const METHODS: &[Method] = &[
             param("dmethod", K::Text, Text("copy")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("haslock", &[], R::Any, Yes),
     method(
@@ -850,7 +850,7 @@ const METHODS: &[Method] = &[
             param("wantreturn", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "pbcor",
@@ -868,7 +868,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("pixeltype", &[], R::Any, Yes),
     method(
@@ -1198,7 +1198,7 @@ const METHODS: &[Method] = &[
             param("order", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "twopointcorrelation",

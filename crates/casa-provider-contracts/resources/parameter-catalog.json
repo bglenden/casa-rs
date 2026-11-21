@@ -2,6 +2,145 @@
   "schema_version": 1,
   "concepts": [
     {
+      "id": "vla_calibrator.outfile",
+      "semantic_revision": 1,
+      "casa_name": "outfile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Write the retrieved source model as a CASA component-list table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.source",
+      "semantic_revision": 1,
+      "casa_name": "source",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Calibrator name. Specify either the name or the direction.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.direction",
+      "semantic_revision": 1,
+      "casa_name": "direction",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Direction in FRAME LONGITUDE LATITUDE form.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.band",
+      "semantic_revision": 1,
+      "casa_name": "band",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Case-insensitive VLA receiver band P, L, S, C, X, U, K, A or Q.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.obsdate",
+      "semantic_revision": 1,
+      "casa_name": "obsdate",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Observation date as numeric MJD or a YYYY-MM-DD calendar date.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.refdate",
+      "semantic_revision": 1,
+      "casa_name": "refdate",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Optional reference date as numeric MJD or a YYYY-MM-DD calendar date.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "vla_calibrator.hosts",
+      "semantic_revision": 1,
+      "casa_name": "hosts",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "service_reference"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "VLA calibrator-service URLs in the order they will be queried.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "positions.output.outfile",
       "semantic_revision": 1,
       "casa_name": "outfile",
@@ -16760,6 +16899,494 @@
         "examples": [
           ""
         ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.scalebychan",
+      "semantic_revision": 1,
+      "casa_name": "scalebychan",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Evaluate calibrator flux density per channel."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.standard",
+      "semantic_revision": 1,
+      "casa_name": "standard",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "Perley-Taylor 95",
+          "Butler-JPL-Horizons 2010",
+          "Perley-Butler 2010",
+          "Stevens-Reynolds 2016",
+          "Perley-Taylor 99",
+          "Perley-Butler 2013",
+          "Perley 90",
+          "Scaife-Heald 2012",
+          "manual",
+          "Butler-JPL-Horizons 2012",
+          "Perley-Butler 2017",
+          "fluxscale",
+          "Baars"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Flux density standard for the calibrator model."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.model",
+      "semantic_revision": 1,
+      "casa_name": "model",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Input image or calibrator model name."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.listmodels",
+      "semantic_revision": 1,
+      "casa_name": "listmodels",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "List available calibrator model images."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.fluxdensity",
+      "semantic_revision": 1,
+      "casa_name": "fluxdensity",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "physical_quantity",
+      "documentation": {
+        "summary": "Manual Stokes I, Q, U and V flux densities in Jy."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.spix",
+      "semantic_revision": 1,
+      "casa_name": "spix",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Spectral index and curvature coefficients."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.polindex",
+      "semantic_revision": 1,
+      "casa_name": "polindex",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "allow_scalar": false
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Coefficients of the fractional linear polarization."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.polangle",
+      "semantic_revision": 1,
+      "casa_name": "polangle",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "allow_scalar": false
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Coefficients of the linear polarization angle in radians."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.rotmeas",
+      "semantic_revision": 1,
+      "casa_name": "rotmeas",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "physical_quantity",
+      "documentation": {
+        "summary": "Rotation measure in rad/m\u00b2."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.fluxdict",
+      "semantic_revision": 1,
+      "casa_name": "fluxdict",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Flux dictionary returned by fluxscale with incremental disabled."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.useephemdir",
+      "semantic_revision": 1,
+      "casa_name": "useephemdir",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use the ephemeris position for a Solar System calibrator."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.interpolation",
+      "semantic_revision": 1,
+      "casa_name": "interpolation",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "nearest",
+          "linear",
+          "spline",
+          "",
+          "cubic"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Time interpolation of calibrator flux coefficients."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setjy.ismms",
+      "semantic_revision": 1,
+      "casa_name": "ismms",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Allow an empty local selection while processing a Multi-MS."
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.objname",
+      "semantic_revision": 1,
+      "casa_name": "objname",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Object to predict, using a name recognized by the flux standard.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.epoch",
+      "semantic_revision": 1,
+      "casa_name": "epoch",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "UTC observation epoch. Use a CASA calendar date or a quantity in days.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.minfreq",
+      "semantic_revision": 1,
+      "casa_name": "minfreq",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "First prediction frequency. Supply a quantity such as 90GHz.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.maxfreq",
+      "semantic_revision": 1,
+      "casa_name": "maxfreq",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Last prediction frequency. An omitted or nonpositive frequency uses minfreq.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.nfreqs",
+      "semantic_revision": 1,
+      "casa_name": "nfreqs",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of evenly spaced frequencies. A range uses at least two samples.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.prefix",
+      "semantic_revision": 1,
+      "casa_name": "prefix",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Prefix prepended to the generated component-list name.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.showplot",
+      "semantic_revision": 1,
+      "casa_name": "showplot",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Display the visibility-amplitude figure when an antenna configuration is provided.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.savefig",
+      "semantic_revision": 1,
+      "casa_name": "savefig",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Save the visibility-amplitude figure to this path.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.symb",
+      "semantic_revision": 1,
+      "casa_name": "symb",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Matplotlib marker or format string used for each series.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.include0amp",
+      "semantic_revision": 1,
+      "casa_name": "include0amp",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Start the visibility-amplitude axis at zero.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.include0bl",
+      "semantic_revision": 1,
+      "casa_name": "include0bl",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Start the projected-baseline axis at zero.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.blunit",
+      "semantic_revision": 1,
+      "casa_name": "blunit",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "klambda"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Display projected lengths in metres by default, or in kilolambda at the first frequency.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.showbl0flux",
+      "semantic_revision": 1,
+      "casa_name": "showbl0flux",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Include the zero-baseline flux in the legend.",
+        "examples": []
       },
       "persistence_class": "profile"
     }

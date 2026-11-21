@@ -5,22 +5,41 @@ mod axis;
 mod collapse;
 mod output;
 
+use crate::image::{ImageHistoryEntry, image_history_entries};
 use casa_provider_contracts::{ParameterValue, python_repr};
+use casa_types::{RecordValue, Value};
 
-use super::axes::{legacy_subimage_coordinates_with_stokes, subimage_coordinates_with_stokes};
+use super::axes::{subimage_coordinate_record, subimage_coordinates_with_stokes};
 use super::imsubimage::{SubimageRegion, coords::subset_beam_set, region::SubimageSelection};
 use super::{combined_selection_mask, patch_saved_coords_keyword};
 use crate::{
-    ImageBeamSet, ImageError, ImagePixel, ImmomentsRequest, MomentImageSummary, MomentMapSummary,
-    PagedImage, TempImage,
+    ImageBeamSet, ImageError, ImageInterface, ImagePixel, ImmomentsRequest, MomentImageSummary,
+    MomentMapSummary, PagedImage, TempImage,
 };
 
 pub(super) use self::collapse::PixelClip;
 #[cfg(test)]
 pub(super) use self::{axis::ProfileCoordinates, collapse::collapse_moment};
 
-pub(super) fn run<T>(
+pub(super) fn run_paged<T>(
     image: &PagedImage<T>,
+    request: &ImmomentsRequest,
+) -> Result<MomentMapSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+{
+    let record = match image.table().keywords().get("coords") {
+        Some(Value::Record(record)) => Some(record),
+        _ => None,
+    };
+    let history = image_history_entries(&request.imagename)?;
+    run(image, record, &history, request)
+}
+
+pub(super) fn run<T>(
+    image: &dyn ImageInterface<T>,
+    record: Option<&RecordValue>,
+    history: &[ImageHistoryEntry],
     request: &ImmomentsRequest,
 ) -> Result<MomentMapSummary, ImageError>
 where
@@ -36,7 +55,7 @@ where
         request.stokes.as_deref(),
     )?;
     let axis = axis::resolve(image, request.axis.as_ref(), &selection.shape)?;
-    let mut input = image.get_slice(&selection.start, &selection.shape)?;
+    let mut input = image.get_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
     let mut mask =
         combined_selection_mask(image, &selection, request.mask.as_deref(), request.stretch)?;
     selection.apply_selection_masks(&mut mask);
@@ -48,12 +67,14 @@ where
         &selection.shape,
         selection.selected_stokes.as_deref(),
     )?;
-    let record = legacy_subimage_coordinates_with_stokes(
-        image,
-        &selection.start,
-        &selection.shape,
-        selection.selected_stokes.as_deref(),
-    );
+    let record = record.cloned().and_then(|record| {
+        subimage_coordinate_record(
+            record,
+            &selection.start,
+            &selection.shape,
+            selection.selected_stokes.as_deref(),
+        )
+    });
     let mut info = image.image_info()?;
     info.beam_set = subset_beam_set(
         &info.beam_set,
@@ -94,8 +115,10 @@ where
         &request.moments,
     );
     let misc = image.misc_info();
-    let history = crate::image::image_history_entries(&request.imagename)?;
-    let command = task_history(request);
+    let command = [
+        concat!("version: casa-rs ", env!("CARGO_PKG_VERSION")).into(),
+        task_history(request),
+    ];
     let stage = destinations.stage()?;
     let mut products = Vec::with_capacity(destinations.paths.len());
     for (i, (&moment, result)) in request.moments.iter().zip(results).enumerate() {
@@ -119,8 +142,8 @@ where
         if let Some(record) = &record {
             patch_saved_coords_keyword(&staged, record.clone())?;
         }
-        crate::image::append_image_history_entries(&staged, &history)?;
-        crate::image::add_image_history(&staged, "immoments", std::slice::from_ref(&command))?;
+        crate::image::append_image_history_entries(&staged, history)?;
+        crate::image::add_image_history(&staged, "immoments", &command)?;
         products.push(MomentImageSummary {
             outfile: destinations.paths[i].display().to_string(),
             moment,

@@ -35,7 +35,7 @@ fn text_field<'a>(record: &'a RecordValue, name: &str) -> Option<&'a str> {
 }
 
 #[derive(Clone, Copy)]
-enum OutputFrame {
+pub(super) enum OutputFrame {
     Absolute,
     Relative,
 }
@@ -134,7 +134,7 @@ impl OutputFrame {
         }
     }
 
-    fn apply(
+    pub(super) fn apply(
         self,
         coordinates: &CoordinateSystem,
         values: &mut [f64],
@@ -153,14 +153,18 @@ impl OutputFrame {
                 .expect("existing coordinate");
             for (axis, reference) in axes.into_iter().zip(model.reference_pixel()) {
                 let Some(axis) = axis else { continue };
-                if let CoordinateModel::Stokes(stokes) = model {
+                let discrete_planes = match model {
+                    CoordinateModel::Stokes(stokes) => Some(stokes.n_stokes()),
+                    CoordinateModel::Quality(quality) => Some(quality.values().len()),
+                    _ => None,
+                };
+                if let Some(count) = discrete_planes {
                     let absolute = if self.absolute() {
                         values[axis] + reference
                     } else {
                         values[axis]
                     };
                     let index = (absolute + 0.5).trunc();
-                    let count = stokes.n_stokes();
                     if !(0.0..count as f64).contains(&index) {
                         return Err(raised(format!(
                             "Absolute pixel {index} is out of range [0..{}]",

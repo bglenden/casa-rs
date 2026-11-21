@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "plotms",
   "casa_version": "6.7.6.14",
-  "audit_revision": "e775bd07a6e5b9ebfbb4b812844564b063dc78e9",
+  "audit_revision": "b60d8a6a140bd6f0a29177584db5ff91244f5d12",
   "parameters": {
     "vis": {
       "scope": "Input MS or CalTable (blank for none)",
@@ -17,7 +17,8 @@
     "caltable": {
       "scope": "Input CalTable (blank for none)",
       "evidence": [
-        "paired"
+        "paired",
+        "legacy-calibration"
       ],
       "behaviors": [
         "table"
@@ -415,8 +416,9 @@
       "status": "Partial"
     },
     "freqframe": {
-      "scope": "Ignore the requested frequency frame when transform is false. Active frequency conversion remains open for calibration tables.",
+      "scope": "Calibration-table PlotMS retains the table’s stored spectral coordinates and warns when an active frame is requested. MeasurementSet transform coverage is tracked separately.",
       "evidence": [
+        "calibration-controls",
         "selectors",
         "remaining"
       ],
@@ -973,89 +975,94 @@
       "status": "Partial"
     },
     "headeritems": {
-      "scope": "Comma-separated list of pre-defined page header items.",
+      "scope": "Render requested page headers and metadata on current calibration tables and supported MeasurementSet figures. Shared MeasurementSet figure coverage is tracked separately.",
       "evidence": [
+        "calibration-controls",
         "remaining"
       ],
       "behaviors": [
         "presentation"
       ],
-      "status": "Not implemented"
+      "status": "Partial"
     },
     "showatm": {
-      "scope": "Overlay atmospheric transmission on current calibration tables. MeasurementSet overlays remain open.",
+      "scope": "Overlay atmospheric transmission on MeasurementSets and current calibration tables.",
       "evidence": [
         "atmosphere",
-        "remaining"
+        "ms-atmosphere"
       ],
       "behaviors": [
         "advanced"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "showtsky": {
-      "scope": "Overlay sky temperature on current calibration tables. MeasurementSet overlays remain open.",
+      "scope": "Overlay sky temperature on MeasurementSets and current calibration tables.",
       "evidence": [
         "atmosphere",
-        "remaining"
+        "ms-atmosphere"
       ],
       "behaviors": [
         "advanced"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "showimage": {
-      "scope": "Overlay a receiver image sideband on current calibration tables. MeasurementSet overlays remain open.",
+      "scope": "Overlay a receiver image sideband on MeasurementSets and current calibration tables.",
       "evidence": [
         "atmosphere",
-        "remaining"
+        "ms-atmosphere"
       ],
       "behaviors": [
         "advanced"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "colorizeoverlay": {
-      "scope": "Colorize the curve overlay using coloraxis",
+      "scope": "Color atmospheric overlays by the selected metadata axis in MeasurementSet and calibration-table figures.",
       "evidence": [
-        "remaining"
+        "ms-atmosphere"
       ],
       "behaviors": [
         "advanced"
-      ]
+      ],
+      "status": "Implemented"
     }
   },
   "behaviors": [
     {
       "id": "table",
-      "title": "Read current-format calibrations",
+      "title": "Read MeasurementSets and calibration tables",
       "status": "Partial",
-      "scope": "Open a current casacore calibration table through vis or caltable, preserving the public None return and input-path checks.",
+      "scope": "Open casacore MeasurementSets and current, BPOLY and GSPLINE calibration tables through vis or caltable, preserving the public None return and input-path checks.",
       "evidence": [
-        "paired"
+        "paired",
+        "legacy-calibration"
       ],
-      "gap": "Legacy BPOLY and GSPLINE table loading and the remaining MS plotting paths are open."
+      "gap": "Remaining MeasurementSet plotting paths are open under #1032 and #215."
     },
     {
       "id": "selection",
       "title": "Select solution samples",
       "status": "Partial",
-      "scope": "Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors.",
+      "scope": "Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC.",
       "evidence": [
         "paired",
-        "selectors"
+        "selectors",
+        "legacy-calibration"
       ],
-      "gap": "Further legacy formats and MS plotting paths remain open."
+      "gap": "Remaining MeasurementSet selection paths are open under #1032 and #215."
     },
     {
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata.",
       "evidence": [
         "paired",
         "selectors",
-        "callibrary"
+        "callibrary",
+        "legacy-calibration"
       ],
       "gap": "Pointing-coordinate axes and advanced per-axis MS data columns are open."
     },
@@ -1083,20 +1090,22 @@
       "id": "presentation",
       "title": "Render the shared plot document",
       "status": "Partial",
-      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend and export sizing.",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing.",
       "evidence": [
-        "paired"
+        "paired",
+        "calibration-controls"
       ],
-      "gap": "Renderer-specific marker fill patterns, page headers and interactive editing remain open."
+      "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
     },
     {
       "id": "export",
       "title": "Save and publish selected plot products",
       "status": "Partial",
-      "scope": "Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and single-panel figures.",
+      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.",
       "evidence": [
         "paired",
-        "callibrary"
+        "callibrary",
+        "legacy-calibration"
       ],
       "gap": "More export, multi-plot state and interactive display forms remain open."
     },
@@ -1104,14 +1113,15 @@
       "id": "advanced",
       "title": "Advanced calibration plotting controls",
       "status": "Partial",
-      "scope": "Apply calibration libraries to MeasurementSet plots in memory and compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.",
+      "scope": "Apply calibration libraries to MeasurementSet plots in memory. Compute transmission, sky temperature and receiver sidebands for MeasurementSets and calibration tables, including selected channels and requested overlay color groups.",
       "evidence": [
         "atmosphere",
+        "ms-atmosphere",
         "selectors",
         "remaining",
         "callibrary"
       ],
-      "gap": "The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215."
+      "gap": "Remaining shared PlotMS forms are tracked in #1032 and #215."
     }
   ],
   "decisions": [
@@ -1140,6 +1150,19 @@
       "evidence": [
         "selectors"
       ]
+    },
+    {
+      "id": "gspline-negative-antenna",
+      "state": "Proposed",
+      "inputs": "A five-antenna GSPLINE table plotted with antenna=\"!A2\".",
+      "casa": "Displays only antenna A2, despite negation.",
+      "ours": "Displays A0, A1, A3 and A4.",
+      "rationale": "Honor the documented antenna exclusion instead of passing the excluded ID to the plot cache.",
+      "impact": "The displayed antenna membership follows the source-row filter.",
+      "record": "PlotMS shows the excluded antenna on a GSPLINE plot",
+      "evidence": [
+        "legacy-calibration"
+      ]
     }
   ],
   "evidence": {
@@ -1154,12 +1177,13 @@
       "receipt": "resources/casa-compat/evidence/plotms-calibration-20261119.json",
       "links": [
         "tools/casa-compat/plotms_calibration_oracle.py"
-      ]
+      ],
+      "source_revision": "e775bd07a6e5b9ebfbb4b812844564b063dc78e9"
     },
     "remaining": {
       "kind": "Remaining calibration PlotMS workflow comparisons",
       "state": "planned",
-      "scope": "Advanced calibration table and MS plotting under #1526, #1032 and #215.",
+      "scope": "Shared PlotMS rendering, MeasurementSet workflows and interactive controls under #1032 and #215.",
       "result": "Requires additional native behavior and paired evidence.",
       "links": []
     },
@@ -1175,6 +1199,34 @@
       "receipt": "resources/casa-compat/evidence/plotms-atmosphere-20261119.json",
       "links": [
         "tools/casa-compat/plotms_atmosphere_oracle.py"
+      ]
+    },
+    "ms-atmosphere": {
+      "kind": "Same-input MeasurementSet PlotMS atmospheric overlays",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 with casaplotms 2.9.1 on the same MeasurementSets and calibration tables, including measured weather, water vapour, receiver sidebands, averaging, scan iteration and read-only callibrary correction.",
+      "result": "Matched 17 exports and 4,540 printed coordinates and metadata. Six figure names and 400 rendered coordinates matched. Default visibility and atmosphere markers remained visible, and the scan and correlation colors had the expected group membership. Maximum overlay normalized RMS was 9.15099e-5. The input MeasurementSet data, weights and flags were preserved.",
+      "casa_version": "6.7.6.14",
+      "revision": "5ed8020023334573ace4f40e2edc12494a9f8b03",
+      "source_revision": "5ed8020023334573ace4f40e2edc12494a9f8b03",
+      "command": "casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-atmosphere-20261121.json",
+      "links": [
+        "tools/casa-compat/plotms_ms_atmosphere_oracle.py"
+      ]
+    },
+    "calibration-controls": {
+      "kind": "Same-input calibration-table PlotMS headers and transform controls",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on the same current bandpass table and selected calibration solutions. Public page headers and spectral transform settings.",
+      "result": "Three text exports matched byte for byte. CASA rendered the requested page header labels. Native verified stored table values, independent field pages, absent wildcard metadata, a polynomial direction and row-specific frame, and non-overlapping 1000 by 400 pixel headers at 100 and 300 DPI. Two native active transform calls preserved the reference coordinates after a warning. The pinned renderer failed to complete active frame requests on the test table.",
+      "casa_version": "6.7.6.14",
+      "revision": "95ca3bf47f2fa98411cf9fea7d72ba95eac47c44",
+      "source_revision": "95ca3bf47f2fa98411cf9fea7d72ba95eac47c44",
+      "command": "casa-python tools/casa-compat/plotms_calibration_controls_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-calibration-controls-20261121.json",
+      "links": [
+        "tools/casa-compat/plotms_calibration_controls_oracle.py"
       ]
     },
     "selectors": {
@@ -1201,6 +1253,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-callibrary-20261119.json",
       "links": [
         "https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py"
+      ]
+    },
+    "legacy-calibration": {
+      "kind": "Same-input legacy calibration PlotMS comparison",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on the same persisted BPOLY and GSPLINE tables with receptor-dependent gains, surviving and flagged receptors, and source-row selection.",
+      "result": "20 text exports, 31,696 points, exact headers and metadata, and 2,080 rendered coordinates matched. Maximum ordinate normalized RMS 3.78525e-07. Four invalid requests were refused by both engines. The negated-antenna diagnostic confirms the CASA bug and native selection behavior. The input tables and associated MeasurementSet were unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "b60d8a6a140bd6f0a29177584db5ff91244f5d12",
+      "source_revision": "b60d8a6a140bd6f0a29177584db5ff91244f5d12",
+      "command": "casa-python tools/casa-compat/plotms_legacy_calibration_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-legacy-calibration-20261121.json",
+      "links": [
+        "tools/casa-compat/plotms_legacy_calibration_oracle.py"
       ]
     }
   }

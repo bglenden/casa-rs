@@ -4461,6 +4461,31 @@ direction-first pair's (`casa-images` `casa_axis_maps` test
 `feather_takes_the_direction_wherever_its_axes_are`), and the direction-first
 result is checked against CASA's in `image_analysis_casa`.
 
+## `feather` drops units and restoring beams in its per-plane path
+
+CASA 6.7.6.14 combines the `papersky_standard.intimage` and
+`papersky_standard.sdimage` upstream cubes into pixels calibrated in the
+high-resolution beam. The parent output image has an empty brightness unit
+and no restoring beams. casa-rs retains the high-resolution `Jy/beam` unit
+and the matching per-plane beam set. On the upstream test cubes, all three
+pixel planes agree with CASA to a normalized RMS below `3e-7` (#977).
+
+CASA's per-plane slicing also limits the low-resolution sky plane to the
+high-resolution pixel bounds before regridding. With centered 8- and
+12-column images, this discards low-resolution signal in columns 8–9
+that maps to high-resolution columns 6–7. casa-rs pairs the channel and
+Stokes indices while regridding the complete low-resolution sky plane.
+
+## `feather` rounds an integer-aligned image edge inconsistently
+
+CASA 6.7.6.14 can lose or extrapolate boundary values when its sky-coordinate
+round trip lands beside an exact integer pixel. In the smaller-low-image
+fixture, the reference pixels differ by exactly three columns. Placing the
+low-resolution crop at that offset with zero padding before CASA's Fourier
+combination gives an independent reference. Native feathering of the original
+crop agrees with it to a normalized RMS of `1.93e-7`. CASA's direct regrid
+of the crop differs from that reference by `6.01e-4` (#977).
+
 ## `tb.copyrows` adds the rows before it finds a cell it cannot convert, and wraps integers
 
 - Date noted: 2026-10-31
@@ -7986,6 +8011,34 @@ cannot draw a uniform zero with those seeds. The Poisson bound underflows to
 zero, leaving its product loop true after the product reaches zero. casa-rs
 returns a Python error for these inputs.
 
+## PlotMS leaves calibration-table header values blank
+
+CASA 6.7.6.14 with casaplotms 2.9.1 exports labels such as `File:` and
+`Observation date:` when `headeritems` is set on a current bandpass table.
+The corresponding values are blank even in a wide export with only
+`headeritems='filename'`. Casa-rs reads available values from the table and
+lays them out within the requested figure dimensions. Wildcard row IDs leave
+the matching metadata values blank. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
+
+## PlotMS can fail when a calibration-table transform is enabled
+
+With CASA 6.7.6.14 and casaplotms 2.9.1, enabling `freqframe='BARY'` or
+`freqframe='TOPO'` on the same bandpass table failed in the headless plotting
+process before completing the export. `CalCache::loadIt` documents the
+calibration-table behavior with its warning that transformations are ignored.
+Casa-rs emits that warning and exports the stored spectral coordinates.
+Both engines produced identical text when `transform=False` with nondefault
+frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
+
+## PlotMS shows the excluded antenna on a GSPLINE plot
+
+On a GSPLINE table with antennas A0 through A4, CASA 6.7.6.14 and
+casaplotms 2.9.1 plot only A2 for `antenna="!A2"`. The legacy selector
+excludes A2 from the source row query, then passes the excluded ID to the
+plot cache as an antenna to display. The cache evaluates and plots that ID.
+casa-rs applies the exclusion to the source rows and plots A0, A1, A3, and
+A4. The legacy calibration PlotMS oracle checks both outcomes.
+
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
 With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and
@@ -8068,6 +8121,33 @@ owns a copy of the voltage-pattern table with the alias. A real-only
 pattern uses a zero-valued imaginary image owned by the same grid.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
 [`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
+
+## Image collapse can abort or shift a wrapped longitude by 180 degrees
+
+CASA 6.7.6.14 aborts for negative or duplicate axes, for example
+`ia.collapse("sum", [-1])` and `ia.collapse("sum", [0, 0])`. casa-rs
+raises a Python error before replacing the output.
+
+On a default 4 × 4 direction image, `ia.collapse("sum", [0, 1])` also
+averages longitudes on opposite sides of the 0-degree meridian as ordinary
+numbers. CASA reports a longitude near 180 degrees for a footprint centered
+about half an arcminute from the meridian. casa-rs unwraps both endpoints around the interior sky position before
+averaging, so the result remains on the selected footprint. This also
+keeps the midpoint on fields broader than 180 degrees.
+
+CASA 6.7.6.14 also segfaults collapsing a Stokes–Frequency image whose
+native record puts Frequency at pixel axis 1 and world axis 0. casa-rs
+resolves `axes="Frequency"` through the native world-to-pixel map and
+collapses the corresponding pixel axis.
+
+## Continuum subtraction leaves a partial product for aliased outputs
+
+CASA 6.7.6.14 accepts the same initially absent path for `outline` and
+`outcont` in `image.continuumsub`. It writes the continuum model before
+raising an error while publishing the residual. With overwrite enabled,
+CASA still reports an error after writing the model. casa-rs rejects
+aliased destinations before fitting and verifies both destinations before
+publishing either image.
 
 ## A zero-stride region aborts `image.modify`
 
@@ -8438,9 +8518,416 @@ CASA also reads byte-swapped NumPy origin arrays as native-endian bytes.
 For example, `np.array(1.5, dtype=">f8")` applies a zero-pixel shift on a
 little-endian host. casa-rs reads the declared byte order.
 
+## FITS export shifts the zenithal polynomial coefficients
+
+CASA 6.7.6.14 starts the `ZPN` coefficients at latitude-axis `PV i_1`
+when it exports an image. FITS WCS defines the constant coefficient at
+`PV i_0`. For a polynomial beginning `[0.02, 1, 0.1, -0.02]`, reopening the
+export in CASA changes the sky positions. A zero constant can cause CASA
+to reopen the file as a linear coordinate. casa-rs writes the coefficients
+from `PV i_0`. Both readers recover the original sky positions from that
+header.
+
+## A rejected latitude edit can leave a projected coordinate unusable
+
+In CASA 6.7.6.14, a CEA coordinate with zero reference latitude and
+`LONPOLE=0°` cannot move its reference to `-0.5` radians with the same
+pole. `coordsys.setreferencevalue` raises for this edit but leaves the new
+latitude in the coordinate record. The same failure occurs for other
+projections when the requested latitude cannot use the existing pole.
+casa-rs checks the pole before committing the reference edit and preserves
+the usable coordinate if the edit fails.
+
+## A display frame can shift an adjusted native coordinate reference twice
+
+CASA 6.7.6.14's `coordsys.setreferencecode` can pass the displayed
+reference position into the conversion as if it were still in the native
+frame. For a J2000 reference of `[24°, 32°]`, adjusting to ECLIPTIC
+gives about `[0.597567, 0.356488]` radians. With a Galactic display layer
+active, it instead gives about `[2.582935, -0.784427]` radians. An active
+BARY display layer also changes the result of an LSRK-to-GEO adjustment
+of the same spectral reference pixel. casa-rs uses the native direction
+and native reference-pixel frequency, then resets the display layer on
+the coordinate whose native code changed.
+
 ## A rejected combined conversion-frame request changes the direction frame
 
 CASA 6.7.6.14 applies the direction conversion in `coordsys.setconversiontype`
 before it validates the requested spectral frame. With `direction="GALACTIC"`
 and `spectral="invalid"`, the call raises after changing the direction
 conversion. casa-rs preserves both conversion layers when the call fails.
+
+## Rebuilding a sampled spectral axis can relabel its rest frequency
+
+CASA 6.7.6.14 passes the old rest-frequency number to the new `setspectral`
+table in Hz. If the old coordinate declares MHz, a rest frequency of
+`1420.405751786 MHz` becomes `1420.405751786 Hz`. casa-rs converts the active
+rest frequency to Hz before building the new frequency or velocity table.
+
+The same setter accepts a positive rest quantity with incompatible units,
+such as `21cm`, and records it as `0.21 Hz`. It can also store an infinite
+rest frequency. casa-rs rejects these inputs while preserving the prior
+spectral coordinate.
+
+## Reflected Quality pixels keep their original labels in CASA
+
+For a Float image of shape `[3, 2]` with a linear axis and a Quality axis
+ordered `DATA, ERROR`, CASA 6.7.6.14's `image.transpose(order="-10")` places
+the error pixels first but labels them `DATA`. casa-rs reverses the labels
+with the pixels and retains their association after reopening the image.
+
+## FITS export can abort on an image with a native Quality coordinate
+
+Exporting a Float native image with a two-plane Quality coordinate
+(`DATA` and `ERROR`) with `image.tofits` terminates pinned CASA 6.7.6.14
+with a floating-point exception. With the Quality axis removed from the
+public layout and the `ERROR` plane fixed in the record, export terminates
+with a segmentation fault. casa-rs raises a Python error and preserves the
+image in both cases. Its single-HDU FITS writer cannot represent the data
+and error semantics of a native Quality coordinate.
+
+## An empty nested list crashes `coordsys.convertmany`
+
+CASA 6.7.6.14 exits with a segmentation fault when a two-axis coordinate
+system receives `convertmany([[], []])`. The equivalent NumPy array with
+shape `(2, 0)` returns an empty double array of that shape. casa-rs returns
+the same empty array for both representations.
+
+## Invalid slice indices can terminate `image.getslice`
+
+On a `[7, 8, 3]` image, CASA 6.7.6.14 aborts on `getslice([0, 2],
+[0, 2], coord=[0, 0, 100])`. Its axis-vector reader also accesses the
+second entry when an explicit list contains only the first axis. casa-rs
+raises a Python error for an out-of-range fixed coordinate or a missing
+second axis and preserves the attached image. An explicit `npts=None` also
+aborts CASA. casa-rs raises a type error for that argument.
+
+## `image.transpose` can change the metadata of a reflected sample
+
+In CASA 6.7.6.14, reflecting an axis negates the corresponding world
+increment. In a `[4, 6, 5]` image with a direction matrix
+`[[1, 0.2], [-0.3, 1]]`, `transpose(order="2-01")` moves the sample at
+`[1, 2, 3]` to `[3, 2, 2]` and changes its reported direction. casa-rs
+reflects the matching pixel column of the coupled transform and preserves
+the sample's world position.
+
+For a `[4, 5, 2, 6]` image, `transpose(order="-30-21")` reverses the
+spectral and Stokes samples but retains the original beam grid and Stokes
+labels. casa-rs moves each sampled plane with its original label and
+restoring beam.
+
+For a six-pixel tabular axis with pixels `[0, 1, 3, 5]` and worlds
+`[100, 101, 111, 120]`, the reflected pixel 1 represents the original
+pixel 4. CASA reports 119 there. casa-rs reflects the lookup grid and
+reports the original interpolated value of 115.5.
+
+If an image has pixel axes `[Stokes, Frequency]` and world axes
+`[Frequency, Stokes]`, CASA 6.7.6.14 reflects Stokes pixels for the named
+order `["-Frequency", "Stokes"]`. casa-rs resolves the names through the
+world-to-pixel mapping, so this order reflects the frequency planes.
+
+## Unequal image-section strides can shift coupled sky coordinates
+
+On a SIN direction plane with reference pixel `[0, 0]` and PC matrix
+`[[0, -1], [1, 0]]`, CASA 6.7.6.14 applies a stride of `[2, 1]` by doubling
+the first world increment. It reports about one arcminute of declination change
+between output pixels `[0, 0]` and `[1, 0]`. The selected input pixels
+`[0, 0]` and `[2, 0]` are about two arcminutes apart. This affects the
+section geometry used by `image.subimage`, `image.pad`, and `image.pbcor`.
+casa-rs scales the PC matrix with the increments so that each selected
+pixel retains its sky position.
+
+## Fluxscale dictionaries can select the wrong windows in `setjy`
+
+CASA 6.7.6.14 documents `spw` as a selector for valid windows in a
+`fluxdict`. Its Python wrapper calls `ms.msseltoindex` on the class when
+`spw` is explicit, raising `AttributeError` before writing. With an implicit
+selection, all `fluxd=-1` and a nonzero fitted flux, the wrapper passes an
+empty window list. The imager interprets it as every window and can replace
+an existing model. casa-rs applies the intersection of the selected window
+IDs and the valid dictionary entries. An empty intersection leaves the
+scratch and virtual models intact.
+
+A `fluxscale(fitorder=0)` dictionary can also contain only the fitted
+intercept in `spidx`. CASA's wrapper indexes the first element after
+removing that intercept and can raise `IndexError`. casa-rs uses zero
+spectral index for this constant fit. The local oracle compares the
+corrected cases with equivalent CASA manual models and checks preservation
+of the input model. [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## Listing the Butler–JPL Horizons 2010 objects in setjy raises before displaying them
+
+With `listmodels=True` and `standard="Butler-JPL-Horizons 2010"`, CASA
+6.7.6.14 calls an unavailable `logsink.posta` method and raises
+`AttributeError`. The object names are already defined in the task.
+casa-rs displays that list and returns the empty listing result without
+opening a MeasurementSet. [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## A resolved setjy model uses the wrong manual spectral law
+
+In CASA 6.7.6.14, `setjy(standard="manual", model="3C286_L.im",`
+`fluxdensity=2.4, spix=-0.74, reffreq="1.41GHz")` writes zero
+visibilities in the 1.413 GHz VLA band. With `spix=0`, `scalebychan=True`
+and the default 1 GHz reference, CASA incorrectly gives the image a
+frequency-dependent amplitude. The resolved-image branch evaluates the
+spectral polynomial at a frequency in Hz and uses the result as a power
+of the frequency ratio. casa-rs evaluates the documented polynomial in
+`log10(f / f0)`, as used by the manual point-source model. It normalizes
+the existing image morphology to that intensity per channel or at the
+representative frequency for constant scaling. [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## CASA uvsub drops the second feed basis of a resolved virtual model
+
+In CASA 6.7.6.14, an MS with RR/LL on one window and XX/YY on the next can
+hold two valid `SetJyGridFT` records for a resolved IQUV image. `ms.uvsub`
+uses the first window's circular model and subtracts zero on the linear
+window, even when CASA itself wrote both records. Scratch `setjy` predicts
+nonzero visibilities on both windows. casa-rs reads either writer's
+records and applies the matching Fourier grid on each window.
+[#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## getcalmodvla rejects a documented calendar reference date
+
+CASA 6.7.6.14 accepts a `YYYY-MM-DD` observation date but raises
+`TypeError` for the same `refdate` format. It parses the date into MJD
+and then tests the original string against zero. casa-rs uses the
+parsed MJD to decide whether to include `refdate` in the request and
+keeps the supplied calendar date in the component list provenance.
+[#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## Convolution can produce isolated infinities in an otherwise undefined plane
+
+CASA 6.7.6.14 spreads an unmasked NaN through the FFT axes in
+`image.convolve`. The validity mask and planes along degenerate kernel
+axes are independent. For an unmasked infinity, a four-pixel input
+`[1, 1, 1, inf]` with kernel `[1, 0, 0]` and `scale=1` produces
+`[nan, nan, inf, nan]`. The surviving infinity depends on the transform
+and padding. Casa-rs returns NaN throughout the affected plane when
+convolution mixes a valid nonfinite value, so the result is consistent
+across direct accumulation, FFT blocks, and tile sizes. A kernel with no
+active axes still applies the scalar coefficient with IEEE arithmetic.
+Masked samples contribute zero and the output retains the selected input
+validity.
+
+## Solar System setjy drops a scan or time restriction
+
+CASA 6.7.6.14 uses the requested scan to choose the epoch for
+`setjy(standard="Butler-JPL-Horizons 2012")` but omits the scan when writing
+`MODEL_DATA`. Even when one scan has been selected, the task replaces
+existing models in other scans of that field and spectral window. With a
+time range, it writes the correct rows but calculates the spectrum at the
+first timestamp outside the requested range because it passes `timerange`
+where the CASA tool expects `time`.
+
+casa-rs uses the scan and time selection both for the model epoch and for
+writing. A pinned comparison checks the selected scan against CASA and
+verifies that unselected model cells retain their previous values. A
+second comparison physically selects the requested time range in the CASA
+reference MeasurementSet and checks both the returned flux and complex model
+visibilities.
+
+## Solar System setjy changes the integrated flux for reversed channel widths
+
+CASA 6.7.6.14 passes the two channel edges in reverse order to its
+brightness integrator when `CHAN_WIDTH` is negative. For a Titan channel
+centered at 345.9 GHz with a 1 GHz bandwidth, the reported flux changes
+by more than ten percent when only the width's sign is reversed. A
+one-channel spectrum also changes its reference edge.
+
+casa-rs integrates the physical band from its lower to its higher
+frequency. A paired one-channel check compares both signed widths with
+CASA's positive-width result, including the model published to the
+MeasurementSet.
+
+## setjy fails to read an observation selector supplied as a string
+
+CASA 6.7.6.14 assigns its local observation selector only for non-string
+values when `usescratch=True`. For example, `observation="1"` raises before
+selecting a row, while `observation=1` reaches the same documented selector.
+casa-rs resolves either form. The 2012 Solar System comparison uses the
+integer form in CASA and the string form in casa-rs against an MS with two
+observatory rows.
+
+## imager.setjy can abort when the manual reference frequency is omitted
+
+CASA 6.7.6.14 can terminate the Python process when
+`imager.setjy(fluxdensity=[5, 0.6, 0.2, 0.1], standard="Perley-Butler 2017")`
+uses the declared empty `reffreq` default. The binding constructs a spectrum
+with a zero reference frequency, which the component library rejects.
+
+casa-rs supplies the task's 1 GHz reference when the tool parameter is
+omitted. The fixed-flux comparison uses that explicit frequency in CASA
+and the default in casa-rs.
+
+## An empty imager.setjy selection can widen the next ft
+
+In CASA 6.7.6.14, `imager.setjy(field="0", scan="999", ...)` returns
+a format-only record when the scan matches no data. The call also
+rebuilds the visibility iterator over the full MeasurementSet. A subsequent
+`ft` can then replace model cells outside the preceding `selectvis`.
+
+casa-rs preserves the existing selection when the new scan matches no rows.
+A paired test verifies the format-only return, unchanged model cells for the
+empty call, and the scope of the following `ft`.
+
+## Image decomposition counts masked emission and fits empty backgrounds
+
+CASA 6.7.6.14 counts masked samples in `image.decompose`. On a 9 × 11
+Float image with peaks 7 at [1, 2], 1 at [3, 4], and 4 at [5, 6],
+`decompose(simple=True, threshold=1, fit=False)` returns three islands
+after its default mask excludes [1, 2]. An expression mask accepting
+only the 7 peak also leaves all three bounds. The native
+decomposer reads raw pixels from the selected subimage. Casa-rs combines
+the default and requested masks with the selected region before
+thresholding so excluded samples cannot become sources.
+
+On an 11 × 13 zero image, CASA reports zero regions with
+`decompose(simple=True, fit=True, threshold=0.7)`, then starts fitting
+143 components to the background. Casa-rs returns empty component and
+bound matrices when the detection set is empty.
+
+A fit can also be underdetermined. Three samples with values 9, 3, and 1
+at [7, 7], [8, 7], and [8, 8] constrain fewer than the six parameters
+returned for a 2D Gaussian. With `threshold=0.7`, `maxretry=0`, and
+`maxrms=0.0001`, each implementation reconstructs all three samples to
+within 0.00001. The independent solvers can select different centers,
+widths, and angles from the valid solutions. Casa-rs also uses a fixed
+retry sequence so fits with identical inputs are reproducible.
+
+### predictcomp leaves requested figures unwritten
+
+With CASA 6.7.6.14, a valid `antennalist`, `showplot=True` and a nonempty
+`savefig` return a component list and `savedfig=None`. The task produces
+no figure. This also leaves the documented marker, axis and legend controls
+without an effect. casa-rs projects the specified array at the observation
+epoch, evaluates the model's visibility amplitudes at the requested
+frequencies, and renders the requested figure.
+
+### predictcomp 2012 scales the disk position angle as arcseconds
+
+The Horizons 2012 helper passes the ephemeris `NP_ang` model angle, in
+degrees, to `componentlist` as arcseconds. For Jupiter at MJD 60000 this
+stores an angle of about 0.0931 degrees instead of about 335.11 degrees.
+casa-rs uses the ephemeris angle in degrees, as for the 2012 `setjy` model.
+This preserves the projected disk orientation when the table is used to
+predict visibility amplitudes.
+
+### predictcomp can reuse stale task output for a rounded epoch
+
+The CASA task removes a previous component list using a filename formed
+from the full Python frequency and epoch strings. The imager generates
+its filename with six significant digits. For repeated 3C286 predictions
+at MJD 58000.25 with the same first frequency, changing the final
+frequency can leave the old spectrum in place while the task reports the
+new frequency grid. The casa-rs task replaces a prior component list at
+the generated path after completing its new table.
+
+## A circular deviation window with an all-true footprint can abort
+
+On a 15 × 17 Float direction image, CASA 6.7.6.14 terminates the Python
+process with a segmentation fault during
+`image.deviation(xlength=3, ylength="", stattype="npts")`. The 1.5-pixel
+radius includes all nine pixel centers of the bounding square, so there
+is no footprint mask. The diagnostic assumes it exists when reporting
+the circle size. Casa-rs computes the documented circular statistic
+and clips the window at the image's edges, returning counts of 9 in
+the interior, 6 at an edge, and 4 in a corner for an unmasked image.
+
+## Image FFT can use the wrong explicit axis or abort on a coupled coordinate
+
+CASA 6.7.6.14 indexes its array of requested FFT axes with the requested
+axis value itself. On a 7 × 8 linear image, `image.fft(axes=[1], complex=...)`
+can transform the first axis. The requested value 1 is outside the one-entry
+list. Casa-rs transforms the requested second axis and rejects axes outside
+the image's rank before creating outputs.
+
+CASA can also terminate the process when only one axis of a coupled
+linear coordinate is selected. A 7 × 8 image with linear transform
+`[[1, 0.2], [0.5, 1]]` and `fft(axes=[0], complex=...)` reproduces it.
+The linear-coordinate Fourier operation rejects the partial inversion,
+after which the tool dereferences the absent coordinate. Casa-rs returns
+the coordinate error and leaves the output destinations untouched.
+
+For a Fourier transform of a linear frequency or time coordinate, CASA
+6.7.6.14 labels the output in seconds or hertz and uses the input's
+unconverted increment. A four-pixel axis with 2 MHz spacing produces
+`0.125 s`, while the same axis expressed as 2,000,000 Hz produces
+`1.25e-7 s`. A four-pixel axis spaced by 2 ms likewise produces
+`0.125 Hz` instead of 125 Hz. Casa-rs converts the spacing to hertz or
+seconds before taking the reciprocal so equivalent inputs give the same
+Fourier coordinates.
+
+### `image.findsources` can abort on a transposed plane or an invalid source count
+
+On a Float image of shape `[21, 23]` with a compact off-center source,
+CASA 6.7.6.14 finds the source in the original sky plane.
+After `transpose(order="10")`, the default point search aborts with a heap
+error in a separate process. `SkyComponentFactory::encodeSkyComponent`
+swaps flux and the first position on a latitude-first sky plane and accesses
+the sixth parameter even for a three-parameter point source. A transposed
+four-axis image with two singleton axes can instead return an incorrect sky
+position. Casa-rs maps both pixel positions and ellipse endpoints through the
+direction coordinate's axis order. The search area still uses the selected
+image's pixel order.
+
+A search on a Float image with an unselected third nondegenerate axis aborts
+with `Slicer error:IPosition-lengths differ` in CASA, which uses a
+two-dimensional slice after dropping singleton axes. Casa-rs requires a
+two-dimensional sky plane and reports a Python error before reading pixels if
+more than two nondegenerate axes remain. Selecting one channel or polarization
+before the search still works.
+
+`nmax=0` crashes CASA because the search accesses an empty result matrix.
+Casa-rs returns an empty component list. A negative count aborts on CASA's
+negative matrix dimension and raises a Python error in casa-rs.
+
+The first two mask rows initialize `inDone` from the mask instead of its
+inverse. On a 16 × 17 Float image with a compact peak centered at row 1 or
+2, CASA finds no source with an all-true mask. When the first two rows are
+masked off, CASA reports the source anyway. Casa-rs preserves the regular
+scan starting at row 3 for both masks, so rows excluded by the mask cannot
+contribute to these detections.
+
+For a native J2000 sky coordinate with its conversion type set to Galactic,
+`findsources` returns Galactic longitude and latitude, approximately
+`(1.68201, -1.05039)` radians for an off-center point in a synthetic image
+centered at J2000 zero. CASA tags these values as J2000, so a component list
+using that record interprets a different sky position. Casa-rs tags the
+angles with the frame used to compute them. Gaussian directions and their
+position angles are computed in that same frame.
+
+### `image.fitcomponents` writes fitted estimates in the wrong pixel grid
+
+In CASA 6.7.6.14, fitting a Gaussian centered at pixel `[14.2, 17.7]` in a
+31 × 34 image with the default sky coordinates reports the correct
+`pixelcoords` in the fit record. The same call writes `14.9998, 17.0002`
+in the `newestimates` file. `ImageFitterResults::writeNewEstimatesFile`
+inserts the component direction in radians into a coordinate system whose
+world values use the visible direction units. Casa-rs writes the fitted
+center in the original input pixel grid, which is what the estimates-file
+reader expects.
+
+The detailed fit record also inherits the direction-label mismatch described
+for `findsources`. With a J2000 sky coordinate and a Galactic conversion
+frame, CASA returns the fitted direction near `(1.68200, -1.05040)` radians
+tagged J2000. Casa-rs labels the fitted direction with its conversion frame.
+
+The optional summary labels the frequency column `GHz` but writes raw world
+values. The default spectral axis reports channel 1 as `1.415e+09` under that
+heading, while the component's frequency record correctly reports
+`1.415 GHz`. Casa-rs converts the summary column to GHz.
+
+A masked value of 100 next to a 7 Jy/pixel Gaussian gives a reported peak
+uncertainty of 1.7604 Jy/pixel without a `residual` output in CASA 6.7.6.14.
+Requesting that output gives about `3.4e-9 Jy/pixel` for the same fit. CASA
+uses all entries in its anonymous residual image for the first RMS and
+honors the source mask for the second. Casa-rs computes fit uncertainties
+from valid pixels whether or not a residual image is written.
+
+When fitting Stokes Q or U in a multi-Stokes cube, CASA 6.7.6.14 reports the
+selected polarization's fitted flux but writes its model and residual pixels
+to the first polarization plane. A rank-five image with an ancillary axis
+selected at pixel 1 shows the same mismatch. The output write position is
+initialized to zero and only the spectral position is updated. Casa-rs
+writes the fitted result to the selected polarization and ancillary position.
+The input grid and validity mask remain present in both requested images.

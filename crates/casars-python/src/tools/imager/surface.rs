@@ -86,6 +86,32 @@ const METHODS: &[Method] = &[
             S::Implemented,
         )
     },
+    Method {
+        mutating: true,
+        ..method(
+            "setjy",
+            &[
+                param("field", K::Any, D::Empty),
+                param("spw", K::Any, D::Empty),
+                param("modimage", K::Text, D::Text("")),
+                param("fluxdensity", K::Floats, D::Floats(&[0., 0., 0., 0.])),
+                param("standard", K::Text, D::Text("SOURCE")),
+                param("scalebychan", K::Bool, D::Bool(false)),
+                param("spix", K::Floats, D::Floats(&[0.])),
+                param("reffreq", K::Quantity, D::Empty),
+                param("polindex", K::Floats, D::Floats(&[0.])),
+                param("polangle", K::Floats, D::Floats(&[0.])),
+                param("rotmeas", K::Float, D::Float(0.)),
+                param("time", K::Text, D::Text("")),
+                param("scan", K::Text, D::Text("")),
+                param("intent", K::Text, D::Text("")),
+                param("observation", K::Text, D::Text("")),
+                param("interpolation", K::Text, D::Text("nearest")),
+            ],
+            R::Record,
+            S::Implemented,
+        )
+    },
     method(
         "setoptions",
         &[
@@ -158,6 +184,22 @@ const METHODS: &[Method] = &[
         R::Bool,
         S::Partial,
     ),
+    Method {
+        mutating: true,
+        ..method(
+            "predictcomp",
+            &[
+                param("objname", K::Text, D::Text("")),
+                param("standard", K::Text, D::Text("")),
+                param("epoch", K::Measure, D::Empty),
+                param("freqs", K::Floats, D::Floats(&[1e11])),
+                param("pfx", K::Text, D::Text("predictcomp")),
+            ],
+            R::Text,
+            S::Implemented,
+        )
+    },
+    method("ssoflux", &[], R::Bool, S::Implemented),
     method(
         "uvrange",
         &[

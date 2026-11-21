@@ -259,6 +259,9 @@ pub struct ImstatPlanesSummary {
     pub trcf: String,
     /// The display shape, with CASA's degenerate display axes dropped.
     pub display_shape: Vec<usize>,
+    /// Text table of plane coordinates and statistics for the task log.
+    #[serde(skip)]
+    pub plane_log: String,
     /// Number of points in each plane.
     pub npts: Vec<f64>,
     /// Each plane's minimum.
@@ -718,8 +721,8 @@ pub struct FeatherRequest {
     /// Low-pass filter the dish image at its nominal diameter when no positive diameter is given.
     #[serde(default)]
     pub lowpassfiltersd: bool,
-    /// Replace an existing output image.
-    #[serde(default)]
+    /// Replace an existing output image. CASA feather replaces by default.
+    #[serde(default = "default_true")]
     pub overwrite: bool,
 }
 
@@ -832,6 +835,9 @@ pub struct ImageMathSummary {
     pub units: String,
     /// Valid output pixels after intersecting input masks and finite results.
     pub valid_pixels: usize,
+    /// Restoring beam diagnostics for the task logger.
+    #[serde(skip)]
+    pub beam_warnings: Vec<String>,
 }
 
 /// Summary returned after writing an `impbcor` product.

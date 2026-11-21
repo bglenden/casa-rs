@@ -12,8 +12,8 @@ use crate::scratch_columns::{Write, change_in_place};
 use crate::{MeasurementSet, MsResult};
 
 use super::{
-    ModelState, VirtualModelEntry, add_model, delete_images, invalid, record_images,
-    virtual_model_target_for_field,
+    ModelState, VirtualModelEntry, add_model, clear_model_selection, delete_images, invalid,
+    record_images, virtual_model_target_for_field,
 };
 
 /// Check a planned placement against a fresh SOURCE snapshot under MAIN.
@@ -76,7 +76,46 @@ impl VirtualModelPublication {
         lock: &mut TableWriteLock,
         expected: (i32, &Path),
     ) -> MsResult<()> {
-        self.publish(ms, entries, Some(lock), Some(expected))
+        self.publish(ms, entries, Some(lock), Some(expected), None)
+    }
+
+    /// Replace a field's selected windows, retaining its other windows.
+    /// Stage the clear and all new entries under the same storage lock.
+    pub fn replace_windows_holding<'a>(
+        &mut self,
+        ms: &mut MeasurementSet,
+        entries: impl IntoIterator<Item = &'a VirtualModelEntry>,
+        lock: &mut TableWriteLock,
+        field: i32,
+        spws: &[i32],
+    ) -> MsResult<()> {
+        self.publish(
+            ms,
+            entries.into_iter().map(|entry| (entry, true)),
+            Some(lock),
+            None,
+            Some((field, spws)),
+        )
+    }
+
+    /// Replace the windows only when the planned storage target still owns them.
+    /// Verify the route and publish under the same locks.
+    pub fn replace_windows_at_holding<'a>(
+        &mut self,
+        ms: &mut MeasurementSet,
+        entries: impl IntoIterator<Item = &'a VirtualModelEntry>,
+        lock: &mut TableWriteLock,
+        field: i32,
+        spws: &[i32],
+        expected: &Path,
+    ) -> MsResult<()> {
+        self.publish(
+            ms,
+            entries.into_iter().map(|entry| (entry, true)),
+            Some(lock),
+            Some((field, expected)),
+            Some((field, spws)),
+        )
     }
 
     pub(super) fn publish<'a>(
@@ -85,6 +124,7 @@ impl VirtualModelPublication {
         entries: impl IntoIterator<Item = (&'a VirtualModelEntry, bool)>,
         lock: Option<&mut TableWriteLock>,
         expected: Option<(i32, &Path)>,
+        replace: Option<(i32, &[i32])>,
     ) -> MsResult<()> {
         match self.stage {
             PublicationStage::Published => return Ok(()),
@@ -107,7 +147,10 @@ impl VirtualModelPublication {
             }
             if matches!(self.stage, PublicationStage::Unwritten) {
                 let mut state = ModelState::read(ms)?;
-                let mut retired_images = Vec::new();
+                let mut retired_images = match replace {
+                    Some((field, spws)) => clear_model_selection(ms, &mut state, &[field], spws)?,
+                    None => Vec::new(),
+                };
                 for (entry, incremental) in entries {
                     retired_images.extend(add_model(ms, &mut state, entry, incremental)?);
                 }

@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Pinned CASA 6.7.6.14 runway through the normal immoments executable.
 
+use std::ffi::CStr;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use casa_images::PagedImage;
+use casa_images::{ImmomentsRequest, PagedImage, immoments};
+use fitsio::{
+    FitsFile,
+    images::{ImageDescription, ImageType},
+    tables::{ColumnDataType, ColumnDescription},
+};
 use serde_json::{Value, json};
 
 fn copy_inputs(source: &Path, destination: &Path) {
@@ -24,6 +30,85 @@ fn copy_inputs(source: &Path, destination: &Path) {
             fs::copy(entry.path(), path).unwrap();
         }
     }
+}
+
+#[test]
+fn fits_image_extension_keeps_its_original_history_and_beam() {
+    let workspace = tempfile::tempdir().unwrap();
+    for insert_binary_table in [false, true] {
+        let stem = if insert_binary_table {
+            "later-image"
+        } else {
+            "first-extension"
+        };
+        let imagename = workspace.path().join(format!("{stem}.fits"));
+        let outfile = workspace.path().join(format!("{stem}.im"));
+        let mut fits = FitsFile::create(&imagename).open().unwrap();
+        append_fits_history(&mut fits, c"PRIMARY_HISTORY");
+        if insert_binary_table {
+            let column = ColumnDescription::new("METADATA")
+                .with_type(ColumnDataType::Int)
+                .create()
+                .unwrap();
+            fits.create_table("METADATA", &[column]).unwrap();
+        }
+        let hdu = fits
+            .create_image(
+                "IMAGE",
+                &ImageDescription {
+                    data_type: ImageType::Float,
+                    dimensions: &[4, 2, 2],
+                },
+            )
+            .unwrap();
+        for (key, value) in [("CTYPE3", "FREQ"), ("CUNIT3", "Hz"), ("BUNIT", "Jy/beam")] {
+            hdu.write_key(&mut fits, key, value).unwrap();
+        }
+        for (key, value) in [
+            ("CRVAL3", 1.415e9),
+            ("CDELT3", 1.0e6),
+            ("CRPIX3", 1.0),
+            ("RESTFRQ", 1.42e9),
+        ] {
+            hdu.write_key(&mut fits, key, value).unwrap();
+        }
+        hdu.write_image(&mut fits, &[1.0_f32; 16]).unwrap();
+        append_fits_history(&mut fits, c"IMAGE_HISTORY");
+        append_fits_history(&mut fits, c"AIPS CLEAN BMAJ= 0.002 BMIN= 0.001 BPA= 12");
+        drop(fits);
+        let result = immoments(&ImmomentsRequest {
+            imagename,
+            outfile: outfile.clone(),
+            moments: vec![0],
+            ..ImmomentsRequest::default()
+        });
+        if insert_binary_table {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("zeroth or first extension")
+            );
+            assert!(!outfile.exists());
+        } else {
+            result.unwrap();
+            let output = PagedImage::<f32>::open(outfile).unwrap();
+            let history = output.history().unwrap();
+            assert!(history.iter().any(|line| line == "IMAGE_HISTORY"));
+            assert!(!history.iter().any(|line| line == "PRIMARY_HISTORY"));
+            let beam = output.image_info().unwrap().beam_set.single_beam().unwrap();
+            assert!((beam.major_in("arcsec").unwrap() - 7.2).abs() < 1e-10);
+            assert!((beam.minor_in("arcsec").unwrap() - 3.6).abs() < 1e-10);
+            assert!((beam.position_angle_in("deg").unwrap() - 12.).abs() < 1e-10);
+        }
+    }
+}
+
+fn append_fits_history(fits: &mut FitsFile, message: &CStr) {
+    let mut status = 0;
+    // SAFETY: fits is live and the message is NUL terminated.
+    unsafe { fitsio::sys::ffphis(fits.as_raw(), message.as_ptr(), &mut status) };
+    fitsio::errors::check_status(status).unwrap();
 }
 
 #[test]

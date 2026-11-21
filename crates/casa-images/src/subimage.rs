@@ -194,6 +194,15 @@ impl<'a, T: ImagePixel, I: ImageInterface<T>> ImageInterface<T> for SubImage<'a,
     fn name(&self) -> Option<&Path> {
         self.parent.name()
     }
+
+    fn default_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
+        self.parent
+            .get_mask_slice(&self.start, &self.shape, &self.stride)
+    }
+
+    fn default_mask_name(&self) -> Option<String> {
+        self.parent.default_mask_name()
+    }
 }
 
 /// Mutable subimage view over a writable parent image.

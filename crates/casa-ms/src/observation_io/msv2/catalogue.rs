@@ -210,12 +210,20 @@ pub(super) fn fields_and_uvw(
     // whose `NUM_POLY` is above zero follows its polynomial instead. The
     // boundary holds every field, so a table that cannot be read refuses
     // the opening.
-    let attached = crate::ephemeris::field_motions(ms)
+    let attached = crate::ephemeris::field_motions(ms, false)
         .map_err(storage)?
         .iter()
         .map(|motion| match motion {
             crate::ephemeris::FieldMotion::Fixed => Ok(None),
-            crate::ephemeris::FieldMotion::Ephemeris(series) => Ok(Some(series.clone())),
+
+            crate::ephemeris::FieldMotion::Ephemeris(
+                crate::ephemeris::AttachedFieldEphemeris::Inertial(series),
+            ) => Ok(Some(series.clone())),
+            crate::ephemeris::FieldMotion::Ephemeris(
+                crate::ephemeris::AttachedFieldEphemeris::Apparent(_),
+            ) => Err(invalid(
+                "the inertial observation catalogue cannot store an apparent ephemeris",
+            )),
             crate::ephemeris::FieldMotion::Unreadable(reason) => {
                 Err(invalid(format!("the ephemeris a field follows: {reason}")))
             }

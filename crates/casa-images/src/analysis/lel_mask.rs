@@ -358,12 +358,45 @@ impl<'a> PreparedMask<'a> {
         target_coordinates: &CoordinateSystem,
         stretch: bool,
     ) -> Result<Option<Self>, ImageError> {
+        Self::new_for_output(mask_expr, target_shape, target_coordinates, stretch, None)
+    }
+
+    pub(super) fn new_for_output(
+        mask_expr: Option<&str>,
+        target_shape: &'a [usize],
+        target_coordinates: &CoordinateSystem,
+        stretch: bool,
+        destination: Option<&Path>,
+    ) -> Result<Option<Self>, ImageError> {
+        Self::new_for_outputs(
+            mask_expr,
+            target_shape,
+            target_coordinates,
+            stretch,
+            destination,
+        )
+    }
+
+    pub(super) fn new_for_outputs<'b>(
+        mask_expr: Option<&str>,
+        target_shape: &'a [usize],
+        target_coordinates: &CoordinateSystem,
+        stretch: bool,
+        destinations: impl IntoIterator<Item = &'b Path>,
+    ) -> Result<Option<Self>, ImageError> {
         let Some(raw) = mask_expr.map(str::trim).filter(|s| !s.is_empty()) else {
             return Ok(None);
         };
         let expr = mask_expression(raw);
         let names = referenced_images(&expr).map_err(mask_parse_error)?;
-        let opened = open_operands(&resolve_named_operands(names)?, false)?;
+        let operands = resolve_named_operands(names)?;
+        for destination in destinations {
+            for operand in &operands {
+                super::ensure_outfile_does_not_alias_input(destination, &operand.path)?;
+                super::ensure_artifacts_do_not_overlap(destination, &operand.path)?;
+            }
+        }
+        let opened = open_operands(&operands, false)?;
         let (real, complex) = operand_resolvers(&opened);
         let expression =
             parse_subimage_mask_expr(&expr, &real, &complex).map_err(mask_parse_error)?;
@@ -518,8 +551,15 @@ pub fn open_fits_expression<T: ImageExprValue + From<f32>>(
     path: &Path,
     use_mask: bool,
 ) -> Result<ImageExpression<T>, ImageError> {
+    open_fits_expression_with_history(path, use_mask).map(|(image, _)| image)
+}
+
+pub(super) fn open_fits_expression_with_history<T: ImageExprValue + From<f32>>(
+    path: &Path,
+    use_mask: bool,
+) -> Result<(ImageExpression<T>, Vec<crate::image::ImageHistoryEntry>), ImageError> {
     let fits = FitsToolImport::open(path, 0, -1)?;
-    if fits.is_tile_compressed() {
+    if fits.hdu_index() > 1 || fits.is_tile_compressed() {
         return Err(ImageError::CasaSelection(format!(
             "No data in the zeroth or first extension of {}",
             path.display(),
@@ -549,7 +589,8 @@ pub fn open_fits_expression<T: ImageExprValue + From<f32>>(
         }),
         mask_fn,
     );
-    expression.compile()
+    let history = fits.history.into_iter().map(|row| row.entry).collect();
+    Ok((expression.compile()?, history))
 }
 
 fn open_path_with_mask_name(

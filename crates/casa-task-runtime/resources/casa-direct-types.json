@@ -238,6 +238,14 @@
     "nretry": "cInt",
     "rdelay": "cFloat"
   },
+  "getcalmodvla": {
+    "outfile": "cPath",
+    "overwrite": "cBool",
+    "source": "cStr",
+    "direction": "cStr",
+    "band": "cStr",
+    "hosts": "cStrVec"
+  },
   "imhead": {
     "mode": "cStr",
     "hdkey": "cStr",
@@ -530,10 +538,46 @@
     "doPlot": "cBool",
     "plotName": "cStr"
   },
+  "predictcomp": {
+    "objname": "cStr",
+    "standard": "cStr",
+    "epoch": "cStr",
+    "minfreq": "cStr",
+    "maxfreq": "cStr",
+    "nfreqs": "cInt",
+    "prefix": "cPath",
+    "antennalist": "cStr",
+    "showplot": "cBool",
+    "savefig": "cStr",
+    "symb": "cStr",
+    "include0amp": "cBool",
+    "include0bl": "cBool",
+    "blunit": "cStr",
+    "showbl0flux": "cBool"
+  },
   "rerefant": {
     "caltable": "cStr",
     "refantmode": "cStr",
     "refant": "cStr"
+  },
+  "setjy": {
+    "vis": "cStr",
+    "field": "cStr",
+    "spw": "cStr",
+    "selectdata": "cBool",
+    "intent": "cStr",
+    "scalebychan": "cBool",
+    "standard": "cStr",
+    "model": "cStr",
+    "listmodels": "cBool",
+    "reffreq": "cStr",
+    "polindex": "cFloatVec",
+    "polangle": "cFloatVec",
+    "rotmeas": "cFloat",
+    "useephemdir": "cBool",
+    "interpolation": "cStr",
+    "usescratch": "cBool",
+    "ismms": "cBool"
   },
   "simalma": {
     "project": "cStr",

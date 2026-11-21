@@ -25,6 +25,7 @@ mod calstat;
 mod casa_read;
 mod ft;
 mod getantposalma;
+mod getcalmodvla;
 mod history;
 mod initweights;
 mod listcal;
@@ -35,6 +36,9 @@ mod plotweather;
 mod read;
 mod render;
 mod rerefant;
+mod setjy;
+
+pub use setjy::direct::{ImagerSetJyRequest, imager_setjy};
 mod smoothcal;
 mod statwt;
 mod uvmodelfit;
@@ -75,8 +79,14 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if task.surface() == "getantposalma" {
         return getantposalma::run(task);
     }
+    if task.surface() == "getcalmodvla" {
+        return getcalmodvla::run(task);
+    }
     if task.surface() == "ft" {
         return ft::run(task);
+    }
+    if task.surface() == "setjy" {
+        return setjy::run(task);
     }
     if task.surface() == "rerefant" {
         return rerefant::run(task);

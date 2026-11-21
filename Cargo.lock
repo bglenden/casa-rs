@@ -313,6 +313,7 @@ dependencies = [
 name = "casa-images"
 version = "0.27.0"
 dependencies = [
+ "casa-components",
  "casa-coordinates",
  "casa-fft",
  "casa-lattices",
@@ -858,11 +859,15 @@ dependencies = [
 name = "casars-simulation"
 version = "0.27.0"
 dependencies = [
+ "casa-calibration",
+ "casa-components",
  "casa-measures-data",
  "casa-ms",
  "casa-provider-contracts",
  "casa-simulation",
+ "casa-tables",
  "casa-task-runtime",
+ "casa-types",
  "schemars",
  "serde",
  "serde_json",

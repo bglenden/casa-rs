@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use casa_ms::virtual_model::{
-    VirtualModelPublication, verify_virtual_model_target_holding, virtual_model_target,
+    VirtualModelPublication, verify_virtual_model_target_holding, virtual_model_target_for_field,
 };
 use casa_ms::{MeasurementSet, MsResult, VirtualModelEntry};
 use casa_tables::TableWriteLock;
@@ -16,6 +16,7 @@ pub(crate) struct VirtualFtPublication {
     components: Vec<VirtualModelEntry>,
     incremental: bool,
     field: Option<i32>,
+    replace_windows: Option<Vec<i32>>,
     inputs: Vec<PlannedInput>,
     targets: Vec<Target>,
 }
@@ -45,29 +46,66 @@ impl VirtualFtPublication {
         incremental: bool,
         concatenated_root: bool,
     ) -> MsResult<Self> {
-        let mut publication = Self {
+        let first = components
+            .first()
+            .or_else(|| images.first().map(|image| &image.entry));
+        let field = first
+            .map(|entry| {
+                entry
+                    .fields()
+                    .first()
+                    .copied()
+                    .ok_or_else(|| invalid("a virtual model entry names no field"))
+            })
+            .transpose()?;
+        let publication = Self {
             components,
             incremental,
-            field: None,
+            field,
+            replace_windows: None,
             inputs: Vec::new(),
             targets: Vec::new(),
         };
-        let Some(first) = publication
-            .components
-            .first()
-            .or_else(|| images.first().map(|image| &image.entry))
-        else {
-            return Ok(publication);
+        publication.plan(tables, images, concatenated_root)
+    }
+
+    /// Prepare a field's replacement across a concatenation's physical
+    /// SOURCE and MAIN tables. Distinct targets each own their images.
+    pub(crate) fn replacing_field<'a>(
+        tables: impl Iterator<Item = &'a MeasurementSet>,
+        components: Vec<VirtualModelEntry>,
+        images: Vec<ImageModel>,
+        field: i32,
+        windows: &[i32],
+    ) -> MsResult<Self> {
+        let publication = Self {
+            components,
+            incremental: true,
+            field: Some(field),
+            replace_windows: Some(windows.to_vec()),
+            inputs: Vec::new(),
+            targets: Vec::new(),
         };
-        publication.field = first.fields().first().copied();
+        publication.plan(tables, images, true)
+    }
+
+    fn plan<'a>(
+        mut self,
+        tables: impl Iterator<Item = &'a MeasurementSet>,
+        images: Vec<ImageModel>,
+        concatenated_root: bool,
+    ) -> MsResult<Self> {
+        let Some(field) = self.field else {
+            return Ok(self);
+        };
         let mut storage_paths = BTreeSet::new();
         for (input, table) in tables.enumerate() {
-            let storage = virtual_model_target(table, first)?
+            let storage = virtual_model_target_for_field(table, field)?
                 .canonicalize()
                 .map_err(invalid)?;
             let main = main_path(table)?;
             let skip_concat = input == 0 && concatenated_root && main == storage;
-            publication.inputs.push(PlannedInput {
+            self.inputs.push(PlannedInput {
                 main,
                 storage: storage.clone(),
             });
@@ -88,20 +126,16 @@ impl VirtualFtPublication {
                     .map(|model| model.copy_to(table))
                     .collect::<MsResult<_>>()?
             };
-            publication.targets.push(Target {
+            self.targets.push(Target {
                 input,
                 images: target_images,
                 publication: VirtualModelPublication::default(),
             });
         }
-        if let Some(target) = publication
-            .targets
-            .first_mut()
-            .filter(|target| target.input == 0)
-        {
+        if let Some(target) = self.targets.first_mut().filter(|target| target.input == 0) {
             target.images = images;
         }
-        Ok(publication)
+        Ok(self)
     }
 
     /// Resume this publication with the same set of inputs in the same
@@ -136,12 +170,23 @@ impl VirtualFtPublication {
                     .enumerate()
                     .map(|(index, model)| (&model.entry, self.incremental || index > 0)),
             );
-            let result = target.publication.publish_holding(
-                table,
-                entries,
-                lock,
-                (field, &self.inputs[target.input].storage),
-            );
+            let result = if let Some(windows) = &self.replace_windows {
+                target.publication.replace_windows_at_holding(
+                    table,
+                    entries.map(|(entry, _)| entry),
+                    lock,
+                    field,
+                    windows,
+                    &self.inputs[target.input].storage,
+                )
+            } else {
+                target.publication.publish_holding(
+                    table,
+                    entries,
+                    lock,
+                    (field, &self.inputs[target.input].storage),
+                )
+            };
             if target.publication.may_reference_images() {
                 for image in &mut target.images {
                     image.retain();

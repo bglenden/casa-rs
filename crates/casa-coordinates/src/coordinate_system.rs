@@ -13,6 +13,7 @@
 //! order of their axes.
 
 mod edit;
+mod fourier;
 mod mapped;
 mod record_axes;
 
@@ -516,6 +517,7 @@ fn record_basename(kind: CoordinateType) -> &'static str {
         CoordinateType::Spectral => "spectral",
         CoordinateType::Stokes => "stokes",
         CoordinateType::Tabular => "tabular",
+        CoordinateType::Quality => "quality",
     }
 }
 
@@ -556,9 +558,16 @@ fn coordinate_record_entries(rec: &RecordValue) -> Vec<(usize, String)> {
 }
 
 fn legacy_coordinate_prefix(name: &str) -> Option<&'static str> {
-    ["direction", "spectral", "stokes", "linear", "tabular"]
-        .into_iter()
-        .find(|prefix| name.starts_with(prefix))
+    [
+        "direction",
+        "spectral",
+        "stokes",
+        "linear",
+        "tabular",
+        "quality",
+    ]
+    .into_iter()
+    .find(|prefix| name.starts_with(prefix))
 }
 
 fn inferred_coordinate_type(name: &str) -> Option<&'static str> {
@@ -569,6 +578,7 @@ fn inferred_coordinate_type(name: &str) -> Option<&'static str> {
         "spectral" => Some("Spectral"),
         "stokes" => Some("Stokes"),
         "tabular" => Some("Tabular"),
+        "quality" => Some("Quality"),
         _ => None,
     }
 }
@@ -590,6 +600,7 @@ fn parse_coordinate_record(
         "Spectral" => SpectralCoordinate::from_record(rec).map(Into::into),
         "Stokes" => StokesCoordinate::from_record(rec).map(CoordinateModel::Stokes),
         "Tabular" => TabularCoordinate::from_record(rec).map(CoordinateModel::Tabular),
+        "Quality" => crate::QualityCoordinate::from_record(rec).map(CoordinateModel::Quality),
         other => Err(CoordinateError::InvalidRecord(format!(
             "unsupported coordinate type '{other}' in '{name}'"
         ))),

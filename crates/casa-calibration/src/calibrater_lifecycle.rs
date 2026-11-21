@@ -10,6 +10,7 @@ use casa_tables::RequiredScalarColumnValues;
 use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
+use crate::listing::{CalibrationListingReport, list_calibration, publish_listing};
 
 use crate::{
     ApplyCalibrationTableSpec, AttachmentError, AttachmentMode, AttachmentOptions,
@@ -205,6 +206,52 @@ impl CalibraterLifecycle {
         self.equation
             .as_ref()
             .map(|equation| equation.attachment.path())
+    }
+
+    /// List calibration solutions using the attached MeasurementSet's
+    /// antenna, field and spectral-window selections. A nonempty listfile
+    /// is created atomically and refused when it already exists.
+    ///
+    /// # Errors
+    ///
+    /// The tool is detached, a table or selector is invalid, or a listing
+    /// file cannot be published.
+    pub fn list_calibration(
+        &self,
+        caltable: &Path,
+        field: &str,
+        antenna: &str,
+        spw: &str,
+        listfile: &str,
+        page_rows: i32,
+    ) -> Result<CalibrationListingReport, String> {
+        let Some(dataset) = self.dataset_path() else {
+            return Err(if caltable.exists() {
+                "MSSelection::getTEN() called without setting the MS".into()
+            } else {
+                format!("Table {} does not exist.", caltable.display())
+            });
+        };
+        #[cfg(unix)]
+        let ms = MeasurementSet::open_retained_read(dataset);
+        #[cfg(not(unix))]
+        let ms = MeasurementSet::open(dataset);
+        let ms = ms.map_err(|error| error.to_string())?;
+        let listing = list_calibration(&ms, caltable, field, antenna, spw, page_rows)?;
+        if listfile.is_empty() {
+            return Ok(CalibrationListingReport {
+                listing: Some(listing),
+                listfile: None,
+            });
+        }
+        if let Some(error) = listing.error {
+            return Err(error);
+        }
+        publish_listing(Path::new(listfile), &listing.lines())?;
+        Ok(CalibrationListingReport {
+            listing: None,
+            listfile: Some(listfile.into()),
+        })
     }
 
     /// Release the current equation and attachment. The iterator choice is

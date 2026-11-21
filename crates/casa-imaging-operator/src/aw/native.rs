@@ -49,7 +49,8 @@ pub struct NativeAwPair<'a> {
 /// prepared aperture always belongs to the model its cells are asked of.
 pub struct EvlaAwWorkspace {
     model: EvlaApertureModel,
-    legacy_vla: bool,
+    legacy_vla_feed: bool,
+    inclusive_crop: bool,
     size: usize,
     fft: PlaneFft<f32>,
     jones: Vec<Complex32>,
@@ -93,7 +94,8 @@ impl EvlaAwWorkspace {
         let quadrant = (request.size / 2 + 1) * (request.size / 2 + 1);
         Ok(Self {
             model,
-            legacy_vla: false,
+            legacy_vla_feed: false,
+            inclusive_crop: false,
             size: request.size,
             fft: PlaneFft::<f32>::new([request.size; 2], false)
                 .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?,
@@ -110,8 +112,13 @@ impl EvlaAwWorkspace {
         })
     }
 
-    pub(super) fn with_legacy_vla_feed(mut self, legacy: bool) -> Self {
-        self.legacy_vla = legacy;
+    pub(super) fn with_casa_cell_layout(
+        mut self,
+        inclusive_crop: bool,
+        legacy_vla_feed: bool,
+    ) -> Self {
+        self.inclusive_crop = inclusive_crop;
+        self.legacy_vla_feed = legacy_vla_feed;
         self
     }
 
@@ -197,7 +204,8 @@ impl EvlaAwWorkspace {
         self.prepared = None;
         let Self {
             model,
-            legacy_vla,
+            legacy_vla_feed,
+            inclusive_crop,
             fft,
             jones,
             aperture,
@@ -212,7 +220,7 @@ impl EvlaAwWorkspace {
             fft,
             jones,
             aperture,
-            *legacy_vla,
+            *legacy_vla_feed,
         )?;
         fill_sky_mueller(
             model,
@@ -221,7 +229,7 @@ impl EvlaAwWorkspace {
             fft,
             jones,
             weight,
-            *legacy_vla,
+            *legacy_vla_feed,
         )?;
         let origin = (request.size / 2) as isize;
         let inner_half = (request.size / request.oversampling / 2) as isize;
@@ -241,7 +249,7 @@ impl EvlaAwWorkspace {
         save_edges(weight, request.size, edges);
         transform(fft, weight)?;
         restore_edges(weight, request.size, edges);
-        let weight_crop = crop_normalize(weight, request, rings, *legacy_vla)?;
+        let weight_crop = crop_normalize(weight, request, rings, *inclusive_crop)?;
         self.prepared = Some((key, weight_crop));
         Ok(())
     }
@@ -339,7 +347,7 @@ impl EvlaAwWorkspace {
         for value in imaging.iter_mut() {
             *value /= peak;
         }
-        let crop = crop_normalize(imaging, request, rings, self.legacy_vla)?;
+        let crop = crop_normalize(imaging, request, rings, self.inclusive_crop)?;
         self.realized = Some(crop);
         Ok(self.pair().expect("both crops succeeded"))
     }
@@ -494,7 +502,7 @@ fn crop_normalize(
     values: &mut [Complex32],
     request: EvlaAwCellRequest,
     rings: &[u16],
-    legacy_vla: bool,
+    inclusive_crop: bool,
 ) -> Result<(usize, usize), NativeAwGenerationError> {
     let origin = request.size / 2;
     let radius = support_radius(values, request.size, rings)
@@ -509,7 +517,7 @@ fn crop_normalize(
     }
     let extent = (request.oversampling * (support + 2)) as isize;
     let bottom = (((origin as isize - extent) / 2) * 2).max(0) as usize;
-    let top = ((((origin as isize + extent) / 2) * 2 - (!legacy_vla) as isize) as usize)
+    let top = ((((origin as isize + extent) / 2) * 2 - (!inclusive_crop) as isize) as usize)
         .min(request.size - 1);
     let size = top - bottom + 1;
     let mut area = Complex32::default();

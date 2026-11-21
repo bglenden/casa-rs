@@ -644,6 +644,33 @@ def ft(
 ) -> Any:
     ...
 
+def setjy(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    field: str = ...,
+    spw: str = ...,
+    selectdata: bool = ...,
+    timerange: str | list[str] | tuple[str, ...] = ...,
+    scan: str | list[str] | tuple[str, ...] = ...,
+    intent: str = ...,
+    observation: str | int = ...,
+    scalebychan: bool = ...,
+    standard: Literal['Perley-Taylor 95', 'Butler-JPL-Horizons 2010', 'Perley-Butler 2010', 'Stevens-Reynolds 2016', 'Perley-Taylor 99', 'Perley-Butler 2013', 'Perley 90', 'Scaife-Heald 2012', 'manual', 'Butler-JPL-Horizons 2012', 'Perley-Butler 2017', 'fluxscale', 'Baars'] = ...,
+    model: str = ...,
+    listmodels: bool = ...,
+    fluxdensity: float | list[float] | tuple[float, ...] = ...,
+    spix: float | list[float] | tuple[float, ...] = ...,
+    reffreq: str = ...,
+    polindex: list[float] | tuple[float, ...] = ...,
+    polangle: list[float] | tuple[float, ...] = ...,
+    rotmeas: float = ...,
+    fluxdict: Mapping[str, ParameterData] = ...,
+    useephemdir: bool = ...,
+    interpolation: Literal['nearest', 'linear', 'spline', '', 'cubic'] = ...,
+    usescratch: bool = ...,
+    ismms: bool = ...,
+) -> Any:
+    ...
+
 def uvmodelfit(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     field: str = ...,
@@ -1147,6 +1174,18 @@ def simalma(
 ) -> Any:
     ...
 
+def getcalmodvla(
+    outfile: StrPath = ...,
+    overwrite: bool = ...,
+    source: str = ...,
+    direction: str = ...,
+    band: str = ...,
+    obsdate: int | float | str = ...,
+    refdate: int | float | str = ...,
+    hosts: str | list[str] | tuple[str, ...] = ...,
+) -> Any:
+    ...
+
 def getantposalma(
     outfile: StrPath = ...,
     overwrite: bool = ...,
@@ -1300,6 +1339,25 @@ def plotbandpass(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass')
+def predictcomp(
+    objname: str = ...,
+    standard: Literal['Perley-Taylor 95', 'Butler-JPL-Horizons 2010', 'Perley-Butler 2010', 'Perley-Taylor 99', 'Perley-Butler 2013', 'Perley 90', 'Butler-JPL-Horizons 2012', 'Perley-Butler 2017', 'Baars'] = ...,
+    epoch: str = ...,
+    minfreq: str = ...,
+    maxfreq: str = ...,
+    nfreqs: int = ...,
+    prefix: str = ...,
+    antennalist: str = ...,
+    showplot: bool = ...,
+    savefig: str = ...,
+    symb: str = ...,
+    include0amp: bool = ...,
+    include0bl: bool = ...,
+    blunit: Literal['', 'klambda'] = ...,
+    showbl0flux: bool = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass']
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp']

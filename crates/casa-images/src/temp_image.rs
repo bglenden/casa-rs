@@ -34,8 +34,8 @@ use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_lattices::{
-    Lattice, LatticeError, LatticeMut, TempLattice, TempStoragePolicy, TraversalCacheHint,
-    TraversalCacheScope, TraversalCursorIter, TraversalSpec,
+    Lattice, LatticeError, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy,
+    TraversalCacheHint, TraversalCacheScope, TraversalCursorIter, TraversalSpec,
 };
 use casa_types::{ArrayD, RecordValue};
 use ndarray::IxDyn;
@@ -43,11 +43,15 @@ use ndarray::IxDyn;
 use crate::error::ImageError;
 use crate::image::{
     ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface,
-    PagedImage, assign_mask_slice, slice_mask_array, validate_mask_slice_write,
+    PagedImage, assign_mask_slice, validate_mask_slice_write, validate_new_mask_name,
 };
 use crate::image_expr::{ImageExprBuilder, ImageExprValue, ImageExpression};
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
+
+mod mask;
+
+use mask::TempMask;
 
 /// A temporary image that stores pixels in a [`TempLattice`] and metadata
 /// in member fields.
@@ -67,9 +71,10 @@ pub struct TempImage<T: ImagePixel> {
     misc_info: RecordValue,
     image_info: ImageInfo,
     image_info_record: Option<RecordValue>,
-    masks: Vec<(String, ArrayD<bool>)>,
+    masks: Vec<(String, TempMask)>,
+    mask_scratch: Option<ScratchSpace>,
     default_mask: Option<String>,
-    anonymous_mask: Option<ArrayD<bool>>,
+    anonymous_mask: Option<TempMask>,
     history: Vec<ImageHistoryRow>,
 }
 
@@ -87,7 +92,15 @@ impl<T: ImagePixel> TempImage<T> {
         coords: CoordinateSystem,
         policy: TempStoragePolicy,
     ) -> Result<Self, ImageError> {
-        let lattice = TempLattice::new(shape, policy)?;
+        let lattice = TempLattice::new(shape, policy.clone())?;
+        let mask_scratch = match policy {
+            TempStoragePolicy::Paged { scratch } | TempStoragePolicy::Auto { scratch, .. }
+                if lattice.is_paged() =>
+            {
+                Some(scratch)
+            }
+            _ => None,
+        };
         Ok(Self {
             lattice,
             expression: None,
@@ -97,6 +110,7 @@ impl<T: ImagePixel> TempImage<T> {
             image_info: ImageInfo::default(),
             image_info_record: None,
             masks: Vec::new(),
+            mask_scratch,
             default_mask: None,
             anonymous_mask: None,
             history: Vec::new(),
@@ -196,6 +210,12 @@ impl<T: ImagePixel> TempImage<T> {
     /// Returns `None` — temporary images have no on-disk path.
     pub fn name(&self) -> Option<&Path> {
         None
+    }
+
+    pub(crate) fn set_pixel_cache_budget(&mut self, bytes: usize) -> Result<(), ImageError> {
+        self.lattice
+            .set_maximum_cache_size_pixels((bytes / std::mem::size_of::<T>()).max(1))?;
+        Ok(())
     }
 
     /// Reads the full pixel array.
@@ -377,16 +397,16 @@ impl<T: ImagePixel> TempImage<T> {
             });
         }
         self.default_mask = None;
-        self.anonymous_mask = Some(mask);
+        self.anonymous_mask = Some(TempMask::Dense(mask));
         Ok(())
     }
 
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
-        self.find_named_mask(name).cloned()
+        self.find_named_mask(name)?.read()
     }
 
-    fn find_named_mask(&self, name: &str) -> Result<&ArrayD<bool>, ImageError> {
+    fn find_named_mask(&self, name: &str) -> Result<&TempMask, ImageError> {
         self.masks
             .iter()
             .find(|(candidate, _)| candidate == name)
@@ -408,9 +428,13 @@ impl<T: ImagePixel> TempImage<T> {
             .iter_mut()
             .find(|(candidate, _)| candidate == name)
         {
-            *mask = data.clone();
+            match mask {
+                TempMask::Dense(mask) => *mask = data.clone(),
+                TempMask::Paged(mask) => mask.put_slice(data, &vec![0; data.ndim()])?,
+            }
         } else {
-            self.masks.push((name.to_owned(), data.clone()));
+            self.masks
+                .push((name.to_owned(), TempMask::Dense(data.clone())));
         }
         Ok(())
     }
@@ -430,19 +454,19 @@ impl<T: ImagePixel> TempImage<T> {
         if name.is_empty()
             && let Some(mask) = self.anonymous_mask.as_mut()
         {
-            return assign_mask_slice(mask, data, start);
+            return mask.write_slice(data, start);
         }
         if let Some((_, mask)) = self
             .masks
             .iter_mut()
             .find(|(candidate, _)| candidate == name)
         {
-            return assign_mask_slice(mask, data, start);
+            return mask.write_slice(data, start);
         }
         validate_mask_slice_write(self.shape(), data.shape(), start)?;
         let mut mask = ArrayD::from_elem(IxDyn(self.shape()), false);
         assign_mask_slice(&mut mask, data, start)?;
-        self.masks.push((name.to_owned(), mask));
+        self.masks.push((name.to_owned(), TempMask::Dense(mask)));
         Ok(())
     }
 
@@ -628,15 +652,15 @@ impl<T: ImagePixel> TempImage<T> {
             paged.set_image_info(&self.image_info)?;
         }
         paged.set_misc_info(self.misc_info.clone())?;
-        for (name, mask_data) in &self.masks {
-            paged.put_mask(name, mask_data)?;
+        for (name, mask) in &self.masks {
+            mask.save(&mut paged, name)?;
         }
         if let Some(mask) = &self.anonymous_mask {
             let name = (0..)
                 .map(|n| format!("mask{n}"))
                 .find(|name| self.masks.iter().all(|(stored, _)| stored != name))
                 .expect("a free name exists");
-            paged.put_mask(&name, mask)?;
+            mask.save(&mut paged, &name)?;
             paged.set_default_mask(&name)?;
         } else if let Some(ref default) = self.default_mask {
             paged.set_default_mask(default)?;
@@ -859,7 +883,7 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
-        slice_mask_array(self.find_named_mask(name)?, start, shape, stride)
+        self.find_named_mask(name)?.read_slice(start, shape, stride)
     }
 
     fn history(&self) -> Result<Vec<String>, ImageError> {
@@ -872,7 +896,7 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         }
         match self.default_mask.as_deref() {
             Some(name) => Ok(Some(self.get_named_mask(name)?)),
-            None => Ok(self.anonymous_mask.clone()),
+            None => self.anonymous_mask.as_ref().map(TempMask::read).transpose(),
         }
     }
 
@@ -897,7 +921,7 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
             None => self
                 .anonymous_mask
                 .as_ref()
-                .map(|mask| slice_mask_array(mask, start, shape, stride))
+                .map(|mask| mask.read_slice(start, shape, stride))
                 .transpose(),
         }
     }
@@ -922,6 +946,22 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
 
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
         TempImage::put_mask(self, name, data)
+    }
+
+    fn create_filled_mask(&mut self, name: &str, value: bool) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
+        validate_new_mask_name(name, &self.mask_names())?;
+        let mask = TempMask::filled(self.shape(), value, self.mask_scratch.as_ref())?;
+        self.masks.push((name.to_owned(), mask));
+        Ok(())
+    }
+
+    fn create_filled_pixel_mask(&mut self, value: bool) -> Result<String, ImageError> {
+        self.require_writable_pixels()?;
+        let mask = TempMask::filled(self.shape(), value, self.mask_scratch.as_ref())?;
+        self.default_mask = None;
+        self.anonymous_mask = Some(mask);
+        Ok(String::new())
     }
 
     fn put_mask_slice(
@@ -976,6 +1016,9 @@ impl<T: ImagePixel> std::fmt::Debug for TempImage<T> {
 }
 
 // ---- Tests ------------------------------------------------------------------
+
+#[cfg(test)]
+mod paged_mask_tests;
 
 #[cfg(test)]
 mod tests {

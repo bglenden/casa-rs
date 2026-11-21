@@ -644,6 +644,18 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
         self.put_mask(name, &ArrayD::from_elem(IxDyn(self.shape()), value))
     }
 
+    /// Creates the active pixel mask of a new output with uniform validity.
+    /// Returns the name to use for slice writes, empty for an anonymous mask.
+    ///
+    /// # Errors
+    /// The image cannot create or activate the mask.
+    fn create_filled_pixel_mask(&mut self, value: bool) -> Result<String, ImageError> {
+        let name = "mask0";
+        self.create_filled_mask(name, value)?;
+        self.set_default_mask(name)?;
+        Ok(name.to_owned())
+    }
+
     /// Whether an existing named mask accepts writes.
     fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
         Ok(self.mask_names().iter().any(|entry| entry == name))
@@ -1451,13 +1463,14 @@ impl<T: ImagePixel> PagedImage<T> {
     /// # Errors
     /// Returns an error before changing the image if the record is invalid
     /// or the number of pixel axes differs from the image's dimensionality.
-    pub fn set_coordinate_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+    pub fn set_coordinate_record(&mut self, mut record: RecordValue) -> Result<(), ImageError> {
         let coords = CoordinateSystem::from_record(&record)?;
         if coords.n_pixel_axes() != self.ndim() {
             return Err(ImageError::InvalidMetadata(
                 "Supplied CoordinateSystem and image shape are inconsistent".into(),
             ));
         }
+        coords.normalize_quality_records(&mut record)?;
         self.table
             .keywords_mut()
             .upsert("coords", Value::Record(record));
@@ -3582,7 +3595,7 @@ pub(crate) fn slice_mask_array(
     Ok(view.to_owned())
 }
 
-fn validate_new_mask_name(name: &str, existing: &[String]) -> Result<(), ImageError> {
+pub(crate) fn validate_new_mask_name(name: &str, existing: &[String]) -> Result<(), ImageError> {
     if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
         return Err(ImageError::InvalidMetadata(format!(
             "Invalid mask name {name}"

@@ -237,6 +237,20 @@ impl ImageHandle {
         with_pixels!(self, storage => storage.save())
     }
 
+    pub(super) fn history_entries(&self) -> PyResult<Vec<casa_images::image::ImageHistoryRow>> {
+        with_pixels!(self, storage => match storage {
+            Storage::Paged(image) => casa_images::image::image_history_rows(image.name().expect("native image path")).map_err(raised),
+            Storage::Temp { image, .. } => Ok(image.history_rows().to_vec()),
+        })
+    }
+
+    pub(super) fn append_history_entries(
+        &mut self,
+        entries: &[casa_images::image::ImageHistoryRow],
+    ) -> PyResult<()> {
+        with_pixels!(self, storage => with_storage!(storage, image => image.append_history_entries(entries))).map_err(raised)
+    }
+
     pub(super) fn append_history_at(
         &mut self,
         location: &str,
@@ -263,11 +277,12 @@ impl ImageHandle {
         })
     }
 
-    pub(super) fn set_coordinate_record(&mut self, record: RecordValue) -> PyResult<()> {
+    pub(super) fn set_coordinate_record(&mut self, mut record: RecordValue) -> PyResult<()> {
         with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised),
             Storage::Temp { image, record: current, .. } => {
                 let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
+                coordinates.normalize_quality_records(&mut record).map_err(raised)?;
                 image.set_coordinates(coordinates).map_err(raised)?;
                 *current = record;
                 Ok(())

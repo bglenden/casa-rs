@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use casa_components::{ComponentList, Flux, Polarisation, SkyComponent, SpectralKind, stokes_in};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
 use casa_images::PagedImage;
+use casa_imaging_operator::GridPolarization;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
@@ -21,7 +22,7 @@ use casa_types::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
 };
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_types::{Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
 use num_complex::Complex64;
 
@@ -702,16 +703,15 @@ impl ImagerVoltagePattern {
         let squint_law = if squint {
             match (custom.as_ref(), default_beam) {
                 (Some(custom), _) => custom.squint,
-                // PBMath1DEVLA supplies its radial fit when squint is requested.
-                (None, Some((PrimaryBeam::Evla, _))) => None,
-                (None, Some((beam, reference_hz))) if telescope == "VLA" && beam.squints() => {
+                (None, Some((beam, reference_hz)))
+                    if beam.squint_displacement_rad(reference_hz, reference_hz, 0., true)
+                        != [0.; 2] =>
+                {
                     Some(BeamSquintLaw::Telescope { beam, reference_hz })
                 }
-                _ => {
-                    return Err(invalid(
-                        "this legacy voltage-pattern squint is pending #1520",
-                    ));
-                }
+                // CASA accepts GOFIGURE for the other default profiles and
+                // its dish-diameter fallback, which have no physical offset.
+                (None, _) => None,
             }
         } else {
             None
@@ -723,7 +723,7 @@ impl ImagerVoltagePattern {
         }
         let projected_model = custom.as_ref().is_some_and(|custom| custom.projected_image)
             || (telescope == "VLA" && self.table.is_none())
-            || matches!(squint_law, Some(BeamSquintLaw::Table { .. }));
+            || squint_law.is_some();
         let pattern = if let Some(custom) = custom {
             custom.pattern
         } else {
@@ -923,12 +923,7 @@ impl PreparedVoltagePattern {
         };
         let projected = if radial.is_none() {
             let centre = self.centre_in_image_frame(direction)?;
-            let shifted = if npol == 4 {
-                self.shifted_pixels(direction, &centre, frequency)?
-            } else {
-                None
-            };
-            Some((pixel_centre(direction, &centre)?, shifted))
+            Some(pixel_centre(direction, &centre)?)
         } else {
             None
         };
@@ -941,24 +936,39 @@ impl PreparedVoltagePattern {
         Ok((0..npol)
             .map(|pol| {
                 Array2::from_shape_fn((ny, nx), |(y, x)| {
-                    if let Some((centre, shifted)) = projected {
-                        if let Some([right, left]) = shifted
-                            && matches!(pol, 0 | 3)
-                        {
-                            let i = values[[x, y, 0, 0]];
-                            let v = values[[x, y, 3, 0]];
-                            let right = (i + v) * projected_power(x, y, right);
-                            let left = (i - v) * projected_power(x, y, left);
-                            // Apply the displaced parallel-hand beams in correlation space.
-                            return if pol == 0 {
-                                0.5 * (right + left)
-                            } else {
-                                0.5 * (right - left)
-                            };
-                        }
+                    if let Some(centre) = projected {
                         return values[[x, y, pol, 0]] * projected_power(x, y, centre);
                     }
                     values[[x, y, pol, 0]] * power(radial.expect("radial plane")[[y, x]])
+                })
+            })
+            .collect())
+    }
+
+    pub(super) fn squinted_model_tapers(
+        &self,
+        direction: &DirectionCoordinate,
+        [nx, ny]: [usize; 2],
+        frequency: f64,
+        polarizations: &[GridPolarization],
+    ) -> MsResult<Vec<Array2<f32>>> {
+        let centre = self.centre_in_image_frame(direction)?;
+        let shifted = self.shifted_pixels(direction, &centre, frequency)?;
+        let centre = pixel_centre(direction, &centre)?;
+        let [right, left] = shifted.unwrap_or([centre; 2]);
+        let pattern = self.pattern().at_frequency(frequency);
+        let increments = direction.increment();
+        let increment_deg = [increments[0].to_degrees(), increments[1].to_degrees()];
+        Ok(polarizations
+            .iter()
+            .map(|polarization| {
+                let centre = match polarization {
+                    GridPolarization::Correlation(Correlation::RR) => right,
+                    GridPolarization::Correlation(Correlation::LL) => left,
+                    _ => centre,
+                };
+                Array2::from_shape_fn((ny, nx), |(y, x)| {
+                    pattern.power(projected_radius(x, y, centre, increment_deg, frequency))
                 })
             })
             .collect())

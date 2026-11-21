@@ -8,6 +8,8 @@ mod imager_sources;
 pub(crate) mod legacy_aw;
 pub(crate) mod legacy_pbw;
 pub(crate) mod moving_source;
+pub(crate) mod predictcomp;
+pub(crate) mod setjy;
 pub(crate) mod settings;
 pub(crate) mod single_dish;
 pub(crate) mod virtual_publication;

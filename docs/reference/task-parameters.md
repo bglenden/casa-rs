@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 829
-- Surfaces: 45 (45 task, 0 session)
-- Surface bindings: 1089
+- Concepts: 862
+- Surfaces: 48 (48 task, 0 session)
+- Surface bindings: 1135
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -33,6 +33,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
 | [Subtract Visibility Model](#surface-uvsub)<br><code>uvsub</code> | task | 1 | <code>calibration</code> | 2 | Subtract or restore the current visibility model in corrected data. |
 | [Predict Visibility Model](#surface-ft)<br><code>ft</code> | task | 1 | <code>calibration</code> | 15 | Predict model visibilities from component lists and model images. |
+| [Set Calibrator Flux Density](#surface-setjy)<br><code>setjy</code> | task | 1 | <code>calibration</code> | 23 | Populate a calibrator visibility model with setjy. |
 | [Fit Visibility Component](#surface-uvmodelfit)<br><code>uvmodelfit</code> | task | 1 | <code>calibration</code> | 14 | Fit a single sky component to selected visibilities. |
 | [Clear Calibration](#surface-clearcal)<br><code>clearcal</code> | task | 1 | <code>calibration</code> | 5 | Initialize or reset scratch visibility columns. |
 | [Delete Model](#surface-delmod)<br><code>delmod</code> | task | 1 | <code>calibration</code> | 4 | Remove scratch or virtual model visibilities. |
@@ -61,6 +62,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Calibration Statistics](#surface-calstat)<br><code>calstat</code> | task | 1 | <code>calibration</code> | 3 | Compute descriptive statistics for a calibration table column. |
 | [List Calibration Solutions](#surface-listcal)<br><code>listcal</code> | task | 1 | <code>calibration</code> | 7 | List selected antenna calibration solutions and flags. |
 | [Plot Bandpass](#surface-plotbandpass)<br><code>plotbandpass</code> | task | 1 | <code>calibration</code> | 49 | Plot calibration spectra and channel derivatives. |
+| [Get VLA Calibrator Model](#surface-getcalmodvla)<br><code>getcalmodvla</code> | task | 1 | <code>calibration</code> | 8 | Retrieve a calibrator brightness model from the VLA service. |
+| [Predict Calibrator Component](#surface-predictcomp)<br><code>predictcomp</code> | task | 1 | <code>simulation</code> | 15 | Write a flux calibrator component list and optionally plot its visibility amplitudes. |
 
 <a id="surface-msexplore"></a>
 
@@ -832,6 +835,42 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>incremental</code> | <code>parameter.incremental@r1</code> | <code>bool</code> | <code>false</code>; optional | Model | Write incremental correction factors instead of absolute transfer gains |
 | <code>usescratch</code> | <code>parameter.usescratch@r1</code> | <code>bool</code> | <code>false</code>; optional | Model | Write MODEL_DATA. |
 
+<a id="surface-setjy"></a>
+
+## Set Calibrator Flux Density (<code>setjy</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Populate a calibrator visibility model with setjy.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required when listmodels=false | Input | Input MeasurementSet path or paths. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | CASA field selector text. Empty selects every field. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal spw selector text. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
+| <code>timerange</code> | <code>ms.selection.timerange@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata timerange selector. |
+| <code>scan</code> | <code>ms.selection.scan@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata scan selector. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Intent selector. |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
+| <code>scalebychan</code> | <code>setjy.scalebychan@r1</code> | <code>bool</code> | <code>true</code>; optional | Calibrator model | Evaluate calibrator flux density per channel. |
+| <code>standard</code> | <code>setjy.standard@r1</code> | <code>choice (13 values)</code> | <code>"Perley-Butler 2017"</code>; optional | Calibrator model | Flux density standard for the calibrator model. |
+| <code>model</code> | <code>setjy.model@r1</code> | <code>string</code> | <code>""</code>; optional | Calibrator model | Input image or calibrator model name. |
+| <code>listmodels</code> | <code>setjy.listmodels@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibrator model | List available calibrator model images. |
+| <code>fluxdensity</code> | <code>setjy.fluxdensity@r1</code> | <code>array&lt;float&gt;</code> | <code>-1</code>; optional | Calibrator model | Manual Stokes I, Q, U and V flux densities in Jy. |
+| <code>spix</code> | <code>setjy.spix@r1</code> | <code>array&lt;float&gt;</code> | <code>0.0</code>; optional | Calibrator model | Spectral index and curvature coefficients. |
+| <code>reffreq</code> | <code>parameter.reffreq@r1</code> | <code>string</code> | <code>"1GHz"</code>; optional | Calibrator model | Reference frequency. |
+| <code>polindex</code> | <code>setjy.polindex@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Calibrator model | Coefficients of the fractional linear polarization. |
+| <code>polangle</code> | <code>setjy.polangle@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Calibrator model | Coefficients of the linear polarization angle in radians. |
+| <code>rotmeas</code> | <code>setjy.rotmeas@r1</code> | <code>float</code> | <code>0.0</code>; optional | Calibrator model | Rotation measure in rad/m². |
+| <code>fluxdict</code> | <code>setjy.fluxdict@r1</code> | <code>variant</code> | <code>{}</code>; optional | Calibrator model | Flux dictionary returned by fluxscale with incremental disabled. |
+| <code>useephemdir</code> | <code>setjy.useephemdir@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibrator model | Use the ephemeris position for a Solar System calibrator. |
+| <code>interpolation</code> | <code>setjy.interpolation@r1</code> | <code>choice (5 values)</code> | <code>"nearest"</code>; optional | Calibrator model | Time interpolation of calibrator flux coefficients. |
+| <code>usescratch</code> | <code>parameter.usescratch@r1</code> | <code>bool</code> | <code>true</code>; optional | Model | Write MODEL_DATA. |
+| <code>ismms</code> | <code>setjy.ismms@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibrator model | Allow an empty local selection while processing a Multi-MS. |
+
 <a id="surface-uvmodelfit"></a>
 
 ## Fit Visibility Component (<code>uvmodelfit</code>)
@@ -1297,7 +1336,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>sdfactor</code> | <code>parameter.sdfactor@r1</code> | <code>float</code> | <code>1.0</code>; optional | Feather | Single-dish scaling factor |
 | <code>effdishdiam</code> | <code>feather.effdishdiam@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Feather | Effective single-dish diameter in metres; a negative value keeps the image's beam. |
 | <code>lowpassfiltersd</code> | <code>feather.lowpassfiltersd@r1</code> | <code>bool</code> | <code>false</code>; optional | Feather | Filter the single-dish image's high spatial frequencies out. |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file<br><em>Surface:</em> casa-rs's own control: CASA's feather has no overwrite parameter. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Replace an existing output file<br><em>Surface:</em> CASA replaces an existing output image. Set this control to false to refuse replacement. |
 
 <a id="surface-importfits"></a>
 
@@ -1735,5 +1774,54 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>scans</code> | <code>plotbandpass.scans@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | A scan or list of scans for which to display solutions. Default = all. Does not work with overlay="time". |
 | <code>figfileSequential</code> | <code>plotbandpass.figfile_sequential@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc. |
 | <code>chanrangeSetXrange</code> | <code>plotbandpass.chanrange_set_xrange@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | If True, then chanrange also sets the xrange to display |
+
+<a id="surface-getcalmodvla"></a>
+
+## Get VLA Calibrator Model (<code>getcalmodvla</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Retrieve a calibrator brightness model from the VLA service.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>outfile</code> | <code>vla_calibrator.outfile@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Output | Write the retrieved source model as a CASA component-list table. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>source</code> | <code>vla_calibrator.source@r1</code> | <code>string</code> | <code>""</code>; optional | VLA Service | Calibrator name. Specify either the name or the direction. |
+| <code>direction</code> | <code>vla_calibrator.direction@r1</code> | <code>string</code> | <code>""</code>; optional | VLA Service | Direction in FRAME LONGITUDE LATITUDE form. |
+| <code>band</code> | <code>vla_calibrator.band@r1</code> | <code>string</code> | <code>""</code>; optional | VLA Service | Case-insensitive VLA receiver band P, L, S, C, X, U, K, A or Q. |
+| <code>obsdate</code> | <code>vla_calibrator.obsdate@r1</code> | <code>variant</code> | <code>0</code>; optional | VLA Service | Observation date as numeric MJD or a YYYY-MM-DD calendar date. |
+| <code>refdate</code> | <code>vla_calibrator.refdate@r1</code> | <code>variant</code> | <code>0</code>; optional | VLA Service | Optional reference date as numeric MJD or a YYYY-MM-DD calendar date. |
+| <code>hosts</code> | <code>vla_calibrator.hosts@r1</code> | <code>array&lt;string&gt;</code> | <code>["http://obs.vla.nrao.edu/calmodvla"]</code>; optional | VLA Service | VLA calibrator-service URLs in the order they will be queried. |
+
+<a id="surface-predictcomp"></a>
+
+## Predict Calibrator Component (<code>predictcomp</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `simulation`
+- Summary: Write a flux calibrator component list and optionally plot its visibility amplitudes.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>objname</code> | <code>predictcomp.objname@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | Object to predict, using a name recognized by the flux standard. |
+| <code>standard</code> | <code>setjy.standard@r1</code> | <code>choice (9 values; surface-narrowed)</code> | <code>"Butler-JPL-Horizons 2010"</code>; optional | Prediction | Flux density standard for the calibrator model. |
+| <code>epoch</code> | <code>predictcomp.epoch@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | UTC observation epoch. Use a CASA calendar date or a quantity in days. |
+| <code>minfreq</code> | <code>predictcomp.minfreq@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | First prediction frequency. Supply a quantity such as 90GHz. |
+| <code>maxfreq</code> | <code>predictcomp.maxfreq@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | Last prediction frequency. An omitted or nonpositive frequency uses minfreq. |
+| <code>nfreqs</code> | <code>predictcomp.nfreqs@r1</code> | <code>integer</code> | <code>2</code>; optional | Prediction | Number of evenly spaced frequencies. A range uses at least two samples. |
+| <code>prefix</code> | <code>predictcomp.prefix@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | Prefix prepended to the generated component-list name. |
+| <code>antennalist</code> | <code>parameter.antennalist@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | Antenna config list. |
+| <code>showplot</code> | <code>predictcomp.showplot@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Display the visibility-amplitude figure when an antenna configuration is provided. |
+| <code>savefig</code> | <code>predictcomp.savefig@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | Save the visibility-amplitude figure to this path. |
+| <code>symb</code> | <code>predictcomp.symb@r1</code> | <code>string</code> | <code>"."</code>; optional | Plot | Matplotlib marker or format string used for each series. |
+| <code>include0amp</code> | <code>predictcomp.include0amp@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Start the visibility-amplitude axis at zero. |
+| <code>include0bl</code> | <code>predictcomp.include0bl@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Start the projected-baseline axis at zero. |
+| <code>blunit</code> | <code>predictcomp.blunit@r1</code> | <code>choice (2 values)</code> | <code>""</code>; optional | Plot | Display projected lengths in metres by default, or in kilolambda at the first frequency. |
+| <code>showbl0flux</code> | <code>predictcomp.showbl0flux@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Include the zero-baseline flux in the legend. |
 
 _End of generated reference._

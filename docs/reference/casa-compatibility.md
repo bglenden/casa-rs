@@ -31,6 +31,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | gaincal | gaincal | yes | 38 | 38 | 0 | 3 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 6 | 4 | 0 |
 | getantposalma | getantposalma | yes | 10 | 10 | 0 | 0 | 0 | 0 |
+| getcalmodvla | getcalmodvla | yes | 8 | 8 | 0 | 0 | 0 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 0 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 0 | 1 | 0 |
@@ -45,9 +46,11 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 32 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
-| plotms | plotms | yes | 102 | 102 | 0 | 13 | 0 | 0 |
+| plotms | plotms | yes | 102 | 102 | 0 | 12 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
+| predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
+| setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
@@ -962,6 +965,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
+### getcalmodvla
+
+- CASA source: `casatasks/getcalmodvla.py`, 8 parameters
+- Implementation: `casatasks/private/task_getcalmodvla.py`, `getcalmodvla` (line 63): 0 return statements, 11 raise statements
+- Called with its defaults in an empty directory, CASA raises `ValueError`: outfile must be specified
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 8, in CASA's order: yes
+- Defaults that differ: none
+
 ### imhead
 
 - CASA source: `casatasks/imhead.py`, 5 parameters
@@ -1538,7 +1552,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
 - Accepted only at CASA's default until #1032: `rowindex`, `colindex`, `plotindex`, `xframe`, `xinterp`, `yframe`, `yinterp`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
-- Accepted only at CASA's default until #1526: `colorizeoverlay`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 102, in CASA's order: yes
 - Defaults that differ: none
@@ -1547,14 +1560,14 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 13, Implemented: 24, Not implemented: 2, Partial: 63, Unassessed: 0.
+Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 12, Implemented: 28, Not implemented: 1, Partial: 61, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
 | CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
 |---|---|---|---|---|---|
 | `vis` | `''` | `''`; `vis` → `vis` | Partial | Input MS or CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (table) | [paired](#plotms-evidence-paired) |
-| `caltable` | `''` | `''`; `caltable` → `caltable` | Partial | Input CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (calibration_table) | [paired](#plotms-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Partial | Input CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (calibration_table) | [paired](#plotms-evidence-paired), [legacy-calibration](#plotms-evidence-legacy-calibration) |
 | `gridrows` | `1` | `1`; `gridrows` → `gridrows` | Implemented | Number of subplot rows [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
 | `gridcols` | `1` | `1`; `gridcols` → `gridcols` | Implemented | Number of subplot columns [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
 | `rowindex` | `0` | `0`; `rowindex` → `rowindex` | Default only | Row location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
@@ -1594,7 +1607,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `avgspw` | `False` | `False`; `avgspw` → `avgspw` | Implemented | Average over all spectral windows [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `scalar` | `False` | `False`; `scalar` → `scalar` | Implemented | Scalar averaging (False=vector averaging) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `transform` | `True` | `True`; `transform` → `transform` | Partial | Disable the frequency controls when false. Additional active calibration transforms remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
-| `freqframe` | `''` | `''`; `freqframe` → `freqframe` | Partial | Ignore the requested frequency frame when transform is false. Active frequency conversion remains open for calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `LSRK`, `CMB`, `GALACTO`, `GEO`, `TOPO`, `LSRD`, `LGROUP`, `BARY`, `` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `freqframe` | `''` | `''`; `freqframe` → `freqframe` | Partial | Calibration-table PlotMS retains the table’s stored spectral coordinates and warns when an active frame is requested. MeasurementSet transform coverage is tracked separately. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `LSRK`, `CMB`, `GALACTO`, `GEO`, `TOPO`, `LSRD`, `LGROUP`, `BARY`, `` | [calibration-controls](#plotms-evidence-calibration-controls), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `restfreq` | `''` | `''`; `restfreq` → `restfreq` | Partial | CASA leaves modern calibration-table coordinates unchanged for supplied rest-frequency values. Frequency and velocity transforms for other inputs remain separately tracked. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `veldef` | `'RADIO'` | `'RADIO'`; `veldef` → `veldef` | Not implemented | The definition in which to render velocity [advanced](#plotms-behavior-advanced)<br>Catalog domain: `RADIO`, `OPTICAL`, `TRUE` | [remaining](#plotms-evidence-remaining) |
 | `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter` | Default only | The direction coordinates of the desired center [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
@@ -1650,40 +1663,40 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `showgui` | `True` | `True`; `showgui` → `showgui` | Partial | Show GUI [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `clearplots` | `True` | `True`; `clearplots` → `clearplots` | Default only | Remove any existing plots so new ones can replace them. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `callib` | `[]` | `[]`; `callib` → `callib` | Partial | Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated scalar or spectral weights. Iterated figures and additional calibration plotting controls remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [callibrary](#plotms-evidence-callibrary), [remaining](#plotms-evidence-remaining) |
-| `headeritems` | `''` | `''`; `headeritems` → `headeritems` | Not implemented | Comma-separated list of pre-defined page header items. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
-| `showatm` | `False` | `False`; `showatm` → `showatm` | Partial | Overlay atmospheric transmission on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
-| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Partial | Overlay sky temperature on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
-| `showimage` | `False` | `False`; `showimage` → `showimage` | Partial | Overlay a receiver image sideband on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
-| `colorizeoverlay` | `False` | `False`; `colorizeoverlay` → `colorizeoverlay` | Default only | Colorize the curve overlay using coloraxis [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+| `headeritems` | `''` | `''`; `headeritems` → `headeritems` | Partial | Render requested page headers and metadata on current calibration tables and supported MeasurementSet figures. Shared MeasurementSet figure coverage is tracked separately. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [calibration-controls](#plotms-evidence-calibration-controls), [remaining](#plotms-evidence-remaining) |
+| `showatm` | `False` | `False`; `showatm` → `showatm` | Implemented | Overlay atmospheric transmission on MeasurementSets and current calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere) |
+| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Implemented | Overlay sky temperature on MeasurementSets and current calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere) |
+| `showimage` | `False` | `False`; `showimage` → `showimage` | Implemented | Overlay a receiver image sideband on MeasurementSets and current calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere) |
+| `colorizeoverlay` | `False` | `False`; `colorizeoverlay` → `colorizeoverlay` | Implemented | Color atmospheric overlays by the selected metadata axis in MeasurementSet and calibration-table figures. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [ms-atmosphere](#plotms-evidence-ms-atmosphere) |
 
 #### plotms interacting modes and task behavior
 
 <a id="plotms-behavior-table"></a>
-##### Read current-format calibrations
+##### Read MeasurementSets and calibration tables
 
-**Partial** — Open a current casacore calibration table through vis or caltable, preserving the public None return and input-path checks.
+**Partial** — Open casacore MeasurementSets and current, BPOLY and GSPLINE calibration tables through vis or caltable, preserving the public None return and input-path checks.
 
-Legacy BPOLY and GSPLINE table loading and the remaining MS plotting paths are open.
+Remaining MeasurementSet plotting paths are open under #1032 and #215.
 
-Evidence: [paired](#plotms-evidence-paired).
+Evidence: [paired](#plotms-evidence-paired), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-selection"></a>
 ##### Select solution samples
 
-**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors.
+**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC.
 
-Further legacy formats and MS plotting paths remain open.
+Remaining MeasurementSet selection paths are open under #1032 and #215.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-coordinates"></a>
 ##### Project axes and flags
 
-**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.
+**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata.
 
 Pointing-coordinate axes and advanced per-axis MS data columns are open.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [callibrary](#plotms-evidence-callibrary).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-averaging"></a>
 ##### Average solution points
@@ -1706,35 +1719,35 @@ Evidence: [paired](#plotms-evidence-paired).
 <a id="plotms-behavior-presentation"></a>
 ##### Render the shared plot document
 
-**Partial** — Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend and export sizing.
+**Partial** — Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing.
 
-Renderer-specific marker fill patterns, page headers and interactive editing remain open.
+Renderer-specific marker fill patterns and interactive editing remain open.
 
-Evidence: [paired](#plotms-evidence-paired).
+Evidence: [paired](#plotms-evidence-paired), [calibration-controls](#plotms-evidence-calibration-controls).
 
 <a id="plotms-behavior-export"></a>
 ##### Save and publish selected plot products
 
-**Partial** — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and single-panel figures.
+**Partial** — Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.
 
 More export, multi-plot state and interactive display forms remain open.
 
-Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary).
+Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
 
-**Partial** — Apply calibration libraries to MeasurementSet plots in memory and compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.
+**Partial** — Apply calibration libraries to MeasurementSet plots in memory. Compute transmission, sky temperature and receiver sidebands for MeasurementSets and calibration tables, including selected channels and requested overlay color groups.
 
-The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.
+Remaining shared PlotMS forms are tracked in #1032 and #215.
 
-Evidence: [atmosphere](#plotms-evidence-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining), [callibrary](#plotms-evidence-callibrary).
+Evidence: [atmosphere](#plotms-evidence-atmosphere), [ms-atmosphere](#plotms-evidence-ms-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining), [callibrary](#plotms-evidence-callibrary).
 
 #### plotms deviations and unfinished work
 
 ##### disable-selection: Proposed
 
-- Record: [PlotMS disabling selection calls the selection setter with a missing argument](https://github.com/bglenden/casa-rs/blob/e775bd07a6e5b9ebfbb4b812844564b063dc78e9/docs/CASA%20%28C%2B%2B%29%20bugs.md#plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument)
+- Record: [PlotMS disabling selection calls the selection setter with a missing argument](https://github.com/bglenden/casa-rs/blob/b60d8a6a140bd6f0a29177584db5ff91244f5d12/docs/CASA%20%28C%2B%2B%29%20bugs.md#plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument)
 - Inputs: A PlotMS request with selectdata=False and supplied selection text.
 - CASA: Raises Exception with message updateImmediately must be a boolean.
 - casa-rs: Displays and exports all available solution points without applying the selector text.
@@ -1753,6 +1766,17 @@ Evidence: [atmosphere](#plotms-evidence-atmosphere), [selectors](#plotms-evidenc
 - Owner decision: Pending; not an accepted deviation.
 - Evidence: [selectors](#plotms-evidence-selectors).
 
+##### gspline-negative-antenna: Proposed
+
+- Record: [PlotMS shows the excluded antenna on a GSPLINE plot](https://github.com/bglenden/casa-rs/blob/b60d8a6a140bd6f0a29177584db5ff91244f5d12/docs/CASA%20%28C%2B%2B%29%20bugs.md#plotms-shows-the-excluded-antenna-on-a-gspline-plot)
+- Inputs: A five-antenna GSPLINE table plotted with antenna="!A2".
+- CASA: Displays only antenna A2, despite negation.
+- casa-rs: Displays A0, A1, A3 and A4.
+- Rationale: Honor the documented antenna exclusion instead of passing the excluded ID to the plot cache.
+- User impact: The displayed antenna membership follows the source-row filter.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [legacy-calibration](#plotms-evidence-legacy-calibration).
+
 #### plotms evidence
 
 Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
@@ -1770,7 +1794,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-remaining"></a>
 ##### remaining
 
-**Remaining calibration PlotMS workflow comparisons — planned.** Requires additional native behavior and paired evidence. Advanced calibration table and MS plotting under #1526, #1032 and #215.
+**Remaining calibration PlotMS workflow comparisons — planned.** Requires additional native behavior and paired evidence. Shared PlotMS rendering, MeasurementSet workflows and interactive controls under #1032 and #215.
 
 
 <a id="plotms-evidence-atmosphere"></a>
@@ -1782,6 +1806,26 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `12d08ef332634591a6ad4611408f4cc178f601c5`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-atmosphere-20261119.json`.
+
+<a id="plotms-evidence-ms-atmosphere"></a>
+##### ms-atmosphere
+
+**Same-input MeasurementSet PlotMS atmospheric overlays — passed.** Matched 17 exports and 4,540 printed coordinates and metadata. Six figure names and 400 rendered coordinates matched. Default visibility and atmosphere markers remained visible, and the scan and correlation colors had the expected group membership. Maximum overlay normalized RMS was 9.15099e-5. The input MeasurementSet data, weights and flags were preserved. CASA 6.7.6.14 with casaplotms 2.9.1 on the same MeasurementSets and calibration tables, including measured weather, water vapour, receiver sidebands, averaging, scan iteration and read-only callibrary correction.
+
+- [tools/casa-compat/plotms_ms_atmosphere_oracle.py](https://github.com/bglenden/casa-rs/blob/5ed8020023334573ace4f40e2edc12494a9f8b03/tools/casa-compat/plotms_ms_atmosphere_oracle.py)
+- Revision: `5ed8020023334573ace4f40e2edc12494a9f8b03`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-atmosphere-20261121.json`.
+
+<a id="plotms-evidence-calibration-controls"></a>
+##### calibration-controls
+
+**Same-input calibration-table PlotMS headers and transform controls — passed.** Three text exports matched byte for byte. CASA rendered the requested page header labels. Native verified stored table values, independent field pages, absent wildcard metadata, a polynomial direction and row-specific frame, and non-overlapping 1000 by 400 pixel headers at 100 and 300 DPI. Two native active transform calls preserved the reference coordinates after a warning. The pinned renderer failed to complete active frame requests on the test table. CASA 6.7.6.14 and casaplotms 2.9.1 on the same current bandpass table and selected calibration solutions. Public page headers and spectral transform settings.
+
+- [tools/casa-compat/plotms_calibration_controls_oracle.py](https://github.com/bglenden/casa-rs/blob/95ca3bf47f2fa98411cf9fea7d72ba95eac47c44/tools/casa-compat/plotms_calibration_controls_oracle.py)
+- Revision: `95ca3bf47f2fa98411cf9fea7d72ba95eac47c44`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_calibration_controls_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-calibration-controls-20261121.json`.
 
 <a id="plotms-evidence-selectors"></a>
 ##### selectors
@@ -1802,6 +1846,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `f9215c62670dfc19138bd9d65a949d22065f1c59`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_callibrary_oracle.py --work <new-dir> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-callibrary-20261119.json`.
+
+<a id="plotms-evidence-legacy-calibration"></a>
+##### legacy-calibration
+
+**Same-input legacy calibration PlotMS comparison — passed.** 20 text exports, 31,696 points, exact headers and metadata, and 2,080 rendered coordinates matched. Maximum ordinate normalized RMS 3.78525e-07. Four invalid requests were refused by both engines. The negated-antenna diagnostic confirms the CASA bug and native selection behavior. The input tables and associated MeasurementSet were unchanged. CASA 6.7.6.14 and casaplotms 2.9.1 on the same persisted BPOLY and GSPLINE tables with receptor-dependent gains, surviving and flagged receptors, and source-row selection.
+
+- [tools/casa-compat/plotms_legacy_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/b60d8a6a140bd6f0a29177584db5ff91244f5d12/tools/casa-compat/plotms_legacy_calibration_oracle.py)
+- Revision: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_legacy_calibration_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-legacy-calibration-20261121.json`.
 
 ### plotweather
 
@@ -1868,6 +1922,21 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Command: `MPLBACKEND=Agg PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotweather_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotweather-20261119.json`.
 
+### predictcomp
+
+- CASA source: `casatasks/predictcomp.py`, 15 parameters
+- Implementation: `casatasks/private/task_predictcomp.py`, `predictcomp` (line 12): 4 return statements, 2 raise statements
+  - returns at line 113: `False`
+  - returns at line 130: `False`
+  - returns at line 138: `False`
+  - returns at line 202: `retval`
+- Called with its defaults in an empty directory, CASA raises `ValueError`: Error, objname is undefined
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 15, in CASA's order: yes
+- Defaults that differ: none
+
 ### rerefant
 
 - CASA source: `casatasks/rerefant.py`, 5 parameters
@@ -1931,6 +2000,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
+### setjy
+
+- CASA source: `casatasks/setjy.py`, 23 parameters
+- Implementation: `casatasks/private/task_setjy.py`, `setjy` (line 72): 1 return statements, 2 raise statements
+  - returns at line 133: `retval`
+- Called with its defaults in an empty directory, CASA raises `RuntimeError`: Table file <cwd>/table.dat does not exist
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 23, in CASA's order: yes
+- Defaults that differ: none
 
 ### simalma
 

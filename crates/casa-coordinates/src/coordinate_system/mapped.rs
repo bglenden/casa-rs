@@ -8,6 +8,8 @@ use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
 
 use super::record_axes::{check_numbering, live_coordinate, read_models};
 use super::{CoordinateSystem, RecordCoordinate, coordinate_record_entries, record_basename};
+
+mod mixed;
 use crate::coordinate::CoordinateModel;
 use crate::direction::convert_value_to_unit;
 use crate::error::CoordinateError;
@@ -485,7 +487,7 @@ fn convert_local_world_offsets(
     absolute: bool,
 ) -> Result<(), CoordinateError> {
     match model {
-        CoordinateModel::Stokes(_) => Ok(()),
+        CoordinateModel::Stokes(_) | CoordinateModel::Quality(_) => Ok(()),
         CoordinateModel::Direction(direction) => direction.convert_world_offset(values, absolute),
         _ => {
             for (value, reference) in values.iter_mut().zip(model.reference_value()) {
@@ -533,6 +535,14 @@ impl CoordinateSystem {
             }
         }
         values
+    }
+
+    /// A coordinate's stored replacement pixel vector, including entries
+    /// on visible axes. Unmapped systems have no replacement vector.
+    pub fn local_pixel_replacements(&self, index: usize) -> Option<&[f64]> {
+        self.nonconsecutive_maps()
+            .and_then(|maps| maps.placements.get(index))
+            .map(|placement| placement.pixel.replacements.as_slice())
     }
 
     /// Units of the values returned by `to_world`, in public world-axis order.

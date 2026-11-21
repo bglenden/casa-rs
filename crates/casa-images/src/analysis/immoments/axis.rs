@@ -6,10 +6,10 @@ use casa_provider_contracts::ParameterValue;
 use casa_types::quanta::Unit;
 
 use super::super::SPEED_OF_LIGHT_KM_S;
-use crate::{ImageError, ImagePixel, PagedImage};
+use crate::{ImageError, ImageInterface, ImagePixel};
 
 pub(super) fn resolve<T: ImagePixel>(
-    image: &PagedImage<T>,
+    image: &dyn ImageInterface<T>,
     parameter: Option<&ParameterValue>,
     selected_shape: &[usize],
 ) -> Result<usize, ImageError> {

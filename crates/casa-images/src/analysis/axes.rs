@@ -8,7 +8,8 @@
 //! record's coordinates are found where the record places them.
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, QualityCoordinate, QualityType,
+    StokesCoordinate, StokesType,
 };
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -159,9 +160,18 @@ pub(super) fn legacy_subimage_coordinates_with_stokes<T: ImagePixel>(
     shape: &[usize],
     stokes: Option<&[StokesType]>,
 ) -> Option<RecordValue> {
-    let Some(Value::Record(mut coords)) = image.table().keywords().get("coords").cloned() else {
+    let Some(Value::Record(coords)) = image.table().keywords().get("coords") else {
         return None;
     };
+    subimage_coordinate_record(coords.clone(), start, shape, stokes)
+}
+
+pub(super) fn subimage_coordinate_record(
+    mut coords: RecordValue,
+    start: &[usize],
+    shape: &[usize],
+    stokes: Option<&[StokesType]>,
+) -> Option<RecordValue> {
     // The image's coordinates were read from this record, so its fields
     // resolve; if not, the output keeps the coordinates casa-rs writes.
     shift_record_reference_pixels(&mut coords, start, shape).ok()?;
@@ -180,49 +190,57 @@ pub(super) fn replace_stokes_in_record(
         ImageError::InvalidMetadata(format!("stokes record coordinates: {error}"))
     })?;
     for coordinate in placed {
-        if !coordinate.field.starts_with("stokes") {
-            continue;
+        if coordinate.field.starts_with("stokes")
+            && matches!(record.get(&coordinate.field), Some(Value::Record(_)))
+        {
+            replace_stokes_axis_in_record(record, &coordinate.field, stokes)?;
         }
-        let Some(Value::Record(stokes_rec)) = record.get_mut(&coordinate.field) else {
-            continue;
-        };
-        let use_codes = matches!(
-            stokes_rec.get("stokes"),
-            Some(Value::Array(ArrayValue::Int32(_)))
-        );
-        if use_codes {
+    }
+    Ok(())
+}
+
+/// Replace a single stored Stokes axis and synchronize its reference fields.
+///
+/// # Errors
+///
+/// Returns an error if the named coordinate record is missing.
+pub fn replace_stokes_axis_in_record(
+    record: &mut RecordValue,
+    field: &str,
+    stokes: &[StokesType],
+) -> Result<(), ImageError> {
+    let Some(Value::Record(stokes_rec)) = record.get_mut(field) else {
+        return Err(ImageError::InvalidMetadata(format!(
+            "Missing Stokes coordinate {field}"
+        )));
+    };
+    let use_codes = matches!(
+        stokes_rec.get("stokes"),
+        Some(Value::Array(ArrayValue::Int32(_)))
+    );
+    let labels = if use_codes {
+        ArrayValue::from_i32_vec(stokes.iter().map(|s| s.code()).collect())
+    } else {
+        ArrayValue::from_string_vec(stokes.iter().map(|s| s.name().to_string()).collect())
+    };
+    stokes_rec.upsert("stokes", Value::Array(labels));
+    if let Some(&first) = stokes.first() {
+        if matches!(stokes_rec.get("crval"), Some(Value::Array(_))) {
             stokes_rec.upsert(
-                "stokes",
-                Value::Array(ArrayValue::from_i32_vec(
-                    stokes.iter().map(|s| s.code()).collect(),
-                )),
-            );
-        } else {
-            stokes_rec.upsert(
-                "stokes",
-                Value::Array(ArrayValue::from_string_vec(
-                    stokes.iter().map(|s| s.name().to_string()).collect(),
-                )),
+                "crval",
+                Value::Array(ArrayValue::from_f64_vec(vec![f64::from(first.code())])),
             );
         }
-        if let Some(&first) = stokes.first() {
-            if matches!(stokes_rec.get("crval"), Some(Value::Array(_))) {
-                stokes_rec.upsert(
-                    "crval",
+        if matches!(stokes_rec.get("crpix"), Some(Value::Array(_))) {
+            stokes_rec.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
+        }
+        if let Some(suffix) = field.strip_prefix("stokes") {
+            let wr_key = format!("worldreplace{suffix}");
+            if matches!(record.get(&wr_key), Some(Value::Array(_))) {
+                record.upsert(
+                    wr_key,
                     Value::Array(ArrayValue::from_f64_vec(vec![f64::from(first.code())])),
                 );
-            }
-            if matches!(stokes_rec.get("crpix"), Some(Value::Array(_))) {
-                stokes_rec.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
-            }
-            if let Some(suffix) = coordinate.field.strip_prefix("stokes") {
-                let wr_key = format!("worldreplace{suffix}");
-                if matches!(record.get(&wr_key), Some(Value::Array(_))) {
-                    record.upsert(
-                        wr_key,
-                        Value::Array(ArrayValue::from_f64_vec(vec![f64::from(first.code())])),
-                    );
-                }
             }
         }
     }
@@ -273,6 +291,17 @@ pub(super) fn section_record_reference_pixels(
         let Some(Value::Record(coordinate_record)) = record.get_mut(&coordinate.field) else {
             continue;
         };
+        if coordinate_record.get("quality").is_some() {
+            if let [Some(axis)] = coordinate.pixel_axes.as_slice() {
+                section_quality_labels(
+                    coordinate_record,
+                    start[*axis],
+                    shape[*axis],
+                    stride.map_or(1, |stride| stride[*axis]),
+                )?;
+            }
+            continue;
+        }
         if coordinate.field.starts_with("spectral")
             && let Some(Some(axis)) = coordinate.pixel_axes.first()
             && casa_coordinates::SpectralCoordinate::subimage_tabular_record_with_stride(
@@ -297,8 +326,63 @@ pub(super) fn section_record_reference_pixels(
     Ok(())
 }
 
-/// Adjust casacore reference pixels and increments for a section. The
-/// increments scale by the pixel steps, leaving the PC matrix unchanged.
+/// Keep the planes selected by the image section in a native Quality subrecord.
+///
+/// # Errors
+/// The stride must be positive and every selected plane must have a label.
+pub fn section_quality_labels(
+    record: &mut RecordValue,
+    start: usize,
+    count: usize,
+    stride: usize,
+) -> Result<(), ImageError> {
+    if stride == 0 {
+        return Err(ImageError::InvalidMetadata(
+            "Quality image section requires a positive stride".into(),
+        ));
+    }
+    let quality = QualityCoordinate::from_record(record)?;
+    let labels: Vec<_> = quality
+        .values()
+        .iter()
+        .copied()
+        .skip(start)
+        .step_by(stride)
+        .take(count)
+        .collect();
+    if labels.len() != count {
+        return Err(ImageError::InvalidMetadata(
+            "Quality axis has fewer planes than the image section".into(),
+        ));
+    }
+    write_quality_labels(record, &labels)
+}
+
+/// Replace the plane labels and reference values of a native Quality subrecord.
+///
+/// # Errors
+/// An empty label list cannot describe a Quality coordinate.
+pub fn write_quality_labels(
+    record: &mut RecordValue,
+    labels: &[QualityType],
+) -> Result<(), ImageError> {
+    let first = labels.first().ok_or_else(|| {
+        ImageError::InvalidMetadata("A Quality axis requires at least one plane".into())
+    })?;
+    record.upsert(
+        "quality",
+        ArrayValue::from_string_vec(labels.iter().map(|kind| kind.name().to_owned()).collect())
+            .into(),
+    );
+    record.upsert(
+        "crval",
+        ArrayValue::from_f64_vec(vec![f64::from(first.code())]).into(),
+    );
+    record.upsert("crpix", ArrayValue::from_f64_vec(vec![0.0]).into());
+    Ok(())
+}
+
+/// Adjust the reference pixels and scale the columns of the coordinate transform.
 fn section_pixels(record: &mut RecordValue, shifts: &[f64], steps: &[f64]) {
     let step = |axis| steps.get(axis).copied().unwrap_or(1.0);
     let position = |axis, value| (value - shifts.get(axis).copied().unwrap_or(0.0)) / step(axis);
@@ -316,6 +400,22 @@ fn section_pixels(record: &mut RecordValue, shifts: &[f64], steps: &[f64]) {
                 map_numeric_values(array, |axis, value| value * step(axis))
             }
             Some(Value::Scalar(ScalarValue::Float64(cdelt))) => *cdelt *= step(0),
+            _ => {}
+        }
+        // CDELT scales world rows. The stored PC transposes the matrix
+        // used by the transform, so its first index is the input axis.
+        let shape = [steps.len(), steps.len()];
+        match record.get_mut("pc") {
+            Some(Value::Array(ArrayValue::Float64(matrix))) if matrix.shape() == shape => {
+                for (index, coefficient) in matrix.indexed_iter_mut() {
+                    *coefficient *= steps[index[0]] / steps[index[1]];
+                }
+            }
+            Some(Value::Array(ArrayValue::Float32(matrix))) if matrix.shape() == shape => {
+                for (index, coefficient) in matrix.indexed_iter_mut() {
+                    *coefficient *= (steps[index[0]] / steps[index[1]]) as f32;
+                }
+            }
             _ => {}
         }
     }

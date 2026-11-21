@@ -342,9 +342,11 @@ mod tests {
     /// deliberate change.
     #[test]
     fn every_overwrite_binding_has_casas_default() {
-        // CASA 6.7.6 tasks with an `overwrite` parameter, and its default.
+        // CASA 6.7.6 output replacement defaults. Feather replaces without
+        // exposing an overwrite parameter.
         let casa = BTreeMap::from([
             ("exportfits", false),
+            ("feather", true),
             ("getantposalma", false),
             ("importfits", false),
             ("impbcor", false),
@@ -357,12 +359,11 @@ mod tests {
             ("simanalyze", true),
         ]);
         // casa-rs's own `overwrite` on CASA tasks that have none, and on the
-        // casa-rs tasks; CASA's tasks never replace an output unasked.
+        // casa-rs tasks that require explicit permission to replace outputs.
         let extras = BTreeSet::from([
             "applycal",
             "bandpass",
             "calibrate",
-            "feather",
             "fluxscale",
             "gaincal",
             "gencal",
@@ -864,6 +865,7 @@ mod tests {
                                 | "tsdimaging"
                                 | "plotms"
                                 | "immoments"
+                                | "predictcomp"
                         ),
                         "{} product sources",
                         surface.id()

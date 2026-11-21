@@ -7,6 +7,7 @@ use crate::MsAverageSpec;
 
 use super::averaging;
 use super::axis::{Axis, SampleCoordinates};
+use super::iteration::IterationAxis;
 use super::selection::Selection;
 use super::table_data::{CalibrationTable, Solution};
 
@@ -23,6 +24,8 @@ pub(super) struct SeriesRequest<'a> {
     pub(super) y: Axis,
     pub(super) polarization: &'a str,
     pub(super) averaging: &'a MsAverageSpec,
+    pub(super) spline: Option<super::legacy::SplineDisplay>,
+    pub(super) iteration: Option<IterationAxis>,
 }
 
 pub(super) fn points(
@@ -72,6 +75,29 @@ pub(super) fn points(
                 )?;
             }
         }
+    } else if request.spline.is_some()
+        && !request.x.uses_spline_antenna()
+        && !request.y.uses_spline_antenna()
+        && !matches!(
+            request.iteration,
+            Some(IterationAxis::Antenna | IterationAxis::Baseline)
+        )
+    {
+        for chunk in rows.chunk_by(|first, second| first.time == second.time) {
+            let input = chunk
+                .iter()
+                .map(|row| table.solution(*row))
+                .collect::<Result<Vec<_>, _>>()?;
+            append_points(
+                table,
+                (&input, &[]),
+                chunk[0],
+                selection,
+                request,
+                axes,
+                &mut result,
+            )?;
+        }
     } else {
         for coordinates in rows {
             let input = [table.solution(coordinates)?];
@@ -116,7 +142,17 @@ fn append_points(
         return Err("calibration solutions being averaged must have the same shape".into());
     }
     let receptors = shape[0] / x.stride;
-    let polarizations = polarizations(table, request.polarization, receptors)?;
+    let mut polarizations = polarizations(table, request.polarization, receptors)?;
+    if request.spline.is_some()
+        && !x.axis.uses_receptor()
+        && !y.axis.uses_receptor()
+        && !matches!(
+            request.iteration,
+            Some(IterationAxis::Polarization | IterationAxis::AntennaPosition)
+        )
+    {
+        polarizations.truncate(1);
+    }
     let channels = selection.channels(first.coordinates.window, shape[1]);
     let size = request
         .averaging
@@ -144,6 +180,9 @@ fn append_points(
                 .sum::<f64>()
                 / (members.len() as f64 * 1e9)
         });
+        if let Some(spline) = request.spline {
+            spline.coordinates(&mut coordinates);
+        }
         for &polarization in &polarizations {
             coordinates.receptor = polarization.output_index();
             let x_value = x.project(
@@ -335,6 +374,7 @@ impl Component {
             }
         };
         let projected = match self.axis {
+            Axis::Flag => f64::from(flagged),
             Axis::Amplitude | Axis::GainAmplitude if self.real => value.re,
             Axis::Phase | Axis::GainPhase if self.fringe => value.re.to_degrees(),
             _ => self.axis.value(coordinates, value, snr),

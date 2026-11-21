@@ -18,8 +18,8 @@ use super::{
     MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
     MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset,
     MsPlotSpec, MsPlotStyleSpec, PlotMsCalibration, apply_msexplore_flag_edit_for_request,
-    build_calibrated_plotms_payload, build_msexplore_payload, export_msexplore_plot,
-    preview_msexplore_flag_edit_for_request,
+    build_calibrated_plotms_payload, build_msexplore_payload, build_uncalibrated_plotms_payload,
+    export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 };
 use crate::{MeasurementSet, MsSelection};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
@@ -206,7 +206,7 @@ fn run_task(
     {
         return super::calibration::run(task, &path, payload);
     }
-    let (options, calibration) = if task.surface() == "plotms" {
+    let options = if task.surface() == "plotms" {
         let library = task.texts("callib")?;
         let calibration = if library.is_empty() {
             None
@@ -217,16 +217,16 @@ fn run_task(
             })?;
             Some((load, library))
         };
-        (
-            options_from_plotms(task, calibration.is_some())?,
-            calibration,
-        )
+        let atmosphere = super::calibration::atmosphere::Options::from_task(task)?;
+        let visibility_document = calibration.is_some() || atmosphere.is_some();
+        let options = options_from_plotms(task, calibration.is_some(), visibility_document)?;
+        if visibility_document {
+            return run_visibility_plot(task, options, payload, calibration, atmosphere);
+        }
+        options
     } else {
-        (options_from(task)?, None)
+        options_from(task)?
     };
-    if let Some((load, library)) = calibration {
-        return run_calibrated_plot(task, options, payload, load, &library);
-    }
     let outcome = run(options)?;
     let success = if task.surface() == "plotms" {
         TaskSuccess::new(CasaValue::None, &outcome.result)?
@@ -242,12 +242,12 @@ fn run_task(
     })
 }
 
-fn run_calibrated_plot(
+fn run_visibility_plot(
     task: &TaskInvocation<'_>,
     mut options: CliOptions,
     array_payload: Option<&Path>,
-    load: PlotMsCalibrationLoader,
-    library: &[String],
+    calibration: Option<(PlotMsCalibrationLoader, Vec<String>)>,
+    atmosphere: Option<super::calibration::atmosphere::Options>,
 ) -> Result<TaskSuccess, TaskFailure> {
     let output = options.plot_output.as_deref();
     super::task_contract::refuse_unwritable_outputs(
@@ -265,8 +265,17 @@ fn run_calibrated_plot(
     if !options.selection.selectdata {
         options.selection = MsSelection::default();
     }
-    let mut calibration = load(&ms, &options.selection, library)?;
-    calibration.x_data_column = options.x_data_column;
+    let library = calibration
+        .as_ref()
+        .map_or(&[][..], |(_, entries)| entries.as_slice());
+    let calibrated = calibration
+        .as_ref()
+        .map(|(load, _)| {
+            let mut input = load(&ms, &options.selection, library)?;
+            input.x_data_column = options.x_data_column;
+            Ok::<_, TaskFailure>(input)
+        })
+        .transpose()?;
     let show = task.flag("showgui")?;
     let format = task.text("expformat")?.filter(|ext| !ext.is_empty());
     let is_text = output.is_some_and(|path| {
@@ -280,22 +289,37 @@ fn run_calibrated_plot(
     let mut plots = Vec::new();
     if output.is_some() || show {
         let spec = build_explore_spec(&options).map_err(TaskFailure::validation)?;
-        let payload = build_calibrated_plotms_payload(&ms, &spec, &calibration)
-            .map_err(TaskFailure::execution)?;
+        let payload = match &calibrated {
+            Some(input) => build_calibrated_plotms_payload(&ms, &spec, input),
+            None => build_uncalibrated_plotms_payload(&ms, &spec, options.x_data_column),
+        }
+        .map_err(TaskFailure::execution)?;
+        let overlays = if let Some(atmosphere) = atmosphere {
+            super::plotms_atmosphere::build(
+                &ms,
+                &options.selection,
+                &payload,
+                atmosphere,
+                &spec.plots[0],
+            )?
+        } else {
+            Vec::new()
+        };
         if show || figure_file.is_some() {
             let arrays = array_payload.ok_or_else(|| {
                 TaskFailure::validation("use casars.tasks.plotms for rendered figures")
             })?;
-            plots.push(super::plotms_figure::prepare(
+            plots = super::plotms_figure::prepare(
                 task,
                 &payload,
                 arrays,
                 figure_file,
                 show,
-            )?);
+                &overlays,
+            )?;
         }
         if let Some(path) = text_file {
-            super::plotms_text::write_calibrated_export(task, &ms, &payload, path, library)?;
+            super::plotms_text::write_export(task, &ms, &payload, path, library, &overlays)?;
         }
     }
     TaskSuccess::new(
@@ -911,22 +935,9 @@ fn parse_header_items(value: Option<&str>) -> Result<Vec<MsPageHeaderItem>, Stri
         if token.is_empty() {
             continue;
         }
-        let item = match token {
-            "filename" => MsPageHeaderItem::Filename,
-            "ycolumn" => MsPageHeaderItem::YColumn,
-            "obsdate" => MsPageHeaderItem::ObsDate,
-            "obstime" => MsPageHeaderItem::ObsTime,
-            "observer" => MsPageHeaderItem::Observer,
-            "projid" => MsPageHeaderItem::ProjId,
-            "telescope" => MsPageHeaderItem::Telescope,
-            "targname" => MsPageHeaderItem::TargName,
-            "targdir" => MsPageHeaderItem::TargDir,
-            other => {
-                return Err(format!(
-                    "unsupported --headeritems value {other:?}; expected a comma-separated subset of: filename, ycolumn, obsdate, obstime, observer, projid, telescope, targname, targdir"
-                ));
-            }
-        };
+        let item = MsPageHeaderItem::parse(token).ok_or_else(|| format!(
+            "unsupported --headeritems value {token:?}; expected a comma-separated subset of: filename, ycolumn, obsdate, obstime, observer, projid, telescope, targname, targdir"
+        ))?;
         if !items.contains(&item) {
             items.push(item);
         }
@@ -1072,13 +1083,8 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
 fn options_from_plotms(
     task: &TaskInvocation<'_>,
     on_the_fly: bool,
+    visibility_document: bool,
 ) -> Result<CliOptions, TaskFailure> {
-    if task.flag("showatm")? || task.flag("showtsky")? {
-        return Err(TaskFailure::validation(
-            "MeasurementSet atmospheric overlays are pending #1526",
-        ));
-    }
-
     let text = |name| {
         task.text(name)
             .map(|text| text.filter(|value| !value.is_empty()))
@@ -1091,7 +1097,7 @@ fn options_from_plotms(
             .and_then(std::ffi::OsStr::to_str)
             .map(str::to_owned)
     });
-    let plot_format = if on_the_fly {
+    let plot_format = if visibility_document {
         MsExportFormat::Txt
     } else {
         export_format

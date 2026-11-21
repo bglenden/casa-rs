@@ -21,7 +21,7 @@ pub(super) fn coordinate_type(name: &str) -> CoordinateType {
     }
 }
 
-fn coordinate_index(placement: &RecordCoordinate) -> usize {
+pub(super) fn coordinate_index(placement: &RecordCoordinate) -> usize {
     placement
         .field
         .trim_start_matches(|character: char| !character.is_ascii_digit())
@@ -179,6 +179,7 @@ impl PyCoordsys {
         let state = py.detach(|| {
             let mut copy = self.state().clone();
             copy.parent_name = "unknown".into();
+            copy.coordinates.reset_direction_mix_ranges();
             copy
         });
         Py::new(

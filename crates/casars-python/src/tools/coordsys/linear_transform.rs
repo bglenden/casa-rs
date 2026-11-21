@@ -18,7 +18,7 @@ fn raised(message: impl ToString) -> PyErr {
     PyRuntimeError::new_err(message.to_string())
 }
 
-fn matrix_input(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
+pub(super) fn matrix_input(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
     let invalid = || raised("The value array is not a double or integer array");
     let value = value.filter(|value| !value.is_none()).ok_or_else(invalid)?;
     let (mut shape, values) = if let Ok(array) = value.cast::<PyUntypedArray>() {
@@ -331,6 +331,7 @@ impl CoordinateState {
             }
         }
         drop(matrices);
+        coordinates.retain_direction_mix_ranges(&self.coordinates);
         self.record = record;
         self.coordinates = coordinates;
         Ok(())
@@ -365,7 +366,12 @@ fn apply_matrix(
         matrix.dim() == (count, count)
     };
     // CASA returns true when the coordinate refuses a matrix of the wrong shape.
-    if !valid_shape || matches!(full, CoordinateModel::Stokes(_)) {
+    if !valid_shape
+        || matches!(
+            full,
+            CoordinateModel::Stokes(_) | CoordinateModel::Quality(_)
+        )
+    {
         return Ok(true);
     }
     if matrix.iter().any(|value| !value.is_finite()) {
@@ -398,7 +404,7 @@ fn apply_matrix(
             .with_linear_transform(matrix[[0, 0]])
             .map_err(raised)?
             .into(),
-        CoordinateModel::Stokes(_) => return Ok(true),
+        CoordinateModel::Stokes(_) | CoordinateModel::Quality(_) => return Ok(true),
     };
     let mut record = state.record.clone();
     update_stored_coordinate(&mut record, &placement.field, &changed)?;

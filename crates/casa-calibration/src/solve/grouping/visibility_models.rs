@@ -85,6 +85,23 @@ impl VisibilityModels {
         self
     }
 
+    /// Use the legacy visibility iterator's FIELD-column directions for
+    /// attached moving fields in `setjy` component predictions.
+    pub(crate) fn with_calibration_field_directions(
+        mut self,
+        ms: &MeasurementSet,
+    ) -> Result<Self, GainSolveError> {
+        self.models.use_calibration_field_directions(ms)?;
+        Ok(self)
+    }
+
+    pub(crate) fn with_phase_centre_time(mut self, time_mjd_seconds: f64) -> Self {
+        for time in self.models.phase_times.values_mut() {
+            *time = time_mjd_seconds;
+        }
+        self
+    }
+
     fn with_models(
         ms: &MeasurementSet,
         rows: Vec<SelectedSolveRow>,

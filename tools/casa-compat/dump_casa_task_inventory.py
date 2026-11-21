@@ -64,6 +64,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("gaincal", "casatasks"),
     ("gencal", "casatasks"),
     ("getantposalma", "casatasks"),
+    ("getcalmodvla", "casatasks"),
     ("imhead", "casatasks"),
     ("immath", "casatasks"),
     ("immoments", "casatasks"),
@@ -80,7 +81,9 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("plotbandpass", "casatasks"),
     ("plotms", "casaplotms"),
     ("plotweather", "casatasks"),
+    ("predictcomp", "casatasks"),
     ("rerefant", "casatasks"),
+    ("setjy", "casatasks"),
     ("simanalyze", "casatasks"),
     ("simalma", "casatasks"),
     ("simobserve", "casatasks"),
@@ -288,9 +291,12 @@ def probe(name: str, package: str) -> dict[str, Any]:
             return {"timed_out": PROBE_TIMEOUT_SECONDS}
     for line in reversed(completed.stdout.splitlines()):
         try:
-            return json.loads(line)
+            result = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if "message" in result:
+            result["message"] = result["message"].replace(directory, "<cwd>")
+        return result
     return {"exit_code": completed.returncode}
 
 

@@ -14,10 +14,11 @@ use casa_calibration::{
 };
 use casa_ms::MsSelection;
 use casa_types::quanta::{Quantity, Unit};
-use numpy::PyArray1;
+use numpy::{PyArray1, PyUntypedArray};
 use pyo3::{
-    exceptions::{PyRuntimeError, PyTypeError},
+    exceptions::{PyRuntimeError, PySystemError, PyTypeError},
     prelude::*,
+    types::{PyBool, PyBytes, PyList, PyString},
 };
 
 use crate::convert::{DoubleList, Variant, quantity};
@@ -192,6 +193,86 @@ impl PyCalibrater {
         Ok(result)
     }
 
+    #[pyo3(signature = (caltable, field = None, antenna = None, spw = None, listfile = None, pagerows = None), text_signature = "($self, caltable, field=[], antenna=[], spw=[], listfile='', pagerows=50)")]
+    #[allow(clippy::too_many_arguments)]
+    fn listcal(
+        &self,
+        py: Python<'_>,
+        caltable: Bound<'_, PyAny>,
+        field: Option<Bound<'_, PyAny>>,
+        antenna: Option<Bound<'_, PyAny>>,
+        spw: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = arguments::supplied)] listfile: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = arguments::supplied)] pagerows: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let caltable = arguments::text(Some(caltable), "caltable", "")?;
+        let listfile = arguments::text(listfile, "listfile", "")?;
+        let field = arguments::listing_selector(field.as_ref())?;
+        let antenna = arguments::listing_selector(antenna.as_ref())?;
+        let spw = arguments::listing_selector(spw.as_ref())?;
+        let pagerows = arguments::listing_page_rows(pagerows.as_ref())?;
+        let report = self.with_lifecycle(py, move |state| {
+            Ok(state.list_calibration(
+                Path::new(caltable.split('\0').next().unwrap_or_default()),
+                &field,
+                &antenna,
+                &spw,
+                listfile.split('\0').next().unwrap_or_default(),
+                pagerows,
+            ))
+        })?;
+        let report = match report {
+            Ok(report) => report,
+            Err(error) => return listcal_error(py, &error),
+        };
+        let presenter = py
+            .import("casars.tasks._runner")?
+            .getattr("_present_listcal")?;
+        let report = crate::parameters::to_python(py, &report)?;
+        match presenter.call1((report,)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.is_instance_of::<PyRuntimeError>(py) => {
+                listcal_error(py, &error.value(py).to_string())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// CASA's retired plotcal entry point still validates its arguments
+    /// and reports the current attachment state.
+    #[pyo3(signature = (antennas, fields, spwids, plottype = "AMP", tablename = "", polarization = 1, multiplot = false, nx = 1, ny = 1, psfile = ""), text_signature = "($self, antennas, fields, spwids, plottype='AMP', tablename='', polarization=1, multiplot=False, nx=1, ny=1, psfile='')")]
+    #[allow(clippy::too_many_arguments, unused_variables)]
+    fn plotcal(
+        &self,
+        py: Python<'_>,
+        antennas: &Bound<'_, PyAny>,
+        fields: &Bound<'_, PyAny>,
+        spwids: &Bound<'_, PyAny>,
+        plottype: &str,
+        tablename: &str,
+        polarization: i64,
+        #[pyo3(from_py_with = plot_flag)] multiplot: bool,
+        nx: i64,
+        ny: i64,
+        psfile: &str,
+    ) -> PyResult<bool> {
+        for (name, value) in [
+            ("antennas", antennas),
+            ("fields", fields),
+            ("spwids", spwids),
+        ] {
+            plot_selector(name, value)?;
+        }
+        let attached = self.with_lifecycle(py, |state| Ok(state.dataset_path().is_some()))?;
+        let line = if attached {
+            LogLine::warning("Sorry not implemented yet")
+        } else {
+            LogLine::error("Must first open a MeasurementSet.")
+        };
+        emit(py, LOGGER, &[line])?;
+        Ok(false)
+    }
+
     #[pyo3(signature = (apply = true, solve = true), text_signature = "($self, apply=True, solve=True)")]
     fn reset(&self, py: Python<'_>, apply: bool, solve: bool) -> PyResult<bool> {
         self.attached(py, |state| state.reset(apply, solve))
@@ -338,6 +419,44 @@ pub(super) fn selector(value: &Variant) -> Option<String> {
         ),
         value => Some(value.describe()),
     }
+}
+
+fn listcal_error(py: Python<'_>, error: &str) -> PyResult<bool> {
+    emit(
+        py,
+        LOGGER,
+        &[LogLine::error(format!("Caught Exception: {error}"))],
+    )?;
+    Err(runtime_error("Error in Calibrater::listCal."))
+}
+
+fn plot_flag(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if !value.is_instance_of::<PyBool>() {
+        return Err(PyTypeError::new_err(
+            "in method 'calibrater_plotcal', argument 8 of type 'bool'",
+        ));
+    }
+    value.extract()
+}
+
+fn plot_selector(name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytes>() {
+        return Err(PyTypeError::new_err(format!(
+            "argument _{name} must not be a string"
+        )));
+    }
+    if value.is_instance_of::<PyList>()
+        || value.is_instance_of::<PyUntypedArray>()
+        || matches!(
+            value.extract::<Variant>()?,
+            Variant::Bool(_) | Variant::Number(_)
+        )
+    {
+        return Ok(());
+    }
+    Err(PySystemError::new_err(
+        "<built-in function calibrater_plotcal> returned a result with an exception set",
+    ))
 }
 
 fn runtime_error(error: impl std::fmt::Display) -> PyErr {

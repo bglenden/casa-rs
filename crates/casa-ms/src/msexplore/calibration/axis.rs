@@ -4,7 +4,7 @@
 use num_complex::Complex64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Axis {
+pub(in crate::msexplore) enum Axis {
     Channel,
     Frequency,
     Time,
@@ -15,6 +15,7 @@ pub(super) enum Axis {
     Row,
     Antenna1,
     Antenna2,
+    Feed1,
     Receptor,
     Observation,
     Amplitude,
@@ -26,6 +27,7 @@ pub(super) enum Axis {
     GainReal,
     GainImaginary,
     SignalToNoise,
+    Flag,
     Delay,
     Rate,
     DispersiveDelay,
@@ -54,6 +56,7 @@ impl Axis {
             "row" => Row,
             "antenna" | "antenna1" | "ant" | "ant1" => Antenna1,
             "antenna2" | "ant2" => Antenna2,
+            "feed1" => Feed1,
             "poln" | "polarization" | "corr" | "correlation" => Receptor,
             "observation" => Observation,
             "amp" | "amplitude" => Amplitude,
@@ -65,6 +68,7 @@ impl Axis {
             "gainreal" | "greal" => GainReal,
             "gainimag" | "gimag" => GainImaginary,
             "snr" => SignalToNoise,
+            "flag" => Flag,
             "delay" | "del" => Delay,
             "rate" | "delayrate" => Rate,
             "disp" | "dispdelay" => DispersiveDelay,
@@ -78,7 +82,7 @@ impl Axis {
         Ok(axis)
     }
 
-    pub(super) fn label(self) -> &'static str {
+    pub(in crate::msexplore) fn label(self) -> &'static str {
         use Axis::*;
         match self {
             Channel => "Channel",
@@ -91,6 +95,7 @@ impl Axis {
             Row => "Row",
             Antenna1 => "Antenna1",
             Antenna2 => "Antenna2",
+            Feed1 => "Feed1",
             Receptor => "Poln",
             Observation => "Observation",
             Amplitude => "Amp",
@@ -102,6 +107,7 @@ impl Axis {
             GainReal => "Gain Real",
             GainImaginary => "Gain Imag",
             SignalToNoise => "SNR",
+            Flag => "Flag",
             Delay => "Delay",
             Rate => "Delay Rate",
             DispersiveDelay => "Disp Delay",
@@ -116,7 +122,7 @@ impl Axis {
         }
     }
 
-    pub(super) fn unit(self) -> &'static str {
+    pub(in crate::msexplore) fn unit(self) -> &'static str {
         match self {
             Self::Frequency => "GHz",
             Self::Time => "MJD seconds",
@@ -144,6 +150,7 @@ impl Axis {
             Row => metadata.row as f64,
             Antenna1 => f64::from(metadata.antennas[0]),
             Antenna2 => f64::from(metadata.antennas[1]),
+            Feed1 => f64::from(metadata.feed1),
             Receptor => metadata.receptor as f64,
             Observation => f64::from(metadata.observation),
             Amplitude | GainAmplitude => value.norm(),
@@ -160,10 +167,33 @@ impl Axis {
             | SwitchedPower
             | Tec
             | AntennaPosition
+            | Flag
             | AtmosphericTransmission
             | SkyTemperature
             | ImageSideband => value.re,
         }
+    }
+
+    pub(super) fn uses_receptor(self) -> bool {
+        use Axis::*;
+        matches!(
+            self,
+            Receptor
+                | Amplitude
+                | Phase
+                | Real
+                | Imaginary
+                | GainAmplitude
+                | GainPhase
+                | GainReal
+                | GainImaginary
+                | SignalToNoise
+                | Flag
+        )
+    }
+
+    pub(super) fn uses_spline_antenna(self) -> bool {
+        self == Self::Antenna1 || (self != Self::Receptor && self.uses_receptor())
     }
 }
 
@@ -179,5 +209,6 @@ pub(super) struct SampleCoordinates {
     pub(super) field: i32,
     pub(super) window: i32,
     pub(super) antennas: [i32; 2],
+    pub(super) feed1: i32,
     pub(super) observation: i32,
 }

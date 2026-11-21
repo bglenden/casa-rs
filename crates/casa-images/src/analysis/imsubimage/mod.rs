@@ -4,11 +4,33 @@
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
 mod bounding_box;
+mod collapse;
+mod continuum;
+mod convolve;
+mod convolve2d;
+pub use collapse::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
+pub use continuum::{ContinuumSummary, ImageContinuum};
+pub use convolve::{ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution};
+pub use convolve2d::{GaussianConvolutionOptions, ImageGaussianConvolution};
 pub(super) mod coords;
 mod crop;
 mod decimate;
+mod decompose;
+mod deviation;
+mod findsources;
+mod fitcomponents;
+pub use fitcomponents::{
+    ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
+    fit_image_components,
+};
+mod fourier;
+pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};
+pub use deviation::{DeviationOptions, ImageDeviation};
+pub use findsources::{FindSourcesOptions, find_image_sources};
 mod insert;
 mod noise;
+mod pad;
+mod pbcor;
 mod pixel_edit;
 mod read_window;
 mod rebin;
@@ -16,6 +38,7 @@ pub(super) mod region;
 mod region_write;
 pub use region_write::{put_image_region, validate_put_region_shapes};
 mod replace_masked;
+mod smoothing;
 
 pub use replace_masked::{
     MaskReplacementOptions, MaskReplacementOutcome, replace_masked_complex_pixels,
@@ -25,10 +48,14 @@ pub use replace_masked::{
 pub use bounding_box::ImageRegionBounds;
 pub use crop::{ImageCrop, ImageCropOptions};
 pub use decimate::{DecimationMethod, DecimationPixel, ImageDecimation, ImageDecimationOptions};
+pub use fourier::{FourierOptions, FourierPixel, ImageFourier};
 pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
+pub use pad::{ImagePad, ImagePadOptions};
+pub use pbcor::{ImagePbcor, ImagePbcorBeam, ImagePbcorOptions};
 pub use pixel_edit::ImagePixelSelection;
 pub use rebin::{ImageRebin, ImageRebinOptions};
+pub use smoothing::{ImageSmoothing, SmoothingKernel, SmoothingOptions, SmoothingPixel};
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -446,7 +473,8 @@ impl SubimagePlan {
         Ok(())
     }
 
-    fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
+    /// Indices of the original beam planes retained on a selected source axis.
+    pub fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
         let Some(axis) = axis.filter(|_| planes > 1) else {
             return vec![0];
         };
@@ -628,6 +656,52 @@ pub fn ensure_outfile_does_not_alias_input(
         )));
     }
     Ok(())
+}
+
+/// Reject overlapping table, image or text paths before an operation creates
+/// any of them. Existing symlinks are resolved along each path.
+///
+/// # Errors
+/// Paths overlap, or their existing components cannot be inspected.
+pub fn ensure_artifacts_do_not_overlap(first: &Path, second: &Path) -> Result<(), ImageError> {
+    let a = resolve_artifact_path(first)?;
+    let b = resolve_artifact_path(second)?;
+    if a.starts_with(&b) || b.starts_with(&a) {
+        return Err(ImageError::CasaSelection(format!(
+            "Output path '{}' overlaps '{}'",
+            first.display(),
+            second.display()
+        )));
+    }
+    Ok(())
+}
+
+fn resolve_artifact_path(path: &Path) -> Result<std::path::PathBuf, ImageError> {
+    use std::path::Component;
+
+    let inspect_error = |error| {
+        ImageError::CasaSelection(format!(
+            "Could not resolve path '{}': {error}",
+            path.display()
+        ))
+    };
+    let absolute = std::path::absolute(path).map_err(inspect_error)?;
+    let mut resolved = std::path::PathBuf::new();
+    for part in absolute.components() {
+        if part == Component::ParentDir {
+            resolved.pop();
+        } else {
+            resolved.push(part);
+        }
+        if matches!(part, Component::Normal(_)) {
+            match resolved.canonicalize() {
+                Ok(canonical) => resolved = canonical,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(inspect_error(error)),
+            }
+        }
+    }
+    Ok(resolved)
 }
 
 fn run_fits_input(request: &ImsubimageRequest) -> Result<ImageSubimageSummary, ImageError> {

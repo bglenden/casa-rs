@@ -108,8 +108,10 @@ fn stored_polygon_follows_physical_axes_with_independent_world_order() {
     ] {
         let plane = region.lattice_plane(&coords, &shape).unwrap().unwrap();
         assert_eq!(plane.start, [2, 1]);
-        assert_eq!(plane.mask.shape(), [2, 2]);
-        assert!(plane.mask.iter().all(|&inside| inside));
+        assert_eq!(plane.extent, [2, 2]);
+        assert!(
+            (0..2).all(|x| (0..2).all(|y| plane.contains(plane.start[0] + x, plane.start[1] + y)))
+        );
     }
 }
 

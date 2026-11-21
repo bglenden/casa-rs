@@ -13,7 +13,7 @@ use super::inspect::{coordinate_type, numbered_coordinates};
 use super::{CoordinateState, PyCoordsys};
 
 /// Names and parameter counts from casacore's `Projection::nParameters`.
-const PROJECTIONS: &[(&str, i64)] = &[
+pub(super) const PROJECTIONS: &[(&str, i64)] = &[
     ("AZP", 2),
     ("SZP", 3),
     ("TAN", 0),

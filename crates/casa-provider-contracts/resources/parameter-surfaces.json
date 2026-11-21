@@ -17287,6 +17287,941 @@
     },
     {
       "kind": "task",
+      "id": "setjy",
+      "contract_version": 1,
+      "display_name": "Set Calibrator Flux Density",
+      "category": "Calibration",
+      "summary": "Populate a calibrator visibility model with setjy.",
+      "provider_family": "calibration",
+      "casa_task": "setjy",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "setjy"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "equals",
+            "parameter": "listmodels",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "field",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "spw",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "selectdata",
+          "concept": {
+            "id": "parameter.selectdata",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "Enables the detailed selection controls for this calibration workflow.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--selectdata"
+              ],
+              "false_flags": [
+                "--no-selectdata"
+              ]
+            },
+            "provider": {
+              "field": "selectdata"
+            },
+            "python": {
+              "name": "selectdata"
+            },
+            "presentation": {
+              "label": "Apply Selection",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 6
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "timerange"
+            },
+            "python": {
+              "name": "timerange",
+              "type_hint": "str | list[str] | tuple[str, ...]"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 6
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--scan"
+              ],
+              "false_flags": [],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan",
+              "type_hint": "str | list[str] | tuple[str, ...]"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection",
+              "advanced": false,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ]
+            },
+            "provider": {
+              "field": "intent"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "intent",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "observation",
+          "concept": {
+            "id": "ms.selection.observation",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--observation"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "observation"
+            },
+            "python": {
+              "name": "observation",
+              "type_hint": "str | int"
+            },
+            "presentation": {
+              "label": "Observation IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scalebychan",
+          "concept": {
+            "id": "setjy.scalebychan",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scalebychan"
+              ]
+            },
+            "provider": {
+              "field": "scalebychan"
+            },
+            "python": {
+              "name": "scalebychan"
+            },
+            "presentation": {
+              "label": "scalebychan",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 8
+        },
+        {
+          "name": "standard",
+          "concept": {
+            "id": "setjy.standard",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "Perley-Butler 2017"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--standard"
+              ]
+            },
+            "provider": {
+              "field": "standard"
+            },
+            "python": {
+              "name": "standard"
+            },
+            "presentation": {
+              "label": "standard",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 9
+        },
+        {
+          "name": "model",
+          "concept": {
+            "id": "setjy.model",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--model"
+              ]
+            },
+            "provider": {
+              "field": "model"
+            },
+            "python": {
+              "name": "model"
+            },
+            "presentation": {
+              "label": "model",
+              "group": "Calibrator model"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1519",
+            "reason": "setjy resolves predefined calibrator model names and accepts one scalar image path."
+          },
+          "order": 10
+        },
+        {
+          "name": "listmodels",
+          "concept": {
+            "id": "setjy.listmodels",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--listmodels"
+              ]
+            },
+            "provider": {
+              "field": "listmodels"
+            },
+            "python": {
+              "name": "listmodels"
+            },
+            "presentation": {
+              "label": "listmodels",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 11
+        },
+        {
+          "name": "fluxdensity",
+          "concept": {
+            "id": "setjy.fluxdensity",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fluxdensity"
+              ]
+            },
+            "provider": {
+              "field": "fluxdensity"
+            },
+            "python": {
+              "name": "fluxdensity"
+            },
+            "presentation": {
+              "label": "fluxdensity",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 12
+        },
+        {
+          "name": "spix",
+          "concept": {
+            "id": "setjy.spix",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spix"
+              ]
+            },
+            "provider": {
+              "field": "spix"
+            },
+            "python": {
+              "name": "spix"
+            },
+            "presentation": {
+              "label": "spix",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 13
+        },
+        {
+          "name": "reffreq",
+          "concept": {
+            "id": "parameter.reffreq",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "1GHz"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--reffreq"
+              ]
+            },
+            "provider": {
+              "field": "reffreq"
+            },
+            "python": {
+              "name": "reffreq"
+            },
+            "presentation": {
+              "label": "reffreq",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 14
+        },
+        {
+          "name": "polindex",
+          "concept": {
+            "id": "setjy.polindex",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--polindex"
+              ]
+            },
+            "provider": {
+              "field": "polindex"
+            },
+            "python": {
+              "name": "polindex"
+            },
+            "presentation": {
+              "label": "polindex",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 15
+        },
+        {
+          "name": "polangle",
+          "concept": {
+            "id": "setjy.polangle",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--polangle"
+              ]
+            },
+            "provider": {
+              "field": "polangle"
+            },
+            "python": {
+              "name": "polangle"
+            },
+            "presentation": {
+              "label": "polangle",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 16
+        },
+        {
+          "name": "rotmeas",
+          "concept": {
+            "id": "setjy.rotmeas",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--rotmeas"
+              ]
+            },
+            "provider": {
+              "field": "rotmeas"
+            },
+            "python": {
+              "name": "rotmeas"
+            },
+            "presentation": {
+              "label": "rotmeas",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 17
+        },
+        {
+          "name": "fluxdict",
+          "concept": {
+            "id": "setjy.fluxdict",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "table",
+              "value": {}
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fluxdict"
+              ]
+            },
+            "provider": {
+              "field": "fluxdict"
+            },
+            "python": {
+              "name": "fluxdict",
+              "type_hint": "Mapping[str, ParameterData]"
+            },
+            "presentation": {
+              "label": "fluxdict",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 18
+        },
+        {
+          "name": "useephemdir",
+          "concept": {
+            "id": "setjy.useephemdir",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--useephemdir"
+              ]
+            },
+            "provider": {
+              "field": "useephemdir"
+            },
+            "python": {
+              "name": "useephemdir"
+            },
+            "presentation": {
+              "label": "useephemdir",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 19
+        },
+        {
+          "name": "interpolation",
+          "concept": {
+            "id": "setjy.interpolation",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "nearest"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interpolation"
+              ]
+            },
+            "provider": {
+              "field": "interpolation"
+            },
+            "python": {
+              "name": "interpolation"
+            },
+            "presentation": {
+              "label": "interpolation",
+              "group": "Calibrator model"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1519",
+            "reason": "setjy interpolates calibrator flux coefficients in time and accepts spline and the empty spelling."
+          },
+          "order": 20
+        },
+        {
+          "name": "usescratch",
+          "concept": {
+            "id": "parameter.usescratch",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--usescratch"
+              ]
+            },
+            "provider": {
+              "field": "usescratch"
+            },
+            "python": {
+              "name": "usescratch"
+            },
+            "presentation": {
+              "label": "usescratch",
+              "group": "Model"
+            }
+          }
+        },
+        {
+          "name": "ismms",
+          "concept": {
+            "id": "setjy.ismms",
+            "semantic_revision": 1
+          },
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--ismms"
+              ]
+            },
+            "provider": {
+              "field": "ismms"
+            },
+            "python": {
+              "name": "ismms"
+            },
+            "presentation": {
+              "label": "ismms",
+              "group": "Calibrator model"
+            }
+          },
+          "order": 22
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "uvmodelfit",
       "contract_version": 1,
       "display_name": "Fit Visibility Component",
@@ -23028,7 +23963,6 @@
         },
         {
           "name": "colorizeoverlay",
-          "unimplemented": {"issue": 1526},
           "concept": {
             "id": "plotms.colorizeoverlay",
             "semantic_revision": 1
@@ -27940,7 +28874,7 @@
             "kind": "literal",
             "value": {
               "kind": "bool",
-              "value": false
+              "value": true
             }
           },
           "required_when": {
@@ -27951,14 +28885,14 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": "casa-rs's own control: CASA's feather has no overwrite parameter.",
+          "surface_note": "CASA replaces an existing output image. Set this control to false to refuse replacement.",
           "projections": {
             "cli": {
               "positional": null,
               "flags": [
                 "--overwrite"
               ],
-              "false_flags": [],
+              "false_flags": ["--no-overwrite"],
               "metavar": null
             },
             "provider": {
@@ -38978,6 +39912,1014 @@
             },
             "presentation": {
               "label": "chanrangeSetXrange",
+              "group": "Plot"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "getcalmodvla",
+      "contract_version": 1,
+      "display_name": "Get VLA Calibrator Model",
+      "category": "Calibration",
+      "summary": "Retrieve a calibrator brightness model from the VLA service.",
+      "provider_family": "calibration",
+      "casa_task": "getcalmodvla",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "getcalmodvla"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": false
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "vla_calibrator.outfile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "Output Component List",
+              "group": "Output"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "This path names a component-list table."
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "Overwrite",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "source",
+          "concept": {
+            "id": "vla_calibrator.source",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--source"
+              ],
+              "metavar": "NAME"
+            },
+            "provider": {
+              "field": "source"
+            },
+            "python": {
+              "name": "source"
+            },
+            "presentation": {
+              "label": "Calibrator Name",
+              "group": "VLA Service"
+            }
+          }
+        },
+        {
+          "name": "direction",
+          "concept": {
+            "id": "vla_calibrator.direction",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--direction"
+              ],
+              "metavar": "DIRECTION"
+            },
+            "provider": {
+              "field": "direction"
+            },
+            "python": {
+              "name": "direction"
+            },
+            "presentation": {
+              "label": "Calibrator Direction",
+              "group": "VLA Service"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "The VLA service accepts a source lookup direction as an alternative to source name."
+          }
+        },
+        {
+          "name": "band",
+          "concept": {
+            "id": "vla_calibrator.band",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--band"
+              ],
+              "metavar": "BAND"
+            },
+            "provider": {
+              "field": "band"
+            },
+            "python": {
+              "name": "band"
+            },
+            "presentation": {
+              "label": "VLA Receiver Band",
+              "group": "VLA Service"
+            }
+          }
+        },
+        {
+          "name": "obsdate",
+          "concept": {
+            "id": "vla_calibrator.obsdate",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--obsdate"
+              ],
+              "metavar": "DATE"
+            },
+            "provider": {
+              "field": "obsdate"
+            },
+            "python": {
+              "name": "obsdate",
+              "type_hint": "int | float | str"
+            },
+            "presentation": {
+              "label": "Observation Date",
+              "group": "VLA Service"
+            }
+          }
+        },
+        {
+          "name": "refdate",
+          "concept": {
+            "id": "vla_calibrator.refdate",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refdate"
+              ],
+              "metavar": "DATE"
+            },
+            "provider": {
+              "field": "refdate"
+            },
+            "python": {
+              "name": "refdate",
+              "type_hint": "int | float | str"
+            },
+            "presentation": {
+              "label": "Reference Date",
+              "group": "VLA Service"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "This date is the upper bound for versions of the VLA model database, not a simulated observation date."
+          }
+        },
+        {
+          "name": "hosts",
+          "concept": {
+            "id": "vla_calibrator.hosts",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": "http://obs.vla.nrao.edu/calmodvla"
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--hosts"
+              ],
+              "metavar": "URLS"
+            },
+            "provider": {
+              "field": "hosts"
+            },
+            "python": {
+              "name": "hosts"
+            },
+            "presentation": {
+              "label": "Service URLs",
+              "group": "VLA Service"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "URLs for the VLA calibrator-model service."
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "predictcomp",
+      "contract_version": 1,
+      "display_name": "Predict Calibrator Component",
+      "category": "Calibration",
+      "summary": "Write a flux calibrator component list and optionally plot its visibility amplitudes.",
+      "provider_family": "simulation",
+      "casa_task": "predictcomp",
+      "execution": {
+        "invocation_name": "predictcomp",
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "predictcomp-run-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "prediction-products",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "decoded_artifacts"
+              },
+              "cardinality": "many",
+              "optional": true,
+              "probe_supported": false
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "objname",
+          "concept": {
+            "id": "predictcomp.objname",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--objname"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "objname"
+            },
+            "python": {
+              "name": "objname"
+            },
+            "presentation": {
+              "label": "objname",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "standard",
+          "concept": {
+            "id": "setjy.standard",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "Butler-JPL-Horizons 2010"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [
+            {
+              "kind": "allowed_values",
+              "values": [
+                  "Perley-Taylor 95",
+                  "Butler-JPL-Horizons 2010",
+                  "Perley-Butler 2010",
+                  "Perley-Taylor 99",
+                  "Perley-Butler 2013",
+                  "Perley 90",
+                  "Butler-JPL-Horizons 2012",
+                  "Perley-Butler 2017",
+                  "Baars"
+              ]
+            }
+          ],
+          "projections": {
+            "cli": {
+              "flags": [
+                "--standard"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "standard"
+            },
+            "python": {
+              "name": "standard"
+            },
+            "presentation": {
+              "label": "standard",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "epoch",
+          "concept": {
+            "id": "predictcomp.epoch",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--epoch"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "epoch"
+            },
+            "python": {
+              "name": "epoch"
+            },
+            "presentation": {
+              "label": "epoch",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "minfreq",
+          "concept": {
+            "id": "predictcomp.minfreq",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minfreq"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "minfreq"
+            },
+            "python": {
+              "name": "minfreq"
+            },
+            "presentation": {
+              "label": "minfreq",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "maxfreq",
+          "concept": {
+            "id": "predictcomp.maxfreq",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--maxfreq"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "maxfreq"
+            },
+            "python": {
+              "name": "maxfreq"
+            },
+            "presentation": {
+              "label": "maxfreq",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "nfreqs",
+          "concept": {
+            "id": "predictcomp.nfreqs",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--nfreqs"
+              ],
+              "metavar": "COUNT"
+            },
+            "provider": {
+              "field": "nfreqs"
+            },
+            "python": {
+              "name": "nfreqs"
+            },
+            "presentation": {
+              "label": "nfreqs",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "prefix",
+          "concept": {
+            "id": "predictcomp.prefix",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--prefix"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "prefix"
+            },
+            "python": {
+              "name": "prefix"
+            },
+            "presentation": {
+              "label": "prefix",
+              "group": "Prediction"
+            }
+          }
+        },
+        {
+          "name": "antennalist",
+          "concept": {
+            "id": "parameter.antennalist",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antennalist"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "antennalist"
+            },
+            "python": {
+              "name": "antennalist"
+            },
+            "presentation": {
+              "label": "antennalist",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showplot",
+          "concept": {
+            "id": "predictcomp.showplot",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showplot"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "showplot"
+            },
+            "python": {
+              "name": "showplot"
+            },
+            "presentation": {
+              "label": "showplot",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "savefig",
+          "concept": {
+            "id": "predictcomp.savefig",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--savefig"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "savefig"
+            },
+            "python": {
+              "name": "savefig"
+            },
+            "presentation": {
+              "label": "savefig",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "symb",
+          "concept": {
+            "id": "predictcomp.symb",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "."
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--symb"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "symb"
+            },
+            "python": {
+              "name": "symb"
+            },
+            "presentation": {
+              "label": "symb",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "include0amp",
+          "concept": {
+            "id": "predictcomp.include0amp",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--include0amp"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "include0amp"
+            },
+            "python": {
+              "name": "include0amp"
+            },
+            "presentation": {
+              "label": "include0amp",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "include0bl",
+          "concept": {
+            "id": "predictcomp.include0bl",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--include0bl"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "include0bl"
+            },
+            "python": {
+              "name": "include0bl"
+            },
+            "presentation": {
+              "label": "include0bl",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "blunit",
+          "concept": {
+            "id": "predictcomp.blunit",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--blunit"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "blunit"
+            },
+            "python": {
+              "name": "blunit"
+            },
+            "presentation": {
+              "label": "blunit",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showbl0flux",
+          "concept": {
+            "id": "predictcomp.showbl0flux",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showbl0flux"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "showbl0flux"
+            },
+            "python": {
+              "name": "showbl0flux"
+            },
+            "presentation": {
+              "label": "showbl0flux",
               "group": "Plot"
             }
           }

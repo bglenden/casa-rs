@@ -27,7 +27,7 @@ pub(super) struct SharedImage {
     coordinates_replaced: AtomicBool,
 }
 
-type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
+pub(super) type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
 
 static ATTACHED: Mutex<OpenImages> = Mutex::new(BTreeMap::new());
 
@@ -35,9 +35,23 @@ pub(super) fn registry() -> MutexGuard<'static, OpenImages> {
     ATTACHED.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+pub(super) fn read_locked<T>(
+    attachment: &AttachedImage,
+    read: impl FnOnce(&ImageHandle) -> PyResult<T>,
+) -> PyResult<T> {
+    let mut handle = attachment.lock();
+    attachment.require_pixel_read_lock(&mut handle)?;
+    let staged = read(&handle);
+    let release = attachment.release_requested_lock(&mut handle);
+    let result = staged?;
+    release?;
+    Ok(result)
+}
+
 pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,
+    registered: bool,
     beam_view: Mutex<BeamView>,
     retained_inputs: Vec<Self>,
     operand_paths: Vec<PathBuf>,
@@ -61,6 +75,7 @@ impl AttachedImage {
                 coordinates_replaced: AtomicBool::new(false),
             }),
             key: None,
+            registered: false,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
@@ -95,7 +110,7 @@ impl AttachedImage {
 
         // The data lock may wait for a different process. Keep the registry
         // available to other image names while this open is in progress.
-        let opened = Self::open_native(path, &key, Some(0), TableUseLock::acquire_waiting)?;
+        let mut opened = Self::open_native(path, &key, Some(0), TableUseLock::acquire_waiting)?;
         if !keep_read_lock {
             opened.lock().unlock_storage()?;
         }
@@ -124,7 +139,7 @@ impl AttachedImage {
 
     pub(super) fn open_created(registry: &mut OpenImages, path: &Path) -> PyResult<Self> {
         let key = key(path)?;
-        let opened = Self::open_native(path, &key, Some(1), TableUseLock::acquire)?;
+        let mut opened = Self::open_native(path, &key, Some(1), TableUseLock::acquire)?;
         if !opened
             .lock()
             .lock_storage(casa_tables::LockType::Write, 1)?
@@ -151,6 +166,7 @@ impl AttachedImage {
             .map(|image| Self {
                 image,
                 key: Some(key.to_path_buf()),
+                registered: true,
                 beam_view: Mutex::default(),
                 retained_inputs: Vec::new(),
                 operand_paths: Vec::new(),
@@ -171,7 +187,7 @@ impl AttachedImage {
         } else {
             TableUseLock::acquire_readonly
         };
-        let opened = Self::open_native(&key, &key, None, acquire)?;
+        let mut opened = Self::open_native(&key, &key, None, acquire)?;
         opened.register(registry);
         Ok(opened)
     }
@@ -199,6 +215,7 @@ impl AttachedImage {
         let opened = Self {
             image,
             key: Some(key.to_path_buf()),
+            registered: false,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
@@ -208,12 +225,13 @@ impl AttachedImage {
         Ok(opened)
     }
 
-    fn register(&self, registry: &mut OpenImages) {
+    fn register(&mut self, registry: &mut OpenImages) {
         if let Some(key) = &self.key {
             registry
                 .entry(key.clone())
                 .or_default()
                 .push(Arc::downgrade(&self.image));
+            self.registered = true;
         }
     }
 
@@ -420,6 +438,7 @@ impl AttachedImage {
             return Ok(Self {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
+                registered: self.registered,
                 beam_view: Mutex::new(self.beam_view().clone()),
                 retained_inputs: Vec::new(),
                 operand_paths: Vec::new(),
@@ -501,6 +520,7 @@ impl AttachedImage {
         Ok(Self {
             image,
             key: Some(target),
+            registered: true,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
@@ -749,7 +769,11 @@ fn restore_native_move<T>(
 
 impl Drop for AttachedImage {
     fn drop(&mut self) {
-        if let Some(key) = &self.key {
+        // A failed open can drop the candidate while publication holds the
+        // registry lock. The candidate has no registry entry to remove.
+        if self.registered
+            && let Some(key) = &self.key
+        {
             let mut registry = registry();
             if Arc::strong_count(&self.image) == 1
                 && let Some(images) = registry.get_mut(key)

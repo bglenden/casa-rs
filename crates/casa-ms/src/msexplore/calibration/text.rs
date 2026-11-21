@@ -13,10 +13,18 @@ pub(super) fn axes_header(
     y: Axis,
     verbose: bool,
     has_points: bool,
-    position_parameters: bool,
+    table: &CalibrationTable,
 ) -> io::Result<()> {
     let (columns, units) = match (verbose, has_points) {
-        (true, true) if position_parameters => (
+        (true, true) if table.subtype == "BPOLY" => (
+            "chan scan field ant1 ant1name time freq spw poln obs",
+            " None None None None None MJD(seconds) GHz None None None",
+        ),
+        (true, true) if table.subtype == "GSPLINE" => (
+            "scan field ant1 ant1name time spw poln obs",
+            " None None None None MJD(seconds) None None None",
+        ),
+        (true, true) if table.position_parameters() => (
             "chan scan field ant1 ant2 ant1name ant2name time freq spw antpos obs",
             " None None None None None None None MJD(seconds) GHz None None None",
         ),
@@ -51,12 +59,6 @@ pub(super) fn point(
         return writeln!(output, "{x} {y}");
     }
     let metadata = point.coordinates;
-    let names = metadata.antennas.map(|id| {
-        usize::try_from(id)
-            .ok()
-            .and_then(|id| table.antennas.get(id))
-            .map_or_else(|| "*".to_string(), |antenna| antenna.label())
-    });
     let polarization = if table.position_parameters() {
         CalibrationTable::position_label(metadata.receptor).to_owned()
     } else if metadata.receptor < 0 {
@@ -64,6 +66,35 @@ pub(super) fn point(
     } else {
         metadata.receptor.to_string()
     };
+    if matches!(table.subtype.as_str(), "BPOLY" | "GSPLINE") {
+        let name = usize::try_from(metadata.antennas[0])
+            .ok()
+            .and_then(|id| table.antennas.get(id))
+            .map_or("*", |antenna| antenna.name.as_str());
+        write!(output, "{x} {y}")?;
+        if table.subtype == "BPOLY" {
+            write!(output, " {}", metadata.channel)?;
+        }
+        write!(
+            output,
+            " {} {} {} {name} {:.3}",
+            metadata.scan, metadata.field, metadata.antennas[0], metadata.time,
+        )?;
+        if table.subtype == "BPOLY" {
+            write!(output, " {:.9}", metadata.frequency_ghz)?;
+        }
+        return writeln!(
+            output,
+            " {} {polarization} {}",
+            metadata.window, metadata.observation,
+        );
+    }
+    let names = metadata.antennas.map(|id| {
+        usize::try_from(id)
+            .ok()
+            .and_then(|id| table.antennas.get(id))
+            .map_or_else(|| "*".to_string(), |antenna| antenna.label())
+    });
     writeln!(
         output,
         "{x} {y} {} {} {} {} {} {} {} {:.3} {:.9} {} {} {}",

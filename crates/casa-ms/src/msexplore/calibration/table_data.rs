@@ -135,6 +135,7 @@ impl CalibrationTable {
                 integer(table, row, "ANTENNA1").unwrap_or(-1),
                 integer(table, row, "ANTENNA2").unwrap_or(-1),
             ],
+            feed1: integer(table, row, "FEED1").unwrap_or(-1),
             observation: integer(table, row, "OBSERVATION_ID").unwrap_or(-1),
         })
     }

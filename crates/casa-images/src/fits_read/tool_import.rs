@@ -28,8 +28,9 @@ use fitsio::{
 use ndarray::{Array2, Axis, IxDyn, ShapeBuilder, Slice, Zip};
 
 use super::{
-    PrimaryHdu, brightness_unit, history::history_from_cards, image_info_from_fits_header,
-    read_fits_axis_shape,
+    PrimaryHdu, brightness_unit,
+    history::{history_from_cards, restoring_beam_from_history},
+    image_info_from_fits_header, read_fits_axis_shape,
 };
 use crate::{
     ImageError, ImageInfo, ImageInterface, MutableImageInterface, TempImage, image::ImageHistoryRow,
@@ -221,6 +222,7 @@ impl FitsToolImport {
             header,
             coordinates,
         };
+        let history = history_from_cards(&cards, true);
         let mut info = image_info_from_fits_header(&source.header).to_record();
         if let Some((beams, records)) = source.beam_set()? {
             info.remove("restoringbeam");
@@ -235,13 +237,17 @@ impl FitsToolImport {
                 }
                 info.upsert("perplanebeams", Value::Record(grid));
             }
+        } else if info.get("restoringbeam").is_none()
+            && let Some(beam) = restoring_beam_from_history(&history)
+        {
+            info.upsert("restoringbeam", Value::Record(beam.to_record()));
         }
         Ok(Self {
             coordinate_record,
             units: brightness_unit(&source.header),
             image_info: info,
             misc_info: miscellaneous(&physical),
-            history: history_from_cards(&cards, true),
+            history,
             source,
         })
     }
@@ -940,7 +946,12 @@ fn set_fits_pole_and_projection(
         return;
     };
     let sin = projection == "SIN";
-    if sin || matches!(projection.as_str(), "TAN" | "STG" | "ARC" | "ZEA" | "AZP") {
+    if sin
+        || matches!(
+            projection.as_str(),
+            "TAN" | "STG" | "ARC" | "ZEA" | "AZP" | "ZPN"
+        )
+    {
         // The pole for a zenithal WCS is the center of the projection.
         if let Some(Value::Array(ArrayValue::Float64(reference))) = direction.get("crval")
             && let Some(latitude) = reference.get(IxDyn(&[1]))

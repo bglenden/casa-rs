@@ -143,7 +143,7 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
         cells: Vec::new(),
         header_opening_bytes: 0,
         groups,
-        rotations: Vec::new(),
+        rotations: PaSchedule::Unrotated,
         oversampling: 2,
         max_half_support: [0, 0],
         mueller: MuellerRouting::scalar(&[Some(0)], 1),
@@ -317,7 +317,7 @@ fn dense_pa_import_keeps_the_last_paired_buffer_and_charges_discarded_paths() {
     cells[0].imaging.path.reserve(256);
     let longest = cells[0].imaging.path.capacity() + cells[0].weight.path.capacity();
     let discarded = longest + cells[2].imaging.path.capacity() + cells[2].weight.path.capacity();
-    let opening = coalesce_imported_pa(&mut cells);
+    let opening = coalesce_imported_pa(&mut cells, true);
     let mut retained: Vec<_> = cells
         .iter()
         .map(|cell| {
@@ -374,13 +374,13 @@ fn rotation_epochs_key_the_current_group_and_bound_memory() {
         require_repeatable_schedule: false,
         samples: Arc::new([(1.0, 0.0), (2.0, 0.25), (3.0, 0.5)]),
     };
-    catalog.rotations = rotation.schedule(0.0).unwrap();
+    catalog.rotations = PaSchedule::Single(rotation.schedule(0.0).unwrap());
     catalog.indexing.rotation = Some(rotation);
     let slots = &mut catalog.lru.get_mut().unwrap().slots;
     let original_slots = slots.capacity();
     slots.resize_with(3, || Slot::Empty);
     let slot_bytes = (slots.capacity() - original_slots) * size_of::<Slot>();
-    let added_index = catalog.rotations.capacity() * size_of::<(f64, f64)>()
+    let added_index = catalog.rotations.resident_bytes()
         + 3 * size_of::<(f64, f32)>()
         + 2 * size_of::<usize>()
         + slot_bytes;
@@ -515,7 +515,8 @@ fn an_odd_sampled_aw_cell_imports_both_endpoint_tap_rows() {
         diameter_m: 25.0,
         sky_increment_rad: 1e-4,
         working_size: 32,
-        legacy_vla: None,
+        telescope: "EVLA",
+        legacy_coordinates: None,
     };
     write_cell(&path, &plane, 1.5e9, grid, &misc).unwrap();
     let header = read_header(&path).unwrap();

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Calibration table input for the shared PlotMS provider.
 
-mod atmosphere;
+pub(super) mod atmosphere;
 pub(super) mod averaging;
-mod axis;
+pub(super) mod axis;
 pub(super) mod figure;
+mod header;
 mod iteration;
+mod legacy;
 mod samples;
 mod selection;
 mod table_data;
@@ -21,7 +23,7 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 use self::axis::Axis;
-use self::iteration::PlotPanels;
+use self::iteration::{IterationAxis, PlotPanels};
 use self::samples::{Point, SeriesRequest};
 use self::selection::{Expressions, Selection};
 use self::table_data::CalibrationTable;
@@ -62,6 +64,7 @@ pub(super) fn run(
     payload: Option<&Path>,
 ) -> Result<TaskSuccess, TaskFailure> {
     validate_calibration_controls(task)?;
+    let header_items = header::items(task)?;
     figure::plot_limits(task.value("plotrange"))?;
     let output = task
         .text("plotfile")?
@@ -77,7 +80,6 @@ pub(super) fn run(
     let native = Table::open(TableOptions::new(path)).map_err(|e| {
         TaskFailure::execution(format!("open calibration table {}: {e}", path.display()))
     })?;
-    let table = CalibrationTable::read(native, path).map_err(TaskFailure::execution)?;
     let use_selection = task.flag("selectdata")?;
     let expression = |name| {
         if use_selection {
@@ -98,6 +100,25 @@ pub(super) fn run(
     if polarization.is_empty() {
         polarization = expression("polarization")?;
     }
+    let expressions = Expressions {
+        antenna: &antenna,
+        field: &field,
+        spw: &spw,
+        scan: &scan,
+        timerange: &timerange,
+        observation: &observation,
+        taql: &taql,
+    };
+    let averaging = averaging::options(task)?;
+    let (native, spline) = legacy::materialize(
+        native,
+        path,
+        &expressions,
+        averaging::active(&averaging),
+        &polarization,
+    )
+    .map_err(TaskFailure::execution)?;
+    let table = CalibrationTable::read(native, path).map_err(TaskFailure::execution)?;
     if table.position_parameters()
         && !matches!(
             antenna_position.as_str(),
@@ -113,17 +134,17 @@ pub(super) fn run(
     } else {
         &polarization
     };
-    let expressions = Expressions {
-        antenna: &antenna,
-        field: &field,
-        spw: &spw,
-        scan: &scan,
-        timerange: &timerange,
-        observation: &observation,
-        taql: &taql,
-    };
-    let selection = Selection::resolve(&table, &expressions).map_err(TaskFailure::validation)?;
-    let averaging = averaging::options(task)?;
+    // Legacy GSPLINE selection applies to the source solution rows.
+    let spline_selection = Expressions::default();
+    let selection = Selection::resolve(
+        &table,
+        if spline.is_some() {
+            &spline_selection
+        } else {
+            &expressions
+        },
+    )
+    .map_err(TaskFailure::validation)?;
     let [default_x, default_y] = default_axes(&table.subtype);
     let x = task
         .text("xaxis")?
@@ -132,6 +153,11 @@ pub(super) fn run(
         .map_err(TaskFailure::validation)?;
     let ys = axes(task.value("yaxis"), task.value("ydatacolumn"), default_y)
         .map_err(TaskFailure::validation)?;
+    if spline.is_some() {
+        legacy::check_spline_axes(std::iter::once(x).chain(ys.iter().copied()))
+            .map_err(TaskFailure::validation)?;
+    }
+    let iteration = IterationAxis::from_task(task)?;
     let series = ys
         .into_iter()
         .map(|y| {
@@ -140,6 +166,8 @@ pub(super) fn run(
                 y,
                 polarization: receptor_selection,
                 averaging: &averaging,
+                spline,
+                iteration,
             };
             let points =
                 samples::points(&table, &selection, &request).map_err(TaskFailure::validation)?;
@@ -147,7 +175,7 @@ pub(super) fn run(
         })
         .collect::<Result<Vec<_>, TaskFailure>>()?;
     let samples = series.iter().map(|line| line.points.len()).sum();
-    let mut panels = PlotPanels::prepare(task, &table, series)?;
+    let mut panels = PlotPanels::prepare(task, &table, series, iteration)?;
     if let Some(options) = atmosphere::Options::from_task(task)? {
         atmosphere::append_overlays(
             &table,
@@ -198,7 +226,15 @@ pub(super) fn run(
     }
     let show = task.flag("showgui")?;
     let plots = match payload {
-        Some(payload) => figure::prepare(task, payload, figure_path, show, overwrite, &panels)?,
+        Some(payload) => figure::prepare(
+            task,
+            payload,
+            figure_path,
+            show,
+            overwrite,
+            &panels,
+            |source| header::lines(&header_items, &table, path, source),
+        )?,
         None if figure_path.is_some() => {
             return Err(TaskFailure::validation(
                 "use casars.tasks.plotms for rendered figures",
@@ -217,24 +253,16 @@ pub(super) fn run(
 }
 
 fn validate_calibration_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
-    let pending = |name| {
-        TaskFailure::validation(format!(
-            "PlotMS calibration control {name} is pending #1526"
-        ))
-        .at(name)
-    };
-    if task
-        .text("headeritems")?
-        .is_some_and(|value| !value.is_empty())
-    {
-        return Err(pending("headeritems"));
-    }
     if task.flag("transform")?
-        && task
+        && (task
             .text("freqframe")?
             .is_some_and(|value| !value.is_empty())
+            || task
+                .text("restfreq")?
+                .is_some_and(|value| !value.is_empty())
+            || !task.required_text("veldef")?.eq_ignore_ascii_case("RADIO"))
     {
-        return Err(pending("freqframe"));
+        tracing::warn!("Transformations ignored: not supported for calibration tables.");
     }
     if task.flag("selectdata")? {
         for name in ["uvrange", "array", "intent", "feed"] {
@@ -293,7 +321,8 @@ pub(super) fn axis_names(value: Option<&ParameterValue>) -> Result<Vec<&str>, St
 fn default_axes(subtype: &str) -> [Axis; 2] {
     use Axis::*;
     match subtype {
-        "B Jones" | "BPOLY" => [Channel, Amplitude],
+        "B Jones" => [Channel, Amplitude],
+        "BPOLY" => [Frequency, Amplitude],
         "K Jones" => [Antenna1, Amplitude],
         subtype if subtype.starts_with("KAntPos") => [Antenna1, Amplitude],
         subtype if subtype.contains("TSYS") => [Channel, Amplitude],
@@ -376,7 +405,7 @@ fn write_export(
                 series.y,
                 header.verbose,
                 points.peek().is_some(),
-                table.position_parameters(),
+                table,
             )?;
             for point in points {
                 text::point(

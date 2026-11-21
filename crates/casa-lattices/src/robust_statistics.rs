@@ -291,9 +291,18 @@ pub fn compute_robust_stats(
                 } else {
                     max_zscore(stats.npts as u64)
                 };
-                let low = stats.mean - z * stats.sigma;
-                let high = stats.mean + z * stats.sigma;
-                kept.retain(|point| low <= point.value && point.value <= high);
+                let center = if stats.npts == 0. { 0. } else { stats.mean };
+                let low = center - z * stats.sigma;
+                let high = center + z * stats.sigma;
+                // Casacore replaces the range on the original data at each
+                // iteration. An empty previous range has mean and sigma zero.
+                kept.clear();
+                kept.extend(
+                    sample
+                        .iter()
+                        .copied()
+                        .filter(|point| low <= point.value && point.value <= high),
+                );
                 if kept.len() < stats.npts as usize {
                     reductions += 1;
                 }
@@ -496,15 +505,13 @@ fn biweight_location_scale(
     if npts <= 1 {
         return Err(RobustStatsError::BiweightNeedsTwoPoints { npts });
     }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|left, right| left.total_cmp(right));
-    let mut location = averaging_median(&sorted);
-    let mut deviations: Vec<f64> = values
-        .iter()
-        .map(|value| (value - location).abs())
-        .collect();
-    deviations.sort_by(|left, right| left.total_cmp(right));
-    let mut scale = PROBIT_3_4 * averaging_median(&deviations);
+    let mut workspace = values.to_vec();
+    let mut location = selection_median(&mut workspace);
+    for (deviation, value) in workspace.iter_mut().zip(values) {
+        *deviation = (value - location).abs();
+    }
+    let mut scale = PROBIT_3_4 * selection_median(&mut workspace);
+    drop(workspace);
 
     let mut spread = c * scale;
     let (mut low, mut high) = (location - spread, location + spread);
@@ -551,10 +558,27 @@ fn biweight_location_scale(
             high = location + spread;
         }
     } else {
-        location = location_sums(location, scale, low, high);
-        scale = scale_sums(location, scale, low, high);
+        let initial_location = location;
+        location = location_sums(initial_location, scale, low, high);
+        scale = scale_sums(initial_location, scale, low, high);
     }
     Ok((location, scale))
+}
+
+fn selection_median(values: &mut [f64]) -> f64 {
+    let mid = values.len() / 2;
+    let even = values.len().is_multiple_of(2);
+    let (lower, median, _) = values.select_nth_unstable_by(mid, f64::total_cmp);
+    if even {
+        let lower_middle = lower
+            .iter()
+            .copied()
+            .max_by(f64::total_cmp)
+            .expect("two central values");
+        (lower_middle + *median) / 2.0
+    } else {
+        *median
+    }
 }
 
 /// The maximum z-score Chauvenet's criterion allows for a sample of

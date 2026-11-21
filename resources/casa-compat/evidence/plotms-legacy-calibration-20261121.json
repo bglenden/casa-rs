@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "b60d8a6a140bd6f0a29177584db5ff91244f5d12",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on the same persisted BPOLY and GSPLINE tables with receptor-dependent gains, surviving and flagged receptors, and source-row selection.",
+  "command": "casa-python tools/casa-compat/plotms_legacy_calibration_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "result": "passed",
+  "paired_text_exports": 20,
+  "paired_points": 31696,
+  "maximum_ordinate_normalized_rms": 3.78525e-07,
+  "paired_png_products": 2,
+  "matched_native_rendered_coordinates": 2080,
+  "paired_refusals": 4,
+  "negative_antenna_deviation_checked": true,
+  "input_files_unchanged": true
+}

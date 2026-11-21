@@ -1,25 +1,29 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA's `coordsys` tool (cs): every method of CASA 6.7.6.14's binding,
-//! with its signature (ADR-0017, #1025). A method casa-rs does not implement
-//! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
+//! CASA's `coordsys` tool (cs) and the signature inventory for the
+//! CASA 6.7.6.14 binding (ADR-0017, #1025).
 
 mod axis_labels;
 mod construction;
 pub(super) use construction::{append_coordinate, validate_coordinate_indices};
 mod conversion_frames;
 mod convert_direction;
+mod direction_edit;
 mod doppler;
 pub(super) use doppler::stored_velocity_settings;
 mod frame_metadata;
 mod inspect;
 mod linear_transform;
+mod mixed_transform;
 mod observation;
 mod ordering;
+mod projection;
 mod reference;
+mod reference_code;
 mod replace;
 mod rest_frequency;
-mod stubs;
+mod spectral_samples;
 mod subimage;
+mod summary;
 pub(crate) mod surface;
 mod tabular;
 mod transform_many;
@@ -39,16 +43,6 @@ use casa_types::measures::{direction_to_record, epoch_to_record, position_to_rec
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-
-use crate::tools::not_yet_implemented_in;
-
-/// The issue that records the methods casa-rs refuses.
-const ISSUE: u32 = 1027;
-
-/// A method casa-rs does not implement yet.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("coordsys", method, ISSUE)
-}
 
 fn index_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i32> {
     if value.is_none() {
@@ -121,6 +115,9 @@ fn current_epoch(mut info: ObsInfo) -> ObsInfo {
 
 impl CoordinateState {
     fn from_coordinates(coordinates: CoordinateSystem, mut record: RecordValue) -> PyResult<Self> {
+        coordinates
+            .normalize_quality_records(&mut record)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         for (index, placement) in coordinates
             .coordinates_in_record(&record)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?

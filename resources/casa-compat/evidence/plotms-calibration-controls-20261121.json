@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "95ca3bf47f2fa98411cf9fea7d72ba95eac47c44",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on the same current bandpass table and selected calibration solutions. Public page headers and spectral transform settings.",
+  "command": "casa-python tools/casa-compat/plotms_calibration_controls_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "result": "passed",
+  "paired_text_exports": 3,
+  "native_active_transform_exports": 2,
+  "matched_native_header_sizes": [
+    [
+      1000,
+      400,
+      100
+    ],
+    [
+      1000,
+      400,
+      300
+    ]
+  ]
+}

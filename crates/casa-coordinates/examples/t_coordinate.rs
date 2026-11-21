@@ -248,8 +248,8 @@ fn projection_demo() {
 
     // Parse from name.
     assert_eq!(ProjectionType::from_name("sin"), Some(ProjectionType::SIN));
-    assert_eq!(ProjectionType::from_name("BON"), None);
-    println!("  from_name('sin') = SIN, from_name('BON') = None");
+    assert_eq!(ProjectionType::from_name("XPH"), None);
+    println!("  from_name('sin') = SIN, from_name('XPH') = None");
 }
 
 // -----------------------------------------------------------------------

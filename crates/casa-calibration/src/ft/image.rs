@@ -410,55 +410,124 @@ fn effective_padding(options: &PredictionGeometry) -> MsResult<GridPadding> {
     ))
 }
 
-fn automatic_w_planes(
+pub(super) fn automatic_w_planes(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
 ) -> MsResult<WPlaneCount> {
-    let velocity = 299_792_458.0;
-    let spectral = ms.spectral_window()?;
-    let windows = selected
-        .selected_rows
-        .iter()
-        .map(|row| row.spectral_window_id)
-        .collect::<BTreeSet<_>>();
-    let mut min_frequency = f64::INFINITY;
-    let mut max_frequency: f64 = 0.;
-    for window in windows {
-        let frequencies = spectral.chan_freq(window as usize)?;
-        let channels = match selected.channel_selections.get(&window) {
-            Some(selection) => selection.indices(frequencies.len())?,
-            None => (0..frequencies.len()).collect(),
-        };
-        for channel in channels {
-            min_frequency = min_frequency.min(frequencies[channel]);
-            max_frequency = max_frequency.max(frequencies[channel]);
+    let mut stats = WStatistics::new();
+    stats.add_selection(ms, selected)?;
+    stats.plane_count()
+}
+
+/// Selection-wide legacy WProjectFT statistics, accumulated in MS iterator order.
+pub(super) struct WStatistics {
+    min_w: f64,
+    max_w: f64,
+    square_sum: f64,
+    rows: usize,
+    last_frequency: f64,
+}
+
+impl WStatistics {
+    pub(super) fn new() -> Self {
+        Self {
+            min_w: f64::INFINITY,
+            max_w: 0.,
+            square_sum: 0.,
+            rows: 0,
+            last_frequency: 0.,
         }
     }
-    let uvw = ms.main_table().column_accessor("UVW")?;
-    let mut min_w = f64::INFINITY;
-    let mut max_w: f64 = 0.;
-    let mut square_sum: f64 = 0.;
-    for rows in selected.selected_rows.chunks(256) {
-        let row_ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
-        for value in uvw.array_cells_owned_uncached(&row_ids)? {
-            let Some(ArrayValue::Float64(values)) = value else {
-                return Err(invalid("UVW must contain three doubles"));
+
+    pub(super) fn add_selection(
+        &mut self,
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+    ) -> MsResult<()> {
+        if selected.selected_rows.is_empty() {
+            return Ok(());
+        }
+        let spectral = ms.spectral_window()?;
+        let windows = selected
+            .selected_rows
+            .iter()
+            .map(|row| row.spectral_window_id)
+            .collect::<BTreeSet<_>>();
+        let mut ranges = BTreeMap::new();
+        for window in windows {
+            let frequencies = spectral.chan_freq(window as usize)?;
+            let channels = match selected.channel_selections.get(&window) {
+                Some(selection) => selection.indices(frequencies.len())?,
+                None => (0..frequencies.len()).collect(),
             };
-            let w = values
-                .iter()
-                .nth(2)
-                .ok_or_else(|| invalid("UVW must contain a W coordinate"))?
-                .abs();
-            min_w = min_w.min(w);
-            max_w = max_w.max(w);
-            square_sum += w * w;
+            let mut low = f64::INFINITY;
+            let mut high: f64 = 0.;
+            for channel in channels {
+                let frequency = frequencies[channel];
+                low = low.min(frequency);
+                high = high.max(frequency);
+            }
+            ranges.insert(window, (low, high));
         }
+        let main = ms.main_table();
+        let uvw = main.column_accessor("UVW")?;
+        let arrays = (ranges.len() > 1)
+            .then(|| main.column_accessor("ARRAY_ID"))
+            .transpose()?;
+        let mut last_buffer = None;
+        for rows in selected.selected_rows.chunks(256) {
+            let row_ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+            let w_rows = uvw.array_cells_owned_uncached(&row_ids)?;
+            let array_ids = arrays
+                .as_ref()
+                .map(|column| column.scalar_cells_owned_for_rows(&row_ids))
+                .transpose()?;
+            for (index, (row, value)) in rows.iter().zip(w_rows).enumerate() {
+                let Some(ArrayValue::Float64(values)) = value else {
+                    return Err(invalid("UVW must contain three doubles"));
+                };
+                let w = values
+                    .iter()
+                    .nth(2)
+                    .ok_or_else(|| invalid("UVW must contain a W coordinate"))?
+                    .abs();
+                let (low, high) = ranges[&row.spectral_window_id];
+                // CASA reduces each buffer in wavelengths before taking extrema.
+                self.min_w = self.min_w.min(w * low);
+                self.max_w = self.max_w.max(w * high);
+                self.square_sum += w * w;
+                let array = if let Some(array_ids) = &array_ids {
+                    let Some(ScalarValue::Int32(array)) = &array_ids[index] else {
+                        return Err(invalid("ARRAY_ID must be Int32"));
+                    };
+                    *array
+                } else {
+                    0
+                };
+                let key = (array, row.field_id, row.data_desc_id);
+                if last_buffer.is_none_or(|last| key > last) {
+                    last_buffer = Some(key);
+                    self.last_frequency = high;
+                }
+            }
+            self.rows += rows.len();
+        }
+        Ok(())
     }
-    Ok(WPlaneCount::Auto {
-        min_w: min_w * min_frequency / velocity,
-        max_w: max_w * max_frequency / velocity,
-        rms_w: (square_sum / selected.selected_rows.len() as f64).sqrt() * max_frequency / velocity,
-    })
+
+    pub(super) fn plane_count(&self) -> MsResult<WPlaneCount> {
+        if self.rows == 0 {
+            return Err(invalid("automatic W projection needs a nonempty selection"));
+        }
+        let velocity = 299_792_458.0;
+        // WProjectFT::wStat sums metres squared and scales its RMS by the
+        // maximum frequency retained from the final buffer.
+        Ok(WPlaneCount::Auto {
+            min_w: self.min_w / velocity,
+            max_w: self.max_w / velocity,
+            rms_w: (self.square_sum / self.rows as f64).sqrt() * self.last_frequency / velocity,
+        })
+    }
 }
 
 pub(super) fn validate_short_cubic(
@@ -583,30 +652,19 @@ impl ImageTransform {
                 "the model image's Stokes axis does not match its planes",
             ));
         }
-        if npol > 1
-            && options
-                .voltage_pattern
-                .as_ref()
-                .is_some_and(|beam| beam.has_squint())
+        if options
+            .voltage_pattern
+            .as_ref()
+            .is_some_and(|beam| beam.has_squint())
         {
-            let polarization = ms.polarization()?;
-            let layouts: BTreeSet<_> = selected
-                .selected_rows
-                .iter()
-                .map(|row| row.polarization_id)
-                .collect();
-            for layout in layouts {
-                let codes = polarization.corr_type(usize::try_from(layout).map_err(invalid)?)?;
-                if codes.iter().any(|&code| {
-                    !matches!(
-                        Correlation::from_casacore_code(code),
-                        Some(Correlation::RR | Correlation::RL | Correlation::LR | Correlation::LL)
-                    )
-                }) {
-                    return Err(invalid(
-                        "legacy voltage-pattern squint for noncircular correlations is pending #1520",
-                    ));
-                }
+            use StokesType::{I, LL, Q, RR, U, V};
+            if !matches!(
+                stokes.stokes(),
+                [I] | [Q] | [V] | [I, Q] | [I, U] | [U, I] | [I, V] | [RR, LL] | [I, Q, U, V]
+            ) {
+                return Err(invalid(
+                    "legacy voltage-pattern squint for these Stokes axes is pending #1520",
+                ));
             }
         }
         let correlations = first_correlations(ms, selected)?
@@ -624,7 +682,19 @@ impl ImageTransform {
                     .ok_or_else(|| invalid("unsupported polarization plane in model image"))
             })
             .collect::<MsResult<Vec<_>>>()?;
-        let routing = PolarizationRouting::compile(&correlations, &requested).map_err(invalid)?;
+        use PolarizationCoordinate::{StokesI, StokesQ, StokesU};
+        let routing = if matches!(
+            requested.as_slice(),
+            [StokesQ] | [StokesI, StokesU] | [StokesU, StokesI]
+        ) {
+            // CASA can save the nonzero cross-hand model even when the
+            // selected MeasurementSet contains only parallel hands. I/U
+            // also retains the original U plane even if no row uses it.
+            PolarizationRouting::from_saved_planes(&correlations, &requested)
+        } else {
+            PolarizationRouting::compile(&correlations, &requested)
+        }
+        .map_err(invalid)?;
         let increment = [direction.increment()[0], direction.increment()[1]];
         // GridFT phases on the world direction of the integer image
         // midpoint, which need not be the WCS reference pixel.
@@ -756,20 +826,15 @@ impl ImageTransform {
                 Ok::<_, casa_ms::MsError>((beam, direction, separations))
             })
             .transpose()?;
-        let squint = beam.as_ref().is_some_and(|(beam, _, _)| beam.has_squint());
-        if squint {
-            let index = coordinate_index(image.coordinates(), CoordinateType::Stokes)?;
-            let CoordinateModel::Stokes(stokes) = image.coordinates().coordinate(index) else {
-                unreachable!("Stokes coordinate");
-            };
-            use StokesType::{I, Q, U, V};
-            if !matches!(stokes.stokes(), [I] | [I, Q, U, V]) {
-                return Err(invalid(
-                    "legacy voltage-pattern squint for these Stokes axes is pending #1520",
-                ));
-            }
-        }
-        let grid_pols = self.operator.polarization().grid_pols();
+        let grid = self.operator.polarization().grid();
+        let squint = beam.as_ref().is_some_and(|(beam, _, _)| beam.has_squint())
+            && grid.iter().any(|plane| {
+                matches!(
+                    plane,
+                    GridPolarization::Correlation(Correlation::RR | Correlation::LL)
+                )
+            });
+        let grid_pols = grid.len();
         let settings = self.options.settings;
         let plane_bytes = gx.saturating_mul(gy).saturating_mul(8);
         let cache_bytes = usize::try_from(settings.cache_size)
@@ -795,15 +860,37 @@ impl ImageTransform {
             cache_bytes,
         )
         .map_err(invalid)?;
-        let work_bytes = model_plane_memory([nx, ny], npol, [gx, gy], grid_pols);
+        let taper_bytes = if squint {
+            model_taper_bytes([nx, ny], grid_pols)
+        } else {
+            0
+        };
+        let work_bytes =
+            model_plane_memory([nx, ny], npol, [gx, gy], grid_pols).saturating_add(taper_bytes);
         let (workers, reservation) =
             model_workers(self.options.native_threads, channels, work_bytes);
-        let (_reservation, team) = match WorkerTeam::new(workers) {
+        let (worker_memory, team) = match WorkerTeam::new(workers) {
             Ok(team) => (reservation, team),
             Err(_) => {
                 drop(reservation);
                 (None, WorkerTeam::new(1).map_err(invalid)?)
             }
+        };
+        let _serial_taper_memory = if squint && worker_memory.is_none() {
+            let host = HostResources::detect().map_err(invalid)?;
+            Some(
+                admit(
+                    &host,
+                    &ResourcePolicy::Balanced,
+                    &Demand {
+                        phase: "legacy squinted image tapers",
+                        memory: taper_bytes,
+                    },
+                )
+                .map_err(invalid)?,
+            )
+        } else {
+            None
         };
         tracing::debug!(
             requested = self.options.native_threads,
@@ -820,29 +907,38 @@ impl ImageTransform {
                     .map_err(invalid)
             },
             |plane, values| {
-                let images = if let Some((beam, direction, separation)) = &beam {
-                    beam.model_plane(
-                        direction,
-                        separation.as_ref(),
-                        values,
-                        self.frequencies[plane],
-                    )?
-                } else {
+                let plain_images = || {
                     (0..npol)
                         .map(|pol| Array2::from_shape_fn((ny, nx), |(y, x)| values[[x, y, pol, 0]]))
                         .collect()
                 };
+                let frequency = self.frequencies[plane];
+                let (images, factors) = match &beam {
+                    Some((beam, direction, _)) if squint => {
+                        // CASA converts to correlation planes before applying
+                        // PBMath to the displaced RR and LL receptors.
+                        let tapers =
+                            beam.squinted_model_tapers(direction, [nx, ny], frequency, grid)?;
+                        (plain_images(), Some(tapers))
+                    }
+                    Some((beam, direction, separation)) => (
+                        beam.model_plane(direction, separation.as_ref(), values, frequency)?,
+                        None,
+                    ),
+                    None => (plain_images(), None),
+                };
+                let prescale = factors
+                    .as_deref()
+                    .map_or(ModelPrescale::Unit, ModelPrescale::GridPlanes);
                 let model = ModelImages {
                     first_plane: plane as u32,
                     planes: vec![ModelPlane { images }],
                 };
                 match &mosaic {
-                    Some(correction) => self.operator.prepare_model_with_correction(
-                        &model,
-                        ModelPrescale::Unit,
-                        correction,
-                    ),
-                    None => self.operator.prepare_model(&model, ModelPrescale::Unit),
+                    Some(correction) => self
+                        .operator
+                        .prepare_model_with_correction(&model, prescale, correction),
+                    None => self.operator.prepare_model(&model, prescale),
                 }
                 .map_err(invalid)
             },
@@ -1074,6 +1170,12 @@ fn model_plane_memory(
         .saturating_mul(grid_polarizations + 1)
         .saturating_mul(2 * size_of::<f64>());
     (image_bytes.saturating_add(grid_bytes) as u64).saturating_add(grid_planning_bytes(grid_cells))
+}
+
+fn model_taper_bytes([nx, ny]: [usize; 2], grid_polarizations: usize) -> u64 {
+    nx.saturating_mul(ny)
+        .saturating_mul(grid_polarizations)
+        .saturating_mul(size_of::<f32>()) as u64
 }
 
 #[cfg(test)]

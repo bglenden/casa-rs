@@ -5,6 +5,28 @@ use crate::CoordinateType;
 use crate::fits::header::FitsHeader;
 
 #[test]
+fn zpn_header_preserves_high_polynomial_coefficients() {
+    let mut coefficients = vec![0.0; 21];
+    coefficients[1] = 1.0;
+    coefficients[20] = 0.1;
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::with_parameters(ProjectionType::ZPN, coefficients),
+        [0.0, std::f64::consts::FRAC_PI_2],
+        [0.1, 0.1],
+        [0.0, 0.0],
+    ));
+    let shape = [16, 16];
+    let header = try_to_fits_header(&coordinates, &shape).unwrap();
+    assert_eq!(header.get_float("PV2_20"), Some(0.1));
+    let restored = from_fits_header(&header, &shape).unwrap();
+    // At one radian from the zenith, r = z + 0.1 z^20 is 1.1 rad.
+    let world = restored.to_world(&[0.0, -11.0]).unwrap();
+    assert!((world[1] - (std::f64::consts::FRAC_PI_2 - 1.0)).abs() < 1e-12);
+}
+
+#[test]
 fn fits_readback_keeps_a_rotated_direction_and_a_separately_placed_frequency() {
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(
