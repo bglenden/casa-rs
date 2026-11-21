@@ -53,12 +53,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (order), text_signature = "($self, order)")]
-    fn reorder(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("reorder")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (csys, whichin, whichout), text_signature = "($self, csys, whichin, whichout)")]
     fn replace(
         &self,
@@ -158,11 +152,5 @@ impl PyCoordsys {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("summary")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (order), text_signature = "($self, order)")]
-    fn transpose(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("transpose")
     }
 }
