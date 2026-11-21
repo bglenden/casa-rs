@@ -19,9 +19,29 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     let ms = MeasurementSet::open(&vis)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
-    let rows = solve_polarization(&ms, &request).map_err(TaskFailure::execution)?;
+    let outcome = solve_polarization(&ms, &request).map_err(TaskFailure::execution)?;
+    let result = if outcome.source.is_empty() {
+        CasaValue::None
+    } else {
+        CasaValue::dict(outcome.source.into_iter().map(|(field, windows)| {
+            let mut average = num_complex::Complex32::ZERO;
+            let vector = |qu: num_complex::Complex32| {
+                CasaValue::float64_vector([1.0, f64::from(qu.re), f64::from(qu.im), 0.0])
+            };
+            let mut entries = windows
+                .iter()
+                .map(|(id, &qu)| {
+                    average += qu;
+                    (format!("Spw{id}"), vector(qu))
+                })
+                .collect::<Vec<_>>();
+            average /= windows.len() as f32;
+            entries.push(("SpwAve".into(), vector(average)));
+            (field, CasaValue::dict(entries))
+        }))
+    };
     TaskSuccess::new(
-        CasaValue::None,
-        &serde_json::json!({ "solution_rows": rows }),
+        result,
+        &serde_json::json!({ "solution_rows": outcome.rows }),
     )
 }

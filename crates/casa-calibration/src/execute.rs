@@ -2198,7 +2198,7 @@ fn apply_row_all_channels(
         let is_switched_power = subtype == "G EVLASWPOW";
         let position_angle = subtype == "PosAng Jones";
         let channelized_polarization = polarization::Leakage::is_channelized(subtype)
-            || subtype == "Xf Jones"
+            || matches!(subtype, "Xf Jones" | "Xfparang Jones")
             || position_angle;
         let bounded_frequency_cache = is_tsys || channelized_polarization;
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
@@ -2255,7 +2255,7 @@ fn apply_row_all_channels(
         let is_bandpass = is_tsys || matches!(subtype, "B Jones" | "BPOLY");
         let resample_frequency = is_bandpass || channelized_polarization;
         let first_receptor_only =
-            (is_bandpass || is_switched_power || matches!(subtype, "X Jones" | "Xf Jones"))
+            (is_bandpass || is_switched_power || polarization::is_cross_hand_phase(subtype))
                 && correlation_types.len() == 1;
         let (ant1_transient, ant2_transient) = (
             bounded_frequency_cache && ant1.interpolated,
@@ -4469,10 +4469,7 @@ fn load_parameters(
         }
     })?;
     let leakage = polarization::Leakage::from_subtype(&table_plan.summary.table_subtype);
-    let cross_hand_phase = matches!(
-        table_plan.summary.table_subtype.as_str(),
-        "X Jones" | "Xf Jones"
-    );
+    let cross_hand_phase = polarization::is_cross_hand_phase(&table_plan.summary.table_subtype);
     let supports_calwt = (table_plan.summary.parameter_family
         == CalibrationParameterFamily::Complex
         && leakage.is_none()

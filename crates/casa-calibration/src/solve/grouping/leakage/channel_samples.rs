@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Bound the retained preaverages for iterative channelized solves.
+//! Bound the retained preaverages for channelized polarization solves.
 
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -11,8 +11,15 @@ use super::standard::StandardSample;
 const SAMPLE_BUFFER_BYTES: usize = 32 * 1024 * 1024;
 const ENCODED_BYTES: usize = 88;
 
-pub(super) struct ChannelSamples {
-    pending: Vec<Vec<StandardSample>>,
+pub(super) trait ScratchSample {
+    const BYTES: usize;
+
+    fn write_to(&self, bytes: &mut [u8]);
+    fn from_bytes(bytes: &[u8]) -> Self;
+}
+
+pub(super) struct ChannelSamples<S = StandardSample> {
+    pending: Vec<Vec<S>>,
     capacity: usize,
     buffered: usize,
     spill: Option<Spill>,
@@ -24,9 +31,9 @@ struct Spill {
     runs: Vec<Vec<(u64, usize)>>,
 }
 
-impl ChannelSamples {
+impl<S: ScratchSample> ChannelSamples<S> {
     pub(super) fn new(channels: usize) -> Self {
-        Self::with_capacity(channels, SAMPLE_BUFFER_BYTES / size_of::<StandardSample>())
+        Self::with_capacity(channels, SAMPLE_BUFFER_BYTES / size_of::<S>())
     }
 
     fn with_capacity(channels: usize, capacity: usize) -> Self {
@@ -46,7 +53,7 @@ impl ChannelSamples {
         self.buffered == 0 && self.spill.is_none()
     }
 
-    pub(super) fn push(&mut self, channel: usize, sample: StandardSample) -> io::Result<()> {
+    pub(super) fn push(&mut self, channel: usize, sample: S) -> io::Result<()> {
         self.pending[channel].push(sample);
         self.buffered += 1;
         if self.buffered >= self.capacity {
@@ -65,12 +72,14 @@ impl ChannelSamples {
         }
         let spill = self.spill.as_mut().expect("scratch is open");
         let mut writer = BufWriter::new(&mut spill.file);
+        let mut bytes = vec![0; S::BYTES];
         for (channel, pending) in self.pending.iter_mut().enumerate() {
             if !pending.is_empty() {
                 spill.runs[channel].push((spill.offset, pending.len()));
-                spill.offset += (pending.len() * ENCODED_BYTES) as u64;
+                spill.offset += (pending.len() * S::BYTES) as u64;
                 for sample in std::mem::take(pending) {
-                    writer.write_all(&encode(&sample))?;
+                    sample.write_to(&mut bytes);
+                    writer.write_all(&bytes)?;
                 }
             }
         }
@@ -81,25 +90,53 @@ impl ChannelSamples {
 
     /// Take one channel's averaged samples in their original order, including
     /// any batches written to the unnamed scratch file.
-    pub(super) fn take(&mut self, channel: usize) -> io::Result<Vec<StandardSample>> {
-        let pending = std::mem::take(&mut self.pending[channel]);
-        let Some(spill) = self.spill.as_mut() else {
-            return Ok(pending);
+    pub(super) fn take(&mut self, channel: usize) -> io::Result<Vec<S>> {
+        let Some(spill) = &self.spill else {
+            return Ok(std::mem::take(&mut self.pending[channel]));
         };
-        let runs = std::mem::take(&mut spill.runs[channel]);
-        let mut samples =
-            Vec::with_capacity(pending.len() + runs.iter().map(|(_, count)| count).sum::<usize>());
-        let mut reader = BufReader::new(&mut spill.file);
-        for (offset, count) in runs {
-            reader.seek(SeekFrom::Start(offset))?;
-            let mut bytes = [0; ENCODED_BYTES];
-            for _ in 0..count {
-                reader.read_exact(&mut bytes)?;
-                samples.push(decode(bytes));
+        let count = self.pending[channel].len()
+            + spill.runs[channel]
+                .iter()
+                .map(|(_, count)| count)
+                .sum::<usize>();
+        let mut samples = Vec::with_capacity(count);
+        self.drain(channel, |sample| samples.push(sample))?;
+        Ok(samples)
+    }
+
+    pub(super) fn drain(&mut self, channel: usize, mut visit: impl FnMut(S)) -> io::Result<()> {
+        if let Some(spill) = self.spill.as_mut() {
+            let runs = std::mem::take(&mut spill.runs[channel]);
+            let mut reader = BufReader::new(&mut spill.file);
+            let mut bytes = vec![0; S::BYTES];
+            for (offset, count) in runs {
+                reader.seek(SeekFrom::Start(offset))?;
+                for _ in 0..count {
+                    reader.read_exact(&mut bytes)?;
+                    visit(S::from_bytes(&bytes));
+                }
             }
         }
-        samples.extend(pending);
-        Ok(samples)
+        std::mem::take(&mut self.pending[channel])
+            .into_iter()
+            .for_each(visit);
+        Ok(())
+    }
+}
+
+impl ScratchSample for StandardSample {
+    const BYTES: usize = ENCODED_BYTES;
+
+    fn write_to(&self, bytes: &mut [u8]) {
+        bytes.copy_from_slice(&encode(self));
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Self {
+        decode(
+            bytes
+                .try_into()
+                .expect("standard polarization sample length"),
+        )
     }
 }
 
@@ -167,7 +204,7 @@ mod tests {
 
     #[test]
     fn spilled_preaverages_keep_channel_and_insertion_order() {
-        let mut channels = ChannelSamples::with_capacity(3, 4);
+        let mut channels = ChannelSamples::<StandardSample>::with_capacity(3, 4);
         for index in 0..11 {
             channels.push(index % 3, sample(index)).unwrap();
         }
