@@ -12,10 +12,11 @@ use casa_images::{
     regrid::RegridPixel,
 };
 use casa_types::RecordValue;
+use pyo3::exceptions::{PyOverflowError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::convert::IntList;
+use crate::convert::{DoubleList, IntList};
 use crate::tools::table::casa_record;
 
 use super::PyImageTool;
@@ -26,18 +27,56 @@ use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{Region, mask_argument, require_bool};
 
+#[derive(Default)]
+struct GridCoordinates(Option<RecordValue>);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for GridCoordinates {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let record = value
+            .cast::<PyDict>()
+            .map_err(|_| PyTypeError::new_err("csys is not a dictionary"))?;
+        if record.is_empty() {
+            Ok(Self::default())
+        } else {
+            Ok(Self(Some(casa_record(value.py(), Some(record))?)))
+        }
+    }
+}
+
+fn regrid_indices(value: &Bound<'_, PyAny>) -> PyResult<IntList> {
+    if let Ok(integers) = value.extract::<IntList>() {
+        return Ok(integers);
+    }
+    let DoubleList(numbers) = value.extract()?;
+    numbers
+        .into_iter()
+        .map(|number| {
+            if number.is_finite() && number >= i64::MIN as f64 && number < -(i64::MIN as f64) {
+                Ok(number as i64)
+            } else {
+                Err(PyOverflowError::new_err(
+                    "image shape and axes need finite integer indices",
+                ))
+            }
+        })
+        .collect::<PyResult<Vec<_>>>()
+        .map(IntList)
+}
+
 #[pymethods]
 impl PyImageTool {
     /// Resample the selected image onto the requested coordinate grid.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (outfile="", shape=IntList(vec![-1]), csys=None, axes=IntList(vec![-1]), region=None, mask=None, method="linear", decimate=10, replicate=false, doref=true, dropdeg=false, overwrite=false, force=false, asvelocity=false, stretch=false), text_signature = "($self, outfile='', shape=[-1], csys={}, axes=[-1], region={}, mask='', method='linear', decimate=10, replicate=False, doref=True, dropdeg=False, overwrite=False, force=False, asvelocity=False, stretch=False)")]
+    #[pyo3(signature = (outfile="", shape=IntList(vec![-1]), csys=GridCoordinates::default(), axes=IntList(vec![-1]), region=None, mask=None, method="linear", decimate=10, replicate=false, doref=true, dropdeg=false, overwrite=false, force=false, asvelocity=false, stretch=false), text_signature = "($self, outfile='', shape=[-1], csys={}, axes=[-1], region={}, mask='', method='linear', decimate=10, replicate=False, doref=True, dropdeg=False, overwrite=False, force=False, asvelocity=False, stretch=False)")]
     fn regrid(
         &self,
         py: Python<'_>,
         outfile: &str,
-        shape: IntList,
-        csys: Option<&Bound<'_, PyDict>>,
-        axes: IntList,
+        #[pyo3(from_py_with = regrid_indices)] shape: IntList,
+        csys: GridCoordinates,
+        #[pyo3(from_py_with = regrid_indices)] axes: IntList,
         region: Option<&Bound<'_, PyAny>>,
         mask: Option<&Bound<'_, PyAny>>,
         method: &str,
@@ -50,16 +89,12 @@ impl PyImageTool {
         #[pyo3(from_py_with = require_bool)] asvelocity: bool,
         #[pyo3(from_py_with = require_bool)] stretch: bool,
     ) -> PyResult<Py<Self>> {
-        let target = csys
-            .filter(|record| !record.is_empty())
-            .map(|record| casa_record(py, Some(record)))
-            .transpose();
+        let GridCoordinates(target) = csys;
         let region = Region::capture(py, region);
         let mask = mask_argument(mask);
         let attachment = py.detach(|| {
             let state = self.state();
             let input = state.image.as_ref().ok_or_else(|| raised("Unable to create image"))?;
-            let target = target?;
             let region = region?;
             let mask = mask?;
             let destination = (!outfile.is_empty()).then(|| Path::new(outfile));

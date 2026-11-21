@@ -83,7 +83,8 @@ pub fn regrid_image<T: RegridPixel>(
     {
         return Err(invalid("PV images are not supported by regrid"));
     }
-    let shape: Vec<i64> = if options.shape.first().is_none_or(|&size| size < 0) {
+    let shape_specified = options.shape.first().is_some_and(|&size| size >= 0);
+    let shape: Vec<i64> = if !shape_specified {
         input.shape().iter().map(|&size| size as i64).collect()
     } else {
         options.shape.to_vec()
@@ -180,6 +181,7 @@ pub fn regrid_image<T: RegridPixel>(
             image_tool: Some(ImageToolSampling {
                 force: options.force,
                 convert_reference: options.convert_reference,
+                shape_specified,
             }),
         },
     )?;

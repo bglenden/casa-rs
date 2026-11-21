@@ -349,3 +349,111 @@ def test_regrid_refuses_a_position_velocity_grid(casa):
                 strip.done()
         finally:
             source.done()
+
+
+@pytest.mark.parametrize("method,replicate", [("lanczos", False), ("linear", True)])
+def test_regrid_disjoint_sky_leaves_named_destination_intact(casa, tmp_path, method, replicate):
+    data = np.full((32, 32), 7., dtype=np.float32)
+    for api in (casa, tools):
+        source = api.image()
+        output = api.image()
+        path = str(tmp_path / f"{api.__name__}-disjoint.im")
+        try:
+            assert source.fromarray(pixels=data)
+            assert output.fromarray(path, pixels=data+1)
+            output.done()
+            target = _record(source, "direction", [40., 0.])
+            with pytest.raises(RuntimeError, match="no overlap"):
+                source.regrid(path, csys=target, axes=[0, 1], method=method, decimate=1,
+                              replicate=replicate, overwrite=True)
+            assert output.open(path)
+            np.testing.assert_array_equal(output.getchunk(), data+1)
+            target = _record(source, "direction", [4., 0.])
+            overlap = source.regrid(csys=target, axes=[0, 1], method=method, decimate=1,
+                                    replicate=replicate)
+            try:
+                assert overlap.getchunk(getmask=True)[15, 15]
+                assert overlap.getchunk()[15, 15] == pytest.approx(7.)
+                if method == "lanczos":
+                    assert overlap.getchunk()[0, 15] == 0.
+                    assert overlap.getchunk(getmask=True)[0, 15]
+            finally:
+                overlap.done()
+        finally:
+            output.done()
+            source.done()
+
+
+@pytest.mark.parametrize("doref", [False, True])
+def test_regrid_resamples_when_only_the_direction_conversion_changes(casa, doref):
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=np.ones((32, 32), dtype=np.float32))
+            coords = source.coordsys()
+            try:
+                coords.setconversiontype(direction="GALACTIC")
+                target = coords.torecord()
+            finally:
+                coords.done()
+            with pytest.raises(RuntimeError):
+                source.regrid(csys=target, axes=[0, 1], decimate=1, doref=doref)
+            assert source.isopen()
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("axes", [[-1], [0, 1, 2]])
+def test_regrid_infers_the_shape_of_a_stokes_subset(casa, axes):
+    x, y, pol, chan = np.ogrid[:32, :32, :4, :3]
+    data = (x + 2*y + 100*pol + 1000*chan).astype(np.float32)
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            coords = source.coordsys()
+            try:
+                assert coords.setstokes("I Q")
+                record = coords.torecord()
+            finally:
+                coords.done()
+            for shape in ([-1], [32, 32, 2, 3]):
+                result = source.regrid(csys=record, axes=axes, shape=shape, decimate=1)
+                try:
+                    np.testing.assert_array_equal(result.getchunk(), data[:, :, :2, :])
+                    labels = result.coordsys()
+                    try:
+                        assert labels.stokes() == ["I", "Q"]
+                    finally:
+                        labels.done()
+                finally:
+                    result.done()
+            with pytest.raises(RuntimeError):
+                source.regrid(csys=record, axes=axes, shape=[32, 32, 4, 3], decimate=1)
+        finally:
+            source.done()
+
+
+def test_regrid_shapes_only_selected_axes_and_coerces_numeric_indices(casa):
+    data = np.arange(32*32, dtype=np.float32).reshape(32, 32)
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            target = _record(source)
+            for axes, shape in (([0], [32, 28]), ([1], [28, 32]), ([0, 1], [1, 1])):
+                with pytest.raises(RuntimeError):
+                    source.regrid(csys=target, axes=axes, shape=shape, decimate=1)
+            cropped = source.regrid(csys=target, axes=[0], shape=[28, 32], decimate=1)
+            accepted = source.regrid(csys=target, axes=np.asarray([0., 1.]),
+                                     shape=[28.6, 30.9], decimate=1)
+            try:
+                np.testing.assert_allclose(cropped.getchunk(), data[:28], atol=2e-6)
+                np.testing.assert_allclose(accepted.getchunk(), data[:28, :30], atol=2e-6)
+            finally:
+                cropped.done()
+                accepted.done()
+            with pytest.raises(TypeError):
+                source.regrid(csys=None)
+        finally:
+            source.done()

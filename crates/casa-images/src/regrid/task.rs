@@ -39,6 +39,7 @@ pub(crate) struct TaskRegridOptions<'a> {
 pub(crate) struct ImageToolSampling {
     pub(crate) force: bool,
     pub(crate) convert_reference: bool,
+    pub(crate) shape_specified: bool,
 }
 
 impl TaskRegridOptions<'_> {
@@ -60,30 +61,11 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     let input_shape = input.shape();
     let frame = frame::observation_frame(input.coordinates());
     let resized = requested_shape(options.shape, input_shape)?;
-    let all_axes = if options.image_tool.is_some() {
-        options.axes.is_empty() || options.axes == [-1]
-    } else {
-        use_default_axes(input, template, options.axes, resized.is_none())
-    };
-    let chosen = requested_axes(
-        options.axes,
-        all_axes,
-        input_shape.len(),
-        options.image_tool.is_some(),
-    )?;
     let mut shape = resized.clone().unwrap_or_else(|| input_shape.to_vec());
+    let (all_axes, chosen, after_singleton) =
+        requested_axis_selection(input, template, &options, &shape, resized.is_none())?;
     let ordered = index_coordinates(input.coordinates());
     let target_order = index_coordinates(&template.coordinates);
-    let after_singleton = match options.axes {
-        [axis] if *axis >= 0 => ordered.iter().any(|(axes, coordinate)| {
-            let pixel = *axis as usize;
-            axes.as_slice() == [Some(pixel)]
-                && input_shape[pixel] == 1
-                && coordinate.coordinate_type() == CoordinateType::Spectral
-                && shape[pixel] > 1
-        }),
-        _ => false,
-    };
     let mut result = Regridded {
         data: input.get()?,
         mask: input
@@ -140,21 +122,21 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             .map(|&axis| template.shape[axis])
             .collect();
         if let (CoordinateModel::Stokes(ours), CoordinateModel::Stokes(theirs)) = (ours, theirs) {
-            if (all_axes || chosen[first]) && ours.stokes().len() > 1 && theirs.stokes().len() > 1 {
-                select_stokes(
-                    &mut result,
-                    index,
-                    first,
-                    ours,
-                    theirs,
-                    resized.as_ref().map(|s| s[first]),
-                )?;
-                shape[first] = result.data.shape()[first];
-            } else if shape[first] != input_shape[first] || (!all_axes && chosen[first]) {
-                return Err(invalid(
-                    "an unchanged Stokes axis must keep its input length",
-                ));
-            }
+            let explicit_axis = !all_axes && chosen[first];
+            let selection =
+                stokes_regrid_request(&options, first, &shape, all_axes, explicit_axis)?;
+            let explicit_length = resized
+                .as_ref()
+                .filter(|_| options.image_tool.is_none_or(|tool| tool.shape_specified))
+                .map(|resized| resized[first]);
+            shape[first] = regrid_stokes(
+                &mut result,
+                (index, first),
+                (ours, theirs),
+                (shape[first], explicit_length),
+                selection,
+                explicit_axis,
+            )?;
             continue;
         }
         let selected: Vec<_> = axes
@@ -178,12 +160,17 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 }
             }
         }
+        if (options.image_tool.is_some() || !selected.contains(&true))
+            && axes
+                .iter()
+                .zip(&selected)
+                .any(|(&axis, &regrid)| !regrid && shape[axis] != input_shape[axis])
+        {
+            return Err(invalid(
+                "an axis not being regridded must keep its input length",
+            ));
+        }
         if !selected.contains(&true) {
-            if axes.iter().any(|&axis| shape[axis] != input_shape[axis]) {
-                return Err(invalid(
-                    "an axis not being regridded must keep its input length",
-                ));
-            }
             continue;
         }
         found = true;
@@ -197,29 +184,18 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
                 if n_axes == 2 =>
             {
-                let dimensions = [lengths[0], lengths[1]];
-                let old_dimensions = [input_lengths[0], input_lengths[1]];
-                validate_decimation(
-                    options.decimate,
-                    dimensions,
-                    &selected,
-                    all_axes || after_singleton,
-                )?;
-                if options.force()
-                    || old_dimensions != dimensions
-                    || !same_direction_grid(ours, theirs)
-                {
-                    apply_direction(
-                        &mut result,
-                        [axes[0], axes[1]],
-                        input.units(),
-                        (ours, theirs),
-                        dimensions,
-                        &options,
-                        &frame,
-                    )?;
-                }
-                CoordinateModel::Direction(theirs.clone())
+                regrid_direction_coordinate(
+                    &mut result,
+                    [axes[0], axes[1]],
+                    input.units(),
+                    (ours, theirs),
+                    (
+                        [lengths[0], lengths[1]],
+                        &selected,
+                        all_axes || after_singleton,
+                    ),
+                    (&options, &frame),
+                )?
             }
             (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
                 if n_axes == 1 && input_lengths == lengths && ours == theirs =>
@@ -248,24 +224,13 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                     &frame,
                 )?
             }
-            _ if n_axes == 1 => {
-                let coordinates = (0..lengths[0])
-                    .map(|p| {
-                        if options.replicate {
-                            Some(replicated_position(p, input_lengths[0], lengths[0]))
-                        } else {
-                            theirs
-                                .to_world(&[p as f64])
-                                .and_then(|world| ours.to_pixel(&world))
-                                .ok()
-                                .and_then(|pixel| pixel.first().copied())
-                                .filter(|pixel| pixel.is_finite())
-                        }
-                    })
-                    .collect();
-                apply_one_axis(&mut result, first, lengths[0], coordinates, options.method);
-                theirs.clone()
-            }
+            _ if n_axes == 1 => regrid_one_axis(
+                &mut result,
+                first,
+                [input_lengths[0], lengths[0]],
+                (ours, theirs),
+                &options,
+            ),
             _ => {
                 return Err(invalid(
                     "regridding this multi-axis coordinate is unsupported (#977)",
@@ -281,6 +246,54 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         return Err(invalid("All output pixels are masked"));
     }
     Ok(result)
+}
+
+fn regrid_direction_coordinate<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    axes: [usize; 2],
+    units: &str,
+    (input, target): (&DirectionCoordinate, &DirectionCoordinate),
+    (shape, selected, all_axes): ([usize; 2], &[bool], bool),
+    (options, frame): (&TaskRegridOptions<'_>, &MeasFrame),
+) -> Result<CoordinateModel, ImageError> {
+    if options.image_tool.is_some() && shape == [1, 1] {
+        return Err(invalid(
+            "cannot regrid a direction coordinate with shape [1, 1]",
+        ));
+    }
+    validate_decimation(options.decimate, shape, selected, all_axes)?;
+    if options.force()
+        || axes.map(|axis| result.data.shape()[axis]) != shape
+        || !same_direction_grid(input, target)
+    {
+        apply_direction(result, axes, units, (input, target), shape, options, frame)?;
+    }
+    Ok(CoordinateModel::Direction(target.clone()))
+}
+
+fn regrid_one_axis<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    axis: usize,
+    [input_length, length]: [usize; 2],
+    (input, target): (&CoordinateModel, &CoordinateModel),
+    options: &TaskRegridOptions<'_>,
+) -> CoordinateModel {
+    let positions = (0..length)
+        .map(|pixel| {
+            if options.replicate {
+                Some(replicated_position(pixel, input_length, length))
+            } else {
+                target
+                    .to_world(&[pixel as f64])
+                    .and_then(|world| input.to_pixel(&world))
+                    .ok()
+                    .and_then(|pixel| pixel.first().copied())
+                    .filter(|pixel| pixel.is_finite())
+            }
+        })
+        .collect();
+    apply_one_axis(result, axis, length, positions, options.method);
+    target.clone()
 }
 
 fn validate_omitted_coordinate(
@@ -326,6 +339,32 @@ fn use_default_axes<T: ImagePixel>(
     infer_shape
         && axes == [source_spectral as i64]
         && target_spectral.is_some_and(|axis| target.shape[axis] == 1)
+}
+
+fn requested_axis_selection<T: ImagePixel>(
+    input: &dyn ImageInterface<T>,
+    template: &RegridTemplate,
+    options: &TaskRegridOptions<'_>,
+    shape: &[usize],
+    infer_shape: bool,
+) -> Result<(bool, Vec<bool>, bool), ImageError> {
+    let all_axes = if options.image_tool.is_some() {
+        options.axes.is_empty() || options.axes == [-1]
+    } else {
+        use_default_axes(input, template, options.axes, infer_shape)
+    };
+    let chosen = requested_axes(
+        options.axes,
+        all_axes,
+        input.ndim(),
+        options.image_tool.is_some(),
+    )?;
+    let after_singleton = input
+        .find_axis(CoordinateType::Spectral)
+        .is_some_and(|axis| {
+            options.axes == [axis as i64] && input.shape()[axis] == 1 && shape[axis] > 1
+        });
+    Ok((all_axes, chosen, after_singleton))
 }
 
 fn regrid_linear_coordinate<T: RegridPixel>(
@@ -432,6 +471,7 @@ fn same_linear_grid(input: &LinearCoordinate, output: &LinearCoordinate) -> bool
 
 fn same_direction_grid(input: &DirectionCoordinate, output: &DirectionCoordinate) -> bool {
     input.direction_ref() == output.direction_ref()
+        && input.conversion_direction_ref() == output.conversion_direction_ref()
         && input.projection() == output.projection()
         && input.pc_matrix() == output.pc_matrix()
         && input.reference_pixel() == output.reference_pixel()
@@ -439,6 +479,47 @@ fn same_direction_grid(input: &DirectionCoordinate, output: &DirectionCoordinate
         && input.increment() == output.increment()
         && input.longpole() == output.longpole()
         && input.native_pole() == output.native_pole()
+}
+
+fn stokes_regrid_request(
+    options: &TaskRegridOptions<'_>,
+    axis: usize,
+    shape: &[usize],
+    all_axes: bool,
+    explicit_axis: bool,
+) -> Result<bool, ImageError> {
+    if options.image_tool.is_none() || all_axes || !explicit_axis {
+        return Ok(all_axes || explicit_axis);
+    }
+    let slot = options
+        .axes
+        .iter()
+        .position(|&candidate| candidate == axis as i64)
+        .expect("explicit Stokes axis");
+    // CASA checks the output Stokes slot in the requested axis order and
+    // enables Stokes selection only when that list covers the Stokes index.
+    if slot != axis && shape[slot] != shape[axis] {
+        return Err(invalid("Stokes axis and output shape do not match"));
+    }
+    Ok(options.axes.get(axis).is_some_and(|&value| value > 0))
+}
+
+fn regrid_stokes<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    (coordinate, axis): (usize, usize),
+    (input, target): (&StokesCoordinate, &StokesCoordinate),
+    (length, explicit_length): (usize, Option<usize>),
+    select: bool,
+    explicit_axis: bool,
+) -> Result<usize, ImageError> {
+    if select && input.stokes().len() > 1 && target.stokes().len() > 1 {
+        select_stokes(result, coordinate, axis, input, target, explicit_length)?;
+    } else if length != result.data.shape()[axis] || explicit_axis {
+        return Err(invalid(
+            "an unchanged Stokes axis must keep its input length",
+        ));
+    }
+    Ok(result.data.shape()[axis])
 }
 
 fn index_coordinates(
@@ -733,9 +814,40 @@ fn apply_direction<T: RegridPixel>(
 ) -> Result<(), ImageError> {
     let scale = jy_per_pixel_scale(units, input, target);
     let input_shape = axes.map(|axis| result.data.shape()[axis]);
-    let grid = if options.replicate {
+    let grid = if options.replicate && options.image_tool.is_none() {
         replicated_grid(input_shape, shape)
-    } else if options.image_tool.is_some()
+    } else {
+        let projected = direction_grid(input, target, shape, options, frame)?;
+        if options.image_tool.is_some()
+            && !projected.iter().flatten().any(|pixel| {
+                pixel
+                    .iter()
+                    .zip(input_shape)
+                    .all(|(&value, length)| value > -1. && value < length as f64)
+            })
+        {
+            return Err(invalid(
+                "There is no overlap between the input and output direction grids",
+            ));
+        }
+        if options.replicate {
+            replicated_grid(input_shape, shape)
+        } else {
+            projected
+        }
+    };
+    apply_plane(result, axes, shape, &grid, options.method, scale);
+    Ok(())
+}
+
+fn direction_grid(
+    input: &DirectionCoordinate,
+    target: &DirectionCoordinate,
+    shape: [usize; 2],
+    options: &TaskRegridOptions<'_>,
+    frame: &MeasFrame,
+) -> Result<Vec<Option<[f64; 2]>>, ImageError> {
+    if options.image_tool.is_some()
         && input.increment() == target.increment()
         && input.reference_value() == target.reference_value()
         && *input.pc_matrix() == *target.pc_matrix()
@@ -748,40 +860,36 @@ fn apply_direction<T: RegridPixel>(
         // An integral crop or translation on the same tangent plane is exact.
         // A sky round trip can move the first excluded row across the
         // interpolation boundary and fill it by extrapolating the edge.
-        (0..shape[1])
+        return Ok((0..shape[1])
             .flat_map(|y| {
                 (0..shape[0]).map(move |x| Some(affine.source_pixel([x as f64, y as f64])))
             })
-            .collect()
+            .collect());
+    }
+    // Casacore's inter-coordinate conversion uses native frames, while
+    // toWorldMany and toPixelMany retain each coordinate's conversion layer.
+    let to = input.direction_ref();
+    let from = if options.convert_reference() {
+        target.direction_ref()
     } else {
-        // Casacore's inter-coordinate conversion uses native frames, while
-        // toWorldMany and toPixelMany retain each coordinate's conversion layer.
-        let to = input.direction_ref();
-        let from = if options.convert_reference() {
-            target.direction_ref()
-        } else {
-            to
-        };
-        let decimate = options.decimate.max(0) as usize;
-        let project = |pixel| {
-            let world = target.pixel_to_world(pixel).ok()?;
-            let world = frame::convert_angles(world, from, to, frame).ok()?;
-            input
-                .world_to_pixel(world)
-                .ok()
-                .filter(|p| p.iter().all(|x| x.is_finite()))
-        };
-        if decimate <= 1 && from == to {
-            positions(input, target, shape)
-        } else {
-            // Report a missing measures frame before treating per-pixel projection failures as masks.
-            let world = target.reference_value();
-            frame::convert_angles([world[0], world[1]], from, to, frame)?;
-            coarse_positions(shape, decimate, project)
-        }
+        to
     };
-    apply_plane(result, axes, shape, &grid, options.method, scale);
-    Ok(())
+    let decimate = options.decimate.max(0) as usize;
+    if decimate <= 1 && from == to {
+        return Ok(positions(input, target, shape));
+    }
+    let project = |pixel| {
+        let world = target.pixel_to_world(pixel).ok()?;
+        let world = frame::convert_angles(world, from, to, frame).ok()?;
+        input
+            .world_to_pixel(world)
+            .ok()
+            .filter(|p| p.iter().all(|x| x.is_finite()))
+    };
+    // Report a missing measures frame before treating projection failures as masks.
+    let world = target.reference_value();
+    frame::convert_angles([world[0], world[1]], from, to, frame)?;
+    Ok(coarse_positions(shape, decimate, project))
 }
 
 fn replicated_grid(input: [usize; 2], output: [usize; 2]) -> Vec<Option<[f64; 2]>> {
