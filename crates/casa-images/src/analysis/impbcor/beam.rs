@@ -68,7 +68,7 @@ pub(super) fn image<T: ImagePixel>(
     let same_shape = target.shape() == beam.shape();
     let target_direction = direction(target.coordinates())?;
     let beam_direction = direction(beam.coordinates())?;
-    let plane = if same_shape {
+    let plane = if same_shape && beam_axes == target_axes {
         None
     } else if plane_shape(beam.shape(), beam_axes)
         .into_iter()
@@ -136,6 +136,9 @@ fn align<T>(
     {
         pixels = pixels.index_axis_move(Axis(axis), 0);
     }
+    if (source[0] < source[1]) != (target[0] < target[1]) {
+        pixels.swap_axes(0, 1);
+    }
     for axis in (0..target_rank).filter(|axis| !target.contains(axis)) {
         pixels = pixels.insert_axis(Axis(axis));
     }
@@ -197,4 +200,21 @@ fn matching_direction(
             .iter()
             .zip(right.pc_matrix())
             .all(|(&a, &b)| near(a, b, linear_tolerance))
+}
+
+#[cfg(test)]
+mod tests {
+    use ndarray::array;
+
+    use super::align;
+
+    #[test]
+    fn primary_beam_matches_target_longitude_and_latitude_order() {
+        let pixels = array![[1, 2, 3], [4, 5, 6]].into_dyn();
+        let aligned = align(pixels, Some(([0, 1], [1, 0])), 3);
+        assert_eq!(
+            aligned,
+            array![[[1], [4]], [[2], [5]], [[3], [6]]].into_dyn()
+        );
+    }
 }

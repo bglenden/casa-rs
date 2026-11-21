@@ -36,7 +36,7 @@ pub(super) fn reduce_coordinates_and_beams(
         Ok(record)
     };
     let shifted = if spec.stride.is_some() {
-        CoordinateSystem::from_record(&section_record(input_coords.to_record())?)?
+        input_coords.restore_record_with_layout(&section_record(input_coords.to_record())?)?
     } else {
         subimage_coordinates_with_stokes(
             input_coords,
@@ -53,9 +53,14 @@ pub(super) fn reduce_coordinates_and_beams(
         let record = shifted_legacy.unwrap_or_else(|| shifted.to_record());
         let reduced =
             drop_axes_from_legacy_record(&record, ndim, spec.kept_axes).ok_or_else(|| {
-                ImageError::InvalidMetadata("could not reduce the subimage axis maps".into())
+                ImageError::InvalidMetadata(
+                    "could not reduce the subimage axis maps (#1002)".into(),
+                )
             })?;
-        (CoordinateSystem::from_record(&reduced)?, Some(reduced))
+        (
+            input_coords.restore_record_with_layout(&reduced)?,
+            Some(reduced),
+        )
     };
 
     image_info.beam_set = subset_beam_section(
@@ -71,15 +76,11 @@ pub(super) fn reduce_coordinates_and_beams(
 }
 
 fn find_system_axis(coords: &CoordinateSystem, kind: CoordinateType) -> Option<usize> {
-    let mut offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        if coord.coordinate_type() == kind {
-            return Some(offset);
-        }
-        offset += coord.n_pixel_axes();
-    }
-    None
+    coords
+        .coordinate_pixel_axes(coords.find_coordinate(kind)?)?
+        .into_iter()
+        .flatten()
+        .next()
 }
 
 pub(in crate::analysis) fn subset_beam_set(
