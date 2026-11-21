@@ -273,6 +273,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_initweights(values)
     if name == "plotbandpass":
         return _call_plotbandpass(values, arguments)
+    if name == "predictcomp":
+        return _call_predictcomp(values, arguments)
     if name == "plotweather":
         return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
@@ -896,6 +898,50 @@ def _flagdata_clip_range(
     return bounds
 
 
+def _call_predictcomp(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    from numbers import Integral
+    from os.path import expanduser, expandvars
+
+    errors = {}
+    for parameter, value in arguments.items():
+        if parameter == "nfreqs":
+            valid = isinstance(value, Integral)
+            expected = "cInt"
+        elif parameter in ("showplot", "include0amp", "include0bl", "showbl0flux"):
+            valid = isinstance(value, bool)
+            expected = "cBool"
+        else:
+            valid = isinstance(value, str)
+            expected = "cPath" if parameter == "prefix" else "cStr"
+        if not valid:
+            errors[parameter] = ["null value not allowed" if value is None else f"must be of {expected} type"]
+    if errors:
+        raise AssertionError(str(errors))
+    if "nfreqs" in values:
+        values["nfreqs"] = int(values["nfreqs"])
+    if "prefix" in values:
+        values["prefix"] = expandvars(expanduser(values["prefix"]))
+    try:
+        result = run("predictcomp", **values).value
+    except TaskParameterError as error:
+        if error.completion.message == "m0" and error.completion.parameter == "epoch":
+            raise KeyError("m0") from error
+        if error.completion.parameter in ("objname", "minfreq"):
+            raise ValueError(error.completion.message) from error
+        raise
+    except ValueError as error:
+        for parameter in ("standard", "blunit"):
+            if f"for {parameter}:" in str(error):
+                raise AssertionError(str({parameter: [f"unallowed value {arguments[parameter]}"]})) from error
+        raise
+    if result and arguments["antennalist"]:
+        import numpy as np
+
+        zero_flux = result["spectrum"]["bl0flux"]
+        zero_flux["value"] = np.float64(zero_flux["value"])
+    return result
+
+
 def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
     import numpy as np
 
@@ -1444,6 +1490,13 @@ def _execute_task(
             from ._weather_plot import render_weather
 
             render_weather(plot, workspace)
+
+    if task == "predictcomp" and process.returncode == 0:
+        plot = loads(stdout)["result"]["plot"]
+        if plot is not None:
+            from ._predictcomp_plot import render_prediction
+
+            render_prediction(plot, workspace)
 
     values = [
         (name, _display_value(state.value))

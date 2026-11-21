@@ -5,7 +5,7 @@ use std::path::Path;
 
 use casa_components::{ComponentList, ComponentListError, ComponentShape, SkyComponent};
 use casa_ms::{MsResult, open_measures_runtime};
-use casa_tables::publication::rename_without_replacing;
+use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -121,12 +121,8 @@ impl PredictedComponent {
         if path.is_dir() {
             return Ok(());
         }
-        let parent = path.parent().unwrap_or(workspace);
-        let staging = tempfile::tempdir_in(parent).map_err(invalid)?;
+        let staging = self.stage(path.parent().unwrap_or(workspace))?;
         let staged = staging.path().join("model.cl");
-        ComponentList::from(vec![self.component.clone()])
-            .write_table(&staged)
-            .map_err(invalid)?;
         match rename_without_replacing(&staged, &path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -139,4 +135,109 @@ impl PredictedComponent {
             Err(error) => Err(invalid(error)),
         }
     }
+}
+
+impl PredictedComponent {
+    fn stage(&self, parent: &Path) -> MsResult<tempfile::TempDir> {
+        let staging = tempfile::tempdir_in(parent).map_err(invalid)?;
+        ComponentList::from(vec![self.component.clone()])
+            .write_table(staging.path().join("model.cl"))
+            .map_err(invalid)?;
+        Ok(staging)
+    }
+
+    /// Publish the public task's fresh component list, replacing a previous
+    /// component list with the same rounded name atomically.
+    ///
+    /// # Errors
+    ///
+    /// The output path cannot be written or would replace another file type.
+    pub fn write_for_task(&self, workspace: &Path) -> MsResult<()> {
+        let path = workspace.join(&self.filename);
+        let parent = path.parent().unwrap_or(workspace);
+        std::fs::create_dir_all(parent).map_err(invalid)?;
+        let staging = self.stage(parent)?;
+        let staged = staging.path().join("model.cl");
+        match rename_without_replacing(&staged, &path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if !path
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.is_dir())
+                {
+                    return Err(invalid(ComponentListError::Exists(path)));
+                }
+                ComponentList::read_table(&path).map_err(invalid)?;
+                exchange_directories(&staged, &path).map_err(invalid)
+            }
+            Err(error) => Err(invalid(error)),
+        }
+    }
+}
+/// Evaluate the public task's 2012 Horizons disk model at the ALMA site.
+///
+/// The input frequencies are channel centres. The 2012 task defines a narrow
+/// bandwidth around each centre, and writes it in the TOPO frame.
+///
+/// # Errors
+///
+/// The epoch or frequency grid is invalid, or no flux samples are supported.
+pub fn predict_solar_component_2012(
+    object: &str,
+    epoch: &MEpoch,
+    frequency_hz: &[f64],
+    prefix: &str,
+) -> MsResult<PredictedComponent> {
+    use casa_types::measures::position::MPosition;
+
+    use super::setjy::solar2012::Solar2012;
+
+    let first = *frequency_hz
+        .first()
+        .ok_or_else(|| invalid("predictcomp requires at least one frequency"))?;
+    let mjd = epoch.value().as_mjd();
+    if mjd == 0. {
+        return Err(invalid("Invalid epoch, 0.0d"));
+    }
+    let frequencies: Vec<_> = frequency_hz
+        .iter()
+        .map(|&hz| MFrequency::new(hz, FrequencyRef::TOPO))
+        .collect();
+    let model = Solar2012::open(object, mjd)?;
+    let measures = open_measures_runtime()?;
+    let position = MPosition::from_observatory_name("ALMA", measures.as_ref())
+        .map_err(invalid)?
+        .ok_or_else(|| invalid("the Measures catalog has no ALMA observatory"))?;
+    let frame = MeasFrame::new()
+        .with_measures(measures)
+        .with_epoch(epoch.clone())
+        .with_position(position)
+        .with_direction(model.direction().clone());
+    let half_width = frequency_hz
+        .get(1)
+        .map_or(first * 1e-4, |hz| (hz - first).abs() * 1e-2);
+    let bands: Vec<_> = frequency_hz
+        .iter()
+        .map(|hz| [hz - half_width, hz + half_width])
+        .collect();
+    let (mut component, _, supported) = model.component(
+        model.direction().clone(),
+        &frame,
+        &frequencies,
+        &bands,
+        true,
+    )?;
+    if !supported {
+        return Err(invalid("Flux densities cannot be determined"));
+    }
+    // Unlike setjy, predictcomp writes the band centre as the reference.
+    component
+        .spectrum_mut()
+        .set_reference_frequency(frequencies[0].clone());
+    let label = format!("{object}_spw0_{:.3}GHz_{mjd:.1}d", first / 1e9);
+    component.set_label(&label);
+    Ok(PredictedComponent {
+        filename: format!("{prefix}{label}.cl"),
+        component,
+    })
 }

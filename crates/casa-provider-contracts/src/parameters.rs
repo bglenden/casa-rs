@@ -892,6 +892,8 @@ pub enum ManagedResultDecoder {
     ImmomentsRunV1,
     #[serde(rename = "plotms-run-v1")]
     PlotmsRunV1,
+    #[serde(rename = "predictcomp-run-v1")]
+    PredictcompRunV1,
     #[serde(rename = "simobserve-run-v1")]
     SimobserveRunV1,
 }

@@ -36,6 +36,7 @@
 
 mod corrupt;
 pub mod predict;
+pub mod predictcomp;
 pub mod readantenna;
 pub mod session;
 pub mod simalma;

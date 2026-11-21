@@ -12,6 +12,9 @@ publish = false
 workspace = true
 
 [dependencies]
+casa-calibration = { path = "../casa-calibration" }
+casa-components = { path = "../casa-components" }
+casa-types = { path = "../casa-types" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
@@ -35,3 +38,7 @@ path = "src/simanalyze.rs"
 [[bin]]
 name = "simalma"
 path = "src/simalma.rs"
+
+[[bin]]
+name = "predictcomp"
+path = "src/predictcomp.rs"

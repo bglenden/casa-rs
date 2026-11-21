@@ -17151,6 +17151,244 @@
         "summary": "Allow an empty local selection while processing a Multi-MS."
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.objname",
+      "semantic_revision": 1,
+      "casa_name": "objname",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Object to predict, using a name recognized by the flux standard.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.epoch",
+      "semantic_revision": 1,
+      "casa_name": "epoch",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "UTC observation epoch. Use a CASA calendar date or a quantity in days.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.minfreq",
+      "semantic_revision": 1,
+      "casa_name": "minfreq",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "First prediction frequency. Supply a quantity such as 90GHz.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.maxfreq",
+      "semantic_revision": 1,
+      "casa_name": "maxfreq",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Last prediction frequency. An omitted or nonpositive frequency uses minfreq.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.nfreqs",
+      "semantic_revision": 1,
+      "casa_name": "nfreqs",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of evenly spaced frequencies. A range uses at least two samples.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.prefix",
+      "semantic_revision": 1,
+      "casa_name": "prefix",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Prefix prepended to the generated component-list name.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.showplot",
+      "semantic_revision": 1,
+      "casa_name": "showplot",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Display the visibility-amplitude figure when an antenna configuration is provided.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.savefig",
+      "semantic_revision": 1,
+      "casa_name": "savefig",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Save the visibility-amplitude figure to this path.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.symb",
+      "semantic_revision": 1,
+      "casa_name": "symb",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Matplotlib marker or format string used for each series.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.include0amp",
+      "semantic_revision": 1,
+      "casa_name": "include0amp",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Start the visibility-amplitude axis at zero.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.include0bl",
+      "semantic_revision": 1,
+      "casa_name": "include0bl",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Start the projected-baseline axis at zero.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.blunit",
+      "semantic_revision": 1,
+      "casa_name": "blunit",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "klambda"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Display projected lengths in metres by default, or in kilolambda at the first frequency.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "predictcomp.showbl0flux",
+      "semantic_revision": 1,
+      "casa_name": "showbl0flux",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Include the zero-baseline flux in the legend.",
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

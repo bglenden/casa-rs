@@ -858,11 +858,14 @@ dependencies = [
 name = "casars-simulation"
 version = "0.27.0"
 dependencies = [
+ "casa-calibration",
+ "casa-components",
  "casa-measures-data",
  "casa-ms",
  "casa-provider-contracts",
  "casa-simulation",
  "casa-task-runtime",
+ "casa-types",
  "schemars",
  "serde",
  "serde_json",

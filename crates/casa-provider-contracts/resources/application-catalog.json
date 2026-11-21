@@ -569,6 +569,16 @@
         "calibration_table"
       ],
       "include_in_suite": true
+    },
+    {
+      "id": "predictcomp",
+      "launch": {
+        "executable": "predictcomp",
+        "cargo_package": "casars-simulation",
+        "override_env": "CASARS_PREDICTCOMP_BIN"
+      },
+      "dataset_kinds": [],
+      "include_in_suite": true
     }
   ]
 }

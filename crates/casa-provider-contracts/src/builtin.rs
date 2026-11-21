@@ -865,6 +865,7 @@ mod tests {
                                 | "tsdimaging"
                                 | "plotms"
                                 | "immoments"
+                                | "predictcomp"
                         ),
                         "{} product sources",
                         surface.id()
