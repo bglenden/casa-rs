@@ -253,7 +253,7 @@ fn complete_axis_maps_match_casa_and_round_trip_through_native_images() {
         let Some(Value::Record(record)) = table.keywords().get("coords") else {
             panic!("{name}: missing coordinate record");
         };
-        let Some(Value::Array(ArrayValue::Float32(data))) = table.row(0).unwrap().get("map") else {
+        let ArrayValue::Float32(data) = table.row_accessor().array_cell(0, "map").unwrap() else {
             panic!("{name}: missing Float32 image pixels");
         };
         let mapped = CoordinateSystem::from_mapped_record(record).unwrap();
