@@ -288,6 +288,10 @@ pub struct FlagDataRequest {
     /// Optional RFlag spectral threshold, before [`Self::freqdevscale`].
     /// `None` computes one from the data.
     pub freqdev: Option<f64>,
+    /// Explicit RFlag time thresholds keyed by field and spectral window.
+    pub timedev_by_field_spw: BTreeMap<(i32, i32), f64>,
+    /// Explicit RFlag frequency thresholds keyed by field and spectral window.
+    pub freqdev_by_field_spw: BTreeMap<(i32, i32), f64>,
     /// Run CASA's automatic post-extension agent after TFCrop/RFlag.
     pub extendflags: bool,
     /// Extend flags across correlations/polarizations.
@@ -345,6 +349,8 @@ impl Default for FlagDataRequest {
             rflag_window: Some(3),
             timedev: None,
             freqdev: None,
+            timedev_by_field_spw: BTreeMap::new(),
+            freqdev_by_field_spw: BTreeMap::new(),
             extendflags: true,
             extendpols: false,
             extension_enabled: true,
@@ -467,6 +473,9 @@ pub enum FlaggingError {
     /// A requested TFCrop visibility column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode tfcrop")]
     MissingTfcropColumn,
+    /// An active explicit RFlag cutoff has a zero or negative scale.
+    #[error("{0} must be positive when its threshold is positive")]
+    InvalidRFlagScale(&'static str),
     /// The automatic visibility operator did not name a polarization product.
     #[error(
         "Unknown polarization requested, ({0}) supported types are: XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
@@ -1809,6 +1818,35 @@ fn apply_rflag_flags(
     let projection = is_calibration_table(ms)
         .then(|| calibration::automatic_projection(request, &samples))
         .transpose()?;
+    if !calculate
+        && request.rflag_window.is_some()
+        && let Some(projection) = &projection
+    {
+        for (scale_name, scale, thresholds) in [
+            (
+                "timedevscale",
+                request.timedevscale,
+                &request.timedev_by_field_spw,
+            ),
+            (
+                "freqdevscale",
+                request.freqdevscale,
+                &request.freqdev_by_field_spw,
+            ),
+        ] {
+            if scale <= 0.0
+                && !thresholds.is_empty()
+                && samples.iter().any(|sample| {
+                    projection.includes(sample.corr)
+                        && thresholds
+                            .get(&(sample.field, sample.spw))
+                            .is_some_and(|&value| value > 0.0)
+                })
+            {
+                return Err(FlaggingError::InvalidRFlagScale(scale_name));
+            }
+        }
+    }
     // RFlag reads the selected stored complex products directly.
     let loaded_ms = started.elapsed().as_millis();
     let groups = if projection.is_some() {
@@ -3344,23 +3382,26 @@ impl RFlagHistograms {
     /// Unscaled thresholds for the public calculate report and flagging.
     /// CASA applies the scale factors only when testing for flags.
     fn into_thresholds(self, request: &FlagDataRequest, calibration: bool) -> RFlagThresholds {
-        let mut timedev = BTreeMap::new();
-        let mut freqdev = BTreeMap::new();
-        for (key, histogram) in self.time {
-            let threshold = request
-                .timedev
-                .filter(|&value| !calibration || value > 0.0)
-                .unwrap_or_else(|| histogram.threshold());
-            timedev.insert(key, threshold);
+        let cutoffs = |histograms: BTreeMap<FieldSpwKey, ChannelHistogram>,
+                       scalar: Option<f64>,
+                       supplied: &BTreeMap<FieldSpwKey, f64>| {
+            histograms
+                .into_iter()
+                .map(|(key, histogram)| {
+                    let threshold = supplied
+                        .get(&key)
+                        .copied()
+                        .filter(|&value| value > 0.0)
+                        .or(scalar.filter(|&value| !calibration || value > 0.0))
+                        .unwrap_or_else(|| histogram.threshold());
+                    (key, threshold)
+                })
+                .collect()
+        };
+        RFlagThresholds {
+            timedev: cutoffs(self.time, request.timedev, &request.timedev_by_field_spw),
+            freqdev: cutoffs(self.freq, request.freqdev, &request.freqdev_by_field_spw),
         }
-        for (key, histogram) in self.freq {
-            let threshold = request
-                .freqdev
-                .filter(|&value| !calibration || value > 0.0)
-                .unwrap_or_else(|| histogram.threshold());
-            freqdev.insert(key, threshold);
-        }
-        RFlagThresholds { timedev, freqdev }
     }
 }
 
@@ -3375,38 +3416,65 @@ impl RFlagThresholds {
         // CASA uses -1 for an unavailable applied cutoff. A negative scalar
         // skips the fitted cutoff, and a negative scale skips the prepass
         // histogram. CASA scales its sentinel together with defined cutoffs.
-        let applied = |threshold: f64, supplied: Option<f64>, scale: f64| {
+        let applied = |threshold: f64, scalar: Option<f64>, supplied: Option<f64>, scale: f64| {
+            if let Some(value) = supplied {
+                return if value > 0.0 { value * scale } else { -scale };
+            }
             if calibration
-                && !supplied.is_some_and(|value| value > 0.0)
-                && (threshold == 0.0 || scale < 0.0 || supplied.is_some_and(|value| value < 0.0))
+                && !scalar.is_some_and(|value| value > 0.0)
+                && (threshold == 0.0 || scale < 0.0 || scalar.is_some_and(|value| value < 0.0))
             {
                 -scale
             } else {
                 threshold * scale
             }
         };
-        for value in self.timedev.values_mut() {
-            *value = applied(*value, request.timedev, request.timedevscale);
+        for (key, value) in &mut self.timedev {
+            *value = applied(
+                *value,
+                request.timedev,
+                request.timedev_by_field_spw.get(key).copied(),
+                request.timedevscale,
+            );
         }
-        for value in self.freqdev.values_mut() {
-            *value = applied(*value, request.freqdev, request.freqdevscale);
+        for (key, value) in &mut self.freqdev {
+            *value = applied(
+                *value,
+                request.freqdev,
+                request.freqdev_by_field_spw.get(key).copied(),
+                request.freqdevscale,
+            );
         }
         self
     }
 
     fn public_report(&self, request: &FlagDataRequest) -> RFlagThresholdReport {
-        let rows = |values: &BTreeMap<FieldSpwKey, f64>, supplied: Option<f64>| {
-            if supplied.is_some_and(|value| value > 0.0) {
+        let rows = |values: &BTreeMap<FieldSpwKey, f64>,
+                    scalar: Option<f64>,
+                    supplied: &BTreeMap<FieldSpwKey, f64>| {
+            if request.rflag_window.is_none() {
                 return Vec::new();
             }
-            values
-                .iter()
-                .map(|(&(field, spw), &value)| [f64::from(field), f64::from(spw), value])
+            let mut report = supplied.clone();
+            if !scalar.is_some_and(|value| value > 0.0) {
+                report.extend(values);
+            }
+            report
+                .into_iter()
+                .map(|((field, spw), value)| [f64::from(field), f64::from(spw), value])
                 .collect()
         };
         RFlagThresholdReport {
-            timedev: rows(&self.timedev, request.timedev),
-            freqdev: rows(&self.freqdev, request.freqdev),
+            timedev: rows(
+                &self.timedev,
+                request.timedev,
+                &request.timedev_by_field_spw,
+            ),
+            freqdev: rows(
+                &self.freqdev,
+                request.freqdev,
+                &request.freqdev_by_field_spw,
+            ),
         }
     }
 

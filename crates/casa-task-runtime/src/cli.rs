@@ -278,6 +278,14 @@ fn validated_cli_value(
     }
     let parsed = if one_selector {
         ParameterValue::String(text.to_string())
+    } else if bundle.surface.id() == "flagdata"
+        && matches!(binding.name.as_str(), "timedev" | "freqdev")
+        && text.trim_start().starts_with('[')
+    {
+        serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .and_then(|value| ParameterValue::from_plain_json(&value))
+            .unwrap_or_else(|| ParameterValue::String(text.to_string()))
     } else if concept.normalization == NormalizationRule::NumericVariant {
         let token = text.trim();
         token
