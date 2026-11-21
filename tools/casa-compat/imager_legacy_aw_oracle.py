@@ -155,6 +155,63 @@ def compare_cold(root, dataset, model):
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
+def compare_cold_evla(root, dataset, model):
+    from imager_evla_squint_oracle import telescope_input
+
+    assert casatasks.version_string() == '6.7.6.14'
+    results = {}
+    with TemporaryDirectory(dir=root) as temporary:
+        work = Path(temporary)
+        evla = work / 'evla.ms'
+        telescope_input(dataset, evla, 'EVLA')
+        editor = table()
+        assert editor.open(str(evla / 'OBSERVATION'), nomodify=False)
+        assert editor.nrows() == 1
+        assert editor.addrows(1)
+        for column in editor.colnames():
+            if editor.iscelldefined(column, 0):
+                assert editor.putcell(column, 1, editor.getcell(column, 0))
+        assert editor.done()
+        assert editor.open(str(evla), nomodify=False)
+        ids = editor.getcol('OBSERVATION_ID')
+        ids[len(ids) // 2:] = 1
+        assert editor.putcol('OBSERVATION_ID', ids) and editor.done()
+        setup = casa_imager()
+        assert setup.open(str(evla), usescratch=True) and setup.done()
+        factories = (('casa', casa_imager), ('native', imager))
+        for name, factory in factories:
+            mixed, cache = work / f'{name}-mixed.ms', work / f'{name}-mixed-cache'
+            make_input(evla, mixed, scratch=True)
+            assert editor.open(str(mixed / 'OBSERVATION'), nomodify=False)
+            assert editor.putcell('TELESCOPE_NAME', 1, 'VLA') and editor.done()
+            before = data(mixed, 'MODEL_DATA')
+            predict(mixed, model, cache, 'awproject', False, accepts=False,
+                    factory=factory, wbawp=True)
+            assert not list(cache.glob('*CFS_*.im'))
+            np.testing.assert_array_equal(data(mixed, 'MODEL_DATA'), before)
+        print('Mixed EVLA and VLA observations refused before writing cells or model data', flush=True)
+        for machine in ('awproject', 'mawproject'):
+            case = work / machine
+            case.mkdir()
+            results[machine] = cold_case(case, evla, model, machine, {'wbawp': True})
+            print('EVLA', machine, results[machine], flush=True)
+            assert all(np.isfinite(error) and error < 1.e-3 for error in results[machine].values())
+        warm_cache = work / 'awproject' / 'casa-cache'
+        before = cache_contents(warm_cache)
+        outputs = {}
+        for name, factory in factories:
+            mixed = work / f'{name}-mixed.ms'
+            predict(mixed, model, warm_cache, 'awproject', False, factory=factory, wbawp=True)
+            outputs[name] = data(mixed, 'MODEL_DATA')
+        assert cache_contents(warm_cache) == before
+        np.testing.assert_array_equal(outputs['native'][:, 1:, :], outputs['casa'][:, 1:, :])
+        error = relative_rms(outputs['native'][:, 0, :], outputs['casa'][:, 0, :])
+        assert np.isfinite(error) and error < 1.e-3
+        results['mixed-warm'] = error
+        print('Mixed EVLA and VLA observations reused CASA cells', error, flush=True)
+    (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+
+
 def cold_case(root, dataset, model, machine, terms, *, reference=None):
     native, reopened, imported = (root / f'{name}.ms' for name in (
         'native', 'casa-reopened', 'native-imported',
@@ -520,11 +577,15 @@ def main():
     parser.add_argument('--corrected-reference', type=Path)
     parser.add_argument('--saved-reference', type=Path)
     parser.add_argument('--cold', action='store_true')
+    parser.add_argument('--cold-evla', action='store_true')
     parser.add_argument('--cold-correction', action='store_true')
     args = parser.parse_args()
     args.work.mkdir(parents=True)
     if args.cold:
         compare_cold(args.work, args.dataset, args.model)
+        return
+    if args.cold_evla:
+        compare_cold_evla(args.work, args.dataset, args.model)
         return
     if args.cold_correction:
         compare_cold_correction(args.work, args.dataset, args.model)

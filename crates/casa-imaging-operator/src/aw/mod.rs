@@ -683,7 +683,8 @@ impl AwCatalog {
             &units,
             generation::GenerationOptions {
                 only_missing,
-                legacy_vla: None,
+                legacy_coordinates: None,
+                legacy_vla_feed: false,
             },
             workers,
         )?;
@@ -700,6 +701,22 @@ impl AwCatalog {
         spectral: &casa_coordinates::SpectralCoordinate,
         workers: usize,
     ) -> Result<(), AwCatalogError> {
+        Self::generate_legacy_l_band(root, input, band, spectral, true, workers)
+    }
+
+    /// Form cells for the legacy CASA L-band reader in an empty staging
+    /// directory. `legacy_vla_feed` selects the original VLA feed instead
+    /// of the EVLA feed. Both use the same legacy cell coordinates.
+    /// # Errors
+    /// The request cannot be generated or an image cannot be written.
+    pub fn generate_legacy_l_band(
+        root: &Path,
+        input: &NativeAwRequestInput,
+        band: &str,
+        spectral: &casa_coordinates::SpectralCoordinate,
+        legacy_vla_feed: bool,
+        workers: usize,
+    ) -> Result<(), AwCatalogError> {
         input
             .validate_legacy_vla()
             .map_err(|error| cache_error(root, format!("invalid legacy A/W request: {error}")))?;
@@ -710,7 +727,8 @@ impl AwCatalog {
             &units,
             generation::GenerationOptions {
                 only_missing: false,
-                legacy_vla: Some((band, spectral)),
+                legacy_coordinates: Some((band, spectral)),
+                legacy_vla_feed,
             },
             workers,
         )

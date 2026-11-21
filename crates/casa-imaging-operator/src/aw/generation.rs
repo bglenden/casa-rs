@@ -21,7 +21,8 @@ use super::{
 #[derive(Clone, Copy)]
 pub(super) struct GenerationOptions<'a> {
     pub only_missing: bool,
-    pub legacy_vla: Option<(&'a str, &'a SpectralCoordinate)>,
+    pub legacy_coordinates: Option<(&'a str, &'a SpectralCoordinate)>,
+    pub legacy_vla_feed: bool,
 }
 
 /// One worker's share: the cells of one (parallactic angle, frequency,
@@ -189,7 +190,8 @@ fn generate_unit(
     unit: &Unit,
     GenerationOptions {
         only_missing,
-        legacy_vla,
+        legacy_coordinates,
+        legacy_vla_feed,
     }: GenerationOptions<'_>,
     workspace: &mut Option<EvlaAwWorkspace>,
 ) -> Result<(), AwCatalogError> {
@@ -214,7 +216,7 @@ fn generate_unit(
         frequency
     };
     let mueller = input.mueller_elements[unit.mueller];
-    let conjugate_mueller = if legacy_vla.is_some() {
+    let conjugate_mueller = if legacy_coordinates.is_some() {
         // The legacy writer stores the first Stokes code from the conjugate
         // polarization axis in every imaging and weight cell.
         (if input.mueller_elements[0] == 0 {
@@ -248,7 +250,7 @@ fn generate_unit(
             Some(workspace) => workspace,
             None => workspace.insert(
                 EvlaAwWorkspace::new(model.clone(), request)?
-                    .with_legacy_vla_feed(legacy_vla.is_some()),
+                    .with_casa_cell_layout(legacy_coordinates.is_some(), legacy_vla_feed),
             ),
         };
         // Only the W screen depends on w: the aperture and the weight cell
@@ -266,7 +268,8 @@ fn generate_unit(
             diameter_m: input.antenna_diameter_m,
             sky_increment_rad: grid.sky_increment_rad[1].abs(),
             working_size: grid.size,
-            legacy_vla,
+            telescope: if legacy_vla_feed { "VLA" } else { "EVLA" },
+            legacy_coordinates,
         };
         let suffix = cell_suffix(unit.pa, unit.frequency, iw, unit.mueller);
         write_cell(
