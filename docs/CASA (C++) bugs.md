@@ -9411,3 +9411,21 @@ valid pairs.
 CASA 6.7.6.14's `wvr.gcal(reverse=True, spw=[1])` uses the position of each selected window to build the reversal mask. Its writer then looks up that mask by spectral-window ID. A selection containing only window 1 therefore leaves that window's phase unchanged.
 
 casa-rs applies the global reversal to each selected spectral-window ID. The compact ALMA comparison confirms that the corrected gain for window 1 is the complex conjugate of the ordinary gain, while the installed CASA result retains the ordinary sign. [Pinned CASA WVR tool source](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/tools/wvr/wvr_cmpt.cc?at=refs%2Ftags%2F6.7.6.14)
+
+## Replacing a native image alias can mix a peer's pixels and history
+
+Open a Float native image through a symbolic link using one image tool.
+Then rename a different image over that link using a second tool with
+`overwrite=True`. In CASA 6.7.6.14, a first tool that already read pixels
+keeps reading the original table's pixels, while `history()` reads the
+replacement table's history. When its first pixel read happens after the
+rename, it can also read the replacement's pixels. With the pixel reader
+already open, the renaming tool can continue reading the peer's cached
+pixels. Casa-rs binds the peer to its original table and the renaming tool
+to the moved table. The peer retains the name supplied when it was opened.
+
+CASA 6.7.6.14 also permits replacing a destination link inside a native
+table that an image or table tool has open. Casa-rs applies its existing
+containing-table ownership checks before changing a link. The call returns
+a busy-table error and preserves both paths, since a link under a table
+can participate in its live subtable layout.

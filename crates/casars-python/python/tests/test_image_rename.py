@@ -229,3 +229,69 @@ def test_rename_restores_source_and_target_links_after_history_failure(tmp_path)
     finally:
         owner.done()
         other.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("read_before_rename", [False, True])
+def test_rename_preserves_a_peer_opened_through_the_replaced_link(
+    tmp_path, backend, read_before_rename,
+):
+    api = _backend(backend)
+    source = tmp_path / "source.im"
+    referent = tmp_path / "original-referent.im"
+    output = tmp_path / "output.im"
+    owner, peer = api.image(), api.image()
+    try:
+        assert owner.fromarray(str(source), np.full((3, 4), 7, dtype=np.float32))
+        assert owner.sethistory("probe", ["source provenance"])
+        assert peer.fromarray(str(referent), np.full((3, 4), 9, dtype=np.float32))
+        assert peer.sethistory("probe", ["referent provenance"])
+        assert peer.done()
+        output.symlink_to(referent, target_is_directory=True)
+        assert peer.open(str(output))
+        if read_before_rename:
+            np.testing.assert_array_equal(peer.getchunk(), 9)
+        assert owner.rename(str(output), overwrite=True)
+        assert peer.name() == str(output)
+        peer_value = 7 if backend == "casa" and not read_before_rename else 9
+        owner_value = 9 if backend == "casa" and read_before_rename else 7
+        np.testing.assert_array_equal(peer.getchunk(), peer_value)
+        np.testing.assert_array_equal(owner.getchunk(), owner_value)
+        assert "source provenance" in owner.history()
+        if backend == "casa":
+            assert "source provenance" in peer.history()
+        else:
+            assert "referent provenance" in peer.history()
+            assert "source provenance" not in peer.history()
+            assert peer.remove()
+            assert output.is_dir()
+            np.testing.assert_array_equal(owner.getchunk(), 7)
+    finally:
+        owner.done()
+        peer.done()
+
+
+@pytest.mark.parametrize("parent_tool", ["image", "table"])
+def test_rename_preserves_links_in_a_live_containing_table(tmp_path, parent_tool):
+    source = tmp_path / "source.im"
+    parent = tmp_path / "containing.im"
+    referent = tmp_path / "referent.im"
+    output = parent / "output.im"
+    owner, writer = tools.image(), tools.image()
+    guard = getattr(tools, parent_tool)()
+    try:
+        assert owner.fromarray(str(source), np.full((3, 4), 7, dtype=np.float32))
+        assert writer.fromshape(str(parent), [3, 4])
+        assert writer.done()
+        assert writer.fromshape(str(referent), [3, 4])
+        assert writer.done()
+        output.symlink_to(referent, target_is_directory=True)
+        assert guard.open(str(parent))
+        with pytest.raises(RuntimeError, match="still open"):
+            owner.rename(str(output), overwrite=True)
+        assert source.is_dir() and referent.is_dir()
+        assert output.is_symlink() and output.readlink() == referent
+    finally:
+        guard.done()
+        writer.done()
+        owner.done()

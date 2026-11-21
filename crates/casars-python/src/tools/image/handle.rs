@@ -105,15 +105,25 @@ pub(super) fn raised(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
-pub(super) fn same_file_snapshot(expected: &Metadata, actual: &Metadata) -> bool {
+pub(super) fn same_file_identity(expected: &Metadata, actual: &Metadata) -> bool {
+    if expected.file_type() != actual.file_type() {
+        return false;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
-            return false;
-        }
+        expected.dev() == actual.dev() && expected.ino() == actual.ino()
     }
-    expected.len() == actual.len() && expected.modified().ok() == actual.modified().ok()
+    #[cfg(not(unix))]
+    {
+        expected.created().ok() == actual.created().ok()
+    }
+}
+
+pub(super) fn same_file_snapshot(expected: &Metadata, actual: &Metadata) -> bool {
+    same_file_identity(expected, actual)
+        && expected.len() == actual.len()
+        && expected.modified().ok() == actual.modified().ok()
 }
 
 impl ImageHandle {

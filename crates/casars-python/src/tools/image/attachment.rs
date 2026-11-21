@@ -19,7 +19,7 @@ use pyo3::prelude::*;
 use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
-use super::handle::{ImageHandle, raised, same_file_snapshot};
+use super::handle::{ImageHandle, raised, same_file_identity};
 use super::stub;
 
 pub(super) struct SharedImage {
@@ -53,6 +53,7 @@ pub(super) fn read_locked<T>(
 pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,
+    native_name: Option<PathBuf>,
     registered: bool,
     beam_view: Mutex<BeamView>,
     retained_inputs: Vec<Self>,
@@ -77,6 +78,7 @@ impl AttachedImage {
                 coordinates_replaced: AtomicBool::new(false),
             }),
             key: None,
+            native_name: None,
             registered: false,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
@@ -93,6 +95,10 @@ impl AttachedImage {
         Self::open_with_read_lock(path, false)
     }
 
+    pub(super) fn name_path<'a>(&'a self, image: &'a ImageHandle) -> Option<&'a Path> {
+        self.native_name.as_deref().or_else(|| image.path())
+    }
+
     pub(super) fn native_path(&self) -> Option<&Path> {
         self.key.as_deref()
     }
@@ -102,7 +108,8 @@ impl AttachedImage {
             return ImageHandle::open(path).map(Self::temporary).map_err(raised);
         }
         let key = key(path)?;
-        let shared = Self::shared(&registry(), &key);
+        let name = std::path::absolute(path).map_err(raised)?;
+        let shared = Self::shared(&registry(), &key, &name);
         if let Some(shared) = shared {
             if keep_read_lock {
                 shared.read_current_beams()?;
@@ -112,13 +119,13 @@ impl AttachedImage {
 
         // The data lock may wait for a different process. Keep the registry
         // available to other image names while this open is in progress.
-        let mut opened = Self::open_native(path, &key, Some(0), TableUseLock::acquire_waiting)?;
+        let mut opened = Self::open_native(&name, &key, Some(0), TableUseLock::acquire_waiting)?;
         if !keep_read_lock {
             opened.lock().unlock_storage()?;
         }
         let shared = {
             let mut registry = registry();
-            if let Some(shared) = Self::shared(&registry, &key) {
+            if let Some(shared) = Self::shared(&registry, &key, &name) {
                 shared
             } else {
                 opened.register(&mut registry);
@@ -152,7 +159,7 @@ impl AttachedImage {
         Ok(opened)
     }
 
-    fn shared(registry: &OpenImages, key: &Path) -> Option<Self> {
+    fn shared(registry: &OpenImages, key: &Path, name: &Path) -> Option<Self> {
         registry
             .get(key)
             .into_iter()
@@ -168,6 +175,7 @@ impl AttachedImage {
             .map(|image| Self {
                 image,
                 key: Some(key.to_path_buf()),
+                native_name: Some(name.to_path_buf()),
                 registered: true,
                 beam_view: Mutex::default(),
                 retained_inputs: Vec::new(),
@@ -206,7 +214,7 @@ impl AttachedImage {
             .then(|| acquire(key).map(Arc::new))
             .transpose()
             .map_err(raised)?;
-        let handle = ImageHandle::open_native(path, lock_attempts).map_err(raised)?;
+        let handle = ImageHandle::open_native(key, lock_attempts).map_err(raised)?;
         let beam_view = BeamView::from_image(&handle);
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
@@ -217,6 +225,7 @@ impl AttachedImage {
         let opened = Self {
             image,
             key: Some(key.to_path_buf()),
+            native_name: Some(std::path::absolute(path).map_err(raised)?),
             registered: false,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
@@ -377,7 +386,7 @@ impl AttachedImage {
                     source.display()
                 ))
             })?;
-            image.path().unwrap_or(source).to_path_buf()
+            self.name_path(&image).unwrap_or(source).to_path_buf()
         };
         let absolute = std::path::absolute(name).map_err(raised)?;
         let parent = absolute
@@ -440,6 +449,7 @@ impl AttachedImage {
             return Ok(Self {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
+                native_name: Some(target.clone()),
                 registered: self.registered,
                 beam_view: Mutex::new(self.beam_view().clone()),
                 retained_inputs: Vec::new(),
@@ -460,14 +470,14 @@ impl AttachedImage {
             )));
         }
         for (path, expected) in [(source.as_path(), 1), (target.as_path(), 0)] {
-            // Replacing a destination link leaves its referent and any
-            // attachments to that referent in place.
-            if replaces_link && path == target {
-                continue;
-            }
-            if conflicting_images(&registry, path, expected)
-                || crate::tools::table::path_is_in_use(path)
-            {
+            let in_table_use = if replaces_link && path == target {
+                // The link itself is replaced. Its underlying table and
+                // any tools attached to that table retain their storage.
+                containing_tables(path).any(crate::tools::table::path_is_in_use)
+            } else {
+                crate::tools::table::path_is_in_use(path)
+            };
+            if conflicting_images(&registry, path, expected) || in_table_use {
                 return Err(raised(format!(
                     "Cannot rename image because {} is still open in this process",
                     path.display()
@@ -488,6 +498,8 @@ impl AttachedImage {
         lock_table_tree(source, &mut locks)?;
         if target_metadata.as_ref().is_some_and(|entry| entry.is_dir()) {
             lock_table_tree(&target, &mut locks)?;
+        } else if replaces_link {
+            lock_table_ancestors(&target, &mut locks)?;
         }
         if self
             .image
@@ -527,7 +539,8 @@ impl AttachedImage {
         registry.insert(target.clone(), vec![Arc::downgrade(&image)]);
         Ok(Self {
             image,
-            key: Some(target),
+            key: Some(target.clone()),
+            native_name: Some(target),
             registered: true,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
@@ -548,7 +561,7 @@ impl AttachedImage {
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be deleted.",
             ));
         };
-        let name = self.lock().path().unwrap_or(key).to_path_buf();
+        let name = self.name_path(&self.lock()).unwrap_or(key).to_path_buf();
         let mut registry = registry();
         if conflicting_images(&registry, key, 1) {
             return Err(in_use(key, "this"));
@@ -563,7 +576,12 @@ impl AttachedImage {
             })?;
             image.unlock_storage()?;
         }
-        remove_native_table(&name, key, self.image.use_lock.as_deref())?;
+        let entry = if name.canonicalize().is_ok_and(|actual| actual == *key) {
+            &name
+        } else {
+            key
+        };
+        remove_native_table(entry, key, self.image.use_lock.as_deref())?;
         registry.remove(key);
         Ok(name.to_string_lossy().into_owned())
     }
@@ -644,16 +662,24 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     Ok(())
 }
 
-pub(super) fn lock_table_tree(
+fn containing_tables(path: &Path) -> impl Iterator<Item = &Path> {
+    path.parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .filter(|ancestor| ancestor.join("table.dat").is_file())
+}
+
+fn not_writable(name: &Path) -> PyErr {
+    raised(format!(
+        "Cannot delete file {} because table is not writable",
+        name.display()
+    ))
+}
+
+fn lock_table_ancestors(
     path: &Path,
     leases: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> PyResult<()> {
-    let not_writable = |name: &Path| {
-        raised(format!(
-            "Cannot delete file {} because table is not writable",
-            name.display()
-        ))
-    };
     let parent = path.parent().ok_or_else(|| not_writable(path))?;
     if fs::metadata(parent)
         .map_err(raised)?
@@ -662,11 +688,17 @@ pub(super) fn lock_table_tree(
     {
         return Err(not_writable(path));
     }
-    for ancestor in parent.ancestors() {
-        if ancestor.join("table.dat").is_file() {
-            lock_table_for_deletion(ancestor, leases)?;
-        }
+    for ancestor in containing_tables(path) {
+        lock_table_for_deletion(ancestor, leases)?;
     }
+    Ok(())
+}
+
+pub(super) fn lock_table_tree(
+    path: &Path,
+    leases: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> PyResult<()> {
+    lock_table_ancestors(path, leases)?;
     let mut pending = vec![path.to_path_buf()];
     while let Some(directory) = pending.pop() {
         if fs::metadata(&directory)
@@ -745,17 +777,16 @@ fn move_native_table(
         }
         return Err(move_error(error));
     }
-    if expected.is_symlink()
-        && !previous
-            .symlink_metadata()
-            .is_ok_and(|actual| actual.is_symlink() && same_file_snapshot(expected, &actual))
+    if !previous
+        .symlink_metadata()
+        .is_ok_and(|actual| same_file_identity(expected, &actual))
     {
         return restore_native_move(
             source,
             target,
             Some(backup),
             raised(format!(
-                "The destination link at {} has changed",
+                "The destination image entry at {} has changed",
                 target.display()
             )),
         );

@@ -142,12 +142,12 @@ impl PyImageTool {
     fn name(&self, py: Python<'_>, strippath: bool) -> PyResult<String> {
         py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok("none".into());
             };
-            let image = image.lock();
+            let image = attachment.lock();
             image.check_single_precision("name")?;
-            let Some(path) = image.path() else {
+            let Some(path) = attachment.name_path(&image) else {
                 let name = if image.image_type_name() == "ImageExpr" {
                     ""
                 } else {
