@@ -26,14 +26,10 @@ impl WorldEdit {
     }
 
     fn declared(self, coordinate: &CoordinateModel) -> Vec<f64> {
-        if let CoordinateModel::Direction(direction) = coordinate {
-            let (reference, increment) = direction.reference_and_increment_in_world_units();
-            match self {
-                Self::Reference => reference,
-                Self::Increment => increment,
-            }
-        } else {
-            self.native(coordinate)
+        let (reference, increment) = coordinate.reference_and_increment_in_declared_units();
+        match self {
+            Self::Reference => reference,
+            Self::Increment => increment,
         }
     }
 }
@@ -43,14 +39,12 @@ fn raised(error: impl std::fmt::Display) -> PyErr {
 }
 
 fn angle_units(model: &CoordinateModel) -> Vec<Option<String>> {
-    match model {
-        CoordinateModel::Direction(direction) => direction
-            .visible_world_units()
-            .into_iter()
-            .map(Some)
-            .collect(),
-        _ => vec![None; model.n_world_axes()],
-    }
+    model
+        .declared_axis_units()
+        .into_iter()
+        .zip(model.axis_units())
+        .map(|(declared, native)| (declared != native).then_some(declared))
+        .collect()
 }
 
 fn declared_value(value: f64, unit: Option<&str>) -> PyResult<f64> {

@@ -13,8 +13,8 @@ use casa_types::RecordValue;
 
 use crate::error::CoordinateError;
 use crate::{
-    DirectionCoordinate, LinearCoordinate, QualityCoordinate, SpectralCoordinate, StokesCoordinate,
-    TabularCoordinate,
+    CoordinateSystem, DirectionCoordinate, LinearCoordinate, QualityCoordinate, SpectralCoordinate,
+    StokesCoordinate, TabularCoordinate,
 };
 
 /// Discriminant for the coordinate kinds supported by casacore.
@@ -36,6 +36,23 @@ pub enum CoordinateType {
     Tabular,
     /// A 1-axis data/error quality coordinate.
     Quality,
+    /// A nested coordinate system.
+    System,
+}
+
+impl CoordinateType {
+    /// Prefix of this coordinate's numbered field in a native casacore record.
+    pub fn record_prefix(self) -> &'static str {
+        match self {
+            Self::Linear => "linear",
+            Self::Direction => "direction",
+            Self::Spectral => "spectral",
+            Self::Stokes => "stokes",
+            Self::Tabular => "tabular",
+            Self::Quality => "quality",
+            Self::System => "coordsys",
+        }
+    }
 }
 
 impl fmt::Display for CoordinateType {
@@ -47,6 +64,7 @@ impl fmt::Display for CoordinateType {
             Self::Stokes => f.write_str("Stokes"),
             Self::Tabular => f.write_str("Tabular"),
             Self::Quality => f.write_str("Quality"),
+            Self::System => f.write_str("System"),
         }
     }
 }
@@ -60,6 +78,7 @@ pub enum CoordinateModel {
     Stokes(StokesCoordinate),
     Tabular(TabularCoordinate),
     Quality(QualityCoordinate),
+    System(Box<CoordinateSystem>),
 }
 
 macro_rules! dispatch_coordinate {
@@ -71,6 +90,7 @@ macro_rules! dispatch_coordinate {
             CoordinateModel::Stokes(value) => value.$method($($argument),*),
             CoordinateModel::Tabular(value) => value.$method($($argument),*),
             CoordinateModel::Quality(value) => value.$method($($argument),*),
+            CoordinateModel::System(value) => value.$method($($argument),*),
         }
     };
 }
@@ -116,6 +136,40 @@ impl CoordinateModel {
         dispatch_coordinate!(self, axis_units)
     }
 
+    /// Units recorded for each world axis, before converting direction angles to radians.
+    pub fn declared_axis_units(&self) -> Vec<String> {
+        match self {
+            Self::Direction(direction) => direction.visible_world_units(),
+            Self::System(system) => system.world_axis_values(Self::declared_axis_units),
+            _ => self.axis_units(),
+        }
+    }
+
+    /// Concrete coordinate and local axis for a world axis of this model.
+    pub fn world_axis_leaf(&self, axis: usize) -> Option<(&Self, usize)> {
+        if let Self::System(system) = self {
+            let (index, local) = system.world_axis_owner(axis)?;
+            system.coordinate(index).world_axis_leaf(local)
+        } else {
+            (axis < self.n_world_axes()).then_some((self, axis))
+        }
+    }
+
+    /// Reference values and increments expressed in the units in the coordinate record.
+    pub fn reference_and_increment_in_declared_units(&self) -> (Vec<f64>, Vec<f64>) {
+        match self {
+            Self::Direction(direction) => direction.reference_and_increment_in_world_units(),
+            Self::System(system) => system
+                .world_axis_values(|model| {
+                    let (reference, increment) = model.reference_and_increment_in_declared_units();
+                    reference.into_iter().zip(increment).collect()
+                })
+                .into_iter()
+                .unzip(),
+            _ => (self.reference_value(), self.increment()),
+        }
+    }
+
     /// Serializes this coordinate in the canonical casacore field layout.
     pub fn to_record(&self) -> RecordValue {
         dispatch_coordinate!(self, to_record)
@@ -144,6 +198,12 @@ impl From<SpectralCoordinate> for CoordinateModel {
     }
 }
 
+impl From<CoordinateSystem> for CoordinateModel {
+    fn from(value: CoordinateSystem) -> Self {
+        Self::System(Box::new(value))
+    }
+}
+
 mod sealed {
     pub trait Sealed {}
 }
@@ -154,6 +214,7 @@ impl sealed::Sealed for SpectralCoordinate {}
 impl sealed::Sealed for StokesCoordinate {}
 impl sealed::Sealed for TabularCoordinate {}
 impl sealed::Sealed for QualityCoordinate {}
+impl sealed::Sealed for CoordinateSystem {}
 
 /// The interface shared by all coordinate types.
 ///
@@ -199,6 +260,48 @@ pub trait Coordinate: sealed::Sealed + fmt::Debug + Send + Sync {
 
     /// Returns the axis unit strings (one per world axis).
     fn axis_units(&self) -> Vec<String>;
+}
+
+impl Coordinate for CoordinateSystem {
+    fn coordinate_type(&self) -> CoordinateType {
+        CoordinateType::System
+    }
+
+    fn n_pixel_axes(&self) -> usize {
+        self.n_pixel_axes()
+    }
+
+    fn n_world_axes(&self) -> usize {
+        self.n_world_axes()
+    }
+
+    fn to_world(&self, pixel: &[f64]) -> Result<Vec<f64>, CoordinateError> {
+        self.to_world(pixel)
+    }
+
+    fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
+        self.to_pixel(world)
+    }
+
+    fn reference_value(&self) -> Vec<f64> {
+        self.reference_value()
+    }
+
+    fn reference_pixel(&self) -> Vec<f64> {
+        self.reference_pixel()
+    }
+
+    fn increment(&self) -> Vec<f64> {
+        self.world_axis_values(CoordinateModel::increment)
+    }
+
+    fn axis_names(&self) -> Vec<String> {
+        self.world_axis_values(CoordinateModel::axis_names)
+    }
+
+    fn axis_units(&self) -> Vec<String> {
+        self.world_axis_units()
+    }
 }
 
 #[cfg(test)]

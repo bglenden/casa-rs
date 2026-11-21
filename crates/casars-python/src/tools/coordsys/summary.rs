@@ -21,6 +21,7 @@ use crate::tools::{LogLine, emit};
 use super::conversion_frames::FrameName;
 use super::doppler::VelocityConversion;
 use super::inspect::coordinate_index;
+use super::world_reference::nested_axis_display;
 use super::{CoordinateState, PyCoordsys};
 
 const COLUMNS: [&str; 9] = [
@@ -306,6 +307,11 @@ fn coordinate_rows(
     doppler: DopplerRef,
 ) -> PyResult<Vec<AxisRow>> {
     let model = cs.coordinate(index);
+    if matches!(model, CoordinateModel::System(_)) && model.n_pixel_axes() != model.n_world_axes() {
+        return Err(PyRuntimeError::new_err(
+            "Cannot summarize a nested coordinate system with unequal pixel and world axes",
+        ));
+    }
     let mut fields = std::array::from_fn(|_| String::new());
     fields[0] = pixel.map_or_else(|| "..".into(), |axis| axis.to_string());
     fields[1] = number.to_string();
@@ -370,6 +376,7 @@ fn coordinate_rows(
     let mut row_increment = increment;
     let mut unit = model.axis_units()[local].clone();
     let mut precision = 6;
+    let mut formatted_increment = None;
     match model {
         CoordinateModel::Direction(direction) => {
             fields[4] = if direction.is_ncp() {
@@ -398,10 +405,17 @@ fn coordinate_rows(
                 coordinate_precision(value, model.increment()[0]),
             );
             precision = coordinate_precision(increment, model.increment()[0]);
+            if let Some((value, increment, units)) =
+                nested_axis_display(model, local, value, increment)?
+            {
+                fields[5] = value;
+                formatted_increment = Some(increment);
+                unit = units;
+            }
         }
     }
     fields[7] = if pixel.is_some() {
-        scientific(row_increment, precision)
+        formatted_increment.unwrap_or_else(|| scientific(row_increment, precision))
     } else {
         String::new()
     };

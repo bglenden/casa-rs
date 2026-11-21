@@ -63,7 +63,7 @@ fn failed(message: &str) -> CoordinateError {
 fn fourier_coordinate(
     source: &CoordinateModel,
     lengths: &[Option<usize>],
-) -> Result<LinearCoordinate, CoordinateError> {
+) -> Result<CoordinateModel, CoordinateError> {
     let n = source.n_pixel_axes();
     if lengths.len() != n || source.n_world_axes() != n {
         return Err(failed(
@@ -76,6 +76,18 @@ fn fourier_coordinate(
     let mut pixel = source.reference_pixel();
     let mut increment = source.increment();
     let transform = match source {
+        CoordinateModel::System(system) => {
+            let shape = lengths
+                .iter()
+                .map(|length| length.unwrap_or(1))
+                .collect::<Vec<_>>();
+            let axes = lengths
+                .iter()
+                .enumerate()
+                .filter_map(|(axis, length)| length.map(|_| axis))
+                .collect::<Vec<_>>();
+            return system.fourier_axes(&shape, &axes).map(Into::into);
+        }
         CoordinateModel::Direction(direction) => {
             if n != 2 || lengths.iter().any(Option::is_none) {
                 return Err(failed(
@@ -145,7 +157,8 @@ fn fourier_coordinate(
         .with_reference_value(center)
         .with_reference_pixel(pixel)
         .with_increment(increment)
-        .with_pc_matrix(transform))
+        .with_pc_matrix(transform)
+        .into())
 }
 
 fn invert_pc(
