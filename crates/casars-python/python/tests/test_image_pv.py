@@ -127,6 +127,26 @@ def test_pv_spectral_and_polarization_selection(casa, region):
             source.done()
 
 
+def test_pv_strided_channel_region_retains_sampled_wcs(casa):
+    data = _ramp()
+    region = casa.regionmanager().box([0, 0, 0, 0], [23, 25, 1, 4], [1, 1, 1, 2])
+    results = []
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            product = source.pv(start=[4, 7], end=[16, 7], region=region)
+            try:
+                results.append(_read(product))
+                np.testing.assert_array_equal(product.getchunk(), data[4:17, 7, :, ::2])
+                assert results[-1][6][-1] == pytest.approx(2000.)
+            finally:
+                product.done()
+        finally:
+            source.done()
+    _compare(results[1], results[0])
+
+
 def test_pv_returns_a_detached_tool_when_requested_and_preserves_existing_output(casa, tmp_path):
     for api in (casa, tools):
         source = api.image()
@@ -157,6 +177,7 @@ def test_pv_refuses_mixed_endpoints_and_direction_region(casa):
                 {"start": [4, 7], "end": [16., 7.]},
                 {"start": [4, 7], "end": [16, 7], "width": 3.},
                 {"start": [4, 7], "end": [16, 7], "chans": "1~3"},
+                {"start": [4, 7], "end": [16, 7], "region": None, "chans": "1;3"},
                 {"start": [4, 7], "end": [16, 7], "region": "box[[2pix,3pix],[22pix,23pix]]"},
                 {"start": [4, 7], "end": [16, 7], "center": [10, 7]},
             ):
