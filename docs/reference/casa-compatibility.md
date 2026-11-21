@@ -48,6 +48,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | yes | 102 | 102 | 0 | 13 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
+| predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
@@ -1880,6 +1881,21 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `3b459173040b1758f761ba68e95d59e2d5d60214`; CASA: `6.7.6.14`.
 - Command: `MPLBACKEND=Agg PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotweather_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotweather-20261119.json`.
+
+### predictcomp
+
+- CASA source: `casatasks/predictcomp.py`, 15 parameters
+- Implementation: `casatasks/private/task_predictcomp.py`, `predictcomp` (line 12): 4 return statements, 2 raise statements
+  - returns at line 113: `False`
+  - returns at line 130: `False`
+  - returns at line 138: `False`
+  - returns at line 202: `retval`
+- Called with its defaults in an empty directory, CASA raises `ValueError`: Error, objname is undefined
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 15, in CASA's order: yes
+- Defaults that differ: none
 
 ### rerefant
 

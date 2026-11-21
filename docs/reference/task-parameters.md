@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 849
-- Surfaces: 47 (47 task, 0 session)
-- Surface bindings: 1120
+- Concepts: 862
+- Surfaces: 48 (48 task, 0 session)
+- Surface bindings: 1135
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -63,6 +63,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [List Calibration Solutions](#surface-listcal)<br><code>listcal</code> | task | 1 | <code>calibration</code> | 7 | List selected antenna calibration solutions and flags. |
 | [Plot Bandpass](#surface-plotbandpass)<br><code>plotbandpass</code> | task | 1 | <code>calibration</code> | 49 | Plot calibration spectra and channel derivatives. |
 | [Get VLA Calibrator Model](#surface-getcalmodvla)<br><code>getcalmodvla</code> | task | 1 | <code>calibration</code> | 8 | Retrieve a calibrator brightness model from the VLA service. |
+| [Predict Calibrator Component](#surface-predictcomp)<br><code>predictcomp</code> | task | 1 | <code>simulation</code> | 15 | Write a flux calibrator component list and optionally plot its visibility amplitudes. |
 
 <a id="surface-msexplore"></a>
 
@@ -1794,5 +1795,33 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>obsdate</code> | <code>vla_calibrator.obsdate@r1</code> | <code>variant</code> | <code>0</code>; optional | VLA Service | Observation date as numeric MJD or a YYYY-MM-DD calendar date. |
 | <code>refdate</code> | <code>vla_calibrator.refdate@r1</code> | <code>variant</code> | <code>0</code>; optional | VLA Service | Optional reference date as numeric MJD or a YYYY-MM-DD calendar date. |
 | <code>hosts</code> | <code>vla_calibrator.hosts@r1</code> | <code>array&lt;string&gt;</code> | <code>["http://obs.vla.nrao.edu/calmodvla"]</code>; optional | VLA Service | VLA calibrator-service URLs in the order they will be queried. |
+
+<a id="surface-predictcomp"></a>
+
+## Predict Calibrator Component (<code>predictcomp</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `simulation`
+- Summary: Write a flux calibrator component list and optionally plot its visibility amplitudes.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>objname</code> | <code>predictcomp.objname@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | Object to predict, using a name recognized by the flux standard. |
+| <code>standard</code> | <code>setjy.standard@r1</code> | <code>choice (9 values; surface-narrowed)</code> | <code>"Butler-JPL-Horizons 2010"</code>; optional | Prediction | Flux density standard for the calibrator model. |
+| <code>epoch</code> | <code>predictcomp.epoch@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | UTC observation epoch. Use a CASA calendar date or a quantity in days. |
+| <code>minfreq</code> | <code>predictcomp.minfreq@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | First prediction frequency. Supply a quantity such as 90GHz. |
+| <code>maxfreq</code> | <code>predictcomp.maxfreq@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | Last prediction frequency. An omitted or nonpositive frequency uses minfreq. |
+| <code>nfreqs</code> | <code>predictcomp.nfreqs@r1</code> | <code>integer</code> | <code>2</code>; optional | Prediction | Number of evenly spaced frequencies. A range uses at least two samples. |
+| <code>prefix</code> | <code>predictcomp.prefix@r1</code> | <code>string</code> | <code>""</code>; optional | Prediction | Prefix prepended to the generated component-list name. |
+| <code>antennalist</code> | <code>parameter.antennalist@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | Antenna config list. |
+| <code>showplot</code> | <code>predictcomp.showplot@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Display the visibility-amplitude figure when an antenna configuration is provided. |
+| <code>savefig</code> | <code>predictcomp.savefig@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | Save the visibility-amplitude figure to this path. |
+| <code>symb</code> | <code>predictcomp.symb@r1</code> | <code>string</code> | <code>"."</code>; optional | Plot | Matplotlib marker or format string used for each series. |
+| <code>include0amp</code> | <code>predictcomp.include0amp@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Start the visibility-amplitude axis at zero. |
+| <code>include0bl</code> | <code>predictcomp.include0bl@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Start the projected-baseline axis at zero. |
+| <code>blunit</code> | <code>predictcomp.blunit@r1</code> | <code>choice (2 values)</code> | <code>""</code>; optional | Plot | Display projected lengths in metres by default, or in kilolambda at the first frequency. |
+| <code>showbl0flux</code> | <code>predictcomp.showbl0flux@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Include the zero-baseline flux in the legend. |
 
 _End of generated reference._

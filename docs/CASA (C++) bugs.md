@@ -8753,3 +8753,31 @@ returned for a 2D Gaussian. With `threshold=0.7`, `maxretry=0`, and
 within 0.00001. The independent solvers can select different centers,
 widths, and angles from the valid solutions. Casa-rs also uses a fixed
 retry sequence so fits with identical inputs are reproducible.
+
+### predictcomp leaves requested figures unwritten
+
+With CASA 6.7.6.14, a valid `antennalist`, `showplot=True` and a nonempty
+`savefig` return a component list and `savedfig=None`. The task produces
+no figure. This also leaves the documented marker, axis and legend controls
+without an effect. casa-rs projects the specified array at the observation
+epoch, evaluates the model's visibility amplitudes at the requested
+frequencies, and renders the requested figure.
+
+### predictcomp 2012 scales the disk position angle as arcseconds
+
+The Horizons 2012 helper passes the ephemeris `NP_ang` model angle, in
+degrees, to `componentlist` as arcseconds. For Jupiter at MJD 60000 this
+stores an angle of about 0.0931 degrees instead of about 335.11 degrees.
+casa-rs uses the ephemeris angle in degrees, as for the 2012 `setjy` model.
+This preserves the projected disk orientation when the table is used to
+predict visibility amplitudes.
+
+### predictcomp can reuse stale task output for a rounded epoch
+
+The CASA task removes a previous component list using a filename formed
+from the full Python frequency and epoch strings. The imager generates
+its filename with six significant digits. For repeated 3C286 predictions
+at MJD 58000.25 with the same first frequency, changing the final
+frequency can leave the old spectrum in place while the task reports the
+new frequency grid. The casa-rs task replaces a prior component list at
+the generated path after completing its new table.
