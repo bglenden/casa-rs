@@ -25,12 +25,13 @@ def galactic_coordinates(api, name):
 
 def test_direction_conversion_matches_independent_galactic_rotation():
     cs = galactic_coordinates(tools, b"gal")
-    # The first column of the IAU equatorial-to-Galactic rotation at J2000.
-    x, y, z = -0.0548755604, 0.4941094279, -0.8676661490
-    expected = [np.arctan2(y, x), np.arcsin(z)]
+    # The first column of casacore MeasData::J2000toGAL, which uses the
+    # FK5-derived Galactic pole rather than the modern ICRS matrix.
+    x, y, z = -0.0548777621, 0.4941083214, -0.8676666398
+    expected = [np.arctan2(y, x), np.arctan2(z, np.hypot(x, y))]
     reference = cs.referencepixel()["numeric"]
     actual = cs.toworld(reference)["numeric"]
-    np.testing.assert_allclose(actual, expected, atol=2.e-7)
+    np.testing.assert_allclose(actual, expected, atol=2.e-10, rtol=0.0)
     np.testing.assert_allclose(cs.topixel(actual)["numeric"], reference, atol=1.e-8)
     np.testing.assert_allclose(cs.referencevalue()["numeric"], [0.0, 0.0])
 
@@ -53,7 +54,7 @@ def test_spectral_conversion_uses_observation_context_and_survives_native_io(cas
     base = casa.coordsys().newcoordsys(direction=True, spectral=True)
     assert base.setunits(["rad", "rad", "Hz"])
     assert base.settelescope("EVLA")
-    assert base.setepoch(casa.measures().epoch("UTC", "58850d"))
+    assert base.setepoch({"type": "epoch", "refer": "UTC", "m0": {"value": 58850.0, "unit": "d"}})
     record = base.torecord()
     axis = base.findcoordinate("spectral")["world"][0]
     pixel = [0.0, 0.0, 3.25]
@@ -106,7 +107,7 @@ def test_bad_frames_and_missing_spectral_context_have_the_casa_error_classes(cas
             cs.setconversiontype(direction="invalid")
         with pytest.raises(RuntimeError, match="Transformations to/from frame"):
             cs.setconversiontype(spectral="Undefined")
-        assert cs.settelescope("Unlisted observatory")
+        assert cs.settelescope("Unlisted observatory") is False
         before = cs.torecord()
         with pytest.raises(RuntimeError, match="Cannot find observatory"):
             cs.setconversiontype(spectral="BARY")

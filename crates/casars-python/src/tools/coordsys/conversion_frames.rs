@@ -92,9 +92,7 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<()> {
     else {
         return Ok(());
     };
-    let Some((CoordinateModel::Direction(direction), _)) =
-        coordinate(state, CoordinateType::Direction)?
-    else {
+    let Some((_, direction_placement)) = coordinate(state, CoordinateType::Direction)? else {
         return Err(spectral_error(
             "No DirectionCoordinate; cannot set Spectral conversion layer",
         ));
@@ -112,8 +110,15 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<()> {
         return Ok(());
     }
 
-    let reference = direction.reference_pixel();
-    let pixel = [reference[0], reference[1]];
+    let CoordinateModel::Direction(direction) =
+        direction_placement.model(&state.record).map_err(raised)?
+    else {
+        return Err(spectral_error("Invalid DirectionCoordinate"));
+    };
+    let pixel = direction
+        .reference_pixel()
+        .try_into()
+        .map_err(|_| spectral_error("Invalid direction reference pixel"))?;
     let [longitude, latitude] = direction.pixel_to_world(pixel).map_err(raised)?;
     let direction =
         MDirection::from_angles(longitude, latitude, direction.conversion_direction_ref());
@@ -172,6 +177,9 @@ impl PyCoordsys {
         let spectral = spectral
             .0
             .ok_or_else(|| PyTypeError::new_err("argument _spectral must be a string"))?;
+        if direction.is_empty() && spectral.is_empty() {
+            return Ok(true);
+        }
         py.detach(|| {
             let mut state = self.state();
             let mut updated = state.clone();
