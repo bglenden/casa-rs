@@ -180,17 +180,24 @@ def test_matrix_edit_promotes_a_coupled_slice_without_resetting_other_coordinate
     target = tools.coordsys()
     assert target.fromrecord(record)
     assert target.addcoordinate(tabular=True)
+    record = target.torecord()
+    for domain in ("pixel", "world"):
+        record[f"{domain}map0"] = np.array([1, -2], dtype=np.int32)
+        record[f"{domain}map1"] = np.array([0], dtype=np.int32)
+    record["tabular1"]["pixelvalues"] = np.array([0.0, 2.0, 5.0])
+    record["tabular1"]["worldvalues"] = np.array([10.0, 14.0, 30.0])
+    assert target.fromrecord(record)
     tabular = np.array([[2.0]])
     assert target.setlineartransform("tabular", tabular)
-    before = target.toworld([3.0, 1.0])["numeric"]
+    point = [1.0, 3.0]
+    before = target.toworld(point)["numeric"]
     matrix = np.array([[1.0, 1.0], [1.0, 2.0]])
     assert target.setlineartransform("linear", matrix)
     np.testing.assert_array_equal(target.lineartransform("tabular"), tabular)
-    after = target.toworld([3.0, 1.0])["numeric"]
+    after = target.toworld(point)["numeric"]
     # The hidden pixel supplies the second matrix column with value 2.
-    assert before[0] == 6.0
-    assert after[0] == 8.0
-    assert before[1] == after[1]
+    np.testing.assert_array_equal(before, [14.0, 6.0])
+    np.testing.assert_array_equal(after, [14.0, 8.0])
     reopened = tools.coordsys()
     assert reopened.fromrecord(target.torecord())
-    np.testing.assert_array_equal(reopened.toworld([3.0, 1.0])["numeric"], after)
+    np.testing.assert_array_equal(reopened.toworld(point)["numeric"], after)
