@@ -3,7 +3,7 @@
 use std::ops::{Add, Div, Mul, Range, Sub};
 use std::path::Path;
 
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Axis, IxDyn, Zip};
 
