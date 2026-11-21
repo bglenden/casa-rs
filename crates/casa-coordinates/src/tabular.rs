@@ -573,6 +573,43 @@ fn interpolate(
     Ok(ys[lo] + t * (ys[hi] - ys[lo]))
 }
 
+pub(crate) fn interpolate_samples(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
+    if xs.is_empty() || xs.len() != ys.len() {
+        return Err(CoordinateError::ConversionFailed(
+            "tabular interpolation requires matching lookup tables with at least one entry".into(),
+        ));
+    }
+    if xs.len() == 1 {
+        return Ok(ys[0]);
+    }
+    interpolate(|index| xs[index], ys, x, 0.0)
+}
+
+pub(crate) fn inverse_sampled_axis(
+    pixels: &[f64],
+    worlds: &[f64],
+    reference: f64,
+    transform: f64,
+    world: f64,
+) -> Result<f64, CoordinateError> {
+    if pixels.len() < 2 || pixels.len() != worlds.len() {
+        return interpolate_samples(worlds, pixels, world);
+    }
+    // Casacore's inverse channel corrector interpolates in the average
+    // pixel domain, so its duplicate tolerance is independent of world units.
+    let last = pixels.len() - 1;
+    let origin = worlds[0];
+    let increment = (worlds[last] - origin) / (pixels[last] - pixels[0]);
+    let corrected_pixel = |value| (value - origin) / increment + pixels[0];
+    let target = corrected_pixel(reference) + (world - reference) / (increment * transform);
+    interpolate(
+        |index| corrected_pixel(worlds[index]),
+        pixels,
+        target,
+        CASACORE_PIXEL_TOLERANCE,
+    )
+}
+
 impl Coordinate for TabularCoordinate {
     fn coordinate_type(&self) -> CoordinateType {
         CoordinateType::Tabular
@@ -598,11 +635,10 @@ impl Coordinate for TabularCoordinate {
         } else if self.pixel_values.len() == 1 {
             self.constant_world()
         } else {
-            self.scaled_world(interpolate(
-                |index| self.pixel_values[index],
+            self.scaled_world(interpolate_samples(
+                &self.pixel_values,
                 &self.world_values,
                 pixel[0],
-                0.0,
             )?)
         };
         Ok(vec![world])
@@ -622,23 +658,13 @@ impl Coordinate for TabularCoordinate {
                 ));
             }
             crpix + (world[0] - crval) / (cdelt * self.linear_transform)
-        } else if self.pixel_values.len() == 1 {
-            self.pixel_values[0]
         } else {
-            let last = self.pixel_values.len() - 1;
-            let pixel_origin = self.pixel_values[0];
-            let world_origin = self.world_values[0];
-            let increment =
-                (self.world_values[last] - world_origin) / (self.pixel_values[last] - pixel_origin);
-            let corrected_pixel = |value| (value - world_origin) / increment + pixel_origin;
-            let reference = self.reference_world();
-            let target = corrected_pixel(reference)
-                + (world[0] - reference) / (increment * self.linear_transform);
-            interpolate(
-                |index| corrected_pixel(self.world_values[index]),
+            inverse_sampled_axis(
                 &self.pixel_values,
-                target,
-                CASACORE_PIXEL_TOLERANCE,
+                &self.world_values,
+                self.reference_world(),
+                self.linear_transform,
+                world[0],
             )?
         };
         Ok(vec![pixel])
@@ -733,13 +759,8 @@ impl TabularCoordinate {
                 .zip(&self.world_values)
                 .map(|(&pixel, &world)| {
                     self.scaled_world(
-                        interpolate(
-                            |index| self.pixel_values[index],
-                            &self.world_values,
-                            pixel,
-                            0.0,
-                        )
-                        .unwrap_or(world),
+                        interpolate_samples(&self.pixel_values, &self.world_values, pixel)
+                            .unwrap_or(world),
                     )
                 })
                 .collect()

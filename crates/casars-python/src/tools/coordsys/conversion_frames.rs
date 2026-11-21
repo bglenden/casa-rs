@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, SpectralCoordinate};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{MPosition, MeasFrame};
-use casa_types::{ScalarValue, Value};
+use casa_types::{RecordValue, ScalarValue, Value};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -13,7 +13,7 @@ use crate::convert::holder::{DIRECTION_CODES, FREQUENCY_CODES};
 use crate::tools::{LogLine, emit};
 
 use super::frame_metadata::coordinate;
-use super::{CoordinateState, PyCoordsys};
+use super::{CoordinateState, PyCoordsys, default_spectral_conversion};
 
 pub(super) struct FrameName(Option<String>);
 
@@ -98,6 +98,28 @@ fn spectral_error(message: impl std::fmt::Display) -> PyErr {
     ))
 }
 
+pub(super) fn declared_frequency_ref(model: &SpectralCoordinate) -> FrequencyRef {
+    if model.has_undefined_frame() {
+        FrequencyRef::Undefined
+    } else {
+        model.frequency_ref()
+    }
+}
+
+pub(super) fn relabel_spectral_record(record: &mut RecordValue, frame: FrequencyRef) {
+    let system = Value::Scalar(ScalarValue::String(frame.as_str().into()));
+    record.upsert("system", system.clone());
+    if record.get("frequency_ref").is_some() {
+        record.upsert("frequency_ref", system.clone());
+    }
+    let mut conversion = match record.remove("conversion") {
+        Some(Value::Record(record)) => record,
+        _ => default_spectral_conversion(),
+    };
+    conversion.upsert("system", system);
+    record.upsert("conversion", Value::Record(conversion));
+}
+
 fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<Option<LogLine>> {
     let Some((CoordinateModel::Spectral(model), placement)) =
         coordinate(state, CoordinateType::Spectral)?
@@ -113,11 +135,7 @@ fn set_spectral(state: &mut CoordinateState, name: &str) -> PyResult<Option<LogL
         .resolve(name)
         .and_then(|canonical| canonical.parse::<FrequencyRef>().ok())
         .ok_or_else(|| spectral_error(format!("invalid frequency system {name}")))?;
-    let native = if model.has_undefined_frame() {
-        FrequencyRef::Undefined
-    } else {
-        model.frequency_ref()
-    };
+    let native = declared_frequency_ref(model);
     if model.conversion_frequency_ref().unwrap_or(native) == frame {
         return Ok(None);
     }

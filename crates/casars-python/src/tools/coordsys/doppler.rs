@@ -106,6 +106,24 @@ struct VelocityConversion {
     convention: DopplerRef,
 }
 
+pub(super) fn sampled_frequencies_from_velocities(
+    velocities: Vec<f64>,
+    unit: &Unit,
+    convention: DopplerRef,
+    rest_hz: f64,
+) -> PyResult<Vec<f64>> {
+    let conversion = VelocityConversion {
+        rest_hz,
+        hz_per_unit: 1.0,
+        velocity_scale: unit.val().factor / C_MPS,
+        convention,
+    };
+    velocities
+        .into_iter()
+        .map(|value| conversion.velocity_to_frequency(value))
+        .collect()
+}
+
 fn velocity_settings(
     state: &CoordinateState,
     field: &str,

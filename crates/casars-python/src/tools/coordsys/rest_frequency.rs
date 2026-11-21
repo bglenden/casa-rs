@@ -11,7 +11,9 @@ use pyo3::types::{PyDict, PyFloat, PyList, PyTuple};
 use crate::convert::{Variant, read_quantity};
 
 use super::PyCoordsys;
-use super::frame_metadata::{coordinate, missing};
+use super::frame_metadata::missing;
+use super::inspect::numbered_coordinates;
+use super::replace::replace_at;
 
 enum Frequencies {
     Numeric(Vec<f64>, Option<String>),
@@ -34,13 +36,7 @@ impl Frequencies {
             return Ok(Some(Self::Numeric(values, None)));
         }
         Ok(match value.extract::<Variant>() {
-            Ok(Variant::Text(value)) => Some(Self::Text(
-                value
-                    .split([' ', ','])
-                    .filter(|text| !text.is_empty())
-                    .map(str::to_owned)
-                    .collect(),
-            )),
+            Ok(Variant::Text(value)) => Some(Self::Text(quantity_tokens(&value))),
             Ok(Variant::Texts(values)) => Some(Self::Text(values)),
             _ => None,
         })
@@ -52,20 +48,7 @@ impl Frequencies {
             Self::Numeric(values, None) => return Ok(values),
             Self::Numeric(values, Some(from)) => (values, read_unit(&from)?),
             Self::Text(values) => {
-                let quantities = values
-                    .iter()
-                    .map(|text| read_quantity(text, &format!(" In converting quantity {text}")))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let from = quantities
-                    .first()
-                    .ok_or_else(|| raised("Value is not a valid frequency"))?
-                    .unit()
-                    .clone();
-                let values = quantities
-                    .iter()
-                    .map(|quantity| casacore::get_value(quantity, &from))
-                    .collect();
-                (values, from)
+                quantity_vector(&values)?.ok_or_else(|| raised("Value is not a valid frequency"))?
             }
         };
         if casacore::frequency_hz(&Quantity::with_unit(1.0, from.clone())).is_none() {
@@ -76,6 +59,30 @@ impl Frequencies {
             .map(|value| casacore::get_value(&Quantity::with_unit(value, from.clone()), &unit))
             .collect())
     }
+}
+
+pub(super) fn quantity_tokens(value: &str) -> Vec<String> {
+    value
+        .split([' ', ','])
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+pub(super) fn quantity_vector(texts: &[String]) -> PyResult<Option<(Vec<f64>, Unit)>> {
+    let quantities = texts
+        .iter()
+        .map(|text| read_quantity(text, &format!(" In converting quantity {text}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let Some(first) = quantities.first() else {
+        return Ok(None);
+    };
+    let unit = first.unit().clone();
+    let values = quantities
+        .iter()
+        .map(|quantity| casacore::get_value(quantity, &unit))
+        .collect();
+    Ok(Some((values, unit)))
 }
 
 fn raised(message: impl Into<String>) -> PyErr {
@@ -130,7 +137,10 @@ impl PyCoordsys {
         py.detach(|| {
             let mut state = self.state();
             let kind = CoordinateType::Spectral;
-            let Some((CoordinateModel::Spectral(spectral), placement)) = coordinate(&state, kind)?
+            let Some((index, CoordinateModel::Spectral(spectral), placement)) =
+                numbered_coordinates(&state)?
+                    .into_iter()
+                    .find(|(_, model, _)| model.coordinate_type() == kind)
             else {
                 return Err(missing(kind));
             };
@@ -141,27 +151,33 @@ impl PyCoordsys {
             let which = usize::try_from(which).map_err(|_| {
                 raised(format!("Illegal index '{which}' into restfrequency vector"))
             })?;
-            if frequencies
-                .iter()
-                .any(|value| !value.is_finite() || *value < 0.0)
-            {
-                return Err(raised("Rest frequencies must be non-negative and finite"));
-            }
             if append {
                 let mut existing = spectral.rest_frequencies().to_vec();
                 existing.append(&mut frequencies);
                 frequencies = existing;
             }
-            let &active = frequencies
-                .get(which)
-                .ok_or_else(|| raised("Failed AlwaysAssert which<restfreqs_p.nelements()"))?;
-            let mut record = state.editable_record()?;
-            let Some(Value::Record(target)) = record.get_mut(&placement.field) else {
+            let spectral = spectral
+                .clone()
+                .with_selected_rest_frequencies(frequencies, which)
+                .map_err(|error| raised(error.to_string()))?;
+            let Some(Value::Record(mut target)) = state.record.get(&placement.field).cloned()
+            else {
                 return Err(raised("Spectral coordinate is missing from the record"));
             };
-            target.upsert("restfreq", Value::Scalar(ScalarValue::Float64(active)));
-            target.upsert("restfreqs", ArrayValue::from_f64_vec(frequencies).into());
-            state.apply_edited_record(record)?;
+            target.upsert(
+                "restfreq",
+                Value::Scalar(ScalarValue::Float64(spectral.rest_frequency())),
+            );
+            target.upsert(
+                "restfreqs",
+                ArrayValue::from_f64_vec(spectral.rest_frequencies().to_vec()).into(),
+            );
+            replace_at(
+                &mut state,
+                index as i32,
+                spectral.into(),
+                Value::Record(target),
+            )?;
             Ok(true)
         })
     }

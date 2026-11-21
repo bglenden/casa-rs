@@ -12,11 +12,10 @@ use pyo3::types::PyBool;
 use crate::convert::holder::{DIRECTION_CODES, FREQUENCY_CODES};
 use crate::tools::{LogLine, emit};
 
-use super::conversion_frames::FrameName;
+use super::conversion_frames::{FrameName, declared_frequency_ref, relabel_spectral_record};
 use super::frame_metadata::{coordinate, missing};
 use super::inspect::{coordinate_type, numbered_coordinates};
 use super::replace::replace_at;
-use super::spectral_samples::{declared_frame, native_conversion_record};
 use super::{CoordinateState, PyCoordsys};
 
 fn raised(error: impl ToString) -> PyErr {
@@ -162,7 +161,7 @@ fn spectral_code(
         .resolve(name)
         .and_then(|code| code.parse().ok())
         .ok_or_else(|| raised(format!("Invalid frequency code '{name}' given")))?;
-    let native = declared_frame(model);
+    let native = declared_frequency_ref(model);
     if native == frame {
         return Ok(());
     }
@@ -201,12 +200,7 @@ fn spectral_code(
     let Some(Value::Record(mut record)) = state.record.get(&placement.field).cloned() else {
         return Err(raised("Missing spectral coordinate record"));
     };
-    let system = Value::Scalar(ScalarValue::String(frame.as_str().into()));
-    record.upsert("system", system.clone());
-    if record.get("frequency_ref").is_some() {
-        record.upsert("frequency_ref", system);
-    }
-    native_conversion_record(&mut record, frame);
+    relabel_spectral_record(&mut record, frame);
     if adjust {
         let rebuilt = changed.to_record();
         if let Some(table) = rebuilt.get("tabular") {

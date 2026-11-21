@@ -19,6 +19,7 @@ mod reference;
 mod reference_code;
 mod replace;
 mod rest_frequency;
+mod spectral_samples;
 mod stubs;
 mod subimage;
 pub(crate) mod surface;
