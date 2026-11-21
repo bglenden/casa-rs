@@ -381,10 +381,10 @@ impl TestKernels {
 /// millimetres share one too.
 pub fn keyed_cell(w_lambda: f64, freq_hz: f64, cells: u16) -> CfKey {
     let millimetres = (w_lambda * SPEED_OF_LIGHT / freq_hz * 1.0e3).round() as i64;
-    CfKey {
-        group: u16::try_from(millimetres.rem_euclid(i64::from(cells))).expect("below cells"),
-        cube: 0,
-    }
+    CfKey::new(
+        u16::try_from(millimetres.rem_euclid(i64::from(cells))).expect("below cells"),
+        0,
+    )
 }
 
 /// The weight-image groups the samples of `rows` make on each plane of

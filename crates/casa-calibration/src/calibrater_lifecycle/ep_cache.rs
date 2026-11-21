@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA's one-W-plane legacy EP convolution cache.
+//! CASA's legacy EP convolution cache and its per-W-plane image tables.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -29,14 +29,14 @@ pub(crate) struct EpCacheProducts {
     pub convolution: ArrayD<Complex32>,
     pub convolution_coordinates: CoordinateSystem,
     pub weights: ArrayD<Complex32>,
-    pub support: usize,
+    pub support: Vec<usize>,
     pub sampling: usize,
     _memory: Reservation,
 }
 
 struct Slot {
     angle_deg: f64,
-    support: usize,
+    support: Vec<usize>,
     sampling: usize,
 }
 
@@ -68,14 +68,18 @@ impl EpCache {
         }
     }
 
-    pub(super) fn read(
+    pub(crate) fn read(
         &self,
         host: &HostResources,
         angle_rad: f64,
         maximum_gap_deg: f64,
         shape: &[usize],
         correlations: &[StokesType],
+        planes: usize,
     ) -> MsResult<Option<EpCacheProducts>> {
+        if planes == 0 {
+            return Err(invalid("legacy EP cache requires a positive W-plane count"));
+        }
         let slots = self.slots()?;
         let angle = angle_rad.to_degrees();
         let matching = slots
@@ -87,8 +91,23 @@ impl EpCache {
         let Some((_, index, slot)) = matching else {
             return Ok(None);
         };
-        let convolution = self.kernel("CF", index, slot, correlations.len())?;
-        let weights = self.kernel("CFWT", index, slot, correlations.len())?;
+        let support = slot.support.get(..planes).ok_or_else(|| {
+            invalid("legacy EP cache contains fewer W planes than the requested transform")
+        })?;
+        let convolution = self.kernel(
+            "CF",
+            (index, 0),
+            support[0],
+            slot.sampling,
+            correlations.len(),
+        )?;
+        let weights = self.kernel(
+            "CFWT",
+            (index, 0),
+            support[0],
+            slot.sampling,
+            correlations.len(),
+        )?;
         let bytes = |image: &PagedImage<Complex32>| {
             image
                 .shape()
@@ -97,25 +116,34 @@ impl EpCache {
                     size.saturating_mul(length as u64)
                 })
         };
+        let conv_bytes = bytes(&convolution);
+        let weight_bytes = bytes(&weights);
         let memory = admit(
             host,
             &ResourcePolicy::Balanced,
             &Demand {
                 phase: "legacy EP cached convolutions",
-                memory: bytes(&convolution).saturating_add(bytes(&weights)),
+                memory: conv_bytes
+                    .saturating_add(weight_bytes)
+                    .saturating_mul(planes as u64)
+                    .saturating_add(if planes > 1 {
+                        conv_bytes.max(weight_bytes)
+                    } else {
+                        0
+                    }),
             },
         )
         .map_err(invalid)?;
         let convolution_coordinates = convolution.coordinates().clone();
-        let convolution = read_kernel(&convolution)?;
-        let weights = read_kernel(&weights)?;
-        let beam = PagedImage::<f32>::open(self.root.join(BEAM)).map_err(invalid)?;
+        let convolution = self.read_kernels(host, "CF", index, slot, support, convolution)?;
+        let weights = self.read_kernels(host, "CFWT", index, slot, support, weights)?;
+        let beam = PagedImage::<f32>::open_with_cache(self.root.join(BEAM), 1).map_err(invalid)?;
         if shape != beam.shape() {
             return Err(invalid(
                 "legacy EP cache average beam has a different image shape",
             ));
         }
-        let average_beam = beam.get().map_err(invalid)?;
+        let average_beam = read_pixels(host, beam)?;
         if average_beam.iter().any(|value| !value.is_finite())
             || !average_beam.iter().any(|value| *value >= 1e-4)
         {
@@ -128,24 +156,62 @@ impl EpCache {
             convolution,
             convolution_coordinates,
             weights,
-            support: slot.support,
+            support: support.to_vec(),
             sampling: slot.sampling,
             _memory: memory,
         }))
     }
 
-    fn kernel(
+    fn read_kernels(
         &self,
+        host: &HostResources,
         prefix: &str,
         index: usize,
         slot: &Slot,
+        support: &[usize],
+        first: PagedImage<Complex32>,
+    ) -> MsResult<ArrayD<Complex32>> {
+        let [nx, ny, pols, 1] = *first.shape() else {
+            unreachable!("validated legacy EP cache image");
+        };
+        let pixels = read_kernel(host, first, support[0] != 0)?;
+        if support.len() == 1 {
+            return Ok(pixels);
+        }
+        let mut packed = ArrayD::zeros(IxDyn(&[nx, ny, pols, support.len()]).f());
+        let mut planes = packed.axis_iter_mut(ndarray::Axis(3));
+        planes
+            .next()
+            .unwrap()
+            .assign(&pixels.index_axis(ndarray::Axis(3), 0));
+        drop(pixels);
+        for (plane, (&half_width, mut destination)) in
+            support.iter().skip(1).zip(planes).enumerate()
+        {
+            let image = self.kernel(prefix, (index, plane + 1), half_width, slot.sampling, pols)?;
+            if image.shape() != [nx, ny, pols, 1] {
+                return Err(invalid(
+                    "legacy EP cache W planes have different image shapes",
+                ));
+            }
+            let pixels = read_kernel(host, image, half_width != 0)?;
+            destination.assign(&pixels.index_axis(ndarray::Axis(3), 0));
+        }
+        Ok(packed)
+    }
+
+    fn kernel(
+        &self,
+        prefix: &str,
+        (index, plane): (usize, usize),
+        support: usize,
+        sampling: usize,
         pols: usize,
     ) -> MsResult<PagedImage<Complex32>> {
-        let path = self.root.join(format!("{prefix}0_{index}"));
-        let image = PagedImage::<Complex32>::open(&path).map_err(invalid)?;
-        let span = slot
-            .support
-            .checked_mul(slot.sampling)
+        let path = self.root.join(format!("{prefix}{plane}_{index}"));
+        let image = PagedImage::<Complex32>::open_with_cache(&path, 1).map_err(invalid)?;
+        let span = support
+            .checked_mul(sampling)
             .and_then(|span| span.checked_mul(2));
         let [nx, ny, count, 1] = *image.shape() else {
             return Err(invalid(format!(
@@ -172,6 +238,11 @@ impl EpCache {
         products: &LegacyEpConvolution,
     ) -> MsResult<()> {
         let mut slots = self.slots()?;
+        if slots.iter().any(|slot| slot.support.len() != 1) {
+            return Err(invalid(
+                "appending to a multi-plane legacy EP cache is pending #1520",
+            ));
+        }
         let index = slots.len();
         let names = product_names(index);
         let staged = tempfile::Builder::new()
@@ -217,7 +288,7 @@ impl EpCache {
         let angle = format!("{:.4}", angle_rad.to_degrees());
         slots.push(Slot {
             angle_deg: angle.parse().map_err(invalid)?,
-            support: products.support,
+            support: vec![products.support],
             sampling: products.sampling,
         });
         let mut manifest = format!("{} 1\n", slots.len());
@@ -225,7 +296,7 @@ impl EpCache {
             writeln!(
                 manifest,
                 "{} {} {}  {}",
-                slot.angle_deg, slot.support, slot.support, slot.sampling
+                slot.angle_deg, slot.support[0], slot.support[0], slot.sampling
             )
             .expect("writing to a String cannot fail");
         }
@@ -304,12 +375,38 @@ impl EpCache {
     }
 }
 
-fn read_kernel(image: &PagedImage<Complex32>) -> MsResult<ArrayD<Complex32>> {
-    let kernels = image.get().map_err(invalid)?;
+fn read_pixels<T: ImagePixel>(host: &HostResources, image: PagedImage<T>) -> MsResult<ArrayD<T>> {
+    let tile = image
+        .tile_shape()
+        .iter()
+        .fold(size_of::<T>() as u64, |bytes, &axis| {
+            bytes.saturating_mul(axis as u64)
+        });
+    let _tile_memory = admit(
+        host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy EP kernel tile buffers",
+            // One cached tile plus transient raw bytes and decoding scratch.
+            memory: tile.saturating_mul(3),
+        },
+    )
+    .map_err(invalid)?;
+    let pixels = image.get().map_err(invalid);
+    drop(image);
+    pixels
+}
+
+fn read_kernel(
+    host: &HostResources,
+    image: PagedImage<Complex32>,
+    nonzero: bool,
+) -> MsResult<ArrayD<Complex32>> {
+    let kernels = read_pixels(host, image)?;
     if kernels
         .iter()
         .any(|v| !v.re.is_finite() || !v.im.is_finite())
-        || !kernels.iter().any(|v| v.re != 0. || v.im != 0.)
+        || (nonzero && !kernels.iter().any(|v| v.re != 0. || v.im != 0.))
     {
         return Err(invalid("invalid sample in legacy EP cache kernel"));
     }
@@ -339,17 +436,20 @@ fn decode_slots(document: &str) -> MsResult<Vec<Slot>> {
     let mut fields = document.split_whitespace();
     let slots = parse::<usize>(&mut fields)?;
     let planes = parse::<usize>(&mut fields)?;
-    if planes != 1 {
-        return Err(invalid("legacy EP requires a one-plane convolution cache"));
+    if !(1..=usize::from(u16::MAX)).contains(&planes) {
+        return Err(invalid("invalid W-plane count in legacy EP cache aux.dat"));
     }
     let mut decoded = Vec::new();
     for _ in 0..slots {
         let angle_deg = parse::<f64>(&mut fields)?;
-        let support = parse::<usize>(&mut fields)?;
-        let _ = parse::<usize>(&mut fields)?; // CASA reload uses X support for both axes.
+        let mut support = Vec::new();
+        for _ in 0..planes {
+            support.push(parse::<usize>(&mut fields)?);
+            let _ = parse::<usize>(&mut fields)?; // CASA reload uses X support for both axes.
+        }
         let sampling = parse::<f64>(&mut fields)?;
         if !angle_deg.is_finite()
-            || support == 0
+            || (planes == 1 && support[0] == 0)
             || !(1. ..usize::MAX as f64).contains(&sampling)
             || sampling.fract() != 0.
         {

@@ -130,7 +130,7 @@ impl Kernels {
     pub fn keys(self) -> Vec<CfKey> {
         match self {
             Self::Spheroidal | Self::Separable => vec![CfKey::default()],
-            Self::Dense | Self::WideDense => (0..2).map(|cube| CfKey { group: 0, cube }).collect(),
+            Self::Dense | Self::WideDense => (0..2).map(|cube| CfKey::new(0, cube)).collect(),
             Self::Mosaic => {
                 let dishes = MOSAIC_DISHES_M.len();
                 let mut keys = Vec::new();
@@ -139,7 +139,7 @@ impl Kernels {
                         let group = u16::try_from(pair_plane([first as u8, second as u8], dishes))
                             .expect("pair plane fits u16");
                         for cube in 0..MOSAIC_FREQUENCIES_HZ.len() as u16 {
-                            keys.push(CfKey { group, cube });
+                            keys.push(CfKey::new(group, cube));
                         }
                     }
                 }
@@ -305,13 +305,7 @@ impl ConvolutionFunctionSet for Dense {
         [self.support / 2; 2]
     }
     fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
-        Some(self.taps(
-            CfKey {
-                group: 0,
-                cube: 1 - key.cube,
-            },
-            hold,
-        ))
+        Some(self.taps(CfKey::new(0, 1 - key.cube), hold))
     }
     fn mueller(&self) -> &MuellerRouting {
         &self.mueller

@@ -370,7 +370,7 @@ fn clipped_spreads_hold_at_most_their_charge() {
             Box::new(set),
             precision,
         );
-        let key = CfKey { group: 0, cube: 0 };
+        let key = CfKey::new(0, 0);
         // A sample anchored on the grid's last column, whose support
         // overruns it.
         let cell = 1.0 / geometry.scale()[0];
@@ -598,10 +598,7 @@ fn aw_open(root: &std::path::Path, bound: usize) -> AwCatalog {
 /// hold, as a pass's modes do, and the next group's prediction cell through
 /// the prediction hold: a CPU backend's two holds (#449, #773 review).
 fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 2]) {
-    let key = CfKey {
-        group: group as u16,
-        cube: ((group + 1) % catalog.groups()) as u16,
-    };
+    let key = CfKey::new(group as u16, ((group + 1) % catalog.groups()) as u16);
     let [gridding, prediction] = holds;
     assert!(catalog.taps(key, gridding).half_support()[0] > 0);
     assert!(catalog.weight_taps(key, gridding).is_some());
@@ -853,11 +850,7 @@ fn check_awp2_squint_routing(set: &casa_imaging_operator::Awp2) {
         spectral_window: 0,
     };
     let key = set.key(&row, 1.2e9, 53_803.0);
-    assert_eq!(
-        key,
-        CfKey { group: 1, cube: 6 },
-        "PA tie and half-turn prediction"
-    );
+    assert_eq!(key, CfKey::new(1, 6), "PA tie and half-turn prediction");
     let other_pa = set.key(
         &RowContext {
             parallactic_angle_rad: [0.0; 2],
@@ -866,11 +859,7 @@ fn check_awp2_squint_routing(set: &casa_imaging_operator::Awp2) {
         1.2e9,
         53_803.0,
     );
-    assert_eq!(
-        other_pa,
-        CfKey { group: 5, cube: 0 },
-        "prediction wraps at -π"
-    );
+    assert_eq!(other_pa, CfKey::new(5, 0), "prediction wraps at -π");
     let mut hold = CellHold::new();
     let mut expected_hold = CellHold::new();
     fn data(layout: TapLayout<'_>) -> &[Complex32] {
@@ -881,12 +870,12 @@ fn check_awp2_squint_routing(set: &casa_imaging_operator::Awp2) {
     }
     assert_eq!(
         data(set.prediction_taps(key, &mut hold)),
-        data(set.taps(CfKey { group: 7, cube: 0 }, &mut expected_hold)),
+        data(set.taps(CfKey::new(7, 0), &mut expected_hold)),
         "prediction changes PA while retaining frequency and W",
     );
     assert_eq!(
         data(set.psf_taps(other_pa, &mut hold)),
-        data(set.taps(CfKey { group: 4, cube: 0 }, &mut expected_hold)),
+        data(set.taps(CfKey::new(4, 0), &mut expected_hold)),
         "PSF uses W=0 at the same PA",
     );
     let zero = CfKey { group: 0, ..key };
