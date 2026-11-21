@@ -22,8 +22,8 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
-    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, LinearCoordinate,
+    Projection, ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::{
     FeatherRequest, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType, ImpvRequest,
@@ -228,6 +228,161 @@ fn int_map(record: &casa_types::RecordValue, field: &str) -> Vec<i32> {
     match record.get(field) {
         Some(Value::Array(ArrayValue::Int32(values))) => values.iter().copied().collect(),
         other => panic!("{field}: {other:?}"),
+    }
+}
+
+fn mapped_rewrite_directory(scratch: &Path) -> PathBuf {
+    let output = std::env::var_os("CASA_RS_AXIS_MAP_REWRITE_OUT")
+        .map_or_else(|| scratch.join("rewrites"), PathBuf::from);
+    std::fs::create_dir_all(&output).unwrap();
+    output
+}
+
+#[test]
+fn complete_axis_maps_match_casa_and_round_trip_through_native_images() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let output = mapped_rewrite_directory(scratch.path());
+    for name in [
+        "transposed.image",
+        "spectral_first.image",
+        "swapped.image",
+        "interleaved.image",
+        "dropdeg_ra.image",
+        "pv.image",
+        "dropdeg_linear.image",
+        "dropdeg_linear_between.image",
+        "tabular_spectral_first.image",
+    ] {
+        let source = copy_image(name, scratch.path());
+        let table = Table::open(TableOptions::new(&source)).unwrap();
+        let Some(Value::Record(record)) = table.keywords().get("coords") else {
+            panic!("{name}: missing coordinate record");
+        };
+        let ArrayValue::Float32(data) = table.row_accessor().array_cell(0, "map").unwrap() else {
+            panic!("{name}: missing Float32 image pixels");
+        };
+        let mapped = CoordinateSystem::from_mapped_record(record).unwrap();
+        let oracle = casa(name);
+        let shape = numbers(&oracle["shape"])
+            .into_iter()
+            .map(|extent| extent as usize)
+            .collect::<Vec<_>>();
+        assert_eq!(data.shape(), &shape);
+        assert_eq!(mapped.n_pixel_axes(), shape.len());
+        let world_names = (0..mapped.n_world_axes())
+            .map(|axis| {
+                let (coordinate, local) = mapped.world_axis_owner(axis).unwrap();
+                mapped.coordinate(coordinate).axis_names()[local].clone()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(world_names, strings(&oracle["names"]), "{name}");
+
+        let samples = oracle["samples"].as_array().unwrap();
+        let mut pixel_columns = Array2::zeros((mapped.n_pixel_axes(), samples.len()));
+        let mut world_columns = Array2::zeros((mapped.n_world_axes(), samples.len()));
+        for (column, sample) in samples.iter().enumerate() {
+            for (axis, value) in numbers(&sample["pixel"]).into_iter().enumerate() {
+                pixel_columns[(axis, column)] = value;
+            }
+            for (axis, value) in numbers(&sample["world"]).into_iter().enumerate() {
+                world_columns[(axis, column)] = value;
+            }
+        }
+        let world_batch = mapped.to_world_columns(pixel_columns.view()).unwrap();
+        let pixel_batch = mapped.to_pixel_columns(world_columns.view()).unwrap();
+        for (column, sample) in samples.iter().enumerate() {
+            let input_pixel = numbers(&sample["pixel"]);
+            let input_world = numbers(&sample["world"]);
+            let inverse_pixel = numbers(&sample["inverse_pixel"]);
+            let got_world = mapped.to_world(&input_pixel).unwrap();
+            let got_pixel = mapped.to_pixel(&input_world).unwrap();
+            for (axis, (&scalar, expected)) in got_world.iter().zip(input_world).enumerate() {
+                let tolerance = 1e-12 * expected.abs().max(1.0);
+                assert!(
+                    (scalar - expected).abs() <= tolerance,
+                    "{name}: world axis {axis}: {scalar} vs {expected}"
+                );
+                assert!((world_batch[(axis, column)] - expected).abs() <= tolerance);
+            }
+            for (axis, (&scalar, expected)) in got_pixel.iter().zip(inverse_pixel).enumerate() {
+                let tolerance = 1e-7_f64.max(1e-10 * expected.abs());
+                assert!(
+                    (scalar - expected).abs() <= tolerance,
+                    "{name}: inverse axis {axis}: {scalar} vs {expected}"
+                );
+                assert!((pixel_batch[(axis, column)] - expected).abs() <= tolerance);
+            }
+        }
+
+        let path = output.join(name);
+        let mut image = PagedImage::<f32>::create(shape.clone(), mapped.clone(), &path).unwrap();
+        image.set_coordinates(mapped).unwrap();
+        image.put_slice(data, &vec![0; shape.len()]).unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let saved = coords_record(&path);
+        for field in record.fields() {
+            if ["worldmap", "pixelmap", "worldreplace", "pixelreplace"]
+                .iter()
+                .any(|prefix| field.name.starts_with(prefix))
+            {
+                assert_eq!(
+                    saved.get(&field.name),
+                    Some(&field.value),
+                    "{name}: {}",
+                    field.name
+                );
+            }
+        }
+        let restored = CoordinateSystem::from_mapped_record(&saved).unwrap();
+        assert_eq!(
+            restored.n_coordinates(),
+            oracle["maps"].as_object().unwrap().len(),
+            "{name}"
+        );
+        let new_world = restored.to_world_columns(pixel_columns.view()).unwrap();
+        assert_eq!(new_world, world_batch, "{name}");
+    }
+}
+
+#[test]
+fn a_legacy_direction_slice_can_be_added_or_replaced_in_a_native_output() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let output = mapped_rewrite_directory(scratch.path());
+    let source = copy_image("dropdeg_ra.image", scratch.path());
+    let legacy = CoordinateSystem::from_record(&coords_record(&source)).unwrap();
+    let slice = legacy.coordinate(legacy.find_coordinate(CoordinateType::Direction).unwrap());
+    for (name, append) in [
+        ("added-direction.image", true),
+        ("replaced-direction.image", false),
+    ] {
+        let mut coords = CoordinateSystem::new();
+        coords.add_coordinate(LinearCoordinate::new(1, Vec::new(), Vec::new()));
+        coords.transpose_axes(&[0], &[0]).unwrap();
+        let (shape, input) = if append {
+            coords.add_coordinate(slice.clone());
+            (vec![3, 3], vec![0.0, 1.0])
+        } else {
+            coords.replace_coordinate(0, slice.clone());
+            (vec![3], vec![1.0])
+        };
+        let world = coords.to_world(&input).unwrap();
+        let path = output.join(name);
+        let mut image = PagedImage::<f32>::create(shape, coords, &path).unwrap();
+        image.save().unwrap();
+        drop(image);
+        let record = coords_record(&path);
+        let slot = usize::from(append);
+        for kind in ["pixelmap", "worldmap"] {
+            assert_eq!(
+                int_map(&record, &format!("{kind}{slot}")),
+                [-(slot as i32) - 1, slot as i32],
+            );
+        }
+        let restored = CoordinateSystem::from_mapped_record(&record).unwrap();
+        let got = restored.to_world(&input).unwrap();
+        assert!((world[slot] - got[slot]).abs() < 1e-12);
     }
 }
 

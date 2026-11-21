@@ -123,16 +123,38 @@ impl AxisMap {
             }
         }
     }
+
+    fn insert_hidden_axis(&mut self, local: usize, replacement: f64) {
+        let visible = self.indices[0];
+        let position = if visible < 0 { -1 - visible } else { visible };
+        let marker = -position.saturating_add(local as i32) - 1;
+        self.indices.insert(local, marker);
+        self.replacements.insert(local, replacement);
+    }
 }
 
 #[derive(Debug, Clone)]
 struct Placement {
-    record_index: usize,
     pixel: AxisMap,
     world: AxisMap,
 }
 
 impl Placement {
+    fn promote_direction_slice(&mut self, model: &mut CoordinateModel) -> bool {
+        let CoordinateModel::Direction(direction) = model else {
+            return false;
+        };
+        let Some(removed) = direction.take_removed_axis() else {
+            return false;
+        };
+        self.pixel.insert_hidden_axis(removed.index, removed.pixel);
+        let mut world = [0.0; 2];
+        world[removed.index] = removed.world_rad;
+        let replacement = direction.in_world_units(world)[removed.index];
+        self.world.insert_hidden_axis(removed.index, replacement);
+        true
+    }
+
     fn coordinate_world_replacements(
         &self,
         model: &CoordinateModel,
@@ -196,10 +218,15 @@ fn default_world_replacements(coordinate: &CoordinateModel) -> Vec<f64> {
     let world = coordinate
         .to_world(&vec![0.0; coordinate.n_pixel_axes()])
         .unwrap_or_else(|_| vec![0.0; coordinate.n_world_axes()]);
-    if let CoordinateModel::Direction(direction) = coordinate
-        && let [longitude, latitude] = world.as_slice()
-    {
-        return direction.in_world_units([*longitude, *latitude]).into();
+    if let CoordinateModel::Direction(direction) = coordinate {
+        return world
+            .into_iter()
+            .zip(direction.visible_world_units())
+            .map(|(value, unit)| {
+                convert_value_to_unit(value, "rad", &unit, "worldreplace")
+                    .expect("direction units are angles")
+            })
+            .collect();
     }
     world
 }
@@ -238,8 +265,7 @@ impl AxisMaps {
     }
 
     pub(super) fn write_record(&self, models: &[CoordinateModel], record: &mut RecordValue) {
-        for (model, placement) in models.iter().zip(&self.placements) {
-            let index = placement.record_index;
+        for (index, (model, placement)) in models.iter().zip(&self.placements).enumerate() {
             let prefix = record_basename(model.coordinate_type());
             record.upsert(format!("{prefix}{index}"), Value::Record(model.to_record()));
             placement.pixel.write(record, index, "pixel");
@@ -247,65 +273,28 @@ impl AxisMaps {
         }
     }
 
-    pub(super) fn append(&mut self, coordinate: &CoordinateModel) {
-        let record_index = self.placements.last().map_or(0, |p| p.record_index + 1);
+    pub(super) fn append(&mut self, coordinate: &mut CoordinateModel) {
         let pixel = AxisMap::identity(self.n_pixel, vec![0.0; coordinate.n_pixel_axes()]);
         let world = AxisMap::identity(self.n_world, default_world_replacements(coordinate));
-        self.placements.push(Placement {
-            record_index,
-            pixel,
-            world,
-        });
         self.n_pixel += coordinate.n_pixel_axes();
         self.n_world += coordinate.n_world_axes();
+        let mut placement = Placement { pixel, world };
+        if placement.promote_direction_slice(coordinate) {
+            self.concatenated = false;
+        }
+        self.placements.push(placement);
     }
 
     pub(super) fn replace_coordinate(
         &mut self,
         index: usize,
         old: &CoordinateModel,
-        new: &CoordinateModel,
+        new: &mut CoordinateModel,
     ) {
-        let world = &mut self.placements[index].world;
-        if old.coordinate_type() == new.coordinate_type() {
-            let old_units = record_units(old);
-            let new_units = record_units(new);
-            let scaled = old_units
-                .iter()
-                .zip(&new_units)
-                .zip(&world.replacements)
-                .map(|((from, to), &value)| {
-                    if from == to {
-                        return Some(value);
-                    }
-                    let quantity = Quantity::new(value, from).ok()?;
-                    let unit = Unit::new(to).ok()?;
-                    quantity.get_value_in(&unit).ok()
-                })
-                .collect::<Option<Vec<_>>>();
-            if let Some(scaled) = scaled
-                && world
-                    .indices
-                    .iter()
-                    .zip(&scaled)
-                    .all(|(&axis, value)| axis >= 0 || value.is_finite())
-            {
-                world.replacements = scaled;
-                return;
-            }
-        }
-        let reference = if let CoordinateModel::Direction(direction) = new {
-            direction.reference_and_increment_in_world_units().0
-        } else {
-            new.reference_value()
-        };
-        for ((&axis, value), reference) in world
-            .indices
-            .iter()
-            .zip(&mut world.replacements)
-            .zip(reference)
-        {
-            *value = if axis < 0 { reference } else { 0.0 };
+        let placement = &mut self.placements[index];
+        replace_world_values(&mut placement.world, old, new);
+        if placement.promote_direction_slice(new) {
+            self.concatenated = false;
         }
     }
 
@@ -395,6 +384,54 @@ impl AxisMaps {
     }
 }
 
+fn replace_world_values(world: &mut AxisMap, old: &CoordinateModel, new: &CoordinateModel) {
+    if old.coordinate_type() == new.coordinate_type() {
+        let old_units = record_units(old);
+        let new_units = record_units(new);
+        let scaled = old_units
+            .iter()
+            .zip(&new_units)
+            .zip(&world.replacements)
+            .map(|((from, to), &value)| {
+                if from == to {
+                    return Some(value);
+                }
+                let quantity = Quantity::new(value, from).ok()?;
+                let unit = Unit::new(to).ok()?;
+                quantity.get_value_in(&unit).ok()
+            })
+            .collect::<Option<Vec<_>>>();
+        if let Some(scaled) = scaled
+            && world
+                .indices
+                .iter()
+                .zip(&scaled)
+                .all(|(&axis, value)| axis >= 0 || value.is_finite())
+        {
+            world.replacements = scaled;
+            return;
+        }
+    }
+    let reference = if let CoordinateModel::Direction(direction) = new {
+        direction.reference_and_increment_in_world_units().0
+    } else {
+        new.reference_value()
+    };
+    for ((&axis, value), reference) in world
+        .indices
+        .iter()
+        .zip(&mut world.replacements)
+        .zip(reference)
+    {
+        // Keep an invalid reference from making the replacement vector unreadable.
+        *value = if axis < 0 && reference.is_finite() {
+            reference
+        } else {
+            0.0
+        };
+    }
+}
+
 fn is_concatenated<'a>(axes: impl Iterator<Item = &'a [i32]>) -> bool {
     axes.flatten()
         .copied()
@@ -447,24 +484,15 @@ impl CoordinateSystem {
         self.maps.as_deref().filter(|maps| !maps.concatenated)
     }
 
-    fn ensure_axis_maps(&mut self) -> Result<&mut AxisMaps, CoordinateError> {
+    fn ensure_axis_maps(&mut self) -> &mut AxisMaps {
         if self.maps.is_none() {
-            if self.coordinates.iter().any(|model| {
-                matches!(model, CoordinateModel::Direction(direction) if direction.removed_axis().is_some())
-            }) {
-                // Restore the full model for a direction slice made by the contiguous reader.
-                let mapped = Self::from_mapped_record(&self.to_record())?;
-                self.coordinates = mapped.coordinates;
-                self.maps = mapped.maps;
-            } else {
-                let mut maps = AxisMaps::from_placements(Vec::new())?;
-                for coordinate in &self.coordinates {
-                    maps.append(coordinate);
-                }
-                self.maps = Some(Box::new(maps));
+            let mut maps = AxisMaps::from_placements(Vec::new()).expect("empty maps are valid");
+            for coordinate in &mut self.coordinates {
+                maps.append(coordinate);
             }
+            self.maps = Some(Box::new(maps));
         }
-        Ok(self.maps.as_deref_mut().expect("axis maps initialized"))
+        self.maps.as_deref_mut().expect("axis maps initialized")
     }
 
     /// Reads a casacore record in coordinate creation order, retaining
@@ -486,10 +514,10 @@ impl CoordinateSystem {
         let mut world_start = 0;
         let mut placements = Vec::with_capacity(models.len());
         let mut coordinates = Vec::with_capacity(models.len());
-        for (record_index, _, model) in models {
-            if record_index > i32::MAX as usize {
+        for (expected, (record_index, _, model)) in models.into_iter().enumerate() {
+            if record_index != expected {
                 return Err(CoordinateError::InvalidRecord(
-                    "coordinate number is too large".into(),
+                    "coordinate records must be numbered from zero without gaps".into(),
                 ));
             }
             let pixel_rank = model.n_pixel_axes();
@@ -511,11 +539,7 @@ impl CoordinateSystem {
             };
             pixel_start += pixel_rank;
             world_start += world_rank;
-            placements.push(Placement {
-                record_index,
-                pixel,
-                world,
-            });
+            placements.push(Placement { pixel, world });
             coordinates.push(model);
         }
         let maps = AxisMaps::from_placements(placements)?;
@@ -571,7 +595,7 @@ impl CoordinateSystem {
     ) -> Result<(), CoordinateError> {
         let world = inverse_order(world_order, self.n_world_axes(), "world")?;
         let pixel = inverse_order(pixel_order, self.n_pixel_axes(), "pixel")?;
-        let maps = self.ensure_axis_maps()?;
+        let maps = self.ensure_axis_maps();
         for placement in &mut maps.placements {
             for (axis_map, order) in [
                 (&mut placement.world, &world),
@@ -599,8 +623,7 @@ impl CoordinateSystem {
         replacement: f64,
     ) -> Result<(), CoordinateError> {
         check_removal(axis, self.n_pixel_axes(), replacement)?;
-        self.ensure_axis_maps()?
-            .remove_axis(axis, replacement, true);
+        self.ensure_axis_maps().remove_axis(axis, replacement, true);
         Ok(())
     }
 
@@ -648,7 +671,7 @@ impl CoordinateSystem {
             replacement
         };
         check_removal(axis, self.n_world_axes(), replacement)?;
-        let maps = self.ensure_axis_maps()?;
+        let maps = self.ensure_axis_maps();
         if let Some((axis, position)) = pixel {
             maps.remove_axis(axis, position, true);
         }
@@ -741,7 +764,9 @@ impl CoordinateSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DirectionCoordinate, LinearCoordinate, Projection, ProjectionType};
+    use crate::{
+        DirectionCoordinate, LinearCoordinate, Projection, ProjectionType, TabularCoordinate,
+    };
     use casa_types::measures::direction::DirectionRef;
     use ndarray::array;
 
@@ -956,5 +981,115 @@ mod tests {
         let mapless = CoordinateSystem::from_mapped_record(&record).unwrap();
         assert_eq!(mapless.to_world(&[2.0, 3.0]).unwrap(), [2.0, 3.0]);
         assert_eq!(mapless.to_record(), explicit.to_record());
+    }
+
+    fn legacy_direction_slice() -> DirectionCoordinate {
+        let mut direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.2, 0.3],
+            [-0.01, 0.01],
+            [0.0, 1.0],
+        )
+        .with_world_units(["deg", "deg"])
+        .unwrap();
+        direction.remove_record_axis(0, 4.0, 13.0).unwrap();
+        direction
+    }
+
+    #[test]
+    fn promoting_legacy_slice_preserves_other_live_coordinate_models() {
+        let mut system = CoordinateSystem::new();
+        system.add_coordinate(legacy_direction_slice());
+        system.add_coordinate(
+            TabularCoordinate::linear(0.0, 1.0, 0.0, "offset", "pix")
+                .with_linear_transform(2.0)
+                .unwrap(),
+        );
+        let pixel = [2.0, 3.0];
+        let world = system.to_world(&pixel).unwrap();
+        assert_eq!(world[1], 6.0);
+        let inverse = system.to_pixel(&world).unwrap();
+        system.transpose_axes(&[0, 1], &[0, 1]).unwrap();
+        let actual_world = system.to_world(&pixel).unwrap();
+        let actual_pixel = system.to_pixel(&world).unwrap();
+        assert_eq!(actual_world[1], 6.0);
+        assert_eq!(actual_pixel[1], 3.0);
+        assert!((actual_world[0] - world[0]).abs() < 1e-12);
+        assert!((actual_pixel[0] - inverse[0]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn appending_or_replacing_a_legacy_slice_saves_its_full_axis_maps() {
+        for append in [false, true] {
+            let mut system = CoordinateSystem::new();
+            system.add_coordinate(LinearCoordinate::new(1, Vec::new(), Vec::new()));
+            system.transpose_axes(&[0], &[0]).unwrap();
+            if append {
+                system.add_coordinate(legacy_direction_slice());
+            } else {
+                system.replace_coordinate(0, legacy_direction_slice());
+            }
+            let record = system.to_record();
+            let slot = usize::from(append);
+            for kind in ["pixelmap", "worldmap"] {
+                assert_eq!(
+                    get_required_vec_i32(&record, &format!("{kind}{slot}")).unwrap(),
+                    [-(slot as i32) - 1, slot as i32]
+                );
+            }
+            let restored = CoordinateSystem::from_mapped_record(&record).unwrap();
+            let pixel = vec![2.0; system.n_pixel_axes()];
+            let world = system.to_world(&pixel).unwrap();
+            let restored_world = restored.to_world(&pixel).unwrap();
+            let original_inverse = system.to_pixel(&world).unwrap();
+            let restored_inverse = restored.to_pixel(&world).unwrap();
+            for (actual, expected) in restored_world.iter().zip(world) {
+                assert!((actual - expected).abs() < 1e-12);
+            }
+            for (actual, expected) in restored_inverse.iter().zip(original_inverse) {
+                assert!((actual - expected).abs() < 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn mapped_coordinate_numbers_are_contiguous() {
+        let mut system = CoordinateSystem::new();
+        for _ in 0..3 {
+            system.add_coordinate(LinearCoordinate::new(1, Vec::new(), Vec::new()));
+        }
+        for missing in [0, 1] {
+            let mut record = system.to_record();
+            record.remove(&format!("linear{missing}"));
+            let error = CoordinateSystem::from_mapped_record(&record).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("numbered from zero without gaps")
+            );
+        }
+    }
+
+    #[test]
+    fn replacing_with_an_invalid_reference_keeps_the_hidden_slot_finite() {
+        let mut system = CoordinateSystem::new();
+        system.add_coordinate(LinearCoordinate::new(
+            2,
+            Vec::new(),
+            vec!["MHz".into(), "m".into()],
+        ));
+        system.remove_world_axis(0, 42.0).unwrap();
+        system.replace_coordinate(
+            0,
+            LinearCoordinate::new(2, Vec::new(), vec!["s".into(), "m".into()])
+                .with_reference_value(vec![f64::NAN, 20.0]),
+        );
+        let record = system.to_record();
+        assert_eq!(
+            get_required_vec_f64(&record, "worldreplace0").unwrap(),
+            [0.0, 0.0]
+        );
+        assert!(CoordinateSystem::from_mapped_record(&record).is_ok());
     }
 }
