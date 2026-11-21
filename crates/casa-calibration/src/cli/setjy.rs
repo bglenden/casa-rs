@@ -31,6 +31,8 @@ use crate::ft::setjy::{ManualFlux, sampled_point};
 use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
 
+mod fluxdict;
+
 enum FluxParameters {
     Manual(ManualFlux),
     Standard {
@@ -67,6 +69,11 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             return TaskSuccess::new(flux_dictionary(Vec::new()), &());
         }
         return empty_selection(task);
+    }
+    if task.text("standard")?.as_deref() == Some("fluxscale") {
+        let result = fluxdict::run(task, opened, selection, &selected, scratch)?;
+        super::history::record_task(task, &path);
+        return TaskSuccess::new(result, &());
     }
     let Some(flux) = flux_parameters(task)? else {
         if scratch {
@@ -113,10 +120,32 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             selected = opened.resolve(&selection).map_err(execution)?;
             selected.channel_selections.clear();
         }
+    }
+    publish_models(&mut opened, &selected, models, &spws, scratch)?;
+    opened.release().map_err(execution)?;
+    super::history::record_task(task, &path);
+    if partially_written {
+        // CASA's cleanup after the later failure raises once an earlier
+        // component list has already been applied and retired.
+        return Err(execution(
+            "flux coefficients are missing for a later field after earlier models were written",
+        ));
+    }
+    TaskSuccess::new(fluxes, &())
+}
+
+fn publish_models(
+    opened: &mut OpenedMs,
+    selected: &ResolvedMsSelection,
+    models: FieldModels,
+    spws: &[i32],
+    scratch: bool,
+) -> Result<(), TaskFailure> {
+    if scratch {
         let entries: Vec<_> = models.into_values().flatten().collect();
         write_model_scratch(
             &mut opened.measurement_set,
-            &selected,
+            selected,
             &entries,
             false,
             true,
@@ -133,21 +162,12 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                     &entries,
                     &mut opened.lock,
                     field,
-                    &spws,
+                    spws,
                 )
                 .map_err(execution)?;
         }
     }
-    opened.release().map_err(execution)?;
-    super::history::record_task(task, &path);
-    if partially_written {
-        // CASA's cleanup after the later failure raises once an earlier
-        // component list has already been applied and retired.
-        return Err(execution(
-            "flux coefficients are missing for a later field after earlier models were written",
-        ));
-    }
-    TaskSuccess::new(fluxes, &())
+    Ok(())
 }
 
 fn empty_selection(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
