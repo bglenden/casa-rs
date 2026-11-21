@@ -293,3 +293,84 @@ def test_text_report_follows_existing_log_symlink(tmp_path):
         assert result["mask"].sum() == 6
     finally:
         image.done()
+
+
+def test_reports_do_not_replace_the_image_holding_a_named_region(casa, tmp_path):
+    data, mask = _data()
+    path = tmp_path / "region-source.im"
+    creator = casa.image()
+    assert creator.fromarray(str(path), data)
+    assert creator.done()
+    manager = casa.regionmanager()
+    region = manager.box([0, 0, 0, 1], [3, 4, 0, 5])
+    assert manager.fromrecordtotable(str(path), "roi", region)
+    manager.done()
+    report = path / "table.dat"
+    original = report.read_bytes()
+    im = _attached(tools, data, mask)
+    try:
+        region_name = f"{path}:roi"
+        result = im.getprofile(3, region=region_name, unit="pixel")
+        np.testing.assert_array_equal(result["planes"], [1., 2., 3., 4., 5.])
+        with pytest.raises(RuntimeError):
+            im.getprofile(3, region=region_name, logfile=str(report))
+        with pytest.raises(RuntimeError):
+            im.fitprofile(region=region_name, logfile=str(report), ngauss=0, poly=0)
+        assert report.read_bytes() == original
+        assert creator.open(str(path))
+        np.testing.assert_array_equal(creator.getchunk(), data)
+        assert creator.done()
+    finally:
+        im.done()
+
+
+def test_strided_channel_labels_use_original_source_pixels(casa):
+    spectrum = np.arange(7, dtype=np.float32)
+    data = np.broadcast_to(spectrum, (4, 5, 1, 7)).copy()
+    manager = casa.regionmanager()
+    region = manager.box([0, 0, 0, 1], [3, 4, 0, 5], [1, 1, 1, 2])
+    manager.done()
+    for api, expected_labels in [(casa, [1., 2., 3.]), (tools, [1., 3., 5.])]:
+        image = _attached(api, data)
+        try:
+            pixel = image.getprofile(3, region=region, unit="pixel")
+            spectral = image.getprofile(3, region=region, unit="GHz")
+            np.testing.assert_array_equal(pixel["values"], [1., 3., 5.])
+            np.testing.assert_array_equal(pixel["planes"], expected_labels)
+            np.testing.assert_array_equal(pixel["coords"], expected_labels)
+            np.testing.assert_array_equal(spectral["planes"], expected_labels)
+            np.testing.assert_allclose(spectral["coords"], [1.414998, 1.415, 1.415002], rtol=0, atol=2e-12)
+        finally:
+            image.done()
+
+
+def test_rest_frequency_quantities_and_negative_spectral_samples(casa):
+    cs = casa.coordsys()
+    assert cs.newcoordsys(direction=True, spectral=True)
+    assert cs.setreferencepixel([0, 0, 0])
+    assert cs.setreferencevalue(value=[0., 0., -1.5e9])
+    assert cs.setincrement(value=[-1e-4, 1e-4, 5e8])
+    coord = cs.torecord()
+    cs.done()
+    data = np.ones((1, 1, 7), dtype=np.float32)
+    results = []
+    for api in (casa, tools):
+        image = _attached(api, data, csys=coord)
+        try:
+            radio = image.getprofile(2, unit="km/s", spectype="rad", restfreq="2GHz")
+            _compare(image.getprofile(2, unit="km/s", spectype="rad", restfreq=2e9), radio)
+            _compare(image.getprofile(2, unit="km/s", spectype="rad", restfreq="0.149896229m"), radio)
+            optical = image.getprofile(2, unit="km/s", spectype="optical", restfreq="2GHz")
+            wave = image.getprofile(2, unit="cm", spectype="wave", restfreq="1m")
+            with pytest.raises(RuntimeError):
+                image.getprofile(2, unit="cm", spectype="wave", restfreq="-1GHz")
+            unchanged = image.getprofile(2, unit="GHz", restfreq="-1GHz")
+            np.testing.assert_array_equal(unchanged["coords"], [-1.5, -1., -.5, 0., .5, 1., 1.5])
+            assert radio["coords"][0] == pytest.approx(74948.1145)
+            assert np.isposinf(optical["coords"][3])
+            assert np.isposinf(wave["coords"][:4]).all()
+            results.append((radio, optical, wave))
+        finally:
+            image.done()
+    for native, expected in zip(*results[::-1]):
+        _compare(native, expected)

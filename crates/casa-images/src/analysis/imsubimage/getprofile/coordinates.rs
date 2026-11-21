@@ -215,6 +215,7 @@ impl Conversion {
                 source.name()
             )));
         };
+        let explicit_rest = rest_freq.map(rest_frequency_hz).transpose()?;
         let frequency_unit = source.val().factor;
         if target
             .val()
@@ -230,15 +231,11 @@ impl Conversion {
                     ));
                 }
             };
-            let rest_hz = if let Some(rest) = rest_freq {
-                rest.get_value_in(&Unit::new("Hz").expect("hertz is a built-in unit"))
-                    .map_err(|error| invalid(error.to_string()))?
+            let rest_hz = if let Some(rest) = explicit_rest {
+                rest
             } else {
                 spectral.rest_frequency_hz()?
             };
-            if !rest_hz.is_finite() || rest_hz < 0. {
-                return Err(invalid("A rest frequency must be finite and nonnegative"));
-            }
             Ok(Self::Velocity {
                 convention,
                 frequency_unit,
@@ -282,7 +279,7 @@ impl Conversion {
                 if *rest_hz == 0. {
                     return f64::NAN;
                 }
-                let ratio = value * frequency_unit / rest_hz;
+                let ratio = value.abs() * frequency_unit / rest_hz;
                 MDoppler::new(ratio, DopplerRef::RATIO)
                     .convert_to(*convention, &MeasFrame::default())
                     .map_or(f64::NAN, |velocity| velocity.value() * scale)
@@ -293,6 +290,9 @@ impl Conversion {
                 air,
             } => {
                 let frequency = value * frequency_unit;
+                if frequency <= 0. {
+                    return f64::INFINITY;
+                }
                 let wavelength = scale / frequency;
                 if *air {
                     let inverse_microns_sq = (frequency / (1e6 * SPEED_OF_LIGHT)).powi(2);
@@ -306,5 +306,24 @@ impl Conversion {
                 }
             }
         }
+    }
+}
+
+fn rest_frequency_hz(rest: &Quantity) -> Result<f64, ImageError> {
+    let unit = rest.unit().val();
+    let hertz = Unit::new("Hz").expect("hertz is a built-in unit");
+    let meters = Unit::new("m").expect("meters are a built-in unit");
+    let value = if unit.dim.is_dimensionless() {
+        rest.get_si_value()
+    } else if unit.conformant(meters.val()) {
+        SPEED_OF_LIGHT / rest.get_si_value()
+    } else {
+        rest.get_value_in(&hertz)
+            .map_err(|error| invalid(error.to_string()))?
+    };
+    if value.is_finite() && value >= 0. {
+        Ok(value)
+    } else {
+        Err(invalid("A rest frequency must be finite and nonnegative"))
     }
 }

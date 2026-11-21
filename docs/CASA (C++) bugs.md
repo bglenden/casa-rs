@@ -9069,3 +9069,8 @@ With `spectype="beta"` and `unit="m"`, CASA reports its unchanged
 frequency values while labeling them as meters. Casa-rs rejects
 relativistic velocity with a wavelength unit, as it does for radio
 and optical velocity.
+
+For a region retaining channels 1, 3 and 5, CASA returns samples at
+those channels but numbers the `planes` array 1, 2 and 3. The same
+contiguous numbers appear in `coords` when pixel units are requested.
+Casa-rs reports the original sampled pixel numbers.

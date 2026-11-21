@@ -124,12 +124,7 @@ impl ReadRequest<'_> {
         let path = nonempty(self.logfile).map(Path::new);
         let region = self.region.selection();
         if let Some(path) = path {
-            let region_file = match &region {
-                Some(SubimageRegion::Text(text)) => {
-                    Some(Path::new(text.trim())).filter(|path| path.is_file())
-                }
-                _ => None,
-            };
+            let region_file = region.and_then(SubimageRegion::external_path);
             for input in source
                 .path()
                 .into_iter()

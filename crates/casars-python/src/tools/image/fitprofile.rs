@@ -261,12 +261,7 @@ impl ProfileRequest<'_> {
         attachment.beam_view().apply_to(&mut beam_record);
         let [pixel_box, channels, stokes] = self.selection;
         let region = self.region.selection();
-        let region_file = match &region {
-            Some(SubimageRegion::Text(text)) => {
-                Some(Path::new(text.trim())).filter(|path| path.is_file())
-            }
-            _ => None,
-        };
+        let region_file = region.and_then(SubimageRegion::external_path);
         let fit = ImageProfileFit::new(
             image,
             source.coordinate_record(),
