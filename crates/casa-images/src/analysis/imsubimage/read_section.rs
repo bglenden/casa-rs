@@ -2,6 +2,7 @@
 
 use casa_types::ArrayD;
 
+use crate::image_expr::validate_slice_request;
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::{
@@ -19,6 +20,7 @@ pub struct ImageRegionSection {
     pub stride: Vec<usize>,
     /// Membership of the sampled pixels when requested for a nonrectangular region.
     pub membership: Option<ArrayD<bool>>,
+    selection: Option<SubimageSelection>,
 }
 
 impl ImageRegionSection {
@@ -42,6 +44,7 @@ impl ImageRegionSection {
                 count: section.count,
                 stride: section.stride,
                 membership: None,
+                selection: None,
             });
         }
         let section = SubimageSelection::resolve_section(image, None, region, None, None)?;
@@ -51,10 +54,38 @@ impl ImageRegionSection {
         }
         let count = section.packed_shape();
         Ok(Self {
-            start: section.start,
+            start: section.start.clone(),
             count,
-            stride: section.stride.unwrap_or_else(|| vec![1; image.ndim()]),
+            stride: section
+                .stride
+                .clone()
+                .unwrap_or_else(|| vec![1; image.ndim()]),
             membership,
+            selection: section.stride.is_none().then_some(section),
         })
+    }
+
+    /// Compute region membership in a window of the packed section.
+    /// `start` is relative to the selected section's first output pixel.
+    ///
+    /// # Errors
+    /// The window is outside the selected section.
+    pub fn mask_window(
+        &self,
+        start: &[usize],
+        count: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        validate_slice_request(&self.count, start, count, &vec![1; self.count.len()])?;
+        let mut mask = None;
+        if let Some(selection) = &self.selection {
+            let source = self
+                .start
+                .iter()
+                .zip(start)
+                .map(|(&base, &offset)| base + offset)
+                .collect::<Vec<_>>();
+            selection.apply_window_masks(&mut mask, &source, count);
+        }
+        Ok(mask)
     }
 }

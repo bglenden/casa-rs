@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
-use casa_images::analysis::SubimageRegion;
+use casa_images::analysis::{ImageRegionSection, SubimageRegion};
 use casa_images::{ImageInterface, ImagePixel, MutableImageInterface, image::image_history_rows};
 use casa_types::RecordValue;
 use ndarray::{ArrayD, SliceInfoElem, Zip};
@@ -18,7 +18,8 @@ use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::lifecycle::open_image;
-use super::region_read::read_region_section;
+use super::pixels::and_mask;
+use super::region_read::resolve_region_section;
 use super::{PyImageTool, stub};
 
 struct CopyImage<'a> {
@@ -97,12 +98,11 @@ impl CopyImage<'_> {
         coordinates: CoordinateSystem,
         path: Option<&Path>,
         expression_mask: Option<&ArrayD<bool>>,
-        region_mask: Option<&ArrayD<bool>>,
+        region: &ImageRegionSection,
         mut read: impl FnMut(&[usize], &[usize], &[usize]) -> PyResult<PixelSection<T>>,
     ) -> PyResult<Storage<T>> {
         let shape = &selection.shape;
         let output_shape = selection.projected(shape);
-        let unit_stride = vec![1; shape.len()];
         let mut storage =
             Storage::create(output_shape.clone(), coordinates, path, None).map_err(raised)?;
         let total = shape
@@ -137,16 +137,18 @@ impl CopyImage<'_> {
                 .zip(&selection.stride)
                 .map(|((&index, &base), &step)| base + index * step)
                 .collect::<Vec<_>>();
-            let (pixels, mut mask) = read(&source, &block_shape, &selection.stride)?;
+            let (pixels, mask) = read(&source, &block_shape, &selection.stride)?;
+            let mut mask = and_mask(
+                mask,
+                region.mask_window(&start, &block_shape).map_err(raised)?,
+            );
             let output_start = selection.projected(&start);
             let pixels = selection.squeeze(pixels);
             with_storage!(&mut storage, image => image.put_slice(&pixels, &output_start))
                 .map_err(raised)?;
             let expression = expression_mask
                 .map(|mask| mask.slice(slice(&source, &block_shape, &selection.stride).as_slice()));
-            let membership = region_mask
-                .map(|mask| mask.slice(slice(&start, &block_shape, &unit_stride).as_slice()));
-            for passes in [expression, membership].into_iter().flatten() {
+            if let Some(passes) = expression {
                 if let Some(pixels_valid) = mask.as_mut() {
                     Zip::from(pixels_valid)
                         .and(passes)
@@ -183,8 +185,8 @@ impl CopyImage<'_> {
         add_history: bool,
     ) -> PyResult<ImageHandle> {
         let region = (!self.region.is_empty()).then_some(SubimageRegion::Record(&self.region));
-        let (section, membership) = read_region_section(original, region, true)?;
-        let mut selection = Selection::new(section);
+        let section = resolve_region_section(original, region, false)?;
+        let mut selection = Selection::new(&section);
         if self.dropdeg {
             selection.drop_degenerate()?;
         }
@@ -208,7 +210,7 @@ impl CopyImage<'_> {
         macro_rules! copy_native {
             ($storage:expr, $variant:ident) => {
                 ImageHandle::$variant(with_storage!($storage, image => {
-                    Self::copy_pixels(&selection, coordinates, path, mask.as_ref(), membership.as_ref(), |start, shape, stride| {
+                    Self::copy_pixels(&selection, coordinates, path, mask.as_ref(), &section, |start, shape, stride| {
                         let pixels = image.get_slice_with_stride(start, shape, stride).map_err(raised)?;
                         let mask = ImageInterface::get_mask_slice(image.as_ref(), start, shape, stride).map_err(raised)?;
                         Ok((pixels, mask))
@@ -222,7 +224,7 @@ impl CopyImage<'_> {
                 coordinates,
                 path,
                 mask.as_ref(),
-                membership.as_ref(),
+                &section,
                 |start, shape, stride| {
                     let pixels = fits.read(start, shape, stride)?;
                     let mask = pixels.mapv(|value| !value.is_nan());

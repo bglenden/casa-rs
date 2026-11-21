@@ -3,7 +3,9 @@
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate, StokesCoordinate,
 };
-use casa_images::analysis::{reduce_subimage_coordinate_record, section_quality_labels};
+use casa_images::analysis::{
+    ImageRegionSection, reduce_subimage_coordinate_record, section_quality_labels,
+};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
@@ -13,7 +15,6 @@ use crate::convert::value::CasaValue;
 use crate::tools::table::values;
 
 use super::handle::raised;
-use super::pixels::Chunk;
 use super::stub;
 
 pub(super) struct Selection {
@@ -24,12 +25,12 @@ pub(super) struct Selection {
 }
 
 impl Selection {
-    pub fn new(section: Chunk) -> Self {
-        let rank = section.size.len();
+    pub fn new(section: &ImageRegionSection) -> Self {
+        let rank = section.count.len();
         Self {
-            start: section.start,
-            shape: section.size,
-            stride: section.stride,
+            start: section.start.clone(),
+            shape: section.count.clone(),
+            stride: section.stride.clone(),
             retained: (0..rank).collect(),
         }
     }
