@@ -54,7 +54,9 @@ fn index_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i32> {
     match value.extract::<i64>() {
         Ok(value) => Ok(value as i32),
         Err(error) if error.is_instance_of::<PyOverflowError>(value.py()) => Ok(-1),
-        Err(_) => Err(PyTypeError::new_err(format!("argument _{name} must be an integer"))),
+        Err(_) => Err(PyTypeError::new_err(format!(
+            "argument _{name} must be an integer"
+        ))),
     }
 }
 

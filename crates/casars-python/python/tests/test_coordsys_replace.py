@@ -65,6 +65,19 @@ def test_replacement_uses_the_full_hidden_local_coordinate(casa):
         np.testing.assert_allclose(target.topixel([142.0])["numeric"], [18532.0])
 
 
+def test_replacement_preserves_other_live_coordinate_edits(casa):
+    for api in (tools, casa):
+        target = api.coordsys().newcoordsys(linear=1, tabular=True)
+        assert target.settabular([0, 2, 5], [10, 14, 30])
+        assert target.setlineartransform("tabular", [[2.0]])
+        assert target.setreferencepixel([1.0], "tabular")
+        before = target.torecord()["tabular1"]
+        source = api.coordsys().newcoordsys(stokes="Q,U")
+        assert target.replace(source.torecord(), 0, 0)
+        _assert_value(target.torecord()["tabular1"], before)
+        np.testing.assert_allclose(target.toworld([1.0, 1.0])["numeric"], [3.0, 6.0])
+
+
 def test_bad_records_indices_and_dimensions_are_atomic(casa):
     for api in (tools, casa):
         target = api.coordsys().newcoordsys(spectral=True)
