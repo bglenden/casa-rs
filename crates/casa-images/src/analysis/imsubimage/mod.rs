@@ -25,8 +25,8 @@ pub use fitcomponents::{
     fit_image_components,
 };
 pub use fitprofile::{
-    ImageProfileFit, ProfileDivisor, ProfileEstimates, ProfileFitOptions, ProfileOutputNames,
-    ProfilePeaks, ProfileRegion, ProfileSigma,
+    ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
+    ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
 };
 mod fourier;
 pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};

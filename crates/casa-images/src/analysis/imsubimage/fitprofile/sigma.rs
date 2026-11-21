@@ -85,6 +85,13 @@ impl<'a> Sigma<'a> {
         })
     }
 
+    pub(super) fn full_size_image(&self) -> Option<&dyn ImageInterface<f32>> {
+        match self.source {
+            ProfileSigma::Image(image) if !self.broadcast => Some(image),
+            _ => None,
+        }
+    }
+
     pub(super) fn lane(
         &self,
         selection: &ProfileSelection,

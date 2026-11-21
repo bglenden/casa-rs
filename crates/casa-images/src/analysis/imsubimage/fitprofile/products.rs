@@ -442,6 +442,20 @@ fn write_sigma(
         image: create(shape.clone(), &fit.original_coordinates, path)?,
         mask: None,
     };
+    if let Some(image) = sigma.full_size_image() {
+        output.image.set_units(image.units())?;
+        output.image.set_misc_info(image.misc_info())?;
+        output.image.set_image_info(&image.image_info()?)?;
+        if let Some(path) = image.name() {
+            output
+                .image
+                .append_history_entries(&crate::image::image_history_rows(path)?)?;
+        } else {
+            output
+                .image
+                .append_history_at("::ImageProfileFitter::fit", &image.history()?)?;
+        }
+    }
     let mut row = shape.clone();
     row[axis] = 1;
     let count = row

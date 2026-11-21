@@ -499,7 +499,15 @@ impl NamedImageStages {
             .collect()
     }
 
-    pub(super) fn publish(mut self, allow_missing: bool) -> PyResult<()> {
+    pub(super) fn publish(self, allow_missing: bool) -> PyResult<()> {
+        self.publish_with(allow_missing, || Ok(()))
+    }
+
+    pub(super) fn publish_with(
+        mut self,
+        allow_missing: bool,
+        finish: impl FnOnce() -> PyResult<()>,
+    ) -> PyResult<()> {
         if allow_missing {
             for slot in &mut self.stages {
                 if let Some((stage, _)) = slot
@@ -522,8 +530,13 @@ impl NamedImageStages {
             .map(|(stage, _)| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
             .collect::<PyResult<Vec<_>>>()?;
         let mut locks = BTreeMap::new();
-        install_images(self.stages.into_iter().flatten(), &registry, &mut locks)?;
-        Ok(())
+        let installed = install_images(self.stages.into_iter().flatten(), &registry, &mut locks)?;
+        finish().map_err(|error| {
+            installed
+                .into_iter()
+                .rev()
+                .fold(error, |error, image| image.restore(error))
+        })
     }
 }
 

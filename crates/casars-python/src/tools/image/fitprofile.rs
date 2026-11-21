@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::Path;
+use std::fs::{self, File, Metadata};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
 use casa_images::analysis::{
-    ImageProfileFit, ProfileDivisor, ProfileEstimates, ProfileFitOptions, ProfileOutputNames,
-    ProfilePeaks, ProfileRegion, ProfileSigma, ensure_artifacts_do_not_overlap,
+    ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
+    ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma, SubimageRegion,
+    ensure_artifacts_do_not_overlap,
 };
 use casa_images::{Image, ImageInterface};
 use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
@@ -205,14 +206,13 @@ impl ProfileRequest<'_> {
             _ => None,
         };
         validate_log(self.logfile)?;
-        let (stages, record, summary) = read_locked(attachment, |source| match source {
+        let (stages, fit) = read_locked(attachment, |source| match source {
             ImageHandle::Float(storage) => storage.with_float_view(|image| {
                 self.compute(attachment, source, image, sigma.as_ref(), history)
             }),
             _ => Err(raised("This method only supports Float valued images")),
         })?;
-        stages.publish(true)?;
-        let mut logs: Vec<_> = summary.iter().cloned().map(LogLine::info).collect();
+        let mut logs: Vec<_> = fit.summary.iter().cloned().map(LogLine::info).collect();
         if self.ngauss < 0 {
             logs.push(LogLine::warning(
                 "ngauss < 0 is meaningless. Setting ngauss = 0",
@@ -223,20 +223,31 @@ impl ProfileRequest<'_> {
                 "Ignoring outsigma because no sigma image or array was specified",
             ));
         }
-        if self.logresults || !self.logfile.is_empty() {
-            let details = self.log_text(&record);
-            if !self.logfile.is_empty() {
-                write_log(
-                    self.logfile,
-                    &format!("{}\n\n{details}", summary.join("\n")),
-                    self.append,
-                )?;
-            }
-            if self.logresults {
-                logs.push(LogLine::info(details));
-            }
+        let details = (self.logresults || !self.logfile.is_empty()).then(|| self.log_text(&fit));
+        let staged_log = if let Some(details) = &details
+            && !self.logfile.is_empty()
+        {
+            let text = format!("{}\n\n{details}", fit.summary.join("\n"));
+            Some(StagedProfileLog::new(
+                Path::new(self.logfile),
+                &text,
+                self.append,
+            )?)
+        } else {
+            None
+        };
+        stages.publish_with(true, || {
+            staged_log.map_or(Ok(()), StagedProfileLog::install)
+        })?;
+        if let Some(details) = details
+            && self.logresults
+        {
+            logs.push(LogLine::info(details));
         }
-        Ok(FitReport { record, logs })
+        Ok(FitReport {
+            record: fit.record,
+            logs,
+        })
     }
 
     fn compute(
@@ -246,17 +257,24 @@ impl ProfileRequest<'_> {
         image: &dyn ImageInterface<f32>,
         sigma: Option<&Image>,
         history: bool,
-    ) -> PyResult<(NamedImageStages, RecordValue, [String; 5])> {
+    ) -> PyResult<(NamedImageStages, ImageProfileFitResult)> {
         let mut beam_record = image.image_info().map_err(raised)?.to_record();
         attachment.beam_view().apply_to(&mut beam_record);
         let [pixel_box, channels, stokes] = self.selection;
+        let region = self.region.selection();
+        let region_file = match &region {
+            Some(SubimageRegion::Text(text)) => {
+                Some(Path::new(text.trim())).filter(|path| path.is_file())
+            }
+            _ => None,
+        };
         let fit = ImageProfileFit::new(
             image,
             source.coordinate_record(),
             ProfileFitOptions {
                 selection: ProfileRegion {
                     pixel_box: nonempty(pixel_box),
-                    region: self.region.selection(),
+                    region,
                     chans: nonempty(channels),
                     stokes: nonempty(stokes),
                 },
@@ -279,6 +297,7 @@ impl ProfileRequest<'_> {
                 },
                 other_artifact: nonempty(self.logfile).map(Path::new),
                 beam_record: Some(&beam_record),
+                log_polynomials: self.logresults || !self.logfile.is_empty(),
             },
             self.outputs,
         )
@@ -290,7 +309,8 @@ impl ProfileRequest<'_> {
                 .into_iter()
                 .chain(attachment.operand_paths().iter().map(|path| path.as_path()))
                 .chain(sigma.and_then(ImageInterface::name))
-                .chain(nonempty(self.estimates_file).map(Path::new)),
+                .chain(nonempty(self.estimates_file).map(Path::new))
+                .chain(region_file),
         )?;
         let output_is_spectrum: Vec<_> = fit
             .destinations()
@@ -301,7 +321,7 @@ impl ProfileRequest<'_> {
                 .map(|name| (name, name == self.outputs.sigma)),
         )?;
         let paths = stages.paths();
-        let (record, summary) = fit.fit(&paths).map_err(raised)?;
+        let fit = fit.fit(&paths).map_err(raised)?;
         {
             let mut paths = paths
                 .into_iter()
@@ -315,7 +335,9 @@ impl ProfileRequest<'_> {
             };
             for path in paths {
                 let mut image = Image::open(path).map_err(raised)?;
-                image.append_history_entries(&prior).map_err(raised)?;
+                if image.history().map_err(raised)?.is_empty() {
+                    image.append_history_entries(&prior).map_err(raised)?;
+                }
                 if history {
                     image
                         .append_history_at(
@@ -325,12 +347,12 @@ impl ProfileRequest<'_> {
                         .map_err(raised)?;
                 }
                 image
-                    .append_history_at("::ImageProfileFitter::fit", &summary)
+                    .append_history_at("::ImageProfileFitter::fit", &fit.summary)
                     .map_err(raised)?;
                 image.save().map_err(raised)?;
             }
         }
-        Ok((stages, record, summary))
+        Ok((stages, fit))
     }
 
     fn history_call(&self) -> String {
@@ -352,10 +374,11 @@ impl ProfileRequest<'_> {
         )
     }
 
-    fn log_text(&self, record: &RecordValue) -> String {
+    fn log_text(&self, fit: &ImageProfileFitResult) -> String {
         use std::fmt::Write as _;
 
         let mut text = format!("Input parameters ---\n{}\n", self.history_call());
+        let record = &fit.record;
         let Some(Value::Array(ArrayValue::Bool(valid))) = record.get("valid") else {
             return text;
         };
@@ -368,6 +391,15 @@ impl ProfileRequest<'_> {
             );
             if !ok {
                 continue;
+            }
+            if let Some(polynomial) = fit.polynomials.get(position) {
+                let _ = writeln!(text, "    Type: POLYNOMIAL");
+                for (unit, terms) in [("pixel", &polynomial.pixel), ("world", &polynomial.world)] {
+                    let _ = writeln!(text, "        Coefficients in {unit} coordinates");
+                    for (index, &[value, error]) in terms.iter().enumerate() {
+                        let _ = writeln!(text, "        c{index} : {value:.12e} +/- {error:.8e}");
+                    }
+                }
             }
             for field in record.fields() {
                 let Value::Record(model) = &field.value else {
@@ -513,15 +545,70 @@ fn validate_log(path: &str) -> PyResult<()> {
     Ok(())
 }
 
-fn write_log(path: &str, value: &str, append: bool) -> PyResult<()> {
-    let mut output = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(append)
-        .truncate(!append)
-        .open(path)
-        .map_err(raised)?;
-    output.write_all(value.as_bytes()).map_err(raised)
+struct StagedProfileLog {
+    path: PathBuf,
+    previous: Option<Metadata>,
+    file: tempfile::NamedTempFile,
+}
+
+impl StagedProfileLog {
+    fn new(path: &Path, text: &str, append: bool) -> PyResult<Self> {
+        let (path, previous) = match path.symlink_metadata() {
+            Ok(_) => {
+                let target = path.canonicalize().map_err(raised)?;
+                let metadata = target.metadata().map_err(raised)?;
+                if !metadata.is_file() {
+                    return Err(raised(format!(
+                        "{} is not a regular log file",
+                        path.display()
+                    )));
+                }
+                (target, Some(metadata))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (path.to_path_buf(), None),
+            Err(error) => return Err(raised(error)),
+        };
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut file = tempfile::NamedTempFile::new_in(parent).map_err(raised)?;
+        if let Some(metadata) = &previous {
+            file.as_file()
+                .set_permissions(metadata.permissions())
+                .map_err(raised)?;
+            if append {
+                io::copy(&mut File::open(&path).map_err(raised)?, file.as_file_mut())
+                    .map_err(raised)?;
+            }
+        }
+        file.write_all(text.as_bytes()).map_err(raised)?;
+        file.flush().map_err(raised)?;
+        Ok(Self {
+            path,
+            previous,
+            file,
+        })
+    }
+
+    fn install(self) -> PyResult<()> {
+        if let Some(previous) = self.previous {
+            let current = self.path.symlink_metadata().map_err(raised)?;
+            if !current.is_file()
+                || previous.len() != current.len()
+                || previous.modified().ok() != current.modified().ok()
+            {
+                return Err(raised(format!(
+                    "Log {} changed during fitting",
+                    self.path.display()
+                )));
+            }
+            self.file.persist(self.path).map_err(raised)?;
+        } else {
+            self.file.persist_noclobber(self.path).map_err(raised)?;
+        }
+        Ok(())
+    }
 }
 
 fn nonempty(value: &str) -> Option<&str> {

@@ -127,10 +127,11 @@ impl PeakLists<'_> {
                 let size = size as usize;
                 let components = (first..first + size)
                     .map(|index| self.line(index, LineKind::Gaussian))
-                    .collect::<Result<_, _>>()?;
+                    .collect::<Result<Vec<_>, _>>()?;
                 let constraints = (tie..tie + size - 1)
                     .map(|index| constraints.map(|column| column.get(index).copied().unwrap_or(0.)))
-                    .collect();
+                    .collect::<Vec<_>>();
+                validate_ties(&components, &constraints)?;
                 first += size;
                 tie += size - 1;
                 Ok(Multiplet {
@@ -160,12 +161,40 @@ impl PeakLists<'_> {
             self.centers[index],
             self.widths[index],
         ];
-        Ok(LineEstimate {
+        LineEstimate::new(kind, values, fixed)
+    }
+}
+
+impl LineEstimate {
+    pub(super) fn new(
+        kind: LineKind,
+        mut values: [f64; 3],
+        fixed: [bool; 3],
+    ) -> Result<Self, ImageError> {
+        if values[0] == 0. {
+            return Err(invalid("PCF amplitude cannot equal 0"));
+        }
+        values[2] = values[2].abs();
+        Ok(Self {
             kind,
             values,
             fixed,
         })
     }
+}
+
+fn validate_ties(components: &[LineEstimate], ties: &[[f64; 3]]) -> Result<(), ImageError> {
+    for (secondary, tie) in components[1..].iter().zip(ties) {
+        for (index, &constraint) in tie.iter().enumerate() {
+            if constraint != 0. && secondary.fixed[index] && !components[0].fixed[index] {
+                let parameter = ["amplitude", "center", "width"][index];
+                return Err(invalid(format!(
+                    "You cannot fix the {parameter} of a non-reference Gaussian if its tied reference parameter is free"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl PolynomialEstimate {

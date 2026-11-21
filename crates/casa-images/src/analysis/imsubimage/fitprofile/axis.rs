@@ -90,15 +90,15 @@ impl<'a> ProfileAxis<'a> {
         self.native(position, center)
     }
 
-    pub(super) fn increment(&self, position: &[f64]) -> Result<f64, ImageError> {
+    pub(super) fn signed_increment(&self, position: &[f64]) -> Result<f64, ImageError> {
         if self.rest_hz > 0. {
-            Ok((self.world(position, 1.)? - self.world(position, 0.)?).abs())
+            Ok(self.world(position, 1.)? - self.world(position, 0.)?)
         } else {
             let (owner, index) = self
                 .coordinates
                 .world_axis_owner(self.world_axis)
                 .ok_or_else(|| invalid("The fit axis has no corresponding coordinate"))?;
-            Ok(self.coordinates.coordinate(owner).increment()[index].abs())
+            Ok(self.coordinates.coordinate(owner).increment()[index])
         }
     }
 

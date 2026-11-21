@@ -113,7 +113,7 @@ impl ProfileResults {
         }
         self.valid[IxDyn(pixel)] = true;
         self.iterations[IxDyn(pixel)] = solution.iterations as i64;
-        let increment = axis.increment(world_pixel)?;
+        let increment = axis.signed_increment(world_pixel)?.abs();
         let mut index = pixel.to_vec();
         index.push(0);
         let mut types = 0;

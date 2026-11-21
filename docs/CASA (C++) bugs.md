@@ -8980,3 +8980,14 @@ With a Galactic conversion frame on a J2000 image, the angles in the
 `fitprofile` direction record are Galactic but CASA labels and formats
 them as equatorial. Casa-rs reports the conversion frame and displays
 its longitude and latitude in degrees.
+
+CASA calculates the reported integral uncertainty by multiplying
+relative errors by the signed line integral. A fitted absorption
+line therefore has a negative uncertainty. Casa-rs preserves its
+negative integral and reports the standard error as a nonnegative
+magnitude.
+
+For a Gaussian multiplet with tied peaks of 6 and 3 and an accepted
+amplitude range of 4 to 7, CASA accepts both peaks because its
+constraint loop repeatedly examines the first peak. Casa-rs checks
+the range against every component of the multiplet.

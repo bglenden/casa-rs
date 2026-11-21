@@ -6,6 +6,7 @@ use casa_coordinates::CoordinateType;
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{AxisDescription, Slice};
 
+use crate::analysis::axes::stokes_for_axis;
 use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInterface};
 
@@ -41,12 +42,27 @@ impl ProfileSelection {
                 input.ndim(),
             )));
         }
+        let stokes = region
+            .stokes
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let stokes = if stokes.is_none()
+            && region.region.is_none()
+            && let Some(axis) = input.find_axis(CoordinateType::Stokes)
+            && input.shape()[axis] > 1
+        {
+            stokes_for_axis(input.coordinates(), axis)?
+                .first()
+                .map(|stokes| stokes.name())
+        } else {
+            stokes
+        };
         let selection = SubimageSelection::resolve_section(
             input,
             region.pixel_box,
             region.region,
             region.chans,
-            region.stokes,
+            stokes,
         )?;
         let plan = SubimagePlan::from_selection(
             input,

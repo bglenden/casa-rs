@@ -56,11 +56,12 @@ fn parse(row: &str) -> Result<LineEstimate, String> {
             char::from(flag)
         ));
     }
-    Ok(LineEstimate {
-        kind: LineKind::Gaussian,
+    LineEstimate::new(
+        LineKind::Gaussian,
         values,
-        fixed: ["p", "c", "f"].map(|flag| flags.contains(flag)),
-    })
+        ["p", "c", "f"].map(|flag| flags.contains(flag)),
+    )
+    .map_err(|error| error.to_string())
 }
 
 pub(super) fn automatic(profile: &[f32], maximum: usize) -> Vec<LineEstimate> {

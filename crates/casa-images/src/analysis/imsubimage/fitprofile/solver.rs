@@ -53,15 +53,23 @@ pub(super) fn solve(curve: &Curve, samples: &[Sample]) -> Option<Solution> {
         .iter()
         .map(|row| row.weight * row.y * row.y)
         .sum::<f64>();
-    let precision = f64::EPSILON * power.max(f64::MIN_POSITIVE);
+    let precision = 16. * f64::EPSILON * power.max(f64::MIN_POSITIVE);
     let mut converged = free.is_empty() || score <= precision;
     let mut candidate = values.clone();
     while !converged && iterations < 200 && damping <= 1e12 {
         iterations += 1;
         let (mut normal, rhs) = normal_equations(curve, &values, &free, samples);
+        let stride = free.len() + 1;
+        let stationary = rhs.iter().enumerate().all(|(index, gradient)| {
+            let curvature = normal[index * stride];
+            curvature > 0. && gradient.abs() <= 128. * f64::EPSILON * (power * curvature).sqrt()
+        });
+        if stationary {
+            converged = true;
+            break;
+        }
         for index in 0..free.len() {
-            let diagonal = &mut normal[index * (free.len() + 1)];
-            *diagonal += damping * diagonal.abs() + 1e-18;
+            normal[index * stride] *= 1. + damping;
         }
         if let Some(delta) = solve_symmetric_positive_definite(&normal, &rhs) {
             candidate.copy_from_slice(&values);

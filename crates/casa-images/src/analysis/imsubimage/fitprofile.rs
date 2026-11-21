@@ -12,7 +12,7 @@ mod selection;
 mod sigma;
 mod solver;
 
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use casa_types::{
     RecordValue,
@@ -25,7 +25,7 @@ use crate::{ImageError, ImageInterface};
 use super::SubimageRegion;
 use axis::{ProfileAxis, automatic_divisor};
 use curve::Curve;
-use models::{PeakLists, PolynomialEstimate, ProfileModels, SpectralPolynomial};
+use models::{LineKind, PeakLists, PolynomialEstimate, ProfileModels, SpectralPolynomial};
 use products::{Product, ProfileProducts};
 use results::ProfileResults;
 use selection::{Lane, MeanLane, ProfileLaneReader, ProfileSelection};
@@ -67,6 +67,8 @@ pub struct ProfileFitOptions<'a> {
     pub other_artifact: Option<&'a Path>,
     /// Attachment-local restoring beams, if different from the native table metadata.
     pub beam_record: Option<&'a RecordValue>,
+    /// Keep ordinary polynomial coefficients for the detailed fit log.
+    pub log_polynomials: bool,
 }
 
 /// Region expression applied before fitting profiles.
@@ -164,6 +166,24 @@ pub struct ImageProfileFit<'a> {
     products: Vec<Product>,
 }
 
+/// Public result record with optional numerical detail for the fit report.
+pub struct ImageProfileFitResult {
+    /// CASA's public record, including masks, statuses, and nonlinear fit results.
+    pub record: RecordValue,
+    /// History messages reporting the numbers of profiles and fits.
+    pub summary: [String; 5],
+    /// Ordinary polynomial coefficients and errors keyed by the profile pixel.
+    pub polynomials: BTreeMap<Vec<usize>, ProfilePolynomialFit>,
+}
+
+/// Continuum polynomial coefficients in the fitted and displayed coordinates.
+pub struct ProfilePolynomialFit {
+    /// Coefficients and marginal standard errors in pixel coordinates.
+    pub pixel: Vec<[f64; 2]>,
+    /// Coefficients and marginal standard errors in world coordinates.
+    pub world: Vec<[f64; 2]>,
+}
+
 impl<'a> ImageProfileFit<'a> {
     /// Validate the selected geometry and estimates and enumerate possible products.
     ///
@@ -202,11 +222,24 @@ impl<'a> ImageProfileFit<'a> {
             0
         };
         let length = selection.plan.shape[selection.axis];
-        let unknowns = automatic.saturating_mul(3).saturating_add(
-            options
-                .polynomial
-                .map_or(0, |order| order.saturating_add(1)),
-        );
+        let gaussian = models
+            .singlets
+            .iter()
+            .filter(|line| matches!(line.kind, LineKind::Gaussian))
+            .count();
+        let fixed = Curve::new(&models, &[], None)
+            .fixed
+            .iter()
+            .filter(|&&flag| flag)
+            .count();
+        let unknowns = (automatic + gaussian)
+            .saturating_mul(3)
+            .saturating_add(
+                options
+                    .polynomial
+                    .map_or(0, |order| order.saturating_add(1)),
+            )
+            .saturating_sub(fixed);
         if unknowns >= length {
             return Err(invalid(format!(
                 "There are not enough points ({length}) along the fit axis to fit {unknowns} unknowns"
@@ -253,7 +286,7 @@ impl<'a> ImageProfileFit<'a> {
     ///
     /// # Errors
     /// Input reads, mask or sigma preparation, native metadata or output writes failed.
-    pub fn fit(self, staged: &[Option<&Path>]) -> Result<(RecordValue, [String; 5]), ImageError> {
+    pub fn fit(self, staged: &[Option<&Path>]) -> Result<ImageProfileFitResult, ImageError> {
         let axis = ProfileAxis::new(&self.selection, self.models.spectral_polynomial.is_some())?;
         let plane_mask = self.selection.selected_planes(self.options.planes)?;
         let mut reader = self.selection.reader(
@@ -288,6 +321,7 @@ impl<'a> ImageProfileFit<'a> {
         };
         let mut previous = Vec::<(Vec<usize>, Vec<f64>)>::new();
         let mut attempts = 0;
+        let mut polynomials = BTreeMap::new();
         for lane_number in 0..lanes {
             let position = self.selection.position(lane_number);
             let world_pixel = self.world_pixel(&position);
@@ -313,6 +347,19 @@ impl<'a> ImageProfileFit<'a> {
                         solution,
                         outcome.valid,
                     )?;
+                    if outcome.valid
+                        && self.options.log_polynomials
+                        && let Some(terms) = &curve.polynomial
+                    {
+                        let origin = axis.world(&world_pixel, 0.)?;
+                        let increment = axis.signed_increment(&world_pixel)?;
+                        let coefficients = &solution.values[terms.clone()];
+                        let errors = &solution.errors[terms.clone()];
+                        polynomials.insert(
+                            position.clone(),
+                            ProfilePolynomialFit::new(coefficients, errors, origin, increment),
+                        );
+                    }
                     if outcome.valid
                         && self.options.multifit
                         && self.automatic == 0
@@ -344,7 +391,11 @@ impl<'a> ImageProfileFit<'a> {
             sigma.as_ref(),
             &axis.unit,
         )?;
-        Ok((record, summary))
+        Ok(ImageProfileFitResult {
+            record,
+            summary,
+            polynomials,
+        })
     }
 
     fn world_pixel(&self, position: &[usize]) -> Vec<f64> {
@@ -525,6 +576,32 @@ impl<'a> ImageProfileFit<'a> {
                             && (index == 1 || value == 0. || (errors[index] / value).abs() <= 100.)
                     })
             })
+    }
+}
+
+impl ProfilePolynomialFit {
+    fn new(coefficients: &[f64], errors: &[f64], origin: f64, increment: f64) -> Self {
+        let pixel: Vec<_> = coefficients
+            .iter()
+            .zip(errors)
+            .map(|(&value, &error)| [value, error])
+            .collect();
+        let mut world = vec![[0_f64; 2]; coefficients.len()];
+        // Substitute p = (x - origin) / increment and expand by the
+        // binomial theorem. CASA reports marginal errors without covariance.
+        let mut inverse_slope = 1.;
+        for (order, &[coefficient, error]) in pixel.iter().enumerate() {
+            let mut multiplier = inverse_slope;
+            for index in (0..=order).rev() {
+                world[index][0] += multiplier * coefficient;
+                world[index][1] = world[index][1].hypot(multiplier * error);
+                if index != 0 {
+                    multiplier *= -origin * index as f64 / (order - index + 1) as f64;
+                }
+            }
+            inverse_slope /= increment;
+        }
+        Self { pixel, world }
     }
 }
 

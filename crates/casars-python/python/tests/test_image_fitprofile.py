@@ -491,3 +491,149 @@ def test_profile_direction_reports_the_frame_used_for_the_angles(casa, frame):
         _compare_records(native, expected, compare_direction=False)
     else:
         _compare_records(native, expected)
+
+
+@pytest.mark.parametrize("amplitude", [1., 1e-15])
+def test_fixed_width_line_is_invariant_under_amplitude_scaling(casa, tmp_path, amplitude):
+    x = np.arange(31.)
+    data = _cube(_line(x, amplitude, 15., 4.), (1, 1))
+    fits = []
+    for api in (casa, tools):
+        path = tmp_path / f"{api.__name__}.model"
+        fit = _fit(api, data, pampest=amplitude, pcenterest=14., pfwhmest=4., pfix="pf",
+                   model=str(path))
+        assert fit["valid"].item()
+        model = _read(tools, path)[0]
+        np.testing.assert_allclose(model / amplitude, data / amplitude, atol=2e-6)
+        fits.append(fit["gs"]["center"].item())
+    assert fits[0] == pytest.approx(fits[1], abs=2e-6)
+
+
+@pytest.mark.parametrize("model,parameters,message", [
+    ("gaussian", dict(pampest=0., pcenterest=8., pfwhmest=3.), "amplitude cannot equal 0"),
+    ("gaussian", dict(pampest=2., pcenterest=1., pfwhmest=3.), "not enough points"),
+    ("multiplet", dict(gmncomps=2, gmampest=[2., 1.], gmcenterest=[10., 20.],
+                      gmfwhmest=[3., 3.], gmampcon=.5, gmfix=["", "p"]), "non-reference Gaussian"),
+])
+def test_invalid_line_estimates_fail_before_publication(casa, tmp_path, model, parameters, message):
+    length = 3 if "not enough" in message else 31
+    data = _cube(np.arange(length, dtype=np.float32), (1, 1))
+    for api in (casa, tools):
+        path = tmp_path / f"{api.__name__}-{model}.im"
+        with pytest.raises(RuntimeError, match=message):
+            _fit(api, data, model=str(path), **parameters)
+        assert not path.exists()
+
+
+@pytest.mark.parametrize("multifit", [False, True])
+def test_default_stokes_fits_first_and_explicit_stokes_fits_selected(casa, tmp_path, multifit):
+    pixels = np.broadcast_to(np.array([2., 10.], dtype=np.float32).reshape(1,1,2,1), (2,1,2,11)).copy()
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=pixels)
+        try:
+            for selection, value in [("", 2.), ("Q", 10.)]:
+                path = tmp_path / f"{api.__name__}-{selection}.im"
+                fit = source.fitprofile(ngauss=0, poly=0, stokes=selection, multifit=multifit,
+                                        model=str(path), logresults=False)
+                assert fit["valid"].shape == (2 if multifit else 1,1,1,1)
+                assert fit["valid"].all()
+                output = _read(tools, path)[0]
+                assert output.shape == (2 if multifit else 1,1,1,11)
+                np.testing.assert_allclose(output, value, atol=1e-7)
+        finally:
+            source.done()
+
+
+def test_polynomial_coefficients_in_detailed_log(casa, tmp_path):
+    import re
+
+    for api in (casa, tools):
+        logfile = tmp_path / f"{api.__name__}.log"
+        data = _cube(2. + 3. * np.arange(11.), (1, 1))
+        assert _fit(api, data, ngauss=0, poly=1, logfile=str(logfile))["valid"].item()
+        report = logfile.read_text()
+        for order, coefficient in [(0, 2.), (1, 3.)]:
+            values = re.findall(rf"c{order} *: *([-+e.0-9]+)", report)
+            assert len(values) == 2
+            assert float(values[0]) == pytest.approx(coefficient, abs=1e-8)
+
+
+def test_profile_log_refuses_region_alias_and_fails_with_image_rollback(tmp_path):
+    data = _cube(_line(np.arange(31.), 7., 15.2, 6.), (3, 3))
+    estimate = dict(pampest=6., pcenterest=15., pfwhmest=5.)
+    region = tmp_path / "region.crtf"
+    region.write_text("#CRTFv0\nbox[[0pix, 0pix], [1pix, 2pix]]\n")
+    expected = region.read_bytes()
+    model = tmp_path / "model.im"
+    with pytest.raises(RuntimeError):
+        _fit(tools, data, region=str(region), logfile=str(region), model=str(model), append=False, **estimate)
+    assert region.read_bytes() == expected
+    assert not model.exists()
+
+    import pathlib
+    full_device = pathlib.Path("/dev/full")
+    if full_device.exists():
+        saved_sigma = tmp_path / "existing.im"
+        maker = tools.image()
+        assert maker.fromarray(str(saved_sigma), np.full((2, 2), 8., dtype=np.float32))
+        assert maker.done()
+        with pytest.raises(RuntimeError, match="regular log file"):
+            _fit(tools, data, logfile=str(full_device), model=str(model), outsigma=str(saved_sigma),
+                 sigma=np.ones(31), **estimate)
+        np.testing.assert_array_equal(_read(tools, saved_sigma)[0], 8.)
+        assert not model.exists()
+
+
+def test_native_sigma_image_metadata_is_copied(casa, tmp_path):
+    data = _cube(2. + 3. * np.arange(11.))
+    for writer in (casa, tools):
+        source = writer.image()
+        sigma = writer.image()
+        original = str(tmp_path / (writer.__name__ + ".sigma"))
+        product = str(tmp_path / (writer.__name__ + ".normalized"))
+        assert source.fromarray(pixels=data)
+        assert source.sethistory(origin="science", history="science history marker")
+        assert sigma.fromarray(original, np.full_like(data, 2.))
+        assert sigma.setbrightnessunit("K")
+        assert sigma.setmiscinfo({"source": "sigma metadata"})
+        assert sigma.sethistory(origin="sigma", history="sigma history marker")
+        assert sigma.done()
+        assert source.fitprofile(ngauss=0, poly=1, multifit=True, sigma=original,
+                                 outsigma=product, logresults=False)["valid"].all()
+        assert source.done()
+        for reader in (casa, tools):
+            output = reader.image()
+            assert output.open(product)
+            assert output.brightnessunit() == "K"
+            assert output.miscinfo()["source"] == "sigma metadata"
+            np.testing.assert_array_equal(output.getchunk(), 1.)
+            entries = output.history()
+            assert "sigma history marker" in entries
+            assert "science history marker" not in entries
+            assert entries[-1] == "Number valid             = 4"
+            assert output.done()
+
+
+def test_absorption_integral_uncertainty_is_nonnegative(casa):
+    x = np.arange(31.)
+    data = _cube(_line(x, -4., 15.1, 4.) + .02 * np.sin(3*x), (1, 1))
+    args = dict(pampest=-3.9, pcenterest=15., pfwhmest=4.2)
+    oracle = _fit(casa, data, **args)["gs"]
+    native = _fit(tools, data, **args)["gs"]
+    assert oracle["integralErr"].item() < 0. < native["integralErr"].item()
+    assert native["integral"].item() == pytest.approx(oracle["integral"].item(), rel=.001)
+    assert native["integralErr"].item() == pytest.approx(-oracle["integralErr"].item(), rel=.002)
+
+
+def test_good_range_applies_to_secondary_multiplet_peak(casa):
+    x = np.arange(51.)
+    data = _cube(_line(x, 6., 17., 4.) + _line(x, 3., 29., 4.), (1, 1))
+    args = dict(gmncomps=2, gmampest=[5., 2.5], gmcenterest=[17., 29.],
+                gmfwhmest=[4., 4.], gmampcon=.5, gmcentercon=12., gmfwhmcon=1.,
+                goodamprange=[4., 7.])
+    assert _fit(casa, data, **args)["valid"].item()
+    native = _fit(tools, data, **args)
+    assert native["converged"].item()
+    assert not native["valid"].item()
+    assert native["type"].item() == "UNDEF"
