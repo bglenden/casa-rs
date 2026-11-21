@@ -48,6 +48,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | plotms | plotms | yes | 102 | 102 | 0 | 13 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
+| setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
@@ -1931,6 +1932,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
+### setjy
+
+- CASA source: `casatasks/setjy.py`, 23 parameters
+- Implementation: `casatasks/private/task_setjy.py`, `setjy` (line 72): 1 return statements, 2 raise statements
+  - returns at line 133: `retval`
+- Called with its defaults in an empty directory, CASA raises `RuntimeError`: Table file <cwd>/table.dat does not exist
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 23, in CASA's order: yes
+- Defaults that differ: none
 
 ### simalma
 
