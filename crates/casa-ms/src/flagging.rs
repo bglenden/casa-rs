@@ -855,31 +855,18 @@ pub fn flagdata_path_with_model(
 /// With multiple commands, selection is local to each agent and a time
 /// range gates the calibration buffers at their first integration.
 pub fn flagdata_calibration_program(
-    path: impl AsRef<Path>,
+    mut table: MeasurementSet,
     requests: &[FlagDataRequest],
     write_flags: bool,
-    flagbackup: bool,
     local_selection: bool,
 ) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
-    let path = path.as_ref();
-    let mut table =
-        MeasurementSet::open(path).map_err(|source| FlaggingError::OpenMeasurementSet {
-            path: path.display().to_string(),
-            source,
-        })?;
     if !is_calibration_table(&table) {
         return Err(FlaggingError::MutateFlags {
-            path: path.display().to_string(),
+            path: display_ms_path(&table),
             reason: "calibration flag commands require a calibration table".to_owned(),
         });
     }
-    calibration::run_program(
-        &mut table,
-        requests,
-        write_flags,
-        flagbackup,
-        local_selection,
-    )
+    calibration::run_program(&mut table, requests, write_flags, local_selection)
 }
 
 fn report_after(

@@ -4,26 +4,44 @@
 use casa_provider_contracts::ParameterValue;
 
 #[derive(Default)]
-pub(super) struct Assignments(Vec<(String, ParameterValue)>);
+pub(super) struct Assignments(Vec<(String, ParameterValue, Option<String>)>);
 
 impl Assignments {
     pub(super) fn get(&self, name: &str) -> Option<&ParameterValue> {
         self.0
             .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value)
+            .find(|(key, _, _)| key == name)
+            .map(|(_, value, _)| value)
     }
 
     pub(super) fn set(&mut self, name: &str, value: ParameterValue) {
-        if let Some((_, previous)) = self.0.iter_mut().find(|(key, _)| key == name) {
+        self.set_with_spelling(name, value, None);
+    }
+
+    pub(super) fn set_with_spelling(
+        &mut self,
+        name: &str,
+        value: ParameterValue,
+        spelling: Option<String>,
+    ) {
+        if let Some((_, previous, old_spelling)) = self.0.iter_mut().find(|(key, _, _)| key == name)
+        {
             *previous = value;
+            *old_spelling = spelling;
         } else {
-            self.0.push((name.to_owned(), value));
+            self.0.push((name.to_owned(), value, spelling));
         }
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = (&String, &ParameterValue)> {
-        self.0.iter().map(|(key, value)| (key, value))
+        self.0.iter().map(|(key, value, _)| (key, value))
+    }
+
+    pub(super) fn spelling(&self, name: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|(key, _, _)| key == name)
+            .and_then(|(_, _, spelling)| spelling.as_deref())
     }
 }
 

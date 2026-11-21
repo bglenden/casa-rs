@@ -11,9 +11,21 @@ use casa_types::quanta::format::{TIME, YMD, format_time};
 use casa_types::quanta::{Quantity, Unit};
 
 use super::super::command_values::{Assignments, parse_assignments};
+use super::super::shadow;
 
 pub(super) fn read(task: &TaskInvocation<'_>) -> Result<Vec<Assignments>, TaskFailure> {
+    let buffer = task.value("tbuff");
+    let padded = match buffer {
+        Some(ParameterValue::Float(seconds)) => *seconds != 0.0,
+        Some(ParameterValue::Integer(seconds)) => *seconds != 0,
+        Some(ParameterValue::Array(values)) => !values.is_empty(),
+        _ => false,
+    };
+    let padding = padding(buffer)?;
     let (lines, from_file) = match task.value("inpfile") {
+        Some(ParameterValue::String(line)) if padded && !Path::new(line).is_file() => {
+            (vec![line.clone()], false)
+        }
         Some(ParameterValue::String(path)) => (read_lines(path)?, true),
         Some(ParameterValue::Array(values)) => {
             let inputs = strings(values)?;
@@ -36,7 +48,6 @@ pub(super) fn read(task: &TaskInvocation<'_>) -> Result<Vec<Assignments>, TaskFa
         Some(ParameterValue::Array(values)) => strings(values)?,
         _ => return Err(error()),
     };
-    let padding = padding(task.value("tbuff"))?;
     let mut commands = Vec::new();
     for line in lines {
         if line.is_empty() || line.starts_with('#') {
@@ -45,7 +56,7 @@ pub(super) fn read(task: &TaskInvocation<'_>) -> Result<Vec<Assignments>, TaskFa
         if line.trim().is_empty() {
             return Err(error());
         }
-        let line = if from_file || padding.is_none() {
+        let line = if from_file || !padded {
             line.replace("true", "True").replace("false", "False")
         } else {
             line
@@ -58,6 +69,12 @@ pub(super) fn read(task: &TaskInvocation<'_>) -> Result<Vec<Assignments>, TaskFa
             && !matches!(values.get("reason"), Some(ParameterValue::String(reason)) if reasons.contains(&reason.as_str()))
         {
             continue;
+        }
+        if let Some(ParameterValue::String(path)) = values.get("addantenna")
+            && !path.is_empty()
+        {
+            let antenna = shadow::read_list(path).map_err(|_| error())?;
+            values.set_with_spelling("addantenna", antenna.value, antenna.command);
         }
         if values
             .iter()
@@ -178,6 +195,9 @@ pub(super) fn command_line(values: &Assignments, reason: &str) -> String {
     let mut arguments = values
         .iter()
         .map(|(key, value)| {
+            if let Some(spelling) = values.spelling(key) {
+                return format!("{key}={spelling}");
+            }
             render(
                 key,
                 if key == "reason" && !reason.is_empty() {

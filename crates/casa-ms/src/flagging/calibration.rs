@@ -30,12 +30,8 @@ pub(super) fn run_program(
     table: &mut MeasurementSet,
     requests: &[FlagDataRequest],
     write_flags: bool,
-    flagbackup: bool,
     local_selection: bool,
 ) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
-    let backup = (write_flags && flagbackup && !requests.is_empty())
-        .then(|| save_next_casa_flag_backup(table, "flagdata"))
-        .transpose()?;
     let mut reports = Vec::with_capacity(requests.len());
     let mut touched = std::collections::BTreeSet::new();
     for request in requests {
@@ -61,9 +57,6 @@ pub(super) fn run_program(
             ..ChangeSet::default()
         };
         persist_changed_flags(table, &changes, &path)?;
-    }
-    if let Some(report) = reports.iter_mut().flatten().next() {
-        report.backup_version = backup;
     }
     Ok(reports)
 }
@@ -645,8 +638,12 @@ fn select_buffer_times(
     let timed =
         clip_time::ordered_baseline_chunks(table, &all, None, false, &display_ms_path(table))?;
     let mut selected = vec![false; all.len()];
-    for chunk in timed.chunk_by(|left, right| left.baseline_key() == right.baseline_key()) {
-        if holds(chunk[0].time()) {
+    for chunk in timed.chunk_by(|left, right| left.chunk_key() == right.chunk_key()) {
+        let first = chunk
+            .iter()
+            .min_by_key(|row| row.row)
+            .expect("nonempty buffer");
+        if holds(first.time()) {
             for row in chunk {
                 selected[row.row] = true;
             }

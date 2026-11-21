@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_ms::flagging::FlagDataMode;
-use casa_ms::flagging::flagdata_calibration_program;
+use casa_ms::flagging::{flagdata_calibration_program, save_next_casa_flag_backup};
 use casa_ms::{
-    FlagDataReport, FlagDataRequest, flagdata_empty_record, flagdata_named_summary_record,
-    ms_task_success,
+    FlagDataReport, FlagDataRequest, MeasurementSet, flagdata_empty_record,
+    flagdata_named_summary_record, ms_task_success,
 };
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{
@@ -16,9 +16,9 @@ use casa_task_runtime::{
 };
 
 use super::{
-    backup_before_failed_apply, channel_bin_widths, command, command_values::Assignments,
-    data_column, flagdata_column_argument, is_calibration_table, not_yet, prepare_flagdata_request,
-    rflag, time_chunk_argument,
+    channel_bin_widths, command, command_values::Assignments, data_column,
+    flagdata_column_argument, is_calibration_table, not_yet, prepare_flagdata_request, rflag,
+    time_chunk_argument,
 };
 
 #[path = "list_input.rs"]
@@ -29,6 +29,17 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
     if !is_calibration_table(&path) {
         return Err(not_yet("mode", "list"));
     }
+    let write_flags = action == "apply";
+    let table = MeasurementSet::open(&path)
+        .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
+    let backup = if write_flags && task.flag("flagbackup")? {
+        Some(
+            save_next_casa_flag_backup(&table, "flagdata")
+                .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?,
+        )
+    } else {
+        None
+    };
     let commands = input::read(task)?;
     let save = task.flag("savepars")?;
     if matches!(action, "" | "none") {
@@ -37,39 +48,28 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
         }
         return ms_task_success(flagdata_empty_record(), &Vec::<FlagDataReport>::new());
     }
-    let write_flags = action == "apply";
     let mut requests = Vec::new();
     let mut agents = Vec::new();
     for (index, values) in commands.iter().enumerate() {
-        if let Some(request) = prepare(task, values, action).or_else(|error| {
-            backup_before_failed_apply(task, action)?;
-            Err(error)
-        })? {
+        if let Some(request) = prepare(task, values, action)? {
             requests.push(request);
             agents.push((index, values));
         }
     }
-    if requests.is_empty() {
-        backup_before_failed_apply(task, action)?;
-        return Err(TaskFailure::execution("nreport").at("flag-list-no-report"));
-    }
-    let reports = flagdata_calibration_program(
-        &path,
-        &requests,
-        write_flags,
-        task.flag("flagbackup")?,
-        commands.len() > 1,
-    )
-    .map_err(|error| {
-        let parameter = if matches!(error, casa_ms::flagging::FlaggingError::CalibrationAntint) {
-            "calibration-agent"
-        } else {
-            "flag-list-agent"
-        };
-        TaskFailure::execution(error.to_string()).at(parameter)
-    })?;
-    if reports.iter().all(Option::is_none) {
-        return Err(TaskFailure::execution("nreport").at("flag-list-no-report"));
+    let mut reports =
+        flagdata_calibration_program(table, &requests, write_flags, commands.len() > 1).map_err(
+            |error| {
+                let parameter =
+                    if matches!(error, casa_ms::flagging::FlaggingError::CalibrationAntint) {
+                        "calibration-agent"
+                    } else {
+                        "flag-list-agent"
+                    };
+                TaskFailure::execution(error.to_string()).at(parameter)
+            },
+        )?;
+    if let Some(report) = reports.iter_mut().flatten().next() {
+        report.backup_version = backup;
     }
     if !write_flags {
         for (report, &(index, values)) in reports.iter().zip(&agents) {
@@ -91,6 +91,9 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
     }
     if save && task.required_text("display")?.is_empty() {
         save_commands(task, &path, &commands, false)?;
+    }
+    if reports.iter().all(Option::is_none) {
+        return Err(TaskFailure::execution("nreport").at("flag-list-no-report"));
     }
     let value = summary_value(&reports, &agents);
     ms_task_success(value, &reports.into_iter().flatten().collect::<Vec<_>>())
@@ -155,6 +158,12 @@ fn prepare(
         .filter(|(key, _)| key.as_str() != "reason")
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
+    if mode.is_empty() {
+        values.insert(
+            "mode".to_owned(),
+            ParameterValue::String("manual".to_owned()),
+        );
+    }
     if let Some(ParameterValue::Array(range)) = values.get_mut("clipminmax") {
         if range.len() < 2 {
             return Err(
