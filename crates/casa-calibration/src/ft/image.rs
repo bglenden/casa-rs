@@ -660,7 +660,7 @@ impl ImageTransform {
             use StokesType::{I, LL, Q, RR, U, V};
             if !matches!(
                 stokes.stokes(),
-                [I] | [Q] | [V] | [I, Q] | [I, V] | [RR, LL] | [I, Q, U, V]
+                [I] | [Q] | [V] | [I, Q] | [I, U] | [U, I] | [I, V] | [RR, LL] | [I, Q, U, V]
             ) {
                 return Err(invalid(
                     "legacy voltage-pattern squint for these Stokes axes is pending #1520",
@@ -682,9 +682,14 @@ impl ImageTransform {
                     .ok_or_else(|| invalid("unsupported polarization plane in model image"))
             })
             .collect::<MsResult<Vec<_>>>()?;
-        let routing = if requested == [PolarizationCoordinate::StokesQ] {
+        use PolarizationCoordinate::{StokesI, StokesQ, StokesU};
+        let routing = if matches!(
+            requested.as_slice(),
+            [StokesQ] | [StokesI, StokesU] | [StokesU, StokesI]
+        ) {
             // CASA can save the nonzero cross-hand model even when the
-            // selected MeasurementSet contains only parallel hands.
+            // selected MeasurementSet contains only parallel hands. I/U
+            // also retains the original U plane even if no row uses it.
             PolarizationRouting::from_saved_planes(&correlations, &requested)
         } else {
             PolarizationRouting::compile(&correlations, &requested)

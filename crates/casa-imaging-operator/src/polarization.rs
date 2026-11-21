@@ -125,7 +125,25 @@ impl PolarizationRouting {
                 reason: "requested coordinates mix Stokes parameters and correlations",
             });
         }
-        let grid = if !stokes_requested {
+        use PolarizationCoordinate::{StokesI, StokesU};
+        // Legacy GridFT retains both Stokes planes. FTMachine::initMaps
+        // finds I anywhere on that axis, then routes both parallel
+        // hands to plane zero.
+        let saved_iu = !require_all
+            && feed != FeedBasis::Stokes
+            && matches!(requested, [StokesI, StokesU] | [StokesU, StokesI]);
+        let grid = if saved_iu {
+            requested
+                .iter()
+                .map(|&coordinate| {
+                    if coordinate == StokesI {
+                        GridPolarization::StokesI
+                    } else {
+                        GridPolarization::Correlation(Correlation::U)
+                    }
+                })
+                .collect()
+        } else if !stokes_requested {
             requested
                 .iter()
                 .map(|coordinate| {
@@ -155,6 +173,9 @@ impl PolarizationRouting {
         let pol_map = correlations
             .iter()
             .map(|correlation| {
+                if saved_iu {
+                    return correlation.is_parallel_hand().then_some(0);
+                }
                 grid.iter()
                     .position(|plane| match plane {
                         GridPolarization::Correlation(target) => target == correlation,
@@ -163,23 +184,24 @@ impl PolarizationRouting {
                     .map(|index| index as u8)
             })
             .collect::<Vec<_>>();
-        if require_all && pol_map.iter().all(Option::is_none) {
+        if (require_all || saved_iu) && pol_map.iter().all(Option::is_none) {
             return Err(OperatorError::Polarization {
                 reason: "selected correlations feed no grid polarization",
             });
         }
+        let coefficient_basis = if saved_iu { FeedBasis::Stokes } else { feed };
         let to_requested = requested
             .iter()
             .flat_map(|coordinate| {
                 grid.iter()
-                    .map(|plane| to_coefficient(feed, *coordinate, *plane))
+                    .map(|plane| to_coefficient(coefficient_basis, *coordinate, *plane))
             })
             .collect();
         let to_requested_psf = requested
             .iter()
             .flat_map(|coordinate| {
                 grid.iter()
-                    .map(|plane| psf_coefficient(feed, requested, *coordinate, *plane))
+                    .map(|plane| psf_coefficient(coefficient_basis, requested, *coordinate, *plane))
             })
             .collect();
         let from_requested = grid
@@ -187,14 +209,16 @@ impl PolarizationRouting {
             .flat_map(|plane| {
                 requested
                     .iter()
-                    .map(|coordinate| from_coefficient(feed, *plane, *coordinate))
+                    .map(|coordinate| from_coefficient(coefficient_basis, *plane, *coordinate))
             })
             .collect();
         let sumwt_source = requested
             .iter()
             .enumerate()
             .map(|(index, coordinate)| {
-                if stokes_requested {
+                if saved_iu {
+                    SumwtSource::Plane(index)
+                } else if stokes_requested {
                     stokes_sumwt_source(feed, requested, index, grid.len())
                 } else {
                     SumwtSource::Plane(
