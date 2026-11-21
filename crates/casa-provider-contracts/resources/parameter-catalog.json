@@ -9394,7 +9394,7 @@
       "persistence_class": "profile"
     },
     {
-      "id": "flagdata.datacolumn",
+      "id": "parameter.datacolumn.flagdata",
       "semantic_revision": 1,
       "casa_name": "datacolumn",
       "value_domain": {"kind": "variant"},
