@@ -30,29 +30,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, shape = None, csys = None, axes = None, region = None, mask = None, method = None, decimate = None, replicate = None, doref = None, dropdeg = None, overwrite = None, force = None, asvelocity = None, stretch = None), text_signature = "($self, outfile='', shape=[-1], csys={}, axes=[-1], region={}, mask='', method='linear', decimate=10, replicate=False, doref=True, dropdeg=False, overwrite=False, force=False, asvelocity=False, stretch=False)")]
-    fn regrid(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        shape: Option<&Bound<'_, PyAny>>,
-        csys: Option<&Bound<'_, PyAny>>,
-        axes: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        method: Option<&Bound<'_, PyAny>>,
-        decimate: Option<&Bound<'_, PyAny>>,
-        replicate: Option<&Bound<'_, PyAny>>,
-        doref: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        force: Option<&Bound<'_, PyAny>>,
-        asvelocity: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("regrid")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, shape = None, pa = None, region = None, mask = None, method = None, decimate = None, replicate = None, dropdeg = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', shape=[-1], pa=[], region={}, mask='', method='cubic', decimate=0, replicate=False, dropdeg=False, overwrite=False, stretch=False)")]
     fn rotate(
         &self,

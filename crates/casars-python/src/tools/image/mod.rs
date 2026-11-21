@@ -62,6 +62,7 @@ mod pv;
 mod rebin;
 mod records;
 mod region_read;
+mod regrid;
 mod replace_masked;
 mod serialization;
 mod slice;

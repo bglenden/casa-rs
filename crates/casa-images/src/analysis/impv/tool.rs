@@ -48,6 +48,7 @@ pub fn generate_image_pv(
         endpoints,
         plane.map(|axis| image.shape()[axis]),
         width,
+        true,
     )?;
     let selection = resolve_selection(image, request, plane, region, true)?;
     if selection
