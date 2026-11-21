@@ -10,6 +10,13 @@ pub(super) struct Peak {
     pub(super) height: f64,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum PeakRanking {
+    Positive,
+    Signed,
+    Absolute,
+}
+
 struct Row {
     pixels: Vec<f32>,
     done: Vec<bool>,
@@ -51,8 +58,9 @@ pub(super) fn search(
     section: &StridedSection<'_>,
     nmax: usize,
     cutoff: f64,
-    signed: bool,
+    ranking: PeakRanking,
 ) -> Result<Vec<Peak>, ImageError> {
+    let signed = !matches!(ranking, PeakRanking::Positive);
     let width = plan.shape[0];
     let height = plan.shape[1];
     if height < 4 {
@@ -118,7 +126,14 @@ pub(super) fn search(
             }
             let position = peaks
                 .iter()
-                .position(|peak| magnitude >= peak.height)
+                .position(|peak| {
+                    let previous = if matches!(ranking, PeakRanking::Absolute) {
+                        peak.height.abs()
+                    } else {
+                        peak.height
+                    };
+                    magnitude >= previous
+                })
                 .unwrap_or(peaks.len());
             if position >= nmax {
                 continue;

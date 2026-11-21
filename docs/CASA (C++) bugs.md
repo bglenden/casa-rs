@@ -9074,3 +9074,17 @@ For a region retaining channels 1, 3 and 5, CASA returns samples at
 those channels but numbers the `planes` array 1, 2 and 3. The same
 contiguous numbers appear in `coords` when pixel units are requested.
 Casa-rs reports the original sampled pixel numbers.
+
+### `image.maxfit` can select the wrong channel or crash on an all-masked image
+
+On a direction cube with peaks of +6 in one channel and +2 and −12 in
+another, CASA 6.7.6.14 returns the weaker positive source with
+`negfind=False` and the +6 source with `negfind=True`. The
+plane-selection branch applies the opposite sign policy to the one
+documented, and the subsequent source search can miss a negative peak.
+Casa-rs ranks positive peaks by value by default and ranks both signs
+by magnitude with `negfind=True`, retaining the fitted peak's sign.
+
+On an entirely masked Float direction image, default `image.maxfit`
+can dereference an absent maximum and terminate the CASA Python
+process. Casa-rs raises a Python error and preserves the image.

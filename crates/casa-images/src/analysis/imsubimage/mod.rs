@@ -35,7 +35,9 @@ pub use fitprofile::{
 mod fourier;
 pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};
 pub use deviation::{DeviationOptions, ImageDeviation};
-pub use findsources::{FindSourcesOptions, find_image_sources};
+pub use findsources::{
+    FindSourcesOptions, ImageMaxFit, MaxFitOptions, find_image_sources, fit_image_maximum,
+};
 mod insert;
 mod noise;
 mod pad;
