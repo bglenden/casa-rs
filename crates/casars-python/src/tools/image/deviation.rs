@@ -4,12 +4,14 @@ use std::path::Path;
 
 use casa_images::{
     ImageInterface,
-    analysis::{DeviationOptions, ImageDeviation, ensure_outfile_does_not_alias_input},
+    analysis::{
+        DeviationOptions, ImageDeviation, SubimageRegion, ensure_outfile_does_not_alias_input,
+    },
     regrid::RegridMethod,
 };
 use casa_types::quanta::Quantity;
 use pyo3::prelude::*;
-use pyo3::types::PyBool;
+use pyo3::types::{PyBool, PyString};
 
 use crate::convert::{IntList, Variant, quantity};
 
@@ -22,6 +24,7 @@ use super::subimage::{RegionArgument, mask_argument, require_bool};
 struct LengthArgument {
     value: Variant,
     pixels: Option<i64>,
+    flags: Option<String>,
 }
 
 impl Default for LengthArgument {
@@ -29,6 +32,7 @@ impl Default for LengthArgument {
         Self {
             value: Variant::Text("1pix".into()),
             pixels: None,
+            flags: None,
         }
     }
 }
@@ -45,6 +49,11 @@ impl<'a, 'py> FromPyObject<'a, 'py> for LengthArgument {
         Ok(Self {
             value: value.extract()?,
             pixels,
+            flags: if value.is_instance_of::<PyString>() {
+                None
+            } else {
+                sequence_items(&value)?.as_deref().and_then(bool_history)
+            },
         })
     }
 }
@@ -62,15 +71,51 @@ impl LengthArgument {
     }
 
     fn is_empty(&self) -> bool {
-        self.value.is_empty_sequence()
+        self.flags.is_some()
+            || self.value.is_empty_sequence()
             || matches!(&self.value, Variant::Text(text) if text.is_empty())
     }
+
+    fn history(&self) -> String {
+        self.flags.as_ref().map_or_else(
+            || history_variant(&self.value),
+            |flags| history_value(flags).to_owned(),
+        )
+    }
+}
+
+fn sequence_items<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Vec<Bound<'py, PyAny>>>> {
+    value
+        .try_iter()
+        .ok()
+        .map(|items| items.collect())
+        .transpose()
+}
+
+fn bool_history(items: &[Bound<'_, PyAny>]) -> Option<String> {
+    let flags = items
+        .iter()
+        .map(|item| {
+            item.cast::<PyBool>()
+                .ok()
+                .map(|flag| if flag.is_true() { "true" } else { "false" })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(format!("[{}]", flags.join(",")))
+}
+
+fn history_value(value: &str) -> &str {
+    if value.len() > 300 { "..." } else { value }
+}
+
+fn history_string(value: &str) -> String {
+    format!("\"{}\"", history_value(value))
 }
 
 fn history_variant(value: &Variant) -> String {
     match value {
-        Variant::Text(text) => format!("{text:?}"),
-        value => value.describe(),
+        Variant::Text(text) => history_string(text),
+        value => history_value(&value.describe()).to_owned(),
     }
 }
 
@@ -94,7 +139,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for AnchorArgument {
     fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         if let Ok(token) = value.extract::<String>() {
             return Ok(Self {
-                history: format!("{token:?}"),
+                history: history_string(&token),
                 selection: if token == "ref" {
                     Ok(None)
                 } else {
@@ -109,27 +154,10 @@ impl<'a, 'py> FromPyObject<'a, 'py> for AnchorArgument {
                 selection: Ok(None),
             });
         }
-        let items = value
-            .try_iter()
-            .ok()
-            .map(|items| items.collect::<PyResult<Vec<_>>>())
-            .transpose()?;
-        if let Some(items) = items
-            .as_ref()
-            .filter(|items| items.iter().all(|item| item.is_instance_of::<PyBool>()))
-        {
-            let flags = items
-                .iter()
-                .map(|item| {
-                    if item.is_truthy().unwrap_or_default() {
-                        "true"
-                    } else {
-                        "false"
-                    }
-                })
-                .collect::<Vec<_>>();
+        let items = sequence_items(&value)?;
+        if let Some(flags) = items.as_deref().and_then(bool_history) {
             return Ok(Self {
-                history: format!("[{}]", flags.join(",")),
+                history: history_value(&flags).into(),
                 selection: Ok(None),
             });
         }
@@ -139,16 +167,18 @@ impl<'a, 'py> FromPyObject<'a, 'py> for AnchorArgument {
                 .map(|item| item.extract::<i64>().ok())
                 .collect::<Option<Vec<_>>>()
         });
-        Ok(Self {
-            history: history_variant(&variant),
-            selection: match (variant, integers) {
-                (Variant::Numbers(_), Some(values)) => values
-                    .try_into()
-                    .map(Some)
-                    .map_err(|_| "anchor must have exactly two integer values".to_owned()),
-                _ => Err("Unsupported type for anchor".to_owned()),
-            },
-        })
+        let selection: Result<Option<[i64; 2]>, String> = match (&variant, integers) {
+            (Variant::Numbers(_), Some(values)) => values
+                .try_into()
+                .map(Some)
+                .map_err(|_| "anchor must have exactly two integer values".to_owned()),
+            _ => Err("Unsupported type for anchor".to_owned()),
+        };
+        let history = match selection.as_ref() {
+            Ok(Some([x, y])) => format!("[{x},{y}]"),
+            _ => history_variant(&variant),
+        };
+        Ok(Self { history, selection })
     }
 }
 
@@ -214,6 +244,7 @@ impl Request<'_> {
             region: self.region.selection(),
             mask: Some(&self.mask),
             stretch: self.stretch,
+            destination: (!self.outfile.is_empty()).then(|| Path::new(self.outfile)),
             grid: grid.map(|entry| entry as usize),
             anchor: self.anchor.selection.as_ref().copied().map_err(raised)?,
             x_length: self.xlength.parse("xlength")?,
@@ -284,7 +315,10 @@ impl Request<'_> {
             maxiter,
             ..
         } = self;
-        let region = region.history();
+        let region = match region.selection() {
+            Some(SubimageRegion::Text(text)) => history_string(text),
+            _ => region.history(),
+        };
         let grid = grid
             .0
             .iter()
@@ -292,10 +326,15 @@ impl Request<'_> {
             .collect::<Vec<_>>()
             .join(",");
         let anchor = &anchor.history;
-        let xlength = history_variant(&xlength.value);
-        let ylength = history_variant(&ylength.value);
+        let xlength = xlength.history();
+        let ylength = ylength.history();
+        let outfile = history_string(outfile);
+        let mask = history_string(mask);
+        let interp = history_string(interp);
+        let stattype = history_string(stattype);
+        let statalg = history_string(statalg);
         format!(
-            "ia.deviation(outfile={outfile:?}, region={region}, mask={mask:?}, overwrite={overwrite}, stretch={stretch}, grid=[{grid}], anchor={anchor}, xlength={xlength}, ylength={ylength}, interp={interp:?}, stattype={stattype:?}, statalg={statalg:?}, zscore={zscore:.6}, maxiter={maxiter})"
+            "ia.deviation(outfile={outfile}, region={region}, mask={mask}, overwrite={overwrite}, stretch={stretch}, grid=[{grid}], anchor={anchor}, xlength={xlength}, ylength={ylength}, interp={interp}, stattype={stattype}, statalg={statalg}, zscore={zscore:.6}, maxiter={maxiter})"
         )
     }
 }

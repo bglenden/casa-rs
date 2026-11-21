@@ -116,6 +116,40 @@ def test_deviation_circle_with_a_full_rectangular_bounding_mask():
         source.done()
 
 
+def test_deviation_even_rectangle_includes_float_rounded_edges(casa):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromshape(shape=[15, 17])
+        try:
+            output = source.deviation(xlength=4, ylength=4, stattype="npts")
+            try:
+                actual = output.getchunk()
+                assert actual[7, 8] == 25.
+                assert actual[0, 0] == actual[-1, -1] == 9.
+                assert actual[7, 0] == actual[7, -1] == 15.
+            finally:
+                output.done()
+        finally:
+            source.done()
+
+
+def test_deviation_boolean_circle_and_casa_history(casa):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromshape(shape=[15, 17])
+        try:
+            output = source.deviation(anchor=[1, 2], xlength=2,
+                                      ylength=[True, False], stattype="npts" + "x"*310)
+            try:
+                assert output.getchunk()[7, 8] == 5.
+                assert 'anchor=[1,2], xlength=2, ylength=[true,false]' in output.history()[-1]
+                assert 'stattype="..."' in output.history()[-1]
+            finally:
+                output.done()
+        finally:
+            source.done()
+
+
 @pytest.mark.parametrize("interp", ["nearest", "linear", "cubic"])
 @pytest.mark.parametrize("masked", [False, True])
 def test_deviation_grid_interpolation_across_tiles(casa, interp, masked):
@@ -163,6 +197,46 @@ def test_deviation_chauvenet_rejects_a_local_outlier(casa):
             finally:
                 mean.done()
                 count.done()
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("offset, expected", [(0, 4.), (1, 0.)])
+def test_deviation_chauvenet_can_recover_samples_after_empty_clipping(casa, offset, expected):
+    x, y = np.indices((15, 17))
+    values = ((x+y) % 2 + offset).astype(np.float32)
+    options = dict(xlength=3, ylength=3, statalg="ch", zscore=.1, maxiter=1)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        try:
+            output = source.deviation(stattype="npts", **options)
+            try:
+                assert output.getchunk()[7, 8] == expected
+                assert output.getchunk(getmask=True).all()
+            finally:
+                output.done()
+            if offset:
+                with pytest.raises(RuntimeError, match="No valid data found"):
+                    source.deviation(stattype="median", **options)
+        finally:
+            source.done()
+
+
+def test_deviation_reuses_single_grid_value_across_output_tiles(casa):
+    x, y, z = np.indices((128, 128, 2))
+    values = (x + 2*y + 13*z).astype(np.float32)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        try:
+            output = source.deviation(grid=[256, 256], anchor=[64, 64], interp="nearest",
+                                      xlength=51, ylength=51, stattype="mean")
+            try:
+                expected = np.broadcast_to(values[64, 64, :], values.shape)
+                np.testing.assert_array_equal(output.getchunk(), expected)
+            finally:
+                output.done()
         finally:
             source.done()
 
@@ -297,3 +371,24 @@ def test_deviation_preserves_an_existing_output_after_interpolation_failure(tmp_
             reopened.done()
     finally:
         source.done()
+
+
+def test_deviation_rejects_output_aliasing_named_mask(casa, tmp_path):
+    values = np.full((15, 17), 3., dtype=np.float32)
+    for index, api in enumerate((casa, tools)):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        path = tmp_path / f"protected-mask-{index}.im"
+        mask = api.image()
+        assert mask.fromarray(str(path), np.ones_like(values))
+        mask.done()
+        before = {child.relative_to(path): child.read_bytes() for child in path.rglob("*")
+                  if child.is_file() and child.name != "table.lock"}
+        try:
+            with pytest.raises(RuntimeError):
+                source.deviation(outfile=str(path), mask=f'"{path}" > 0',
+                                 overwrite=True, stattype="mean")
+            assert before
+            assert all((path / name).read_bytes() == contents for name, contents in before.items())
+        finally:
+            source.done()

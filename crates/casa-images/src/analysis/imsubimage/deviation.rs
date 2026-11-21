@@ -3,8 +3,10 @@
 mod geometry;
 mod statistic;
 
+use std::collections::{HashMap, VecDeque};
+use std::path::Path;
+
 use casa_coordinates::{CoordinateModel, CoordinateType};
-use casa_lattices::SamplePoint;
 use casa_types::quanta::Quantity;
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Array2, Axis, Ix2, IxDyn, Zip};
@@ -17,7 +19,7 @@ use super::super::lel_mask::PreparedMask;
 use super::read_window::PixelSections;
 use super::{StridedSection, SubimageOptions, SubimagePlan, SubimageRegion};
 use geometry::Window;
-use statistic::LocalStatistic;
+use statistic::{LocalStatistic, Samples};
 
 /// Options for a local-statistic image along the direction plane.
 pub struct DeviationOptions<'a> {
@@ -27,6 +29,8 @@ pub struct DeviationOptions<'a> {
     pub mask: Option<&'a str>,
     /// Permit broadcasting compatible mask axes.
     pub stretch: bool,
+    /// Final output path, used to prevent replacing mask operands.
+    pub destination: Option<&'a Path>,
     /// Positive interval between statistic samples on each direction axis.
     pub grid: [usize; 2],
     /// Anchor pixel in the parent image, or its rounded reference pixel.
@@ -157,11 +161,12 @@ impl<'a> ImageDeviation<'a> {
         let reader = PixelSections {
             image,
             selection,
-            mask: PreparedMask::new(
+            mask: PreparedMask::new_for_output(
                 self.options.mask,
                 image.shape(),
                 image.coordinates(),
                 self.options.stretch,
+                self.options.destination,
             )?,
         };
         if self.grid.step == [1, 1] && self.window.is_single_pixel() {
@@ -192,7 +197,9 @@ impl<'a> ImageDeviation<'a> {
         for axis in self.axes {
             cursor[axis] = 32;
         }
-        let mut sample = Vec::new();
+        let mut sample = self.statistic.samples();
+        let mut sampled = HashMap::new();
+        let mut insertion_order = VecDeque::new();
         let mut source_masked = false;
         let mut interpolation_failed = false;
         let [x, y] = self.axes;
@@ -209,14 +216,20 @@ impl<'a> ImageDeviation<'a> {
                 plane: &tile.position,
             };
             let selected = input.read(first, last.map(|index| index + 1))?;
-            let g_from = self
-                .grid
-                .index(first)
-                .map(|index| ((index.floor() as isize) - 1).max(0) as usize);
-            let g_last = self.grid.index(last);
-            let g_to: [usize; 2] = std::array::from_fn(|i| {
-                ((g_last[i].floor() as isize + 3).max(1) as usize).min(self.grid.count[i])
-            });
+            let direct = self.grid.step == [1, 1];
+            let (g_from, g_to) = if direct {
+                (first, last.map(|i| i + 1))
+            } else {
+                let first = self
+                    .grid
+                    .index(first)
+                    .map(|i| ((i.floor() as isize) - 1).max(0) as usize);
+                let last = self.grid.index(last);
+                let end = std::array::from_fn(|i| {
+                    ((last[i].floor() as isize + 3).max(1) as usize).min(self.grid.count[i])
+                });
+                (first, end)
+            };
             let grid_shape = std::array::from_fn(|i| g_to[i] - g_from[i]);
             let (lower, upper) = self.window.bounds(
                 self.grid.point(g_from),
@@ -227,20 +240,44 @@ impl<'a> ImageDeviation<'a> {
                 let i = usize::from(axis == y);
                 (upper[i] - lower[i] - 1) * section.stride[axis] + 1
             });
-            let halo = if lower == selected.lower && upper == selected.upper() {
-                None
-            } else if cache_shape[0].saturating_mul(cache_shape[1]) <= 128 * 1024 {
-                Some(input.read(lower, upper)?)
-            } else {
-                None
-            };
-            let cache = halo.as_ref().unwrap_or(&selected);
+            let read_halo = !selected.covers(lower, upper)
+                && cache_shape[0].saturating_mul(cache_shape[1]) <= 128 * 1024;
+            let mut halo = None;
+            let plane = tile
+                .position
+                .iter()
+                .zip(&self.section.shape)
+                .enumerate()
+                .filter(|&(i, _)| !self.axes.contains(&i))
+                .fold(0, |identifier, (_, (&at, &size))| identifier * size + at);
             let mut values = Vec::with_capacity(grid_shape[0] * grid_shape[1]);
             let mut available = Vec::with_capacity(values.capacity());
             for gy in g_from[1]..g_to[1] {
                 for gx in g_from[0]..g_to[0] {
-                    let center = self.grid.point([gx, gy]);
-                    let value = self.stat_at(&input, cache, center, &mut sample)?;
+                    let key = (plane, gx, gy);
+                    let value = if let Some(&value) = sampled.get(&key) {
+                        value
+                    } else {
+                        if read_halo && halo.is_none() {
+                            halo = Some(input.read(lower, upper)?);
+                        }
+                        let cache = halo.as_ref().unwrap_or(&selected);
+                        let center = self.grid.point([gx, gy]);
+                        let value = self.stat_at(&input, cache, center, &mut sample)?;
+                        if !direct {
+                            // Interpolation tiles overlap. Retain recent grid values
+                            // without allocating a plane of them for a dense grid.
+                            const GRID_CACHE_LIMIT: usize = 8192;
+                            if insertion_order.len() == GRID_CACHE_LIMIT
+                                && let Some(oldest) = insertion_order.pop_front()
+                            {
+                                sampled.remove(&oldest);
+                            }
+                            sampled.insert(key, value);
+                            insertion_order.push_back(key);
+                        }
+                        value
+                    };
                     values.push(f64::from(value.unwrap_or(0.)));
                     available.push(value.is_some());
                 }
@@ -288,21 +325,18 @@ impl<'a> ImageDeviation<'a> {
         input: &TileInput<'_>,
         cache: &PlaneInput,
         center: [usize; 2],
-        sample: &mut Vec<SamplePoint>,
+        sample: &mut Samples,
     ) -> Result<Option<f32>, ImageError> {
         let (lower, upper) = self.window.bounds(center, center, self.grid.shape);
         sample.clear();
-        let append = |pixels: &PlaneInput, sample: &mut Vec<SamplePoint>| {
+        let append = |pixels: &PlaneInput, sample: &mut Samples| {
             let limit = pixels.upper();
             for y in lower[1].max(pixels.lower[1])..upper[1].min(limit[1]) {
                 for x in lower[0].max(pixels.lower[0])..upper[0].min(limit[0]) {
                     if self.window.contains(center, [x, y])
                         && let Some(value) = pixels.get([x, y])
                     {
-                        sample.push(SamplePoint {
-                            value: f64::from(value),
-                            position: sample.len() as u64,
-                        });
+                        sample.push(value);
                     }
                 }
             }
@@ -317,15 +351,21 @@ impl<'a> ImageDeviation<'a> {
             if peak.get(center).is_none() {
                 return Ok(None);
             }
-            for y in (lower[1]..upper[1]).step_by(64) {
-                for x in (lower[0]..upper[0]).step_by(128) {
-                    let end = [(x + 128).min(upper[0]), (y + 64).min(upper[1])];
+            let stride = input.axes.map(|axis| input.section.stride[axis]);
+            let [width, height] = window_read_block(stride);
+            for y in (lower[1]..upper[1]).step_by(height) {
+                for x in (lower[0]..upper[0]).step_by(width) {
+                    let end = [(x + width).min(upper[0]), (y + height).min(upper[1])];
                     append(&input.read([x, y], end)?, sample);
                 }
             }
         }
         self.statistic.evaluate(sample)
     }
+}
+
+fn window_read_block(stride: [usize; 2]) -> [usize; 2] {
+    [128_usize.div_ceil(stride[0]), 64_usize.div_ceil(stride[1])]
 }
 
 fn write_tile(
@@ -448,5 +488,19 @@ impl PlaneInput {
             .as_ref()
             .is_none_or(|mask| mask[index])
             .then(|| self.pixels[index])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_read_block;
+
+    #[test]
+    fn window_blocks_bound_underlying_reads_even_when_strided() {
+        for stride in [[1, 1], [3, 5], [64, 64], [191, 371]] {
+            let block = window_read_block(stride);
+            let dense: [usize; 2] = std::array::from_fn(|i| (block[i] - 1) * stride[i] + 1);
+            assert!(dense[0] <= 128 && dense[1] <= 64, "{stride:?}: {dense:?}");
+        }
     }
 }

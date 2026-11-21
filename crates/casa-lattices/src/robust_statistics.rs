@@ -291,9 +291,18 @@ pub fn compute_robust_stats(
                 } else {
                     max_zscore(stats.npts as u64)
                 };
-                let low = stats.mean - z * stats.sigma;
-                let high = stats.mean + z * stats.sigma;
-                kept.retain(|point| low <= point.value && point.value <= high);
+                let center = if stats.npts == 0. { 0. } else { stats.mean };
+                let low = center - z * stats.sigma;
+                let high = center + z * stats.sigma;
+                // Casacore replaces the range on the original data at each
+                // iteration. An empty previous range has mean and sigma zero.
+                kept.clear();
+                kept.extend(
+                    sample
+                        .iter()
+                        .copied()
+                        .filter(|point| low <= point.value && point.value <= high),
+                );
                 if kept.len() < stats.npts as usize {
                     reductions += 1;
                 }
