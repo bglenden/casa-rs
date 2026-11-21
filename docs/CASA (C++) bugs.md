@@ -7308,6 +7308,19 @@ reference antennas. Casa-rs writes zero to flagged cells. The paired
 test compares flags and valid coefficients and applies both products.
 [Paired oracle](../tools/casa-compat/polcal_leakage_solve_oracle.py)
 
+## The last cross-hand model can suppress a `polcal` position angle solution
+
+CASA 6.7.6.14's joint leakage and angle modes fit a complex source multiplier
+across all usable measurements in an interval. `DJones::guessPar` uses it
+only if the final inspected model correlation has nonzero amplitude. A
+`Df+X` interval with polarized source information in seven channels reports
+a zero angle when an eighth channel has zero cross-hand model and comes last.
+Reversing the same data and model reports the fitted angle of about 10.88°.
+
+Casa-rs applies the phase from the constrained fit in both orders. An empty
+fit retains the identity angle correction.
+[Paired oracle](../tools/casa-compat/polcal_joint_leakage_oracle.py)
+
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
 In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet

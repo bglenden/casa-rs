@@ -19,7 +19,7 @@ def normalized_rms(got, want):
     return float(np.linalg.norm(got - want) / scale) if scale else float(np.linalg.norm(got))
 
 
-def compare(reference, native):
+def compare(reference, native, *, gain_tolerance=1e-3):
     with opened(reference) as want, opened(native) as got:
         assert want.nrows() == got.nrows() > 0
         assert want.info()['subType'] == got.info()['subType']
@@ -33,7 +33,7 @@ def compare(reference, native):
         gain = normalized_rms(got.getcol('CPARAM')[valid], want.getcol('CPARAM')[valid])
         error = normalized_rms(got.getcol('PARAMERR'), want.getcol('PARAMERR'))
         snr = normalized_rms(got.getcol('SNR'), want.getcol('SNR'))
-        assert gain < 1e-3 and error < 1e-3 and snr < 1e-3, (gain, error, snr)
+        assert gain < gain_tolerance and error < 1e-3 and snr < 1e-3, (gain, error, snr)
     with opened(reference/'SPECTRAL_WINDOW') as want, opened(native/'SPECTRAL_WINDOW') as got:
         for column in ('NUM_CHAN', 'CHAN_FREQ', 'REF_FREQUENCY', 'FLAG_ROW'):
             np.testing.assert_allclose(got.getcell(column, 0), want.getcell(column, 0),
@@ -41,14 +41,14 @@ def compare(reference, native):
     return gain, error, snr
 
 
-def solve(root, vis, api, stokes, **options):
+def solve(root, vis, api, stokes, *, gain_tolerance=1e-3, **options):
     root.mkdir()
     outputs = {label: root/f'{label}.cal' for label in ('casa', 'native')}
     params = dict(field='0', refant='A0', smodel=stokes)
     params.update(options)
     for label, task in [('casa', casa.polcal), ('native', api.polcal)]:
         assert task(str(vis), str(outputs[label]), **params) is None
-    difference = compare(outputs['casa'], outputs['native'])
+    difference = compare(outputs['casa'], outputs['native'], gain_tolerance=gain_tolerance)
     print(root.parent.name, root.name, 'gain, formal error and SNR normalized RMS', difference)
     return outputs
 

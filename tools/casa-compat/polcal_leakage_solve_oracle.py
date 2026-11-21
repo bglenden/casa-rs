@@ -80,7 +80,7 @@ def compare_table(reference, candidate):
     return float(error)
 
 
-def compare_apply(root, vis, products, native, priors):
+def compare_apply(root, vis, products, native, priors, *, cross_hand_tolerance=None):
     products_seen = []
     for producer in ('casa', 'native'):
         product = products[producer]
@@ -95,6 +95,10 @@ def compare_apply(root, vis, products, native, priors):
     for data, other_flags in products_seen[1:]:
         np.testing.assert_array_equal(other_flags, flags)
         assert np.linalg.norm(data-base) / np.linalg.norm(base) < 1e-3
+        if cross_hand_tolerance is not None:
+            valid = ~flags[1:3]
+            difference = np.linalg.norm((data[1:3]-base[1:3])[valid]) / np.linalg.norm(base[1:3][valid])
+            assert difference < cross_hand_tolerance, difference
 
 
 def solve_case(root, vis, native, stokes, priors=(), **overrides):

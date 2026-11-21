@@ -194,6 +194,10 @@ pub(super) fn leakage_request(
     let kind = match poltype.as_str() {
         "D" => LeakageSolveKind::D,
         "Df" => LeakageSolveKind::Df,
+        "D+QU" => LeakageSolveKind::DQu,
+        "Df+QU" => LeakageSolveKind::DfQu,
+        "D+X" => LeakageSolveKind::DX,
+        "Df+X" => LeakageSolveKind::DfX,
         "Dlls" => LeakageSolveKind::Dlls,
         "Dflls" => LeakageSolveKind::Dflls,
         _ => {
