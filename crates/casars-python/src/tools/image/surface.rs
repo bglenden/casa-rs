@@ -924,7 +924,7 @@ const METHODS: &[Method] = &[
             param("wantreturn", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "rebin",

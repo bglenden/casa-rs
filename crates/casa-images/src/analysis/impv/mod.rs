@@ -3,6 +3,9 @@
 
 mod geometry;
 mod position;
+mod tool;
+
+pub use tool::{ImagePvProduct, generate_image_pv};
 
 use std::io;
 use std::path::Path;
@@ -19,8 +22,8 @@ use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{IxDyn, ShapeBuilder};
 
 use super::axes::{
-    direction_plane_axes, legacy_subimage_coordinates_with_stokes, stokes_for_axis,
-    subimage_coordinates_with_stokes,
+    direction_plane_axes, replace_stokes_in_record, section_record_reference_pixels,
+    stokes_for_axis, subimage_coordinate_record, subimage_coordinates_with_stokes,
 };
 use super::imsubimage::{
     SubimageRegion,
@@ -30,7 +33,7 @@ use super::imsubimage::{
 use super::{combined_selection_mask, ensure_outfile_does_not_alias_input};
 use crate::plane::PlaneIndex;
 use crate::regrid::{Plane, RegridMethod};
-use crate::{ImageError, ImagePixel, ImpvRequest, PagedImage, PvImageSummary};
+use crate::{ImageError, ImageInterface, ImagePixel, ImpvRequest, PagedImage, PvImageSummary};
 
 pub(super) fn run<T>(
     image: &PagedImage<T>,
@@ -49,7 +52,7 @@ where
     let plane = direction_plane_axes(image)?;
     let direction = direction(image.coordinates())?;
     let width = position::width(&request.width, direction)?;
-    let endpoints = position::endpoints(request, direction)?;
+    let endpoints = position::endpoints(request, direction, true)?;
     let strip = geometry::Strip::new(direction, endpoints, plane.map(|i| image.shape()[i]), width)?;
     let selection = selection(image, request, plane)?;
     let mut mask =
@@ -62,8 +65,12 @@ where
             "All selected pixels are masked".into(),
         ));
     }
+    let native = match image.table().keywords().get("coords") {
+        Some(Value::Record(record)) => Some(record.clone()),
+        _ => None,
+    };
     let (coordinates, record, secondary) =
-        output_coordinates(image, &selection, plane, &strip, &request.unit)?;
+        output_coordinates(image, native, &selection, plane, &strip, &request.unit)?;
     let mut info = image.image_info()?;
     info.beam_set = subset_beam_set(
         &info.beam_set,
@@ -147,19 +154,33 @@ fn selection<T: ImagePixel>(
             _ => None,
         }
     };
-    let chans = request
-        .chans
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.eq_ignore_ascii_case("all") && !s.eq_ignore_ascii_case("none"));
+    resolve_selection(image, request, plane, region, false)
+}
+
+fn resolve_selection<T: ImagePixel>(
+    image: &dyn ImageInterface<T>,
+    request: &ImpvRequest,
+    plane: [usize; 2],
+    region: Option<SubimageRegion<'_>>,
+    allow_strides: bool,
+) -> Result<SubimageSelection, ImageError> {
+    let chans = request.chans.as_deref().map(str::trim).filter(|s| {
+        !s.eq_ignore_ascii_case("all") && (allow_strides || !s.eq_ignore_ascii_case("none"))
+    });
     let stokes = request
         .stokes
         .as_deref()
         .map(str::trim)
         .map(|s| s.trim_start_matches('[').trim_end_matches(']').trim())
-        .filter(|s| !s.eq_ignore_ascii_case("all") && !s.eq_ignore_ascii_case("none"))
+        .filter(|s| {
+            !s.eq_ignore_ascii_case("all") && (allow_strides || !s.eq_ignore_ascii_case("none"))
+        })
         .map(|s| s.replace(';', ","));
-    let resolved = SubimageSelection::resolve(image, None, region, chans, stokes.as_deref())?;
+    let resolved = if allow_strides {
+        SubimageSelection::resolve_section(image, None, region, chans, stokes.as_deref())?
+    } else {
+        SubimageSelection::resolve(image, None, region, chans, stokes.as_deref())?
+    };
     if resolved.has_multiple_regions {
         return Err(ImageError::CasaSelection(
             "Only a single n-dimensional rectangular region is supported".into(),
@@ -187,13 +208,7 @@ where
     let [x, y] = plane;
     let plane_shape = [input.shape()[x], input.shape()[y]];
     let planes = PlaneIndex::new(input.shape(), plane);
-    let offsets = (0..strip.shape[0])
-        .map(|i| {
-            (0..strip.shape[1])
-                .map(|j| strip.input_pixel(i, j))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let offsets = strip.input_offsets()?;
     let mut out_shape = input.shape().to_vec();
     out_shape[x] = strip.shape[0];
     out_shape.remove(y);
@@ -222,15 +237,9 @@ where
             .map(|axis| planes.pixel(i, axis))
             .collect();
         for (i, section) in offsets.iter().enumerate() {
-            let (sum, n) = section
-                .iter()
-                .filter_map(|&at| plane.sample(method, at))
-                .fold((0.0, 0), |(sum, n), value| {
-                    (sum + f64::from(value as f32), n + 1)
-                });
-            if n > 0 {
+            if let Some(value) = collapse_width(&plane, method, section) {
                 output_index[offset_axis] = i;
-                result[IxDyn(&output_index)] = (sum / f64::from(n)) as f32;
+                result[IxDyn(&output_index)] = value;
                 valid[IxDyn(&output_index)] = true;
             }
         }
@@ -238,8 +247,19 @@ where
     Ok((result, valid))
 }
 
+fn collapse_width(plane: &Plane<'_>, method: RegridMethod, points: &[[f64; 2]]) -> Option<f32> {
+    let (sum, count) = points
+        .iter()
+        .filter_map(|&at| plane.sample(method, at))
+        .fold((0., 0), |(sum, count), value| {
+            (sum + f64::from(value as f32), count + 1)
+        });
+    (count != 0).then(|| (sum / f64::from(count)) as f32)
+}
+
 fn output_coordinates<T: ImagePixel>(
-    image: &PagedImage<T>,
+    image: &dyn ImageInterface<T>,
+    native: Option<RecordValue>,
     selection: &SubimageSelection,
     plane: [usize; 2],
     strip: &geometry::Strip,
@@ -253,28 +273,52 @@ fn output_coordinates<T: ImagePixel>(
         .map_err(|e| ImageError::CasaSelection(e.to_string()))?;
     let mut selected_stokes = selection.selected_stokes.clone();
     if selected_stokes.is_none()
-        && let Some(axis) = selection.stokes_axis
-        && selection.shape[axis] != image.shape()[axis]
+        && let Some(axis) = image.find_axis(CoordinateType::Stokes)
+        && selection.packed_shape()[axis] != image.shape()[axis]
     {
         let stokes = stokes_for_axis(image.coordinates(), axis)?;
         let start = selection.start[axis];
-        selected_stokes = Some(stokes[start..start + selection.shape[axis]].to_vec());
+        let step = selection.stride.as_ref().map_or(1, |stride| stride[axis]);
+        selected_stokes = Some(
+            stokes[start..start + selection.shape[axis]]
+                .iter()
+                .copied()
+                .step_by(step)
+                .collect(),
+        );
     }
     let selected_stokes = selected_stokes.as_deref();
-    let mut record = match legacy_subimage_coordinates_with_stokes(
-        image,
-        &selection.start,
-        &selection.shape,
-        selected_stokes,
-    ) {
-        Some(record) => record,
-        None => subimage_coordinates_with_stokes(
-            image.coordinates(),
+    let native = native.filter(|record| {
+        record
+            .fields()
+            .iter()
+            .any(|field| field.name.starts_with("pixelmap"))
+    });
+    let mut record = if let Some(stride) = selection.stride.as_deref() {
+        let mut record = native.unwrap_or_else(|| image.coordinates().to_record());
+        section_record_reference_pixels(
+            &mut record,
             &selection.start,
-            &selection.shape,
-            selected_stokes,
-        )?
-        .to_record(),
+            &selection.packed_shape(),
+            Some(stride),
+        )?;
+        if let Some(stokes) = selected_stokes {
+            replace_stokes_in_record(&mut record, stokes)?;
+        }
+        record
+    } else {
+        match native.and_then(|record| {
+            subimage_coordinate_record(record, &selection.start, &selection.shape, selected_stokes)
+        }) {
+            Some(record) => record,
+            None => subimage_coordinates_with_stokes(
+                image.coordinates(),
+                &selection.start,
+                &selection.shape,
+                selected_stokes,
+            )?
+            .to_record(),
+        }
     };
     let direction = CoordinateSystem::record_coordinates(&record)?
         .into_iter()
@@ -298,15 +342,27 @@ fn output_coordinates<T: ImagePixel>(
     let kept: Vec<_> = (0..image.ndim()).filter(|&axis| axis != plane[1]).collect();
     let mut record = drop_axes_from_legacy_record(&record, image.ndim(), &kept)
         .ok_or_else(|| ImageError::InvalidMetadata("cannot remove the collapsed PV axis".into()))?;
-    let offset = kept
+    let pixel_offset = kept
         .iter()
         .position(|&axis| axis == plane[0])
-        .expect("offset axis kept") as i32;
-    // casacore sets the removed linear axis to its own second axis index.
-    for kind in ["pixelmap", "worldmap"] {
+        .expect("offset axis kept");
+    let offset = CoordinateSystem::record_coordinates(&record)?
+        .into_iter()
+        .find(|entry| {
+            entry.field.starts_with("linear") && entry.pixel_axes == [Some(pixel_offset), None]
+        })
+        .ok_or_else(|| {
+            ImageError::InvalidMetadata("PV offset axis missing from the image record".into())
+        })?;
+    let world_offset = offset.world_axes[0]
+        .ok_or_else(|| ImageError::InvalidMetadata("PV offset has no world axis".into()))?;
+    let suffix = offset.field.trim_start_matches("linear");
+    // The removed local axis is encoded as -2. The surviving pixel and
+    // world axes can occupy independently transposed positions.
+    for (kind, active) in [("pixelmap", pixel_offset), ("worldmap", world_offset)] {
         record.upsert(
             format!("{kind}{suffix}"),
-            Value::Array(ArrayValue::from_i32_vec(vec![offset, -2])),
+            Value::Array(ArrayValue::from_i32_vec(vec![active as i32, -2])),
         );
     }
     Ok((CoordinateSystem::from_record(&record)?, record, secondary))
