@@ -7999,6 +7999,25 @@ cannot draw a uniform zero with those seeds. The Poisson bound underflows to
 zero, leaving its product loop true after the product reaches zero. casa-rs
 returns a Python error for these inputs.
 
+## PlotMS leaves calibration-table header values blank
+
+CASA 6.7.6.14 with casaplotms 2.9.1 exports labels such as `File:` and
+`Observation date:` when `headeritems` is set on a current bandpass table.
+The corresponding values are blank even in a wide export with only
+`headeritems='filename'`. Casa-rs reads available values from the table and
+lays them out within the requested figure dimensions. Wildcard row IDs leave
+the matching metadata values blank. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
+
+## PlotMS can fail when a calibration-table transform is enabled
+
+With CASA 6.7.6.14 and casaplotms 2.9.1, enabling `freqframe='BARY'` or
+`freqframe='TOPO'` on the same bandpass table failed in the headless plotting
+process before completing the export. `CalCache::loadIt` documents the
+calibration-table behavior with its warning that transformations are ignored.
+Casa-rs emits that warning and exports the stored spectral coordinates.
+Both engines produced identical text when `transform=False` with nondefault
+frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
+
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
 With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and

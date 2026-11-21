@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Calibration table input for the shared PlotMS provider.
 
-mod atmosphere;
+pub(super) mod atmosphere;
 pub(super) mod averaging;
-mod axis;
+pub(super) mod axis;
 pub(super) mod figure;
+mod header;
 mod iteration;
 mod samples;
 mod selection;
@@ -62,6 +63,7 @@ pub(super) fn run(
     payload: Option<&Path>,
 ) -> Result<TaskSuccess, TaskFailure> {
     validate_calibration_controls(task)?;
+    let header_items = header::items(task)?;
     figure::plot_limits(task.value("plotrange"))?;
     let output = task
         .text("plotfile")?
@@ -198,7 +200,15 @@ pub(super) fn run(
     }
     let show = task.flag("showgui")?;
     let plots = match payload {
-        Some(payload) => figure::prepare(task, payload, figure_path, show, overwrite, &panels)?,
+        Some(payload) => figure::prepare(
+            task,
+            payload,
+            figure_path,
+            show,
+            overwrite,
+            &panels,
+            |source| header::lines(&header_items, &table, path, source),
+        )?,
         None if figure_path.is_some() => {
             return Err(TaskFailure::validation(
                 "use casars.tasks.plotms for rendered figures",
@@ -217,24 +227,16 @@ pub(super) fn run(
 }
 
 fn validate_calibration_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
-    let pending = |name| {
-        TaskFailure::validation(format!(
-            "PlotMS calibration control {name} is pending #1526"
-        ))
-        .at(name)
-    };
-    if task
-        .text("headeritems")?
-        .is_some_and(|value| !value.is_empty())
-    {
-        return Err(pending("headeritems"));
-    }
     if task.flag("transform")?
-        && task
+        && (task
             .text("freqframe")?
             .is_some_and(|value| !value.is_empty())
+            || task
+                .text("restfreq")?
+                .is_some_and(|value| !value.is_empty())
+            || !task.required_text("veldef")?.eq_ignore_ascii_case("RADIO"))
     {
-        return Err(pending("freqframe"));
+        tracing::warn!("Transformations ignored: not supported for calibration tables.");
     }
     if task.flag("selectdata")? {
         for name in ["uvrange", "array", "intent", "feed"] {

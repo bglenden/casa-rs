@@ -12,17 +12,21 @@ use super::calibration::{
     averaging,
     text::{significant, write_averaging_header},
 };
-use super::{MsAxis, MsPlotPayload, MsScatterSeries, listobs};
+use super::plotms_atmosphere::Curve;
+use super::{
+    MsAxis, MsPlotPayload, MsScatterPlotMsMetadata, MsScatterPointRef, MsScatterSeries, listobs,
+};
 use crate::MeasurementSet;
 use crate::columns::main_ids;
 use crate::columns::time_columns::TimeColumn;
 
-pub(super) fn write_calibrated_export(
+pub(super) fn write_export(
     task: &TaskInvocation<'_>,
     ms: &MeasurementSet,
     payload: &MsPlotPayload,
     output: &Path,
     library: &[String],
+    overlays: &[Vec<Curve>],
 ) -> Result<(), TaskFailure> {
     let parent = output
         .parent()
@@ -46,11 +50,17 @@ pub(super) fn write_calibrated_export(
                 plot.x_axis,
                 &plot.series,
                 verbose,
+                library.is_empty(),
             )
             .map_err(io)?;
+            if let Some(curves) = overlays.first() {
+                write_curves(&mut writer, &mut metadata, plot.x_axis, curves, verbose)
+                    .map_err(io)?;
+            }
         }
         MsPlotPayload::ScatterGrid(grid) => {
-            writeln!(writer, "# iteraxis: {}", grid.iteraxis.as_str()).map_err(io)?;
+            let axis = super::plotms_figure::iteration_name(grid.iteraxis);
+            writeln!(writer, "# iteraxis: {axis}").map_err(io)?;
             let capacity = grid.gridrows.saturating_mul(grid.gridcols);
             for (panel, plot) in grid.panels.iter().take(capacity).enumerate() {
                 if panel == 0 {
@@ -64,8 +74,13 @@ pub(super) fn write_calibrated_export(
                     grid.x_axis,
                     &plot.series,
                     verbose,
+                    library.is_empty(),
                 )
                 .map_err(io)?;
+                if let Some(curves) = overlays.get(panel) {
+                    write_curves(&mut writer, &mut metadata, grid.x_axis, curves, verbose)
+                        .map_err(io)?;
+                }
             }
         }
         _ => {
@@ -128,6 +143,9 @@ fn write_header(
         None
     };
     write_averaging_header(output, &average, requested_channels).map_err(io)?;
+    if library.is_empty() {
+        return Ok(());
+    }
     let label = match library {
         [filename] if !filename.contains('=') => std::path::absolute(filename)
             .map_err(io)?
@@ -144,65 +162,123 @@ fn write_series(
     x_axis: MsAxis,
     data: &[MsScatterSeries],
     verbose: bool,
+    channel_major: bool,
 ) -> std::io::Result<()> {
-    let mut previous_y = None;
-    for series in data {
-        if previous_y != Some(series.y_axis) {
-            previous_y = Some(series.y_axis);
-            let (x, y) = (name(x_axis), name(series.y_axis));
-            if verbose {
-                writeln!(
-                    output,
-                    "# x y chan scan field ant1 ant2 ant1name ant2name time freq spw poln obs"
-                )?;
-                writeln!(
-                    output,
-                    "# {x} {y} None None None None None None None MJD(seconds) GHz None None None"
-                )?;
-            } else {
-                writeln!(output, "# x y ")?;
-                writeln!(output, "# {x} {y}")?;
-            }
-        }
-        for (index, (&(x, y), point)) in series.points.iter().zip(&series.provenance).enumerate() {
-            let display = series.plotms_metadata.get(index);
-            let x = coordinate(x_axis, x);
-            let y = coordinate(series.y_axis, y);
-            if verbose {
-                let row = metadata.row(point.row)?;
-                let freq = row
-                    .frequencies
-                    .get(point.chan_start..point.chan_end)
-                    .filter(|values| !values.is_empty())
-                    .map_or(f64::NAN, |values| {
-                        values.iter().sum::<f64>() / values.len() as f64 / 1e9
-                    });
-                let pol = row
-                    .correlations
-                    .get(point.corr)
-                    .map_or("?", |&code| listobs::stokes_name(code));
-                writeln!(
-                    output,
-                    "{x} {y} {} {} {} {} {} {} {} {:.3} {freq:.9} {} {pol} {}",
-                    display.map_or(point.chan_start, |point| point.channel),
-                    row.scan,
-                    row.field,
-                    row.ant1,
-                    row.ant2,
-                    row.ant1name,
-                    row.ant2name,
-                    display
-                        .and_then(|point| point.average_time)
-                        .unwrap_or(row.time),
-                    row.spw,
-                    row.observation
-                )?;
-            } else {
-                writeln!(output, "{x} {y}")?;
-            }
+    for section in data.chunk_by(|left, right| left.y_axis == right.y_axis) {
+        let y_axis = section[0].y_axis;
+        write_section(output, name(x_axis), name(y_axis), verbose)?;
+        let mut points = section.iter().flat_map(|series| {
+            series
+                .points
+                .iter()
+                .zip(&series.provenance)
+                .enumerate()
+                .map(|(index, (xy, point))| (xy, point, series.plotms_metadata.get(index).copied()))
+        });
+        let write = |(&(x, y), point, display)| {
+            write_point(
+                output,
+                metadata,
+                (coordinate(x_axis, x), coordinate(y_axis, y)),
+                point,
+                display,
+                None,
+                verbose,
+            )
+        };
+        if channel_major {
+            let mut ordered = points.collect::<Vec<_>>();
+            ordered
+                .sort_unstable_by_key(|&(_, point, _)| (point.row, point.chan_start, point.corr));
+            ordered.into_iter().try_for_each(write)?;
+        } else {
+            points.try_for_each(write)?;
         }
     }
     Ok(())
+}
+
+fn write_curves(
+    output: &mut dyn Write,
+    metadata: &mut Metadata<'_>,
+    x_axis: MsAxis,
+    curves: &[Curve],
+    verbose: bool,
+) -> std::io::Result<()> {
+    for curve in curves {
+        write_section(output, name(x_axis), curve.axis.label(), verbose)?;
+        for sample in &curve.samples {
+            write_point(
+                output,
+                metadata,
+                (coordinate(x_axis, sample.x), significant(sample.y)),
+                &sample.point,
+                Some(sample.display),
+                Some(sample.frequency),
+                verbose,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn write_section(output: &mut dyn Write, x: &str, y: &str, verbose: bool) -> std::io::Result<()> {
+    if verbose {
+        writeln!(
+            output,
+            "# x y chan scan field ant1 ant2 ant1name ant2name time freq spw poln obs"
+        )?;
+        writeln!(
+            output,
+            "# {x} {y} None None None None None None None MJD(seconds) GHz None None None"
+        )
+    } else {
+        writeln!(output, "# x y ")?;
+        writeln!(output, "# {x} {y}")
+    }
+}
+
+fn write_point(
+    output: &mut dyn Write,
+    metadata: &mut Metadata<'_>,
+    (x, y): (String, String),
+    point: &MsScatterPointRef,
+    display: Option<MsScatterPlotMsMetadata>,
+    frequency: Option<f64>,
+    verbose: bool,
+) -> std::io::Result<()> {
+    if !verbose {
+        return writeln!(output, "{x} {y}");
+    }
+    let row = metadata.row(point.row)?;
+    let frequency = frequency.unwrap_or_else(|| {
+        row.frequencies
+            .get(point.chan_start..point.chan_end)
+            .filter(|values| !values.is_empty())
+            .map_or(f64::NAN, |values| {
+                values.iter().sum::<f64>() / values.len() as f64
+            })
+    }) / 1e9;
+    let pol = row
+        .correlations
+        .get(point.corr)
+        .map_or("?", |&code| listobs::stokes_name(code));
+    writeln!(
+        output,
+        "{x} {y} {} {} {} {} {} {} {} {:.3} {frequency:.9} {} {pol} {}",
+        display.map_or(point.chan_start, |point| point.channel),
+        row.scan,
+        row.field,
+        row.ant1,
+        row.ant2,
+        row.ant1name,
+        row.ant2name,
+        display
+            .and_then(|point| point.average_time)
+            .unwrap_or(row.time),
+        row.spw,
+        row.observation,
+    )
 }
 
 fn name(axis: MsAxis) -> &'static str {
@@ -248,7 +324,7 @@ fn coordinate(axis: MsAxis, value: f64) -> String {
     }
 }
 
-struct Metadata<'a> {
+pub(super) struct Metadata<'a> {
     ms: &'a MeasurementSet,
     time: TimeColumn<'a>,
     antennas: Vec<String>,
@@ -257,22 +333,22 @@ struct Metadata<'a> {
     correlations: HashMap<i32, Arc<[i32]>>,
 }
 
-struct Row {
+pub(super) struct Row {
     ant1: i32,
     ant2: i32,
     ant1name: String,
     ant2name: String,
-    field: i32,
-    scan: i32,
-    spw: i32,
-    observation: i32,
-    time: f64,
+    pub(super) field: i32,
+    pub(super) scan: i32,
+    pub(super) spw: i32,
+    pub(super) observation: i32,
+    pub(super) time: f64,
     frequencies: Arc<[f64]>,
     correlations: Arc<[i32]>,
 }
 
 impl<'a> Metadata<'a> {
-    fn new(ms: &'a MeasurementSet) -> std::io::Result<Self> {
+    pub(super) fn new(ms: &'a MeasurementSet) -> std::io::Result<Self> {
         let antenna = ms.antenna().map_err(std::io::Error::other)?;
         let antennas = (0..antenna.row_count())
             .map(|row| Ok(format!("{}@{}", antenna.name(row)?, antenna.station(row)?)))
@@ -288,7 +364,7 @@ impl<'a> Metadata<'a> {
         })
     }
 
-    fn row(&mut self, row: usize) -> std::io::Result<&Row> {
+    pub(super) fn row(&mut self, row: usize) -> std::io::Result<&Row> {
         if self
             .last_row
             .as_ref()

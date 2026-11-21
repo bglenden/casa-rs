@@ -23,6 +23,7 @@ pub(super) fn prepare(
     show: bool,
     overwrite: bool,
     panels: &PlotPanels,
+    header: impl Fn(&[Panel]) -> Vec<String>,
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
     let pages = panels.pages().collect::<Vec<_>>();
     let destinations = pages
@@ -59,7 +60,7 @@ pub(super) fn prepare(
             id: format!("plotms-calibration-{page}"),
             title: title.clone(),
             subtitle: String::new(),
-            header_lines: Vec::new(),
+            header_lines: header(source),
             axes: Vec::new(),
             layers: Vec::new(),
             annotations: Vec::new(),
@@ -194,50 +195,23 @@ fn make_panel(
             )?);
         }
     }
-    if let Some(first) = panel.overlay.first() {
-        let mut bounds = [f64::INFINITY, f64::NEG_INFINITY];
-        for (overlay_id, series) in panel.overlay.iter().enumerate() {
-            let series_index = panel.series.len() + overlay_id;
-            let show_flagged = shows_flagged(ranges.flagged_symbols, series_index);
-            let points = series
-                .points
-                .iter()
-                .filter(|point| {
-                    point.x.is_finite() && point.y.is_finite() && (show_flagged || !point.flagged)
-                })
-                .collect::<Vec<_>>();
-            if points.is_empty() {
-                continue;
-            }
-            for point in &points {
-                bounds = [bounds[0].min(point.y), bounds[1].max(point.y)];
-            }
-            let mut curve = layer(
-                payload,
-                (index, series_index, "atmosphere", 0),
-                false,
-                series.y.label().to_string(),
-                points,
-                true,
-            )?;
-            curve.provenance_summary = "Atmospheric model over the selected channels".into();
-            if let Some(style) = &mut curve.style {
-                style.color = Some(
-                    if overlay_id == 0 {
-                        "#d88400"
-                    } else {
-                        "#b32673"
-                    }
-                    .into(),
-                );
-                style.marker = None;
-            }
-            layers.push(curve);
-        }
-        let mut overlay_axis = axis("atmosphere", first.y, None, bounds, [0.0; 2]);
-        overlay_axis.draws_on_trailing_edge = true;
-        axes.push(overlay_axis);
-    }
+    let colorize_overlay = if task.flag("colorizeoverlay")? {
+        color
+    } else {
+        None
+    };
+    append_atmosphere(
+        payload,
+        panel,
+        index,
+        AtmosphereStyle {
+            flagged_symbols: ranges.flagged_symbols,
+            color: colorize_overlay,
+            connect,
+        },
+        &mut axes,
+        &mut layers,
+    )?;
     let title = panels
         .axis_name()
         .map_or_else(String::new, |axis| format!("{axis} {}", panel.label));
@@ -251,6 +225,69 @@ fn make_panel(
         aspect: None,
         frame_visible: None,
     })
+}
+
+struct AtmosphereStyle<'a> {
+    flagged_symbols: Option<&'a ParameterValue>,
+    color: Option<Axis>,
+    connect: bool,
+}
+
+fn append_atmosphere(
+    payload: &mut PlotPayloadWriter,
+    panel: &Panel,
+    index: usize,
+    style: AtmosphereStyle<'_>,
+    axes: &mut Vec<PlotDocumentAxis>,
+    layers: &mut Vec<PlotDocumentLayer>,
+) -> Result<(), TaskFailure> {
+    let Some(first) = panel.overlay.first() else {
+        return Ok(());
+    };
+    let mut bounds = [f64::INFINITY, f64::NEG_INFINITY];
+    for (overlay_id, series) in panel.overlay.iter().enumerate() {
+        let series_index = panel.series.len() + overlay_id;
+        let show_flagged = shows_flagged(style.flagged_symbols, series_index);
+        let mut groups = BTreeMap::<String, Vec<&Point>>::new();
+        for point in series.points.iter().filter(|point| {
+            point.x.is_finite() && point.y.is_finite() && (show_flagged || !point.flagged)
+        }) {
+            bounds = [bounds[0].min(point.y), bounds[1].max(point.y)];
+            let group = style.color.map_or_else(
+                || series.y.label().to_string(),
+                |axis| {
+                    format!(
+                        "{} {}",
+                        axis.label(),
+                        axis.value(&point.coordinates, Default::default(), 0.0)
+                    )
+                },
+            );
+            groups.entry(group).or_default().push(point);
+        }
+        for (group, points) in groups {
+            let mut curve = layer(
+                payload,
+                (index, series_index, "atmosphere", 0),
+                false,
+                group,
+                points,
+                style.connect,
+            )?;
+            curve.title = series.y.label().into();
+            curve.provenance_summary = "Atmospheric model over the selected channels".into();
+            if let Some(layer_style) = &mut curve.style {
+                layer_style.color = style.color.is_none().then(|| {
+                    crate::msexplore::plotms_figure::default_overlay_color(overlay_id).into()
+                });
+            }
+            layers.push(curve);
+        }
+    }
+    let mut overlay_axis = axis("atmosphere", first.y, None, bounds, [0.0; 2]);
+    overlay_axis.draws_on_trailing_edge = true;
+    axes.push(overlay_axis);
+    Ok(())
 }
 
 fn ordinate_id(right: bool) -> &'static str {
