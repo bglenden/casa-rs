@@ -34,7 +34,7 @@ def test_selection_uses_creation_order_and_reuses_live_world_samples(casa):
         cs = api.coordsys().newcoordsys(linear=1, tabular=True)
         assert cs.addcoordinate(tabular=True)
         assert cs.setnames(["Distance", "First", "Second"])
-        assert cs.setunits(["m", "km", "s"], overwrite=True)
+        assert cs.setunits(["km", "m", "cm"])
         assert cs.settabular([0, 2, 5], [10, 14, 30])
         assert cs.settabular(np.array([[0, 3, 9]]), ["5.0", "8.0", "16.0"], np.int32(1))
         assert cs.transpose([2, 0, 1])
@@ -43,7 +43,7 @@ def test_selection_uses_creation_order_and_reuses_live_world_samples(casa):
         assert cs.settabular(world=[5, 17, 29], which=1)
         np.testing.assert_allclose(cs.toworld([6, 2, 7])["numeric"], [23, 2, 34])
         np.testing.assert_array_equal(cs.names(), ["Second", "Distance", "First"])
-        np.testing.assert_array_equal(cs.units(), ["s", "m", "km"])
+        np.testing.assert_array_equal(cs.units(), ["cm", "km", "m"])
         np.testing.assert_array_equal(cs.lineartransform("tabular"), [[1.0]])
 
 

@@ -8261,6 +8261,14 @@ values that its record reader refuses to reopen. casa-rs raises
 rejects non-finite matrix coefficients and reads byte-swapped arrays
 according to their declared byte order.
 
+## Coordsys tabular samples can leave an unreadable coordinate
+
+CASA 6.7.6.14 accepts `settabular([0, 0, 2], [5, 6, 7])` and then raises
+`Interpolate1D::operator() data has repeated x values` in `torecord()`.
+It also accepts nonfinite samples, which can turn even finite input
+positions into `NaN`. casa-rs rejects these samples before changing the
+coordinate. Finite one-sample tables still define constant mappings.
+
 ## `image.statistics` can overwrite a logfile omitted from the current call
 
 With CASA 6.7.6.14, call `ia.statistics(logfile='report.txt')`, replace
