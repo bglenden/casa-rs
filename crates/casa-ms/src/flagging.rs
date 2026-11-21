@@ -241,7 +241,7 @@ pub struct FlagDataRequest {
     pub clip_time_bin: Option<String>,
     /// Positive visibility-iterator chunk interval, in seconds.
     pub time_chunk: Option<f64>,
-    /// Omit scan boundaries when grouping the extension agent's rows.
+    /// Omit scan boundaries when grouping public TFCrop and extension rows.
     pub combinescans: bool,
     /// Quack interval in seconds.
     pub quackinterval: f64,
@@ -1373,9 +1373,35 @@ fn apply_tfcrop_flags(
     let mut modified = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
     let mut time_flags = vec![false; samples.len()];
-    let groups = group_samples(&samples);
+    let groups = if request.casa_row_selection {
+        let timed = clip_time::ordered_baseline_chunks(
+            ms,
+            selected_rows,
+            request.time_chunk,
+            request.combinescans,
+            &display_ms_path(ms),
+        )?;
+        let runs: HashMap<_, _> = sample_row_runs(&samples)
+            .into_iter()
+            .map(|row| (row[0].row, row))
+            .collect();
+        timed
+            .chunk_by(|left, right| left.baseline_key() == right.baseline_key())
+            .map(|baseline| {
+                baseline
+                    .iter()
+                    .filter_map(|row| runs.get(&row.row).copied())
+                    .flatten()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .filter(|group| !group.is_empty())
+            .collect::<Vec<_>>()
+    } else {
+        group_samples(&samples).into_values().collect()
+    };
     if let Some(options) = &options {
-        for group in groups.values() {
+        for group in &groups {
             for by_corr in samples_by_corr(group) {
                 for &direction in options.passes.directions() {
                     let (cutoff, candidates) = match direction {
@@ -1397,11 +1423,11 @@ fn apply_tfcrop_flags(
     }
     if request.extendflags {
         if request.casa_row_selection && channel_selections.is_some() {
-            for group in groups.values() {
+            for group in &groups {
                 extend_tfcrop_selected_channels(group, &loaded.flags_by_row, &mut modified);
             }
         } else {
-            extend_autoflag_grouped(groups.values().map(Vec::as_slice), &samples, &mut modified);
+            extend_autoflag_grouped(groups.iter().map(Vec::as_slice), &samples, &mut modified);
         }
     }
     let union_candidates = count_mask(&modified);

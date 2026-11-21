@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Time-bin membership for clipping a selected MeasurementSet.
+//! Visibility-iterator order and time-bin membership for a selected MeasurementSet.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -141,6 +141,31 @@ pub(super) fn read_clip_times(
             }
         }
     }
+    Ok(timed)
+}
+
+pub(super) fn ordered_baseline_chunks(
+    ms: &MeasurementSet,
+    selected: &[usize],
+    interval: Option<f64>,
+    combine_scans: bool,
+    path: &str,
+) -> Result<Vec<ClipTimedRow>, FlaggingError> {
+    let mut timed = read_clip_times(ms, selected, path)?;
+    if combine_scans {
+        for row in &mut timed {
+            row.combine_scans();
+        }
+    }
+    if let Some(seconds) = interval.filter(|seconds| *seconds > 0.0 && seconds.is_finite()) {
+        mark_time_chunks(&mut timed, seconds);
+    }
+    timed.sort_unstable_by(|left, right| {
+        left.baseline_key()
+            .cmp(&right.baseline_key())
+            .then_with(|| left.time().total_cmp(&right.time()))
+            .then_with(|| left.row.cmp(&right.row))
+    });
     Ok(timed)
 }
 
