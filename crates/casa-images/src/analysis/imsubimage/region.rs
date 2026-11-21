@@ -14,9 +14,7 @@ use casa_types::quanta::casacore::mvangle_radians;
 
 use crate::saved_region::PolygonPixelPlane;
 
-use crate::analysis::axes::{
-    direction_plane_axes, direction_plane_axes_for_coordinates, stokes_for_axis,
-};
+use crate::analysis::axes::{direction_plane_axes, stokes_for_axis};
 use crate::analysis::{
     ChannelSpan, PixelRegion, parse_box_region, parse_stokes_names, parse_stokes_selection,
 };
@@ -35,7 +33,8 @@ pub(super) use sections::StridedSection;
 
 use channels::resolve_channels;
 use saved::{load_saved_region, parse_saved_region};
-pub(super) use text_origin::{TextRegionContext, overlaps_image};
+pub(super) use text_origin::TextRegionContext;
+use text_origin::{looks_like_inline_crtf, parse_crtf_document};
 
 #[derive(Debug, Clone)]
 pub(super) enum SpatialShape {
@@ -80,6 +79,7 @@ struct PlaneSelection {
 struct QualifiedShape {
     spatial: SpatialShape,
     planes: PlaneSelection,
+    excluded: bool,
 }
 
 const EMPTY_SECTION: &str = "selected region contains no pixels inside the image";
@@ -93,6 +93,7 @@ impl From<SpatialShape> for QualifiedShape {
         Self {
             spatial,
             planes: PlaneSelection::default(),
+            excluded: false,
         }
     }
 }
@@ -274,6 +275,7 @@ impl SubimageSelection {
         let stokes_union = union_planes(&regions, |region| region.planes.stokes.as_deref());
         let spatial_shapes = regions
             .iter()
+            .filter(|region| !region.excluded)
             .map(|region| &region.spatial)
             .collect::<Vec<_>>();
         let SpatialResolution {
@@ -325,7 +327,7 @@ impl SubimageSelection {
             spatial_shapes,
             qualified_shapes: if regions
                 .iter()
-                .any(|r| r.planes.channels.is_some() || r.planes.stokes.is_some())
+                .any(|r| r.excluded || r.planes.channels.is_some() || r.planes.stokes.is_some())
             {
                 regions
             } else {
@@ -350,7 +352,7 @@ fn union_planes(
         return None;
     }
     let mut union = Vec::new();
-    for shape in shapes {
+    for shape in shapes.iter().filter(|shape| !shape.excluded) {
         union.extend_from_slice(indices(shape)?);
     }
     Some(union)
@@ -406,33 +408,16 @@ fn parse_region_argument<T: ImagePixel>(
         return load_saved_region(path, name, image.coordinates(), full_shape, plane);
     }
 
-    if let Some(box_text) = text.strip_prefix("box:") {
+    let copy_text = text_context.is_some_and(|context| context.shape.is_some());
+    let box_text = text
+        .strip_prefix("box:")
+        .or_else(|| {
+            text.strip_prefix("pixelbox(")
+                .and_then(|value| value.strip_suffix(')'))
+        })
+        .or_else(|| looks_like_four_ints(text).then_some(text));
+    if !copy_text && let Some(box_text) = box_text {
         let b = parse_single_box(box_text.trim(), full_shape, plane)?;
-        return Ok(ParsedRegion {
-            is_compound: false,
-            is_crtf: false,
-            shapes: vec![SpatialShape::Box(b).into()],
-            saved_mask: None,
-            saved_bounds: None,
-            stride: None,
-        });
-    }
-    if let Some(inner) = text
-        .strip_prefix("pixelbox(")
-        .and_then(|s| s.strip_suffix(')'))
-    {
-        let b = parse_single_box(inner.trim(), full_shape, plane)?;
-        return Ok(ParsedRegion {
-            is_compound: false,
-            is_crtf: false,
-            shapes: vec![SpatialShape::Box(b).into()],
-            saved_mask: None,
-            saved_bounds: None,
-            stride: None,
-        });
-    }
-    if looks_like_four_ints(text) {
-        let b = parse_single_box(text, full_shape, plane)?;
         return Ok(ParsedRegion {
             is_compound: false,
             is_crtf: false,
@@ -454,7 +439,7 @@ fn parse_region_argument<T: ImagePixel>(
         }
         String::from_utf8(bytes)
             .map_err(|e| ImageError::Io(format!("read CRTF file {text}: {e}")))?
-    } else if looks_like_inline_crtf(text) {
+    } else if looks_like_inline_crtf(text, copy_text) {
         text.to_string()
     } else if let Some(path) = text_context
         .map_or_else(|| image.name(), |context| context.table)
@@ -475,19 +460,6 @@ fn looks_like_four_ints(text: &str) -> bool {
     parts.len() == 4 && parts.iter().all(|p| p.trim().parse::<usize>().is_ok())
 }
 
-fn looks_like_inline_crtf(text: &str) -> bool {
-    let lower = text.trim_start().to_ascii_lowercase();
-    lower.starts_with("#crtf")
-        || text.contains('\n')
-        || lower.split_once('[').is_some_and(|(shape, arguments)| {
-            let shape = shape.trim();
-            !shape.is_empty()
-                && shape.bytes().all(|byte| byte.is_ascii_alphabetic())
-                && arguments.contains(',')
-                && arguments.contains(']')
-        })
-}
-
 fn parse_single_box(
     text: &str,
     full_shape: &[usize],
@@ -502,82 +474,6 @@ fn parse_single_box(
         )));
     }
     Ok(boxes[0])
-}
-
-fn parse_crtf_document<T: ImagePixel>(
-    image: &dyn ImageInterface<T>,
-    text: &str,
-    full_shape: &[usize],
-    plane: [usize; 2],
-    text_context: Option<TextRegionContext<'_>>,
-) -> Result<ParsedRegion, ImageError> {
-    let mut shapes = Vec::new();
-    let mut defaults = PlaneSelection::default();
-    let text_origin = text_context.and_then(|context| context.coordinates);
-    let origin = text_origin.unwrap_or_else(|| image.coordinates());
-    let origin_plane = text_origin
-        .map(direction_plane_axes_for_coordinates)
-        .transpose()?
-        .unwrap_or(plane);
-    let projection = text_origin
-        .map(|origin| insert_region::Projection::new(origin, image.coordinates()))
-        .transpose()?;
-    let origin_shape = text_context.and_then(|context| context.shape);
-
-    for raw_stmt in text.split(['\n', ';']) {
-        let stmt = raw_stmt.trim();
-        if stmt.is_empty() || stmt.starts_with('#') {
-            continue;
-        }
-        let lower = stmt.to_ascii_lowercase();
-        if lower.starts_with("ann ") || lower.starts_with("symbol") || lower.starts_with("text") {
-            continue;
-        }
-        if lower.starts_with("global ") {
-            parse_crtf_qualifiers(
-                &split_top_level(stmt[7..].trim(), ','),
-                image,
-                full_shape,
-                &mut defaults,
-                text_origin,
-            )?;
-            continue;
-        }
-        let tokens = split_top_level(stmt, ',');
-        let Some(first) = tokens.first() else {
-            continue;
-        };
-        let spatial = parse_crtf_shape(origin, first, origin_plane, origin_shape.is_some())?;
-        if let Some(shape) = origin_shape
-            && !overlaps_image(&spatial, shape, origin_plane)
-        {
-            continue;
-        }
-        let spatial = match &projection {
-            Some(projection) => projection.project_shape(spatial)?,
-            None => spatial,
-        };
-        let mut planes = defaults.clone();
-        parse_crtf_qualifiers(&tokens[1..], image, full_shape, &mut planes, text_origin)?;
-        shapes.push(QualifiedShape { spatial, planes });
-    }
-
-    if shapes.is_empty() {
-        let message = if origin_shape.is_some() {
-            "Exception: No regions found.".into()
-        } else {
-            format!("No valid CRTF region definitions found in {text:?}")
-        };
-        return Err(ImageError::CasaSelection(message));
-    }
-    Ok(ParsedRegion {
-        is_compound: false,
-        is_crtf: true,
-        shapes,
-        saved_mask: None,
-        saved_bounds: None,
-        stride: None,
-    })
 }
 
 fn parse_crtf_qualifiers<T: ImagePixel>(

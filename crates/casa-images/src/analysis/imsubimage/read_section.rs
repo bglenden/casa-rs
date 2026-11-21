@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::path::Path;
+
+use casa_coordinates::CoordinateSystem;
 use casa_types::ArrayD;
 
 use crate::image_expr::validate_slice_request;
@@ -7,7 +10,7 @@ use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::{
     SubimageRegion,
-    region::{SubimageSelection, saved::lattice_pixel_section},
+    region::{SubimageSelection, TextRegionContext, saved::lattice_pixel_section},
 };
 
 /// Pixel section enclosing a selected region in the source image.
@@ -48,21 +51,57 @@ impl ImageRegionSection {
             });
         }
         let section = SubimageSelection::resolve_section(image, None, region, None, None)?;
+        Ok(Self::from_selection(
+            section,
+            image.ndim(),
+            include_membership,
+        ))
+    }
+
+    /// Resolve inline CRTF, a region file, or a named table region for a copy.
+    ///
+    /// Use the optional origin coordinate system and lattice shape to interpret
+    /// CRTF before mapping it onto the image being copied. Without that origin,
+    /// CRTF is in the copied image's own coordinates. A named table region is
+    /// always looked up in the supplied table.
+    ///
+    /// # Errors
+    /// The text, region file, geometry, or named region is invalid.
+    pub fn resolve_copy_text<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        text: &str,
+        origin: Option<(&CoordinateSystem, &[usize])>,
+        table: Option<&Path>,
+    ) -> Result<Self, ImageError> {
+        let context = TextRegionContext {
+            coordinates: origin.map(|(coordinates, _)| coordinates),
+            table,
+            shape: Some(origin.map_or_else(|| image.shape(), |(_, shape)| shape)),
+        };
+        let section = SubimageSelection::resolve_with_origin(
+            image,
+            None,
+            Some(SubimageRegion::Text(text)),
+            None,
+            None,
+            Some(context),
+        )?;
+        Ok(Self::from_selection(section, image.ndim(), false))
+    }
+
+    fn from_selection(section: SubimageSelection, ndim: usize, include_membership: bool) -> Self {
         let mut membership = None;
         if include_membership && section.stride.is_none() {
             section.apply_selection_masks(&mut membership);
         }
         let count = section.packed_shape();
-        Ok(Self {
+        Self {
             start: section.start.clone(),
             count,
-            stride: section
-                .stride
-                .clone()
-                .unwrap_or_else(|| vec![1; image.ndim()]),
+            stride: section.stride.clone().unwrap_or_else(|| vec![1; ndim]),
             membership,
             selection: section.stride.is_none().then_some(section),
-        })
+        }
     }
 
     /// Compute region membership in a window of the packed section.

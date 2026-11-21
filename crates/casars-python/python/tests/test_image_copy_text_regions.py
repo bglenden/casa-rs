@@ -177,3 +177,83 @@ def test_fromimage_ignores_crtf_shape_fully_outside_its_attachment(casa, tmp_pat
             np.testing.assert_array_equal(active.getchunk(), pixels[10:20, 12:23])
         finally:
             active.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("leading_difference", [False, True])
+def test_copy_crtf_applies_additions_and_subtractions_in_document_order(
+    casa, tmp_path, method, leading_difference,
+):
+    source = str(tmp_path / "source.im")
+    shape = (21, 23, 1, 3)
+    x, y, _, channel = np.ogrid[:21, :23, :1, :3]
+    pixels = (x + 10 * y + 100 * channel).astype(np.float32)
+    fixture = casa.image()
+    try:
+        assert fixture.fromarray(source, pixels)
+    finally:
+        fixture.done()
+    if leading_difference:
+        path = tmp_path / "negative.crtf"
+        path.write_text(
+            "#CRTFv0\n-box[[2pix,3pix],[4pix,5pix]]\n"
+            "box[[6pix,7pix],[8pix,9pix]]\n",
+        )
+        text = str(path)
+        expected = pixels[:9, :10]
+        mask = np.zeros(expected.shape, dtype=bool)
+        mask[0, 0, 0, 0] = True
+        mask[6:, 7:] = True
+    else:
+        text = (
+            "box[[4pix,5pix],[10pix,12pix]], range=[1pix,2pix], corr=[I]\n"
+            "-box[[4pix,5pix],[6pix,12pix]]\n"
+            "box[[5pix,6pix],[5pix,6pix]], range=[1pix,1pix]"
+        )
+        expected = pixels[4:11, 5:13, :, 1:]
+        mask = np.zeros(expected.shape, dtype=bool)
+        mask[3:] = True
+        mask[1, 1, 0, 0] = True
+    for api in (casa, tools):
+        active = api.image()
+        product = None
+        try:
+            assert active.fromshape(shape=list(shape))
+            result = getattr(active, method)(infile=source, region=text)
+            product = active if result is True else result
+            np.testing.assert_array_equal(product.getchunk(), expected)
+            np.testing.assert_array_equal(product.getchunk(getmask=True), mask)
+        finally:
+            if product is not None and product is not active:
+                product.done()
+            active.done()
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("case", ["linear", "extra_statement", "bare_pixels"])
+def test_copy_reports_unsupported_crtf_and_preserves_parent(casa, tmp_path, method, case):
+    source = str(tmp_path / "source.im")
+    fixture = casa.image()
+    linear = case == "linear"
+    shape = [21, 23, 1, 3]
+    text, error = {
+        "linear": ("box[[4pix,5pix],[10pix,12pix]]", "has no direction coordinate"),
+        "extra_statement": (
+            "box[[4pix,5pix],[10pix,12pix]]; box[[18pix,18pix],[20pix,22pix]]",
+            "Illegal extra characters on line",
+        ),
+        "bare_pixels": ("4,5,10,12", "Unable to open region file or region table"),
+    }[case]
+    try:
+        assert fixture.fromshape(source, shape, linear=linear)
+    finally:
+        fixture.done()
+    for api in (casa, tools):
+        active = api.image()
+        try:
+            assert active.fromshape(shape=shape, linear=linear)
+            with pytest.raises(RuntimeError, match=error):
+                getattr(active, method)(infile=source, region=text)
+            np.testing.assert_array_equal(active.shape(), shape)
+        finally:
+            active.done()
