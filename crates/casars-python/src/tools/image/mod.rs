@@ -19,6 +19,7 @@ mod continuum;
 mod convertflux;
 mod convolve;
 mod convolve2d;
+mod decompose;
 mod coordinate_conversion;
 mod copy;
 mod copy_region;

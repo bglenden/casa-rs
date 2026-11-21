@@ -8707,3 +8707,19 @@ selecting a row, while `observation=1` reaches the same documented selector.
 casa-rs resolves either form. The 2012 Solar System comparison uses the
 integer form in CASA and the string form in casa-rs against an MS with two
 observatory rows.
+
+## Image decomposition counts masked emission and fits empty backgrounds
+
+CASA 6.7.6.14 counts masked samples in `image.decompose`. On a 9 × 11
+Float image with peaks 7 at [1, 2], 1 at [3, 4], and 4 at [5, 6],
+`decompose(simple=True, threshold=1, fit=False)` returns three islands
+after its default mask excludes [1, 2]. An expression mask accepting
+only the 7 and 4 peaks also leaves all three bounds. The native
+decomposer reads raw pixels from the selected subimage. Casa-rs combines
+the default and requested masks with the selected region before
+thresholding so excluded samples cannot become sources.
+
+On an 11 × 13 zero image, CASA reports zero regions with
+`decompose(simple=True, fit=True, threshold=0.7)`, then starts fitting
+143 components to the background. Casa-rs returns empty component and
+bound matrices when the detection set is empty.

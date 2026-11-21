@@ -15,6 +15,8 @@ pub use convolve2d::{GaussianConvolutionOptions, ImageGaussianConvolution};
 pub(super) mod coords;
 mod crop;
 mod decimate;
+mod decompose;
+pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};
 mod insert;
 mod noise;
 mod pad;
