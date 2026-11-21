@@ -101,6 +101,25 @@ def test_exact_negative_pixel_meridian_returns_positive_half_turn(casa):
         assert angle == {"unit": "rad", "value": np.pi}
 
 
+def test_square_pixel_check_absorbs_pc_row_scale(casa):
+    source = casa.coordsys().newcoordsys(direction=True).torecord()
+    original_step = source["direction0"]["cdelt"].copy()
+    source["direction0"]["pc"] = np.diag([2.0, 1.0])
+    for api in (tools, casa):
+        rejected = api.coordsys()
+        assert rejected.fromrecord(source)
+        before = rejected.torecord()
+        with pytest.raises(RuntimeError, match="square pixels"):
+            rejected.convertdirection("GALACTIC")
+        _assert_value(rejected.torecord(), before)
+    source["direction0"]["cdelt"][0] *= 0.5
+    for api in (tools, casa):
+        accepted = api.coordsys()
+        assert accepted.fromrecord(source)
+        assert accepted.convertdirection("GALACTIC")["value"] == pytest.approx(-0.4097959745752)
+        np.testing.assert_allclose(accepted.torecord()["direction0"]["cdelt"], original_step)
+
+
 def test_rejected_rotation_preserves_the_previous_grid(casa):
     for api in (tools, casa):
         cs = api.coordsys().newcoordsys(linear=1)

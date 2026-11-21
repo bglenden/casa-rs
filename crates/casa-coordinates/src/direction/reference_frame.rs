@@ -21,22 +21,21 @@ impl DirectionCoordinate {
         &self,
         frame: DirectionRef,
     ) -> Result<(Self, f64), CoordinateError> {
-        let [first, second] = self.in_world_units(self.cdelt).map(f64::abs);
+        // Casacore restores direction records with unit-length PC rows. Their
+        // scale belongs in the increments before checking for square pixels.
+        let mut old = self
+            .clone()
+            .with_normalized_pc_matrix(self.pc.clone())?
+            .with_conversion_direction_ref(frame);
+        let [first, second] = old.in_world_units(old.cdelt).map(f64::abs);
         if (first - second).abs() > 2e-10 * first.max(second) {
             return Err(CoordinateError::ConversionFailed(
                 "Coordinate rotation can only be performed on a coordinate that has square pixels"
                     .into(),
             ));
         }
-        let mut old = self.clone().with_conversion_direction_ref(frame);
-        let world = old.pixel_to_world(self.crpix)?;
-        let mut converted = Self::new(
-            frame,
-            self.projection.clone(),
-            world,
-            self.cdelt,
-            self.crpix,
-        );
+        let world = old.pixel_to_world(old.crpix)?;
+        let mut converted = Self::new(frame, self.projection.clone(), world, old.cdelt, old.crpix);
         // CASA saves the native pole selected by the WCS constructor.
         converted.latpole = converted.native_pole[1];
 
@@ -44,7 +43,7 @@ impl DirectionCoordinate {
         // projection. A one-degree offset toward the equator avoids crossing
         // a pole, and a zero reference pixel avoids cancellation.
         old.crpix = [0.0; 2];
-        old.cdelt = self.cdelt.map(|step| 1.0_f64.to_radians().copysign(step));
+        old.cdelt = old.cdelt.map(|step| 1.0_f64.to_radians().copysign(step));
         let toward_equator: f64 = if world[1] < 0.0 { 1.0 } else { -1.0 };
         let [x, y] = old.world_to_pixel([world[0], world[1] + toward_equator.to_radians()])?;
         let (x, y) = (x * toward_equator, y * toward_equator);
