@@ -139,7 +139,10 @@ fn apply_location(
         let (index, _) = coordinates
             .pixel_axis_owner(axis)
             .expect("public pixel axis");
-        if coordinates.coordinate(index).coordinate_type() == CoordinateType::Stokes {
+        if matches!(
+            coordinates.coordinate(index).coordinate_type(),
+            CoordinateType::Stokes | CoordinateType::Quality
+        ) {
             continue;
         }
         state.edit_record_axis(&mut updated, axis, TabularEdit::ReferencePixel(pixel))?;

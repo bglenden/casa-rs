@@ -207,11 +207,16 @@ pub(in crate::analysis) fn drop_axes_from_legacy_record(
             || name.starts_with("pixelreplace")
             || name.starts_with("worldreplace")
             || name.starts_with("coordinate")
-            || ["direction", "spectral", "stokes", "linear", "tabular"]
-                .iter()
-                .any(|p| {
-                    name.starts_with(p) && name[p.len()..].chars().all(|c| c.is_ascii_digit())
-                });
+            || [
+                "direction",
+                "spectral",
+                "stokes",
+                "linear",
+                "tabular",
+                "quality",
+            ]
+            .iter()
+            .any(|p| name.starts_with(p) && name[p.len()..].chars().all(|c| c.is_ascii_digit()));
         if !is_coord_key {
             out_fields.push(field.clone());
         }

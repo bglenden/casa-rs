@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::analysis::{
     copy_transposed_image, ensure_outfile_does_not_alias_input, replace_stokes_axis_in_record,
+    write_quality_labels,
 };
 use casa_images::image::image_history_rows;
 use casa_images::{ImageBeamSet, ImageInterface, MutableImageInterface};
@@ -269,6 +270,18 @@ fn reversed_coordinates(
                 .ok_or_else(|| raised("Image Stokes planes exceed their coordinate labels"))?;
             let labels = labels.iter().rev().copied().collect::<Vec<_>>();
             replace_stokes_axis_in_record(&mut record, field, &labels).map_err(raised)?;
+            continue;
+        }
+        if let CoordinateModel::Quality(quality) = model {
+            let labels = quality
+                .values()
+                .get(..shape[axis])
+                .ok_or_else(|| raised("Image Quality planes exceed their coordinate labels"))?;
+            let labels = labels.iter().rev().copied().collect::<Vec<_>>();
+            let Some(Value::Record(coordinate)) = record.get_mut(field) else {
+                return Err(raised("Missing Quality coordinate"));
+            };
+            write_quality_labels(coordinate, &labels).map_err(raised)?;
             continue;
         }
         if reflect_samples(&mut record, field, model, shape[axis])? {

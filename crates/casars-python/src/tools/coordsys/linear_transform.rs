@@ -366,7 +366,12 @@ fn apply_matrix(
         matrix.dim() == (count, count)
     };
     // CASA returns true when the coordinate refuses a matrix of the wrong shape.
-    if !valid_shape || matches!(full, CoordinateModel::Stokes(_)) {
+    if !valid_shape
+        || matches!(
+            full,
+            CoordinateModel::Stokes(_) | CoordinateModel::Quality(_)
+        )
+    {
         return Ok(true);
     }
     if matrix.iter().any(|value| !value.is_finite()) {
@@ -399,7 +404,7 @@ fn apply_matrix(
             .with_linear_transform(matrix[[0, 0]])
             .map_err(raised)?
             .into(),
-        CoordinateModel::Stokes(_) => return Ok(true),
+        CoordinateModel::Stokes(_) | CoordinateModel::Quality(_) => return Ok(true),
     };
     let mut record = state.record.clone();
     update_stored_coordinate(&mut record, &placement.field, &changed)?;

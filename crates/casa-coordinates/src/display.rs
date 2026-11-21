@@ -8,7 +8,7 @@
 //!
 //! - equatorial directions as sexagesimal coordinates and Galactic,
 //!   ecliptic, and horizontal directions as fixed decimal degrees,
-//! - Stokes parameters by name,
+//! - Stokes and Quality planes by name,
 //! - every other axis as C++'s default `ostream <<` rendering of the
 //!   world value with its unit appended directly.
 
@@ -61,70 +61,66 @@ pub fn format_world_display(
     coords: &CoordinateSystem,
     pixel: &[f64],
 ) -> Result<String, CoordinateError> {
-    let n_pix = coords.n_pixel_axes();
-    if pixel.len() != n_pix {
-        return Err(CoordinateError::DimensionMismatch {
-            expected: n_pix,
-            got: pixel.len(),
-        });
-    }
-
-    let mut fields = Vec::with_capacity(coords.n_world_axes());
-    let mut pixel_offset = 0;
-    for index in 0..coords.n_coordinates() {
-        let coord: &CoordinateModel = coords.coordinate(index);
-        let n = coord.n_pixel_axes();
-        let world = coord.to_world(&pixel[pixel_offset..pixel_offset + n])?;
-        pixel_offset += n;
-        match coord {
-            CoordinateModel::Direction(direction) => {
-                fields.extend(direction_fields(
+    let world = coords.to_world(pixel)?;
+    let fields: Vec<_> = world
+        .into_iter()
+        .enumerate()
+        .map(|(axis, value)| {
+            let (index, local) = coords.world_axis_owner(axis).expect("public world axis");
+            let coord = coords.coordinate(index);
+            match coord {
+                CoordinateModel::Direction(direction) => direction_field(
                     direction.direction_ref(),
-                    world[0],
-                    world[1],
-                ));
-            }
-            CoordinateModel::Stokes(_) => {
-                let code = world.first().copied().unwrap_or_default() as i32;
-                let name = crate::stokes::StokesType::from_code(code)
-                    .map(|kind| kind.name().to_string())
-                    .unwrap_or_else(|| code.to_string());
-                fields.push(name);
-            }
-            _ => {
-                let units = coord.axis_units();
-                for (axis, value) in world.iter().enumerate() {
-                    fields.push(format!("{}{}", format_stream_value(*value), units[axis]));
+                    direction.longitude_axis() == Some(local),
+                    value,
+                ),
+                CoordinateModel::Stokes(_) => {
+                    let code = value as i32;
+                    crate::stokes::StokesType::from_code(code)
+                        .map_or_else(|| code.to_string(), |kind| kind.name().into())
                 }
+                CoordinateModel::Quality(_) => crate::QualityType::from_world(value).name().into(),
+                _ => format!(
+                    "{}{}",
+                    format_stream_value(value),
+                    coord.axis_units()[local]
+                ),
             }
-        }
-    }
+        })
+        .collect();
     Ok(fields.join(", "))
 }
 
-fn direction_fields(frame: DirectionRef, longitude: f64, latitude: f64) -> [String; 2] {
-    let longitude_deg = longitude.to_degrees();
-    let wrapped = match frame {
-        DirectionRef::ECLIPTIC | DirectionRef::MECLIPTIC | DirectionRef::TECLIPTIC => {
-            (longitude_deg + 180.0).rem_euclid(360.0) - 180.0
-        }
+fn direction_field(frame: DirectionRef, longitude: bool, radians: f64) -> String {
+    let signed = matches!(
+        frame,
+        DirectionRef::ECLIPTIC | DirectionRef::MECLIPTIC | DirectionRef::TECLIPTIC
+    );
+    let positive = matches!(
+        frame,
         DirectionRef::GALACTIC
-        | DirectionRef::SUPERGAL
-        | DirectionRef::AZEL
-        | DirectionRef::AZELSW
-        | DirectionRef::AZELGEO
-        | DirectionRef::AZELSWGEO => longitude_deg.rem_euclid(360.0),
-        _ => {
-            return [
-                format_longitude_hours(longitude),
-                format_latitude_dms(latitude),
-            ];
-        }
+            | DirectionRef::SUPERGAL
+            | DirectionRef::AZEL
+            | DirectionRef::AZELSW
+            | DirectionRef::AZELGEO
+            | DirectionRef::AZELSWGEO
+    );
+    if !(signed || positive) {
+        return if longitude {
+            format_longitude_hours(radians)
+        } else {
+            format_latitude_dms(radians)
+        };
+    }
+    let degrees = radians.to_degrees();
+    let wrapped = if !longitude {
+        degrees
+    } else if signed {
+        (degrees + 180.0).rem_euclid(360.0) - 180.0
+    } else {
+        degrees.rem_euclid(360.0)
     };
-    [
-        format!("{wrapped:.6}deg"),
-        format!("{:.6}deg", latitude.to_degrees()),
-    ]
+    format!("{wrapped:.6}deg")
 }
 
 /// Format a longitude in radians as hours `HH:MM:SS.sss`, wrapped into

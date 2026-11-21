@@ -19,7 +19,7 @@ use fitsio::images::ImageType as FitsImageType;
 use ndarray::{Dimension, IxDyn, ShapeBuilder, Zip};
 
 mod axes;
-pub use axes::replace_stokes_axis_in_record;
+pub use axes::{replace_stokes_axis_in_record, section_quality_labels, write_quality_labels};
 mod custom_values;
 mod exportfits;
 mod extrema;

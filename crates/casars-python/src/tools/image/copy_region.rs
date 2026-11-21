@@ -3,7 +3,7 @@
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate, StokesCoordinate,
 };
-use casa_images::analysis::reduce_subimage_coordinate_record;
+use casa_images::analysis::{reduce_subimage_coordinate_record, section_quality_labels};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
@@ -129,6 +129,24 @@ impl Selection {
             if let CoordinateModel::Stokes(stokes) = coord {
                 if shift != 0 || step != 1 || self.shape[axis] != stokes.stokes().len() {
                     self.set_stokes(&mut record, stokes, axis)?;
+                }
+            } else if let CoordinateModel::Quality(quality) = coord {
+                if shift != 0 || step != 1 || self.shape[axis] != quality.values().len() {
+                    let field = CoordinateSystem::record_coordinates(&record)
+                        .map_err(raised)?
+                        .into_iter()
+                        .find(|coordinate| coordinate.pixel_axes.contains(&Some(axis)))
+                        .ok_or_else(|| {
+                            raised("Quality coordinate is missing from the image record")
+                        })?
+                        .field;
+                    let Some(Value::Record(quality)) = record.get_mut(&field) else {
+                        return Err(raised(
+                            "Quality coordinate is missing from the image record",
+                        ));
+                    };
+                    section_quality_labels(quality, shift, self.shape[axis], step)
+                        .map_err(raised)?;
                 }
             } else if shift != 0 || step != 1 || self.shape[axis] != source_length {
                 if kind == CoordinateType::Spectral

@@ -191,21 +191,8 @@ def test_restore_rejects_stokes_and_replacement_fields_that_casa_rejects(casa):
         assert coordinate.coordinatetype() == ["Direction"]
 
 
-def test_restore_rejects_unsupported_quality_or_sparse_coordinate_indices(casa):
-    native = casa.coordsys().newcoordsys(stokes=["I", "Q"]).torecord()
-    quality = native.pop("stokes0")
-    quality["axes"] = ["Quality"]
-    del quality["stokes"]
-    quality["quality"] = ["DATA", "ERROR"]
-    native["quality0"] = quality
-    oracle = casa.coordsys()
-    assert oracle.fromrecord(native)
-    assert oracle.coordinatetype() == ["Quality"]
-
+def test_restore_rejects_sparse_coordinate_indices_and_invalid_replacements():
     coordinate = tools.coordsys().newcoordsys(direction=True)
-    with pytest.raises(RuntimeError, match=r"quality coordinate.*#1626"):
-        coordinate.fromrecord(oracle.torecord())
-    assert coordinate.naxes() == 2
     linear = tools.coordsys().newcoordsys(linear=1).torecord()
     for field in ("linear", "pixelmap", "worldmap", "pixelreplace", "worldreplace"):
         linear[field + "1"] = linear.pop(field + "0")

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA's `coordsys` tool (cs): every method of CASA 6.7.6.14's binding,
-//! with its signature (ADR-0017, #1025). A method casa-rs does not implement
-//! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
+//! CASA's `coordsys` tool (cs) and the signature inventory for the
+//! CASA 6.7.6.14 binding (ADR-0017, #1025).
 
 mod axis_labels;
 mod construction;
@@ -116,6 +115,9 @@ fn current_epoch(mut info: ObsInfo) -> ObsInfo {
 
 impl CoordinateState {
     fn from_coordinates(coordinates: CoordinateSystem, mut record: RecordValue) -> PyResult<Self> {
+        coordinates
+            .normalize_quality_records(&mut record)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         for (index, placement) in coordinates
             .coordinates_in_record(&record)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?

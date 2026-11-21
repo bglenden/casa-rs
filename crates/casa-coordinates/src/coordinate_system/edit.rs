@@ -671,7 +671,10 @@ impl CoordinateSystem {
             .clone();
         let coordinates = system.coordinates_in_record(record)?;
         let (coordinate, local_axis) = recorded_axis(&coordinates, axis, pixel, naxes)?;
-        if coordinate.field.starts_with("stokes") {
+        if matches!(
+            model.coordinate_type(),
+            CoordinateType::Stokes | CoordinateType::Quality
+        ) {
             return Ok((system, old));
         }
         let before = casacore_unit(&old)
@@ -1050,18 +1053,21 @@ impl CoordinateSystem {
                 }
             }
         }
-        if coordinate.field.starts_with("stokes") {
-            let owner = if pixel {
-                system.pixel_axis_owner(axis)
-            } else {
-                system.world_axis_owner(axis)
-            };
-            let (index, local) = owner.expect("validated public coordinate axis");
-            let coordinate = system.coordinate(index);
+        let owner = if pixel {
+            system.pixel_axis_owner(axis)
+        } else {
+            system.world_axis_owner(axis)
+        };
+        let (index, local) = owner.expect("validated public coordinate axis");
+        let model = system.coordinate(index);
+        if matches!(
+            model.coordinate_type(),
+            CoordinateType::Stokes | CoordinateType::Quality
+        ) {
             let values = match field {
-                "crpix" => coordinate.reference_pixel(),
-                "cdelt" => coordinate.increment(),
-                _ => coordinate.reference_value(),
+                "crpix" => model.reference_pixel(),
+                "cdelt" => model.increment(),
+                _ => model.reference_value(),
             };
             return Ok((system, values[local]));
         }
