@@ -341,7 +341,8 @@ fn write_tile(
         }
         output.put_mask_slice("mask0", valid, start)?;
     }
-    output.put_slice(values, start)
+    output.put_slice(values, start)?;
+    Ok(())
 }
 
 struct Grid {
