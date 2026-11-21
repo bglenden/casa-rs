@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection and output metadata for the public image tool's regrid.
 
+use std::f64::consts::{PI, TAU};
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
@@ -83,18 +84,10 @@ pub fn regrid_image<T: RegridPixel>(
     beam_record: &RecordValue,
     options: ImageRegridOptions<'_>,
 ) -> Result<ImageRegridProduct<T>, ImageError> {
-    let source_coordinates = input.coordinates();
-    if input.find_axis(CoordinateType::Spectral).is_some()
-        && let Some(index) = source_coordinates.find_coordinate(CoordinateType::Linear)
-        && let Some(axes) = source_coordinates.coordinate_pixel_axes(index)
-        && axes
-            .into_iter()
-            .zip(source_coordinates.coordinate(index).axis_names())
-            .any(|(axis, name)| axis.is_some() && name == "Offset")
-    {
+    let rotating = matches!(options.target, ImageRegridTarget::Rotation(_));
+    if !rotating && is_pv_grid(input.coordinates()) {
         return Err(invalid("PV images are not supported by regrid"));
     }
-    let rotating = matches!(options.target, ImageRegridTarget::Rotation(_));
     let shape_specified = options.shape.first().is_some_and(|&size| size >= 0);
     let shape: Vec<i64> = if !shape_specified {
         input
@@ -157,6 +150,9 @@ pub fn regrid_image<T: RegridPixel>(
             (&selection.coordinates, selection.shape.as_slice())
         });
     let ndim = selected_shape.len();
+    if rotating && is_pv_grid(selected_coords) {
+        return Err(invalid("PV images are not supported by rotate"));
+    }
     let has_rotation_shape = rotating && !options.shape.is_empty() && options.shape != [-1];
     if output_shape.len() != ndim || (has_rotation_shape && options.shape.len() != ndim) {
         return Err(invalid(
@@ -225,6 +221,7 @@ pub fn regrid_image<T: RegridPixel>(
                 force: options.force,
                 convert_reference: options.convert_reference,
                 shape_specified,
+                half_turn: matches!(options.target, ImageRegridTarget::Rotation(angle) if angle.rem_euclid(TAU) == PI),
             }),
         },
     )?;
@@ -248,6 +245,23 @@ pub fn regrid_image<T: RegridPixel>(
         image_info,
         beam_planes,
     })
+}
+
+fn is_pv_grid(coordinates: &CoordinateSystem) -> bool {
+    coordinates
+        .find_coordinate(CoordinateType::Spectral)
+        .and_then(|index| coordinates.coordinate_pixel_axes(index))
+        .is_some_and(|axes| axes.into_iter().any(|axis| axis.is_some()))
+        && coordinates
+            .find_coordinate(CoordinateType::Linear)
+            .is_some_and(|index| {
+                coordinates
+                    .coordinate_pixel_axes(index)
+                    .expect("existing coordinate")
+                    .into_iter()
+                    .zip(coordinates.coordinate(index).axis_names())
+                    .any(|(axis, name)| axis.is_some() && name == "Offset")
+            })
 }
 
 fn template_shape(

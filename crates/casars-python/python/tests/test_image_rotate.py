@@ -159,6 +159,24 @@ def test_rotate_right_angle_keeps_the_actual_sky_overlap():
         source.done()
 
 
+@pytest.mark.parametrize("method", ["nearest", "linear", "cubic"])
+def test_rotate_half_turn_excludes_pixels_outside_the_exact_source_grid(method):
+    source = tools.image()
+    x, y = np.ogrid[:24, :26]
+    valid = (x > 0) & (y > 0)
+    expected = np.where(valid, (24 - x) + 2 * (26 - y), 0)
+    try:
+        assert source.fromarray(pixels=_ramp())
+        result = source.rotate(pa="180deg", method=method)
+        try:
+            np.testing.assert_array_equal(result.getchunk(getmask=True), valid)
+            np.testing.assert_array_equal(result.getchunk(), expected)
+        finally:
+            result.done()
+    finally:
+        source.done()
+
+
 def test_rotate_normalizes_obtuse_direction_transform(casa):
     for api in (casa, tools):
         source = api.image()
@@ -279,6 +297,43 @@ def test_rotate_keeps_the_only_pixel_in_a_linear_plane():
             coords.done()
         if product is not None:
             product.done()
+        source.done()
+
+
+def test_rotate_checks_pv_restriction_after_dropping_singleton_spectral_axis(casa):
+    data = _ramp()[None, ...]
+    for api in (casa, tools):
+        source = api.image()
+        coordinate_tool = api.coordsys()
+        coords = coordinate_tool.newcoordsys(spectral=True, linear=2)
+        result = output_coords = None
+        try:
+            assert coords.setnames(["Offset", "Y"], "linear")
+            assert source.fromarray(pixels=data, csys=coords.torecord())
+            with pytest.raises(RuntimeError):
+                source.rotate(pa="35deg", replicate=True)
+            result = source.rotate(pa="35deg", dropdeg=True, replicate=True)
+            np.testing.assert_array_equal(result.getchunk(), data[0])
+            output_coords = result.coordsys()
+            assert output_coords.axiscoordinatetypes() == ["Linear", "Linear"]
+        finally:
+            if output_coords is not None:
+                output_coords.done()
+            if result is not None:
+                result.done()
+            coords.done()
+            coordinate_tool.done()
+            source.done()
+
+
+def test_rotate_rejects_dropped_direction_axis_safely():
+    source = tools.image()
+    try:
+        assert source.fromshape(shape=[1, 26])
+        with pytest.raises(RuntimeError):
+            source.rotate(pa="35deg", dropdeg=True)
+        assert source.isopen()
+    finally:
         source.done()
 
 

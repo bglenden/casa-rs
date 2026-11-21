@@ -9228,6 +9228,12 @@ The longitude and latitude grids still overlap after a right-angle
 rotation about the reference pixel. Casa-rs samples the actual
 overlapping pixels and masks the portions outside the source.
 
+At `pa="180deg"` on the same grid, CASA's linear and cubic interpolators
+can include pixels just outside the top or left edge. A sky-coordinate
+round trip moves some positions back inside the interpolation cutoff.
+Casa-rs checks the sky projection and reflects the pixel about the exact
+reference pixel, so those positions remain outside the grid.
+
 ### `image.rotate` can permute the coordinate axes when dropping a singleton
 
 For a Float `[24, 26, 1, 7]` cube transposed with `order="2301"`,
@@ -9237,6 +9243,11 @@ Spectral coordinates in that order. With per-channel restoring beams,
 it fails because the spectral dimension no longer agrees with the beam
 record. Casa-rs retains Spectral, Direction and Direction in pixel order
 and keeps each beam on its original channel.
+
+On a default direction image of shape `[1, 26]`, CASA 6.7.6.14
+can also terminate when `rotate(pa="35deg", dropdeg=True)` removes one
+axis of the required two-axis plane. Casa-rs rejects the resulting
+coordinate geometry with an error.
 
 ### `image.rotate` can replace the only pixel of a linear plane with zero
 
