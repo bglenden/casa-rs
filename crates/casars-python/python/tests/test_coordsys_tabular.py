@@ -47,6 +47,17 @@ def test_selection_uses_creation_order_and_reuses_live_world_samples(casa):
         np.testing.assert_array_equal(cs.lineartransform("tabular"), [[1.0]])
 
 
+def test_identity_matrix_keeps_live_reference_edits_until_samples_are_replaced(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(tabular=True)
+        assert cs.settabular([0, 2, 5], [10, 14, 30])
+        assert cs.setreferencepixel([1.0])
+        np.testing.assert_array_equal(cs.referencepixel()["numeric"], [1.0])
+        assert cs.setreferencevalue([15.0])
+        assert cs.settabular(pixel=[0, 2, 5])
+        np.testing.assert_allclose(cs.torecord()["tabular0"]["worldvalues"], [11, 15, 31])
+
+
 @pytest.mark.parametrize("both_supplied", [True, False])
 def test_constant_mapping_live_edits_and_public_restore(casa, both_supplied):
     records = []
