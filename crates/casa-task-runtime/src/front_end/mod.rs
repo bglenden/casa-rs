@@ -833,12 +833,7 @@ where
             let is_variant = bundle
                 .catalog
                 .concept(&binding.concept)
-                .is_some_and(|concept| {
-                    matches!(
-                        concept.value_domain,
-                        casa_provider_contracts::ParameterType::Variant
-                    )
-                });
+                .is_some_and(|concept| has_variant_domain(&concept.value_domain));
             let variant_value = if is_variant {
                 #[derive(Deserialize)]
                 struct RawValues<'a> {
@@ -1091,12 +1086,7 @@ fn apply_typed_values(
             && !bundle
                 .catalog
                 .concept(&binding.concept)
-                .is_some_and(|concept| {
-                    matches!(
-                        concept.value_domain,
-                        casa_provider_contracts::ParameterType::Variant
-                    )
-                })
+                .is_some_and(|concept| has_variant_domain(&concept.value_domain))
         {
             return Err(error(format!(
                 "typed parameter {name:?} must use a variant domain"
@@ -1106,6 +1096,15 @@ fn apply_typed_values(
         overrides.values.insert(name.clone(), value.clone());
     }
     Ok(())
+}
+
+fn has_variant_domain(domain: &casa_provider_contracts::ParameterType) -> bool {
+    use casa_provider_contracts::ParameterType;
+    match domain {
+        ParameterType::Variant => true,
+        ParameterType::Optional { value, .. } => has_variant_domain(value),
+        _ => false,
+    }
 }
 
 fn open_named_session(

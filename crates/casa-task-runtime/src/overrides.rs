@@ -215,9 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn casas_empty_list_is_an_absence_and_its_unimplemented_forms_name_their_issue() {
-        // flagdata's timedev (#997 F9): CASA's [] is its '', and its
-        // per-field thresholds are a form casa-rs does not take yet.
+    fn flagdata_deviation_overrides_preserve_matrices_and_absence() {
         let bundle = builtin_surface_bundle("flagdata").unwrap();
         let empty = BTreeMap::from([("timedev".to_string(), ParameterValue::Array(Vec::new()))]);
         assert_eq!(
@@ -232,16 +230,11 @@ mod tests {
                 ParameterValue::Float(1.5),
             ])]),
         )]);
-        let Err(ProfileError::Diagnostics(diagnostics)) = normalize_overrides(&bundle, &per_field)
-        else {
-            panic!("per-field thresholds are refused");
-        };
-        assert_eq!(diagnostics[0].code, DiagnosticCode::InvalidType);
-        assert!(
-            diagnostics[0].message.contains("per-field") && diagnostics[0].message.contains("#978"),
-            "{}",
-            diagnostics[0].message
-        );
+        assert_eq!(normalize_overrides(&bundle, &per_field).unwrap(), per_field);
+    }
+
+    #[test]
+    fn a_type_refusal_adds_no_issue_when_the_binding_has_no_unsupported_forms() {
         // A binding with no unimplemented forms adds nothing.
         let bundle = builtin_surface_bundle("flagmanager").unwrap();
         let wrong = BTreeMap::from([("comment".to_string(), ParameterValue::Array(Vec::new()))]);

@@ -30,32 +30,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (moments = None, axis = None, region = None, mask = None, method = None, smoothaxes = None, smoothtypes = None, smoothwidths = None, includepix = None, excludepix = None, peaksnr = None, stddev = None, doppler = None, outfile = None, smoothout = None, overwrite = None, drop = None, stretch = None), text_signature = "($self, moments=[0], axis=-10, region={}, mask='', method=[], smoothaxes=[-1], smoothtypes=[], smoothwidths=[0.0], includepix=[-1.0], excludepix=[-1.0], peaksnr=3.0, stddev=0.0, doppler='RADIO', outfile='', smoothout='', overwrite=False, drop=True, stretch=False)")]
-    fn moments(
-        &self,
-        moments: Option<&Bound<'_, PyAny>>,
-        axis: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        method: Option<&Bound<'_, PyAny>>,
-        smoothaxes: Option<&Bound<'_, PyAny>>,
-        smoothtypes: Option<&Bound<'_, PyAny>>,
-        smoothwidths: Option<&Bound<'_, PyAny>>,
-        includepix: Option<&Bound<'_, PyAny>>,
-        excludepix: Option<&Bound<'_, PyAny>>,
-        peaksnr: Option<&Bound<'_, PyAny>>,
-        stddev: Option<&Bound<'_, PyAny>>,
-        doppler: Option<&Bound<'_, PyAny>>,
-        outfile: Option<&Bound<'_, PyAny>>,
-        smoothout: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        drop: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("moments")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, shape = None, csys = None, axes = None, region = None, mask = None, method = None, decimate = None, replicate = None, doref = None, dropdeg = None, overwrite = None, force = None, asvelocity = None, stretch = None), text_signature = "($self, outfile='', shape=[-1], csys={}, axes=[-1], region={}, mask='', method='linear', decimate=10, replicate=False, doref=True, dropdeg=False, overwrite=False, force=False, asvelocity=False, stretch=False)")]
     fn regrid(
         &self,

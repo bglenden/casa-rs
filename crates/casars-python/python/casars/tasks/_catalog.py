@@ -993,8 +993,8 @@ def flagdata(
     halfwin: int = 1,
     extendflags: bool = True,
     winsize: ParameterData = 3,
-    timedev: float | Literal['', 'none'] = '',
-    freqdev: float | Literal['', 'none'] = '',
+    timedev: ParameterData | Literal['', 'none'] = '',
+    freqdev: ParameterData | Literal['', 'none'] = '',
     timedevscale: float = 5.0,
     freqdevscale: float = 5.0,
     spectralmax: float = 1000000.0,
@@ -1030,10 +1030,7 @@ def flagdata(
 
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``inpfile``, ``reason``, ``tbuff``, ``channelavg``, ``chanbin``,
-    ``timeavg``, ``timebin``, ``savepars``.
-    Accepted only at CASA's default, where CASA reads them, until #1616:
-    ``ntime``, ``combinescans``.
+    ``inpfile``, ``reason``, ``tbuff``, ``savepars``.
     """
     return _call_casa(flagdata, locals())
 

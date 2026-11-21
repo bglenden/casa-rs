@@ -499,15 +499,42 @@ impl NamedImageStages {
             .collect()
     }
 
+    pub(super) fn omit(&mut self, index: usize) {
+        self.stages[index] = None;
+    }
+
+    pub(super) fn publish_and_open_primary(self) -> PyResult<Option<AttachedImage>> {
+        let primary = self
+            .stages
+            .first()
+            .and_then(Option::as_ref)
+            .map(|(stage, _)| stage.target.clone());
+        self.publish_transaction(false, true, |registry| {
+            primary
+                .as_deref()
+                .map(|path| AttachedImage::open_created(registry, path))
+                .transpose()
+        })
+    }
+
     pub(super) fn publish(self, allow_missing: bool) -> PyResult<()> {
         self.publish_with(allow_missing, || Ok(()))
     }
 
     pub(super) fn publish_with(
-        mut self,
+        self,
         allow_missing: bool,
         finish: impl FnOnce() -> PyResult<()>,
     ) -> PyResult<()> {
+        self.publish_transaction(allow_missing, false, |_| finish())
+    }
+
+    fn publish_transaction<T>(
+        mut self,
+        allow_missing: bool,
+        open_primary: bool,
+        finish: impl FnOnce(&mut attachment::OpenImages) -> PyResult<T>,
+    ) -> PyResult<T> {
         if allow_missing {
             for slot in &mut self.stages {
                 if let Some((stage, _)) = slot
@@ -521,17 +548,20 @@ impl NamedImageStages {
                 }
             }
         }
-        let registry = attachment::registry();
+        let mut registry = attachment::registry();
         self.check_distinct()?;
         let _product_locks = self
             .stages
             .iter()
+            // Opening the returned image takes its staged image lock itself,
+            // just as the paired publisher does for its primary product.
+            .skip(usize::from(open_primary))
             .flatten()
             .map(|(stage, _)| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
             .collect::<PyResult<Vec<_>>>()?;
         let mut locks = BTreeMap::new();
         let installed = install_images(self.stages.into_iter().flatten(), &registry, &mut locks)?;
-        finish().map_err(|error| {
+        finish(&mut registry).map_err(|error| {
             installed
                 .into_iter()
                 .rev()
@@ -761,5 +791,29 @@ mod publication_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn named_publication_restores_replacements_if_the_primary_cannot_open() {
+        Python::initialize();
+        let root = tempfile::tempdir().unwrap();
+        let primary = root.path().join("primary.im");
+        let auxiliary = root.path().join("auxiliary.im");
+        let new_output = root.path().join("new.im");
+        test_image(Some(&primary), 2).unwrap();
+        test_image(Some(&auxiliary), 3).unwrap();
+        let names = [&primary, &auxiliary, &new_output].map(|path| path.to_str().unwrap());
+        let stages = NamedImageStages::new(names, true).unwrap();
+        let paths = stages.paths();
+        for path in &paths[1..] {
+            test_image(*path, 5).unwrap();
+        }
+        // The directory can be installed. Opening it requires a CASA table.
+        std::fs::create_dir(paths[0].unwrap()).unwrap();
+        assert!(stages.publish_and_open_primary().is_err());
+        assert_eq!(ImageHandle::open(&primary).unwrap().shape(), &[2]);
+        assert_eq!(ImageHandle::open(&auxiliary).unwrap().shape(), &[3]);
+        assert!(!new_output.exists());
+        assert_eq!(root.path().read_dir().unwrap().count(), 2);
     }
 }

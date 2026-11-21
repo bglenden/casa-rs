@@ -50,6 +50,7 @@ mod mask_expression;
 mod masks;
 mod metadata;
 mod modify;
+mod moments;
 mod noise;
 mod pad;
 mod pbcor;

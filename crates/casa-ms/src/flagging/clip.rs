@@ -28,7 +28,7 @@ impl ClipMetric {
         }
     }
 
-    fn apply64(self, value: Complex64) -> f64 {
+    pub(super) fn apply64(self, value: Complex64) -> f64 {
         match self {
             Self::Amplitude => value.norm(),
             Self::Real => value.re,
@@ -50,7 +50,7 @@ impl StokesCombination {
         }
     }
 
-    fn apply64(self, left: Complex64, right: Complex64) -> Complex64 {
+    pub(super) fn apply64(self, left: Complex64, right: Complex64) -> Complex64 {
         match self {
             Self::Sum => (left + right) / 2.0,
             Self::Difference => (left - right) / 2.0,

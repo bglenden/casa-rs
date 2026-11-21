@@ -23,7 +23,7 @@ pub use getprofile::{
     ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile,
 };
 mod fitcomponents;
-mod fitprofile;
+pub(in crate::analysis) mod fitprofile;
 mod histogram;
 pub use fitcomponents::{
     ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
@@ -124,7 +124,7 @@ pub struct SubimageOptions<'a> {
 /// An image selection and the matching coordinates and beam metadata. Pixels
 /// remain in the source and are copied in chunks when writing the result.
 pub struct SubimagePlan {
-    selection: SubimageSelection,
+    pub(in crate::analysis) selection: SubimageSelection,
     kept_axes: Vec<usize>,
     /// Pixel shape in output axis order.
     pub shape: Vec<usize>,

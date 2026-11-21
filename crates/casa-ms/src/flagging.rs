@@ -67,7 +67,7 @@ use clip_average::{ChannelBins, check_channel_bins};
 use clip_columns::ClipColumns;
 use clip_time::{TimeClip, time_bin_seconds};
 pub use command::append_flag_command;
-use correlation::{ClipProjection, CorrelationSelection};
+use correlation::{ClipMetric, ClipProjection, CorrelationSelection, TfcropCorrelations};
 pub use shadow::{ShadowAntenna, ShadowOptions};
 mod version_backup;
 mod version_storage;
@@ -282,12 +282,18 @@ pub struct FlagDataRequest {
     /// Maximum number of time samples in an RFlag variance window.
     /// A rejected agent record disables RFlag and leaves extension available.
     pub rflag_window: Option<usize>,
+    /// Boolean-vector switch to reject after selecting rows and validating the column.
+    pub automatic_average_vector: Option<&'static str>,
     /// Optional RFlag time threshold, before [`Self::timedevscale`]. `None`
     /// computes one from the data.
     pub timedev: Option<f64>,
     /// Optional RFlag spectral threshold, before [`Self::freqdevscale`].
     /// `None` computes one from the data.
     pub freqdev: Option<f64>,
+    /// Explicit RFlag time thresholds keyed by field and spectral window.
+    pub timedev_by_field_spw: BTreeMap<(i32, i32), f64>,
+    /// Explicit RFlag frequency thresholds keyed by field and spectral window.
+    pub freqdev_by_field_spw: BTreeMap<(i32, i32), f64>,
     /// Run CASA's automatic post-extension agent after TFCrop/RFlag.
     pub extendflags: bool,
     /// Extend flags across correlations/polarizations.
@@ -343,8 +349,11 @@ impl Default for FlagDataRequest {
             spectralmax: 1.0e6,
             spectralmin: 0.0,
             rflag_window: Some(3),
+            automatic_average_vector: None,
             timedev: None,
             freqdev: None,
+            timedev_by_field_spw: BTreeMap::new(),
+            freqdev_by_field_spw: BTreeMap::new(),
             extendflags: true,
             extendpols: false,
             extension_enabled: true,
@@ -467,6 +476,17 @@ pub enum FlaggingError {
     /// A requested TFCrop visibility column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode tfcrop")]
     MissingTfcropColumn,
+    /// An active explicit RFlag cutoff has a zero or negative scale.
+    #[error("{0} must be positive when its threshold is positive")]
+    InvalidRFlagScale(&'static str),
+    /// The automatic calibration agent expects a scalar Boolean.
+    #[error("RecordInterface::asBool - invalid data type")]
+    InvalidAutomaticAverageVector(&'static str),
+    /// The automatic visibility operator did not name a polarization product.
+    #[error(
+        "Unknown polarization requested, ({0}) supported types are: XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
+    )]
+    UnknownTfcropProduct(String),
     /// A display was requested with a vector of data-column names.
     #[error("'list' object has no attribute 'upper'")]
     DisplayColumnVector,
@@ -567,7 +587,8 @@ fn flagdata_with_persistence(
         .as_deref()
         .filter(|expression| !expression.is_empty() && !expression.starts_with('\0'))
         .or_else(|| (request.mode == FlagDataMode::Clip).then_some(""));
-    let correlations = match correlation {
+    let tfcrop_correlations = request.mode == FlagDataMode::Tfcrop && request.casa_row_selection;
+    let correlations = match correlation.filter(|_| !tfcrop_correlations) {
         Some(expression) => {
             CorrelationSelection::read(ms, request.mode, request.data_column, expression)?
         }
@@ -1396,6 +1417,9 @@ fn apply_tfcrop_flags(
     if options.is_none() && !request.extendflags {
         return Ok(ChangeSet::default());
     }
+    let correlations = (request.casa_row_selection && !calibration)
+        .then(|| TfcropCorrelations::read(ms, request.correlation.as_deref(), column))
+        .transpose()?;
     let loaded = load_samples(
         ms,
         selected_rows,
@@ -1411,69 +1435,99 @@ fn apply_tfcrop_flags(
         false,
     )?;
     let mut samples = loaded.samples;
-    let projection = calibration
+    let calibration_projection = calibration
         .then(|| calibration::automatic_projection(request, &samples))
         .transpose()?;
-    if let Some(projection) = &projection {
+    if let Some(projection) = &calibration_projection {
         for sample in &mut samples {
             sample.amp = projection.scalar(sample);
-        }
-    } else if request.casa_row_selection && column.is_real() {
-        for sample in &mut samples {
-            sample.amp = sample.real;
         }
     }
     let loaded_ms = started.elapsed().as_millis();
     let mut modified = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
     let mut time_flags = vec![false; samples.len()];
-    let groups: Vec<_> = if request.casa_row_selection || projection.is_some() {
+    let groups: Vec<_> = if request.casa_row_selection || calibration_projection.is_some() {
         ordered_autoflag_groups(ms, selected_rows, &samples, request)?
             .into_iter()
-            .map(|(_, samples)| samples)
+            .map(|(([_, _, _, _, description], _), group)| (Some(description), group))
             .collect()
     } else {
-        group_samples(&samples).into_values().collect()
+        group_samples(&samples)
+            .into_values()
+            .map(|group| (None, group))
+            .collect()
     };
     if let Some(options) = &options {
-        let arithmetic = TfcropArithmetic {
-            casa_arithmetic: request.casa_row_selection,
-            model_roundoff: &loaded.model_roundoff,
+        let mut roundoff = if loaded.model_roundoff.is_empty() {
+            Vec::new()
+        } else {
+            vec![0.0; samples.len()]
         };
-        for group in &groups {
-            for by_corr in samples_by_corr(group) {
-                if !projection
-                    .as_ref()
-                    .is_none_or(|p| p.includes(by_corr[0].corr))
-                {
+        for (description, group) in &groups {
+            let planes = samples_by_corr(group);
+            let selection = correlations.as_ref().zip(*description);
+            let default_projections;
+            let (projections, metric) = if let Some((selection, ddid)) = selection {
+                (selection.for_description(ddid)?, Some(selection.metric))
+            } else {
+                default_projections = planes
+                    .iter()
+                    .filter(|plane| {
+                        calibration_projection
+                            .as_ref()
+                            .is_none_or(|p| p.includes(plane[0].corr))
+                    })
+                    .map(|plane| ClipProjection::Stored(plane[0].corr))
+                    .collect::<Vec<_>>();
+                (default_projections.as_slice(), None)
+            };
+            for &projection in projections {
+                let Some(series) = tfcrop_series(
+                    &planes,
+                    projection,
+                    metric,
+                    &modified,
+                    &loaded.model_roundoff,
+                    &mut roundoff,
+                ) else {
                     continue;
-                }
+                };
                 for &direction in options.passes.directions() {
                     let (cutoff, candidates) = match direction {
                         TfcropDirection::Freq => (request.freqcutoff, &mut freq_flags),
                         TfcropDirection::Time => (request.timecutoff, &mut time_flags),
                     };
                     tfcrop_fit_base_and_flag(
-                        &by_corr,
+                        &series.samples,
                         direction,
                         cutoff,
                         options,
-                        arithmetic,
+                        TfcropArithmetic {
+                            casa_arithmetic: request.casa_row_selection,
+                            model_roundoff: &roundoff,
+                        },
                         &mut modified,
                         candidates,
                     );
+                }
+                for (first, second) in series.pairs {
+                    modified[second] |= modified[first];
+                    freq_flags[second] |= freq_flags[first];
+                    time_flags[second] |= time_flags[first];
                 }
             }
         }
     }
     if request.extendflags {
-        if request.casa_row_selection && channel_selections.is_some() {
-            for group in &groups {
-                extend_tfcrop_selected_channels(group, &loaded.flags_by_row, &mut modified);
-            }
-        } else {
-            extend_autoflag_grouped(groups.iter().map(Vec::as_slice), &samples, &mut modified);
-        }
+        extend_tfcrop_groups(
+            &groups,
+            &samples,
+            &loaded.flags_by_row,
+            request.casa_row_selection && channel_selections.is_some(),
+            correlations.as_ref(),
+            &mut modified,
+        );
     }
     let union_candidates = count_mask(&modified);
     let planned_ms = started.elapsed().as_millis();
@@ -1516,6 +1570,116 @@ fn apply_tfcrop_flags(
         })
     });
     Ok(changes)
+}
+
+fn extend_tfcrop_groups(
+    groups: &[(Option<i32>, Vec<Sample>)],
+    samples: &[Sample],
+    flags: &BTreeMap<usize, ArrayD<bool>>,
+    selected_channels: bool,
+    correlations: Option<&TfcropCorrelations>,
+    modified: &mut [bool],
+) {
+    let mut restricted_mask = correlations
+        .filter(|selection| selection.restrict_extension)
+        .map(|_| modified.to_vec());
+    let mask = restricted_mask.as_deref_mut().unwrap_or(modified);
+    if selected_channels {
+        for (_, group) in groups {
+            extend_tfcrop_selected_channels(group, flags, mask);
+        }
+    } else {
+        extend_autoflag_grouped(
+            groups.iter().map(|(_, group)| group.as_slice()),
+            samples,
+            mask,
+        );
+    }
+    if let Some((selection, extended)) = correlations.zip(restricted_mask) {
+        for (description, group) in groups {
+            let planes = selection
+                .extension_planes(description.expect("public TFCrop group has a data description"));
+            for sample in group {
+                if planes.binary_search(&sample.corr).is_ok() {
+                    modified[sample.index] = extended[sample.index];
+                }
+            }
+        }
+    }
+}
+
+struct TfcropSeries {
+    samples: Vec<Sample>,
+    pairs: Vec<(usize, usize)>,
+}
+
+fn tfcrop_series(
+    planes: &[Vec<Sample>],
+    projection: ClipProjection,
+    metric: Option<ClipMetric>,
+    modified: &[bool],
+    model_roundoff: &[f32],
+    roundoff: &mut [f32],
+) -> Option<TfcropSeries> {
+    let plane = |plane| planes.iter().find(|samples| samples[0].corr == plane);
+    let (first, second) = match projection {
+        ClipProjection::Stored(first) => (plane(first)?, None),
+        ClipProjection::Stokes(first, second, combine) => {
+            (plane(first)?, Some((plane(second)?, combine)))
+        }
+    };
+    let mut series = TfcropSeries {
+        samples: Vec::with_capacity(first.len()),
+        pairs: Vec::new(),
+    };
+    let second = second.map(|(samples, combine)| {
+        let lookup = samples
+            .iter()
+            .map(|sample| ((sample.row, sample.chan), sample))
+            .collect::<HashMap<_, _>>();
+        (lookup, combine)
+    });
+    for original in first {
+        let mut sample = *original;
+        let mut value = Complex64::new(sample.real, sample.imag);
+        let mut uncertainty = model_roundoff.get(sample.index).copied().unwrap_or(0.0);
+        if let Some((lookup, combine)) = &second {
+            let Some(other) = lookup.get(&(sample.row, sample.chan)) else {
+                continue;
+            };
+            value = combine.apply64(value, Complex64::new(other.real, other.imag));
+            sample.flag |= sample_is_modified(other, modified);
+            uncertainty =
+                (uncertainty + model_roundoff.get(other.index).copied().unwrap_or(0.0)) * 0.5;
+            series.pairs.push((sample.index, other.index));
+        }
+        if let Some(metric) = metric {
+            sample.amp = metric.apply64(value);
+            if let Some(bound) = roundoff.get_mut(sample.index) {
+                *bound = tfcrop_metric_roundoff(metric, value, uncertainty);
+            }
+        }
+        series.samples.push(sample);
+    }
+    Some(series)
+}
+
+fn tfcrop_metric_roundoff(metric: ClipMetric, value: Complex64, uncertainty: f32) -> f32 {
+    if uncertainty == 0.0 {
+        return 0.0;
+    }
+    let radius = f64::from(uncertainty);
+    match metric {
+        ClipMetric::SquaredMagnitude => (radius * (2.0 * value.norm() + radius)) as f32,
+        ClipMetric::Phase
+            if radius < value.norm() && (value.re >= 0.0 || radius < value.im.abs()) =>
+        {
+            (radius / value.norm()).asin() as f32
+        }
+        // The fit compares principal arguments on either side of ±π.
+        ClipMetric::Phase => std::f32::consts::TAU,
+        _ => uncertainty,
+    }
 }
 
 fn tfcrop_columns(
@@ -1660,6 +1824,35 @@ fn apply_rflag_flags(
     let projection = is_calibration_table(ms)
         .then(|| calibration::automatic_projection(request, &samples))
         .transpose()?;
+    if !calculate
+        && request.rflag_window.is_some()
+        && let Some(projection) = &projection
+    {
+        for (scale_name, scale, thresholds) in [
+            (
+                "timedevscale",
+                request.timedevscale,
+                &request.timedev_by_field_spw,
+            ),
+            (
+                "freqdevscale",
+                request.freqdevscale,
+                &request.freqdev_by_field_spw,
+            ),
+        ] {
+            if scale <= 0.0
+                && !thresholds.is_empty()
+                && samples.iter().any(|sample| {
+                    projection.includes(sample.corr)
+                        && thresholds
+                            .get(&(sample.field, sample.spw))
+                            .is_some_and(|&value| value > 0.0)
+                })
+            {
+                return Err(FlaggingError::InvalidRFlagScale(scale_name));
+            }
+        }
+    }
     // RFlag reads the selected stored complex products directly.
     let loaded_ms = started.elapsed().as_millis();
     let groups = if projection.is_some() {
@@ -3195,23 +3388,26 @@ impl RFlagHistograms {
     /// Unscaled thresholds for the public calculate report and flagging.
     /// CASA applies the scale factors only when testing for flags.
     fn into_thresholds(self, request: &FlagDataRequest, calibration: bool) -> RFlagThresholds {
-        let mut timedev = BTreeMap::new();
-        let mut freqdev = BTreeMap::new();
-        for (key, histogram) in self.time {
-            let threshold = request
-                .timedev
-                .filter(|&value| !calibration || value > 0.0)
-                .unwrap_or_else(|| histogram.threshold());
-            timedev.insert(key, threshold);
+        let cutoffs = |histograms: BTreeMap<FieldSpwKey, ChannelHistogram>,
+                       scalar: Option<f64>,
+                       supplied: &BTreeMap<FieldSpwKey, f64>| {
+            histograms
+                .into_iter()
+                .map(|(key, histogram)| {
+                    let threshold = supplied
+                        .get(&key)
+                        .copied()
+                        .filter(|&value| value > 0.0)
+                        .or(scalar.filter(|&value| !calibration || value > 0.0))
+                        .unwrap_or_else(|| histogram.threshold());
+                    (key, threshold)
+                })
+                .collect()
+        };
+        RFlagThresholds {
+            timedev: cutoffs(self.time, request.timedev, &request.timedev_by_field_spw),
+            freqdev: cutoffs(self.freq, request.freqdev, &request.freqdev_by_field_spw),
         }
-        for (key, histogram) in self.freq {
-            let threshold = request
-                .freqdev
-                .filter(|&value| !calibration || value > 0.0)
-                .unwrap_or_else(|| histogram.threshold());
-            freqdev.insert(key, threshold);
-        }
-        RFlagThresholds { timedev, freqdev }
     }
 }
 
@@ -3226,38 +3422,65 @@ impl RFlagThresholds {
         // CASA uses -1 for an unavailable applied cutoff. A negative scalar
         // skips the fitted cutoff, and a negative scale skips the prepass
         // histogram. CASA scales its sentinel together with defined cutoffs.
-        let applied = |threshold: f64, supplied: Option<f64>, scale: f64| {
+        let applied = |threshold: f64, scalar: Option<f64>, supplied: Option<f64>, scale: f64| {
+            if let Some(value) = supplied {
+                return if value > 0.0 { value * scale } else { -scale };
+            }
             if calibration
-                && !supplied.is_some_and(|value| value > 0.0)
-                && (threshold == 0.0 || scale < 0.0 || supplied.is_some_and(|value| value < 0.0))
+                && !scalar.is_some_and(|value| value > 0.0)
+                && (threshold == 0.0 || scale < 0.0 || scalar.is_some_and(|value| value < 0.0))
             {
                 -scale
             } else {
                 threshold * scale
             }
         };
-        for value in self.timedev.values_mut() {
-            *value = applied(*value, request.timedev, request.timedevscale);
+        for (key, value) in &mut self.timedev {
+            *value = applied(
+                *value,
+                request.timedev,
+                request.timedev_by_field_spw.get(key).copied(),
+                request.timedevscale,
+            );
         }
-        for value in self.freqdev.values_mut() {
-            *value = applied(*value, request.freqdev, request.freqdevscale);
+        for (key, value) in &mut self.freqdev {
+            *value = applied(
+                *value,
+                request.freqdev,
+                request.freqdev_by_field_spw.get(key).copied(),
+                request.freqdevscale,
+            );
         }
         self
     }
 
     fn public_report(&self, request: &FlagDataRequest) -> RFlagThresholdReport {
-        let rows = |values: &BTreeMap<FieldSpwKey, f64>, supplied: Option<f64>| {
-            if supplied.is_some_and(|value| value > 0.0) {
+        let rows = |values: &BTreeMap<FieldSpwKey, f64>,
+                    scalar: Option<f64>,
+                    supplied: &BTreeMap<FieldSpwKey, f64>| {
+            if request.rflag_window.is_none() {
                 return Vec::new();
             }
-            values
-                .iter()
-                .map(|(&(field, spw), &value)| [f64::from(field), f64::from(spw), value])
+            let mut report = supplied.clone();
+            if !scalar.is_some_and(|value| value > 0.0) {
+                report.extend(values);
+            }
+            report
+                .into_iter()
+                .map(|((field, spw), value)| [f64::from(field), f64::from(spw), value])
                 .collect()
         };
         RFlagThresholdReport {
-            timedev: rows(&self.timedev, request.timedev),
-            freqdev: rows(&self.freqdev, request.freqdev),
+            timedev: rows(
+                &self.timedev,
+                request.timedev,
+                &request.timedev_by_field_spw,
+            ),
+            freqdev: rows(
+                &self.freqdev,
+                request.freqdev,
+                &request.freqdev_by_field_spw,
+            ),
         }
     }
 
@@ -4259,6 +4482,17 @@ mod tests {
 
     use super::*;
     use ndarray::array;
+
+    #[test]
+    fn tfcrop_angle_roundoff_covers_the_principal_phase_branch_cut() {
+        let above = Complex64::new(-1.0, 1.0e-8);
+        let below = Complex64::new(-1.0, -1.0e-8);
+        let bound = tfcrop_metric_roundoff(ClipMetric::Phase, above, 1.0e-6);
+        assert!(f64::from(bound) >= (above.arg() - below.arg()).abs());
+        let away_from_cut =
+            tfcrop_metric_roundoff(ClipMetric::Phase, Complex64::new(1.0, 0.0), 1.0e-6);
+        assert!((1.0e-6..=1.1e-6).contains(&away_from_cut));
+    }
 
     fn sample(index: usize, row: usize, corr: usize, chan: usize, real: f64, flag: bool) -> Sample {
         Sample {
