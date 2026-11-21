@@ -156,6 +156,26 @@ def test_errors_and_detached_behavior(casa):
             tool.done()
 
 
+def test_fits_attachment_reads_only_the_selected_plane_with_its_mask(casa, tmp_path):
+    path = str(tmp_path / "masked.fits")
+    source = image(casa, lattice().astype(np.float32), masked=True)
+    try:
+        assert source.tofits(outfile=path)
+    finally:
+        source.done()
+    results = []
+    for api in (tools, casa):
+        tool = api.image()
+        assert tool.open(path)
+        try:
+            results.append(tool.getslice([0, 4], [3, 3], coord=[0, 0, 1], npts=9, method="nearest"))
+        finally:
+            tool.done()
+    assert_record(*results)
+    np.testing.assert_array_equal(results[0]["pixel"], [130, 131, 131, 0, 0, 133, 133, 134, 134])
+    np.testing.assert_array_equal(results[0]["mask"], [1, 1, 1, 0, 0, 1, 1, 1, 1])
+
+
 def test_invalid_indices_raise_a_python_error():
     tool = image(tools, lattice().astype(np.float32))
     try:
@@ -165,5 +185,6 @@ def test_invalid_indices_raise_a_python_error():
             tool.getslice([0, 2], [0, 2], coord=[0, 0, 100])
         with pytest.raises(TypeError, match="npts"):
             tool.getslice([0, 2], [0, 2], npts=None)
+        np.testing.assert_allclose(tool.getslice([0, 2], [0, 2], npts=3)["pixel"], [0, 11, 22])
     finally:
         tool.done()
