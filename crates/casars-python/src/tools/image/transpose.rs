@@ -537,7 +537,7 @@ impl PyImageTool {
                     return Err(raised("This method only supports Float valued images"));
                 }
                 attachment.require_pixel_read_lock(&mut handle)?;
-                let make = || {
+                let mut make = || {
                     let (active, record) = attachment.coordinate_view(&handle);
                     let beams = attachment.beam_view().clone();
                     let ImageHandle::Float(storage) = &*handle else {
