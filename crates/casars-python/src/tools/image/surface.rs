@@ -1198,7 +1198,7 @@ const METHODS: &[Method] = &[
             param("order", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "twopointcorrelation",

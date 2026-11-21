@@ -19,6 +19,7 @@ use fitsio::images::ImageType as FitsImageType;
 use ndarray::{Dimension, IxDyn, ShapeBuilder, Zip};
 
 mod axes;
+pub use axes::replace_stokes_axis_in_record;
 mod custom_values;
 mod exportfits;
 mod extrema;
@@ -45,6 +46,8 @@ mod quantity_input;
 mod schema;
 mod summary_log;
 mod task_contract;
+mod transpose;
+pub use transpose::copy_transposed_image;
 mod world_header;
 
 mod immoments;

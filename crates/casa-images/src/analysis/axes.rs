@@ -190,49 +190,57 @@ pub(super) fn replace_stokes_in_record(
         ImageError::InvalidMetadata(format!("stokes record coordinates: {error}"))
     })?;
     for coordinate in placed {
-        if !coordinate.field.starts_with("stokes") {
-            continue;
+        if coordinate.field.starts_with("stokes")
+            && matches!(record.get(&coordinate.field), Some(Value::Record(_)))
+        {
+            replace_stokes_axis_in_record(record, &coordinate.field, stokes)?;
         }
-        let Some(Value::Record(stokes_rec)) = record.get_mut(&coordinate.field) else {
-            continue;
-        };
-        let use_codes = matches!(
-            stokes_rec.get("stokes"),
-            Some(Value::Array(ArrayValue::Int32(_)))
-        );
-        if use_codes {
+    }
+    Ok(())
+}
+
+/// Replace a single stored Stokes axis and synchronize its reference fields.
+///
+/// # Errors
+///
+/// Returns an error if the named coordinate record is missing.
+pub fn replace_stokes_axis_in_record(
+    record: &mut RecordValue,
+    field: &str,
+    stokes: &[StokesType],
+) -> Result<(), ImageError> {
+    let Some(Value::Record(stokes_rec)) = record.get_mut(field) else {
+        return Err(ImageError::InvalidMetadata(format!(
+            "Missing Stokes coordinate {field}"
+        )));
+    };
+    let use_codes = matches!(
+        stokes_rec.get("stokes"),
+        Some(Value::Array(ArrayValue::Int32(_)))
+    );
+    let labels = if use_codes {
+        ArrayValue::from_i32_vec(stokes.iter().map(|s| s.code()).collect())
+    } else {
+        ArrayValue::from_string_vec(stokes.iter().map(|s| s.name().to_string()).collect())
+    };
+    stokes_rec.upsert("stokes", Value::Array(labels));
+    if let Some(&first) = stokes.first() {
+        if matches!(stokes_rec.get("crval"), Some(Value::Array(_))) {
             stokes_rec.upsert(
-                "stokes",
-                Value::Array(ArrayValue::from_i32_vec(
-                    stokes.iter().map(|s| s.code()).collect(),
-                )),
-            );
-        } else {
-            stokes_rec.upsert(
-                "stokes",
-                Value::Array(ArrayValue::from_string_vec(
-                    stokes.iter().map(|s| s.name().to_string()).collect(),
-                )),
+                "crval",
+                Value::Array(ArrayValue::from_f64_vec(vec![f64::from(first.code())])),
             );
         }
-        if let Some(&first) = stokes.first() {
-            if matches!(stokes_rec.get("crval"), Some(Value::Array(_))) {
-                stokes_rec.upsert(
-                    "crval",
+        if matches!(stokes_rec.get("crpix"), Some(Value::Array(_))) {
+            stokes_rec.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
+        }
+        if let Some(suffix) = field.strip_prefix("stokes") {
+            let wr_key = format!("worldreplace{suffix}");
+            if matches!(record.get(&wr_key), Some(Value::Array(_))) {
+                record.upsert(
+                    wr_key,
                     Value::Array(ArrayValue::from_f64_vec(vec![f64::from(first.code())])),
                 );
-            }
-            if matches!(stokes_rec.get("crpix"), Some(Value::Array(_))) {
-                stokes_rec.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
-            }
-            if let Some(suffix) = coordinate.field.strip_prefix("stokes") {
-                let wr_key = format!("worldreplace{suffix}");
-                if matches!(record.get(&wr_key), Some(Value::Array(_))) {
-                    record.upsert(
-                        wr_key,
-                        Value::Array(ArrayValue::from_f64_vec(vec![f64::from(first.code())])),
-                    );
-                }
             }
         }
     }

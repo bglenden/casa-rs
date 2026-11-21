@@ -8525,3 +8525,27 @@ second entry when an explicit list contains only the first axis. casa-rs
 raises a Python error for an out-of-range fixed coordinate or a missing
 second axis and preserves the attached image. An explicit `npts=None` also
 aborts CASA. casa-rs raises a type error for that argument.
+
+## `image.transpose` can change the metadata of a reflected sample
+
+In CASA 6.7.6.14, reflecting an axis negates the corresponding world
+increment. In a `[4, 6, 5]` image with a direction matrix
+`[[1, 0.2], [-0.3, 1]]`, `transpose(order="2-01")` moves the sample at
+`[1, 2, 3]` to `[3, 2, 2]` and changes its reported direction. casa-rs
+reflects the matching pixel column of the coupled transform and preserves
+the sample's world position.
+
+For a `[4, 5, 2, 6]` image, `transpose(order="-30-21")` reverses the
+spectral and Stokes samples but retains the original beam grid and Stokes
+labels. casa-rs moves each sampled plane with its original label and
+restoring beam.
+
+For a six-pixel tabular axis with pixels `[0, 1, 3, 5]` and worlds
+`[100, 101, 111, 120]`, the reflected pixel 1 represents the original
+pixel 4. CASA reports 119 there. casa-rs reflects the lookup grid and
+reports the original interpolated value of 115.5.
+
+If an image has pixel axes `[Stokes, Frequency]` and world axes
+`[Frequency, Stokes]`, CASA 6.7.6.14 reflects Stokes pixels for the named
+order `["-Frequency", "Stokes"]`. casa-rs resolves the names through the
+world-to-pixel mapping, so this order reflects the frequency planes.
