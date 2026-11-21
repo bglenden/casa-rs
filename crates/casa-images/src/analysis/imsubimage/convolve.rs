@@ -4,7 +4,7 @@ mod fft;
 
 use std::path::Path;
 
-use casa_lattices::{TraversalCursorIter, TraversalSpec};
+use casa_lattices::{TraversalCursor, TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Dimension, IxDyn, Slice, Zip};
 
@@ -125,32 +125,12 @@ impl ImageConvolution {
                 "Kernel lattice has more axes than the image!".into(),
             ));
         }
-        let divisor = (options.scale <= 0.0).then(|| kernel.sum()).transpose()?;
-        let scaling = divisor.map_or(Scaling::Multiply(options.scale), Scaling::Divide);
-        let mut center = kernel
-            .shape()
-            .iter()
-            .map(|&width| width / 2)
+        let workspace = KernelPlan::new(kernel, shape, options.scale)?;
+        let active = (0..shape.len())
+            .map(|axis| workspace.support.get(axis).is_some_and(|&width| width > 1))
             .collect::<Vec<_>>();
-        center.resize(shape.len(), 0);
-        let reach = &shape[..rank];
-        let first = center[..rank]
-            .iter()
-            .zip(reach)
-            .map(|(&mid, &len)| mid.saturating_sub(len - 1))
-            .collect::<Vec<_>>();
-        let support = kernel
-            .shape()
-            .iter()
-            .zip(&center)
-            .zip(&first)
-            .zip(reach)
-            .map(|(((&width, &mid), &low), &len)| width.min(mid.saturating_add(len)) - low)
-            .collect::<Vec<_>>();
-        let kernel_cursor = fft::limit_kernel_cursor(bounded_read_cursor(support.clone())?);
-        // A zero divisor poisons an active FFT plane. With a fully
-        // degenerate kernel the selected center coefficient is scalar.
-        let invalid_normalization = divisor == Some(0.0) && support.iter().any(|&width| width > 1);
+        let has_active = active.contains(&true);
+        let invalid_kernel = has_active && workspace.has_nonfinite()?;
 
         let selection = &self.section.selection;
         let unit = vec![1; shape.len()];
@@ -176,121 +156,257 @@ impl ImageConvolution {
             .zip(input.stride)
             .map(|(&extent, &stride)| extent.div_ceil(stride).max(1))
             .collect::<Vec<_>>();
+        let group_shape = shape
+            .iter()
+            .zip(&active)
+            .map(|(&length, &active)| if active { 1 } else { length })
+            .collect::<Vec<_>>();
         let mut have_mask = false;
-        for tile in tiles(shape, cursor) {
-            let tile = tile?;
-            let mut result = ArrayD::<f64>::zeros(IxDyn(&tile.shape));
-            let (_, validity) = reader.read(
-                &input.source_start(&tile.position),
-                &tile.shape,
-                input.stride,
-            )?;
-            if let Some(mask) = validity.filter(|mask| mask.iter().any(|&valid| !valid)) {
-                if !have_mask {
-                    output.create_filled_mask("mask0", true)?;
-                    output.set_default_mask("mask0")?;
-                    have_mask = true;
-                }
-                output.put_mask_slice("mask0", &mask, &tile.position)?;
-            }
-
-            if invalid_normalization {
-                result.fill(f64::NAN);
-                output.put_slice(&result.mapv(T::from_f64), &tile.position)?;
-                continue;
-            }
-
-            for patch in tiles(&support, kernel_cursor.clone()) {
-                let patch = patch?;
-                let start = patch
-                    .position
-                    .iter()
-                    .zip(&first)
-                    .map(|(&i, &lo)| i + lo)
-                    .collect::<Vec<_>>();
-                let weights = kernel
-                    .read(&start, &patch.shape)?
-                    .mapv(|weight| scaling.apply::<T>(weight.into()));
-                let delta = center
-                    .iter()
-                    .enumerate()
-                    .map(|(axis, &mid)| {
-                        start.get(axis).copied().unwrap_or_default() as isize - mid as isize
-                    })
-                    .collect::<Vec<_>>();
-                let output_region = Window {
-                    start: &tile.position,
-                    shape: &tile.shape,
-                };
-                let Some((origin, size)) = output_region.halo(shape, &delta, &patch.shape) else {
-                    continue;
-                };
-                let halo_section = StridedSection {
-                    start: &input.source_start(&origin),
-                    shape: &size,
-                    stride: input.stride,
-                };
-                let halo_cursor = fft::limit_source_cursor(
-                    bounded_read_cursor(halo_section.dense_shape(&size))?,
+        for group in tiles(&group_shape, cursor.clone()) {
+            let group = group?;
+            let inner_shape = shape
+                .iter()
+                .zip(&group.shape)
+                .zip(&active)
+                .map(|((&length, &width), &active)| if active { length } else { width })
+                .collect::<Vec<_>>();
+            let mut invalid_lanes = ArrayD::from_elem(IxDyn(&group.shape), false);
+            for tile in tiles(&inner_shape, cursor.clone()) {
+                let tile = offset_tile(tile?, &group.position);
+                let (pixels, validity) = reader.read(
+                    &input.source_start(&tile.position),
+                    &tile.shape,
                     input.stride,
-                    weights.shape(),
-                );
-                for piece in halo_section.cursors(halo_cursor) {
-                    let piece = piece?;
-                    let (data, mask) = reader.read(
-                        &halo_section.source_start(&piece.position),
-                        &piece.shape,
-                        input.stride,
-                    )?;
-                    let mut data = data.mapv(|value| value.into());
-                    if let Some(mask) = mask {
-                        Zip::from(&mut data).and(&mask).for_each(|value, &valid| {
-                            if !valid {
-                                *value = 0.;
+                )?;
+                if has_active && !invalid_kernel {
+                    for (mut index, &sample) in pixels.indexed_iter() {
+                        if !sample.into().is_finite()
+                            && validity.as_ref().is_none_or(|mask| mask[&index])
+                        {
+                            for (pixel, &is_active) in index.slice_mut().iter_mut().zip(&active) {
+                                if is_active {
+                                    *pixel = 0;
+                                }
                             }
-                        });
-                    }
-                    let data_start = piece
-                        .position
-                        .iter()
-                        .zip(&origin)
-                        .map(|(&i, &lo)| i + lo)
-                        .collect::<Vec<_>>();
-                    let data_region = Window {
-                        start: &data_start,
-                        shape: &piece.shape,
-                    };
-                    if let Some(convolved) = fft::convolve_block(&data, &weights)? {
-                        let block = Window {
-                            start: &data_start,
-                            shape: convolved.shape(),
-                        };
-                        accumulate(
-                            &mut result,
-                            output_region,
-                            &convolved,
-                            block,
-                            delta.iter().copied(),
-                            1.,
-                        );
-                    } else {
-                        for (index, &weight) in weights.indexed_iter() {
-                            let offsets = delta.iter().enumerate().map(|(axis, &lo)| {
-                                lo + index.slice().get(axis).copied().unwrap_or_default() as isize
-                            });
-                            accumulate(
-                                &mut result,
-                                output_region,
-                                &data,
-                                data_region,
-                                offsets,
-                                weight,
-                            );
+                            invalid_lanes[index] = true;
                         }
                     }
                 }
+                drop(pixels);
+                if let Some(mask) = validity.filter(|mask| mask.iter().any(|&valid| !valid)) {
+                    if !have_mask {
+                        output.create_filled_mask("mask0", true)?;
+                        output.set_default_mask("mask0")?;
+                        have_mask = true;
+                    }
+                    output.put_mask_slice("mask0", &mask, &tile.position)?;
+                }
+
+                let initial = if invalid_kernel { f64::NAN } else { 0. };
+                let mut result = ArrayD::from_elem(IxDyn(&tile.shape), initial);
+                if !invalid_kernel {
+                    workspace.convolve_tile(
+                        &reader,
+                        &input,
+                        Window::from(&tile),
+                        has_active,
+                        &mut result,
+                    )?;
+                }
+                output.put_slice(&result.mapv(T::from_f64), &tile.position)?;
             }
-            output.put_slice(&result.mapv(T::from_f64), &tile.position)?;
+            if invalid_lanes.iter().any(|&invalid| invalid) {
+                // A transform mixes a nonfinite *valid* sample through its
+                // active axes, including the parts worked in other tiles.
+                for tile in tiles(&inner_shape, cursor.clone()) {
+                    let tile = offset_tile(tile?, &group.position);
+                    let mut pixels = output.get_slice(&tile.position, &tile.shape, &unit)?;
+                    let invalid = invalid_lanes
+                        .broadcast(IxDyn(&tile.shape))
+                        .expect("batch axes match");
+                    Zip::from(&mut pixels)
+                        .and(invalid)
+                        .for_each(|value, &invalid| {
+                            if invalid {
+                                *value = T::from_f64(f64::NAN);
+                            }
+                        });
+                    output.put_slice(&pixels, &tile.position)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+struct KernelPlan<'a, T: ConvolutionPixel> {
+    kernel: ConvolutionKernel<'a, T>,
+    scaling: Scaling,
+    center: Vec<usize>,
+    first: Vec<usize>,
+    support: Vec<usize>,
+    cursor: Vec<usize>,
+}
+
+struct KernelPatch {
+    weights: ArrayD<f64>,
+    offsets: Vec<isize>,
+}
+
+impl<'a, T: ConvolutionPixel> KernelPlan<'a, T> {
+    fn new(
+        kernel: ConvolutionKernel<'a, T>,
+        shape: &[usize],
+        scale: f64,
+    ) -> Result<Self, ImageError> {
+        let divisor = (scale <= 0.0).then(|| kernel.sum()).transpose()?;
+        let scaling = divisor.map_or(Scaling::Multiply(scale), Scaling::Divide);
+        let mut center = kernel
+            .shape()
+            .iter()
+            .map(|&width| width / 2)
+            .collect::<Vec<_>>();
+        center.resize(shape.len(), 0);
+        let reach = &shape[..kernel.shape().len()];
+        let first = center
+            .iter()
+            .zip(reach)
+            .map(|(&mid, &len)| mid.saturating_sub(len - 1))
+            .collect::<Vec<_>>();
+        let support = kernel
+            .shape()
+            .iter()
+            .zip(&center)
+            .zip(&first)
+            .zip(reach)
+            .map(|(((&width, &mid), &low), &len)| width.min(mid.saturating_add(len)) - low)
+            .collect::<Vec<_>>();
+        let cursor = fft::limit_kernel_cursor(bounded_read_cursor(support.clone())?);
+        Ok(Self {
+            kernel,
+            scaling,
+            center,
+            first,
+            support,
+            cursor,
+        })
+    }
+
+    fn patches(&self) -> impl Iterator<Item = Result<KernelPatch, ImageError>> + '_ {
+        tiles(&self.support, self.cursor.clone()).map(|patch| {
+            let patch = patch?;
+            let start = patch
+                .position
+                .iter()
+                .zip(&self.first)
+                .map(|(&i, &lo)| i + lo)
+                .collect::<Vec<_>>();
+            let weights = self
+                .kernel
+                .read(&start, &patch.shape)?
+                .mapv(|weight| self.scaling.apply::<T>(weight.into()));
+            let offsets = self
+                .center
+                .iter()
+                .enumerate()
+                .map(|(axis, &mid)| {
+                    start.get(axis).copied().unwrap_or_default() as isize - mid as isize
+                })
+                .collect();
+            Ok(KernelPatch { weights, offsets })
+        })
+    }
+
+    fn has_nonfinite(&self) -> Result<bool, ImageError> {
+        for patch in self.patches() {
+            if patch?.weights.iter().any(|weight| !weight.is_finite()) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn convolve_tile(
+        &self,
+        reader: &PixelSections<'_, T>,
+        input: &StridedSection<'_>,
+        output_region: Window<'_>,
+        exclude_nonfinite: bool,
+        result: &mut ArrayD<f64>,
+    ) -> Result<(), ImageError> {
+        for patch in self.patches() {
+            let KernelPatch {
+                weights,
+                offsets: delta,
+            } = patch?;
+            let Some((origin, size)) = output_region.halo(input.shape, &delta, weights.shape())
+            else {
+                continue;
+            };
+            let halo_section = StridedSection {
+                start: &input.source_start(&origin),
+                shape: &size,
+                stride: input.stride,
+            };
+            let halo_cursor = fft::limit_source_cursor(
+                bounded_read_cursor(halo_section.dense_shape(&size))?,
+                input.stride,
+                weights.shape(),
+            );
+            for piece in halo_section.cursors(halo_cursor) {
+                let piece = piece?;
+                let (data, mask) = reader.read(
+                    &halo_section.source_start(&piece.position),
+                    &piece.shape,
+                    input.stride,
+                )?;
+                let mut data = data.mapv(|value| {
+                    let value = value.into();
+                    if exclude_nonfinite && !value.is_finite() {
+                        0.
+                    } else {
+                        value
+                    }
+                });
+                if let Some(mask) = mask {
+                    Zip::from(&mut data).and(&mask).for_each(|value, &valid| {
+                        if !valid {
+                            *value = 0.;
+                        }
+                    });
+                }
+                let data_start = piece
+                    .position
+                    .iter()
+                    .zip(&origin)
+                    .map(|(&i, &lo)| i + lo)
+                    .collect::<Vec<_>>();
+                let data_region = Window {
+                    start: &data_start,
+                    shape: &piece.shape,
+                };
+                if let Some(convolved) = fft::convolve_block(&data, &weights)? {
+                    let block = Window {
+                        start: &data_start,
+                        shape: convolved.shape(),
+                    };
+                    accumulate(
+                        result,
+                        output_region,
+                        &convolved,
+                        block,
+                        delta.iter().copied(),
+                        1.,
+                    );
+                } else {
+                    for (index, &weight) in weights.indexed_iter() {
+                        let offsets = delta.iter().enumerate().map(|(axis, &lo)| {
+                            lo + index.slice().get(axis).copied().unwrap_or_default() as isize
+                        });
+                        accumulate(result, output_region, &data, data_region, offsets, weight);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -352,6 +468,22 @@ fn slice(start: usize, length: usize) -> Slice {
 struct Window<'a> {
     start: &'a [usize],
     shape: &'a [usize],
+}
+
+impl<'a> From<&'a TraversalCursor> for Window<'a> {
+    fn from(tile: &'a TraversalCursor) -> Self {
+        Self {
+            start: &tile.position,
+            shape: &tile.shape,
+        }
+    }
+}
+
+fn offset_tile(mut tile: TraversalCursor, offset: &[usize]) -> TraversalCursor {
+    for (position, &shift) in tile.position.iter_mut().zip(offset) {
+        *position += shift;
+    }
+    tile
 }
 
 impl Window<'_> {

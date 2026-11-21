@@ -251,3 +251,66 @@ def test_convolve_cannot_replace_an_input_or_a_foreign_file(tmp_path):
     finally:
         kernel.done()
         source.done()
+
+
+@pytest.mark.parametrize("length,width", [(13, 3), (262147, 63)])
+def test_convolve_valid_nan_spans_only_its_active_plane(casa, length, width):
+    values = np.ones((length, 3), dtype=np.float32)
+    values[length - 3, 0] = np.nan
+    values[length // 2, 1] = np.nan
+    valid = np.ones_like(values, dtype=bool)
+    valid[length // 2, 1] = False
+    weights = np.ones(width, dtype=np.float32) / width
+    clean = np.where(valid, values, 0.)
+    expected = np.stack([
+        np.convolve(clean[:, lane], weights, mode="same") for lane in (1, 2)
+    ], axis=1)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        assert source.putregion(pixelmask=valid)
+        product = source.convolve(kernel=weights, scale=1.)
+        try:
+            actual = product.getchunk()
+            assert np.isnan(actual[:, 0]).all()
+            np.testing.assert_allclose(actual[:, 1:], expected, rtol=4e-6, atol=4e-7)
+            np.testing.assert_array_equal(product.getchunk(getmask=True), valid)
+        finally:
+            product.done()
+            source.done()
+
+
+def test_convolve_kernel_and_source_tile_seams(casa):
+    length, width = 550001, 32769
+    impulse = 262143
+    signal = np.zeros(length)
+    signal[impulse] = 3.
+    weights = np.linspace(-2., 7., width)
+    start = impulse - width // 2
+    stop = start + width
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=signal, type="d")
+        result = source.convolve(kernel=weights, scale=1.)
+        try:
+            actual = result.getchunk()
+            np.testing.assert_allclose(actual[start:stop], 3. * weights, rtol=1e-11, atol=1e-11)
+            np.testing.assert_allclose(actual[:start], 0., atol=1e-11)
+            np.testing.assert_allclose(actual[stop:], 0., atol=1e-11)
+        finally:
+            result.done()
+            source.done()
+
+
+def test_convolve_valid_infinity_has_deterministic_nan_output_on_an_active_axis():
+    source = tools.image()
+    values = np.array([[1., 1.], [1., 1.], [np.inf, 2.], [1., 1.]], dtype=np.float32)
+    assert source.fromarray(pixels=values)
+    result = source.convolve(kernel=[1., 0., 0.], scale=1.)
+    try:
+        assert np.isnan(result.getchunk()[:, 0]).all()
+        np.testing.assert_array_equal(result.getchunk()[:, 1], [1., 2., 1., 0.])
+        assert result.getchunk(getmask=True).all()
+    finally:
+        result.done()
+        source.done()
