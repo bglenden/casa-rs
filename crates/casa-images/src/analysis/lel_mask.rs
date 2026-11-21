@@ -171,6 +171,57 @@ pub fn evaluate_image_tool_mask(
     parsed.get_in_sections()
 }
 
+/// Evaluate a Boolean image-tool mask over a strided section of a target image.
+///
+/// The section holds the start, sample count, and stride of each image axis.
+/// Real and complex operands may be combined in one expression. FITS operands
+/// are read by section, and `stretch` allows compatible singleton axes.
+///
+/// # Errors
+/// Returns an error for invalid expressions or incompatible source axes.
+pub fn evaluate_image_tool_mask_section(
+    expression: &str,
+    shape: &[usize],
+    coordinates: &CoordinateSystem,
+    section: (&[usize], &[usize], &[usize]),
+    stretch: bool,
+) -> Result<ArrayD<bool>, ImageError> {
+    let opened = image_operands(expression)?;
+    let (real, complex) = operand_resolvers(&opened);
+    let compiled = parse_image_tool_mask(expression, &real, &complex, &|name| {
+        is_single_precision(&opened, name)
+    })?;
+    let (start, count, stride) = section;
+    let source_shape = compiled.shape();
+    if source_shape.is_empty() {
+        return compiled.eval_section_for_shape(start, count, stride, shape);
+    }
+    if source_shape != shape && !stretch {
+        return Err(ImageError::CasaSelection(format!(
+            "The input image shape ({shape:?}) and mask shape ({source_shape:?}) are different, and it was specified that the mask should not be extended"
+        )));
+    }
+    let axes = geometry::image_tool_mask_axes(
+        opened.iter().map(|(_, source)| source.geometry()),
+        source_shape,
+        coordinates,
+        shape,
+    )?;
+    let select = |values: &[usize]| axes.iter().map(|&axis| values[axis]).collect::<Vec<_>>();
+    let mut mask = compiled.eval_section_for_shape(
+        &select(start),
+        &select(count),
+        &select(stride),
+        &select(shape),
+    )?;
+    for axis in 0..shape.len() {
+        if axes.binary_search(&axis).is_err() {
+            mask = mask.insert_axis(ndarray::Axis(axis));
+        }
+    }
+    broadcast_array(mask, count)
+}
+
 pub(super) fn evaluate_replacement_pixels(
     expression: &str,
     selected_shape: &[usize],

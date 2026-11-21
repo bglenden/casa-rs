@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, format_world_display};
+use casa_images::analysis::evaluate_image_tool_mask_section;
 use casa_images::{ImageInterface, ImagePixel};
 use casa_lattices::{
     ExecutionResources, FitHalfCenter, Lattice, LatticeStatistics, ScratchSpace, Statistic,
@@ -21,7 +22,6 @@ use crate::tools::{LogLine, emit};
 use super::PyImageTool;
 use super::copy_region::Selection;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
-use super::mask_expression::{MaskTarget, evaluate_mask};
 use super::pixels::{Chunk, and_mask, collapse_axes};
 use super::region_read::region_argument;
 
@@ -478,15 +478,16 @@ impl PyImageTool {
                 let expression = if mask.is_empty() {
                     None
                 } else {
-                    Some(evaluate_mask(
-                        &mask,
-                        MaskTarget {
+                    Some(
+                        evaluate_image_tool_mask_section(
+                            &mask,
                             shape,
-                            section: Some((&chunk, image.coordinates())),
+                            image.coordinates(),
+                            (&chunk.start, &chunk.size, &chunk.stride),
                             stretch,
-                            method: "statistics",
-                        },
-                    )?)
+                        )
+                        .map_err(raised)?,
+                    )
                 };
                 let options = StatsOptions {
                     axes: axes.clone(),
