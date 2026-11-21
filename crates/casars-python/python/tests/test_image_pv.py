@@ -165,3 +165,46 @@ def test_pv_refuses_mixed_endpoints_and_direction_region(casa):
                 assert source.isopen()
         finally:
             source.done()
+
+
+@pytest.mark.parametrize("framed", [False, True])
+def test_sky_endpoint_strings_match_the_same_pixel_strip(casa, framed):
+    records = []
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            values = _ramp()
+            image.fromarray(pixels=values)
+            coordinates = image.coordsys()
+            try:
+                assert coordinates.setunits(["rad", "rad"], type="direction")
+                positions = []
+                for x in (4., 16.):
+                    angles = coordinates.toworld([x, 7., 0., 0.], "n")["numeric"][:2]
+                    pair = [f"{angle:.17g}rad" for angle in angles]
+                    positions.append("J2000 " + " ".join(pair) if framed else pair)
+            finally:
+                coordinates.done()
+            result = image.pv(start=positions[0], end=positions[1], unit="deg")
+            try:
+                records.append(_read(result))
+                np.testing.assert_allclose(result.getchunk(), values[4:17, 7], atol=2e-5)
+            finally:
+                result.done()
+        finally:
+            image.done()
+    _compare(records[1], records[0])
+
+
+def test_pv_reverses_the_offset_pixels_when_the_endpoints_are_reversed():
+    image = tools.image()
+    try:
+        values = _ramp()
+        assert image.fromarray(pixels=values)
+        result = image.pv(start=[16, 7], end=[4, 7])
+        try:
+            np.testing.assert_allclose(result.getchunk(), values[16:3:-1, 7], atol=2e-4)
+        finally:
+            result.done()
+    finally:
+        image.done()
