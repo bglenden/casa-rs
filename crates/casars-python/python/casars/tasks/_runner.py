@@ -377,6 +377,16 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise ValueError(completion.message) from error
             if completion.parameter == "calibration-save-command":
                 raise Exception(completion.message) from error
+            if completion.parameter == "flag-list-input":
+                raise ValueError(completion.message) from error
+            if completion.parameter == "flag-list-no-report":
+                raise KeyError("nreport") from error
+            if completion.parameter == "flag-list-agent":
+                raise RuntimeError(completion.message) from error
+            if completion.parameter == "flag-list-threshold-type":
+                raise TypeError(completion.message) from error
+            if completion.parameter == "flag-list-clip-range":
+                raise IndexError(completion.message) from error
             if completion.parameter == "rflag-threshold-file":
                 raise UnboundLocalError(completion.message) from error
             if completion.parameter == "rflag-threshold-path.not-found":
@@ -596,6 +606,7 @@ def _coerce_flagdata_options(
     cint = (int, np.int32, np.int64)
     errors = _flagging_choice_errors("flagdata", values)
     column_vector = _coerce_flagdata_column(values, argument_text, errors)
+    _coerce_flagdata_list_options(values, errors, cfloat)
     for parameter in ("tolerance", "lowerlimit", "upperlimit", "minchanfrac", "growtime", "growfreq",
                       "timecutoff", "freqcutoff"):
         if parameter in values:
@@ -783,6 +794,43 @@ def _coerce_flagdata_options(
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
     return correlation_vector, column_vector
+
+
+def _coerce_flagdata_list_options(values, errors, numeric) -> None:
+    import numpy as np
+
+    for parameter in ("inpfile", "reason"):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if isinstance(value, str):
+            values[parameter] = str(value)
+        elif value is None:
+            errors[parameter] = ["null value not allowed"] * 3
+        elif _flagdata_string_vector(value):
+            if not isinstance(value, np.ndarray) or value.ndim != 0:
+                values[parameter] = [str(item) for item in value]
+        else:
+            errors[parameter] = ["must be of cStr type", "must be of cStrVec type"]
+    if "tbuff" not in values:
+        return
+    value = values["tbuff"]
+    if value is None:
+        errors["tbuff"] = ["null value not allowed"] * 3
+    elif isinstance(value, numeric):
+        values["tbuff"] = float(value)
+    elif isinstance(value, np.ndarray) and value.ndim == 0:
+        second = ("field 'tbuff' cannot be coerced: iteration over a 0-d array"
+                  if value.dtype.type in numeric else "must be of cFloatVec type")
+        errors["tbuff"] = ["must be of cFloat type", second]
+    elif isinstance(value, Iterable) and not isinstance(value, str):
+        items = list(value)
+        if all(isinstance(item, numeric) for item in items):
+            values["tbuff"] = [float(item) for item in items]
+        else:
+            errors["tbuff"] = ["must be of cFloat type", "must be of cFloatVec type"]
+    else:
+        errors["tbuff"] = ["must be of cFloat type", "must be of cFloatVec type"]
 
 
 def _coerce_flagdata_column(values, argument_text, errors) -> str | None:
