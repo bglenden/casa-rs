@@ -4143,6 +4143,12 @@ existing flags in an eight-channel selection do not meet the 80 percent
 frequency threshold for the 32-channel window.
 [TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
 
+The same extension can copy an XX flag to YY when the caller selects only
+XX. Native TFCrop grows flags into the requested physical planes. An input
+flag on YY still contributes to extension in selected XX. A derived Stokes
+fit writes its contributing planes as requested.
+[TFCrop correlation oracle](../tools/casa-compat/flagdata_tfcrop_correlations_oracle.py)
+
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 
 In CASA 6.7.6.14, run `flagdata(mode="clip", timeavg=True, timebin="40s",

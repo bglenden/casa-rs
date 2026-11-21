@@ -161,6 +161,38 @@ def check_related_flag_state(libraries):
     return len(cases)
 
 
+def check_mixed_layouts(libraries):
+    casatasks.concat(vis=["linear.ms", "circular.ms"], concatvis="mixed.ms", freqtol="1Hz")
+    with table("mixed.ms/DATA_DESCRIPTION", ack=False) as descriptions:
+        assert descriptions.nrows() == 2
+        assert len(set(descriptions.getcol("SPECTRAL_WINDOW_ID"))) == 1
+        assert len(set(descriptions.getcol("POLARIZATION_ID"))) == 2
+    with table("mixed.ms", ack=False) as main:
+        data = main.getcol("DATA")
+    empty, empty_rows = flags("mixed.ms")
+    linear = data[:, 20, 1].real > 20.
+    circular = data[:, 21, 1].real > 20.
+    cases = ("XX,RR", "ABS_RR,XX", "ABS_I")
+    for index, expression in enumerate(cases):
+        expected = empty.copy()
+        if expression == "ABS_RR,XX":
+            expected[linear, 16, 0] = True
+        elif expression == "ABS_I":
+            expected[linear, 16, :] = True
+            expected[linear, 20, :] = True
+            expected[circular, 16, :] = True
+            expected[circular, 21, :] = True
+        for name, task in libraries:
+            path = f"mixed-{index}-{name}.ms"
+            copytree("mixed.ms", path)
+            assert task(vis=path, mode="tfcrop", antenna="0&1", datacolumn="data",
+                        correlation=expression, flagdimension="freq", extendflags=False, flagbackup=False) == {}
+            actual, rows = flags(path)
+            np.testing.assert_array_equal(actual, expected, err_msg=expression)
+            np.testing.assert_array_equal(rows, empty_rows)
+    return len(cases)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     libraries = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
@@ -168,7 +200,9 @@ def main():
         products = check_products(libraries)
         check_unknown_operator_product(libraries)
         related = check_related_flag_state(libraries)
-    print(f"{products} TFCrop correlation products, {related} related flag products and an invalid expression verified")
+        mixed = check_mixed_layouts(libraries)
+    print(f"{products} TFCrop correlation products, {related} related flag products, {mixed} mixed-layout "
+          "products and an invalid expression verified")
 
 
 if __name__ == "__main__":
