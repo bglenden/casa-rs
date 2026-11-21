@@ -8042,6 +8042,15 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## Calibration quack can flag the whole scan when times are out of order
+
+With CASA 6.7.6.14, two Tsys time blocks in the same scan stored in reverse
+order are both flagged by `quackinterval=1.0` with either `quackmode='beg'`
+or `quackmode='endb'`, even though their timestamps are ten seconds apart.
+The calibration handler uses the first and last eligible stored rows to
+derive the scan boundaries. Casa-rs uses the eligible timestamps and flags
+the chronological beginning or end as requested.
+
 ## Calibration flagdata ignores a channel stride
 
 CASA 6.7.6.14 manually flags channels 1 through 5 on current CPARAM

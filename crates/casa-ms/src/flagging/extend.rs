@@ -52,14 +52,18 @@ pub(super) fn apply(
         return Ok(changed);
     }
     let mut timed = read_clip_times(ms, selected, path)?;
-    if request.combinescans {
+    // The calibration iterator fixes its chunks by observation, scan,
+    // field and window. MeasurementSet iterator controls apply to MSes.
+    let calibration = super::is_calibration_table(ms);
+    if !calibration && request.combinescans {
         for row in &mut timed {
             row.combine_scans();
         }
     }
-    if let Some(seconds) = request
-        .time_chunk
-        .filter(|seconds| *seconds > 0.0 && seconds.is_finite())
+    if !calibration
+        && let Some(seconds) = request
+            .time_chunk
+            .filter(|seconds| *seconds > 0.0 && seconds.is_finite())
     {
         mark_time_chunks(&mut timed, seconds);
     }
