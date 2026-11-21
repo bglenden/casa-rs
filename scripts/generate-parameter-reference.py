@@ -79,6 +79,12 @@ def unwrap_typed_value(value: dict[str, Any], context: str) -> Any:
             unwrap_typed_value(require_object(item, f"{context}.value[{index}]"), f"{context}.value[{index}]")
             for index, item in enumerate(items)
         ]
+    if kind == "table":
+        fields = require_object(required(value, "value", context), f"{context}.value")
+        return {
+            key: unwrap_typed_value(require_object(item, f"{context}.value.{key}"), f"{context}.value.{key}")
+            for key, item in fields.items()
+        }
     if kind in {"bool", "float", "integer", "string"}:
         return required(value, "value", context)
     raise GenerationError(f"{context} has unsupported typed-value kind {kind!r}")
