@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::analysis::{copy_transposed_image, ensure_outfile_does_not_alias_input};
 use casa_images::image::image_history_rows;
 use casa_images::{ImageBeamSet, ImageInterface, MutableImageInterface};
@@ -259,6 +259,9 @@ fn reversed_coordinates(
             coordinate.upsert("stokes", Value::Array(ArrayValue::from_string_vec(labels)));
             continue;
         }
+        if reflect_samples(&mut record, field, model, shape[axis])? {
+            continue;
+        }
         CoordinateSystem::set_reference_pixel_in_record(
             &mut record,
             axis,
@@ -303,6 +306,75 @@ fn reversed_coordinates(
         }
     }
     Ok((result, record))
+}
+
+fn reflect_samples(
+    record: &mut RecordValue,
+    field: &str,
+    model: &CoordinateModel,
+    length: usize,
+) -> PyResult<bool> {
+    let edge = (length - 1) as f64;
+    let put_vector = |table: &mut RecordValue, key, values| {
+        table.upsert(key, Value::Array(ArrayValue::from_f64_vec(values)));
+    };
+    if let CoordinateModel::Tabular(tabular) = model
+        && !tabular.pixel_values().is_empty()
+    {
+        let Some(Value::Record(table)) = record.get_mut(field) else {
+            return Err(raised("Missing tabular coordinate"));
+        };
+        let pixels = tabular
+            .pixel_values()
+            .iter()
+            .map(|&pixel| edge - pixel)
+            .collect();
+        put_vector(table, "pixelvalues", pixels);
+        put_vector(table, "crpix", vec![edge - tabular.reference_pixel()[0]]);
+        put_vector(table, "cdelt", vec![-tabular.increment()[0]]);
+        return Ok(true);
+    }
+    if let CoordinateModel::Spectral(spectral) = model
+        && !spectral.has_linear_mapping()
+    {
+        // The native spectral record reconstructs the lookup on consecutive
+        // channels. Sample the reflected native frequencies on that grid, so
+        // changes to the output reference metadata cannot rescale the knots.
+        let native = spectral.as_ref().clone().without_conversion();
+        let frequencies = (0..length)
+            .map(|index| {
+                let value = native.to_world(&[edge - index as f64])?[0];
+                native.value_in_hz(value)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(raised)?;
+        let Some(Value::Record(coordinate)) = record.get_mut(field) else {
+            return Err(raised("Missing spectral coordinate"));
+        };
+        let Some(Value::Record(table)) = coordinate.get_mut("tabular") else {
+            return Err(raised("Missing spectral lookup table"));
+        };
+        let increment = if length > 1 {
+            (frequencies[length - 1] - frequencies[0]) / edge
+        } else {
+            0.0
+        };
+        put_vector(table, "crpix", vec![0.0]);
+        put_vector(table, "crval", vec![frequencies[0]]);
+        put_vector(table, "cdelt", vec![increment]);
+        put_vector(
+            table,
+            "pixelvalues",
+            (0..length).map(|index| index as f64).collect(),
+        );
+        put_vector(table, "worldvalues", frequencies);
+        table.upsert(
+            "units",
+            Value::Array(ArrayValue::from_string_vec(vec!["Hz".into()])),
+        );
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn flip_beam_planes(

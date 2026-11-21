@@ -156,6 +156,37 @@ def test_reflected_spectral_and_stokes_planes_keep_their_labels_and_beams():
         image.done()
 
 
+@pytest.mark.parametrize("kind", ["tabular", "spectral"])
+def test_reflection_preserves_the_sampled_axis_world_values(kind):
+    cs = tools.coordsys().newcoordsys(linear=1, tabular=kind == "tabular", spectral=kind == "spectral")
+    if kind == "tabular":
+        assert cs.settabular(pixel=[0.0, 1.0, 3.0, 5.0], world=[100.0, 101.0, 111.0, 120.0])
+        expected = np.array([100.0, 101.0, 106.0, 111.0, 115.5, 120.0])
+    else:
+        expected = np.array([1.415e9, 1.415001e9, 1.415004e9, 1.415009e9, 1.415016e9, 1.415025e9])
+        assert cs.setspectral(frequencies=expected)
+    axis = cs.findcoordinate(kind)["pixel"][0]
+    shape = [4, 4]
+    shape[axis] = expected.size
+    image = tools.image()
+    assert image.fromshape("", shape, cs.torecord())
+    try:
+        points = np.zeros((2, expected.size))
+        points[axis] = np.arange(expected.size)
+        at = image.coordsys().toworldmany(points)["numeric"][axis]
+        np.testing.assert_allclose(at, expected, rtol=0, atol=1e-6)
+        output = image.transpose(order="-01" if axis == 0 else "0-1")
+        try:
+            kinds = output.coordsys().axiscoordinatetypes()
+            assert kinds[axis] == kind.title()
+            reflected = output.coordsys().toworldmany(points)["numeric"][axis]
+            np.testing.assert_allclose(reflected, expected[::-1], rtol=0, atol=1e-6)
+        finally:
+            output.done()
+    finally:
+        image.done()
+
+
 def test_invalid_orders_and_outfile_collision_preserve_inputs(casa, tmp_path):
     for api in (tools, casa):
         with pytest.raises(RuntimeError, match="No image specified to transpose"):

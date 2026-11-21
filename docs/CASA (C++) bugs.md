@@ -8531,3 +8531,8 @@ For a `[4, 5, 2, 6]` image, `transpose(order="-30-21")` reverses the
 spectral and Stokes samples but retains the original beam grid and Stokes
 labels. casa-rs moves each sampled plane with its original label and
 restoring beam.
+
+For a six-pixel tabular axis with pixels `[0, 1, 3, 5]` and worlds
+`[100, 101, 111, 120]`, the reflected pixel 1 represents the original
+pixel 4. CASA reports 119 there. casa-rs reflects the lookup grid and
+reports the original interpolated value of 115.5.
