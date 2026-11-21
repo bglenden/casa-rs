@@ -7,7 +7,7 @@
 //! on the one-relative `pixelAxes`, and a union holds its members as `*1`,
 //! `*2`, … under `regions`, with their count in `regions.nr`.
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -156,26 +156,33 @@ enum RegionAxis {
     Named(CoordinateType, usize, String),
 }
 
-fn region_axes(coords: &CoordinateSystem) -> Vec<RegionAxis> {
-    (0..coords.n_coordinates())
-        .flat_map(|index| {
-            let coord = coords.coordinate(index);
-            coord
-                .axis_names()
-                .into_iter()
-                .enumerate()
-                .map(move |(axis, name)| match coord {
-                    CoordinateModel::Direction(direction) => {
-                        RegionAxis::Direction(axis, direction.conversion_direction_ref())
-                    }
-                    CoordinateModel::Spectral(spectral) => {
-                        let reference = spectral.conversion_frequency_ref().or_else(|| {
-                            (!spectral.has_undefined_frame()).then(|| spectral.frequency_ref())
-                        });
-                        RegionAxis::Spectral(reference)
-                    }
-                    _ => RegionAxis::Named(coord.coordinate_type(), axis, name),
-                })
+fn region_axes(coords: &CoordinateSystem) -> Vec<Option<RegionAxis>> {
+    (0..coords.n_pixel_axes())
+        .map(|pixel| {
+            let world = coords.pixel_axis_to_world_axis(pixel)?;
+            let (index, axis) = coords.world_axis_owner(world)?;
+            let model = coords.coordinate(index);
+            Some(match model {
+                CoordinateModel::Direction(direction) => {
+                    let axis = if direction.longitude_axis().is_none() {
+                        1
+                    } else {
+                        axis
+                    };
+                    RegionAxis::Direction(axis, direction.conversion_direction_ref())
+                }
+                CoordinateModel::Spectral(spectral) => {
+                    let reference = spectral.conversion_frequency_ref().or_else(|| {
+                        (!spectral.has_undefined_frame()).then(|| spectral.frequency_ref())
+                    });
+                    RegionAxis::Spectral(reference)
+                }
+                _ => RegionAxis::Named(
+                    model.coordinate_type(),
+                    axis,
+                    model.axis_names().get(axis)?.clone(),
+                ),
+            })
         })
         .collect()
 }
@@ -194,7 +201,10 @@ pub(crate) fn map_world_region_axes(
         .map(|axis| {
             saved_axes
                 .get(axis)
-                .and_then(|description| target_axes.iter().position(|candidate| candidate == description))
+                .and_then(Option::as_ref)
+                .and_then(|description| {
+                    target_axes.iter().position(|candidate| candidate.as_ref() == Some(description))
+                })
                 .ok_or_else(|| {
                     ImageError::InvalidMetadata(format!(
                         "saved region {name:?}: region axis is unknown or inconsistent in target coordinate system (pixel axis {axis})"
@@ -241,7 +251,13 @@ fn parse_wc_polygon_record(
             "saved region '{saved_name}' is missing coordinates"
         )));
     };
-    let saved_coords = CoordinateSystem::from_record(coords_record).map_err(|error| {
+    let saved_coords = match CoordinateSystem::from_record(coords_record) {
+        Err(CoordinateError::UnsupportedAxisLayout(_)) => {
+            CoordinateSystem::from_mapped_record(coords_record)
+        }
+        result => result,
+    }
+    .map_err(|error| {
         ImageError::InvalidMetadata(format!(
             "saved region '{saved_name}' has unreadable coordinates: {error}"
         ))

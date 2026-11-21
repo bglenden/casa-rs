@@ -47,11 +47,12 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     let ordered = index_coordinates(input.coordinates());
     let target_order = index_coordinates(&template.coordinates);
     let after_singleton = match options.axes {
-        [axis] if *axis >= 0 => ordered.iter().any(|&(first, coordinate)| {
-            first == *axis as usize
-                && input_shape[first] == 1
+        [axis] if *axis >= 0 => ordered.iter().any(|(axes, coordinate)| {
+            let pixel = *axis as usize;
+            axes.as_slice() == [Some(pixel)]
+                && input_shape[pixel] == 1
                 && coordinate.coordinate_type() == CoordinateType::Spectral
-                && shape[first] > 1
+                && shape[pixel] > 1
         }),
         _ => false,
     };
@@ -68,22 +69,31 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         return Err(invalid("All selected pixels are masked"));
     }
     let mut found = false;
-    for (index, &(first, ours)) in ordered.iter().enumerate() {
-        let n_axes = ours.n_pixel_axes();
-        let axes = first..first + n_axes;
-        let target = target_order.iter().find(|&&(_, model)| {
-            model.coordinate_type() == ours.coordinate_type() && model.n_pixel_axes() == n_axes
+    for (index, (placement, ours)) in ordered.iter().enumerate() {
+        let axes: Vec<_> = placement.iter().copied().flatten().collect();
+        let n_axes = axes.len();
+        let Some(&first) = axes.first() else { continue };
+        let target = target_order.iter().find(|(other, model)| {
+            model.coordinate_type() == ours.coordinate_type()
+                && other
+                    .iter()
+                    .map(Option::is_some)
+                    .eq(placement.iter().map(Option::is_some))
         });
-        let Some(&(other, theirs)) = target else {
-            if shape[axes.clone()] != input_shape[axes] {
+        let input_lengths: Vec<_> = axes.iter().map(|&axis| input_shape[axis]).collect();
+        let Some((other, theirs)) = target else {
+            if axes.iter().any(|&axis| shape[axis] != input_shape[axis]) {
                 return Err(invalid(
                     "an axis missing from the template must keep its input length",
                 ));
             }
             continue;
         };
-        let input_lengths = &input_shape[axes.clone()];
-        let target_lengths = &template.shape[other..other + n_axes];
+        let target_lengths: Vec<_> = other
+            .iter()
+            .flatten()
+            .map(|&axis| template.shape[axis])
+            .collect();
         if let (CoordinateModel::Stokes(ours), CoordinateModel::Stokes(theirs)) = (ours, theirs) {
             if (all_axes || chosen[first]) && ours.stokes().len() > 1 && theirs.stokes().len() > 1 {
                 select_stokes(
@@ -103,7 +113,8 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             continue;
         }
         let selected: Vec<_> = axes
-            .clone()
+            .iter()
+            .copied()
             .enumerate()
             .map(|(i, axis)| {
                 if all_axes
@@ -116,7 +127,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             })
             .collect();
         if resized.is_none() {
-            for (i, axis) in axes.clone().enumerate() {
+            for (i, &axis) in axes.iter().enumerate() {
                 if selected[i]
                     && !(ours.coordinate_type() == CoordinateType::Spectral
                         && target_lengths[i] == 1)
@@ -126,7 +137,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             }
         }
         if !selected.contains(&true) {
-            if shape[axes.clone()] != *input_lengths {
+            if axes.iter().any(|&axis| shape[axis] != input_shape[axis]) {
                 return Err(invalid(
                     "an axis not being regridded must keep its input length",
                 ));
@@ -134,7 +145,12 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             continue;
         }
         found = true;
-        let lengths = &shape[axes];
+        let lengths: Vec<_> = axes.iter().map(|&axis| shape[axis]).collect();
+        if n_axes != ours.n_pixel_axes() {
+            return Err(invalid(
+                "cannot regrid a coordinate with a removed pixel axis",
+            ));
+        }
         let coordinate = match (ours, theirs) {
             (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
                 if n_axes == 2 =>
@@ -150,7 +166,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 if old_dimensions != dimensions || !same_direction_grid(ours, theirs) {
                     apply_direction(
                         &mut result,
-                        first,
+                        [axes[0], axes[1]],
                         input.units(),
                         (ours, theirs),
                         dimensions,
@@ -171,7 +187,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 if input_lengths != lengths || !same_linear_grid(ours, theirs) {
                     apply_linear_plane(
                         &mut result,
-                        first,
+                        [axes[0], axes[1]],
                         input.units(),
                         (ours, theirs),
                         dimensions,
@@ -295,14 +311,15 @@ fn same_direction_grid(input: &DirectionCoordinate, output: &DirectionCoordinate
 
 fn index_coordinates(
     system: &casa_coordinates::CoordinateSystem,
-) -> Vec<(usize, &CoordinateModel)> {
-    let mut first = 0;
+) -> Vec<(Vec<Option<usize>>, &CoordinateModel)> {
     (0..system.n_coordinates())
         .map(|index| {
-            let coordinate = system.coordinate(index);
-            let axis = first;
-            first += coordinate.n_pixel_axes();
-            (axis, coordinate)
+            (
+                system
+                    .coordinate_pixel_axes(index)
+                    .expect("existing coordinate"),
+                system.coordinate(index),
+            )
         })
         .collect()
 }
@@ -536,7 +553,7 @@ fn replicated_position(output: usize, input_count: usize, output_count: usize) -
 
 fn apply_direction<T: RegridPixel>(
     result: &mut Regridded<T>,
-    axis: usize,
+    axes: [usize; 2],
     units: &str,
     (input, target): (&DirectionCoordinate, &DirectionCoordinate),
     shape: [usize; 2],
@@ -544,7 +561,7 @@ fn apply_direction<T: RegridPixel>(
     frame: &MeasFrame,
 ) -> Result<(), ImageError> {
     let scale = jy_per_pixel_scale(units, input, target);
-    let input_shape = [result.data.shape()[axis], result.data.shape()[axis + 1]];
+    let input_shape = axes.map(|axis| result.data.shape()[axis]);
     let grid = if options.replicate {
         replicated_grid(input_shape, shape)
     } else {
@@ -568,7 +585,7 @@ fn apply_direction<T: RegridPixel>(
             coarse_positions(shape, decimate, project)
         }
     };
-    apply_plane(result, axis, shape, &grid, options.method, scale);
+    apply_plane(result, axes, shape, &grid, options.method, scale);
     Ok(())
 }
 
@@ -587,7 +604,7 @@ fn replicated_grid(input: [usize; 2], output: [usize; 2]) -> Vec<Option<[f64; 2]
 
 fn apply_linear_plane<T: RegridPixel>(
     result: &mut Regridded<T>,
-    axis: usize,
+    axes: [usize; 2],
     brightness: &str,
     (input, target): (&LinearCoordinate, &LinearCoordinate),
     shape: [usize; 2],
@@ -604,10 +621,7 @@ fn apply_linear_plane<T: RegridPixel>(
     };
     let factors = [conversion(0)?, conversion(1)?];
     let grid = if options.replicate {
-        replicated_grid(
-            [result.data.shape()[axis], result.data.shape()[axis + 1]],
-            shape,
-        )
+        replicated_grid(axes.map(|axis| result.data.shape()[axis]), shape)
     } else {
         let project = |pixel: [f64; 2]| {
             let mut world = target.to_world(&pixel).ok()?;
@@ -637,20 +651,20 @@ fn apply_linear_plane<T: RegridPixel>(
     } else {
         1.0
     };
-    apply_plane(result, axis, shape, &grid, options.method, scale);
+    apply_plane(result, axes, shape, &grid, options.method, scale);
     Ok(())
 }
 
 fn apply_plane<T: RegridPixel>(
     result: &mut Regridded<T>,
-    axis: usize,
+    axes: [usize; 2],
     shape: [usize; 2],
     positions: &[Option<[f64; 2]>],
     method: RegridMethod,
     scale: f64,
 ) {
     let sampling = DirectionSampling {
-        axes: [axis; 2],
+        axes: [axes; 2],
         shape,
         positions,
         method,

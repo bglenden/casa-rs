@@ -142,11 +142,11 @@ impl PolygonRegion {
     /// Creates an empty region on `pixel_axes`, taking the vertex units from
     /// the world axes of `coords`.
     pub fn new(coords: &CoordinateSystem, pixel_axes: [usize; 2]) -> Result<Self, ImageError> {
-        let units = world_axis_units(coords);
-        check_pixel_axes(pixel_axes, units.len())?;
+        check_pixel_axes(pixel_axes, coords.n_pixel_axes())?;
+        let [x, y] = pixel_axes;
         Ok(Self {
             pixel_axes,
-            units: [units[pixel_axes[0]].clone(), units[pixel_axes[1]].clone()],
+            units: [pixel_axis_unit(coords, x)?, pixel_axis_unit(coords, y)?],
             polygons: Vec::new(),
         })
     }
@@ -324,6 +324,8 @@ impl PolygonRegion {
         base_world: &[f64],
     ) -> Result<PixelPolygons, ImageError> {
         let [x_axis, y_axis] = self.pixel_axes;
+        let x_world = world_axis_for_pixel(coords, x_axis)?;
+        let y_world = world_axis_for_pixel(coords, y_axis)?;
         self.polygons
             .iter()
             .map(|polygon| {
@@ -331,8 +333,8 @@ impl PolygonRegion {
                     .iter()
                     .map(|vertex| {
                         let mut world = base_world.to_vec();
-                        world[x_axis] = vertex[0];
-                        world[y_axis] = vertex[1];
+                        world[x_world] = vertex[0];
+                        world[y_world] = vertex[1];
                         let pixel = coords.to_pixel(&world)?;
                         let pixel = [pixel[x_axis], pixel[y_axis]];
                         if pixel.iter().all(|value| value.is_finite()) {
@@ -356,10 +358,7 @@ impl PolygonRegion {
         self.check_axes(coords)?;
         // WCPolygon creates one LCPolygon at the reference world position.
         // Unspecified axes extend that plane without multiplying its storage.
-        let reference = (0..coords.n_coordinates())
-            .flat_map(|i| coords.coordinate(i).reference_value())
-            .collect::<Vec<_>>();
-        let vertices = self.pixel_polygons_at_world(coords, &reference)?;
+        let vertices = self.pixel_polygons_at_world(coords, &coords.reference_value())?;
         Ok(polygon_pixel_plane(&vertices, shape, self.pixel_axes))
     }
 }
@@ -582,17 +581,19 @@ fn check_pixel_axes(pixel_axes: [usize; 2], n_axes: usize) -> Result<(), ImageEr
     Ok(())
 }
 
-/// The world-axis units of `coords`, one per pixel axis.
-fn world_axis_units(coords: &CoordinateSystem) -> Vec<String> {
-    let mut units = Vec::with_capacity(coords.n_pixel_axes());
-    for index in 0..coords.n_coordinates() {
-        let coordinate = coords.coordinate(index);
-        let coordinate_units = coordinate.axis_units();
-        for axis in 0..coordinate.n_pixel_axes() {
-            units.push(coordinate_units.get(axis).cloned().unwrap_or_default());
-        }
-    }
-    units
+fn world_axis_for_pixel(coords: &CoordinateSystem, pixel: usize) -> Result<usize, ImageError> {
+    coords.pixel_axis_to_world_axis(pixel).ok_or_else(|| {
+        ImageError::InvalidMetadata(format!(
+            "polygon region pixel axis {pixel} has no world axis"
+        ))
+    })
+}
+
+fn pixel_axis_unit(coords: &CoordinateSystem, pixel: usize) -> Result<String, ImageError> {
+    let world = world_axis_for_pixel(coords, pixel)?;
+    let (index, local) = coords.world_axis_owner(world).expect("public world axis");
+    let units = coords.coordinate(index).axis_units();
+    Ok(units.get(local).cloned().unwrap_or_default())
 }
 
 #[cfg(test)]

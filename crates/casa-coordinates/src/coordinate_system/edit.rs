@@ -913,16 +913,8 @@ impl CoordinateSystem {
     /// Return the coordinate type owning a zero-based pixel axis.
     #[must_use]
     pub fn pixel_axis_type(&self, pixel_axis: usize) -> Option<CoordinateType> {
-        let mut offset = 0;
-        for index in 0..self.n_coordinates() {
-            let coordinate = self.coordinate(index);
-            let next = offset + coordinate.n_pixel_axes();
-            if (offset..next).contains(&pixel_axis) {
-                return Some(coordinate.coordinate_type());
-            }
-            offset = next;
-        }
-        None
+        let (coordinate, _) = self.pixel_axis_owner(pixel_axis)?;
+        Some(self.coordinate(coordinate).coordinate_type())
     }
 
     /// Update one zero-based pixel axis's reference pixel in a stored record.

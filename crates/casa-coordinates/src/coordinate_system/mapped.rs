@@ -484,6 +484,38 @@ impl CoordinateSystem {
         self.maps.as_deref().filter(|maps| !maps.concatenated)
     }
 
+    /// The reference pixel in public pixel-axis order.
+    pub fn reference_pixel(&self) -> Vec<f64> {
+        self.reference_axes(true)
+    }
+
+    /// The reference value in public world-axis order, using each model's
+    /// units (radians for directions).
+    pub fn reference_value(&self) -> Vec<f64> {
+        self.reference_axes(false)
+    }
+
+    fn reference_axes(&self, pixel: bool) -> Vec<f64> {
+        let local = if pixel {
+            CoordinateModel::reference_pixel
+        } else {
+            CoordinateModel::reference_value
+        };
+        let Some(maps) = self.nonconsecutive_maps() else {
+            return self.coordinates.iter().flat_map(local).collect();
+        };
+        let mut result = vec![0.0; if pixel { maps.n_pixel } else { maps.n_world }];
+        for (model, placement) in self.coordinates.iter().zip(&maps.placements) {
+            let axes = if pixel {
+                &placement.pixel
+            } else {
+                &placement.world
+            };
+            axes.scatter(&local(model), &mut result);
+        }
+        result
+    }
+
     /// The fields and maps of this system's record, in this system's
     /// coordinate order. Pass the record used to build the system.
     ///
