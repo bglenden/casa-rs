@@ -15,7 +15,14 @@ use crate::tools::{LogLine, emit};
 use super::frame_metadata::coordinate;
 use super::{CoordinateState, PyCoordsys};
 
-struct FrameName(Option<String>);
+pub(super) struct FrameName(Option<String>);
+
+impl FrameName {
+    pub(super) fn into_name(self, argument: &str) -> PyResult<String> {
+        self.0
+            .ok_or_else(|| PyTypeError::new_err(format!("argument _{argument} must be a string")))
+    }
+}
 
 impl Default for FrameName {
     fn default() -> Self {
@@ -175,12 +182,8 @@ impl PyCoordsys {
         direction: FrameName,
         spectral: FrameName,
     ) -> PyResult<bool> {
-        let direction = direction
-            .0
-            .ok_or_else(|| PyTypeError::new_err("argument _direction must be a string"))?;
-        let spectral = spectral
-            .0
-            .ok_or_else(|| PyTypeError::new_err("argument _spectral must be a string"))?;
+        let direction = direction.into_name("direction")?;
+        let spectral = spectral.into_name("spectral")?;
         if direction.is_empty() && spectral.is_empty() {
             return Ok(true);
         }
