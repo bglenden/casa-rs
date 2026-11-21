@@ -10,7 +10,8 @@ pub(super) fn validate_polygon(vertices: &[[f64; 2]]) -> Result<(), ImageError> 
             "polygon regions require at least 3 vertices".into(),
         ));
     }
-    if polygon_self_intersects(vertices) {
+    // CASA encodes a one-pixel CRTF box with coincident polygon vertices.
+    if !vertices.iter().all(|vertex| *vertex == vertices[0]) && polygon_self_intersects(vertices) {
         return Err(ImageError::InvalidMetadata(
             "self-intersecting polygons are not supported".into(),
         ));
@@ -43,6 +44,11 @@ fn point_on_segment(point: [f64; 2], left: [f64; 2], right: [f64; 2]) -> bool {
 pub(super) fn polygon_contains_pixel(polygon: &[[f64; 2]], point: [f64; 2]) -> bool {
     if polygon.len() < 3 {
         return false;
+    }
+    if polygon.iter().all(|vertex| *vertex == polygon[0]) {
+        // Projection of the saved world point can round slightly off the
+        // integer pixel center.
+        return (point[0] - polygon[0][0]).hypot(point[1] - polygon[0][1]) <= 1e-6;
     }
     for index in 0..polygon.len() {
         let left = polygon[index];

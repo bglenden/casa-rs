@@ -54,21 +54,9 @@ pub(super) fn parse_saved_region(
             PolygonRegion::from_record(region_name, rec, target_coords)?,
             target_coords,
             full_shape,
-            false,
         ),
-        "WCUnion" => {
-            // A same-axis polygon union shares a single traversal of the
-            // image planes. Mixed compounds combine their decoded children.
-            match PolygonRegion::from_record(region_name, rec, target_coords) {
-                Ok(polygon) => {
-                    polygon_region(region_name, polygon, target_coords, full_shape, true)
-                }
-                Err(_) => compound::decode(region_name, rec, target_coords, full_shape, plane),
-            }
-        }
-        "WCIntersection" | "WCDifference" | "WCComplement" | "WCExtension" | "WCConcatenation" => {
-            compound::decode(region_name, rec, target_coords, full_shape, plane)
-        }
+        "WCUnion" | "WCIntersection" | "WCDifference" | "WCComplement" | "WCExtension"
+        | "WCConcatenation" => compound::decode(region_name, rec, target_coords, full_shape, plane),
         "LCSlicer" | "LCBox" => {
             let (blc, trc, stride) = if class_name == "LCSlicer" {
                 let section = decode_lc_slicer(region_name, rec, target_coords, full_shape)?;
@@ -151,7 +139,6 @@ fn polygon_region(
     poly: PolygonRegion,
     target_coords: &CoordinateSystem,
     full_shape: &[usize],
-    is_compound: bool,
 ) -> Result<ParsedRegion, ImageError> {
     let plane = poly
         .lattice_plane(target_coords, full_shape)?
@@ -163,7 +150,7 @@ fn polygon_region(
     let axes = poly.pixel_axes;
     let bounds = plane.section(full_shape, axes);
     Ok(ParsedRegion {
-        is_compound,
+        is_compound: false,
         is_crtf: false,
         shapes: Vec::new(),
         saved_mask: Some(SavedRegionMask::Polygon { axes, plane }),
