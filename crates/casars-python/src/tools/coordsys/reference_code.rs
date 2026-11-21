@@ -121,11 +121,13 @@ fn direction_code(state: &mut CoordinateState, name: &str, adjust: bool) -> PyRe
             .try_into()
             .map_err(|_| raised("Invalid direction reference value"))?
     };
-    let changed = model
-        .with_reassigned_reference_frame(frame, reference)
-        .map_err(raised)?;
+    let changed = CoordinateModel::from(
+        model
+            .with_reassigned_reference_frame(frame, reference)
+            .map_err(raised)?,
+    );
     let record = Value::Record(changed.to_record());
-    replace_at(state, index as i32, changed.into(), record)
+    replace_at(state, index as i32, changed, record)
 }
 
 fn frequency_context(state: &CoordinateState) -> PyResult<MeasFrame> {
@@ -201,6 +203,7 @@ fn spectral_code(
         return Err(raised("Missing spectral coordinate record"));
     };
     relabel_spectral_record(&mut record, frame);
+    let changed = CoordinateModel::from(changed);
     if adjust {
         let rebuilt = changed.to_record();
         if let Some(table) = rebuilt.get("tabular") {
@@ -219,7 +222,7 @@ fn spectral_code(
             );
         }
     }
-    replace_at(state, index as i32, changed.into(), Value::Record(record))
+    replace_at(state, index as i32, changed, Value::Record(record))
 }
 
 #[pymethods]
