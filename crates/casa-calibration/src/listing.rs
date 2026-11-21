@@ -86,7 +86,15 @@ pub(crate) fn list_calibration(
     spw: &str,
     page_rows: i32,
 ) -> Result<CalibrationListing, String> {
-    let table = Table::open(TableOptions::new(input)).map_err(display)?;
+    let options = TableOptions::new(input);
+    #[cfg(unix)]
+    let table = Table::open_with_lock(
+        options,
+        casa_tables::LockOptions::new(casa_tables::LockMode::AutoLocking).read_only(true),
+    );
+    #[cfg(not(unix))]
+    let table = Table::open(options);
+    let table = table.map_err(display)?;
     if table.info().table_type != TABLE_INFO_TYPE {
         return Err(format!("{} is not a calibration table", input.display()));
     }

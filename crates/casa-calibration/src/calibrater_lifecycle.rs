@@ -232,7 +232,11 @@ impl CalibraterLifecycle {
                 format!("Table {} does not exist.", caltable.display())
             });
         };
-        let ms = MeasurementSet::open(dataset).map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        let ms = MeasurementSet::open_retained_read(dataset);
+        #[cfg(not(unix))]
+        let ms = MeasurementSet::open(dataset);
+        let ms = ms.map_err(|error| error.to_string())?;
         let listing = list_calibration(&ms, caltable, field, antenna, spw, page_rows)?;
         if listfile.is_empty() {
             return Ok(CalibrationListingReport {

@@ -2,11 +2,11 @@
 //! CASA argument conversions shared by the calibrater methods.
 
 use numpy::PyUntypedArray;
-use pyo3::exceptions::{PySystemError, PyTypeError};
+use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBoolMethods, PyBytes, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{PyBool, PyBoolMethods, PyBytes, PyFloat, PyInt, PyList, PyString, PyTuple};
 
-use crate::convert::integer_vector;
+use crate::convert::{Variant, integer_vector};
 
 pub(super) fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
     Ok(Some(value.clone()))
@@ -50,6 +50,110 @@ pub(super) fn text(value: Option<Bound<'_, PyAny>>, name: &str, default: &str) -
             "argument _{name} must be a string"
         ))),
     }
+}
+
+pub(super) fn listing_page_rows(value: Option<&Bound<'_, PyAny>>) -> PyResult<i32> {
+    let Some(value) = value else { return Ok(50) };
+    if value.is_instance_of::<PyInt>()
+        || value.is_instance(&value.py().import("numpy")?.getattr("integer")?)?
+    {
+        return value.extract::<i64>().map(|rows| rows as i32).map_err(|_| {
+            PyOverflowError::new_err("pagerows does not fit in a signed 64-bit integer")
+        });
+    }
+    Err(PyTypeError::new_err(
+        "argument _pagerows must be an integer",
+    ))
+}
+
+enum ListingSelectorElement {
+    Text(String),
+    Integer(i64),
+    Float(f64),
+    Bool(bool),
+}
+
+pub(super) fn listing_selector(value: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+    let Some(value) = value else {
+        return Ok(String::new());
+    };
+    let mut items = Vec::new();
+    listing_selector_elements(value, &mut items, 0)?;
+    let floats = items
+        .iter()
+        .any(|item| matches!(item, ListingSelectorElement::Float(_)));
+    let integers = items
+        .iter()
+        .any(|item| matches!(item, ListingSelectorElement::Integer(_)));
+    Ok(items
+        .into_iter()
+        .map(|item| match item {
+            ListingSelectorElement::Text(text) => text,
+            ListingSelectorElement::Float(value) => format!("{value:.6}"),
+            ListingSelectorElement::Integer(value) if floats => format!("{:.6}", value as f64),
+            ListingSelectorElement::Integer(value) => value.to_string(),
+            ListingSelectorElement::Bool(value) if floats => {
+                format!("{:.6}", u8::from(value) as f64)
+            }
+            ListingSelectorElement::Bool(value) if integers => u8::from(value).to_string(),
+            ListingSelectorElement::Bool(value) => value.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(","))
+}
+
+fn listing_selector_elements(
+    value: &Bound<'_, PyAny>,
+    items: &mut Vec<ListingSelectorElement>,
+    depth: usize,
+) -> PyResult<()> {
+    use ListingSelectorElement::{Bool, Float, Integer, Text};
+
+    if depth == 128 {
+        return Err(PyValueError::new_err(
+            "cyclic or too deeply nested listing selector",
+        ));
+    }
+    if value.is_none() {
+        return Ok(());
+    }
+    if value.is_instance_of::<PyUntypedArray>() {
+        let flattened = value
+            .call_method1("ravel", ("F",))?
+            .call_method0("tolist")?;
+        return listing_selector_elements(&flattened, items, depth + 1);
+    }
+    if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
+        for item in value.try_iter()? {
+            listing_selector_elements(&item?, items, depth + 1)?;
+        }
+        return Ok(());
+    }
+    let element = if let Ok(flag) = value.cast::<PyBool>() {
+        Bool(flag.is_true())
+    } else if value.is_instance_of::<PyInt>() {
+        Integer(value.extract()?)
+    } else if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytes>() {
+        let text = text(Some(value.clone()), "selector", "")?;
+        Text(text.split('\0').next().unwrap_or_default().into())
+    } else if value.is_instance_of::<PyFloat>() {
+        Float(value.extract()?)
+    } else {
+        let numpy = value.py().import("numpy")?;
+        if value.is_instance(&numpy.getattr("signedinteger")?)? {
+            Integer(value.extract()?)
+        } else if value.is_instance(&numpy.getattr("floating")?)? {
+            Float(value.extract()?)
+        } else if value.is_instance(&numpy.getattr("unsignedinteger")?)?
+            || value.is_instance(&numpy.getattr("bool_")?)?
+        {
+            return Ok(());
+        } else {
+            Text(value.extract::<Variant>()?.describe())
+        }
+    };
+    items.push(element);
+    Ok(())
 }
 
 pub(super) fn window_map(

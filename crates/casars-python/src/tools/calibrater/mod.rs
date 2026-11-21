@@ -193,26 +193,32 @@ impl PyCalibrater {
         Ok(result)
     }
 
-    #[pyo3(signature = (caltable, field = Variant::Empty, antenna = Variant::Empty, spw = Variant::Empty, listfile = "", pagerows = 50), text_signature = "($self, caltable, field=[], antenna=[], spw=[], listfile='', pagerows=50)")]
+    #[pyo3(signature = (caltable, field = None, antenna = None, spw = None, listfile = None, pagerows = None), text_signature = "($self, caltable, field=[], antenna=[], spw=[], listfile='', pagerows=50)")]
     #[allow(clippy::too_many_arguments)]
     fn listcal(
         &self,
         py: Python<'_>,
-        caltable: &str,
-        field: Variant,
-        antenna: Variant,
-        spw: Variant,
-        listfile: &str,
-        pagerows: i64,
+        caltable: Bound<'_, PyAny>,
+        field: Option<Bound<'_, PyAny>>,
+        antenna: Option<Bound<'_, PyAny>>,
+        spw: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = arguments::supplied)] listfile: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = arguments::supplied)] pagerows: Option<Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let report = self.with_lifecycle(py, |state| {
+        let caltable = arguments::text(Some(caltable), "caltable", "")?;
+        let listfile = arguments::text(listfile, "listfile", "")?;
+        let field = arguments::listing_selector(field.as_ref())?;
+        let antenna = arguments::listing_selector(antenna.as_ref())?;
+        let spw = arguments::listing_selector(spw.as_ref())?;
+        let pagerows = arguments::listing_page_rows(pagerows.as_ref())?;
+        let report = self.with_lifecycle(py, move |state| {
             Ok(state.list_calibration(
-                Path::new(caltable),
-                &selector(&field).unwrap_or_default(),
-                &selector(&antenna).unwrap_or_default(),
-                &selector(&spw).unwrap_or_default(),
-                listfile,
-                pagerows as i32,
+                Path::new(caltable.split('\0').next().unwrap_or_default()),
+                &field,
+                &antenna,
+                &spw,
+                listfile.split('\0').next().unwrap_or_default(),
+                pagerows,
             ))
         })?;
         let report = match report {
