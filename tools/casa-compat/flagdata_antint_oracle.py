@@ -4,6 +4,7 @@
 
 from contextlib import chdir
 from json import loads
+from os import environ
 from pathlib import Path
 from shutil import copytree
 from signal import SIGABRT, SIGSEGV
@@ -251,6 +252,41 @@ def check_inputs(libraries):
     return len(cases)
 
 
+def check_provider_and_cli_thresholds():
+    path = "typed-threshold.ms"
+    copytree("source.ms", path)
+    original, auxiliary = snapshot(path), auxiliary_content(path)
+    output = Path("invalid-commands.txt")
+    for value in ("bad", [0.5]):
+        try:
+            tasks.run("flagdata", vis=path, mode="antint", antint_ref_antenna="A0",
+                      action="none", savepars=True, minchanfrac=value, outfile=str(output))
+        except tasks.TaskParameterError as error:
+            assert error.completion.parameter == "minchanfrac"
+        else:
+            raise AssertionError(value)
+        assert not output.exists()
+        assert_preserved(path, original, auxiliary)
+    binary = environ.get("CASARS_FLAGDATA_BIN", "flagdata")
+    arguments = [binary, "--vis", path, "--mode", "antint", "--antint_ref_antenna", "A0"]
+    invalid = subprocess.run(
+        [*arguments, "--minchanfrac", "bad", "--action", "none", "--savepars", "--outfile", str(output)],
+        capture_output=True, check=False,
+    )
+    assert invalid.returncode != 0 and not output.exists()
+    assert_preserved(path, original, auxiliary)
+
+    _, _, _, empty = products(path)
+    for threshold in ("inf", "NaN"):
+        write_seed(path, empty)
+        subprocess.run([*arguments, "--minchanfrac", threshold, "--no-flagbackup"],
+                       capture_output=True, check=True)
+        samples, rows = flags(path)
+        expected = threshold == "NaN"
+        assert np.all(samples == expected)
+        assert np.all(rows == expected)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     libraries = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
@@ -261,8 +297,9 @@ def main():
         check_spectral_windows(libraries)
         check_saved_commands(libraries)
         invalid = check_inputs(libraries)
+        check_provider_and_cli_thresholds()
     print(f"{count} antint products, physical single-channel control, autocorrelation, SPW isolation, "
-          f"saved commands, and {invalid} type refusals verified")
+          f"saved commands, {invalid} type refusals, and raw provider and CLI thresholds verified")
 
 
 if __name__ == "__main__":

@@ -42,6 +42,20 @@ pub(super) struct ClipTimedRow {
 }
 
 impl ClipTimedRow {
+    #[cfg(test)]
+    pub(super) fn integration_fixture_row(
+        row: usize,
+        seconds: f64,
+        [first, second]: [i32; 2],
+    ) -> Self {
+        Self {
+            row,
+            group: [0, 0, 0, 0, 0, first, second],
+            chunk: 0,
+            seconds,
+        }
+    }
+
     pub(super) fn description(&self) -> i32 {
         self.group[4]
     }

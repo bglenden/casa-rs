@@ -287,7 +287,10 @@ fn validated_cli_value(
                 token
                     .parse::<f64>()
                     .ok()
-                    .filter(|value| value.is_finite())
+                    .filter(|value| {
+                        value.is_finite()
+                            || (bundle.surface.id() == "flagdata" && binding.name == "minchanfrac")
+                    })
                     .map_or_else(
                         || ParameterValue::String(text.to_string()),
                         ParameterValue::Float,

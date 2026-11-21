@@ -58,6 +58,10 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
+    let mode = task.required_text("mode")?;
+    if mode == "antint" {
+        antint_min_channel_fraction(task)?;
+    }
     let vector_selector = selector_argument(task)?;
     let column = flagdata_column_argument(task)?;
     let time_chunk = time_chunk_argument(task).or_else(|error| {
@@ -66,7 +70,6 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         Err(error)
     })?;
-    let mode = task.required_text("mode")?;
     let display_option = task.required_text("display")?;
     if column.is_none() && matches!(mode.as_str(), "clip" | "tfcrop" | "rflag") {
         backup_before_failed_apply(task, &action)?;
@@ -688,7 +691,7 @@ fn flagdata_request(
         shadow: ShadowOptions::default(),
         antint: AntennaIntegrationOptions {
             reference_antenna: task.required_text("antint_ref_antenna")?,
-            min_channel_fraction: task.number("minchanfrac")?,
+            min_channel_fraction: antint_min_channel_fraction(task)?,
             verbose: task.flag("verbose")?,
         },
         timecutoff: task.number("timecutoff")?,
@@ -708,6 +711,17 @@ fn flagdata_request(
         growtime: task.number("growtime")?,
         growfreq: task.number("growfreq")?,
     })
+}
+
+fn antint_min_channel_fraction(task: &TaskInvocation<'_>) -> Result<f64, TaskFailure> {
+    if let Some(ParameterValue::NumpyScalar { value, .. }) = task.value("minchanfrac") {
+        match value.as_ref() {
+            ParameterValue::Float(value) => return Ok(*value),
+            ParameterValue::Integer(value) => return Ok(*value as f64),
+            _ => {}
+        }
+    }
+    task.number("minchanfrac")
 }
 
 fn clip_time_bin(

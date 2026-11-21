@@ -899,6 +899,27 @@ fn flag_read_plan(
     include_data_description: bool,
 ) -> Result<MsReadPlan, FlaggingError> {
     let path = display_ms_path(ms);
+    let maximum_elements = maximum_flag_elements(ms)?;
+    let requested_bytes_per_row = maximum_elements
+        .checked_mul(primitive_bytes.saturating_add(2))
+        .and_then(|bytes| bytes.checked_add(usize::from(include_data_description) * 4))
+        .ok_or_else(|| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: "flag row byte accounting overflowed".to_string(),
+        })?;
+    let budget = MsSelectionIoBudget::from_system_memory(1, requested_bytes_per_row, None)
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: source.to_string(),
+        })?;
+    MsReadPlan::new(row_count, budget).map_err(|source| FlaggingError::MutateFlags {
+        path,
+        reason: source.to_string(),
+    })
+}
+
+fn maximum_flag_elements(ms: &MeasurementSet) -> Result<usize, FlaggingError> {
+    let path = display_ms_path(ms);
     let data_description = ms
         .data_description()
         .map_err(|source| FlaggingError::MutateFlags {
@@ -962,22 +983,7 @@ fn flag_read_plan(
                 },
             )?);
     }
-    let requested_bytes_per_row = maximum_elements
-        .checked_mul(primitive_bytes.saturating_add(2))
-        .and_then(|bytes| bytes.checked_add(usize::from(include_data_description) * 4))
-        .ok_or_else(|| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: "flag row byte accounting overflowed".to_string(),
-        })?;
-    let budget = MsSelectionIoBudget::from_system_memory(1, requested_bytes_per_row, None)
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: source.to_string(),
-        })?;
-    MsReadPlan::new(row_count, budget).map_err(|source| FlaggingError::MutateFlags {
-        path,
-        reason: source.to_string(),
-    })
+    Ok(maximum_elements)
 }
 
 fn apply_clip_flags(

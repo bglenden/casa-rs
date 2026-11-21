@@ -7,13 +7,13 @@ use casa_types::ArrayValue;
 use casa_types::quanta::format::{YMD, format_time};
 
 use crate::selection::syntax::ChannelSelection;
-use crate::{MeasurementSet, MsResult};
+use crate::{MeasurementSet, MsReadPlan, MsResult, MsSelectionIoBudget};
 
-use super::clip_time::{ClipTimedRow, integration_blocks, read_clip_times, sort_iterator_rows};
+use super::clip_time::{ClipTimedRow, read_clip_times, sort_iterator_rows};
 use super::geometry::apply_geometric_flags;
 use super::{
     ChangeSet, CorrelationSelection, FLAG_COLUMN, FlaggingError, data_description_spw_map,
-    flag_read_plan,
+    maximum_flag_elements,
 };
 
 /// Controls propagation from a reference antenna's baselines to its integrations.
@@ -69,72 +69,129 @@ pub(super) fn apply(
         .map_err(|error| fail(error.to_string()))?;
     let mut timed = read_clip_times(ms, selected, path)?;
     sort_iterator_rows(&mut timed);
-    let mut affected = Vec::new();
-    let plan = flag_read_plan(ms, timed.len(), size_of::<Option<ArrayValue>>(), false)?;
-    let batch_rows = plan.rows_per_block.max(1);
-    for block in integration_blocks(&timed, batch_rows) {
-        let mut readback = BTreeMap::new();
-        for batch in block.chunks(batch_rows) {
-            let indices: Vec<_> = batch
-                .iter()
-                .filter(|row| reference_baseline(row, reference).is_some())
-                .map(|row| row.row)
-                .collect();
-            let cells = ms
-                .main_table()
-                .column_accessor(FLAG_COLUMN)
-                .and_then(|column| column.array_cells_owned_uncached(&indices))
-                .map_err(|error| fail(error.to_string()))?;
-            readback.extend(indices.into_iter().zip(cells));
-        }
-        for integration in block.chunk_by(ClipTimedRow::shares_integration) {
-            let ddid = integration[0].description();
+    let mut channels_by_description = BTreeMap::new();
+    for row in &timed {
+        let ddid = row.description();
+        if let std::collections::btree_map::Entry::Vacant(slot) =
+            channels_by_description.entry(ddid)
+        {
             let window = ddid_to_spw
                 .get(&ddid)
                 .and_then(|&id| usize::try_from(id).ok())
                 .ok_or_else(|| fail(format!("DATA_DESC_ID {ddid} has no SPW mapping")))?;
-            let channel_count = usize::try_from(
+            let count = usize::try_from(
                 windows
                     .num_chan(window)
                     .map_err(|error| fail(error.to_string()))?,
             )
             .map_err(|_| fail(format!("negative channel count in SPW {window}")))?;
-            if channel_count == 0 {
-                continue;
+            slot.insert(count);
+        }
+    }
+    let bytes_per_row = maximum_flag_elements(ms)?
+        .checked_add(size_of::<Option<ArrayValue>>() + size_of::<usize>())
+        .ok_or_else(|| fail("flag row byte accounting overflowed".to_owned()))?;
+    let budget = MsSelectionIoBudget::from_system_memory(2, bytes_per_row, None)
+        .map_err(|error| fail(error.to_string()))?;
+    let plan = MsReadPlan::new(timed.len(), budget).map_err(|error| fail(error.to_string()))?;
+    let column = ms
+        .main_table()
+        .column_accessor(FLAG_COLUMN)
+        .map_err(|error| fail(error.to_string()))?;
+    let mut affected = IntegrationScan {
+        rows: &timed,
+        reference,
+        antenna_count,
+        channels_by_description: &channels_by_description,
+        options,
+    }
+    .affected_rows(plan.rows_per_block.max(1), &fail, |indices| {
+        column
+            .array_cells_owned_uncached(indices)
+            .map_err(|error| fail(error.to_string()))
+    })?;
+    affected.sort_unstable();
+    apply_geometric_flags(ms, &affected, channels, correlations)
+}
+
+struct IntegrationScan<'a> {
+    rows: &'a [ClipTimedRow],
+    reference: i32,
+    antenna_count: usize,
+    channels_by_description: &'a BTreeMap<i32, usize>,
+    options: &'a AntennaIntegrationOptions,
+}
+
+impl IntegrationScan<'_> {
+    fn affected_rows(
+        &self,
+        batch_rows: usize,
+        fail: impl Fn(String) -> FlaggingError,
+        mut read_flags: impl FnMut(&[usize]) -> Result<Vec<Option<ArrayValue>>, FlaggingError>,
+    ) -> Result<Vec<usize>, FlaggingError> {
+        let mut affected = Vec::new();
+        let mut start = 0;
+        let mut flags = BTreeMap::new();
+        for (batch_index, batch) in self.rows.chunks(batch_rows).enumerate() {
+            let indices: Vec<_> = batch
+                .iter()
+                .filter(|row| reference_baseline(row, self.reference).is_some())
+                .map(|row| row.row)
+                .collect();
+            let mut cells = read_flags(&indices)?.into_iter();
+            for (offset, row) in batch.iter().enumerate() {
+                if !self.rows[start].shares_integration(row) {
+                    let end = batch_index * batch_rows + offset;
+                    self.finish_integration(&self.rows[start..end], &flags, &mut affected);
+                    start = end;
+                    flags.clear();
+                }
+                if let Some(other) = reference_baseline(row, self.reference) {
+                    let count = self.channels_by_description[&row.description()];
+                    add_baseline_flags(&mut flags, row.row, other, count, cells.next().flatten())
+                        .map_err(&fail)?;
+                }
             }
-            let common = flagged_channels(
-                &readback,
-                integration,
-                reference,
-                antenna_count,
-                channel_count,
-                fail,
-            )?;
-            let fraction = common as f64 / channel_count as f64;
-            let reaches = if channel_count == 1 {
-                common == 1
-            } else {
-                fraction
-                    .partial_cmp(&options.min_channel_fraction)
-                    .is_none_or(|order| order.is_gt())
-            };
-            if reaches {
-                affected.extend(integration.iter().map(|row| row.row));
-                if options.verbose {
-                    let time = format_time(integration[0].time() / 86_400.0, YMD, 7);
-                    if channel_count == 1 {
-                        tracing::info!("Flagging integration at time:{time}");
-                    } else {
-                        tracing::info!(
-                            "Flagging integration at time: {time} (fraction of flagged channels found: {fraction})"
-                        );
-                    }
+        }
+        if start < self.rows.len() {
+            self.finish_integration(&self.rows[start..], &flags, &mut affected);
+        }
+        Ok(affected)
+    }
+
+    fn finish_integration(
+        &self,
+        rows: &[ClipTimedRow],
+        flags: &BTreeMap<i32, Vec<bool>>,
+        affected: &mut Vec<usize>,
+    ) {
+        let count = self.channels_by_description[&rows[0].description()];
+        if count == 0 {
+            return;
+        }
+        let common = common_flagged_channels(flags, self.antenna_count, count);
+        let fraction = common as f64 / count as f64;
+        let reaches = if count == 1 {
+            common == 1
+        } else {
+            fraction
+                .partial_cmp(&self.options.min_channel_fraction)
+                .is_none_or(|order| order.is_gt())
+        };
+        if reaches {
+            affected.extend(rows.iter().map(|row| row.row));
+            if self.options.verbose {
+                let time = format_time(rows[0].time() / 86_400.0, YMD, 7);
+                if count == 1 {
+                    tracing::info!("Flagging integration at time:{time}");
+                } else {
+                    tracing::info!(
+                        "Flagging integration at time: {time} (fraction of flagged channels found: {fraction})"
+                    );
                 }
             }
         }
     }
-    affected.sort_unstable();
-    apply_geometric_flags(ms, &affected, channels, correlations)
 }
 
 fn reference_antenna(ms: &MeasurementSet, name: &str) -> MsResult<(Option<i32>, usize)> {
@@ -157,44 +214,97 @@ fn reference_baseline(row: &ClipTimedRow, reference: i32) -> Option<i32> {
     }
 }
 
-fn flagged_channels(
-    flags_by_row: &BTreeMap<usize, Option<ArrayValue>>,
-    rows: &[ClipTimedRow],
-    reference: i32,
+fn add_baseline_flags(
+    flags_by_antenna: &mut BTreeMap<i32, Vec<bool>>,
+    row: usize,
+    other: i32,
+    channel_count: usize,
+    cell: Option<ArrayValue>,
+) -> Result<(), String> {
+    let Some(ArrayValue::Bool(flags)) = cell else {
+        return Err(format!("FLAG row {row} must be a Boolean array"));
+    };
+    let [correlation_count, channels] = flags.shape() else {
+        return Err(format!(
+            "FLAG row {row} must have correlation and channel axes"
+        ));
+    };
+    if *channels != channel_count {
+        return Err(format!("FLAG row {row} has an inconsistent channel count"));
+    }
+    let baseline = flags_by_antenna
+        .entry(other)
+        .or_insert_with(|| vec![false; channel_count]);
+    for (channel, flagged) in baseline.iter_mut().enumerate() {
+        *flagged |= (0..*correlation_count).any(|corr| flags[[corr, channel]]);
+    }
+    Ok(())
+}
+
+fn common_flagged_channels(
+    flags_by_antenna: &BTreeMap<i32, Vec<bool>>,
     antenna_count: usize,
     channel_count: usize,
-    fail: impl Fn(String) -> FlaggingError,
-) -> Result<usize, FlaggingError> {
-    let mut flags_by_antenna = BTreeMap::new();
-    for row in rows {
-        let Some(other) = reference_baseline(row, reference) else {
-            continue;
-        };
-        let row = row.row;
-        let Some(Some(ArrayValue::Bool(flags))) = flags_by_row.get(&row) else {
-            return Err(fail(format!("FLAG row {row} must be a Boolean array")));
-        };
-        let [correlation_count, channels] = flags.shape() else {
-            return Err(fail(format!(
-                "FLAG row {row} must have correlation and channel axes"
-            )));
-        };
-        if *channels != channel_count {
-            return Err(fail(format!(
-                "FLAG row {row} has an inconsistent channel count"
-            )));
-        }
-        let baseline = flags_by_antenna
-            .entry(other)
-            .or_insert_with(|| vec![false; channel_count]);
-        for (channel, flagged) in baseline.iter_mut().enumerate() {
-            *flagged |= (0..*correlation_count).any(|corr| flags[[corr, channel]]);
-        }
-    }
+) -> usize {
     if flags_by_antenna.len() < antenna_count - 1 {
-        return Ok(0);
+        return 0;
     }
-    Ok((0..channel_count)
+    (0..channel_count)
         .filter(|&channel| flags_by_antenna.values().all(|baseline| baseline[channel]))
-        .count())
+        .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integration_decisions_span_physical_flag_batches() {
+        let rows: Vec<_> = [
+            (10.0, [0, 1]),
+            (10.0, [0, 2]),
+            (10.0, [1, 2]),
+            (20.0, [0, 1]),
+            (20.0, [0, 2]),
+            (20.0, [1, 2]),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(row, (time, baseline))| ClipTimedRow::integration_fixture_row(row, time, baseline))
+        .collect();
+        let scan = IntegrationScan {
+            rows: &rows,
+            reference: 0,
+            antenna_count: 3,
+            channels_by_description: &BTreeMap::from([(0, 3)]),
+            options: &AntennaIntegrationOptions::default(),
+        };
+        for batch_size in [1, 2, 16] {
+            let affected = scan
+                .affected_rows(
+                    batch_size,
+                    |reason| FlaggingError::MutateFlags {
+                        path: "fixture".to_owned(),
+                        reason,
+                    },
+                    |indices| {
+                        assert!(indices.len() <= batch_size);
+                        Ok(indices
+                            .iter()
+                            .map(|row| {
+                                let values = match row {
+                                    0 => [[true, true, false], [false, false, false]],
+                                    1 | 3 => [[false, false, false], [true, true, false]],
+                                    4 => [[true, false, false], [false, false, false]],
+                                    _ => panic!("read a non-reference FLAG row"),
+                                };
+                                Some(ArrayValue::Bool(ndarray::arr2(&values).into_dyn()))
+                            })
+                            .collect())
+                    },
+                )
+                .expect("reduce flag batches");
+            assert_eq!(affected, [0, 1, 2]);
+        }
+    }
 }
