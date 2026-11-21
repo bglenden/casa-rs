@@ -126,13 +126,49 @@ def check_unknown_operator_product(libraries):
         assert not any(mask.any() for mask in flags(path))
 
 
+def check_related_flag_state(libraries):
+    with table("linear.ms", ack=False) as main:
+        baseline = ((main.getcol("FIELD_ID") == 0) & (main.getcol("ANTENNA1") == 0)
+                    & (main.getcol("ANTENNA2") == 1))
+    row = np.flatnonzero(baseline)[0]
+    cases = (("ABS_I", False, 0), ("ABS_I", False, 1), ("XX", True, 0), ("XX", True, 1))
+    for index, (expression, extend, plane) in enumerate(cases):
+        for name, task in libraries:
+            path = f"related-{index}-{name}.ms"
+            copytree("linear.ms", path)
+            seeded, rows = flags(path)
+            seeded[row, 9, plane] = True
+            with table(path, readonly=False, ack=False) as main:
+                main.putcol("DATA", np.ones_like(main.getcol("DATA")))
+                main.putcol("FLAG", seeded)
+            expected = seeded.copy()
+            # Stokes I covers both contributing planes. For an explicit XX
+            # fit, native extension may update the selected physical plane.
+            if expression == "ABS_I" or name == "casa" or plane == 1:
+                expected[row, 9, :] = True
+            before = auxiliary_content(path)
+            options = dict(vis=path, mode="tfcrop", antenna="0&1", datacolumn="data",
+                           correlation=expression, flagdimension="freq", extendflags=extend)
+            assert task(action="calculate", **options) == {}
+            if name == "native":
+                calculated = tasks.run("flagdata", action="calculate", **options)
+                assert loads(calculated.stdout)["result"]["changed_samples"] == expected.sum() - seeded.sum()
+            assert auxiliary_content(path) == before
+            assert task(**options) == {}
+            actual, actual_rows = flags(path)
+            np.testing.assert_array_equal(actual, expected)
+            np.testing.assert_array_equal(actual_rows, rows)
+    return len(cases)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     libraries = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
     with TemporaryDirectory(prefix="flagdata-tfcrop-products-") as root, chdir(root):
         products = check_products(libraries)
         check_unknown_operator_product(libraries)
-    print(f"{products} TFCrop correlation products and an invalid expression verified")
+        related = check_related_flag_state(libraries)
+    print(f"{products} TFCrop correlation products, {related} related flag products and an invalid expression verified")
 
 
 if __name__ == "__main__":

@@ -197,6 +197,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         FlaggingError::MissingClipColumn | FlaggingError::MissingTfcropColumn => {
             TaskFailure::validation(error.to_string()).at("datacolumn")
         }
+        FlaggingError::UnknownTfcropProduct(_) => {
+            TaskFailure::execution(error.to_string()).at("correlation")
+        }
         FlaggingError::DisplayColumnVector => {
             TaskFailure::execution(error.to_string()).at("datacolumn")
         }
