@@ -18,11 +18,10 @@ use crate::convert::{DoubleList, IntList, Variant, value::CasaValue};
 use crate::tools::coordsys::stored_velocity_settings;
 use crate::tools::{LogLine, emit};
 
-use super::copy_region::Selection;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::mask_expression::{MaskTarget, evaluate_mask};
 use super::pixels::{Chunk, and_mask, collapse_axes};
-use super::region_read::region_argument;
+use super::region_read::{read_region_argument, read_region_section};
 use super::{PyImageTool, stub};
 
 mod flux;
@@ -422,7 +421,7 @@ impl PyImageTool {
         niter: i64,
     ) -> PyResult<Py<PyAny>> {
         let _ = force;
-        let region = region_argument(py, region, "statistics");
+        let region = read_region_argument(py, region, "statistics");
         let expression = stats_mask(mask);
         let (value, log) = py.detach(|| {
             let state = self.state();
@@ -471,7 +470,7 @@ impl PyImageTool {
                     return Err(raised(format!("Invalid cursor axes: {axes:?}.")));
                 }
                 let axes = collapse_axes(&axes, shape.len())?;
-                let chunk = Chunk::from(Selection::new(shape, &region, "statistics")?);
+                let (chunk, membership) = read_region_section(&image, region.as_ref(), true)?;
                 let expression = if mask.is_empty() {
                     None
                 } else {
@@ -490,7 +489,7 @@ impl PyImageTool {
                     include,
                     exclude,
                     robust,
-                    expression,
+                    expression: and_mask(membership, expression),
                     algorithm,
                     single_precision,
                     fits_backed: image.fits().is_some(),

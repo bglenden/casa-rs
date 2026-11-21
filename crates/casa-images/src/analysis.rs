@@ -34,6 +34,7 @@ mod immath;
 mod importfits;
 mod imregrid;
 mod imsubimage;
+pub use imsubimage::ImageRegionSection;
 pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use imsubimage::{
     ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,

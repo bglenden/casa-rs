@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::RecordValue;
+use casa_images::analysis::ImageRegionSection;
+use casa_types::{ArrayD, RecordValue};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
@@ -8,10 +9,11 @@ use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 use crate::convert::{IntList, Variant, value::CasaValue};
 use crate::tools::{LogLine, emit, table::casa_record};
 
-use super::copy_region::Selection;
-use super::handle::raised;
+use super::attachment::read_locked;
+use super::handle::{ImageHandle, raised, with_pixels, with_storage};
 use super::mask_expression::{MaskTarget, evaluate_mask};
-use super::pixels::{Chunk, ChunkRead, collapse_axes};
+use super::pixels::{Chunk, ChunkRead, and_mask, collapse_axes};
+use super::subimage::Region;
 use super::{PyImageTool, stub};
 
 fn is_boolean_sequence(value: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -57,6 +59,42 @@ pub(super) fn region_argument(
     Err(raised(format!("Unsupported type for region {kind}")))
 }
 
+pub(super) fn read_region_argument(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+    method: &'static str,
+) -> PyResult<Option<Region>> {
+    if value.is_some_and(|value| value.is_instance_of::<PyString>()) {
+        return Region::capture(py, value);
+    }
+    let record = region_argument(py, value, method)?;
+    Ok((!record.is_empty()).then_some(Region::Record(record)))
+}
+
+pub(super) fn read_region_section(
+    image: &ImageHandle,
+    region: Option<&Region>,
+    include_membership: bool,
+) -> PyResult<(Chunk, Option<ArrayD<bool>>)> {
+    let region = region.map(Region::as_region);
+    let section = if let ImageHandle::Float(storage) = image {
+        storage
+            .with_float_view(|image| ImageRegionSection::resolve(image, region, include_membership))
+    } else {
+        with_pixels!(image, storage => with_storage!(storage, image =>
+            ImageRegionSection::resolve(image.as_ref(), region, include_membership)))
+    }
+    .map_err(raised)?;
+    Ok((
+        Chunk {
+            start: section.start,
+            size: section.count,
+            stride: section.stride,
+        },
+        section.membership,
+    ))
+}
+
 fn mask_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
     let Some(value) = value else {
         return Ok(String::new());
@@ -85,7 +123,7 @@ impl PyImageTool {
         getmask: bool,
         stretch: bool,
     ) -> PyResult<Py<PyAny>> {
-        let region = region_argument(py, region, "getregion");
+        let region = read_region_argument(py, region, "getregion");
         let mask = mask_argument(mask);
         let (value, log) = py.detach(|| {
             let state = self.state();
@@ -100,51 +138,51 @@ impl PyImageTool {
             };
             let region = region?;
             let mask = mask?;
-            let mut image = attachment.lock();
-            attachment.require_pixel_read_lock(&mut image)?;
-            let shape = image.shape();
-            let chunk = Chunk::from(Selection::new(shape, &region, "getregion")?);
-            let axes = collapse_axes(
-                axes.as_ref().map_or(&[], |arg| arg.0.as_slice()),
-                shape.len(),
-            )?;
-            let expression = if mask.is_empty() {
-                None
-            } else {
-                Some(evaluate_mask(
-                    &mask,
-                    MaskTarget {
-                        shape,
-                        section: Some((&chunk, image.coordinates())),
-                        stretch,
-                        method: "getregion",
+            read_locked(attachment, |image| {
+                let shape = image.shape();
+                let axes = collapse_axes(
+                    axes.as_ref().map_or(&[], |arg| arg.0.as_slice()),
+                    shape.len(),
+                )?;
+                let (chunk, membership) =
+                    read_region_section(image, region.as_ref(), getmask || !axes.is_empty())?;
+                let expression = if mask.is_empty() {
+                    None
+                } else {
+                    Some(evaluate_mask(
+                        &mask,
+                        MaskTarget {
+                            shape,
+                            section: Some((&chunk, image.coordinates())),
+                            stretch,
+                            method: "getregion",
+                        },
+                    )?)
+                };
+                let data = chunk.read_from(
+                    image,
+                    &ChunkRead {
+                        axes: &axes,
+                        dropdeg,
+                        getmask,
                     },
-                )?)
-            };
-            let data = chunk.read_from(
-                &image,
-                &ChunkRead {
-                    axes: &axes,
-                    dropdeg,
-                    getmask,
-                },
-                expression,
-            )?;
-            attachment.release_requested_lock(&mut image)?;
-            let lines = list.then(|| {
-                let end = chunk
-                    .start
-                    .iter()
-                    .zip(&chunk.size)
-                    .zip(&chunk.stride)
-                    .map(|((&start, &count), &step)| start + (count - 1) * step)
-                    .collect::<Vec<_>>();
-                LogLine::info(format!(
-                    "Selected bounding box {:?} to {end:?}",
-                    chunk.start
-                ))
-            });
-            Ok::<_, PyErr>((data, lines.into_iter().collect()))
+                    and_mask(membership, expression),
+                )?;
+                let lines = list.then(|| {
+                    let end = chunk
+                        .start
+                        .iter()
+                        .zip(&chunk.size)
+                        .zip(&chunk.stride)
+                        .map(|((&start, &count), &step)| start + (count - 1) * step)
+                        .collect::<Vec<_>>();
+                    LogLine::info(format!(
+                        "Selected bounding box {:?} to {end:?}",
+                        chunk.start
+                    ))
+                });
+                Ok((data, lines.into_iter().collect()))
+            })
         })?;
         emit(py, "casars.tools.image", &log)?;
         value.into_python(py)
