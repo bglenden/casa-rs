@@ -214,7 +214,10 @@ fn axis_units(
             }
         }
     }
-    if matches!(model, CoordinateModel::Stokes(_)) {
+    if matches!(
+        model,
+        CoordinateModel::Stokes(_) | CoordinateModel::Quality(_)
+    ) {
         return Ok(AxisUnits::World(1.0));
     }
     let native = if matches!(model, CoordinateModel::Direction(_)) {

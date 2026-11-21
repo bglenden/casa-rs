@@ -487,7 +487,7 @@ fn convert_local_world_offsets(
     absolute: bool,
 ) -> Result<(), CoordinateError> {
     match model {
-        CoordinateModel::Stokes(_) => Ok(()),
+        CoordinateModel::Stokes(_) | CoordinateModel::Quality(_) => Ok(()),
         CoordinateModel::Direction(direction) => direction.convert_world_offset(values, absolute),
         _ => {
             for (value, reference) in values.iter_mut().zip(model.reference_value()) {

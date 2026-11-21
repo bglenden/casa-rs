@@ -84,7 +84,7 @@ pub(in crate::tools) fn validate_coordinate_indices(record: &RecordValue) -> PyR
         let Some((kind, index)) = native_coordinate_field(&field.name) else {
             continue;
         };
-        if matches!(kind, "quality" | "coordsys") {
+        if kind == "coordsys" {
             return Err(raised(format!(
                 "The CASA {kind} coordinate is unsupported (#1626)"
             )));
@@ -294,8 +294,18 @@ pub(super) fn restore(mut record: RecordValue, parent_name: String) -> PyResult<
             restored.push(RecordField::new(key, value));
         }
         let model = coordinates.coordinate(model_index);
-        let value = if model.coordinate_type() == CoordinateType::Stokes {
-            model.to_record().into()
+        let value = if matches!(
+            model,
+            CoordinateModel::Stokes(_) | CoordinateModel::Quality(_)
+        ) {
+            let mut canonical = model.to_record();
+            if field.starts_with("coordinate") {
+                canonical.upsert(
+                    "coordinate_type",
+                    Value::Scalar(ScalarValue::String(model.coordinate_type().to_string())),
+                );
+            }
+            canonical.into()
         } else if let Some(Value::Record(original)) = record.get(&field)
             && let Some(normalized) =
                 super::linear_transform::normalize_restored_matrix(original, model)?

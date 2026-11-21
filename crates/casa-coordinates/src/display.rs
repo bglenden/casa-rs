@@ -91,6 +91,9 @@ pub fn format_world_display(
                     .unwrap_or_else(|| code.to_string());
                 fields.push(name);
             }
+            CoordinateModel::Quality(_) => {
+                fields.push(crate::QualityType::from_world(world[0]).name().into());
+            }
             _ => {
                 let units = coord.axis_units();
                 for (axis, value) in world.iter().enumerate() {

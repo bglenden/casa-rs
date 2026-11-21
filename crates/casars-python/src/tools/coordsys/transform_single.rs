@@ -360,6 +360,15 @@ fn text_values<'a>(
                     .unwrap_or(StokesType::Undefined)
                     .code() as f64);
             }
+            if kind == CoordinateType::Quality {
+                return Quantity::read(text)
+                    .map(|value| value.value())
+                    .map_err(|_| {
+                        raised(format!(
+                            "Failed to convert string formatted world [{text}] to double"
+                        ))
+                    });
+            }
             if kind == CoordinateType::Direction {
                 let invalid = || {
                     raised(format!(
@@ -526,6 +535,7 @@ fn update_measures(
                 };
                 quantity_vector(subrecord(value, "linear")?, &units)?
             }
+            CoordinateModel::Quality(_) => continue,
             CoordinateModel::Tabular(_) => {
                 vec![quantity_record(
                     subrecord(value, "tabular")?,

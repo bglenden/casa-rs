@@ -8502,6 +8502,14 @@ such as `21cm`, and records it as `0.21 Hz`. It can also store an infinite
 rest frequency. casa-rs rejects these inputs while preserving the prior
 spectral coordinate.
 
+## FITS export can abort on an image with a native Quality coordinate
+
+Exporting a Float native image with a two-plane Quality coordinate
+(`DATA` and `ERROR`) with `image.tofits` terminates pinned CASA 6.7.6.14
+with a floating-point exception. casa-rs raises a Python error and preserves
+the image. Its single-HDU FITS writer cannot represent both Quality planes
+with their data and error semantics.
+
 ## An empty nested list crashes `coordsys.convertmany`
 
 CASA 6.7.6.14 exits with a segmentation fault when a two-axis coordinate
