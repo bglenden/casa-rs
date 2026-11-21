@@ -117,6 +117,14 @@ fn text<'a>(record: &'a RecordValue, key: &str) -> Option<&'a str> {
 }
 
 pub(super) fn legacy_radial_pattern(path: &Path, telescope: &str) -> MsResult<PrimaryBeam> {
+    legacy_radial_setup(path, telescope, false).map(|(pattern, _)| pattern)
+}
+
+fn legacy_radial_setup(
+    path: &Path,
+    telescope: &str,
+    requested_squint: bool,
+) -> MsResult<(PrimaryBeam, Option<BeamSquintLaw>)> {
     let host = HostResources::detect().map_err(invalid)?;
     let _table_memory = admit(
         &host,
@@ -138,7 +146,18 @@ pub(super) fn legacy_radial_pattern(path: &Path, telescope: &str) -> MsResult<Pr
         let record = table.cell_accessor(row, "pbdescription")?.record()?;
         match record.get("name") {
             Some(Value::Scalar(ScalarValue::String(name))) if name != "REFERENCE" => {
-                return voltage_pattern::radial_pattern(&record).map_err(invalid);
+                let pattern = voltage_pattern::radial_pattern(&record).map_err(invalid)?;
+                let squint = if requested_squint {
+                    voltage_pattern::radial_squint(&record)
+                        .map_err(invalid)?
+                        .map(|(offset_rad, reference_hz)| BeamSquintLaw::Table {
+                            offset_rad,
+                            reference_hz,
+                        })
+                } else {
+                    None
+                };
+                return Ok((pattern, squint));
             }
             Some(Value::Scalar(ScalarValue::String(_))) | None => {}
             _ => return Err(invalid("legacy voltage pattern name must be a string")),
@@ -167,9 +186,40 @@ pub(crate) struct PreparedVoltagePattern {
 
 #[derive(Clone, Copy)]
 struct BeamSquint {
-    beam: PrimaryBeam,
-    reference_hz: f64,
+    law: BeamSquintLaw,
     angle: f64,
+}
+
+#[derive(Clone, Copy)]
+enum BeamSquintLaw {
+    Telescope {
+        beam: PrimaryBeam,
+        reference_hz: f64,
+    },
+    Table {
+        offset_rad: [f64; 2],
+        reference_hz: f64,
+    },
+}
+
+impl BeamSquint {
+    fn displacement(self, frequency: f64, right: bool) -> [f64; 2] {
+        match self.law {
+            BeamSquintLaw::Telescope { beam, reference_hz } => {
+                beam.squint_displacement_rad(reference_hz, frequency, self.angle, right)
+            }
+            BeamSquintLaw::Table {
+                offset_rad,
+                reference_hz,
+            } => PrimaryBeam::stored_squint_displacement_rad(
+                offset_rad,
+                reference_hz,
+                frequency,
+                self.angle,
+                right,
+            ),
+        }
+    }
 }
 
 struct ComponentVoltage<'a> {
@@ -191,12 +241,7 @@ impl ComponentVoltage<'_> {
         let mut gains = [central; 4];
         if let Some(squint) = self.pattern.squint {
             for (index, right) in [(0, true), (3, false)] {
-                let shift = squint.beam.squint_displacement_rad(
-                    squint.reference_hz,
-                    frequency,
-                    squint.angle,
-                    right,
-                );
+                let shift = squint.displacement(frequency, right);
                 let centre = offset_true_angle(&self.centre, shift).map_err(invalid)?;
                 gains[index] = power(angular_separation(
                     self.component.shape().reference_direction().as_angles(),
@@ -601,16 +646,36 @@ impl ImagerVoltagePattern {
             })
             .transpose()?
             .flatten();
-        // PBMath1DEVLA supplies its radial fit even when dosquint was set.
+        let custom = self
+            .table
+            .as_ref()
+            .map(|path| legacy_radial_setup(path, &telescope, squint))
+            .transpose()?;
         let component_squint = squint;
-        let squint = squint && !matches!(default_beam, Some((PrimaryBeam::Evla, _)));
-        if squint && scratch && mixed_arrays {
+        let squint_law = if squint {
+            match (custom, default_beam) {
+                (Some((_, law)), _) => law,
+                // PBMath1DEVLA supplies its radial fit when squint is requested.
+                (None, Some((PrimaryBeam::Evla, _))) => None,
+                (None, Some((beam, reference_hz))) if telescope == "VLA" && beam.squints() => {
+                    Some(BeamSquintLaw::Telescope { beam, reference_hz })
+                }
+                _ => {
+                    return Err(invalid(
+                        "this legacy voltage-pattern squint is pending #1520",
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        if squint_law.is_some() && scratch && mixed_arrays {
             return Err(invalid(
                 "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
             ));
         }
-        let pattern = if let Some(path) = &self.table {
-            legacy_radial_pattern(path, &telescope)?.pattern()
+        let pattern = if let Some((pattern, _)) = custom {
+            pattern.pattern()
         } else {
             match default_beam {
                 Some((pattern, _)) => pattern.pattern(),
@@ -620,7 +685,7 @@ impl ImagerVoltagePattern {
                     })?,
             }
         };
-        let engine = if squint {
+        let engine = if squint_law.is_some() {
             MsCalEngine::for_calibration(ms)?
         } else {
             MsCalEngine::new(ms)?
@@ -638,12 +703,7 @@ impl ImagerVoltagePattern {
                 .observation_direction_j2000(time, usize::try_from(field).map_err(invalid)?)?,
         };
         let frame = engine.spectral_frame_observatory_direction(time, centre.clone())?;
-        let squint = if squint {
-            if self.table.is_some() || telescope != "VLA" {
-                return Err(invalid(
-                    "this legacy voltage-pattern squint is pending #1520",
-                ));
-            }
+        let squint = if let Some(law) = squint_law {
             if scratch
                 && is_local_direction(centre.refer())
                 && selected
@@ -655,9 +715,6 @@ impl ImagerVoltagePattern {
                     "legacy voltage-pattern squint with changing local pointing is pending #1520",
                 ));
             }
-            let (beam, frequency) = default_beam
-                .filter(|(pattern, _)| pattern.squints())
-                .ok_or_else(|| invalid("this VLA band has no supported squint (#1520)"))?;
             let ScalarValue::Int32(feed) =
                 main.cell_accessor(first.row_index, "FEED2")?.scalar()?
             else {
@@ -674,11 +731,7 @@ impl ImagerVoltagePattern {
                 first.spectral_window_id,
                 time,
             )?;
-            Some(BeamSquint {
-                beam,
-                reference_hz: frequency,
-                angle,
-            })
+            Some(BeamSquint { law, angle })
         } else {
             None
         };
@@ -689,7 +742,8 @@ impl ImagerVoltagePattern {
             }),
             centre,
             frame,
-            projected_model: telescope == "VLA" && self.table.is_none(),
+            projected_model: (telescope == "VLA" && self.table.is_none())
+                || matches!(squint_law, Some(BeamSquintLaw::Table { .. })),
             squint,
             component_squint,
         })
@@ -798,16 +852,11 @@ impl PreparedVoltagePattern {
         centre: &MDirection,
         frequency: f64,
     ) -> MsResult<Option<[[f64; 2]; 2]>> {
-        let Some(BeamSquint {
-            beam,
-            reference_hz,
-            angle,
-        }) = self.squint
-        else {
+        let Some(squint) = self.squint else {
             return Ok(None);
         };
         let shifted = |right| {
-            let offset = beam.squint_displacement_rad(reference_hz, frequency, angle, right);
+            let offset = squint.displacement(frequency, right);
             let shifted_centre = offset_true_angle(centre, offset).map_err(invalid)?;
             pixel_centre(direction, &shifted_centre)
         };

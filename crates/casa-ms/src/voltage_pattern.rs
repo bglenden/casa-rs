@@ -242,6 +242,36 @@ pub fn radial_pattern(record: &RecordValue) -> Result<PrimaryBeam, VoltagePatter
     }
 }
 
+/// Read a stored radial pattern's squint in tangent-angle radians and Hz.
+/// An omitted or zero direction leaves the beam centre unchanged.
+///
+/// # Errors
+/// A supplied direction or reference frequency is invalid.
+pub fn radial_squint(record: &RecordValue) -> Result<Option<([f64; 2], f64)>, VoltagePatternError> {
+    let Some(direction) = record.get("squintdir") else {
+        return Ok(None);
+    };
+    let Value::Record(direction) = direction else {
+        return Err(VoltagePatternError::read(
+            "squintdir must be a direction record",
+        ));
+    };
+    let offset = [
+        quantity(direction, "m0", "rad")?,
+        quantity(direction, "m1", "rad")?,
+    ];
+    if offset == [0.; 2] {
+        return Ok(None);
+    }
+    let frequency = quantity(record, "squintreffreq", "Hz")?;
+    if !offset.iter().all(|value| value.is_finite()) || !frequency.is_finite() || frequency <= 0. {
+        return Err(VoltagePatternError::read(
+            "invalid radial beam squint or reference frequency",
+        ));
+    }
+    Ok(Some((offset, frequency)))
+}
+
 fn quantity(record: &RecordValue, field: &str, unit: &str) -> Result<f64, VoltagePatternError> {
     let Some(Value::Record(value)) = record.get(field) else {
         return Err(VoltagePatternError::read(format!(

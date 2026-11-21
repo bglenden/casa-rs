@@ -35,7 +35,25 @@ impl PrimaryBeam {
             scale * magnitude * angle.cos(),
             scale * magnitude * angle.sin(),
         );
-        let (sin, cos) = (-parallactic_rad).sin_cos();
-        [-(sx * cos + sy * sin), -sx * sin + sy * cos]
+        rotate_squint([sx, sy], parallactic_rad)
     }
+
+    /// Convert a stored beam squint at `reference_hz` into the true-angle
+    /// sky displacement for this channel and circular receptor.
+    #[must_use]
+    pub fn stored_squint_displacement_rad(
+        offset_rad: [f64; 2],
+        reference_hz: f64,
+        channel_hz: f64,
+        parallactic_rad: f64,
+        right: bool,
+    ) -> [f64; 2] {
+        let scale = f64::from((-reference_hz / channel_hz) as f32) * if right { 1. } else { -1. };
+        rotate_squint(offset_rad.map(|value| value * scale), parallactic_rad)
+    }
+}
+
+fn rotate_squint([sx, sy]: [f64; 2], parallactic_rad: f64) -> [f64; 2] {
+    let (sin, cos) = (-parallactic_rad).sin_cos();
+    [-(sx * cos + sy * sin), -sx * sin + sy * cos]
 }
