@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "task": "flagmanager",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "053d037aae381f2d3148c7076f4e3e6dd305de2c",
+  "parameters": {
+    "vis": {
+      "scope": "Existing MeasurementSet or current calibration table.",
+      "status": "Partial",
+      "evidence": [
+        "calibration-versions"
+      ],
+      "behaviors": [
+        "versions"
+      ]
+    },
+    "mode": {
+      "scope": "List, save, restore, delete or rename.",
+      "status": "Partial",
+      "evidence": [
+        "calibration-versions"
+      ],
+      "behaviors": [
+        "versions"
+      ]
+    },
+    "versionname": {
+      "scope": "Literal snapshot name.",
+      "status": "Partial",
+      "evidence": [
+        "calibration-versions"
+      ],
+      "behaviors": [
+        "versions"
+      ]
+    },
+    "oldname": {
+      "scope": "Current name when renaming.",
+      "status": "Partial",
+      "evidence": [
+        "calibration-versions"
+      ],
+      "behaviors": [
+        "versions"
+      ]
+    },
+    "comment": {
+      "scope": "Snapshot comment for save and rename.",
+      "status": "Partial",
+      "evidence": [
+        "calibration-versions"
+      ],
+      "behaviors": [
+        "versions"
+      ]
+    },
+    "merge": {
+      "scope": "Replace, OR, or AND flags during restore.",
+      "status": "Partial",
+      "evidence": [
+        "calibration-versions"
+      ],
+      "behaviors": [
+        "versions"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "versions",
+      "title": "Manage persisted flag versions",
+      "status": "Partial",
+      "scope": "Create, list, rename, delete and restore CASA-readable snapshots. Preserve a calibration table’s FLAG-only schema and its stored science data.",
+      "gap": "Further shared version parameter and error-domain behavior is tracked under #978 and #1617.",
+      "evidence": [
+        "calibration-versions"
+      ]
+    }
+  ],
+  "decisions": [],
+  "evidence": {
+    "calibration-versions": {
+      "kind": "Same-input bidirectional CASA flag versions",
+      "state": "passed",
+      "scope": "CASA-written complex bandpass and real delay tables, with flag versions produced and restored through both public Python implementations.",
+      "result": "Four calibration version workflows, 24 replace/OR/AND restores, four renamed restores and four missing-version cases passed. A live casacore writer and a failed stage verified read-lock consistency and retry. Other calibration columns and metadata were preserved.",
+      "casa_version": "6.7.6.14",
+      "revision": "053d037aae381f2d3148c7076f4e3e6dd305de2c",
+      "command": "casa-python tools/casa-compat/flagmanager_calibration_oracle.py --work <new-dir> --native-bin <flagmanager>",
+      "receipt": "resources/casa-compat/evidence/flagmanager-calibration-20261121.json",
+      "links": [
+        "tools/casa-compat/flagmanager_calibration_oracle.py"
+      ]
+    }
+  }
+}
