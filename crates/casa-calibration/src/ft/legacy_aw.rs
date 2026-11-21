@@ -59,9 +59,10 @@ pub(super) fn prepare_model(
     if options.cache_directory.as_os_str().is_empty() {
         return Err(invalid("legacy AW requires a convolution cache directory"));
     }
-    if ms.observation()?.string(0, "TELESCOPE_NAME")? != "VLA" {
+    let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
+    if !matches!(telescope.as_str(), "VLA" | "EVLA") {
         return Err(invalid(
-            "legacy AW currently needs the original VLA (#1520)",
+            "legacy AW currently needs a VLA or EVLA L-band telescope (#1520)",
         ));
     }
     let (shape, increment, coordinates) = model_geometry(model)?;
@@ -125,6 +126,7 @@ pub(super) fn prepare_model(
     let _cache_lock = ready_cache(
         &options.cache_directory,
         spectral,
+        telescope == "VLA",
         || {
             if !options.wideband || !switches[1] {
                 return Err(invalid(
@@ -555,6 +557,7 @@ fn cell_owned_by(path: &Path, owner: &str) -> MsResult<bool> {
 fn ready_cache(
     root: &Path,
     spectral: &SpectralCoordinate,
+    legacy_vla_feed: bool,
     request: impl FnOnce() -> MsResult<(NativeAwRequestInput, String, Reservation)>,
     host: &HostResources,
     desired_workers: i32,
@@ -585,8 +588,15 @@ fn ready_cache(
             .tempdir_in(root)
             .map_err(invalid)?;
         std::fs::File::create(stage.path().join(OWNED_STAGE)).map_err(invalid)?;
-        AwCatalog::generate_legacy_vla(stage.path(), &input, &band, spectral, workers)
-            .map_err(invalid)?;
+        AwCatalog::generate_legacy_l_band(
+            stage.path(),
+            &input,
+            &band,
+            spectral,
+            legacy_vla_feed,
+            workers,
+        )
+        .map_err(invalid)?;
         promote_cells(root, stage)?;
     }
     drop(lock);

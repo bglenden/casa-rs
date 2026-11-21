@@ -155,6 +155,24 @@ def compare_cold(root, dataset, model):
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
+def compare_cold_evla(root, dataset, model):
+    from imager_evla_squint_oracle import telescope_input
+
+    assert casatasks.version_string() == '6.7.6.14'
+    results = {}
+    with TemporaryDirectory(dir=root) as temporary:
+        work = Path(temporary)
+        evla = work / 'evla.ms'
+        telescope_input(dataset, evla, 'EVLA')
+        for machine in ('awproject', 'mawproject'):
+            case = work / machine
+            case.mkdir()
+            results[machine] = cold_case(case, evla, model, machine, {'wbawp': True})
+            print('EVLA', machine, results[machine], flush=True)
+            assert max(results[machine].values()) < 1.e-3
+    (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+
+
 def cold_case(root, dataset, model, machine, terms, *, reference=None):
     native, reopened, imported = (root / f'{name}.ms' for name in (
         'native', 'casa-reopened', 'native-imported',
@@ -520,11 +538,15 @@ def main():
     parser.add_argument('--corrected-reference', type=Path)
     parser.add_argument('--saved-reference', type=Path)
     parser.add_argument('--cold', action='store_true')
+    parser.add_argument('--cold-evla', action='store_true')
     parser.add_argument('--cold-correction', action='store_true')
     args = parser.parse_args()
     args.work.mkdir(parents=True)
     if args.cold:
         compare_cold(args.work, args.dataset, args.model)
+        return
+    if args.cold_evla:
+        compare_cold_evla(args.work, args.dataset, args.model)
         return
     if args.cold_correction:
         compare_cold_correction(args.work, args.dataset, args.model)
