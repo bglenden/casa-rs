@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "oracle": "CASA tasks and casacore table readback",
+  "casa_version": "6.7.6.14",
+  "revision": "9ab00af35fcee2d932757a367eed2adf255c1f33",
+  "merged_revision": "87daaf296408d74c2589b50d28d6407f0b128523",
+  "execution_date": "2026-11-20",
+  "pull_request": "https://github.com/bglenden/casa-rs/pull/1806",
+  "arguments": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "case_groups": 23,
+    "result": "passed",
+    "scope": "Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state."
+  },
+  "scratch": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_scratch_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "case_groups": 38,
+    "result": "passed",
+    "scope": "Single and partitioned MeasurementSets, scratch and virtual state, and concurrent cleanup."
+  },
+  "prediction": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_ft_oracle.py --work <empty-directory> --native-bin <calibrate> --images --mms --chain",
+    "case_groups": 55,
+    "result": "passed",
+    "scope": "Components, CASA images, FITS, Taylor terms, selections, Multi-MS, and subtraction and solve interchange."
+  },
+  "subtraction": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_uvsub_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "case_groups": 16,
+    "result": "passed",
+    "scope": "Scratch and saved models, observed and corrected data, reverse subtraction, and retained write locks."
+  },
+  "fitting": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_uvmodelfit_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "case_groups": 30,
+    "result": "passed",
+    "scope": "Point, Gaussian and disk fits, selected samples, scratch initialization and CASA component-list readback."
+  }
+}

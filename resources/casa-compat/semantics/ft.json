@@ -1,0 +1,226 @@
+{
+  "schema_version": 1,
+  "task": "ft",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "87daaf296408d74c2589b50d28d6407f0b128523",
+  "parameters": {
+    "vis": {
+      "scope": "Existing single or partitioned MeasurementSet.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "field": {
+      "scope": "Field selection for component, image, and virtual recipe publication.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "spw": {
+      "scope": "Spectral-window and channel selections including strided and disjoint ranges.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "timerange": {
+      "scope": "Observe only visibility rows within the time selection.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "uvrange": {
+      "scope": "Select visibility rows by projected baseline length.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "antenna": {
+      "scope": "Select visibility rows by antenna and baseline expression.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "scan": {
+      "scope": "Select scans, including handling an empty match without editing the model.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "observation": {
+      "scope": "Select observations for prediction.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "intent": {
+      "scope": "Select rows by intent pattern.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "model": {
+      "scope": "Read CASA image input and Taylor image lists. FITS participates in reference-frequency lookup and follows the pinned prediction behavior.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "nterms": {
+      "scope": "Select one or more image Taylor terms with the task's wrapper validation.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "reffreq": {
+      "scope": "Explicit quantity or automatic Taylor reference from the first model image.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "complist": {
+      "scope": "Read component lists including off-axis resolved and polarized components.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "incremental": {
+      "scope": "Select addition or replacement for scratch and virtual publication.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    },
+    "usescratch": {
+      "scope": "Write scratch MODEL_DATA or save a virtual model in the MeasurementSet.",
+      "status": "Implemented",
+      "behaviors": [
+        "prediction"
+      ],
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "prediction",
+      "title": "Component and image visibility prediction",
+      "status": "Implemented",
+      "scope": "Components, CASA images, FITS, Taylor terms, selections, Multi-MS, and subtraction and solve interchange.",
+      "gap": "The listed paired task cases match CASA.",
+      "evidence": [
+        "prediction",
+        "arguments"
+      ]
+    }
+  ],
+  "decisions": [],
+  "evidence": {
+    "prediction": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Components, CASA images, FITS, Taylor terms, selections, Multi-MS, and subtraction and solve interchange.",
+      "result": "55 paired case groups passed across this oracle.",
+      "casa_version": "6.7.6.14",
+      "revision": "9ab00af35fcee2d932757a367eed2adf255c1f33",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_ft_oracle.py --work <empty-directory> --native-bin <calibrate> --images --mms --chain",
+      "receipt": "resources/casa-compat/evidence/model-task-arguments-20261120.json",
+      "links": [
+        "tools/casa-compat/calibration_ft_oracle.py",
+        "https://github.com/bglenden/casa-rs/pull/1806"
+      ]
+    },
+    "arguments": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state.",
+      "result": "23 paired case groups passed across this oracle.",
+      "casa_version": "6.7.6.14",
+      "revision": "9ab00af35fcee2d932757a367eed2adf255c1f33",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/model-task-arguments-20261120.json",
+      "links": [
+        "tools/casa-compat/calibration_model_arguments_oracle.py",
+        "https://github.com/bglenden/casa-rs/pull/1806"
+      ]
+    },
+    "performance": {
+      "kind": "Matched release performance",
+      "state": "planned",
+      "scope": "Throughput, I/O and compute phases, worker counts, and peak memory.",
+      "result": "Scheduled during calibration performance qualification.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/979"
+      ]
+    }
+  }
+}
