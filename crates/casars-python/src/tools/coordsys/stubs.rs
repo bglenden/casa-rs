@@ -64,16 +64,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (direction = None, spectral = None), text_signature = "($self, direction='', spectral='')")]
-    fn setconversiontype(
-        &self,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setconversiontype")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (refcode = None, proj = None, projpar = None, refpix = None, refval = None, incr = None, xform = None, poles = None), text_signature = "($self, refcode='', proj='', projpar=[-1.0], refpix=[-1.0], refval=[], incr=[], xform=[], poles=[])")]
     fn setdirection(
         &self,
