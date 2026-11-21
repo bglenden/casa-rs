@@ -4113,6 +4113,18 @@ Its stored sample masks match explicit CASA selection of each spectral
 window and preserve the other window's flags in the combined operation.
 [Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
 
+## TFCrop can fit frequency during a time-only pass
+
+CASA 6.7.6.14 identifies the active axis by its length in part of TFCrop.
+With 32 integrations and 32 channels, `flagdimension='time'`,
+`timefit='poly'` and `timecutoff=3`, a stationary narrowband signal flags
+channel 16 in all 32 integrations. With 33 integrations, the time-only pass
+leaves the same stationary signal clear.
+
+Native TFCrop uses the named time axis regardless of the buffer shape.
+Both fixture sizes yield the same empty flag mask for this signal.
+[TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
+
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 
 In CASA 6.7.6.14, run `flagdata(mode="clip", timeavg=True, timebin="40s",

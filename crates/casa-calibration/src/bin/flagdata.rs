@@ -26,6 +26,8 @@ use casa_types::quanta::Quantity;
 
 #[path = "flagdata/shadow.rs"]
 mod shadow;
+#[path = "flagdata/tfcrop.rs"]
+mod tfcrop;
 
 const STRING_SELECTORS: [&str; 9] = [
     "field",
@@ -71,6 +73,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         Err(error)
     })?;
     let display_option = task.required_text("display")?;
+    if mode == "tfcrop" {
+        tfcrop::validate_types(task)?;
+    }
     if column.is_none() && matches!(mode.as_str(), "clip" | "tfcrop" | "rflag") {
         backup_before_failed_apply(task, &action)?;
         return Err(
@@ -161,6 +166,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                 | FlagDataMode::Extend
                 | FlagDataMode::Shadow
                 | FlagDataMode::Antint
+                | FlagDataMode::Tfcrop
         )
     {
         return Err(not_yet("action", &action));
@@ -268,6 +274,24 @@ fn save_flag_parameters(
         ],
         "shadow" => &["tolerance", "addantenna"],
         "antint" => &["antint_ref_antenna", "minchanfrac", "verbose"],
+        "tfcrop" => &[
+            "ntime",
+            "combinescans",
+            "datacolumn",
+            "timecutoff",
+            "freqcutoff",
+            "timefit",
+            "freqfit",
+            "maxnpieces",
+            "flagdimension",
+            "usewindowstats",
+            "halfwin",
+            "extendflags",
+            "channelavg",
+            "chanbin",
+            "timeavg",
+            "timebin",
+        ],
         _ => return Err(not_yet("savepars", mode)),
     };
     for &field in fields {
@@ -464,6 +488,9 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                     .map_or_else(|| python_repr(value), str::to_owned),
                 ("addantenna", ParameterValue::Table(_)) => task
                     .argument_text("addantenna")
+                    .map_or_else(|| python_repr(value), str::to_owned),
+                ("maxnpieces" | "halfwin", _) => task
+                    .argument_text(name)
                     .map_or_else(|| python_repr(value), str::to_owned),
                 ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
                     "\"\"".to_string()
@@ -696,6 +723,11 @@ fn flagdata_request(
         },
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
+        tfcrop: if mode == FlagDataMode::Tfcrop {
+            tfcrop::parameters(task)?
+        } else {
+            Some(casa_ms::flagging::TfcropOptions::default())
+        },
         timedevscale: task.number("timedevscale")?,
         freqdevscale: task.number("freqdevscale")?,
         spectralmax: task.number("spectralmax")?,

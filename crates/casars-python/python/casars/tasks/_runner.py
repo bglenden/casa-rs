@@ -565,7 +565,8 @@ def _coerce_flagdata_options(
     cint = (int, np.int32, np.int64)
     errors = _flagging_choice_errors("flagdata", values)
     column_vector = _coerce_flagdata_column(values, argument_text, errors)
-    for parameter in ("tolerance", "lowerlimit", "upperlimit", "minchanfrac", "growtime", "growfreq"):
+    for parameter in ("tolerance", "lowerlimit", "upperlimit", "minchanfrac", "growtime", "growfreq",
+                      "timecutoff", "freqcutoff"):
         if parameter in values:
             value = values[parameter]
             if value is None:
@@ -582,6 +583,19 @@ def _coerce_flagdata_options(
             errors["extendpols"] = ["must be of cVariant type"]
         elif isinstance(value, (np.ndarray, np.int32, np.int64, np.float32, np.float64)):
             argument_text["extendpols"] = str(value)
+    for parameter, default in (("maxnpieces", 7), ("halfwin", 1)):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["null value not allowed"]
+        elif not isinstance(value, cint):
+            errors[parameter] = ["must be of cInt type"]
+        elif isinstance(value, (np.int32, np.int64)):
+            argument_text[parameter] = str(value)
+            values[parameter] = default
+        elif not isinstance(value, bool):
+            values[parameter] = max(-(2**63), min(int(value), 2**63 - 1))
     if "addantenna" in values:
         value = values["addantenna"]
         if value is None:
@@ -672,6 +686,10 @@ def _coerce_flagdata_options(
         ("cmdreason", str, "cStr"),
         ("outfile", str, "cStr"),
         ("antint_ref_antenna", str, "cStr"),
+        ("timefit", str, "cStr"),
+        ("freqfit", str, "cStr"),
+        ("flagdimension", str, "cStr"),
+        ("usewindowstats", str, "cStr"),
         ("flagbackup", bool, "cBool"),
         ("savepars", bool, "cBool"),
         ("overwrite", bool, "cBool"),

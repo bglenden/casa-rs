@@ -236,6 +236,9 @@ pub struct FlagDataRequest {
     pub timecutoff: f64,
     /// TFCrop frequency cutoff in robust sigma units.
     pub freqcutoff: f64,
+    /// Fit controls for the TFCrop agent. An invalid CASA configuration
+    /// can leave this agent inactive while running post-extension.
+    pub tfcrop: Option<TfcropOptions>,
     /// RFlag time threshold scale, applied to a given threshold and a
     /// computed one alike, as CASA applies it.
     pub timedevscale: f64,
@@ -303,6 +306,7 @@ impl Default for FlagDataRequest {
             antint: AntennaIntegrationOptions::default(),
             timecutoff: 4.0,
             freqcutoff: 3.0,
+            tfcrop: Some(TfcropOptions::default()),
             timedevscale: 5.0,
             freqdevscale: 5.0,
             spectralmax: 1.0e6,
@@ -489,6 +493,7 @@ fn flagdata_with_persistence(
                 | FlagDataMode::Extend
                 | FlagDataMode::Shadow
                 | FlagDataMode::Antint
+                | FlagDataMode::Tfcrop
         );
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
@@ -1306,12 +1311,18 @@ fn apply_tfcrop_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
+    let options = request.tfcrop.filter(|options| {
+        (1..=9).contains(&options.max_pieces) && (1..=3).contains(&options.half_window)
+    });
+    if options.is_none() && !request.extendflags {
+        return Ok(ChangeSet::default());
+    }
     let started = Instant::now();
     let loaded = load_samples(
         ms,
         selected_rows,
         channel_selections,
-        Some(request.data_column),
+        options.map(|_| request.data_column),
         None,
         false,
     )?;
@@ -1321,24 +1332,29 @@ fn apply_tfcrop_flags(
     let mut freq_flags = vec![false; samples.len()];
     let mut time_flags = vec![false; samples.len()];
     let groups = group_samples(&samples);
-    for group in groups.values() {
-        for by_corr in samples_by_corr(group) {
-            tfcrop_fit_base_and_flag(
-                &by_corr,
-                TfcropDirection::Freq,
-                TfcropFit::Poly,
-                request.freqcutoff,
-                &mut modified,
-                &mut freq_flags,
-            );
-            tfcrop_fit_base_and_flag(
-                &by_corr,
-                TfcropDirection::Time,
-                TfcropFit::Line,
-                request.timecutoff,
-                &mut modified,
-                &mut time_flags,
-            );
+    if let Some(options) = &options {
+        for group in groups.values() {
+            for by_corr in samples_by_corr(group) {
+                for &direction in options.passes.directions() {
+                    let (fit, cutoff, candidates) = match direction {
+                        TfcropDirection::Freq => {
+                            (options.frequency_fit, request.freqcutoff, &mut freq_flags)
+                        }
+                        TfcropDirection::Time => {
+                            (options.time_fit, request.timecutoff, &mut time_flags)
+                        }
+                    };
+                    tfcrop_fit_base_and_flag(
+                        &by_corr,
+                        direction,
+                        fit,
+                        cutoff,
+                        options,
+                        &mut modified,
+                        candidates,
+                    );
+                }
+            }
         }
     }
     if request.extendflags {
@@ -2221,10 +2237,81 @@ enum TfcropDirection {
     Time,
 }
 
+/// Model fitted to the selected time or frequency axis.
 #[derive(Debug, Clone, Copy)]
-enum TfcropFit {
+pub enum TfcropFit {
+    /// A single line.
     Line,
+    /// A piecewise polynomial.
     Poly,
+}
+
+/// Ordered TFCrop axis passes.
+#[derive(Debug, Clone, Copy)]
+pub enum TfcropPasses {
+    /// Frequency alone.
+    Frequency,
+    /// Time alone.
+    Time,
+    /// Frequency followed by time.
+    FrequencyThenTime,
+    /// Time followed by frequency.
+    TimeThenFrequency,
+}
+
+impl TfcropPasses {
+    fn directions(self) -> &'static [TfcropDirection] {
+        use TfcropDirection::{Freq, Time};
+        match self {
+            Self::Frequency => &[Freq],
+            Self::Time => &[Time],
+            Self::FrequencyThenTime => &[Freq, Time],
+            Self::TimeThenFrequency => &[Time, Freq],
+        }
+    }
+}
+
+/// Additional statistics evaluated around each candidate sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TfcropWindowStats {
+    /// Skip the neighborhood pass.
+    None,
+    /// Mean absolute deviation in the window.
+    Sum,
+    /// Root mean square deviation in the window.
+    Std,
+    /// Both statistics.
+    Both,
+}
+
+/// Model fitting, axis order and optional neighborhood tests for TFCrop.
+#[derive(Debug, Clone, Copy)]
+pub struct TfcropOptions {
+    /// Model along time.
+    pub time_fit: TfcropFit,
+    /// Model along frequency.
+    pub frequency_fit: TfcropFit,
+    /// Axis passes in the order they run.
+    pub passes: TfcropPasses,
+    /// Sliding-window statistics.
+    pub window_stats: TfcropWindowStats,
+    /// Maximum piece count for a polynomial fit.
+    pub max_pieces: usize,
+    /// Number of neighbors per side in a sliding window.
+    pub half_window: usize,
+}
+
+impl Default for TfcropOptions {
+    fn default() -> Self {
+        Self {
+            time_fit: TfcropFit::Line,
+            frequency_fit: TfcropFit::Poly,
+            passes: TfcropPasses::FrequencyThenTime,
+            window_stats: TfcropWindowStats::None,
+            max_pieces: 7,
+            half_window: 1,
+        }
+    }
 }
 
 fn tfcrop_fit_base_and_flag(
@@ -2232,6 +2319,7 @@ fn tfcrop_fit_base_and_flag(
     direction: TfcropDirection,
     fit: TfcropFit,
     cutoff: f64,
+    options: &TfcropOptions,
     modified: &mut [bool],
     direction_flags: &mut [bool],
 ) {
@@ -2281,7 +2369,9 @@ fn tfcrop_fit_base_and_flag(
 
     let avg_fit = match fit {
         TfcropFit::Line => tfcrop_fit_piecewise_poly(&avg_dat, &mut avg_flag, 1, 1),
-        TfcropFit::Poly => tfcrop_fit_piecewise_poly(&avg_dat, &mut avg_flag, 7, 4),
+        TfcropFit::Poly => {
+            tfcrop_fit_piecewise_poly(&avg_dat, &mut avg_flag, options.max_pieces, 4)
+        }
     };
 
     for key1 in &axis1 {
@@ -2300,8 +2390,9 @@ fn tfcrop_fit_base_and_flag(
         }
 
         let mut previous_sd = 0.0f32;
+        let mut sd = 0.0;
         for _ in 0..5 {
-            let sd = tfcrop_std_about_mean(&normalized, &flags, 1.0);
+            sd = tfcrop_std_about_mean(&normalized, &flags, 1.0);
             if !sd.is_finite() || sd <= f32::EPSILON {
                 break;
             }
@@ -2316,6 +2407,8 @@ fn tfcrop_fit_base_and_flag(
             previous_sd = sd;
         }
 
+        tfcrop_window_flags(&normalized, &mut flags, options, cutoff as f32 * sd);
+
         for (i0, key0) in axis0.iter().enumerate() {
             if !flags[i0] {
                 continue;
@@ -2328,6 +2421,38 @@ fn tfcrop_fit_base_and_flag(
                 direction_flags[sample.index] = true;
             }
         }
+    }
+}
+
+fn tfcrop_window_flags(
+    normalized: &[f32],
+    flags: &mut [bool],
+    options: &TfcropOptions,
+    threshold: f32,
+) {
+    let half_width = options.half_window;
+    let stats = options.window_stats;
+    if stats == TfcropWindowStats::None || half_width == 0 {
+        return;
+    }
+    let width = half_width.saturating_mul(2).saturating_add(1);
+    for (start, samples) in normalized.windows(width).enumerate() {
+        let exceeds_mean = matches!(stats, TfcropWindowStats::Sum | TfcropWindowStats::Both)
+            && samples
+                .iter()
+                .map(|value| (*value - 1.0).abs())
+                .sum::<f32>()
+                / width as f32
+                > threshold;
+        let exceeds_rms = matches!(stats, TfcropWindowStats::Std | TfcropWindowStats::Both)
+            && (samples
+                .iter()
+                .map(|value| (*value - 1.0) * (*value - 1.0))
+                .sum::<f32>()
+                / width as f32)
+                .sqrt()
+                > threshold;
+        flags[start + half_width] |= exceeds_mean || exceeds_rms;
     }
 }
 
@@ -4273,6 +4398,7 @@ mod tests {
             TfcropDirection::Freq,
             TfcropFit::Poly,
             1.0,
+            &TfcropOptions::default(),
             &mut modified,
             &mut direction_flags,
         );
@@ -4289,6 +4415,7 @@ mod tests {
             TfcropDirection::Time,
             TfcropFit::Line,
             1.0,
+            &TfcropOptions::default(),
             &mut modified,
             &mut direction_flags,
         );
