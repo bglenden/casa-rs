@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 842
-- Surfaces: 46 (46 task, 0 session)
-- Surface bindings: 1112
+- Concepts: 849
+- Surfaces: 47 (47 task, 0 session)
+- Surface bindings: 1120
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -62,6 +62,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Calibration Statistics](#surface-calstat)<br><code>calstat</code> | task | 1 | <code>calibration</code> | 3 | Compute descriptive statistics for a calibration table column. |
 | [List Calibration Solutions](#surface-listcal)<br><code>listcal</code> | task | 1 | <code>calibration</code> | 7 | List selected antenna calibration solutions and flags. |
 | [Plot Bandpass](#surface-plotbandpass)<br><code>plotbandpass</code> | task | 1 | <code>calibration</code> | 49 | Plot calibration spectra and channel derivatives. |
+| [Get VLA Calibrator Model](#surface-getcalmodvla)<br><code>getcalmodvla</code> | task | 1 | <code>calibration</code> | 8 | Retrieve a calibrator brightness model from the VLA service. |
 
 <a id="surface-msexplore"></a>
 
@@ -1772,5 +1773,26 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>scans</code> | <code>plotbandpass.scans@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | A scan or list of scans for which to display solutions. Default = all. Does not work with overlay="time". |
 | <code>figfileSequential</code> | <code>plotbandpass.figfile_sequential@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc. |
 | <code>chanrangeSetXrange</code> | <code>plotbandpass.chanrange_set_xrange@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | If True, then chanrange also sets the xrange to display |
+
+<a id="surface-getcalmodvla"></a>
+
+## Get VLA Calibrator Model (<code>getcalmodvla</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Retrieve a calibrator brightness model from the VLA service.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>outfile</code> | <code>vla_calibrator.outfile@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Output | Write the retrieved source model as a CASA component-list table. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>source</code> | <code>vla_calibrator.source@r1</code> | <code>string</code> | <code>""</code>; optional | VLA Service | Calibrator name. Specify either the name or the direction. |
+| <code>direction</code> | <code>vla_calibrator.direction@r1</code> | <code>string</code> | <code>""</code>; optional | VLA Service | Direction in FRAME LONGITUDE LATITUDE form. |
+| <code>band</code> | <code>vla_calibrator.band@r1</code> | <code>string</code> | <code>""</code>; optional | VLA Service | Case-insensitive VLA receiver band P, L, S, C, X, U, K, A or Q. |
+| <code>obsdate</code> | <code>vla_calibrator.obsdate@r1</code> | <code>variant</code> | <code>0</code>; optional | VLA Service | Observation date as numeric MJD or a YYYY-MM-DD calendar date. |
+| <code>refdate</code> | <code>vla_calibrator.refdate@r1</code> | <code>variant</code> | <code>0</code>; optional | VLA Service | Optional reference date as numeric MJD or a YYYY-MM-DD calendar date. |
+| <code>hosts</code> | <code>vla_calibrator.hosts@r1</code> | <code>array&lt;string&gt;</code> | <code>["http://obs.vla.nrao.edu/calmodvla"]</code>; optional | VLA Service | VLA calibrator-service URLs in the order they will be queried. |
 
 _End of generated reference._

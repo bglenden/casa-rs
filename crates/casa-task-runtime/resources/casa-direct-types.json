@@ -238,6 +238,14 @@
     "nretry": "cInt",
     "rdelay": "cFloat"
   },
+  "getcalmodvla": {
+    "outfile": "cPath",
+    "overwrite": "cBool",
+    "source": "cStr",
+    "direction": "cStr",
+    "band": "cStr",
+    "hosts": "cStrVec"
+  },
   "imhead": {
     "mode": "cStr",
     "hdkey": "cStr",

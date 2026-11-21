@@ -64,6 +64,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("gaincal", "casatasks"),
     ("gencal", "casatasks"),
     ("getantposalma", "casatasks"),
+    ("getcalmodvla", "casatasks"),
     ("imhead", "casatasks"),
     ("immath", "casatasks"),
     ("immoments", "casatasks"),

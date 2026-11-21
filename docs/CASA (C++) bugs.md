@@ -8618,3 +8618,12 @@ window, even when CASA itself wrote both records. Scratch `setjy` predicts
 nonzero visibilities on both windows. casa-rs reads either writer's
 records and applies the matching Fourier grid on each window.
 [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## getcalmodvla rejects a documented calendar reference date
+
+CASA 6.7.6.14 accepts a `YYYY-MM-DD` observation date but raises
+`TypeError` for the same `refdate` format. It parses the date into MJD
+and then tests the original string against zero. casa-rs uses the
+parsed MJD to decide whether to include `refdate` in the request and
+keeps the supplied calendar date in the component list provenance.
+[#1519](https://github.com/bglenden/casa-rs/issues/1519)

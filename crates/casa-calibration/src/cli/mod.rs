@@ -25,6 +25,7 @@ mod calstat;
 mod casa_read;
 mod ft;
 mod getantposalma;
+mod getcalmodvla;
 mod history;
 mod initweights;
 mod listcal;
@@ -75,6 +76,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     if task.surface() == "getantposalma" {
         return getantposalma::run(task);
+    }
+    if task.surface() == "getcalmodvla" {
+        return getcalmodvla::run(task);
     }
     if task.surface() == "ft" {
         return ft::run(task);

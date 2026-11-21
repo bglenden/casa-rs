@@ -31,6 +31,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | gaincal | gaincal | yes | 38 | 38 | 0 | 3 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 6 | 4 | 0 |
 | getantposalma | getantposalma | yes | 10 | 10 | 0 | 0 | 0 | 0 |
+| getcalmodvla | getcalmodvla | yes | 8 | 8 | 0 | 0 | 0 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 0 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 0 | 1 | 0 |
@@ -962,6 +963,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **Matched release performance — planned.** Scheduled for the programme performance qualification in #979. Representative end-to-end throughput, I/O and compute phases, workers and memory.
 
 - [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
+
+### getcalmodvla
+
+- CASA source: `casatasks/getcalmodvla.py`, 8 parameters
+- Implementation: `casatasks/private/task_getcalmodvla.py`, `getcalmodvla` (line 63): 0 return statements, 11 raise statements
+- Called with its defaults in an empty directory, CASA raises `ValueError`: outfile must be specified
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 8, in CASA's order: yes
+- Defaults that differ: none
 
 ### imhead
 
