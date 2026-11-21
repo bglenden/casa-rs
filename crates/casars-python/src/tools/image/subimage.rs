@@ -34,7 +34,7 @@ impl Region {
         if let Some(Self::Record(record)) = &region
             && !matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name)))
                 if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"
-                    | "WCDifference" | "WCIntersection" | "WCComplement"))
+                    | "WCDifference" | "WCIntersection" | "WCComplement" | "WCExtension" | "WCConcatenation"))
         {
             return Err(super::stub(method).unwrap_err());
         }
