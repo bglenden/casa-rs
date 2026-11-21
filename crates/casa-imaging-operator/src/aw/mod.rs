@@ -25,7 +25,7 @@ use thiserror::Error;
 pub use awp2::{Awp2, Awp2Sampling, Awp2Screens};
 pub use cache::{CacheBound, CacheCharge};
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
-pub use legacy_ep::LegacyEpConvolution;
+pub use legacy_ep::{LegacyEpConvolution, LegacyEpWPlanePlan};
 pub use legacy_pbw::LegacyPbWConvolution;
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};

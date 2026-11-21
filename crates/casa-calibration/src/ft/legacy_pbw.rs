@@ -131,6 +131,12 @@ pub(super) fn prepare_model(
                 "casars_legacy_pbw_angle",
                 Value::Scalar(ScalarValue::Float64(angle_rad)),
             );
+            if let Some(w_scale) = products.w_scale {
+                record.upsert(
+                    "casars_legacy_pbw_w_scale",
+                    Value::Scalar(ScalarValue::Float64(w_scale)),
+                );
+            }
             if let Some(pointing) = pointing {
                 pointing.save(record);
             }
