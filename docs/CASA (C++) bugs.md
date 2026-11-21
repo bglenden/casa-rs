@@ -7373,6 +7373,19 @@ spectral window's fitted and returned Q and U. Casa-rs flags the
 unconstrained channel and estimates Q and U from the remaining channels.
 [Paired oracle](../tools/casa-compat/polcal_parallactic_oracle.py)
 
+## Direct position angle calibration aborts with an open MeasurementSet
+
+CASA 6.7.6.14's `calibrater.posangcal([12.], tablein, tableout)` aborts with
+an uncaught C++ string after opening a circular-feed MeasurementSet. The
+failure occurs with valid G and D calibration tables on both visibility
+iterators. An unattached tool returns `False`.
+
+Casa-rs returns `False` while unattached and raises a catchable
+`RuntimeError` while attached, before modifying or creating a calibration
+table. The public `polcal(poltype='PosAng')` task is available for solving
+and applying a position angle correction.
+[Paired oracle](../tools/casa-compat/calibration_polarization_workflow_oracle.py)
+
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
 In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet

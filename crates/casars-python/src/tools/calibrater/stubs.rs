@@ -56,29 +56,9 @@ impl PyCalibrater {
         not_yet_implemented_in("calibrater", "fluxscale", 1528)
     }
 
-    #[pyo3(signature = (tablein = None, tableout = None, fields = None), text_signature = "($self, tablein='', tableout='', fields=[])")]
-    fn linpolcor(
-        &self,
-        tablein: Option<&Bound<'_, PyAny>>,
-        tableout: Option<&Bound<'_, PyAny>>,
-        fields: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "linpolcor", 1528)
-    }
-
     #[pyo3(signature = (filein), text_signature = "($self, filein)")]
     fn parsecallibfile(&self, filein: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "parsecallibfile", 1528)
-    }
-
-    #[pyo3(signature = (posangcor, tablein, tableout = None), text_signature = "($self, posangcor, tablein, tableout='')")]
-    fn posangcal(
-        &self,
-        posangcor: &Bound<'_, PyAny>,
-        tablein: &Bound<'_, PyAny>,
-        tableout: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "posangcal", 1528)
     }
 
     #[pyo3(signature = (), text_signature = "($self)")]
