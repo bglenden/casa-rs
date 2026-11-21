@@ -35,6 +35,7 @@ mod plotweather;
 mod read;
 mod render;
 mod rerefant;
+mod setjy;
 mod smoothcal;
 mod statwt;
 mod uvmodelfit;
@@ -77,6 +78,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     if task.surface() == "ft" {
         return ft::run(task);
+    }
+    if task.surface() == "setjy" {
+        return setjy::run(task);
     }
     if task.surface() == "rerefant" {
         return rerefant::run(task);
