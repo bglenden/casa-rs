@@ -216,6 +216,7 @@ mod tests {
             supports_calwt: true,
             engine: None,
             antpos_tropo: None,
+            ionosphere: None,
             time_parameter_family: family,
             phase_delay: false,
             callibrary: None,

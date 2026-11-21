@@ -924,11 +924,19 @@ fn build_table_plan(
         fields::selected_spectral_windows(&summary, &resolved_gainfields)?
     };
     let effective_spec;
-    let spec_for_spw_mapping = if summary.table_subtype == "KAntPos Jones" {
-        effective_spec = k_antpos_spwmap_spec(spec, &applicable_data_spw_ids);
-        &effective_spec
-    } else {
-        spec
+    let spec_for_spw_mapping = match summary.table_subtype.as_str() {
+        "KAntPos Jones" => {
+            effective_spec = k_antpos_spwmap_spec(spec, &applicable_data_spw_ids);
+            &effective_spec
+        }
+        "F Jones" => {
+            effective_spec = ApplyCalibrationTableSpec {
+                spwmap: vec![0],
+                ..spec.clone()
+            };
+            &effective_spec
+        }
+        _ => spec,
     };
     let calibration_window_count = if is_bpoly {
         windows

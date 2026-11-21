@@ -414,15 +414,24 @@ pub fn calculate_igrf(
         });
     }
 
-    let observer = frame.position().ok_or(MeasureError::MissingFrameData {
-        what: "position (for IGRF)",
-    })?;
+    calculate_igrf_at_shell_offset(height_m, direction, frame)
+}
+
+/// Calculate an IGRF sample on a sphere offset by `offset_m` from the
+/// observer's geocentric radius. The F Jones calibration uses this signed
+/// shell offset, including when it models a surface below the observer.
+///
+/// # Errors
+/// The frame lacks position or epoch, or the direction or field model fails.
+pub fn calculate_igrf_at_shell_offset(
+    offset_m: f64,
+    direction: &MDirection,
+    frame: &MeasFrame,
+) -> Result<IgrfSample, MeasureError> {
+    let (calculation_pos, dir_itrf) = shell_intersection(offset_m, direction, frame)?;
     let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
         what: "epoch (for IGRF)",
     })?;
-
-    let dir_itrf = direction.convert_to(DirectionRef::ITRF, frame)?;
-    let calculation_pos = subpoint_position(observer, dir_itrf.cosines(), height_m);
     let (field_xyz_nt, longitude_rad) = igrf_field_xyz(&calculation_pos, epoch, frame)?;
     let los_field_nt = dot(field_xyz_nt, dir_itrf.cosines());
 
@@ -437,6 +446,35 @@ pub fn calculate_igrf(
         longitude_rad,
         position: calculation_pos,
     })
+}
+
+/// Intersect the observation direction with the signed-offset sphere used
+/// by CASA's EarthMagneticMachine, returning the position in ITRF.
+///
+/// # Errors
+/// The frame lacks the observer's position or the direction cannot be
+/// converted to ITRF.
+pub fn ionospheric_pierce_point(
+    offset_m: f64,
+    direction: &MDirection,
+    frame: &MeasFrame,
+) -> Result<MPosition, MeasureError> {
+    shell_intersection(offset_m, direction, frame).map(|(point, _)| point)
+}
+
+fn shell_intersection(
+    offset_m: f64,
+    direction: &MDirection,
+    frame: &MeasFrame,
+) -> Result<(MPosition, MDirection), MeasureError> {
+    let observer = frame.position().ok_or(MeasureError::MissingFrameData {
+        what: "position (for IGRF)",
+    })?;
+    let dir_itrf = direction.convert_to(DirectionRef::ITRF, frame)?;
+    Ok((
+        subpoint_position(observer, dir_itrf.cosines(), offset_m),
+        dir_itrf,
+    ))
 }
 
 fn subpoint_position(observer: &MPosition, direction_itrf: [f64; 3], height_m: f64) -> MPosition {

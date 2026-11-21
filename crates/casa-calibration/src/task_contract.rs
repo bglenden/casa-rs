@@ -194,6 +194,9 @@ pub struct GencalTaskRequest {
     /// Explicit CASA ALMA antenna-position JSON `infile`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub antpos_infile: Option<PathBuf>,
+    /// Float CASA image of vertical TEC in longitude, latitude and time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tec_image: Option<PathBuf>,
     /// Request an automatic VLA lookup, with the optional cutoff in days.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ant_pos_time_limit: Option<i64>,
@@ -220,6 +223,7 @@ impl GencalTaskRequest {
     pub(crate) fn infile(&self) -> Option<&std::path::Path> {
         match self.prior.caltype {
             crate::GencalType::Antpos => self.antpos_infile.as_deref(),
+            crate::GencalType::Tecim => self.tec_image.as_deref(),
             _ => self.gaincurve_infile.as_deref(),
         }
     }

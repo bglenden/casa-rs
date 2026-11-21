@@ -62,6 +62,7 @@ use crate::plan::{
 mod availability;
 use availability::execute as execute_apply_plan;
 mod fields;
+mod ionosphere;
 pub(crate) use fields::load as load_interpolated_calibration_table;
 mod gain_validity;
 mod initialization;
@@ -2343,6 +2344,21 @@ fn apply_row_all_channels(
             )?;
             continue;
         }
+        if let Some(ionosphere) = &loaded_table.ionosphere {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            ionosphere.apply(
+                row,
+                [&ant1, &ant2],
+                &sampling_context,
+                &mut output,
+                forward_model,
+            )?;
+            continue;
+        }
 
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
         if !forward_model
@@ -3647,6 +3663,7 @@ pub(crate) struct LoadedCalibrationTable {
     supports_calwt: bool,
     engine: Option<Arc<MsCalEngine>>,
     antpos_tropo: Option<TropoDelay>,
+    ionosphere: Option<ionosphere::Ionosphere>,
     pub(crate) solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
 }
 
@@ -3658,6 +3675,7 @@ enum TimeParameterFamily {
     Opacity,
     Tsys,
     PositionAngle,
+    Tec,
     SwitchedPower,
 }
 
@@ -3671,6 +3689,7 @@ impl TimeParameterFamily {
             "TOpac" => Some(Self::Opacity),
             "B TSYS" => Some(Self::Tsys),
             "PosAng Jones" => Some(Self::PositionAngle),
+            "F Jones" => Some(Self::Tec),
             "G EVLASWPOW" => Some(Self::SwitchedPower),
             _ => None,
         }
@@ -4426,7 +4445,7 @@ fn geometry_engine_for_plan(
     let needs_geometry = plan.calibration_tables.iter().any(|table| {
         matches!(
             table.summary.table_subtype.as_str(),
-            "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac"
+            "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac" | "F Jones"
         )
     });
     if !needs_geometry {
@@ -4471,6 +4490,10 @@ fn load_parameters(
         }
     })?;
     let leakage = polarization::Leakage::from_subtype(&table_plan.summary.table_subtype);
+    let tec = table_plan.summary.table_subtype == "F Jones";
+    let ionosphere = tec
+        .then(|| ionosphere::Ionosphere::read(&table, &table_plan.spec.path))
+        .transpose()?;
     let cross_hand_phase = polarization::is_cross_hand_phase(&table_plan.summary.table_subtype);
     let supports_calwt = (table_plan.summary.parameter_family
         == CalibrationParameterFamily::Complex
@@ -4543,7 +4566,7 @@ fn load_parameters(
                         source: MsError::from(source),
                     })?;
                 let path = &table_plan.spec.path;
-                if table_plan.summary.table_subtype == "PosAng Jones"
+                if (table_plan.summary.table_subtype == "PosAng Jones" || tec)
                     && values.shape().first() != Some(&1)
                 {
                     return Err(ApplyExecutionError::UnsupportedParameterShape {
@@ -4647,6 +4670,7 @@ fn load_parameters(
         supports_calwt,
         engine: geometry_engine.cloned(),
         antpos_tropo,
+        ionosphere,
         solutions,
         callibrary: None,
         time_plans: HashMap::new(),
@@ -4770,6 +4794,7 @@ fn load_bpoly_calibration_table(
         supports_calwt: false,
         engine: None,
         antpos_tropo: None,
+        ionosphere: None,
         solutions,
         callibrary: None,
         time_plans: HashMap::new(),

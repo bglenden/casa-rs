@@ -113,6 +113,7 @@ pub(crate) fn load(
                 supports_calwt: false,
                 engine: None,
                 antpos_tropo: None,
+                ionosphere: None,
                 solutions,
                 callibrary: None,
                 time_plans: HashMap::new(),
@@ -233,7 +234,7 @@ fn physical_grid(
     };
     if matches!(
         family,
-        TimeParameterFamily::Tsys | TimeParameterFamily::PositionAngle
+        TimeParameterFamily::Tsys | TimeParameterFamily::PositionAngle | TimeParameterFamily::Tec
     ) {
         // These coefficients require real interpolation in both dimensions.
         return Ok(raw);
@@ -256,8 +257,10 @@ fn physical_grid(
         TimeParameterFamily::Opacity => {
             CalibrationGrid::Opacity(OpacityGrid::from_arrays(path, &values, &flags)?)
         }
-        TimeParameterFamily::Tsys | TimeParameterFamily::PositionAngle => {
-            unreachable!("parameter stays real until frequency interpolation")
+        TimeParameterFamily::Tsys
+        | TimeParameterFamily::PositionAngle
+        | TimeParameterFamily::Tec => {
+            unreachable!("coefficient uses the raw interpolated value")
         }
         TimeParameterFamily::SwitchedPower => CalibrationGrid::SwitchedPower(
             switched_power::SwitchedPowerGrid::from_grid(path, grid)?,
