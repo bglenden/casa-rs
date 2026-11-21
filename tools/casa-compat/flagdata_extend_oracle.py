@@ -183,6 +183,24 @@ def check_invalid_inputs(libraries):
     return len(invalid)
 
 
+def check_strided_channels(libraries, row):
+    selections = (("0:1;3;5;7", (1, 3, 5)), ("0:1~7^2", (1, 3, 5)))
+    for index, (spw, channels) in enumerate(selections):
+        for name, task in libraries:
+            path = f"stride-{index}-{name}.ms"
+            seeded, seeded_rows = seed(path, [(row, 3, 0)])
+            assert task(vis=path, mode="extend", antenna="0&1", correlation="XX", spw=spw,
+                        flagnearfreq=True, extendpols=False, growtime=0., growfreq=0.) == {}
+            # CASA ignores the stride in the second expression. Its
+            # explicit channel list supplies the intended stored mask.
+            expected_channels = (2, 3, 4) if name == "casa" and index == 1 else channels
+            expected = seeded.copy()
+            expected[row, list(expected_channels), 0] = True
+            samples, row_flags = flags(path)
+            np.testing.assert_array_equal(samples, expected)
+            np.testing.assert_array_equal(row_flags, seeded_rows)
+
+
 def check_commands(libraries, row, extendpols=False):
     written = []
     for name, task in libraries:
@@ -216,6 +234,7 @@ def main():
         rows, count = check_products(libraries)
         polarizations = check_polarizations(libraries, rows)
         invalid = check_invalid_inputs(libraries)
+        check_strided_channels(libraries, rows[1])
         check_commands(libraries, rows[1])
         for directory_name, extendpols in (("array-command", np.array([True, False])),
                                           ("scalar-array-command", np.array(True))):
@@ -225,7 +244,7 @@ def main():
             with chdir(directory):
                 check_commands(libraries, rows[1], extendpols)
     print(f"{count} extension products, {polarizations} polarization products, "
-          f"{invalid} refusals, previews, backups and saved commands verified")
+          f"{invalid} refusals, two strided controls, previews, backups and saved commands verified")
 
 
 if __name__ == "__main__":
