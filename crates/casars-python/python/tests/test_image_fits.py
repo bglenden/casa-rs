@@ -1,5 +1,6 @@
 """Direct FITS attachments and native products from the image tool."""
 
+import gzip
 import os
 
 import numpy as np
@@ -52,6 +53,75 @@ def oracle():
     casa = pytest.importorskip("casatools")
     assert casa.version_string().replace("-", ".") == "6.7.6.14"
     return casa
+
+
+@pytest.fixture
+def gzip_fits(tmp_path):
+    path = tmp_path / "source.fits.gz"
+    path.write_bytes(gzip.compress(_hdu(True, [1, -999, 3, 4]), mtime=0))
+    return path
+
+
+@pytest.mark.parametrize("method", [
+    "open", "newimage", "newimagefromfile", "fromimage", "newimagefromimage",
+])
+def test_gzip_fits_attachment_and_copy_extension(gzip_fits, method):
+    contents = gzip_fits.read_bytes()
+    image = tools.image()
+    product = image
+    coordinates = None
+    try:
+        assert image.fromshape(shape=[3])
+        outcome = getattr(image, method)(infile=str(gzip_fits))
+        if method in ("open", "fromimage"):
+            assert outcome
+        else:
+            product = outcome
+            np.testing.assert_array_equal(image.shape(), [3])
+        persistent = method in ("open", "newimage", "newimagefromfile")
+        assert product.ispersistent() is persistent
+        if persistent:
+            assert product.name() == str(gzip_fits)
+        _assert_value(product.getchunk(), np.array([[1., 3.], [np.nan, 4.]]))
+        _assert_value(product.getchunk(getmask=True), np.array([[True, True], [False, True]]))
+        assert product.brightnessunit() == "Jy/beam"
+        assert product.history()[0] == "first custom history"
+        coordinates = product.coordsys()
+        assert coordinates.setunits(["deg", "deg"])
+        np.testing.assert_allclose(coordinates.toworld([0, 0])["numeric"], [5., 6.], atol=1e-10)
+    finally:
+        if coordinates is not None:
+            coordinates.done()
+        if product is not image:
+            product.done()
+        image.done()
+    assert gzip_fits.read_bytes() == contents
+
+
+def test_pinned_casa_requires_explicit_import_of_gzip_fits(oracle, gzip_fits):
+    image = oracle.image()
+    try:
+        for method in ("open", "newimage", "newimagefromfile", "fromimage", "newimagefromimage"):
+            with pytest.raises(RuntimeError, match="Unable to open image"):
+                getattr(image, method)(infile=str(gzip_fits))
+        for api in (oracle, tools):
+            source = api.image()
+            product = None
+            try:
+                assert source.fromfits(infile=str(gzip_fits))
+                product = source.newimagefromfits(infile=str(gzip_fits))
+                for imported in (source, product):
+                    _assert_value(imported.getchunk(), np.array([[1., 3.], [np.nan, 4.]]))
+                    _assert_value(
+                        imported.getchunk(getmask=True), np.array([[True, True], [False, True]]),
+                    )
+                    assert imported.brightnessunit() == "Jy/beam"
+            finally:
+                if product is not None:
+                    product.done()
+                source.done()
+    finally:
+        image.done()
 
 
 def test_subimage_cannot_replace_its_direct_fits_source(tmp_path):
