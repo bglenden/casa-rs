@@ -86,21 +86,32 @@ pub(crate) struct RemovedAxis {
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
-fn theta_0_for_projection(proj: &Projection) -> f64 {
+fn fiducial_latitude_degrees(proj: &Projection) -> f64 {
     use crate::projection::ProjectionType;
     match proj.projection_type() {
         ProjectionType::CAR
+        | ProjectionType::CYP
+        | ProjectionType::CEA
+        | ProjectionType::HPX
         | ProjectionType::MER
         | ProjectionType::SFL
         | ProjectionType::AIT
         | ProjectionType::PAR
         | ProjectionType::MOL
         | ProjectionType::PCO
+        | ProjectionType::BON
         | ProjectionType::TSC
         | ProjectionType::CSC
         | ProjectionType::QSC => 0.0,
-        _ => FRAC_PI_2, // zenithal projections
+        ProjectionType::COP | ProjectionType::COD | ProjectionType::COE | ProjectionType::COO => {
+            proj.parameters().first().copied().unwrap_or_default()
+        }
+        _ => 90.0, // zenithal projections
     }
+}
+
+fn theta_0_for_projection(proj: &Projection) -> f64 {
+    fiducial_latitude_degrees(proj).to_radians()
 }
 
 /// Computes the celestial coordinates of the native pole (alpha_p, delta_p)
@@ -213,10 +224,16 @@ impl DirectionCoordinate {
         cdelt: [f64; 2],
         crpix: [f64; 2],
     ) -> Self {
-        let theta_0 = theta_0_for_projection(&projection);
+        let fiducial = fiducial_latitude_degrees(&projection);
+        let theta_0 = fiducial.to_radians();
 
-        // longpole (phi_p) defaults: if delta_0 >= theta_0, phi_p = 0, else phi_p = pi
-        let longpole = if crval[1] >= theta_0 { 0.0 } else { PI };
+        // WCSLIB compares the reference and fiducial latitudes in degrees
+        // before picking the default native longitude of the celestial pole.
+        let longpole = if crval[1].to_degrees() >= fiducial {
+            0.0
+        } else {
+            PI
+        };
         let latpole = FRAC_PI_2;
 
         let native_pole = compute_native_pole(crval[0], crval[1], longpole, latpole, theta_0);
@@ -501,6 +518,28 @@ impl DirectionCoordinate {
         &self.projection
     }
 
+    /// Rebuild the coordinate with the selected projection. Retain the native
+    /// frame, reference angles, pixel origin, increments, PC and angular units.
+    ///
+    /// # Errors
+    /// Returns an error if the projection or WCS matrix is invalid.
+    pub fn with_rebuilt_projection(&self, projection: Projection) -> Result<Self, CoordinateError> {
+        projection.validate_conversion_parameters()?;
+        let mut rebuilt = Self::new(
+            self.direction_ref,
+            projection,
+            self.crval,
+            self.cdelt,
+            self.crpix,
+        )
+        .with_normalized_pc_matrix(self.pc.clone())?;
+        rebuilt.validate_native_pole()?;
+        rebuilt.latpole = rebuilt.native_pole[1];
+        rebuilt.world_units = self.world_units.clone();
+        rebuilt.removed_axis = self.removed_axis;
+        Ok(rebuilt)
+    }
+
     /// Whether this slant SIN projection uses the North Celestial Pole form.
     pub fn is_ncp(&self) -> bool {
         let declination = self.projection_reference()[1];
@@ -557,6 +596,59 @@ impl DirectionCoordinate {
     /// Reading it does not change the stored coordinate or its serialized record.
     pub fn native_pole(&self) -> [f64; 2] {
         self.native_pole
+    }
+
+    pub(crate) fn validate_native_pole(&self) -> Result<(), CoordinateError> {
+        let fiducial = fiducial_latitude_degrees(&self.projection);
+        if fiducial == 90.0 {
+            return Ok(());
+        }
+        let latitude = self.crval[1].to_degrees();
+        let longitude = self.longpole.to_degrees();
+        // Use the unclamped WCSLIB candidates. Checking only the residual
+        // of the selected pole misses impossibility near LONPOLE = 90°.
+        let (u, v) = if longitude == 0.0 {
+            (fiducial, 90.0 - latitude)
+        } else {
+            let (_, cosine) = wcslib_sin_cos_degrees(longitude);
+            let (sine_latitude, _) = wcslib_sin_cos_degrees(latitude);
+            let (y, cos_fiducial) = wcslib_sin_cos_degrees(fiducial);
+            let x = cos_fiducial * cosine;
+            let z = x.hypot(y);
+            let invalid = || {
+                CoordinateError::InvalidRecord("invalid direction coordinate transformation".into())
+            };
+            if z == 0.0 {
+                return if sine_latitude == 0.0 {
+                    Ok(())
+                } else {
+                    Err(invalid())
+                };
+            }
+            let ratio = sine_latitude / z;
+            if ratio.abs() - 1.0 >= 1e-10 {
+                return Err(invalid());
+            }
+            (
+                wcslib_atan2_degrees(y, x),
+                wcslib_acos_degrees(ratio.clamp(-1.0, 1.0)),
+            )
+        };
+        let wrap = |angle: f64| {
+            if angle > 180.0 {
+                angle - 360.0
+            } else if angle < -180.0 {
+                angle + 360.0
+            } else {
+                angle
+            }
+        };
+        if wrap(u + v).abs().min(wrap(u - v).abs()) > 90.0 + 1e-10 {
+            return Err(CoordinateError::InvalidRecord(
+                "ill-conditioned direction coordinate transformation".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Returns a reference to the PC rotation/coupling matrix.

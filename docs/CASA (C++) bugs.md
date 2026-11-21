@@ -8426,6 +8426,26 @@ CASA also reads byte-swapped NumPy origin arrays as native-endian bytes.
 For example, `np.array(1.5, dtype=">f8")` applies a zero-pixel shift on a
 little-endian host. casa-rs reads the declared byte order.
 
+## FITS export shifts the zenithal polynomial coefficients
+
+CASA 6.7.6.14 starts the `ZPN` coefficients at latitude-axis `PV i_1`
+when it exports an image. FITS WCS defines the constant coefficient at
+`PV i_0`. For a polynomial beginning `[0.02, 1, 0.1, -0.02]`, reopening the
+export in CASA changes the sky positions. A zero constant can cause CASA
+to reopen the file as a linear coordinate. casa-rs writes the coefficients
+from `PV i_0`. Both readers recover the original sky positions from that
+header.
+
+## A rejected latitude edit can leave a projected coordinate unusable
+
+In CASA 6.7.6.14, a CEA coordinate with zero reference latitude and
+`LONPOLE=0°` cannot move its reference to `-0.5` radians with the same
+pole. `coordsys.setreferencevalue` raises for this edit but leaves the new
+latitude in the coordinate record. The same failure occurs for other
+projections when the requested latitude cannot use the existing pole.
+casa-rs checks the pole before committing the reference edit and preserves
+the usable coordinate if the edit fails.
+
 ## A display frame can shift an adjusted native coordinate reference twice
 
 CASA 6.7.6.14's `coordsys.setreferencecode` can pass the displayed

@@ -276,7 +276,8 @@ fn read_primary_fits_header(
             .and_then(|ctype| ctype.rsplit_once('-'))
             .and_then(|(_, code)| ProjectionType::from_name(code));
         if let Some(projection) = projection {
-            for parameter in 1..=projection.fits_parameter_defaults().len() {
+            let start = projection.fits_parameter_start();
+            for parameter in start..start + projection.fits_parameter_defaults().len() {
                 let key = format!("PV{axis}_{parameter}");
                 if let Some(value) = read_optional_key::<f64>(fits, hdu, &key)? {
                     header.set(key, FitsValue::Float(value));

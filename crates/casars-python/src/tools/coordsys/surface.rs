@@ -72,7 +72,7 @@ const METHODS: &[Method] = &[
         "convertdirection",
         &[param("frame", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "convertmany",
@@ -223,7 +223,7 @@ const METHODS: &[Method] = &[
         R::Any,
         Yes,
     ),
-    method("reorder", &[param("order", K::Any, Required)], R::Any, No),
+    method("reorder", &[param("order", K::Any, Required)], R::Any, Yes),
     method(
         "replace",
         &[
@@ -232,7 +232,7 @@ const METHODS: &[Method] = &[
             param("whichout", K::Any, Required),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("restfrequency", &[], R::Any, Yes),
     method(
@@ -242,7 +242,7 @@ const METHODS: &[Method] = &[
             param("spectral", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setdirection",
@@ -306,7 +306,7 @@ const METHODS: &[Method] = &[
             param("parameters", K::Floats, Floats(&[-1.0])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setreferencecode",
@@ -316,7 +316,7 @@ const METHODS: &[Method] = &[
             param("adjust", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setreferencelocation",
@@ -366,7 +366,7 @@ const METHODS: &[Method] = &[
             param("velocities", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setstokes",
@@ -382,7 +382,7 @@ const METHODS: &[Method] = &[
             param("which", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "settelescope",
@@ -409,7 +409,7 @@ const METHODS: &[Method] = &[
             param("newshape", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "summary",
@@ -470,7 +470,12 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("toworldmany", &[param("value", K::Any, Empty)], R::Any, Yes),
-    method("transpose", &[param("order", K::Any, Required)], R::Any, No),
+    method(
+        "transpose",
+        &[param("order", K::Any, Required)],
+        R::Any,
+        Yes,
+    ),
     method("type", &[], R::Any, Yes),
     method("units", &[param("type", K::Text, Text(""))], R::Any, Yes),
     method(

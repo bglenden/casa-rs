@@ -63,16 +63,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type, parameters = None), text_signature = "($self, type, parameters=[-1.0])")]
-    fn setprojection(
-        &self,
-        r#type: &Bound<'_, PyAny>,
-        parameters: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setprojection")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (doppler = None, list = None), text_signature = "($self, doppler='RADIO', list=True)")]
     fn summary(
         &self,

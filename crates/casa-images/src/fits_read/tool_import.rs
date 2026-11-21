@@ -946,7 +946,12 @@ fn set_fits_pole_and_projection(
         return;
     };
     let sin = projection == "SIN";
-    if sin || matches!(projection.as_str(), "TAN" | "STG" | "ARC" | "ZEA" | "AZP") {
+    if sin
+        || matches!(
+            projection.as_str(),
+            "TAN" | "STG" | "ARC" | "ZEA" | "AZP" | "ZPN"
+        )
+    {
         // The pole for a zenithal WCS is the center of the projection.
         if let Some(Value::Array(ArrayValue::Float64(reference))) = direction.get("crval")
             && let Some(latitude) = reference.get(IxDyn(&[1]))

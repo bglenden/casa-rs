@@ -15,6 +15,7 @@ mod inspect;
 mod linear_transform;
 mod observation;
 mod ordering;
+mod projection;
 mod reference;
 mod reference_code;
 mod replace;
