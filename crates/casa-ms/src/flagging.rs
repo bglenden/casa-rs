@@ -46,6 +46,7 @@ use crate::{
 use casa_numerics::solve_weighted_least_squares;
 
 mod antint;
+mod calibration;
 mod clip;
 mod clip_average;
 mod clip_columns;
@@ -101,6 +102,14 @@ pub enum FlagDataColumn {
     Weight,
     /// MAIN.WEIGHT_SPECTRUM.
     WeightSpectrum,
+    /// Complex calibration parameters.
+    Cparam,
+    /// Real calibration parameters.
+    Fparam,
+    /// Calibration parameter uncertainties.
+    ParamErr,
+    /// Calibration solution signal-to-noise.
+    Snr,
 }
 
 impl FlagDataColumn {
@@ -114,11 +123,23 @@ impl FlagDataColumn {
             Self::ResidualData => "RESIDUAL_DATA",
             Self::Weight => "WEIGHT",
             Self::WeightSpectrum => OptionalMainColumn::WeightSpectrum.name(),
+            Self::Cparam => "CPARAM",
+            Self::Fparam => "FPARAM",
+            Self::ParamErr => "PARAMERR",
+            Self::Snr => "SNR",
         }
     }
 
     fn is_real(self) -> bool {
-        matches!(self, Self::FloatData | Self::Weight | Self::WeightSpectrum)
+        matches!(
+            self,
+            Self::FloatData
+                | Self::Weight
+                | Self::WeightSpectrum
+                | Self::Fparam
+                | Self::ParamErr
+                | Self::Snr
+        )
     }
 }
 
@@ -407,6 +428,10 @@ pub enum FlaggingError {
     #[error("no flagdata summary report for the selected correlations")]
     MissingCorrelationSummary,
 
+    /// A calibration-table row or channel selector was refused.
+    #[error("{0}")]
+    CalibrationSelection(String),
+
     /// A requested clipping column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode clip")]
     MissingClipColumn,
@@ -470,6 +495,9 @@ fn flagdata_with_persistence(
     persist: bool,
     model_factory: Option<FlagDataModelFactory>,
 ) -> Result<FlagDataReport, FlaggingError> {
+    if ms.main_table().info().table_type == "Calibration" {
+        return calibration::run(ms, request, persist);
+    }
     let ms_path = display_ms_path(ms);
     tracing::info!(
         path = %ms_path,

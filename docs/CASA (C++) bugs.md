@@ -8018,6 +8018,21 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## Calibration flagdata ignores a channel stride
+
+CASA 6.7.6.14 manually flags channels 1 through 5 on current CPARAM
+bandpass and FPARAM Tsys tables for `spw='0:1~5^2'`. The channel stride
+selects channels 1, 3, and 5. Casa-rs flags those channels and preserves
+channels 2 and 4. The calibration flagdata oracle checks both outcomes.
+
+## Calibration flagdata summary can crash on a wildcard field
+
+CASA 6.7.6.14 `flagdata(mode='summary')` can segfault on a delay table
+created by `gencal(caltype='sbd')`, whose FIELD_ID is -1. Casa-rs counts
+the flags and uses the literal `-1` key for the wildcard field. The
+calibration flagdata oracle runs the CASA call in a separate process and
+verifies the native report and unchanged input.
+
 ## PlotMS shows the excluded antenna on a GSPLINE plot
 
 On a GSPLINE table with antennas A0 through A4, CASA 6.7.6.14 and
