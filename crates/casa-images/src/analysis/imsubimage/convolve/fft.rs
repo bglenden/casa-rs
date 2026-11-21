@@ -8,6 +8,51 @@ use crate::ImageError;
 
 const MAX_FFT_SAMPLES: usize = 1 << 19;
 const MIN_DIRECT_PRODUCTS: usize = 1 << 16;
+const MIN_FFT_KERNEL: usize = 32;
+
+pub(super) fn limit_kernel_cursor(cursor: Vec<usize>) -> Vec<usize> {
+    limit_cursor(cursor, |shape| {
+        shape
+            .iter()
+            .try_fold(1usize, |total, &length| {
+                total
+                    .checked_mul(length)
+                    .filter(|&n| n <= MAX_FFT_SAMPLES / 16)
+            })
+            .is_some()
+    })
+}
+
+pub(super) fn limit_source_cursor(
+    cursor: Vec<usize>,
+    stride: &[usize],
+    kernel: &[usize],
+) -> Vec<usize> {
+    if kernel.iter().product::<usize>() < MIN_FFT_KERNEL {
+        return cursor;
+    }
+    limit_cursor(cursor, |shape| {
+        let source: Vec<_> = shape
+            .iter()
+            .zip(stride)
+            .map(|(&length, &step)| length.div_ceil(step))
+            .collect();
+        fft_shapes(&source, kernel).is_some()
+    })
+}
+
+fn limit_cursor(mut cursor: Vec<usize>, fits: impl Fn(&[usize]) -> bool) -> Vec<usize> {
+    while !fits(&cursor) {
+        let Some(width) = cursor.iter_mut().max() else {
+            break;
+        };
+        if *width == 1 {
+            break;
+        }
+        *width = width.div_ceil(2);
+    }
+    cursor
+}
 
 /// Compute a full zero-padded linear convolution of two bounded blocks.
 /// A singleton kernel axis is a batch axis and is not transformed.
@@ -15,33 +60,25 @@ pub(super) fn convolve_block(
     source: &ArrayD<f64>,
     kernel: &ArrayD<f64>,
 ) -> Result<Option<ArrayD<f64>>, ImageError> {
-    if source.len().saturating_mul(kernel.len()) < MIN_DIRECT_PRODUCTS {
+    if kernel.len() < MIN_FFT_KERNEL
+        || source.len().saturating_mul(kernel.len()) < MIN_DIRECT_PRODUCTS
+    {
+        return Ok(None);
+    }
+    let Some(shapes) = fft_shapes(source.shape(), kernel.shape()) else {
+        return Ok(None);
+    };
+    let BlockShapes {
+        convolution,
+        grid,
+        kernel: kernel_grid,
+        axes,
+    } = shapes;
+    if axes.is_empty() {
         return Ok(None);
     }
 
-    let mut convolution_shape = source.shape().to_vec();
-    let mut grid_shape = convolution_shape.clone();
-    let mut kernel_grid = vec![1; source.ndim()];
-    let mut axes = Vec::new();
-    for (axis, &width) in kernel.shape().iter().enumerate() {
-        if width > 1 {
-            convolution_shape[axis] += width - 1;
-            let Some(length) = convolution_shape[axis].checked_next_power_of_two() else {
-                return Ok(None);
-            };
-            grid_shape[axis] = length;
-            kernel_grid[axis] = length;
-            axes.push(axis);
-        }
-    }
-    let samples = grid_shape.iter().try_fold(1usize, |total, &length| {
-        total.checked_mul(length).filter(|&n| n <= MAX_FFT_SAMPLES)
-    });
-    if samples.is_none() || axes.is_empty() {
-        return Ok(None);
-    }
-
-    let mut transformed_source = ArrayD::zeros(IxDyn(&grid_shape));
+    let mut transformed_source = ArrayD::zeros(IxDyn(&grid));
     let mut transformed_kernel = ArrayD::zeros(IxDyn(&kernel_grid));
     embed(&mut transformed_source, source.view());
     let mut weights = kernel.view();
@@ -49,21 +86,53 @@ pub(super) fn convolve_block(
         weights = weights.insert_axis(Axis(axis));
     }
     embed(&mut transformed_kernel, weights);
-    let mut plan = BlockTransform::new(&axes, &grid_shape)?;
+    let mut plan = BlockTransform::new(&axes, &grid)?;
     plan.apply(&mut transformed_source, false)?;
     plan.apply(&mut transformed_kernel, false)?;
     let transfer = transformed_kernel
-        .broadcast(IxDyn(&grid_shape))
+        .broadcast(IxDyn(&grid))
         .expect("kernel grid fits");
     Zip::from(&mut transformed_source)
         .and(transfer)
         .for_each(|value, &weight| *value *= weight);
     plan.apply(&mut transformed_source, true)?;
-    let elements = axes.iter().map(|&i| grid_shape[i]).product::<usize>() as f64;
+    let elements = axes.iter().map(|&i| grid[i]).product::<usize>() as f64;
     let answer = transformed_source
-        .slice_each_axis(|axis| Slice::from(..convolution_shape[axis.axis.index()]))
+        .slice_each_axis(|axis| Slice::from(..convolution[axis.axis.index()]))
         .mapv(|value| value.re / elements);
     Ok(Some(answer))
+}
+
+struct BlockShapes {
+    convolution: Vec<usize>,
+    grid: Vec<usize>,
+    kernel: Vec<usize>,
+    axes: Vec<usize>,
+}
+
+fn fft_shapes(source: &[usize], kernel: &[usize]) -> Option<BlockShapes> {
+    let mut convolution = source.to_vec();
+    let mut grid = convolution.clone();
+    let mut kernel_grid = vec![1; source.len()];
+    let mut axes = Vec::new();
+    for (axis, &width) in kernel.iter().enumerate() {
+        if width > 1 {
+            convolution[axis] = convolution[axis].checked_add(width - 1)?;
+            let length = convolution[axis].checked_next_power_of_two()?;
+            grid[axis] = length;
+            kernel_grid[axis] = length;
+            axes.push(axis);
+        }
+    }
+    grid.iter().try_fold(1usize, |total, &length| {
+        total.checked_mul(length).filter(|&n| n <= MAX_FFT_SAMPLES)
+    })?;
+    Some(BlockShapes {
+        convolution,
+        grid,
+        kernel: kernel_grid,
+        axes,
+    })
 }
 
 fn embed(target: &mut ArrayD<Complex64>, input: ndarray::ArrayViewD<'_, f64>) {

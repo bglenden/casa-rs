@@ -86,7 +86,10 @@ def test_convolve_native_kernel_and_products(casa, tmp_path, kind, dtype):
         if kind == "f":
             assert source.setbrightnessunit("Jy/beam")
             assert source.setmiscinfo({"label": "synthetic"})
-            assert source.setrestoringbeam(major="3arcsec", minor="2arcsec", pa="20deg")
+            for channel in range(5):
+                assert source.setrestoringbeam(
+                    major=f"{3+channel}arcsec", minor="2arcsec", pa="20deg", channel=channel,
+                )
             assert source.sethistory(origin="analytic", history=["original provenance"])
         assert kernel.fromarray(kernel_path, weights, type=kind)
         assert kernel.putregion(pixelmask=np.array([True, False, True, False]))
@@ -121,3 +124,130 @@ def test_convolve_native_kernel_and_products(casa, tmp_path, kind, dtype):
                     assert "Degenerate axes added to the kernel" in restored.history()[-1]
             finally:
                 restored.done()
+
+
+def test_convolve_contiguous_and_strided_kernel_arguments(casa):
+    values = np.arange(1, 13, dtype=np.float32).reshape(4, 3)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        try:
+            for kernel in (
+                [[1, 2], [3, 4]],
+                np.arange(1, 5, dtype=np.int64)[::-1],
+                np.ones((3, 1), dtype=np.float32, order="F"),
+            ):
+                output = source.convolve(kernel=kernel, scale=1.)
+                try:
+                    np.testing.assert_allclose(
+                        output.getchunk(), centered_convolution(values, kernel, scale=1.),
+                        rtol=2e-6, atol=2e-5,
+                    )
+                finally:
+                    output.done()
+        finally:
+            source.done()
+
+
+def test_convolve_stretches_a_mask_and_keeps_the_source_unchanged(casa, tmp_path):
+    original = np.arange(1, 73, dtype=np.float32).reshape(4, 3, 6)
+    original_mask = original != 27
+    spatial = np.ones_like(original[..., 0])
+    spatial[1, 1] = 0
+    spatial[3, 0] = 0
+    valid = original_mask & (spatial[..., None] != 0)
+    for api in (casa, tools):
+        source = api.image()
+        mask = api.image()
+        path = str(tmp_path / f"{api.__name__}-stretch.im")
+        assert mask.fromarray(path, spatial)
+        mask.done()
+        assert source.fromarray(pixels=original)
+        assert source.putregion(pixelmask=original_mask)
+        expression = f"'{path}' > 0"
+        try:
+            with pytest.raises(RuntimeError, match="shape.*different"):
+                source.convolve(kernel=[1, 2, 4], mask=expression)
+            output = source.convolve(kernel=[1, 2, 4], mask=expression, stretch=True)
+            try:
+                np.testing.assert_allclose(
+                    output.getchunk(), centered_convolution(original, [1, 2, 4], valid=valid),
+                    rtol=2e-6, atol=2e-5,
+                )
+                np.testing.assert_array_equal(output.getchunk(getmask=True), valid)
+                assert output.maskhandler("get") == ["mask0"]
+                np.testing.assert_array_equal(source.getchunk(), original)
+                np.testing.assert_array_equal(source.getchunk(getmask=True), original_mask)
+            finally:
+                output.done()
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("kernel,pattern", [
+    ([], "kernel is not understood"),
+    (np.array([], dtype=np.float64), "Kernel array cannot be empty"),
+    (np.array([1, 2], dtype=np.float16), "kernel is not understood"),
+    (np.array([[1, 2]]), "more axes than the image"),
+    (True, "kernel is not understood"),
+    (1, "kernel is not understood"),
+])
+def test_convolve_kernel_diagnostics(casa, kernel, pattern):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=np.float32([1., 2., 3., 4.]))
+        try:
+            with pytest.raises(RuntimeError, match=pattern):
+                source.convolve(kernel=kernel)
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("shape,kernel,expect_nan", [
+    ((5,), [1, -1], True),
+    ((5, 1), [1, 0, -1], True),
+    ((1, 4), [1, -1], False),
+])
+def test_convolve_zero_sum_normalization(casa, shape, kernel, expect_nan):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=np.ones(shape, np.float32))
+        output = source.convolve(kernel=kernel)
+        try:
+            predicate = np.isnan if expect_nan else np.isneginf
+            assert predicate(output.getchunk()).all()
+            assert output.getchunk(getmask=True).all()
+        finally:
+            output.done()
+            source.done()
+
+
+def test_convolve_cannot_replace_an_input_or_a_foreign_file(tmp_path):
+    source_path = str(tmp_path / "source.im")
+    kernel_path = str(tmp_path / "kernel.im")
+    foreign = tmp_path / "foreign"
+    foreign.write_text("preserve me")
+    source = tools.image()
+    kernel = tools.image()
+    assert source.fromarray(source_path, np.float32([1., 2., 3.]))
+    assert kernel.fromarray(kernel_path, np.float32([3., 1.]))
+    kernel.done()
+    try:
+        for target in (source_path, kernel_path):
+            with pytest.raises(RuntimeError):
+                source.convolve(target, kernel_path, overwrite=True)
+        with pytest.raises(RuntimeError, match="not a true table"):
+            source.convolve(str(foreign), [1, 2], overwrite=True)
+        np.testing.assert_array_equal(source.getchunk(), [1., 2., 3.])
+        assert kernel.open(kernel_path)
+        np.testing.assert_array_equal(kernel.getchunk(), [3., 1.])
+        assert foreign.read_text() == "preserve me"
+        assert {path.name for path in tmp_path.iterdir()} == {"source.im", "kernel.im", "foreign"}
+        result = source.convolve(kernel=source_path, scale=1.)
+        try:
+            np.testing.assert_array_equal(result.getchunk(), [4., 10., 12.])
+        finally:
+            result.done()
+    finally:
+        kernel.done()
+        source.done()

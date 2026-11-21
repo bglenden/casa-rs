@@ -147,7 +147,7 @@ impl ImageConvolution {
             .zip(reach)
             .map(|(((&width, &mid), &low), &len)| width.min(mid.saturating_add(len)) - low)
             .collect::<Vec<_>>();
-        let kernel_cursor = bounded_read_cursor(support.clone())?;
+        let kernel_cursor = fft::limit_kernel_cursor(bounded_read_cursor(support.clone())?);
         // A zero divisor poisons an active FFT plane. With a fully
         // degenerate kernel the selected center coefficient is scalar.
         let invalid_normalization = divisor == Some(0.0) && support.iter().any(|&width| width > 1);
@@ -230,7 +230,11 @@ impl ImageConvolution {
                     shape: &size,
                     stride: input.stride,
                 };
-                let halo_cursor = bounded_read_cursor(halo_section.dense_shape(&size))?;
+                let halo_cursor = fft::limit_source_cursor(
+                    bounded_read_cursor(halo_section.dense_shape(&size))?,
+                    input.stride,
+                    weights.shape(),
+                );
                 for piece in halo_section.cursors(halo_cursor) {
                     let piece = piece?;
                     let (data, mask) = reader.read(
