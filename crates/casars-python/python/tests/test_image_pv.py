@@ -209,9 +209,12 @@ def test_pv_refuses_mixed_endpoints_and_direction_region(casa):
             assert source.fromarray(pixels=_ramp())
             for options in (
                 {"start": [4, 7], "end": [16., 7.]},
+                {"start": "4,7", "end": "16,7"},
                 {"start": [4, 7], "end": [16, 7], "width": 3.},
                 {"start": [4, 7], "end": [16, 7], "chans": "1~3"},
                 {"start": [4, 7], "end": [16, 7], "region": None, "chans": "1;3"},
+                {"start": [4, 7], "end": [16, 7], "region": None, "chans": "none"},
+                {"start": [4, 7], "end": [16, 7], "region": None, "stokes": "none"},
                 {"start": [4, 7], "end": [16, 7], "region": "box[[2pix,3pix],[22pix,23pix]]"},
                 {"start": [4, 7], "end": [16, 7], "center": [10, 7]},
             ):
@@ -323,3 +326,92 @@ def test_pv_stretches_expression_masks_and_refuses_an_empty_strip(casa, tmp_path
         finally:
             mask_image.done()
             source.done()
+
+
+@pytest.mark.parametrize("width", [1, 3])
+def test_pv_cubic_sampling_at_a_half_pixel_rotation_center(casa, width):
+    data = np.random.default_rng(947).normal(size=(60, 52, 1, 3)).astype(np.float32)
+    results = []
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            product = source.pv(start=[8, 9], end=[45, 40], width=width)
+            try:
+                sky = product.miscinfo()["secondary_coordinates"]["direction0"]
+                results.append((product.getchunk(), product.getchunk(getmask=True), sky))
+            finally:
+                product.done()
+        finally:
+            source.done()
+    expected, expected_mask, expected_sky = results[0]
+    actual, actual_mask, actual_sky = results[1]
+    assert actual.shape == expected.shape == (50, 1, 3)
+    np.testing.assert_array_equal(actual_mask, expected_mask)
+    np.testing.assert_allclose(actual, expected, rtol=2e-4, atol=2e-5)
+    def latitude_arcmin(sky):
+        return casa.quanta().convert({"value": sky["crval"][1], "unit": sky["units"][1]}, "arcmin")["value"]
+    assert latitude_arcmin(actual_sky) == pytest.approx(latitude_arcmin(expected_sky), abs=2e-4)
+
+
+@pytest.mark.parametrize("sky_center", [False, True])
+def test_pv_signed_length_from_a_center(casa, sky_center):
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            data = _ramp()
+            assert source.fromarray(pixels=data)
+            center = [10, 10]
+            length = "-12arcmin"
+            if sky_center:
+                coords = source.coordsys()
+                assert coords.setunits(["rad", "rad"], type="direction")
+                center = [f"{angle:.17g}rad" for angle in coords.toworld([10., 10., 0., 0.], "n")["numeric"][:2]]
+                coords.done()
+                length = -12
+            else:
+                with pytest.raises(RuntimeError):
+                    source.pv(center=center, length=-12, pa="0deg")
+            product = source.pv(center=center, length=length, pa="0deg")
+            try:
+                np.testing.assert_allclose(product.getchunk(), data[10, 4:17], rtol=2e-6, atol=2e-5)
+            finally:
+                product.done()
+        finally:
+            source.done()
+
+
+def test_pv_keeps_independent_native_world_order(casa, tmp_path):
+    data = _ramp()
+    source = casa.image()
+    assert source.fromarray(pixels=data)
+    coords = source.coordsys()
+    record = coords.torecord()
+    coords.done()
+    source.done()
+    for field in record:
+        if field.startswith("worldmap"):
+            record[field] = (record[field] + 1) % 4
+    path = str(tmp_path / "world-mapped.im")
+    source = tools.image()
+    try:
+        assert source.fromarray(pixels=data, csys=record)
+        product = source.pv(path, [4, 7], [16, 7])
+        product.done()
+    finally:
+        source.done()
+    for api in (casa, tools):
+        product = api.image()
+        try:
+            assert product.open(path)
+            coords = product.coordsys()
+            try:
+                assert coords.names() == ["Frequency", "Offset", "Stokes"]
+                assert coords.axiscoordinatetypes() == ["Linear", "Stokes", "Spectral"]
+                np.testing.assert_array_equal(product.getchunk(), data[4:17, 7])
+                world = coords.toworld([2., 1., 4.], "n")["numeric"]
+                np.testing.assert_allclose(world, [1.415002e9, -240.000166, 2.], rtol=2e-6)
+            finally:
+                coords.done()
+        finally:
+            product.done()

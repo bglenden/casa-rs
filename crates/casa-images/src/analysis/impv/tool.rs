@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::ops::Range;
+
 use casa_lattices::{ScratchSpace, TempStoragePolicy, TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::{IxDyn, ShapeBuilder};
@@ -12,8 +14,8 @@ use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInfo, ImageInterface, ImpvRequest, TempImage};
 
 use super::{
-    Plane, RegridMethod, collapse_width, direction, direction_plane_axes, geometry,
-    output_coordinates, position, resolve_selection,
+    Plane, RegridMethod, direction, direction_plane_axes, geometry, output_coordinates, position,
+    resolve_selection,
 };
 
 /// A position-velocity image and its CASA axis-map record.
@@ -40,7 +42,7 @@ pub fn generate_image_pv(
     let plane = direction_plane_axes(image)?;
     let direction = direction(image.coordinates())?;
     let width = position::width(&request.width, direction)?;
-    let endpoints = position::endpoints(request, direction)?;
+    let endpoints = position::endpoints(request, direction, false)?;
     let strip = geometry::Strip::new(
         direction,
         endpoints,
@@ -83,7 +85,6 @@ pub fn generate_image_pv(
     };
     let mut misc = image.misc_info();
     misc.upsert("secondary_coordinates", Value::Record(secondary));
-    let mut offsets = strip.input_offsets()?;
     let [x, y] = plane;
     let mut shape = packed.clone();
     shape[x] = strip.shape[0];
@@ -117,81 +118,17 @@ pub fn generate_image_pv(
             (!request.outfile.as_os_str().is_empty()).then_some(request.outfile.as_path()),
         )?,
     };
-    let method = if strip.rotated() {
-        RegridMethod::Cubic
-    } else {
-        RegridMethod::Nearest
+    let sampler = StripSampler {
+        section,
+        windows,
+        strip,
+        plane,
+        order: [x, y]
+            .into_iter()
+            .chain((0..packed.len()).filter(|axis| *axis != x && *axis != y))
+            .collect(),
     };
-    let (origin, extent) =
-        section_bounds(&offsets, plane.map(|axis| packed[axis]), strip.rotated());
-    for point in offsets.iter_mut().flatten() {
-        for axis in 0..2 {
-            point[axis] -= origin[axis] as f64;
-        }
-    }
-    let mut grid = packed.clone();
-    grid[x] = 1;
-    grid[y] = 1;
-    let mut tile = ones.clone();
-    tile[x] = extent[0];
-    tile[y] = extent[1];
-    let mut output_tile = vec![1; tile.len() - 1];
-    output_tile[x - usize::from(y < x)] = strip.shape[0];
-    let mut any_good = false;
-    let mut has_mask = false;
-    let order: Vec<_> = [x, y]
-        .into_iter()
-        .chain((0..tile.len()).filter(|axis| *axis != x && *axis != y))
-        .collect();
-    for plane in TraversalCursorIter::new(grid, ones.clone(), TraversalSpec::tiles()) {
-        let mut plane_start = plane?.position;
-        let mut output_start = plane_start.clone();
-        output_start.remove(y);
-        plane_start[x] = origin[0];
-        plane_start[y] = origin[1];
-        let (pixels, mask) =
-            windows.read(&section.source_start(&plane_start), &tile, section.stride)?;
-        let pixels = pixels.permuted_axes(order.clone()).reversed_axes();
-        let pixels: Vec<_> = pixels.iter().map(|&value| f64::from(value)).collect();
-        let mask = mask.map(|valid| {
-            valid
-                .permuted_axes(order.clone())
-                .reversed_axes()
-                .iter()
-                .copied()
-                .collect::<Vec<_>>()
-        });
-        let sky = Plane {
-            data: &pixels,
-            mask: mask.as_deref(),
-            shape: extent,
-        };
-        let mut values = Vec::with_capacity(offsets.len());
-        let mut good = Vec::with_capacity(offsets.len());
-        for across in &offsets {
-            let value = collapse_width(&sky, method, across);
-            any_good |= value.is_some();
-            good.push(value.is_some());
-            values.push(value.unwrap_or(0.));
-        }
-        let values =
-            ArrayD::from_shape_vec(IxDyn(&output_tile).f(), values).expect("PV row length");
-        result.put_slice(&values, &output_start)?;
-        if good.iter().any(|&valid| !valid) {
-            if !has_mask {
-                result.make_mask("mask0", true, true)?;
-                has_mask = true;
-            }
-            let mask =
-                ArrayD::from_shape_vec(IxDyn(&output_tile).f(), good).expect("PV mask row length");
-            result.put_mask_slice("mask0", &mask, &output_start)?;
-        }
-    }
-    if !any_good {
-        return Err(ImageError::CasaSelection(
-            "All selected pixels are masked".into(),
-        ));
-    }
+    sampler.copy_to(&mut result)?;
     Ok(ImagePvProduct {
         image: result,
         coordinate_record,
@@ -199,14 +136,149 @@ pub fn generate_image_pv(
     })
 }
 
-fn section_bounds(
-    points: &[Vec<[f64; 2]>],
-    shape: [usize; 2],
-    cubic: bool,
-) -> ([usize; 2], [usize; 2]) {
+// A square tile in strip coordinates maps to at most a sqrt(2)-wider
+// square on the input plane. Tile both axes to bound memory for long or
+// wide diagonal strips, including the cubic interpolation halo.
+const STRIP_TILE: usize = 128;
+
+struct StripSampler<'a> {
+    section: StridedSection<'a>,
+    windows: PixelSections<'a, f32>,
+    strip: geometry::Strip,
+    plane: [usize; 2],
+    order: Vec<usize>,
+}
+
+impl StripSampler<'_> {
+    fn copy_to(&self, result: &mut TempImage<f32>) -> Result<(), ImageError> {
+        let [x, y] = self.plane;
+        let offset_axis = x - usize::from(y < x);
+        let mut grid = self.section.shape.to_vec();
+        grid[x] = 1;
+        grid[y] = 1;
+        let mut shape = vec![1; grid.len() - 1];
+        let planes =
+            TraversalCursorIter::new(grid, vec![1; self.order.len()], TraversalSpec::tiles());
+        let mut any_good = false;
+        let mut has_mask = false;
+        for plane in planes {
+            let plane_start = plane?.position;
+            let mut output_start = plane_start.clone();
+            output_start.remove(y);
+            for along in tile_ranges(self.strip.shape[0]) {
+                output_start[offset_axis] = along.start;
+                shape[offset_axis] = along.len();
+                let samples = self.reduce_rows(&plane_start, along)?;
+                let (values, valid): (Vec<_>, Vec<_>) = samples
+                    .into_iter()
+                    .map(|(sum, count)| {
+                        let good = count != 0;
+                        any_good |= good;
+                        (
+                            if good {
+                                (sum / count as f64) as f32
+                            } else {
+                                0.
+                            },
+                            good,
+                        )
+                    })
+                    .unzip();
+                let values =
+                    ArrayD::from_shape_vec(IxDyn(&shape).f(), values).expect("PV row length");
+                result.put_slice(&values, &output_start)?;
+                if valid.iter().any(|&good| !good) {
+                    if !has_mask {
+                        result.make_mask("mask0", true, true)?;
+                        has_mask = true;
+                    }
+                    let mask = ArrayD::from_shape_vec(IxDyn(&shape).f(), valid)
+                        .expect("PV mask row length");
+                    result.put_mask_slice("mask0", &mask, &output_start)?;
+                }
+            }
+        }
+        if !any_good {
+            return Err(ImageError::CasaSelection(
+                "All selected pixels are masked".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reduce_rows(
+        &self,
+        plane_start: &[usize],
+        along: Range<usize>,
+    ) -> Result<Vec<(f64, usize)>, ImageError> {
+        let [x, y] = self.plane;
+        let sky_shape = self.plane.map(|axis| self.section.shape[axis]);
+        let method = if self.strip.rotated() {
+            RegridMethod::Cubic
+        } else {
+            RegridMethod::Nearest
+        };
+        let mut reduced = vec![(0., 0); along.len()];
+        for across in tile_ranges(self.strip.shape[1]) {
+            let points = along
+                .clone()
+                .flat_map(|step| {
+                    across
+                        .clone()
+                        .map(move |width| self.strip.input_pixel(step, width))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (origin, extent) = section_bounds(&points, sky_shape, self.strip.rotated());
+            let mut start = plane_start.to_vec();
+            let mut shape = vec![1; plane_start.len()];
+            start[x] = origin[0];
+            start[y] = origin[1];
+            shape[x] = extent[0];
+            shape[y] = extent[1];
+            let (pixels, mask) = self.windows.read(
+                &self.section.source_start(&start),
+                &shape,
+                self.section.stride,
+            )?;
+            let pixels = pixels.permuted_axes(self.order.clone()).reversed_axes();
+            let pixels: Vec<_> = pixels.iter().map(|&value| f64::from(value)).collect();
+            let mask = mask.map(|valid| {
+                valid
+                    .permuted_axes(self.order.clone())
+                    .reversed_axes()
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>()
+            });
+            let sky = Plane {
+                data: &pixels,
+                mask: mask.as_deref(),
+                shape: extent,
+            };
+            for ((sum, count), row) in reduced.iter_mut().zip(points.chunks_exact(across.len())) {
+                for &[px, py] in row {
+                    let at = [px - origin[0] as f64, py - origin[1] as f64];
+                    if let Some(sample) = sky.sample(method, at) {
+                        *sum += f64::from(sample as f32);
+                        *count += 1;
+                    }
+                }
+            }
+        }
+        Ok(reduced)
+    }
+}
+
+fn tile_ranges(length: usize) -> impl Iterator<Item = Range<usize>> {
+    (0..length)
+        .step_by(STRIP_TILE)
+        .map(move |start| start..(start + STRIP_TILE).min(length))
+}
+
+fn section_bounds(points: &[[f64; 2]], shape: [usize; 2], cubic: bool) -> ([usize; 2], [usize; 2]) {
     let mut lower = [f64::INFINITY; 2];
     let mut upper = [f64::NEG_INFINITY; 2];
-    for point in points.iter().flatten() {
+    for point in points {
         for axis in 0..2 {
             lower[axis] = lower[axis].min(point[axis]);
             upper[axis] = upper[axis].max(point[axis]);

@@ -52,7 +52,7 @@ where
     let plane = direction_plane_axes(image)?;
     let direction = direction(image.coordinates())?;
     let width = position::width(&request.width, direction)?;
-    let endpoints = position::endpoints(request, direction)?;
+    let endpoints = position::endpoints(request, direction, true)?;
     let strip = geometry::Strip::new(direction, endpoints, plane.map(|i| image.shape()[i]), width)?;
     let selection = selection(image, request, plane)?;
     let mut mask =
@@ -164,17 +164,17 @@ fn resolve_selection<T: ImagePixel>(
     region: Option<SubimageRegion<'_>>,
     allow_strides: bool,
 ) -> Result<SubimageSelection, ImageError> {
-    let chans = request
-        .chans
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.eq_ignore_ascii_case("all") && !s.eq_ignore_ascii_case("none"));
+    let chans = request.chans.as_deref().map(str::trim).filter(|s| {
+        !s.eq_ignore_ascii_case("all") && (allow_strides || !s.eq_ignore_ascii_case("none"))
+    });
     let stokes = request
         .stokes
         .as_deref()
         .map(str::trim)
         .map(|s| s.trim_start_matches('[').trim_end_matches(']').trim())
-        .filter(|s| !s.eq_ignore_ascii_case("all") && !s.eq_ignore_ascii_case("none"))
+        .filter(|s| {
+            !s.eq_ignore_ascii_case("all") && (allow_strides || !s.eq_ignore_ascii_case("none"))
+        })
         .map(|s| s.replace(';', ","));
     let resolved = if allow_strides {
         SubimageSelection::resolve_section(image, None, region, chans, stokes.as_deref())?
@@ -342,15 +342,27 @@ fn output_coordinates<T: ImagePixel>(
     let kept: Vec<_> = (0..image.ndim()).filter(|&axis| axis != plane[1]).collect();
     let mut record = drop_axes_from_legacy_record(&record, image.ndim(), &kept)
         .ok_or_else(|| ImageError::InvalidMetadata("cannot remove the collapsed PV axis".into()))?;
-    let offset = kept
+    let pixel_offset = kept
         .iter()
         .position(|&axis| axis == plane[0])
-        .expect("offset axis kept") as i32;
-    // casacore sets the removed linear axis to its own second axis index.
-    for kind in ["pixelmap", "worldmap"] {
+        .expect("offset axis kept");
+    let offset = CoordinateSystem::record_coordinates(&record)?
+        .into_iter()
+        .find(|entry| {
+            entry.field.starts_with("linear") && entry.pixel_axes == [Some(pixel_offset), None]
+        })
+        .ok_or_else(|| {
+            ImageError::InvalidMetadata("PV offset axis missing from the image record".into())
+        })?;
+    let world_offset = offset.world_axes[0]
+        .ok_or_else(|| ImageError::InvalidMetadata("PV offset has no world axis".into()))?;
+    let suffix = offset.field.trim_start_matches("linear");
+    // The removed local axis is encoded as -2. The surviving pixel and
+    // world axes can occupy independently transposed positions.
+    for (kind, active) in [("pixelmap", pixel_offset), ("worldmap", world_offset)] {
         record.upsert(
             format!("{kind}{suffix}"),
-            Value::Array(ArrayValue::from_i32_vec(vec![offset, -2])),
+            Value::Array(ArrayValue::from_i32_vec(vec![active as i32, -2])),
         );
     }
     Ok((CoordinateSystem::from_record(&record)?, record, secondary))
