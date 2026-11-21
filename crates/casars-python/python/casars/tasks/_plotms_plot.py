@@ -65,9 +65,19 @@ def _typed_values(name, value, expected, description):
 def configure(figure, panel_axes, document, options):
     """Set figure formatting after the shared renderer draws the native layers."""
 
+    headers = document["header_lines"]
+    if headers:
+        height = figure.get_figheight()
+        row_height = min(0.18 / height, 0.24 / len(headers))
+        top = 0.98 - len(headers) * row_height
+        for index, line in enumerate(headers):
+            figure.text(0.025, 0.98 - index * row_height, line, va="top", fontsize=9)
+        if document["title"]:
+            figure.suptitle(document["title"], y=top)
+        figure.subplots_adjust(top=min(figure.subplotpars.top, top - 0.06))
     font = options.get("titlefont")
     if font > 0 and document["title"]:
-        figure.suptitle(document["title"], fontsize=font)
+        figure.suptitle(document["title"], fontsize=font, y=top if headers else None)
     if isinstance(panel_axes, list) and len(panel_axes) > 1:
         if document.get("layout"):
             _share_axes(panel_axes, document["layout"], options)
