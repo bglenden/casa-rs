@@ -74,9 +74,8 @@ pub(super) fn prepare_model(
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
-    if options.apply_pointing_offsets {
-        return Err(invalid("this legacy AW configuration is pending #1520"));
-    }
+    // The public legacy AWProjectFT::get path uses the ordinary pointing
+    // ramp. Imager2 attaches EP Jones tables only to its legacy PB/W modes.
     let (pa_tolerance, _) = pa_steps(options.pa_step_deg, options.rotation_step_deg)?;
     if options.cache_directory.as_os_str().is_empty() {
         return Err(invalid("legacy AW requires a convolution cache directory"));
