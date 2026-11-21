@@ -34,7 +34,7 @@ impl PyImageTool {
             };
             read_locked(source, |image| {
                 let ImageHandle::Float(storage) = image else {
-                    return Err(raised("This application supports only real-valued images"));
+                    return Err(raised("This application supports only float-valued images"));
                 };
                 let maximum =
                     usize::try_from(nmax).map_err(|_| raised("nmax must be nonnegative"))?;

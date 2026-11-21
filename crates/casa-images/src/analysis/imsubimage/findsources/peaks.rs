@@ -79,14 +79,11 @@ pub(super) fn search(
         }
         for x in 1..width - 1 {
             let start = x - 1;
-            if active
-                .iter()
-                .any(|line| line.done[start..=x + 1].iter().any(|&done| done))
-            {
-                continue;
-            }
             let center = f64::from(active[1].pixels[x]);
             let magnitude = if signed { center.abs() } else { center };
+            if magnitude <= 0. {
+                continue;
+            }
             let brightest = peaks.first().map_or(0., |peak| peak.height.abs());
             let weakest = peaks.get(nmax - 1).map_or(0., |peak| peak.height.abs());
             if magnitude < 0.8 * cutoff * brightest
@@ -99,6 +96,12 @@ pub(super) fn search(
                 ]
                 .into_iter()
                 .any(|other| magnitude <= f64::from(other).abs())
+            {
+                continue;
+            }
+            if active
+                .iter()
+                .any(|line| line.done[start..=x + 1].iter().any(|&done| done))
             {
                 continue;
             }
@@ -136,7 +139,7 @@ pub(super) fn search(
     let threshold = cutoff * peaks.first().map_or(0., |peak| peak.height.abs());
     let accepted = peaks
         .iter()
-        .take_while(|peak| peak.height != 0. && peak.height.abs() >= threshold)
+        .take_while(|peak| !(peak.height.abs() < threshold || peak.height == 0.))
         .count();
     peaks.truncate(accepted);
     Ok(peaks)

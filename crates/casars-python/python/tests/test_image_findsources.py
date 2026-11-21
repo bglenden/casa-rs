@@ -186,12 +186,35 @@ def test_findsources_safe_input_limits_and_transposed_axes():
     finally:
         transposed.done()
         image.done()
-    cube = tools.image()
-    assert cube.fromarray(pixels=np.stack([values]*3, axis=-1))
-    try:
-        with pytest.raises(RuntimeError, match="exactly two nondegenerate sky axes"):
-            cube.findsources()
-        region = tools.regionmanager().box([0, 0, 1], [22, 22, 1])
-        _compare(_components(cube.findsources(region=region)), expected)
-    finally:
-        cube.done()
+
+
+def test_findsources_selected_cube_and_nan_cutoff(casa):
+    values = _sources((23, 23), [(8., 8., 13., 3., 3.), (3., 16., 18., 2., 2.)])
+    region_tool = casa.regionmanager()
+    region = region_tool.box([0, 0, 1], [22, 22, 1])
+    region_tool.done()
+    results = []
+    for api in (casa, tools):
+        cube = api.image()
+        assert cube.fromarray(pixels=np.stack([values] * 3, axis=-1))
+        try:
+            results.append(_components(cube.findsources(region=region, cutoff=float("nan"))))
+            assert len(results[-1]) == 2
+            if api is tools:
+                with pytest.raises(RuntimeError, match="exactly two nondegenerate sky axes"):
+                    cube.findsources()
+        finally:
+            cube.done()
+    _compare(results[1], results[0])
+
+
+@pytest.mark.parametrize("dtype", [np.complex64, np.float64, np.complex128])
+def test_findsources_refuses_non_float_images(casa, dtype):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=np.zeros((12, 12), dtype=dtype))
+        try:
+            with pytest.raises(RuntimeError, match="only float-valued images"):
+                source.findsources()
+        finally:
+            source.done()

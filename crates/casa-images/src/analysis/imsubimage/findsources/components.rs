@@ -138,7 +138,7 @@ impl SkyPlane<'_> {
         ];
         if let Ok(unit) = Unit::with_local_definitions(self.brightness, &local) {
             let integrated = *unit.val() * *rad2.val();
-            for name in ["Jy", "Jy.km/s", "K.rad2"] {
+            for name in ["Jy", "Jy.km/s", "K.rad.rad"] {
                 let output = unit_named(name);
                 if integrated.conformant(output.val()) {
                     return (peak * area * integrated.factor / output.val().factor, name);
