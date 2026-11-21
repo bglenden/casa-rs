@@ -97,6 +97,15 @@ def cases(column, time):
     yield 'rflag-apply-files', dict(inpfile=[
         f"{rflag} timedev='time-input.txt' freqdev='frequency-input.txt'", "mode='summary'",
     ])
+    for mode in ('clip', 'tfcrop', 'rflag'):
+        yield f'{mode}-average-with-summary', dict(inpfile=[
+            f"mode='{mode}' datacolumn='{column}' channelavg=True chanbin=2", "mode='summary'",
+        ], flagbackup=True)
+    for suffix, correlation in [('default', ''), ('empty', " correlation=''")]:
+        yield f'tfcrop-{suffix}-correlation', dict(inpfile=[
+            f"mode='tfcrop' datacolumn='{column}' flagdimension='freq' freqfit='line' "
+            f"freqcutoff=0.25 extendflags=False{correlation}", "mode='summary'",
+        ])
     stamp = lambda seconds: (time + timedelta(seconds=seconds)).strftime('%Y/%m/%d/%H:%M:%S.%f')[:-3]
     for label, buffer in [('scalar', 2.0), ('asymmetric', [2.0, 3.0]),
                           ('one-element', [2.0]), ('empty', []), ('numpy', np.asarray([2, 3]))]:

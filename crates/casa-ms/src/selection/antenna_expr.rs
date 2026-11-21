@@ -217,7 +217,7 @@ fn resolve_antenna_expression(
     let clauses = antenna_clauses(antennas, text, reject_unmatched)?;
     Ok(BaselineSelection {
         antenna_count: antennas.len(),
-        pairs: Some(evaluate(&clauses, antennas.len())),
+        pairs: Some(evaluate(&clauses, antennas.len(), false)),
     })
 }
 
@@ -291,6 +291,24 @@ impl MeasurementSet {
         text: &str,
     ) -> MsResult<BaselineSelection> {
         self.with_antenna_rows(|rows| resolve_antenna_expression(rows, text, false))
+    }
+
+    /// A local calibration agent selects the solution antenna for a single
+    /// antenna list. Pair expressions still select an ordered baseline.
+    pub(crate) fn resolve_calibration_agent_antenna_selector(
+        &self,
+        text: &str,
+    ) -> MsResult<BaselineSelection> {
+        if text.is_empty() {
+            return self.resolve_antenna_selector(text);
+        }
+        self.with_antenna_rows(|rows| {
+            let clauses = antenna_clauses(rows, text, true)?;
+            Ok(BaselineSelection {
+                antenna_count: rows.len(),
+                pairs: Some(evaluate(&clauses, rows.len(), true)),
+            })
+        })
     }
 
     /// Resolve the ordered ANTENNA1 IDs of a CASA reference-antenna expression.
@@ -394,11 +412,11 @@ enum Term {
 
 /// Evaluate the terms over every (`ANTENNA1`, `ANTENNA2`) slot, as
 /// `MSAntennaParse::setTEN` (`MSAntennaParse.cc:80-98`) combines them.
-fn evaluate(clauses: &[Clause], count: usize) -> Box<[bool]> {
+fn evaluate(clauses: &[Clause], count: usize, solution_antenna: bool) -> Box<[bool]> {
     let side = count + 2;
     let mut selected = vec![false; side * side].into_boxed_slice();
     for (position, clause) in clauses.iter().enumerate() {
-        let condition = condition(&clause.term, count);
+        let condition = condition(&clause.term, count, solution_antenna);
         for antenna1 in 0..side {
             for antenna2 in 0..side {
                 let value = condition(antenna1, antenna2) != clause.negate;
@@ -418,7 +436,11 @@ fn evaluate(clauses: &[Clause], count: usize) -> Box<[bool]> {
 
 /// The row condition of `term` over slots `0..count + 2`; slots from
 /// `count` on are IDs no list contains.
-fn condition(term: &Term, count: usize) -> Box<dyn Fn(usize, usize) -> bool + '_> {
+fn condition(
+    term: &Term,
+    count: usize,
+    solution_antenna: bool,
+) -> Box<dyn Fn(usize, usize) -> bool + '_> {
     let side = count + 2;
     let mask = move |ids: &[usize]| {
         let mut members = vec![false; side];
@@ -430,7 +452,13 @@ fn condition(term: &Term, count: usize) -> Box<dyn Fn(usize, usize) -> bool + '_
     match term {
         Term::Cross(ids) => {
             let members = mask(ids);
-            Box::new(move |a1, a2| a1 != a2 && (members[a1] || members[a2]))
+            Box::new(move |a1, a2| {
+                if solution_antenna {
+                    members[a1]
+                } else {
+                    a1 != a2 && (members[a1] || members[a2])
+                }
+            })
         }
         Term::Pair {
             first,

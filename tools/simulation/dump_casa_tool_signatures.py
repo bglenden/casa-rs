@@ -39,6 +39,7 @@ TOOLS = (
     "ms",
     "calibrater",
     "imager",
+    "agentflagger",
 )
 
 

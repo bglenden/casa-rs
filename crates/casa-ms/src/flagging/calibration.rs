@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Route current-format calibration tables through the native flagging operations.
 
+use std::borrow::Cow;
+
 use crate::selection::spw_expr::{
     DataDescriptionRow, SpectralWindowRow, SpwSelection, resolve_spw_selector,
 };
@@ -18,7 +20,7 @@ pub(super) fn run(
     let backup_version = (persist && request.flagbackup && request.mode != FlagDataMode::Summary)
         .then(|| save_next_casa_flag_backup(table, "flagdata"))
         .transpose()?;
-    let (mut report, changes) = stage(table, request, !persist, false)?;
+    let (mut report, changes) = stage(table, request, !persist, false, None)?;
     if persist && !changes.changed_row_indices.is_empty() {
         persist_changed_flags(table, &changes, &path)?;
     }
@@ -26,16 +28,34 @@ pub(super) fn run(
     Ok(report)
 }
 
+pub(super) struct ProgramOptions<'a> {
+    pub(super) write_flags: bool,
+    pub(super) sequential: bool,
+    pub(super) local_selection: bool,
+    pub(super) selected_rows: Option<&'a [usize]>,
+}
+
 pub(super) fn run_program(
     table: &mut MeasurementSet,
     requests: &[FlagDataRequest],
-    write_flags: bool,
-    local_selection: bool,
+    options: ProgramOptions<'_>,
 ) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
-    let mut reports = Vec::with_capacity(requests.len());
+    let mut execution_order: Vec<_> = (0..requests.len()).collect();
+    if !options.sequential {
+        // In a combined CASA run the unflag agents clear their samples
+        // before the other agents observe the shared buffer.
+        execution_order.sort_by_key(|&index| requests[index].action != FlagDataAction::Unflag);
+    }
+    let mut reports: Vec<_> = (0..requests.len()).map(|_| None).collect();
     let mut touched = std::collections::BTreeSet::new();
-    for request in requests {
-        let report = match stage(table, request, !write_flags, local_selection) {
+    for index in execution_order {
+        reports[index] = match stage(
+            table,
+            &requests[index],
+            !options.write_flags,
+            options.local_selection,
+            options.selected_rows,
+        ) {
             Ok((report, changes)) => {
                 touched.extend(changes.changed_row_indices);
                 Some(report)
@@ -48,9 +68,8 @@ pub(super) fn run_program(
             ) => None,
             Err(error) => return Err(error),
         };
-        reports.push(report);
     }
-    if write_flags && !touched.is_empty() {
+    if options.write_flags && !touched.is_empty() {
         let path = display_ms_path(table);
         let changes = ChangeSet {
             changed_row_indices: touched.into_iter().collect(),
@@ -66,9 +85,10 @@ fn stage(
     request: &FlagDataRequest,
     calculate: bool,
     local_selection: bool,
+    base_rows: Option<&[usize]>,
 ) -> Result<(FlagDataReport, ChangeSet), FlaggingError> {
     let path = display_ms_path(table);
-    let selected = select(table, request, local_selection)?;
+    let selected = select(table, &request.selection, local_selection, base_rows)?;
     let correlation = request.correlation.as_deref().unwrap_or_default();
     if request.mode == FlagDataMode::Summary {
         if !correlation.is_empty() {
@@ -169,9 +189,13 @@ fn grouped_flags(
             (FlagDataMode::Tfcrop, true) => {
                 apply_tfcrop_flags(table, &selected.rows, channels, request, None)?
             }
-            (FlagDataMode::Rflag, true) => {
-                apply_rflag_flags(table, &selected.rows, channels, request, calculate)?
-            }
+            (FlagDataMode::Rflag, true) => apply_rflag_flags(
+                table,
+                &selected.rows,
+                channels,
+                request,
+                request.rflag_calculate.unwrap_or(calculate),
+            )?,
             (FlagDataMode::Tfcrop, false) => return Err(FlaggingError::MissingTfcropColumn),
             _ => return Err(FlaggingError::UnsupportedCalibrationAgent("rflag")),
         }
@@ -267,10 +291,12 @@ fn edit_row(
             ),
         ));
     }
-    let mut changed = Vec::new();
+    let value = request.action.value();
+    let unflag_mask = (!value).then(|| ArrayD::from_elem(flags.raw_dim(), false));
+    let mut selected = Vec::new();
     apply_clip_array(
         data,
-        flags,
+        unflag_mask.as_ref().unwrap_or(flags),
         channels.as_deref(),
         ClipOptions {
             zeros: request.clipzeros,
@@ -282,12 +308,15 @@ fn edit_row(
         },
         path,
         row,
-        &mut changed,
+        &mut selected,
     )?;
-    for &(receptor, channel) in &changed {
-        flags[[receptor, channel]] = true;
+    let mut changed = 0;
+    for (receptor, channel) in selected {
+        let flag = &mut flags[[receptor, channel]];
+        changed += usize::from(*flag != value);
+        *flag = value;
     }
-    Ok(changed.len())
+    Ok(changed)
 }
 
 struct CalibrationClip {
@@ -527,12 +556,32 @@ struct SelectedFlagRows {
     channels: Option<BTreeMap<i32, ChannelSelection>>,
 }
 
+pub(super) fn selected_rows(
+    table: &MeasurementSet,
+    selection: &MsSelection,
+) -> Result<Vec<usize>, FlaggingError> {
+    if selection
+        .correlation
+        .as_ref()
+        .is_some_and(|selection| !selection.is_empty())
+    {
+        return Err(unsupported_selection());
+    }
+    select(table, selection, false, None).map(|selection| selection.rows)
+}
+
+fn unsupported_selection() -> FlaggingError {
+    selection_error(
+        "MSSelection::toTableExprNode(MSSelectableTable*): Only field-, spw-, scan-, time- and antenna-selection is supported for CalTables",
+    )
+}
+
 fn select(
     table: &MeasurementSet,
-    request: &FlagDataRequest,
+    input: &MsSelection,
     local_selection: bool,
+    base_rows: Option<&[usize]>,
 ) -> Result<SelectedFlagRows, FlaggingError> {
-    let input = &request.selection;
     if [
         input.array.as_deref(),
         input.uvrange.as_deref(),
@@ -542,23 +591,31 @@ fn select(
     .flatten()
     .any(|value| !value.is_empty())
     {
-        return Err(selection_error(
-            "MSSelection::toTableExprNode(MSSelectableTable*): Only field-, spw-, scan-, time- and antenna-selection is supported for CalTables",
-        ));
+        return Err(unsupported_selection());
     }
     let field = table
         .resolve_field_selector(input.field.as_deref().unwrap_or_default())
         .map_err(selection_error)?;
-    let antenna = table
-        .resolve_antenna_selector(input.antenna.as_deref().unwrap_or_default())
-        .map_err(antenna_selection_error)?;
+    let antenna = input.antenna.as_deref().unwrap_or_default();
+    let antenna = if local_selection {
+        table.resolve_calibration_agent_antenna_selector(antenna)
+    } else {
+        table.resolve_antenna_selector(antenna)
+    }
+    .map_err(antenna_selection_error)?;
     let scan = row_id_selection(input.scan.as_deref())?;
     let observation = row_id_selection(input.observation.as_deref())?;
     let spw = spectral_selection(table, input.spw.as_deref().unwrap_or_default())?;
     let mut rows = Vec::new();
     let main = table.main_table();
     let path = table.path();
-    for row in 0..main.row_count() {
+    let unselected_count = if base_rows.is_none() {
+        main.row_count()
+    } else {
+        0
+    };
+    let candidates = (0..unselected_count).chain(base_rows.into_iter().flatten().copied());
+    for row in candidates {
         let id = |column| table_i32(main, row, column, path);
         let includes = |values: &[i32], column| -> Result<bool, FlaggingError> {
             Ok(values.is_empty() || values.contains(&id(column)?))
@@ -591,7 +648,11 @@ fn select(
         let defaults = |row| -> Result<TimeDefaults, FlaggingError> {
             Ok(TimeDefaults {
                 time_mjd_s: time(row)?,
-                exposure_s: 0.1,
+                exposure_s: if local_selection {
+                    table_f64(main, row, "INTERVAL", path)?
+                } else {
+                    0.1
+                },
             })
         };
         let selection = TimeSelector::parse(text)
@@ -602,7 +663,7 @@ fn select(
             })
             .map_err(selection_error)?;
         rows = if local_selection {
-            select_buffer_times(table, rows, |seconds| selection.holds(seconds))?
+            select_buffer_times(table, base_rows, rows, |seconds| selection.holds(seconds))?
         } else {
             let mut selected = Vec::with_capacity(rows.len());
             for row in rows {
@@ -631,13 +692,15 @@ fn select(
 
 fn select_buffer_times(
     table: &MeasurementSet,
+    base_rows: Option<&[usize]>,
     mut rows: Vec<usize>,
     holds: impl Fn(f64) -> bool,
 ) -> Result<Vec<usize>, FlaggingError> {
-    let all = (0..table.main_table().row_count()).collect::<Vec<_>>();
+    let count = table.main_table().row_count();
+    let all = base_rows.map_or_else(|| Cow::Owned((0..count).collect::<Vec<_>>()), Cow::Borrowed);
     let timed =
         clip_time::ordered_baseline_chunks(table, &all, None, false, &display_ms_path(table))?;
-    let mut selected = vec![false; all.len()];
+    let mut selected = vec![false; count];
     for chunk in timed.chunk_by(|left, right| left.chunk_key() == right.chunk_key()) {
         let first = chunk
             .iter()

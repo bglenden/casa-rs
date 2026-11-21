@@ -59,6 +59,7 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<tools::msmetadata::PyMsMetadata>()?;
     module.add_class::<tools::ms::PyMsTool>()?;
     module.add_class::<tools::calibrater::PyCalibrater>()?;
+    module.add_class::<tools::agentflagger::PyAgentFlagger>()?;
     module.add_class::<tools::imager::PyImager>()?;
     module.add_class::<tools::simutil::PySimutil>()?;
     module.add_function(wrap_pyfunction!(linearmosaic, module)?)?;

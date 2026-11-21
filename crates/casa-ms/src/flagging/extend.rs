@@ -67,8 +67,12 @@ pub(super) fn apply(
             request.casa_row_selection,
         )?;
         let grown = grow(&loaded.samples, request);
-        let (touched, changed_samples) =
-            stage_flag_mask(&loaded.samples, &grown, &mut loaded.flags_by_row);
+        let (touched, changed_samples) = stage_flag_mask(
+            &loaded.samples,
+            &grown,
+            &mut loaded.flags_by_row,
+            request.action.value(),
+        );
         changed.changed_samples += changed_samples;
         loaded.flags_by_row.retain(|row, _| touched.contains(row));
         pending.append(&mut loaded.flags_by_row);
