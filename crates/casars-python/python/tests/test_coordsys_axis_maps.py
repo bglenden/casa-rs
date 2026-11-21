@@ -128,3 +128,69 @@ def test_world_axis_without_pixel_remains_editable():
     np.testing.assert_array_equal(target.referencepixel()["numeric"], [2.0, 3.0])
     assert target.setreferencevalue([0.4, 0.3, 1.42e9])
     np.testing.assert_allclose(target.referencevalue()["numeric"], [0.4, 0.3, 1.42e9])
+
+
+def hidden_linear_record(api, axis=-1):
+    source = api.coordsys().newcoordsys(linear=2)
+    assert source.setreferencevalue([3.0, 17.0])
+    assert source.setreferencepixel([0.0, 0.0])
+    assert source.setincrement([1.0, 1.0])
+    record = source.torecord()
+    mask = [-1, 0] if axis == -1 else [0, -2]
+    for domain in ("pixel", "world"):
+        record[f"{domain}map0"] = np.array(mask, dtype=np.int32)
+    record["worldreplace0"] = np.array([3.0, 17.0])
+    record["pixelreplace0"] = np.array([2.0, 2.0])
+    return record
+
+
+def test_reference_measures_keep_hidden_physical_components(casa):
+    record = hidden_linear_record(casa)
+    record["linear0"]["pc"] = np.array([[1.0, 1.0], [1.0, 2.0]])
+    actual, expected = (api.coordsys() for api in (tools, casa))
+    assert actual.fromrecord(record) and expected.fromrecord(record)
+    reference = expected.referencevalue("m")
+    _assert_value(actual.referencevalue("m"), reference, "linear measure")
+    _assert_value(actual.referencevalue("n", "linear"), expected.referencevalue("n", "linear"))
+    # The inverse uses the fixed hidden world value of 3 and the visible
+    # reference value of 17, so both local pixel offsets are zero.
+    np.testing.assert_array_equal(actual.topixel(reference)["numeric"], [0.0])
+    assert actual.setreferencevalue([99.0], "linear")
+    np.testing.assert_array_equal(actual.referencevalue()["numeric"], [99.0])
+    update = actual.referencevalue("m")
+    update["measure"]["linear"]["*2"]["value"] = 21.0
+    assert actual.setreferencevalue(update, "linear")
+    np.testing.assert_array_equal(actual.referencevalue()["numeric"], [21.0])
+    np.testing.assert_array_equal(actual.torecord()["linear0"]["crval"], [3.0, 21.0])
+
+
+def test_reference_direction_measure_includes_removed_world_component(casa):
+    source = casa.coordsys().newcoordsys(direction=True)
+    assert source.setunits(["rad", "rad"], "direction")
+    assert source.setreferencevalue([0.9, 0.3])
+    record = source.torecord()
+    record["worldmap0"] = np.array([-1, 0], dtype=np.int32)
+    actual, expected = (api.coordsys() for api in (tools, casa))
+    assert actual.fromrecord(record) and expected.fromrecord(record)
+    _assert_value(actual.referencevalue("m"), expected.referencevalue("m"), "direction measure")
+
+
+def test_matrix_edit_promotes_a_coupled_slice_without_resetting_other_coordinates():
+    record = hidden_linear_record(tools, axis=-2)
+    target = tools.coordsys()
+    assert target.fromrecord(record)
+    assert target.addcoordinate(tabular=True)
+    tabular = np.array([[2.0]])
+    assert target.setlineartransform("tabular", tabular)
+    before = target.toworld([3.0, 1.0])["numeric"]
+    matrix = np.array([[1.0, 1.0], [1.0, 2.0]])
+    assert target.setlineartransform("linear", matrix)
+    np.testing.assert_array_equal(target.lineartransform("tabular"), tabular)
+    after = target.toworld([3.0, 1.0])["numeric"]
+    # The hidden pixel supplies the second matrix column with value 2.
+    assert before[0] == 6.0
+    assert after[0] == 8.0
+    assert before[1] == after[1]
+    reopened = tools.coordsys()
+    assert reopened.fromrecord(target.torecord())
+    np.testing.assert_array_equal(reopened.toworld([3.0, 1.0])["numeric"], after)

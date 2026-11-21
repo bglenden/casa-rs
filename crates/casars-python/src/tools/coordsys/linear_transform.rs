@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::tabular::TabularEdit;
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
@@ -306,9 +306,17 @@ impl CoordinateState {
     ) -> PyResult<()> {
         let mut matrices = self.tabular_matrices().peekable();
         if matrices.peek().is_some() {
+            let previous = self
+                .coordinates
+                .coordinates_in_record(&self.record)
+                .map_err(raised)?;
             let placements = coordinates.coordinates_in_record(&record).map_err(raised)?;
             for (index, factor) in &mut matrices {
-                let field = &placements[index].field;
+                let field = &previous[index].field;
+                let index = placements
+                    .iter()
+                    .position(|placement| &placement.field == field)
+                    .ok_or_else(|| raised("Missing coordinate placement"))?;
                 let native = recorded_coordinate(&record, field)?;
                 let base = live_tabular_model(coordinates.coordinate(index), native)?;
                 let changed = change_tabular_matrix(&base, factor)?;
@@ -389,12 +397,17 @@ fn apply_matrix(
     let mut record = state.record.clone();
     update_stored_coordinate(&mut record, &placement.field, &changed)?;
     let changed = if sliced {
-        state
-            .coordinates
-            .restore_record_with_layout(&record)
-            .map_err(raised)?
-            .coordinate(index)
-            .clone()
+        match state.coordinates.restore_record_with_layout(&record) {
+            Ok(restored) => restored.coordinate(index).clone(),
+            Err(CoordinateError::UnsupportedAxisLayout(_)) => {
+                let mut record = state.editable_record()?;
+                update_stored_coordinate(&mut record, &placement.field, &changed)?;
+                let restored = CoordinateSystem::from_mapped_record(&record).map_err(raised)?;
+                state.apply_edited_coordinates(record, restored)?;
+                return Ok(true);
+            }
+            Err(error) => return Err(raised(error)),
+        }
     } else {
         changed
     };

@@ -221,7 +221,9 @@ impl<'a> Values<'a> {
         record: Option<&'a RecordValue>,
         absolute: bool,
         axis_map: &[Option<usize>],
+        full: Option<CoordinateModel>,
     ) -> Self {
+        let full_measure = full.map(|model| (model.reference_value(), model.axis_units()));
         let native = if absolute {
             coordinate.reference_value()
         } else {
@@ -257,7 +259,7 @@ impl<'a> Values<'a> {
             converted: false,
             visible_axes,
             world_order: axis_map.iter().copied().flatten().collect(),
-            full_measure: None,
+            full_measure,
         }
     }
 
@@ -470,7 +472,7 @@ fn world_reference(
         _ => None,
     };
     let selected = if kind.is_empty() {
-        let placements = if format.contains('s') {
+        let placements = if format.contains('s') || format.contains('m') {
             state
                 .coordinates
                 .coordinates_in_record(&state.record)
@@ -481,16 +483,26 @@ fn world_reference(
         complete()
             .enumerate()
             .map(|(index, coordinate)| {
+                let placement = placements.get(index);
                 (
                     coordinate,
-                    placements.get(index).and_then(|entry| raw(&entry.field)),
+                    placement.and_then(|entry| raw(&entry.field)),
                     state
                         .coordinates
                         .coordinate_world_axes(index)
                         .expect("existing coordinate"),
+                    placement,
                 )
             })
-            .collect::<Vec<_>>()
+            .map(|(coordinate, record, axes, placement)| {
+                let full = placement
+                    .filter(|entry| format.contains('m') && entry.world_axes.contains(&None))
+                    .map(|entry| entry.model(&state.record))
+                    .transpose()
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                Ok(Values::new(coordinate, record, absolute, &axes, full))
+            })
+            .collect::<PyResult<Vec<_>>>()?
     } else {
         let kind = coordinate_type(kind);
         let Some((_, coordinate, entry)) = numbered_coordinates(state)?
@@ -504,32 +516,23 @@ fn world_reference(
             }
             return Ok(CasaValue::empty_record());
         };
-        let axes = if entry.world_axes.len() == coordinate.n_world_axes() {
-            let mut next = 0;
-            entry
-                .world_axes
-                .iter()
-                .map(|axis| {
-                    axis.map(|_| {
-                        let local = next;
-                        next += 1;
-                        local
-                    })
-                })
-                .collect()
-        } else {
-            (0..coordinate.n_world_axes()).map(Some).collect()
-        };
-        vec![(coordinate, raw(&entry.field), axes)]
+        let axes: Vec<_> = (0..coordinate.n_world_axes()).map(Some).collect();
+        let full = (format.contains('m') && entry.world_axes.contains(&None))
+            .then(|| entry.model(&state.record))
+            .transpose()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        vec![Values::new(
+            coordinate,
+            raw(&entry.field),
+            absolute,
+            &axes,
+            full,
+        )]
     };
-    let values = selected
-        .into_iter()
-        .map(|(coordinate, record, axes)| Values::new(coordinate, record, absolute, &axes))
-        .collect::<Vec<_>>();
     let styles = axis_values(&state.coordinates, true, |coordinate| {
         vec![scientific_coordinate(coordinate); coordinate.n_world_axes()]
     });
-    format_world_record(&values, styles.into_iter(), &format, absolute, true, true)
+    format_world_record(&selected, styles.into_iter(), &format, absolute, true, true)
 }
 
 fn scientific_coordinate(coordinate: &CoordinateModel) -> bool {

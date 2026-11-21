@@ -200,7 +200,7 @@ impl WorldArgument {
         };
         let decoded = match self {
             Self::Unset => input.reference_prefix()?,
-            Self::Numeric(values) => declared_to_native(values, coordinates)?,
+            Self::Numeric(values) => input.numeric(values)?,
             Self::Text(text) => {
                 let parts: Vec<_> = text.split_whitespace().take(50).collect();
                 if parts.len() == 1 {
@@ -254,17 +254,42 @@ impl WorldInput<'_> {
         Ok(values)
     }
 
+    fn numeric(&self, mut values: Vec<f64>) -> PyResult<Vec<f64>> {
+        if let Some(index) = self.selected {
+            let axes = self
+                .state
+                .coordinates
+                .coordinate_world_axes(index)
+                .expect("selected coordinate");
+            let visible = axes.iter().flatten().count();
+            // A typed edit can supply a full local coordinate or just its
+            // visible slots. Hidden components are never written.
+            if visible < axes.len() && values.len() == visible {
+                let mut compact = values.into_iter();
+                values = axes
+                    .into_iter()
+                    .map(|axis| {
+                        axis.map_or(0.0, |_| compact.next().expect("validated visible count"))
+                    })
+                    .collect();
+            }
+        }
+        declared_to_native(values, self.coordinates)
+    }
+
     fn measures(&self, record: &RecordValue) -> PyResult<Vec<f64>> {
         let system = &self.state.coordinates;
         let mut values = world_reference(system);
         update_measures(record, self.state, &mut values)?;
         if let Some(index) = self.selected {
+            let model = system.coordinate(index);
+            let reference = model.reference_value();
             return Ok(system
                 .coordinate_world_axes(index)
                 .expect("selected coordinate")
                 .into_iter()
-                .flatten()
-                .map(|axis| values[axis])
+                .zip(reference)
+                .map(|(axis, reference)| axis.map_or(reference, |axis| values[axis]))
                 .collect());
         }
         Ok(values)
@@ -427,7 +452,7 @@ fn world_record_values(record: &RecordValue, input: &WorldInput<'_>) -> PyResult
         ));
     }
     if let Some(value) = record.get("numeric") {
-        return declared_to_native(numeric_record_value(value)?, input.coordinates);
+        return input.numeric(numeric_record_value(value)?);
     }
     if let Some(value) = record.get("quantity") {
         return quantity_vector(subrecord(value, "quantity")?, &input.units);
