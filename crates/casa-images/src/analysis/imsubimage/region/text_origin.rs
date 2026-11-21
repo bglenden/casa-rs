@@ -348,8 +348,11 @@ fn planes_overlap(
 
 fn same_direction(origin: &CoordinateSystem, input: &CoordinateSystem) -> bool {
     let record = |coordinates: &CoordinateSystem| {
-        coordinates.find_coordinate(CoordinateType::Direction)
+        coordinates
+            .find_coordinate(CoordinateType::Direction)
             .map(|index| coordinates.coordinate(index).to_record())
     };
-    record(origin).zip(record(input)).is_some_and(|(left, right)| left == right)
+    record(origin)
+        .zip(record(input))
+        .is_some_and(|(left, right)| left == right)
 }
