@@ -31,24 +31,25 @@ pub(super) fn apply(
     path: &str,
 ) -> Result<ChangeSet, FlaggingError> {
     let mut changed = ChangeSet::default();
-    if !request.extension_enabled {
-        tracing::warn!("extendpols must be a scalar Boolean to start the extend agent");
-        return Ok(changed);
-    }
     // The CASA constructor uses these comparisons directly. A NaN disables
     // its percentage test, so neighbor growth and polarization can still run.
-    for (parameter, value) in [
-        ("growtime", request.growtime),
-        ("growfreq", request.growfreq),
-    ] {
-        if !value.is_nan() && !(0.0..=100.0).contains(&value) {
-            tracing::warn!(
-                parameter,
-                value,
-                "extend requires percentages from 0 through 100"
-            );
-            return Ok(changed);
-        }
+    let invalid = if request.extension_enabled {
+        [
+            ("growtime", request.growtime),
+            ("growfreq", request.growfreq),
+        ]
+        .into_iter()
+        .find(|(_, value)| !value.is_nan() && !(0.0..=100.0).contains(value))
+        .map(|(parameter, value)| {
+            format!("Unsupported value for {parameter}:{value}. Allowed range is 0.0 through 100.0")
+        })
+    } else {
+        Some("Parameter 'extendpols' must be of type 'bool'".to_owned())
+    };
+    if let Some(reason) = invalid {
+        tracing::warn!("Cannot create agent Extend: {reason}");
+        tracing::error!("There is no agent to run in list");
+        return Ok(changed);
     }
     let mut timed = read_clip_times(ms, selected, path)?;
     if request.combinescans {
@@ -154,7 +155,7 @@ fn grow_across_time_and_frequency(
     request: &FlagDataRequest,
     flags: &mut [bool],
 ) {
-    if request.growtime <= 0.0 && request.growfreq <= 0.0 {
+    if !(request.growtime > 0.0 || request.growfreq > 0.0) {
         return;
     }
     // The flagged counts per correlation and timestep, over its channels,

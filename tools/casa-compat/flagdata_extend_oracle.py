@@ -82,8 +82,19 @@ def check_products(libraries):
             assert task(action="calculate", **options) == {}
             assert_preserved(path, original, before)
             if name == "native":
-                run = tasks.run("flagdata", action="calculate", **options)
-                assert loads(run.stdout)["result"]["changed_samples"] == (expected != seeded).sum()
+                # The generic runner takes native typed values. The public
+                # CASA-style wrapper uses defaults for NumPy switches.
+                provider = {key: False if isinstance(value, np.bool_) else value
+                            for key, value in options.items()}
+                run = tasks.run("flagdata", action="calculate", **provider)
+                actual = loads(run.stdout)["result"]["changed_samples"]
+                expected_changes = (expected != seeded).sum()
+                assert actual == expected_changes, (options, actual, expected_changes)
+                for key in ("growtime", "growfreq"):
+                    value = options[key]
+                    if value < 0 or value > 100:
+                        assert f"Cannot create agent Extend: Unsupported value for {key}:{value:g}" in run.stderr
+                        assert "There is no agent to run in list" in run.stderr
                 assert_preserved(path, original, before)
             assert task(**options) == {}
             samples, row_flags = flags(path)
