@@ -60,6 +60,7 @@ def test_direction_defaults_rebuild_the_axis_at_its_system_axes(casa):
      "refval": ["24deg", "32deg"], "incr": ["-0.5deg", "1deg"],
      "xform": np.array([[0.8, -0.6], [0.6, 0.8]], dtype=np.float32), "poles": "180deg,23deg"},
     {"proj": "CAR", "poles": ["0deg", "90deg"], "xform": [[1., 0.], [0., 1.]]},
+    {"proj": "CAR", "poles": ["0deg", "-90deg"]},
 ])
 def test_direction_argument_forms_and_projected_values_match_casa(casa, parameters):
     values = []
