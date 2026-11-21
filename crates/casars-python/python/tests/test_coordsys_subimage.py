@@ -59,18 +59,55 @@ def test_subsampled_spectral_tables_keep_native_frames_and_physical_hz(casa, len
     frequencies = np.array([1.e9, 1.01e9, 1.03e9, 1.08e9])
     assert source.setspectral(refcode="LSRK", frequencies={"value": frequencies, "unit": "Hz"})
     assert source.setunits([unit])
+    record = source.torecord()
+    record["worldreplace0"] = np.array([1020.0 * right_scale])
+    assert source.fromrecord(record)
     current = tools.coordsys()
     assert current.fromrecord(source.torecord())
-    left = current.subimage([1.5], length)["spectral0"]
-    right = source.subimage([1.5], length)["spectral0"]
+    left_record = current.subimage([1.5], length)
+    right_record = source.subimage([1.5], length)
+    left, right = (returned["spectral0"] for returned in (left_record, right_record))
     assert left["unit"] == right["unit"] == "Hz"
     assert left["system"] == right["system"] == "LSRK"
     expected = np.array(expected)
     np.testing.assert_allclose(right["tabular"]["worldvalues"], expected * right_scale)
     np.testing.assert_allclose(left["tabular"]["worldvalues"], expected * 1.e6)
     np.testing.assert_allclose(left["restfreq"], right["restfreq"] * (1.e6 / right_scale))
+    np.testing.assert_allclose(left_record["worldreplace0"], [1020.e6])
+    np.testing.assert_allclose(left_record["worldreplace0"], right_record["worldreplace0"])
     with pytest.raises(RuntimeError, match="illegal table"):
         current.subimage([1.5], [-1])
+
+
+def test_sampled_spectral_section_keeps_an_undefined_frame(casa):
+    source = casa.coordsys().newcoordsys(spectral=True)
+    frequencies = np.array([1.e9, 1.01e9, 1.03e9])
+    assert source.setspectral(frequencies={"value": frequencies, "unit": "Hz"})
+    record = source.torecord()
+    record["spectral0"]["system"] = "Undefined"
+    record["spectral0"]["conversion"]["system"] = "Undefined"
+    for api in (tools, casa):
+        cs = api.coordsys()
+        assert cs.fromrecord(record)
+        section = cs.subimage([0.5], [2])["spectral0"]
+        assert section["system"] == "Undefined"
+        assert section["conversion"]["system"] == "Undefined"
+        np.testing.assert_allclose(section["tabular"]["worldvalues"], [1005.e6, 1020.e6])
+
+
+def test_spectral_extrapolation_rejects_unusable_new_tables(casa):
+    source = casa.coordsys().newcoordsys(spectral=True)
+    frequencies = np.array([10.0, 9.0, 11.0, 13.0])
+    assert source.setspectral(frequencies={"value": frequencies, "unit": "Hz"})
+    for api in (tools, casa):
+        cs = api.coordsys()
+        assert cs.fromrecord(source.torecord())
+        before = cs.torecord()
+        with pytest.raises(RuntimeError, match="start and end values"):
+            cs.subimage([-1.0], [4])
+        with pytest.raises(RuntimeError, match="monotonically"):
+            cs.subimage([-1.0], [5])
+        _assert_value(cs.torecord(), before)
 
 
 def test_rejected_arguments_and_stokes_extents(casa):

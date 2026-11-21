@@ -256,13 +256,18 @@ impl TabularCoordinate {
         name: impl Into<String>,
         unit: impl Into<String>,
     ) -> Result<Self, CoordinateError> {
+        Self::validate_samples(&pixel, &world)?;
+        Ok(Self::new(pixel, world, name, unit))
+    }
+
+    pub(crate) fn validate_samples(pixel: &[f64], world: &[f64]) -> Result<(), CoordinateError> {
         let invalid = |message: &str| CoordinateError::InvalidRecord(message.into());
         if pixel.is_empty() || pixel.len() != world.len() {
             return Err(invalid(
                 "tabular pixel and world tables must have the same nonzero length",
             ));
         }
-        if pixel.iter().chain(&world).any(|x| !x.is_finite()) {
+        if pixel.iter().chain(world).any(|x| !x.is_finite()) {
             return Err(invalid("tabular samples must be finite"));
         }
         if pixel.len() > 1 {
@@ -305,7 +310,7 @@ impl TabularCoordinate {
                 ));
             }
         }
-        Ok(Self::new(pixel, world, name, unit))
+        Ok(())
     }
 
     /// Creates a linear tabular axis with no samples in its lookup table.

@@ -288,14 +288,10 @@ impl SpectralCoordinate {
             let pixel = f64::from(origin + channel as f32);
             let world = interpolate(pixel_values, world_values, pixel)?;
             let frequency = self.value_in_hz(scaled_world(world, *crval, self.linear_transform))?;
-            if !frequency.is_finite() || worlds.last().is_some_and(|&value| value == frequency) {
-                return Err(CoordinateError::ConversionFailed(
-                    "spectral subimage samples must have distinct finite frequencies".into(),
-                ));
-            }
             pixels.push(channel as f64);
             worlds.push(frequency);
         }
+        crate::TabularCoordinate::validate_samples(&pixels, &worlds)?;
         let first = worlds[0];
         let increment = (worlds[count - 1] - first) / (count - 1).max(1) as f64;
         let mut result = Self::from_tabular(
@@ -308,6 +304,7 @@ impl SpectralCoordinate {
             self.rest_frequency_hz()?,
         )?;
         result.conversion = self.conversion.clone();
+        result.undefined_frame = self.undefined_frame;
         Ok(Some(result))
     }
 

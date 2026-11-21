@@ -14,7 +14,7 @@ use crate::tools::table::values;
 
 use super::ordering::integer_vector;
 use super::transform_single::bool_vector;
-use super::{CoordinateState, PyCoordsys};
+use super::{CoordinateState, PyCoordsys, default_spectral_conversion};
 
 fn raised(error: impl ToString) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
@@ -135,7 +135,7 @@ fn shift_coordinate(
     stored: &mut RecordValue,
     origin: &[f32],
     shape: &[i32],
-) -> PyResult<()> {
+) -> PyResult<Option<f64>> {
     match model {
         CoordinateModel::Stokes(coordinate) => {
             if let Some(axis) = placement.pixel_axes[0] {
@@ -144,7 +144,7 @@ fn shift_coordinate(
         }
         CoordinateModel::Spectral(coordinate) => {
             let Some(axis) = placement.pixel_axes[0] else {
-                return Ok(());
+                return Ok(None);
             };
             if let Some(section) = coordinate
                 .subimage_samples(origin[axis], shape.get(axis).copied())
@@ -154,7 +154,15 @@ fn shift_coordinate(
                 if let Some(native_type) = stored.get("nativeType") {
                     record.upsert("nativeType", native_type.clone());
                 }
+                if record.get("conversion").is_none() {
+                    let mut conversion = default_spectral_conversion();
+                    if let Some(frame) = record.get("system") {
+                        conversion.upsert("system", frame.clone());
+                    }
+                    record.upsert("conversion", Value::Record(conversion));
+                }
                 *stored = record;
+                return coordinate.value_in_hz(1.0).map(Some).map_err(raised);
             } else if let Some(Value::Record(wcs)) = stored.get_mut("wcs") {
                 shift_reference_pixel(wcs, placement, origin)?;
             } else {
@@ -173,7 +181,7 @@ fn shift_coordinate(
         }
         _ => shift_reference_pixel(stored, placement, origin)?,
     }
-    Ok(())
+    Ok(None)
 }
 
 fn subimage_record(
@@ -201,13 +209,21 @@ fn subimage_record(
         let Some(Value::Record(stored)) = record.get_mut(&placement.field) else {
             return Err(raised("Missing coordinate record"));
         };
-        shift_coordinate(
+        let world_scale = shift_coordinate(
             state.coordinates.coordinate(index),
             placement,
             stored,
             origin,
             shape,
         )?;
+        if let Some(scale) = world_scale.filter(|scale| *scale != 1.0) {
+            let index = placement.field.trim_start_matches("spectral");
+            let field = format!("worldreplace{index}");
+            let Some(Value::Array(ArrayValue::Float64(values))) = record.get_mut(&field) else {
+                return Err(raised(format!("Invalid coordinate field {field}")));
+            };
+            values.mapv_inplace(|value| value * scale);
+        }
     }
     Ok(record)
 }
