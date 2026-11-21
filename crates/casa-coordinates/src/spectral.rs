@@ -94,8 +94,8 @@ pub struct SpectralCoordinate {
     undefined_frame: bool,
     /// Optional CASA conversion-layer state for world-coordinate display.
     conversion: Option<SpectralConversion>,
-    /// Active rest frequency (Hz for new coordinates, stored unit on restore).
-    rest_frequency: f64,
+    /// The active entry in the rest-frequency list.
+    rest_frequency_index: usize,
     /// Every rest frequency the coordinate lists, the active one among them
     /// (C++ `restFrequencies()`).
     rest_frequencies: Vec<f64>,
@@ -134,7 +134,7 @@ impl SpectralCoordinate {
             frequency_ref,
             undefined_frame: frequency_ref == FrequencyRef::Undefined,
             conversion: None,
-            rest_frequency,
+            rest_frequency_index: 0,
             rest_frequencies: vec![rest_frequency],
             velocity_convention: DopplerRef::RADIO,
             native_type: SpectralNativeType::Frequency,
@@ -174,7 +174,7 @@ impl SpectralCoordinate {
             frequency_ref,
             undefined_frame: frequency_ref == FrequencyRef::Undefined,
             conversion: None,
-            rest_frequency,
+            rest_frequency_index: 0,
             rest_frequencies: vec![rest_frequency],
             velocity_convention: DopplerRef::RADIO,
             native_type: SpectralNativeType::Frequency,
@@ -236,7 +236,7 @@ impl SpectralCoordinate {
     ///
     /// Returns an error if the stored unit is not a supported frequency unit.
     pub fn rest_frequency_hz(&self) -> Result<f64, CoordinateError> {
-        self.value_in_hz(self.rest_frequency)
+        self.value_in_hz(self.rest_frequency())
     }
 
     /// Return the world-frame frequency at a pixel, in Hz.
@@ -437,7 +437,7 @@ impl SpectralCoordinate {
             crval * scale,
             cdelt * scale,
             crpix,
-            self.rest_frequency,
+            self.rest_frequency(),
         )?
         .mapping;
         Ok(self)
@@ -466,15 +466,15 @@ impl SpectralCoordinate {
     /// Hz; a coordinate restored from a CASA record retains its stored world
     /// unit, which may differ from Hz (#977).
     pub fn rest_frequency(&self) -> f64 {
-        self.rest_frequency
+        self.rest_frequencies[self.rest_frequency_index]
     }
 
     /// Sets the rest frequencies the coordinate lists, the first active,
     /// as C++ `setRestFrequencies(frequencies, 0)` does. An empty list
     /// leaves the coordinate as it is. Returns `self` for chaining.
     pub fn with_rest_frequencies(mut self, frequencies: Vec<f64>) -> Self {
-        if let Some(&active) = frequencies.first() {
-            self.rest_frequency = active;
+        if !frequencies.is_empty() {
+            self.rest_frequency_index = 0;
             self.rest_frequencies = frequencies;
         }
         self
@@ -653,7 +653,7 @@ impl SpectralCoordinate {
             }
             coord.rest_frequencies = list.into_iter().map(|value| value.max(0.0)).collect();
             if let Some(index) = closest_rest_frequency(&coord.rest_frequencies, rest_frequency) {
-                coord.rest_frequency = coord.rest_frequencies[index];
+                coord.rest_frequency_index = index;
             }
         }
         Ok(coord)
@@ -800,7 +800,7 @@ impl SpectralCoordinate {
         );
         rec.upsert(
             "restfreq",
-            Value::Scalar(ScalarValue::Float64(self.rest_frequency)),
+            Value::Scalar(ScalarValue::Float64(self.rest_frequency())),
         );
         rec.upsert(
             "restfreqs",
@@ -879,7 +879,7 @@ impl SpectralCoordinate {
                 );
                 tabular.upsert(
                     "axes",
-                    Value::Array(ArrayValue::from_string_vec(vec![self.name.clone()])),
+                    Value::Array(ArrayValue::from_string_vec(vec!["Frequency".into()])),
                 );
                 tabular.upsert(
                     "units",

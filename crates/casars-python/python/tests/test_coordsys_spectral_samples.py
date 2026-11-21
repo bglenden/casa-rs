@@ -39,6 +39,39 @@ def test_sampled_spectral_inverse_uses_corrected_pixel_units(casa):
             cs.topixel([5.e-16])
 
 
+def test_quantity_text_and_sampled_axis_names(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(spectral=True)
+        assert cs.setnames(["SkyFrequency"], "spectral")
+        for value, expected in (
+            ("1GHz, 2GHz", [1.e9, 2.e9]),
+            (["1GHz", "0.2m"], [1.e9, 299792458.0 / 0.2]),
+        ):
+            assert cs.setspectral(frequencies=value)
+            spectral = cs.torecord()["spectral0"]
+            assert spectral["name"] == "SkyFrequency"
+            np.testing.assert_array_equal(spectral["tabular"]["axes"], ["Frequency"])
+            np.testing.assert_allclose(spectral["tabular"]["worldvalues"], expected)
+        assert cs.setspectral(doppler="RADIO", restfreq="1.42GHz", velocities="0km/s, 20km/s")
+        np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [1.42e9 * (1 - 20_000 / 299792458.0)])
+
+
+def test_active_rest_entry_survives_duplicate_values(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(spectral=True)
+        assert cs.setrestfrequency(np.array([1.e9, 2.e9]), which=1)
+        assert cs.setspectral(restfreq=1.e9)
+        assert cs.setspectral(restfreq=3.e9)
+        spectral = cs.torecord()["spectral0"]
+        assert spectral["restfreq"] == pytest.approx(3.e9)
+        np.testing.assert_array_equal(spectral["restfreqs"], [1.e9, 3.e9])
+        assert cs.setrestfrequency(np.array([1.e9, 1.e9]), which=1)
+        assert cs.setspectral(restfreq={"value": 50.0, "unit": "%"})
+        spectral = cs.torecord()["spectral0"]
+        assert spectral["restfreq"] == pytest.approx(0.5)
+        np.testing.assert_array_equal(spectral["restfreqs"], [1.e9, 0.5])
+
+
 @pytest.mark.parametrize(("convention", "spec_type", "doppler_code"), [("RADIO", 1, 0), ("OPTICAL", 2, 1), ("BETA", 1, 3)])
 def test_sampled_velocity_matches_independent_relations(casa, convention, spec_type, doppler_code):
     velocity = np.array([0.0, 10000.0, 30000.0])
@@ -119,6 +152,8 @@ def test_ignored_and_refused_arguments_leave_the_coordinate_usable(casa, caplog)
         ) is False
         for parameters, message in (
             ({"refcode": "absent"}, "Invalid frequency reference"),
+            ({"refcode": "BARY", "frequencies": "bogus"}, "QuantumHolder::fromString"),
+            ({"refcode": "BARY", "frequencies": samples([2.0], "invalid")}, "Illegal unit string"),
             ({"frequencies": samples([1., 3.], "m")}, "Illegal unit for frequencies"),
             ({"velocities": samples([0., 1.], "km/s")}, "must specify the doppler type"),
             ({"velocities": samples([0., 1.], "km/s"), "doppler": "bogus"}, "Invalid doppler"),

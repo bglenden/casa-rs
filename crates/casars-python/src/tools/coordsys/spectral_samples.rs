@@ -18,6 +18,7 @@ use super::conversion_frames::FrameName;
 use super::doppler::sampled_frequencies_from_velocities;
 use super::inspect::numbered_coordinates;
 use super::replace::replace_at;
+use super::rest_frequency::{quantity_tokens, quantity_vector};
 use super::transform_single::bool_vector;
 use super::{CoordinateState, PyCoordsys, default_spectral_conversion};
 
@@ -34,8 +35,8 @@ struct Samples {
     unit: Unit,
 }
 
-fn record_samples(record: &RecordValue) -> Result<Samples, String> {
-    let missing = || "Illegal Quantum record in QuantumHolder::fromRecord".to_owned();
+fn record_samples(record: &RecordValue) -> Result<(Vec<f64>, &str), &'static str> {
+    let missing = || "Illegal Quantum record in QuantumHolder::fromRecord";
     let Some(Value::Scalar(ScalarValue::String(unit))) = record.get("unit") else {
         return Err(missing());
     };
@@ -48,59 +49,9 @@ fn record_samples(record: &RecordValue) -> Result<Samples, String> {
         Value::Array(ArrayValue::Float32(values)) if values.ndim() == 1 => {
             values.iter().copied().map(f64::from).collect()
         }
-        _ => return Err("Cannot convert QuantumHolder to Quantum<Vector<Double> >".into()),
+        _ => return Err("Cannot convert QuantumHolder to Quantum<Vector<Double> >"),
     };
-    Ok(Samples {
-        values,
-        unit: casacore::casacore_unit(unit).map_err(|error| error.to_string())?,
-    })
-}
-
-fn text_samples(values: Vec<String>) -> Result<Samples, String> {
-    let quantities = values
-        .into_iter()
-        .map(|value| quantity(&Variant::Text(value)))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "Bad input parameter".to_owned())?;
-    let unit = quantities
-        .first()
-        .ok_or_else(|| "Bad input parameter".to_owned())?
-        .unit()
-        .clone();
-    let values = quantities
-        .iter()
-        .map(|quantity| quantity.get_value_in(&unit))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    Ok(Samples { values, unit })
-}
-
-fn sample_argument(
-    py: Python<'_>,
-    value: Option<&Bound<'_, PyAny>>,
-) -> Result<Option<Samples>, String> {
-    let Some(value) = value.filter(|value| !value.is_none()) else {
-        return Ok(None);
-    };
-    if bool_vector(value)
-        .map_err(|error| error.to_string())?
-        .is_some()
-    {
-        return Ok(None);
-    }
-    let samples = if let Ok(record) = value.cast::<PyDict>() {
-        record_samples(&casa_record(py, Some(record)).map_err(|error| error.to_string())?)?
-    } else {
-        match value
-            .extract::<Variant>()
-            .map_err(|error| error.to_string())?
-        {
-            Variant::Text(value) => text_samples(vec![value])?,
-            Variant::Texts(values) => text_samples(values)?,
-            _ => return Err("Unrecognized input parameter".into()),
-        }
-    };
-    Ok((!samples.values.is_empty()).then_some(samples))
+    Ok((values, unit))
 }
 
 fn capture_samples(
@@ -108,16 +59,38 @@ fn capture_samples(
     value: Option<&Bound<'_, PyAny>>,
     name: &str,
     log: &mut Vec<LogLine>,
-) -> Option<Samples> {
-    match sample_argument(py, value) {
-        Ok(samples) => samples,
-        Err(error) => {
-            log.push(LogLine::warning(format!(
-                "Error in {name} parameter.  {error}"
-            )));
-            None
-        }
+) -> PyResult<Option<Samples>> {
+    let Some(value) = value.filter(|value| !value.is_none()) else {
+        return Ok(None);
+    };
+    if bool_vector(value)?.is_some() {
+        return Ok(None);
     }
+    let mut warn = |error: &str| {
+        log.push(LogLine::warning(format!(
+            "Error in {name} parameter.  {error}"
+        )));
+        Ok(None)
+    };
+    let (values, unit) = if let Ok(record) = value.cast::<PyDict>() {
+        let record = casa_record(py, Some(record))?;
+        match record_samples(&record) {
+            Ok((values, unit)) => (values, casacore::casacore_unit(unit).map_err(raised)?),
+            Err(error) => return warn(error),
+        }
+    } else {
+        let texts = match value.extract::<Variant>()? {
+            Variant::Text(value) if value.is_empty() => vec![value],
+            Variant::Text(value) => quantity_tokens(&value),
+            Variant::Texts(values) => values,
+            _ => return warn("Unrecognized input parameter"),
+        };
+        let Some(samples) = quantity_vector(&texts)? else {
+            return warn("Bad input parameter");
+        };
+        samples
+    };
+    Ok((!values.is_empty()).then_some(Samples { values, unit }))
 }
 
 fn declared_frame(model: &SpectralCoordinate) -> FrequencyRef {
@@ -147,12 +120,11 @@ fn update_rest_frequency(
     let Some(rest) = rest.filter(|rest| rest.value() > 0.0) else {
         return Ok(model);
     };
-    let mut hz = rest.value();
-    if rest.unit().val().dim == frequency_dimension() {
-        hz *= rest.unit().val().factor;
-    } else if rest.unit().val().dim != UnitDim::NODIM {
+    let unit = rest.unit().val();
+    if unit.dim != frequency_dimension() && unit.dim != UnitDim::NODIM {
         return Err(raised("Rest frequency units are not compatible with Hz"));
     }
+    let hz = rest.value() * unit.factor;
     let native = model.value_from_hz(hz).map_err(raised)?;
     model.with_replaced_rest_frequency(native).map_err(raised)
 }
@@ -337,19 +309,16 @@ impl PyCoordsys {
             .transpose()?
             .flatten();
         let mut log = Vec::new();
-        let frequencies = capture_samples(py, frequencies, "frequencies", &mut log);
-        let velocities = capture_samples(py, velocities, "velocities", &mut log);
-        let edit = SpectralEdit {
-            frame,
-            rest,
-            frequencies,
-            doppler,
-            velocities,
-        };
-        let (result, log) = py.detach(|| {
-            let result = apply_edit(&mut self.state(), edit, &mut log);
-            (result, log)
-        });
+        let result = (|| {
+            let edit = SpectralEdit {
+                frame,
+                rest,
+                frequencies: capture_samples(py, frequencies, "frequencies", &mut log)?,
+                doppler,
+                velocities: capture_samples(py, velocities, "velocities", &mut log)?,
+            };
+            py.detach(|| apply_edit(&mut self.state(), edit, &mut log))
+        })();
         emit(py, "casars.tools.coordsys", &log)?;
         result
     }

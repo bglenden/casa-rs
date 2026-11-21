@@ -4,7 +4,7 @@ use casa_types::measures::frequency::FrequencyRef;
 
 use crate::{CoordinateError, TabularCoordinate};
 
-use super::{SpectralCoordinate, closest_rest_frequency};
+use super::SpectralCoordinate;
 
 /// Native spectral representation stored in casacore's `nativeType` field.
 /// Internally the coordinate continues to map pixels to frequency.
@@ -105,12 +105,35 @@ impl SpectralCoordinate {
                 "invalid spectral rest frequency".into(),
             ));
         }
-        if let Some(index) = closest_rest_frequency(&self.rest_frequencies, self.rest_frequency) {
-            self.rest_frequencies[index] = frequency;
-        } else {
-            self.rest_frequencies.push(frequency);
+        self.rest_frequencies[self.rest_frequency_index] = frequency;
+        Ok(self)
+    }
+
+    /// Set the rest-frequency list and select its active entry by index.
+    /// The list uses the coordinate's stored frequency unit.
+    ///
+    /// # Errors
+    /// Returns an error for an absent index or a negative or nonfinite entry.
+    pub fn with_selected_rest_frequencies(
+        mut self,
+        frequencies: Vec<f64>,
+        active: usize,
+    ) -> Result<Self, CoordinateError> {
+        if active >= frequencies.len() {
+            return Err(CoordinateError::InvalidRecord(
+                "Failed AlwaysAssert which<restfreqs_p.nelements()".into(),
+            ));
         }
-        self.rest_frequency = frequency;
+        if frequencies
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "Rest frequencies must be non-negative and finite".into(),
+            ));
+        }
+        self.rest_frequency_index = active;
+        self.rest_frequencies = frequencies;
         Ok(self)
     }
 
