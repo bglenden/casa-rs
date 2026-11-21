@@ -48,7 +48,7 @@ enum FluxParameters {
 #[derive(Default)]
 struct FieldModel {
     entries: Vec<VirtualModelEntry>,
-    image: Option<ImageModel>,
+    images: Vec<ImageModel>,
 }
 
 type FieldModels = BTreeMap<i32, FieldModel>;
@@ -190,10 +190,10 @@ fn publish_models(
                 field,
                 spws,
             );
-            if publication.may_reference_images()
-                && let Some(image) = &mut model.image
-            {
-                image.retain();
+            if publication.may_reference_images() {
+                for image in &mut model.images {
+                    image.retain();
+                }
             }
             published.map_err(execution)?;
         }
@@ -460,19 +460,37 @@ fn prepare(
                 path,
                 by_channel,
                 scratch,
+                windows: spws,
             };
             use resolved::ResolvedFlux;
-            let flux = match (flux, spectrum.as_ref().zip(first_jy)) {
-                (FluxParameters::Manual(manual), _) if manual.intensity_jy() != 0. => {
+            let image_spectrum = match flux {
+                FluxParameters::Standard {
+                    catalog,
+                    interpolation,
+                } if by_channel => {
+                    match catalog
+                        .spectrum(&name, &direction, *epoch / 86_400., *interpolation)
+                        .map_err(execution)?
+                    {
+                        CatalogMatch::Spectrum(spectrum) => Some(spectrum),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let flux = match flux {
+                FluxParameters::Manual(manual) if manual.intensity_jy() != 0. => {
                     ResolvedFlux::Manual(manual)
                 }
-                (_, Some((spectrum, jy))) => ResolvedFlux::Catalog(spectrum, jy),
+                FluxParameters::Standard { .. } => {
+                    ResolvedFlux::Catalog(image_spectrum.as_ref(), first_jy.unwrap_or(1.))
+                }
                 _ => ResolvedFlux::Unscaled,
             };
-            model.image = params.prepare(ms, selected, &frame, field, flux)?;
-            if let Some(image) = &model.image {
-                model.entries.push(image.entry.clone());
-            }
+            model.images = params.prepare(ms, selected, &frame, field, flux)?;
+            model
+                .entries
+                .extend(model.images.iter().map(|image| image.entry.clone()));
         }
         field_flux.insert("fieldName".into(), CasaValue::String { value: name });
         returned.insert(

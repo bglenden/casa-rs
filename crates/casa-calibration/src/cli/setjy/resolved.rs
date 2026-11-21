@@ -4,25 +4,26 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use casa_ms::{MeasurementSet, ResolvedMsSelection};
+use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
 use casa_task_runtime::TaskFailure;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::{CalibratorSpectrum, ManualFlux, MsCalEngine, execution};
 use crate::ft::image::ImageModel;
-use crate::ft::setjy::image::{ImageFlux, ImageFrequencies, calibrator_image};
+use crate::ft::setjy::image::{ImageFlux, ImageFrequencies, calibrator_images};
 use crate::session::resolve_casa_calibration_selection;
 
 pub(super) struct ImageParameters<'a> {
     pub(super) path: &'a Path,
     pub(super) by_channel: bool,
     pub(super) scratch: bool,
+    pub(super) windows: &'a [i32],
 }
 
 pub(super) enum ResolvedFlux<'a> {
     Manual(&'a ManualFlux),
-    Catalog(&'a CalibratorSpectrum<'a>, f64),
+    Catalog(Option<&'a CalibratorSpectrum<'a>>, f64),
     Unscaled,
 }
 
@@ -34,12 +35,12 @@ impl ImageParameters<'_> {
         frame: &MeasFrame,
         field: i32,
         flux: ResolvedFlux<'_>,
-    ) -> Result<Option<ImageModel>, TaskFailure> {
+    ) -> Result<Vec<ImageModel>, TaskFailure> {
         let mut request = selected.request.clone();
         request.field = Some(field.to_string());
         let mut selected = resolve_casa_calibration_selection(ms, &request).map_err(execution)?;
         selected.channel_selections.clear();
-        let frequencies = image_frequencies(ms, &selected, field)?;
+        let frequencies = image_frequencies(ms, self.windows, field)?;
         let image_flux = if self.by_channel && frequencies.samples.len() > 1 {
             let samples = match flux {
                 ResolvedFlux::Manual(manual) => Some(
@@ -53,11 +54,11 @@ impl ImageParameters<'_> {
                         })
                         .collect::<Result<_, _>>()?,
                 ),
-                ResolvedFlux::Catalog(spectrum, _) => Some(
+                ResolvedFlux::Catalog(spectrum, fallback) => Some(
                     frequencies
                         .samples
                         .iter()
-                        .map(|&hz| spectrum.flux(hz))
+                        .map(|&hz| spectrum.map_or(fallback, |spectrum| spectrum.flux(hz)))
                         .collect(),
                 ),
                 ResolvedFlux::Unscaled => None,
@@ -74,9 +75,24 @@ impl ImageParameters<'_> {
             };
             ImageFlux::Constant(jy)
         };
-        calibrator_image(
+        let spws = selected
+            .selected_rows
+            .iter()
+            .map(|row| row.spectral_window_id)
+            .collect::<BTreeSet<_>>();
+        let selections = if spws.len() == 1 {
+            vec![selected]
+        } else {
+            spws.into_iter()
+                .map(|spw| {
+                    request.spw = Some(spw.to_string());
+                    resolve_casa_calibration_selection(ms, &request).map_err(execution)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        calibrator_images(
             ms,
-            &selected,
+            &selections,
             self.path,
             &frequencies,
             image_flux,
@@ -89,20 +105,22 @@ impl ImageParameters<'_> {
 
 fn image_frequencies(
     ms: &MeasurementSet,
-    selected: &ResolvedMsSelection,
+    ids: &[i32],
     field: i32,
 ) -> Result<ImageFrequencies, TaskFailure> {
     let windows = ms.spectral_window().map_err(execution)?;
-    let ids = selected
-        .selected_rows
-        .iter()
-        .map(|row| row.spectral_window_id)
-        .collect::<BTreeSet<_>>();
+    let first = ids
+        .first()
+        .ok_or_else(|| execution("setjy image needs a selected spectral window"))?;
+    let first_reference = windows
+        .frequency_reference(*first as usize)
+        .map_err(execution)?;
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
     let mut step = f64::INFINITY;
     let mut engine = None;
-    for id in ids {
+    let mut full_field = None;
+    for &id in ids {
         let frequencies = windows.chan_freq(id as usize).map_err(execution)?;
         let widths = windows.chan_width(id as usize).map_err(execution)?;
         let reference = windows
@@ -122,9 +140,17 @@ fn image_frequencies(
         } else {
             if engine.is_none() {
                 engine = Some(MsCalEngine::new(ms).map_err(execution)?);
+                let request = MsSelection {
+                    field: Some(field.to_string()),
+                    ..MsSelection::default()
+                };
+                full_field =
+                    Some(resolve_casa_calibration_selection(ms, &request).map_err(execution)?);
             }
             let engine = engine.as_ref().expect("frequency conversion engine");
-            let times = selected
+            let times = full_field
+                .as_ref()
+                .expect("full-field frequency selection")
                 .selected_rows
                 .iter()
                 .filter(|row| row.spectral_window_id == id)
@@ -143,5 +169,5 @@ fn image_frequencies(
             }
         }
     }
-    ImageFrequencies::new(min, max, step).map_err(execution)
+    ImageFrequencies::new(min, max, step, first_reference).map_err(execution)
 }

@@ -8608,3 +8608,13 @@ of the frequency ratio. casa-rs evaluates the documented polynomial in
 `log10(f / f0)`, as used by the manual point-source model. It normalizes
 the existing image morphology to that intensity per channel or at the
 representative frequency for constant scaling. [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## CASA uvsub drops the second feed basis of a resolved virtual model
+
+In CASA 6.7.6.14, an MS with RR/LL on one window and XX/YY on the next can
+hold two valid `SetJyGridFT` records for a resolved IQUV image. `ms.uvsub`
+uses the first window's circular model and subtracts zero on the linear
+window, even when CASA itself wrote both records. Scratch `setjy` predicts
+nonzero visibilities on both windows. casa-rs reads either writer's
+records and applies the matching Fourier grid on each window.
+[#1519](https://github.com/bglenden/casa-rs/issues/1519)

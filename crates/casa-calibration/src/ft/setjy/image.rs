@@ -10,19 +10,26 @@ use casa_images::PagedImage;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_types::measures::{direction::MDirection, position::MPosition};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::ft::image::{ImageModel, prepare_image};
-use crate::ft::invalid;
+use crate::ft::{invalid, spectral_with_runtime};
 
 pub(crate) struct ImageFrequencies {
     pub(crate) samples: Vec<f64>,
     span: f64,
+    pub(crate) first_window_reference: FrequencyRef,
 }
 
 impl ImageFrequencies {
-    pub(crate) fn new(min: f64, max: f64, step: f64) -> MsResult<Self> {
+    pub(crate) fn new(
+        min: f64,
+        max: f64,
+        step: f64,
+        first_window_reference: FrequencyRef,
+    ) -> MsResult<Self> {
         let span = max - min;
         let intervals = (span / step).ceil();
         if !min.is_finite()
@@ -42,7 +49,11 @@ impl ImageFrequencies {
                 .map(|index| min + index as f64 * step)
                 .collect(),
         };
-        Ok(Self { samples, span })
+        Ok(Self {
+            samples,
+            span,
+            first_window_reference,
+        })
     }
 
     pub(crate) fn center(&self) -> f64 {
@@ -53,6 +64,22 @@ impl ImageFrequencies {
         }
         lower
     }
+
+    fn record_scale(&self, model: &mut ImageModel, scales: &[f64]) {
+        let record = &mut model.entry.container;
+        record.upsert(
+            "name",
+            Value::Scalar(ScalarValue::String("SetJyGridFT".into())),
+        );
+        record.upsert(
+            "freqscale",
+            Value::Array(ArrayValue::from_f64_vec(self.samples.clone())),
+        );
+        record.upsert(
+            "scaleamp",
+            Value::Array(ArrayValue::from_f64_vec(scales.to_vec())),
+        );
+    }
 }
 
 pub(crate) enum ImageFlux {
@@ -60,15 +87,15 @@ pub(crate) enum ImageFlux {
     PerChannel(Option<Vec<f64>>),
 }
 
-pub(crate) fn calibrator_image(
+pub(crate) fn calibrator_images(
     ms: &MeasurementSet,
-    selected: &ResolvedMsSelection,
+    selections: &[ResolvedMsSelection],
     path: &Path,
     frequencies: &ImageFrequencies,
     flux: ImageFlux,
     frame: &MeasFrame,
     scratch: bool,
-) -> MsResult<Option<ImageModel>> {
+) -> MsResult<Vec<ImageModel>> {
     let input = PagedImage::<f32>::open(path).map_err(invalid)?;
     let mut coordinates = input.coordinates().clone();
     let spectral_index = coordinates.find_coordinate(CoordinateType::Spectral);
@@ -95,12 +122,24 @@ pub(crate) fn calibrator_image(
     let planes = input.shape()[stokes_axis];
     let channels = input.shape()[spectral_axis];
     let cube = channels > 1;
+    let direction = coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .ok_or_else(|| invalid("the setjy image has no direction coordinate"))?;
+    let CoordinateModel::Direction(direction) = coordinates.coordinate(direction) else {
+        unreachable!("direction coordinate");
+    };
+    let center = direction.reference_pixel();
+    let radius = if cube {
+        None
+    } else {
+        calibrator_radius(path, direction)?
+    };
     let (output_spectral, input_pixels) = if cube {
         if spectral_axis != 3 {
             return Err(invalid("the spectral axis of a setjy cube must be last"));
         }
         let target = SpectralCoordinate::from_tabular(
-            FrequencyRef::LSRK,
+            frequencies.first_window_reference,
             (0..frequencies.samples.len())
                 .map(|pixel| pixel as f64)
                 .collect(),
@@ -114,17 +153,18 @@ pub(crate) fn calibrator_image(
             rest,
         )
         .map_err(invalid)?;
+        let spectral = spectral_with_runtime(spectral)?;
+        let ratio = cube_frame_ratio(
+            &coordinates,
+            direction,
+            frequencies.first_window_reference,
+            spectral.frequency_ref(),
+            frame,
+        )?;
         let input_pixels = frequencies
             .samples
             .iter()
-            .map(|&hz| {
-                let measured = MFrequency::new(hz, FrequencyRef::LSRK)
-                    .convert_to(spectral.frequency_ref(), frame)
-                    .map_err(invalid)?;
-                spectral
-                    .pixel_at_frequency_hz(measured.hz())
-                    .map_err(invalid)
-            })
+            .map(|&hz| spectral.pixel_at_frequency_hz(hz * ratio).map_err(invalid))
             .collect::<MsResult<Vec<_>>>()?;
         (target, input_pixels)
     } else {
@@ -161,18 +201,6 @@ pub(crate) fn calibrator_image(
             .iter()
             .position(|&label| label == StokesType::I)
     };
-    let direction = coordinates
-        .find_coordinate(CoordinateType::Direction)
-        .ok_or_else(|| invalid("the setjy image has no direction coordinate"))?;
-    let CoordinateModel::Direction(direction) = coordinates.coordinate(direction) else {
-        unreachable!("direction coordinate");
-    };
-    let center = direction.reference_pixel();
-    let radius = if cube {
-        None
-    } else {
-        calibrator_radius(path, direction)?
-    };
 
     let stage = tempfile::tempdir().map_err(invalid)?;
     let staged_path = stage.path().join("model.im");
@@ -186,14 +214,11 @@ pub(crate) fn calibrator_image(
     .map_err(invalid)?;
     let mut sum = 0.;
     for (channel, pixel) in input_pixels.into_iter().enumerate() {
-        // ImageRegrid fills unsupported output channels with zero.
-        if !(-1e-8..=(channels - 1) as f64 + 1e-8).contains(&pixel) {
-            continue;
-        }
-        let pixel = pixel.clamp(0., (channels - 1) as f64);
+        // ImageRegrid keeps endpoint pixels in the unmasked output cube.
+        let pixel = (pixel as f32).clamp(0., (channels - 1) as f32);
         let lower = pixel.floor() as usize;
         let upper = pixel.ceil() as usize;
-        let weight = (pixel - lower as f64) as f32;
+        let weight = pixel - lower as f32;
         for pol in 0..planes {
             for y in (0..ny).step_by(tile[1]) {
                 for x in (0..nx).step_by(tile[0]) {
@@ -206,7 +231,7 @@ pub(crate) fn calibrator_image(
                         start[spectral_axis] = upper;
                         let other = input.get_slice(&start, &shape).map_err(invalid)?;
                         pixels.zip_mut_with(&other, |first, second| {
-                            *first = *first * (1. - weight) + *second * weight;
+                            *first += (*second - *first) * weight;
                         });
                     }
                     if let Some(radius) = radius {
@@ -254,20 +279,56 @@ pub(crate) fn calibrator_image(
     }
     staged.save().map_err(invalid)?;
     drop(staged);
-    let mut model = prepare_image(ms, selected, &staged_path, None, scratch, scratch)?;
-    if let (Some(model), Some(scales)) = (&mut model, scales) {
-        let record = &mut model.entry.container;
-        record.upsert(
-            "name",
-            Value::Scalar(ScalarValue::String("SetJyGridFT".into())),
-        );
-        record.upsert(
-            "freqscale",
-            Value::Array(ArrayValue::from_f64_vec(frequencies.samples.clone())),
-        );
-        record.upsert("scaleamp", Value::Array(ArrayValue::from_f64_vec(scales)));
+    let mut models = Vec::new();
+    for selected in selections {
+        // CASA grids each window with its own feed and correlation basis.
+        if let Some(mut model) = prepare_image(ms, selected, &staged_path, None, scratch, scratch)?
+        {
+            if let Some(scales) = &scales {
+                frequencies.record_scale(&mut model, scales);
+            }
+            models.push(model);
+        }
     }
-    Ok(model)
+    Ok(models)
+}
+
+fn cube_frame_ratio(
+    coordinates: &casa_coordinates::CoordinateSystem,
+    direction: &casa_coordinates::DirectionCoordinate,
+    from: FrequencyRef,
+    to: FrequencyRef,
+    runtime: &MeasFrame,
+) -> MsResult<f64> {
+    if from == to {
+        return Ok(1.);
+    }
+    let observation = coordinates.obs_info();
+    let position = runtime
+        .measures()
+        .and_then(|provider| MPosition::casa_observatory(&observation.telescope, provider))
+        .or_else(|| observation.telescope_position.clone())
+        .ok_or_else(|| {
+            invalid(format!(
+                "the image observatory {:?} is unavailable",
+                observation.telescope
+            ))
+        })?;
+    let epoch = observation
+        .date
+        .clone()
+        .ok_or_else(|| invalid("the setjy cube has no observation epoch"))?;
+    let [longitude, latitude] = direction.projection_reference();
+    let direction = MDirection::from_angles(longitude, latitude, direction.direction_ref());
+    let frame = runtime
+        .clone()
+        .with_epoch(epoch)
+        .with_position(position)
+        .with_direction(direction);
+    // casacore retains the numerical world grid if no frequency machine can be built.
+    Ok(MFrequency::new(1., from)
+        .convert_to(to, &frame)
+        .map_or(1., |frequency| frequency.hz()))
 }
 
 fn scale_image(

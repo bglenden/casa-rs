@@ -24,26 +24,31 @@ pub(super) fn task_image(task: &TaskInvocation<'_>) -> Result<Option<PathBuf>, T
 
 fn resolve_image(workspace: &Path, model: &str) -> Result<PathBuf, TaskFailure> {
     let direct = workspace.join(model);
-    if direct.is_dir() {
-        return Ok(direct);
+    if Path::new(model).is_absolute() {
+        return direct.is_dir().then_some(direct).ok_or_else(|| {
+            TaskFailure::validation(format!("model image {model:?} was not found")).at("model")
+        });
     }
-    let found = model_directories(
-        workspace,
-        "CalModels",
-        "nrao/VLA/CalModels",
-        &[".ms", ".im", ".tab"],
-    )
-    .into_iter()
-    .map(|directory| directory.join(model))
-    .filter(|path| path.is_dir())
-    .collect::<Vec<_>>();
+    let found = std::iter::once(direct)
+        .chain(
+            model_directories(
+                workspace,
+                "CalModels",
+                "nrao/VLA/CalModels",
+                &[".ms", ".im", ".tab"],
+            )
+            .into_iter()
+            .map(|directory| directory.join(model)),
+        )
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
     match found.as_slice() {
         [path] => Ok(path.clone()),
         [] => {
             Err(TaskFailure::validation(format!("model image {model:?} was not found")).at("model"))
         }
         _ => Err(TaskFailure::validation(format!(
-            "model image {model:?} matches multiple paths: {found:?}"
+            "model image {model:?} matches multiple paths {found:?}; use one absolute path"
         ))
         .at("model")),
     }
