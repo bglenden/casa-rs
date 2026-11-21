@@ -2187,6 +2187,7 @@ fn apply_row_all_channels(
         }
 
         let is_tsys = table_plan.summary.table_subtype == "B TSYS";
+        let is_switched_power = table_plan.summary.table_subtype == "G EVLASWPOW";
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
                 table_index,
@@ -2260,7 +2261,8 @@ fn apply_row_all_channels(
                 table_plan.summary.table_subtype.as_str(),
                 "B Jones" | "BPOLY"
             );
-        let scalar_bandpass = is_bandpass && correlation_types.len() == 1;
+        let first_receptor_only =
+            (is_bandpass || is_switched_power) && correlation_types.len() == 1;
         let (ant1_transient, ant2_transient) =
             (is_tsys && ant1.interpolated, is_tsys && ant2.interpolated);
         let (ant1, ant2) = (ant1.grid, ant2.grid);
@@ -2316,7 +2318,7 @@ fn apply_row_all_channels(
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
         if !forward_model
             && !calibrate_weights
-            && !scalar_bandpass
+            && !first_receptor_only
             && let Some(pair) = build_fast_gain_pair(
                 table_index,
                 &ant1,
@@ -2366,7 +2368,7 @@ fn apply_row_all_channels(
         }
 
         if !forward_model
-            && !scalar_bandpass
+            && !first_receptor_only
             && let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
                 (ant1.as_ref(), ant2.as_ref())
         {
@@ -2414,7 +2416,7 @@ fn apply_row_all_channels(
 
         let generic_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
         for corr_index in 0..data.shape()[0] {
-            let receptors = if scalar_bandpass {
+            let receptors = if first_receptor_only {
                 bandpass::receptors(correlation_types, corr_index)
             } else {
                 correlation_receptors(correlation_types[corr_index])

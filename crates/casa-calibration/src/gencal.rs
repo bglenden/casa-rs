@@ -830,22 +830,29 @@ fn open_measurement_set(path: &Path) -> Result<MeasurementSet, GencalError> {
     })
 }
 
-pub(crate) fn prior_input_for_report(
+pub(crate) fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
-) -> Result<Option<PathBuf>, GencalError> {
+) -> Result<Vec<PathBuf>, GencalError> {
     if request.caltype == GencalType::Antpos {
-        return Ok(infile.map(Path::to_path_buf));
+        return Ok(infile.into_iter().map(Path::to_path_buf).collect());
     }
     if request.caltype == GencalType::Tsys {
         let ms = open_measurement_set(&request.measurement_set)?;
         return Ok(ms
             .subtable(SubtableId::SysCal)
             .and_then(Table::path)
-            .map(Path::to_path_buf));
+            .into_iter()
+            .map(Path::to_path_buf)
+            .collect());
+    }
+    if request.caltype.is_switched_power() {
+        let ms = open_measurement_set(&request.measurement_set)?;
+        let (power, noise_cal) = switched_power::input_paths(&ms, &request.measurement_set)?;
+        return Ok(vec![power, noise_cal]);
     }
     if !request.caltype.is_gain_curve() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     if matches!(request.caltype, GencalType::Gc | GencalType::Gceff) {
         let ms = &request.measurement_set;
@@ -856,13 +863,15 @@ pub(crate) fn prior_input_for_report(
             }
         })?;
         if let Some(path) = power_curve::source_path(ms, &main)? {
-            return Ok(Some(path));
+            return Ok(vec![path]);
         }
     }
     Ok(infile
         .map(Path::to_path_buf)
         .or_else(|| request.gaincurve_table.clone())
-        .or_else(default_vla_gaincurve_table))
+        .or_else(default_vla_gaincurve_table)
+        .into_iter()
+        .collect())
 }
 
 fn write_prior_caltable(

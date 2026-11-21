@@ -3,6 +3,7 @@
 
 use super::{ApplyExecutionError, GainGrid, GainSample, MeasurementSet};
 use crate::gencal::EVLA_CORRELATOR_EFFICIENCY;
+use casa_tables::{Table, TableOptions, add_directory};
 use casa_types::{Complex32, Value};
 use std::path::Path;
 
@@ -54,18 +55,25 @@ pub(super) fn validate_context(
     path: &Path,
 ) -> Result<(), ApplyExecutionError> {
     for name in ["SYSPOWER", "CALDEVICE"] {
-        if ms
+        let Some(reference) = ms
             .main_table()
             .keywords()
             .get(name)
             .and_then(Value::as_table_ref)
-            .is_none()
-        {
+        else {
             return Err(ApplyExecutionError::UnsupportedCalibrationTable {
                 path: path.display().to_string(),
                 reason: format!("RecordInterface: field {name} is unknown"),
             });
-        }
+        };
+        let auxiliary = add_directory(reference, ms.path().unwrap_or_else(|| Path::new(".")));
+        Table::open(TableOptions::new(&auxiliary)).map_err(|source| {
+            ApplyExecutionError::OpenCalibrationAuxiliaryTable {
+                path: path.display().to_string(),
+                subtable: name,
+                source,
+            }
+        })?;
     }
     Ok(())
 }

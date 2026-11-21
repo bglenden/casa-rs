@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use casa_ms::MeasurementSet;
-use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_tables::{ColumnType, RequiredScalarColumnValues, Table, TableOptions};
+use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use super::{GencalError, GencalType, PriorCalRow, get_f64};
@@ -47,6 +47,15 @@ pub(super) fn rows(
 ) -> Result<Vec<PriorCalRow>, GencalError> {
     let power = open(power_path, "SYSPOWER")?;
     let noise = open(noise_path, "CALDEVICE")?;
+    validate_scalar_columns(&power, &[("INTERVAL", PrimitiveType::Float64)])?;
+    validate_scalar_columns(
+        &noise,
+        &[
+            (COL_TIME, PrimitiveType::Float64),
+            ("INTERVAL", PrimitiveType::Float64),
+            ("NUM_CAL_LOAD", PrimitiveType::Int32),
+        ],
+    )?;
     let antennas = ms.antenna().map_err(invalid)?.row_count();
     let windows = ms.spectral_window().map_err(invalid)?.row_count();
     let labels = visibility_labels(ms.main_table())?;
@@ -111,6 +120,24 @@ fn open(path: &Path, name: &str) -> Result<Table, GencalError> {
             path.display()
         ))
     })
+}
+
+fn validate_scalar_columns(
+    table: &Table,
+    columns: &[(&str, PrimitiveType)],
+) -> Result<(), GencalError> {
+    for &(name, expected) in columns {
+        let column = table
+            .schema()
+            .and_then(|schema| schema.column(name))
+            .ok_or_else(|| invalid(format!("Table column {name} is unknown")))?;
+        if *column.column_type() != ColumnType::Scalar || column.data_type() != Some(expected) {
+            return Err(invalid(format!(
+                "Table column {name} has the wrong scalar type"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn ids(

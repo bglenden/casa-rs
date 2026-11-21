@@ -275,6 +275,76 @@ def solver_preapply(root, vis, engines, prior):
             np.testing.assert_allclose(values, expected[1], atol=1e-4)
 
 
+def protect_external_input_tables(root, vis, native):
+    work = root/'external-inputs.ms'
+    copy_ms(vis, work)
+    external = []
+    with table(str(work), readonly=False, ack=False) as main:
+        for name in ('SYSPOWER', 'CALDEVICE'):
+            path = root/f'external-{name}'
+            shutil.copytree(vis/name, path)
+            with table(str(path), ack=False) as linked:
+                main.putkeyword(name, linked)
+            external.append(path)
+    output = root/'report-overlap.cal'
+    for path in external:
+        header = path/'table.dat'
+        before = header.read_bytes()
+        try:
+            native.gencal(str(work), str(output), 'rq', output=str(header), overwrite=True)
+        except (RuntimeError, ValueError) as error:
+            assert 'report path overlaps a scientific product' in str(error)
+        else:
+            raise AssertionError('report overwrote a linked input table')
+        assert header.read_bytes() == before
+        assert not output.exists()
+
+
+def refused_products(root, vis, engines, prior):
+    work = root/'missing-column.ms'
+    copy_ms(vis, work)
+    rebind_extensions(work)
+    with table(str(work/'CALDEVICE'), readonly=False, ack=False) as noise:
+        noise.removecols('NUM_CAL_LOAD')
+    for name, api in engines.items():
+        output = root/f'preserve-{name}.cal'
+        copy_ms(prior, output)
+        original = read_calibration(output)
+        try:
+            api.gencal(str(work), str(output), 'rq')
+        except RuntimeError as error:
+            assert 'Error in Calibrater::specifycal.' in str(error)
+        else:
+            raise AssertionError('generation replaced a table with malformed CALDEVICE')
+        compare_columns(read_calibration(output), original)
+
+    for name, api in engines.items():
+        work = root/f'dangling-{name}.ms'
+        copy_ms(vis, work)
+        rebind_extensions(work)
+        (work/'CALDEVICE').rename(work/'unlinked-CALDEVICE')
+        with opened(work) as main:
+            original = {key: main.getcol(key) for key in ('DATA', 'FLAG', 'WEIGHT')}
+        try:
+            api.applycal(str(work), gaintable=[str(prior)], calwt=True, flagbackup=False)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('application accepted a dangling CALDEVICE reference')
+        with opened(work) as main:
+            compare_columns({key: main.getcol(key) for key in original}, original)
+
+
+def selected_correlation(root, vis, correlation):
+    output = root/f'sole-{correlation}.ms'
+    assert casa.mstransform(str(vis), str(output), correlation=correlation, datacolumn='data') is None
+    for name in ('SYSPOWER', 'CALDEVICE'):
+        if not (output/name).exists():
+            shutil.copytree(vis/name, output/name)
+    rebind_extensions(output)
+    return output
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', required=True, type=Path)
@@ -318,8 +388,17 @@ def main():
             rebind_extensions(spectral)
             assert casa.initweights(str(spectral), wtmode='ones', dowtsp=True) is None
             applications += apply(root, spectral, engines, tables, True, 'nearest')
+            with opened(spectral, True) as main:
+                main.putcol('TIME', main.getcol('TIME') + 1.7)
+            applications += apply(root, spectral, engines, tables, True, 'linear')
+            for correlation in ('LL', 'LR'):
+                selected = selected_correlation(root, vis, correlation)
+                applications += apply(root, selected, engines, tables, True, 'nearest')
+            refused_products(root, vis, engines, tables['casa'])
         print(mode, 'table and apply/weights passed', flush=True)
     parameter_and_failure_controls(root, vis, engines)
+    if 'native' in engines:
+        protect_external_input_tables(root, vis, engines['native'])
     print(f'{len(MODES)} switched-power modes and {applications} applications passed, '
           'plus solver preapply, mixed noise calibration, asynchronous times and refusal controls.')
 
