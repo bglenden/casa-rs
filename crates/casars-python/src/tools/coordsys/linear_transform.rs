@@ -18,7 +18,7 @@ fn raised(message: impl ToString) -> PyErr {
     PyRuntimeError::new_err(message.to_string())
 }
 
-fn matrix_input(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
+pub(super) fn matrix_input(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
     let invalid = || raised("The value array is not a double or integer array");
     let value = value.filter(|value| !value.is_none()).ok_or_else(invalid)?;
     let (mut shape, values) = if let Ok(array) = value.cast::<PyUntypedArray>() {
