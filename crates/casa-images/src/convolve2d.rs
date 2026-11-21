@@ -23,6 +23,9 @@
 //! unit volume) are refused: the simulation tasks convolve Jy/pixel images
 //! only.
 
+mod beam_fit;
+pub(crate) use beam_fit::sampled_beam_convolution;
+
 use std::f64::consts::{LN_2, PI};
 
 use casa_coordinates::{
@@ -88,17 +91,30 @@ fn require_square_pixels(direction: &DirectionCoordinate) -> Result<(), ImageErr
 /// carries the increments, the PC matrix and the projection, as casacore's
 /// `GaussianShape::toPixel` does when `worldWidthsToPixel` turns a beam into
 /// pixels.
-fn sky_per_pixel(direction: &DirectionCoordinate) -> Result<[[f64; 2]; 2], ImageError> {
+pub(crate) fn sky_per_pixel(direction: &DirectionCoordinate) -> Result<[[f64; 2]; 2], ImageError> {
     const STEP: f64 = 0.5;
     let crpix = direction.reference_pixel();
     let world = |dx: f64, dy: f64| direction.to_world(&[crpix[0] + dx, crpix[1] + dy]);
-    let centre = world(0.0, 0.0)?;
+    let reference = world(0.0, 0.0)?;
+    let (longitude, latitude) = (reference[0], reference[1]);
+    let (sin_lon, cos_lon) = longitude.sin_cos();
+    let (sin_lat, cos_lat) = latitude.sin_cos();
+    let east = [-sin_lon, cos_lon, 0.];
+    let north = [-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat];
+    let line_of_sight = |world: &[f64]| {
+        let (sin_lon, cos_lon) = world[0].sin_cos();
+        let (sin_lat, cos_lat) = world[1].sin_cos();
+        [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat]
+    };
     let mut jacobian = [[0.0; 2]; 2];
     for (axis, (dx, dy)) in [(STEP, 0.0), (0.0, STEP)].into_iter().enumerate() {
-        let (plus, minus) = (world(dx, dy)?, world(-dx, -dy)?);
-        let dlon = (plus[0] - minus[0] + PI).rem_euclid(2.0 * PI) - PI;
-        jacobian[0][axis] = dlon * centre[1].cos() / (2.0 * STEP);
-        jacobian[1][axis] = (plus[1] - minus[1]) / (2.0 * STEP);
+        let plus = line_of_sight(&world(dx, dy)?);
+        let minus = line_of_sight(&world(-dx, -dy)?);
+        let project = |basis: [f64; 3]| {
+            (0..3).map(|i| basis[i] * (plus[i] - minus[i])).sum::<f64>() / (2.0 * STEP)
+        };
+        jacobian[0][axis] = project(east);
+        jacobian[1][axis] = project(north);
     }
     Ok(jacobian)
 }
@@ -109,52 +125,170 @@ fn size_of_gaussian(fwhm_pixels: f64) -> usize {
     ((5.0 * sigma + 0.5) as usize + 1) * 2
 }
 
-/// The Gaussian kernel for `beam` on pixels whose sky offsets are `sky`
-/// ([`sky_per_pixel`]): its side (odd) and values, first axis fastest, peak
-/// 1 at the centre. The major axis points north through east, (east,
-/// north) = (sin θ, cos θ). The side is sized from the beam's widths in
-/// pixels, the axes of the pixel-frame ellipse.
-fn kernel(beam: &GaussianBeam, sky: [[f64; 2]; 2]) -> (usize, Vec<f64>) {
-    let (sin_pa, cos_pa) = beam.position_angle.sin_cos();
-    // The exponent's quadratic form on pixel offsets, q(d) = dᵀ Q d, with the
-    // value exp(−4 ln 2 q): half maximum at q = 1/4.
-    let along = [
-        sky[0][0] * sin_pa + sky[1][0] * cos_pa,
-        sky[0][1] * sin_pa + sky[1][1] * cos_pa,
-    ];
-    let across = [
-        sky[0][0] * cos_pa - sky[1][0] * sin_pa,
-        sky[0][1] * cos_pa - sky[1][1] * sin_pa,
-    ];
-    let (a2, b2) = (beam.major.powi(2), beam.minor.powi(2));
-    let q = [
-        [
-            along[0] * along[0] / a2 + across[0] * across[0] / b2,
-            along[0] * along[1] / a2 + across[0] * across[1] / b2,
-        ],
-        [
-            along[1] * along[0] / a2 + across[1] * across[0] / b2,
-            along[1] * along[1] / a2 + across[1] * across[1] / b2,
-        ],
-    ];
-    let (trace, det) = (q[0][0] + q[1][1], q[0][0] * q[1][1] - q[0][1] * q[1][0]);
-    let root = (trace * trace / 4.0 - det).max(0.0).sqrt();
-    let (small, large) = (trace / 2.0 - root, trace / 2.0 + root);
-    let (major_pixels, minor_pixels) = (1.0 / small.sqrt(), 1.0 / large.sqrt());
-    let mut side = size_of_gaussian(major_pixels).max(size_of_gaussian(minor_pixels));
-    if side.is_multiple_of(2) {
-        side += 1;
+/// A sampled Gaussian defined by its two projected, normalized pixel axes.
+/// The footprint is odd and includes all pixels out to CASA's five-sigma
+/// cutoff. Its values can also be generated a tile at a time.
+#[derive(Clone, Copy)]
+pub(crate) struct GaussianSamples {
+    pub(crate) side: usize,
+    along: [f64; 2],
+    across: [f64; 2],
+    determinant_root: f64,
+    minor_pixels: f64,
+}
+
+impl GaussianSamples {
+    pub(crate) fn new(beam: GaussianBeam, sky: [[f64; 2]; 2]) -> Result<Self, ImageError> {
+        if !beam.major.is_finite()
+            || beam.major <= 0.0
+            || !beam.minor.is_finite()
+            || beam.minor < 0.0
+            || beam.minor > beam.major
+            || !beam.position_angle.is_finite()
+        {
+            return Err(ImageError::InvalidMetadata(
+                "invalid Gaussian kernel dimensions".into(),
+            ));
+        }
+        let (sin_pa, cos_pa) = beam.position_angle.sin_cos();
+        // A target-resolution difference may have rank one. Sample its
+        // limiting Gaussian without dividing by zero or rounding positive
+        // values onto the axis.
+        let minor = if beam.minor == 0.0 {
+            beam.major * 1e-12
+        } else {
+            beam.minor
+        };
+        let along = [
+            (sky[0][0] * sin_pa + sky[1][0] * cos_pa) / beam.major,
+            (sky[0][1] * sin_pa + sky[1][1] * cos_pa) / beam.major,
+        ];
+        let across = [
+            (sky[0][0] * cos_pa - sky[1][0] * sin_pa) / minor,
+            (sky[0][1] * cos_pa - sky[1][1] * sin_pa) / minor,
+        ];
+        let a = along[0].powi(2) + across[0].powi(2);
+        let b = along[1].powi(2) + across[1].powi(2);
+        let c = along[0] * along[1] + across[0] * across[1];
+        let determinant_root =
+            (sky[0][0] * sky[1][1] - sky[0][1] * sky[1][0]).abs() / beam.major / minor;
+        let largest_root = ((a + b + (a - b).hypot(2.0 * c)) / 2.0).sqrt();
+        let major_pixels = largest_root / determinant_root;
+        if !major_pixels.is_finite()
+            || major_pixels <= 0.0
+            || major_pixels >= (isize::MAX / 16) as f64
+        {
+            return Err(ImageError::InvalidMetadata(
+                "invalid Gaussian kernel footprint".into(),
+            ));
+        }
+        let side = size_of_gaussian(major_pixels) + 1;
+        Ok(Self {
+            side,
+            along,
+            across,
+            determinant_root,
+            minor_pixels: largest_root.recip(),
+        })
     }
-    let centre = (side - 1) as f64 / 2.0;
-    let mut values = Vec::with_capacity(side * side);
-    for j in 0..side {
-        for i in 0..side {
-            let (dx, dy) = (i as f64 - centre, j as f64 - centre);
-            let form = q[0][0] * dx * dx + 2.0 * q[0][1] * dx * dy + q[1][1] * dy * dy;
-            values.push((-4.0 * LN_2 * form).exp());
+
+    pub(crate) fn sample(&self, x: usize, y: usize) -> f64 {
+        let center = self.side / 2;
+        let dx = (x as isize - center as isize) as f64;
+        let dy = (y as isize - center as isize) as f64;
+        let major = self.along[0] * dx + self.along[1] * dy;
+        let minor = self.across[0] * dx + self.across[1] * dy;
+        (-4.0 * LN_2 * (major.powi(2) + minor.powi(2))).exp()
+    }
+
+    pub(crate) fn precision(&self) -> [[f64; 2]; 2] {
+        let entry =
+            |i: usize, j: usize| self.along[i] * self.along[j] + self.across[i] * self.across[j];
+        [[entry(0, 0), entry(0, 1)], [entry(0, 1), entry(1, 1)]]
+    }
+
+    pub(crate) fn well_sampled(&self) -> bool {
+        self.minor_pixels >= 8.
+    }
+
+    pub(crate) fn volume(&self) -> f64 {
+        if self.side > 129 {
+            if self.well_sampled() {
+                // At this sampling the discrete and continuous volumes
+                // differ only by the far Gaussian tails outside the stamp.
+                return PI / (4. * LN_2 * self.determinant_root);
+            }
+            let mid = (self.side / 2) as isize;
+            return lattice_gaussian_volume(
+                self.precision(),
+                self.determinant_root.powi(2),
+                [0., 0.],
+                [[-mid, mid]; 2],
+            );
+        }
+        let mut sum = 0.;
+        for y in 0..self.side {
+            for x in 0..self.side {
+                sum += self.sample(x, y);
+            }
+        }
+        sum
+    }
+
+    fn collect(self) -> Result<Vec<f64>, ImageError> {
+        let too_large =
+            |_| ImageError::InvalidMetadata("Gaussian kernel exceeds available storage".into());
+        let count = self
+            .side
+            .checked_mul(self.side)
+            .ok_or_else(|| too_large(()))?;
+        let mut values = Vec::new();
+        values.try_reserve_exact(count).map_err(|_| too_large(()))?;
+        for y in 0..self.side {
+            for x in 0..self.side {
+                values.push(self.sample(x, y));
+            }
+        }
+        Ok(values)
+    }
+}
+
+// Sum a possibly thin Gaussian by completing the square along the narrower
+// lattice direction. Expand each strip to a tail well below Float precision.
+fn lattice_gaussian_volume(
+    precision: [[f64; 2]; 2],
+    determinant: f64,
+    mean: [f64; 2],
+    bounds: [[isize; 2]; 2],
+) -> f64 {
+    const LIMIT: f64 = 14.;
+    let first = usize::from(precision[1][1] > precision[0][0]);
+    let second = 1 - first;
+    let a = precision[first][first];
+    let tilt = precision[first][second] / a;
+    let reduced = determinant / a;
+    let row_radius = (LIMIT / reduced).sqrt();
+    let row_first = ((mean[second] - row_radius).ceil() as isize).max(bounds[second][0]);
+    let row_last = ((mean[second] + row_radius).floor() as isize).min(bounds[second][1]);
+    let mut volume = 0.;
+    for row in row_first..=row_last {
+        let row_delta = row as f64 - mean[second];
+        let row_cost = reduced * row_delta * row_delta;
+        let center = mean[first] - tilt * row_delta;
+        let radius = ((LIMIT - row_cost).max(0.) / a).sqrt();
+        let first_pixel = ((center - radius).ceil() as isize).max(bounds[first][0]);
+        let last_pixel = ((center + radius).floor() as isize).min(bounds[first][1]);
+        for pixel in first_pixel..=last_pixel {
+            let form = a * (pixel as f64 - center).powi(2) + row_cost;
+            volume += (-4. * LN_2 * form).exp();
         }
     }
-    (side, values)
+    volume
+}
+
+fn kernel(beam: &GaussianBeam, sky: [[f64; 2]; 2]) -> Result<(usize, Vec<f64>), ImageError> {
+    let sampled = GaussianSamples::new(*beam, sky)?;
+    Ok((sampled.side, sampled.collect()?))
 }
 
 /// The smallest length at least `n` with no prime factor above 7, which
@@ -259,7 +393,7 @@ pub fn convolve2d(
     }
     let shape = input.shape().to_vec();
     let plane = axes.map(|axis| shape[axis]);
-    let (side, values) = kernel(beam, sky_per_pixel(direction)?);
+    let (side, values) = kernel(beam, sky_per_pixel(direction)?)?;
     let mut convolver = PlaneConvolver::new(plane, side, &values)?;
     let mut data = input.get()?;
     let mask = input.default_mask()?;
@@ -358,7 +492,7 @@ where
                 "the common-beam convolution requires a positive axial ratio".into(),
             ));
         }
-        let (side, mut weights) = kernel(&smoothing, sky);
+        let (side, mut weights) = kernel(&smoothing, sky)?;
         let scale = if per_pixel {
             // CASA loops over channels within each polarization. The last
             // plane sets the output unit and keeps the input unit if copied.
@@ -367,7 +501,7 @@ where
             }
             1.0
         } else {
-            let (input_side, input_weights) = kernel(&input, sky);
+            let (input_side, input_weights) = kernel(&input, sky)?;
             let peak = central_gaussian_response(side, &weights, input_side, &input_weights);
             if per_beam {
                 peak.recip()
@@ -424,7 +558,7 @@ fn central_gaussian_response(
 }
 
 /// A position angle in [−90°, 90°], as casacore's `GaussianBeam` keeps it.
-fn unwrap_position_angle(angle: f64) -> f64 {
+pub(crate) fn unwrap_position_angle(angle: f64) -> f64 {
     use std::f64::consts::FRAC_PI_2;
     let mut pa = angle % PI;
     if pa > FRAC_PI_2 {
@@ -484,7 +618,7 @@ mod tests {
         // σ = 5 / √(8 ln 2) ≈ 2.123: 5σ = 10.6 → (11 + 1) × 2 = 24, made odd.
         assert_eq!(size_of_gaussian(5.0), 24);
         let beam = GaussianBeam::new(5.0e-6, 2.0e-6, 0.0);
-        assert_eq!(kernel(&beam, UNROTATED).0, 25);
+        assert_eq!(kernel(&beam, UNROTATED).unwrap().0, 25);
     }
 
     #[test]
@@ -492,7 +626,7 @@ mod tests {
         // RA increases to the left (negative increment): a position angle of
         // 90° (east) puts the major axis along −x, the same line as +x.
         let beam = GaussianBeam::new(6.0e-6, 2.0e-6, std::f64::consts::FRAC_PI_2);
-        let (side, values) = kernel(&beam, UNROTATED);
+        let (side, values) = kernel(&beam, UNROTATED).unwrap();
         let c = (side - 1) / 2;
         let along_x = values[(c + 3) + c * side];
         let along_y = values[c + (c + 3) * side];
@@ -517,7 +651,7 @@ mod tests {
         )
         .with_pc_matrix(ndarray::array![[0.0, -1.0], [1.0, 0.0]]);
         let beam = GaussianBeam::new(6.0 * arcsec, 2.0 * arcsec, 0.0);
-        let (side, values) = kernel(&beam, sky_per_pixel(&rotated).unwrap());
+        let (side, values) = kernel(&beam, sky_per_pixel(&rotated).unwrap()).unwrap();
         let c = (side - 1) / 2;
         assert!((values[(c + 3) + c * side] - 0.5).abs() < 1e-9);
         assert!((values[c + (c + 3) * side] - 0.001_953_125).abs() < 1e-9);

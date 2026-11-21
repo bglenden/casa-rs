@@ -15,27 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, axes = None, r#type = None, major = None, minor = None, pa = None, scale = None, region = None, mask = None, overwrite = None, stretch = None, targetres = None, beam = None), text_signature = "($self, outfile='', axes=[0, 1], type='gaussian', major='0deg', minor='0deg', pa='0deg', scale=-1.0, region={}, mask='', overwrite=False, stretch=False, targetres=False, beam={})")]
-    fn convolve2d(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        axes: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        major: Option<&Bound<'_, PyAny>>,
-        minor: Option<&Bound<'_, PyAny>>,
-        pa: Option<&Bound<'_, PyAny>>,
-        scale: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        targetres: Option<&Bound<'_, PyAny>>,
-        beam: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("convolve2d")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None, mask = None, simple = None, threshold = None, ncontour = None, minrange = None, naxis = None, fit = None, maxrms = None, maxretry = None, maxiter = None, convcriteria = None, stretch = None), text_signature = "($self, region={}, mask='', simple=False, threshold=-1.0, ncontour=11, minrange=1, naxis=2, fit=True, maxrms=-1.0, maxretry=-1, maxiter=256, convcriteria=0.0001, stretch=False)")]
     fn decompose(
         &self,
