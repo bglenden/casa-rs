@@ -8,6 +8,7 @@ use super::DirectionCoordinate;
 
 const PIXEL_TOLERANCE: f64 = 1e-10;
 const ANGLE_TOLERANCE: f64 = PIXEL_TOLERANCE * PI / 180.0;
+pub(super) const DEFAULT_RANGES: [[f64; 2]; 2] = [[-PI, PI], [-FRAC_PI_2, FRAC_PI_2]];
 
 #[derive(Clone, Copy)]
 struct Sample {
@@ -32,9 +33,21 @@ fn signed_longitude(value: f64) -> f64 {
 }
 
 impl DirectionCoordinate {
+    pub(crate) fn reset_mix_ranges(&mut self) {
+        self.mix_ranges = DEFAULT_RANGES;
+    }
+
+    pub(crate) fn retain_mix_ranges(&mut self, previous: &Self) {
+        self.mix_ranges = previous.mix_ranges;
+    }
+
     /// Casacore uses each positive image length to choose the midpoint,
     /// then extends the search interval around its projected sky position.
-    pub(crate) fn set_mix_shape(&mut self, shape: [i64; 2]) -> Result<(), CoordinateError> {
+    pub(crate) fn set_mix_shape(
+        &mut self,
+        shape: [i64; 2],
+        fixed_pixels: [Option<f64>; 2],
+    ) -> Result<(), CoordinateError> {
         let center = [0, 1].map(|axis| {
             if shape[axis] > 0 {
                 shape[axis] as f64 / 2.0
@@ -59,6 +72,27 @@ impl DirectionCoordinate {
             ],
             [world[1] - width[1], world[1] + width[1]],
         ];
+        if fixed_pixels.iter().any(Option::is_some) {
+            let fixed = [0, 1].map(|axis| fixed_pixels[axis].unwrap_or(self.crpix[axis]));
+            let fixed_world = self.pixel_to_world(fixed)?;
+            for axis in 0..2 {
+                if fixed_pixels[axis].is_some() {
+                    let width = 10.0 * self.cdelt[axis].abs();
+                    self.mix_ranges[axis] = if axis == 0 {
+                        let width = width / world[1].cos();
+                        [
+                            signed_longitude(fixed_world[0] - width),
+                            signed_longitude(fixed_world[0] + width),
+                        ]
+                    } else {
+                        [
+                            (fixed_world[1] - width).max(-FRAC_PI_2),
+                            (fixed_world[1] + width).min(FRAC_PI_2),
+                        ]
+                    };
+                }
+            }
+        }
         Ok(())
     }
 
@@ -73,15 +107,9 @@ impl DirectionCoordinate {
         let target = pixels[fixed_pixel_axis];
         let [first, second] = self.mix_ranges[fixed_pixel_axis];
         let (lower, upper) = (first.min(second), first.max(second));
-        let mut evaluate = |angle: f64| {
-            world[fixed_pixel_axis] = angle;
-            if !world[0].is_finite()
-                || !world[1].is_finite()
-                || world[1].abs() > FRAC_PI_2 + ANGLE_TOLERANCE
-            {
-                return Err(invalid_world());
-            }
-            let (phi, theta) = self.celestial_to_native(world[0], world[1]);
+        let known_axis = 1 - fixed_pixel_axis;
+        let known_world = world[known_axis];
+        let project = |angle: f64, phi: f64, theta: f64| {
             let (x, y) = self
                 .projection
                 .project(phi, theta)
@@ -101,12 +129,24 @@ impl DirectionCoordinate {
                 pixel,
             })
         };
-        let low = evaluate(lower)?;
-        let high = evaluate(upper)?;
-        for endpoint in [low, high] {
-            if endpoint.error.abs() < PIXEL_TOLERANCE {
-                return Ok(endpoint.pixel);
+        let mut evaluate = |angle: f64| {
+            world[fixed_pixel_axis] = angle;
+            if !world[0].is_finite()
+                || !world[1].is_finite()
+                || world[1].abs() > FRAC_PI_2 + ANGLE_TOLERANCE
+            {
+                return Err(invalid_world());
             }
+            let (phi, theta) = self.celestial_to_native(world[0], world[1]);
+            project(angle, phi, theta)
+        };
+        let low = evaluate(lower)?;
+        if low.error.abs() < PIXEL_TOLERANCE {
+            return Ok(low.pixel);
+        }
+        let high = evaluate(upper)?;
+        if high.error.abs() < PIXEL_TOLERANCE {
+            return Ok(high.pixel);
         }
         if let Some(pixel) = refine_crossing(low, high, &mut evaluate)? {
             return Ok(pixel);
@@ -137,6 +177,36 @@ impl DirectionCoordinate {
                     return Ok(pixel);
                 }
                 step *= 0.5;
+            }
+        }
+        // A celestial coordinate at a native pole does not determine native
+        // longitude. Some projections map that pole onto an edge or a line.
+        for theta in [FRAC_PI_2, -FRAC_PI_2] {
+            let (longitude, latitude) = self.native_to_celestial(0.0, theta);
+            let pole = [longitude, latitude];
+            let (difference, unknown) = if known_axis == 0 {
+                ((known_world - pole[0]) % TAU, pole[1])
+            } else {
+                let longitude = pole[0] + ((lower - pole[0]) / TAU).ceil() * TAU;
+                (known_world - pole[1], longitude)
+            };
+            if difference.abs() > ANGLE_TOLERANCE || unknown < lower || unknown > upper {
+                continue;
+            }
+            let mut evaluate = |phi| project(phi, phi, theta);
+            let mut previous = evaluate(-PI)?;
+            if previous.error.abs() < PIXEL_TOLERANCE {
+                return Ok(previous.pixel);
+            }
+            for degrees in -179..=180 {
+                let sample = evaluate(f64::from(degrees).to_radians())?;
+                if sample.error.abs() < PIXEL_TOLERANCE {
+                    return Ok(sample.pixel);
+                }
+                if let Some(pixel) = refine_crossing(previous, sample, &mut evaluate)? {
+                    return Ok(pixel);
+                }
+                previous = sample;
             }
         }
         Err(CoordinateError::ConversionFailed(

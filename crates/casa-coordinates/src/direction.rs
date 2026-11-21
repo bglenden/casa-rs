@@ -252,7 +252,7 @@ impl DirectionCoordinate {
             longpole,
             latpole,
             native_pole,
-            mix_ranges: [[-PI, PI], [-FRAC_PI_2, FRAC_PI_2]],
+            mix_ranges: mixed::DEFAULT_RANGES,
             world_units: ["rad".into(), "rad".into()],
             world_names: None,
             removed_axis: None,

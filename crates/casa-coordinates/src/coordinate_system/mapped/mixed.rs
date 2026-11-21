@@ -3,6 +3,27 @@
 use crate::{Coordinate, CoordinateError, CoordinateModel, CoordinateSystem};
 
 impl CoordinateSystem {
+    /// Clear the transient mixed-coordinate search intervals, as on record restore.
+    pub fn reset_direction_mix_ranges(&mut self) {
+        for model in &mut self.coordinates {
+            if let CoordinateModel::Direction(direction) = model {
+                direction.reset_mix_ranges();
+            }
+        }
+    }
+
+    /// Transfer the transient search intervals after an in-place edit that
+    /// preserved the coordinates and their creation order.
+    pub fn retain_direction_mix_ranges(&mut self, previous: &Self) {
+        for (model, old) in self.coordinates.iter_mut().zip(&previous.coordinates) {
+            if let (CoordinateModel::Direction(direction), CoordinateModel::Direction(old)) =
+                (model, old)
+            {
+                direction.retain_mix_ranges(old);
+            }
+        }
+    }
+
     /// Update the sky intervals used by transforms with mixed pixel and
     /// world inputs. Directions with an unknown or removed axis use the
     /// corresponding reference pixel to determine the search interval.
@@ -23,13 +44,19 @@ impl CoordinateSystem {
         for (index, model) in self.coordinates.iter_mut().enumerate() {
             let end = start + model.n_pixel_axes();
             if let CoordinateModel::Direction(direction) = model {
+                let mut fixed = [None; 2];
                 let local = if let Some(maps) = maps {
-                    let pixels = &maps.placements[index].pixel.indices;
+                    let placement = &maps.placements[index];
                     [0, 1].map(|axis| {
-                        pixels
-                            .get(axis)
-                            .and_then(|index| usize::try_from(*index).ok())
-                            .map_or(-1, |index| shape[index])
+                        if let Some(&pixel) = placement.pixel.indices.get(axis) {
+                            if let Ok(public) = usize::try_from(pixel) {
+                                return shape[public];
+                            }
+                            if placement.world.indices[axis] >= 0 {
+                                fixed[axis] = Some(placement.pixel.replacements[axis]);
+                            }
+                        }
+                        -1
                     })
                 } else if let Some(removed) = direction.removed_axis() {
                     let mut local = [-1; 2];
@@ -38,7 +65,7 @@ impl CoordinateSystem {
                 } else {
                     [shape[start], shape[start + 1]]
                 };
-                direction.set_mix_shape(local)?;
+                direction.set_mix_shape(local, fixed)?;
             }
             start = end;
         }

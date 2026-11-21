@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem};
+use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::quanta::{Dimension, UnitDim, casacore};
 use ndarray::{Array2, ShapeBuilder};
-use numpy::{IntoPyArray, PyUntypedArray, PyUntypedArrayMethods};
+use numpy::{IntoPyArray, PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
@@ -308,9 +308,9 @@ impl MixedTransform {
                     let value = if absolute {
                         value
                     } else {
-                        value + conversion.frequency_to_velocity(self.reference_world[axis])?
+                        value + conversion.mixed_velocity(self.reference_world[axis])?
                     };
-                    world[axis] = conversion.velocity_to_frequency(value)?;
+                    world[axis] = conversion.mixed_frequency(value)?;
                 }
             }
         }
@@ -371,12 +371,11 @@ impl MixedTransform {
                     (AxisUnits::World(scale), true) => world[axis] / scale,
                     (AxisUnits::World(scale), false) => relative_world[axis] / scale,
                     (AxisUnits::Velocity(conversion), absolute) => {
-                        let velocity = conversion.frequency_to_velocity(world[axis])?;
+                        let velocity = conversion.mixed_velocity(world[axis])?;
                         if absolute {
                             velocity
                         } else {
-                            velocity
-                                - conversion.frequency_to_velocity(self.reference_world[axis])?
+                            velocity - conversion.mixed_velocity(self.reference_world[axis])?
                         }
                     }
                 })
@@ -406,10 +405,16 @@ fn matrix_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
                 double_values(&array, "convertmany")?,
             )
         }
-        _ if value.is_instance_of::<PyUntypedArray>() => (
-            value.cast::<PyUntypedArray>()?.shape().to_vec(),
-            double_values(value, "convertmany")?,
-        ),
+        _ if value.is_instance_of::<PyUntypedArray>() => {
+            let array = value.cast::<PyUntypedArray>()?;
+            let mut values = double_values(value, "convertmany")?;
+            if array.dtype().kind() == b'U' {
+                // CASA's Unicode-array typemap reads the first string and
+                // leaves the remaining entries in the double vector at zero.
+                values.get_mut(1..).unwrap_or_default().fill(0.0);
+            }
+            (array.shape().to_vec(), values)
+        }
         _ => return Err(bad()),
     };
     let [rows, columns] = shape.as_slice() else {

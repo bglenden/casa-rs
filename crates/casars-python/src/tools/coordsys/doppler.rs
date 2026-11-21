@@ -200,6 +200,27 @@ impl VelocityConversion {
         })
     }
 
+    pub(super) fn mixed_velocity(&self, frequency: f64) -> PyResult<f64> {
+        if self.rest_hz == 0.0 {
+            return Err(raised(
+                "Exception: Rest frequency is 0 so cannot convert to velocity.",
+            ));
+        }
+        let velocity = self.frequency_to_velocity(frequency)?;
+        if velocity.is_nan() {
+            return Err(raised("velocity is NaN"));
+        }
+        Ok(velocity)
+    }
+
+    pub(super) fn mixed_frequency(&self, velocity: f64) -> PyResult<f64> {
+        let frequency = self.velocity_to_frequency(velocity)?;
+        if frequency <= 0.0 {
+            return Err(raised("frequency <= 0"));
+        }
+        Ok(frequency)
+    }
+
     fn new(
         state: &CoordinateState,
         spectral: &SpectralCoordinate,
@@ -234,7 +255,7 @@ impl VelocityConversion {
         })
     }
 
-    pub(super) fn frequency_to_velocity(&self, frequency: f64) -> PyResult<f64> {
+    fn frequency_to_velocity(&self, frequency: f64) -> PyResult<f64> {
         if !frequency.is_finite() || self.rest_hz <= 0.0 {
             return Ok(f64::NAN);
         }
@@ -249,7 +270,7 @@ impl VelocityConversion {
         Ok(velocity.value() / self.velocity_scale)
     }
 
-    pub(super) fn velocity_to_frequency(&self, velocity: f64) -> PyResult<f64> {
+    fn velocity_to_frequency(&self, velocity: f64) -> PyResult<f64> {
         let beta = MDoppler::new(velocity * self.velocity_scale, self.convention)
             .convert_to(DopplerRef::BETA, &MeasFrame::new())
             .map_err(raised)?;
