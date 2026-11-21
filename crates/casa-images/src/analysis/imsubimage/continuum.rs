@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+mod polynomial;
+
 use casa_coordinates::CoordinateType;
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Axis, IxDyn, Zip};
@@ -9,6 +11,7 @@ use crate::{ImageError, ImageInterface, MutableImageInterface};
 use super::super::axes::StridedSection;
 use super::read_window::PixelSections;
 use super::{SubimageOptions, SubimagePlan, SubimageRegion};
+use polynomial::{Coverage, Fit, Prediction};
 
 const MAX_TILE_SAMPLES: usize = 256 * 1024;
 
@@ -133,7 +136,16 @@ impl ImageContinuum {
         };
 
         let coefficients = self.order + 1;
-        let fit_slots = coefficients.saturating_mul(coefficients + 1);
+        let candidate_count = if self.fit_channels.is_empty() {
+            length
+        } else {
+            self.fit_channels
+                .iter()
+                .take_while(|&&index| index < length)
+                .count()
+        };
+        let matrix_side = coefficients.min(candidate_count);
+        let fit_slots = matrix_side.saturating_mul(matrix_side + 1);
         let mut lane_budget = (MAX_TILE_SAMPLES / fit_slots.max(16)).max(1);
         let cursor: Vec<_> = source
             .nice_cursor_shape()
@@ -160,49 +172,49 @@ impl ImageContinuum {
             let tile = line_tile?;
             let count = tile.shape.iter().product::<usize>();
             counts.profiles += count;
-            let mut fits = (0..count)
-                .map(|_| PolynomialFit::new(coefficients))
-                .collect::<Result<Vec<_>, _>>()?;
             let mut position = tile.position;
             let mut shape = tile.shape;
-            for first in (0..length).step_by(axial_block) {
-                position[axis] = first;
-                shape[axis] = axial_block.min(length - first);
-                let (pixels, mask) =
-                    reader.read(&input.source_start(&position), &shape, input.stride)?;
-                let validity = mask.unwrap_or_else(|| ArrayD::from_elem(IxDyn(&shape), true));
-                for ((pixels, valid), fit) in pixels
-                    .lanes(Axis(axis))
-                    .into_iter()
-                    .zip(validity.lanes(Axis(axis)))
-                    .zip(&mut fits)
-                {
-                    for (offset, (&pixel, &valid)) in pixels.iter().zip(&valid).enumerate() {
-                        if valid {
-                            fit.has_data = true;
-                            let index = first + offset;
-                            if self.fit_channels.is_empty()
-                                || self.fit_channels.binary_search(&index).is_ok()
-                            {
-                                if pixel.is_finite() {
-                                    fit.add(abscissa(index, length), f64::from(pixel));
-                                } else {
-                                    fit.nonfinite = true;
-                                }
-                            }
+            let mut coverage = (0..count).map(|_| Coverage::default()).collect::<Vec<_>>();
+            self.visit_profiles(
+                &reader,
+                &input,
+                &mut position,
+                &mut shape,
+                length,
+                axial_block,
+                |lane, index, value| {
+                    coverage[lane].observe(index, value, self.selected(index));
+                },
+            )?;
+            let mut fits = coverage
+                .into_iter()
+                .map(|coverage| coverage.prepare(coefficients))
+                .collect::<Result<Vec<_>, _>>()?;
+            if fits.iter().any(Fit::needs_samples) {
+                self.visit_profiles(
+                    &reader,
+                    &input,
+                    &mut position,
+                    &mut shape,
+                    length,
+                    axial_block,
+                    |lane, index, value| {
+                        if self.selected(index) {
+                            fits[lane].add(index, value);
                         }
-                    }
-                }
+                    },
+                )?;
             }
-            counts.attempted += fits.iter().filter(|fit| fit.has_data).count();
+            let fits: Vec<_> = fits.into_iter().map(Fit::solve).collect();
+            counts.attempted += fits
+                .iter()
+                .filter(|fit| !matches!(fit, Prediction::Input))
+                .count();
             counts.valid += fits
                 .iter()
-                .filter(|fit| fit.has_data && !fit.nonfinite)
+                .filter(|fit| !matches!(fit, Prediction::Input | Prediction::Invalid))
                 .count();
-            let invalidate_fits = fits.iter().any(|fit| fit.nonfinite);
-            for fit in &mut fits {
-                fit.solve();
-            }
+            let invalidate_fits = fits.iter().any(|fit| matches!(fit, Prediction::Invalid));
 
             for first in (0..length).step_by(axial_block) {
                 position[axis] = first;
@@ -216,19 +228,17 @@ impl ImageContinuum {
                         .for_each(|mut model, input| model.assign(&input));
                     for (mut lane, fit) in predictions.lanes_mut(Axis(axis)).into_iter().zip(&fits)
                     {
-                        if fit.has_data {
+                        if !matches!(fit, Prediction::Input) {
                             for (offset, value) in lane.iter_mut().enumerate() {
-                                *value = fit.evaluate(abscissa(first + offset, length)) as f32;
+                                *value = fit.evaluate(first + offset) as f32;
                             }
                         }
                     }
                 }
                 for (mut lane, fit) in pixels.lanes_mut(Axis(axis)).into_iter().zip(&fits) {
-                    if fit.has_data {
+                    if !matches!(fit, Prediction::Input) {
                         for (offset, value) in lane.iter_mut().enumerate() {
-                            *value = (f64::from(*value)
-                                - fit.evaluate(abscissa(first + offset, length)))
-                                as f32;
+                            *value = (f64::from(*value) - fit.evaluate(first + offset)) as f32;
                         }
                     }
                 }
@@ -241,7 +251,7 @@ impl ImageContinuum {
                     let validity =
                         mask.get_or_insert_with(|| ArrayD::from_elem(IxDyn(&shape), true));
                     for (mut lane, fit) in validity.lanes_mut(Axis(axis)).into_iter().zip(&fits) {
-                        if fit.nonfinite {
+                        if matches!(fit, Prediction::Invalid) {
                             lane.fill(false);
                         }
                     }
@@ -265,99 +275,40 @@ impl ImageContinuum {
         }
         Ok(counts)
     }
-}
 
-fn abscissa(index: usize, length: usize) -> f64 {
-    2.0 * index as f64 / (length - 1) as f64 - 1.0
-}
-
-// Update a QR factorization one data row at a time. Chebyshev polynomials
-// span the same fits as powers of the pixel index with better conditioning.
-struct PolynomialFit {
-    size: usize,
-    matrix: Vec<f64>,
-    rhs: Vec<f64>,
-    row: Vec<f64>,
-    count: usize,
-    has_data: bool,
-    nonfinite: bool,
-}
-
-impl PolynomialFit {
-    fn new(size: usize) -> Result<Self, ImageError> {
-        let total = size
-            .checked_mul(size)
-            .ok_or_else(|| invalid("Polynomial fit storage is too large"))?;
-        let mut matrix = Vec::new();
-        matrix
-            .try_reserve_exact(total)
-            .map_err(|_| invalid("Polynomial fit storage is too large"))?;
-        matrix.resize(total, 0.0);
-        Ok(Self {
-            size,
-            matrix,
-            rhs: vec![0.0; size],
-            row: vec![0.0; size],
-            count: 0,
-            has_data: false,
-            nonfinite: false,
-        })
+    fn selected(&self, index: usize) -> bool {
+        self.fit_channels.is_empty() || self.fit_channels.binary_search(&index).is_ok()
     }
 
-    fn add(&mut self, x: f64, mut value: f64) {
-        self.count += 1;
-        let mut previous = 1.0;
-        let mut current = x;
-        for element in &mut self.row {
-            *element = previous;
-            (previous, current) = (current, 2.0 * x * current - previous);
-        }
-        for index in 0..self.size {
-            let pivot = index * self.size + index;
-            let norm = self.matrix[pivot].hypot(self.row[index]);
-            if norm == 0.0 {
-                continue;
+    fn visit_profiles(
+        &self,
+        reader: &PixelSections<'_, f32>,
+        input: &StridedSection<'_>,
+        position: &mut [usize],
+        shape: &mut [usize],
+        length: usize,
+        block: usize,
+        mut visit: impl FnMut(usize, usize, f32),
+    ) -> Result<(), ImageError> {
+        let axis = self.axis;
+        for first in (0..length).step_by(block) {
+            position[axis] = first;
+            shape[axis] = block.min(length - first);
+            let (pixels, mask) = reader.read(&input.source_start(position), shape, input.stride)?;
+            let valid = mask.unwrap_or_else(|| ArrayD::from_elem(IxDyn(shape), true));
+            for (line, (pixels, valid)) in pixels
+                .lanes(Axis(axis))
+                .into_iter()
+                .zip(valid.lanes(Axis(axis)))
+                .enumerate()
+            {
+                for (offset, (&value, &valid)) in pixels.iter().zip(&valid).enumerate() {
+                    if valid {
+                        visit(line, first + offset, value);
+                    }
+                }
             }
-            let cosine = self.matrix[pivot] / norm;
-            let sine = self.row[index] / norm;
-            self.matrix[pivot] = norm;
-            let tail = &mut self.matrix[pivot + 1..(index + 1) * self.size];
-            for (t, b) in tail.iter_mut().zip(&mut self.row[index + 1..]) {
-                (*t, *b) = (cosine * *t + sine * *b, -sine * *t + cosine * *b);
-            }
-            let rhs = &mut self.rhs[index];
-            (*rhs, value) = (cosine * *rhs + sine * value, -sine * *rhs + cosine * value);
         }
-    }
-
-    fn solve(&mut self) {
-        let usable = (0..self.count.min(self.size))
-            .take_while(|&index| self.matrix[index * self.size + index] > 1e-12)
-            .count();
-        self.rhs.truncate(usable);
-        for index in (0..usable).rev() {
-            let following = &self.rhs[index + 1..];
-            let pivot = index * self.size + index;
-            let product: f64 = following
-                .iter()
-                .zip(&self.matrix[pivot + 1..])
-                .map(|(&coefficient, &matrix)| coefficient * matrix)
-                .sum();
-            self.rhs[index] = (self.rhs[index] - product) / self.matrix[pivot];
-        }
-    }
-
-    fn evaluate(&self, x: f64) -> f64 {
-        if self.nonfinite {
-            return f64::NAN;
-        }
-        let mut previous = 1.0;
-        let mut current = x;
-        let mut value = 0.0;
-        for &coefficient in &self.rhs {
-            value += coefficient * previous;
-            (previous, current) = (current, 2.0 * x * current - previous);
-        }
-        value
+        Ok(())
     }
 }

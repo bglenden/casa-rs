@@ -84,6 +84,7 @@ impl Request<'_> {
         outcont: Option<&Path>,
         history: bool,
     ) -> PyResult<(ImageHandle, Option<ImageHandle>)> {
+        image.check_single_precision("continuumsub")?;
         let ImageHandle::Float(storage) = image else {
             return Err(raised("This method only supports Float valued images"));
         };

@@ -200,3 +200,88 @@ def test_continuum_fits_each_quadratic_profile_independently(casa, tmp_path):
             fitted.done()
             result.done()
             original.done()
+
+
+@pytest.mark.parametrize("channels,order,expected", [
+    ([1], 1, [2., 4., 6., 8., 10., 12.]),
+    ([1], 3, [1., 4., 15., 40., 85., 156.]),
+    ([1, 2], 2, [2.6285714, 4., 6., 8.6285714, 11.8857143, 15.7714286]),
+])
+def test_continuum_underdetermined_fit_keeps_casa_scaling(casa, tmp_path, channels, order, expected):
+    pixels = np.float32([2., 4., 6., 8., 10., 12.])
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=pixels)
+        dst = str(tmp_path / f"under-{api.__name__}.im")
+        result = source.continuumsub(outcont=dst, channels=channels, fitorder=order)
+        model = api.image()
+        assert model.open(dst)
+        try:
+            np.testing.assert_allclose(model.getchunk(), expected, atol=3e-6, rtol=2e-6)
+            np.testing.assert_allclose(result.getchunk(), pixels - expected, atol=5e-6, rtol=2e-6)
+        finally:
+            model.done()
+            result.done()
+            source.done()
+
+
+def test_continuum_full_rank_fit_uses_the_selected_abscissa(casa, tmp_path):
+    x = np.arange(8192, dtype=np.float64)
+    values = np.float32(x**4)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        dst = str(tmp_path / f"narrow-{api.__name__}.im")
+        result = source.continuumsub(outcont=dst, channels=[0, 1, 2, 3, 4], fitorder=4)
+        model = api.image()
+        assert model.open(dst)
+        try:
+            np.testing.assert_allclose(model.getchunk()[[0, 1, 2, 3, 4, 100, 8191]],
+                                       values[[0, 1, 2, 3, 4, 100, 8191]], atol=5e-5, rtol=2e-5)
+            np.testing.assert_allclose(result.getchunk()[:5], 0., atol=5e-5)
+        finally:
+            model.done()
+            result.done()
+            source.done()
+
+
+def test_high_order_continuum_with_one_channel_has_no_dense_matrix():
+    source = tools.image()
+    pixels = np.linspace(2., 8., 32769, dtype=np.float32)
+    assert source.fromarray(pixels=pixels)
+    product = source.continuumsub(outcont="", channels=[0], fitorder=32767)
+    try:
+        np.testing.assert_allclose(product.getchunk(), pixels - 2., atol=5e-7)
+    finally:
+        product.done()
+        source.done()
+
+
+def test_continuum_rejects_nested_output_entries_even_through_symlinks(tmp_path):
+    source = tools.image()
+    assert source.fromarray(pixels=np.float32([1., 2., 3., 4.]))
+    outer = tmp_path / "line.im"
+    other = tmp_path / "model.im"
+    holding = tools.image()
+    for path, values in ((outer, [4., 9.]), (other, [8., 10.])):
+        assert holding.fromarray(str(path), np.float32(values))
+        holding.done()
+    child = outer / "child"
+    child.symlink_to(other, target_is_directory=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_dir = outer / "linked-dir"
+    linked_dir.symlink_to(outside, target_is_directory=True)
+    try:
+        for companion in (child, linked_dir / "nested.im"):
+            with pytest.raises(RuntimeError, match="separate destinations"):
+                source.continuumsub(str(outer), str(companion), overwrite=True)
+        assert child.is_symlink() and linked_dir.is_symlink()
+        assert list(outside.iterdir()) == []
+        for path, values in ((outer, [4., 9.]), (other, [8., 10.])):
+            assert holding.open(str(path))
+            np.testing.assert_array_equal(holding.getchunk(), values)
+            holding.done()
+    finally:
+        source.done()
+        holding.done()

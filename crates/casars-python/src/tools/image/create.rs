@@ -222,19 +222,12 @@ impl StagedImage {
         }))
     }
 
-    fn key(&self) -> PyResult<PathBuf> {
+    fn resolved_key(&self) -> PyResult<PathBuf> {
         if self.target.symlink_metadata().is_ok() {
-            return attachment::key(&self.target);
+            attachment::key(&self.target)
+        } else {
+            entry_key(&self.target)
         }
-        let parent = self
-            .target
-            .parent()
-            .and_then(|parent| parent.canonicalize().ok());
-        let name = self.target.file_name();
-        parent
-            .zip(name)
-            .map(|(parent, name)| parent.join(name))
-            .ok_or_else(|| raised("Invalid output image path"))
     }
 
     fn check(
@@ -282,24 +275,93 @@ impl StagedImage {
         }
     }
 
-    fn install(&self, existed: bool) -> std::io::Result<()> {
+    fn install(self, existed: bool) -> PyResult<InstalledImage> {
+        #[cfg(unix)]
+        let directory = std::fs::File::open(&self.product).map_err(raised)?;
         if existed {
-            exchange_directories(&self.product, &self.target)
+            exchange_directories(&self.product, &self.target).map_err(raised)?;
         } else {
-            rename_without_replacing(&self.product, &self.target)
+            rename_without_replacing(&self.product, &self.target).map_err(raised)?;
+        }
+        Ok(InstalledImage {
+            stage: self,
+            existed,
+            #[cfg(unix)]
+            directory,
+        })
+    }
+}
+
+fn entry_key(path: &Path) -> PyResult<PathBuf> {
+    let parent = path.parent().and_then(|parent| parent.canonicalize().ok());
+    parent
+        .zip(path.file_name())
+        .map(|(parent, name)| parent.join(name))
+        .ok_or_else(|| raised("Invalid output image path"))
+}
+
+fn check_distinct(primary: Option<&StagedImage>, companion: Option<&StagedImage>) -> PyResult<()> {
+    let (Some(first), Some(second)) = (primary, companion) else {
+        return Ok(());
+    };
+    let check = |container: &StagedImage, child: &StagedImage| -> PyResult<bool> {
+        let roots = [entry_key(&container.target)?, container.resolved_key()?];
+        let child_entry = entry_key(&child.target)?;
+        let child_resolved = child.resolved_key()?;
+        Ok(roots.iter().any(|root| {
+            child_entry.starts_with(root)
+                || child_resolved.starts_with(root)
+                || child.target.ancestors().skip(1).any(|ancestor| {
+                    ancestor.canonicalize().is_ok_and(|path| path == *root)
+                        || entry_key(ancestor).is_ok_and(|path| path == *root)
+                })
+        }))
+    };
+    if check(first, second)? || check(second, first)? {
+        return Err(raised("Output images must have separate destinations"));
+    }
+    Ok(())
+}
+
+struct InstalledImage {
+    stage: StagedImage,
+    existed: bool,
+    #[cfg(unix)]
+    directory: std::fs::File,
+}
+
+impl InstalledImage {
+    fn still_at_destination(&self) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            matches!(
+                (self.directory.metadata(), self.stage.target.symlink_metadata()),
+                (Ok(opened), Ok(current)) if opened.dev() == current.dev() && opened.ino() == current.ino(),
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            self.stage.target.is_dir()
         }
     }
 
-    fn restore(self, existed: bool, original: PyErr) -> PyErr {
-        let restored = if existed {
-            exchange_directories(&self.product, &self.target)
+    fn restore(self, original: PyErr) -> PyErr {
+        let staged = &self.stage.product;
+        let target = &self.stage.target;
+        let restored = if !self.still_at_destination() {
+            Err(std::io::Error::other(
+                "the destination changed after publication",
+            ))
+        } else if self.existed {
+            exchange_directories(staged, target)
         } else {
-            rename_without_replacing(&self.target, &self.product)
+            rename_without_replacing(target, staged)
         };
         match restored {
             Ok(()) => original,
             Err(error) => {
-                let recovery = self.directory.keep();
+                let recovery = self.stage.directory.keep();
                 raised(format!(
                     "{original}. Image publication could not be rolled back. Inspect {} ({error})",
                     recovery.display()
@@ -327,13 +389,7 @@ pub(super) fn publish_image_pair(
 ) -> PyResult<AttachedImage> {
     let primary = StagedImage::allocate(outfile)?;
     let companion = StagedImage::allocate(companion)?;
-    if let (Some(primary), Some(companion)) = (&primary, &companion) {
-        let first = primary.key()?;
-        let second = companion.key()?;
-        if first.starts_with(&second) || second.starts_with(&first) {
-            return Err(raised("Output images must have separate destinations"));
-        }
-    }
+    check_distinct(primary.as_ref(), companion.as_ref())?;
     let (image, secondary) = build(
         primary.as_ref().map(|stage| stage.product.as_path()),
         companion.as_ref().map(|stage| stage.product.as_path()),
@@ -350,25 +406,33 @@ pub(super) fn publish_image_pair(
     }
     let target = primary.as_ref().map(|stage| stage.target.clone());
     let mut registry = attachment::registry();
+    check_distinct(primary.as_ref(), companion.as_ref())?;
+    // The companion becomes visible first. Keep its access lock across
+    // installation of the primary and any rollback.
+    let _companion_lock = companion
+        .as_ref()
+        .map(|stage| TableWriteLock::acquire(&stage.product, 1))
+        .transpose()
+        .map_err(raised)?;
     let mut locks = BTreeMap::new();
     let mut prepared = Vec::new();
     for stage in [companion, primary].into_iter().flatten() {
         let existed = stage.check(overwrite, &registry, &mut locks)?;
         prepared.push((stage, existed));
     }
-    let mut installed: Vec<(StagedImage, bool)> = Vec::new();
+    let mut installed: Vec<InstalledImage> = Vec::new();
     for (stage, existed) in prepared {
-        if let Err(error) = stage.install(existed) {
-            let error = installed
-                .into_iter()
-                .rev()
-                .fold(raised(error), |error, (stage, existed)| {
-                    stage.restore(existed, error)
-                });
-            return Err(error);
+        match stage.install(existed) {
+            Ok(product) => installed.push(product),
+            Err(error) => {
+                return Err(installed
+                    .into_iter()
+                    .rev()
+                    .fold(error, |error, product| product.restore(error)));
+            }
         }
-        installed.push((stage, existed));
     }
+
     match target
         .as_deref()
         .map(|path| AttachedImage::open_created(&mut registry, path))
@@ -378,9 +442,7 @@ pub(super) fn publish_image_pair(
         Err(error) => Err(installed
             .into_iter()
             .rev()
-            .fold(error, |error, (stage, existed)| {
-                stage.restore(existed, error)
-            })),
+            .fold(error, |error, product| product.restore(error))),
     }
 }
 
@@ -522,5 +584,62 @@ impl PyImageTool {
             request,
             CreationInput::Pixels(Pixels::capture(py, pixels, true)),
         )
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    fn test_image(path: Option<&Path>, size: usize) -> PyResult<ImageHandle> {
+        let shape = vec![size];
+        let coordinates =
+            CoordinateSystem::from_record(&super::super::default_record::for_shape(&shape, false)?)
+                .map_err(raised)?;
+        let mut output = Storage::<f32>::create(shape, coordinates, path, None).map_err(raised)?;
+        output.save().map_err(raised)?;
+        Ok(ImageHandle::Float(output))
+    }
+
+    #[test]
+    fn paired_publication_restores_both_destinations_after_primary_failure() {
+        Python::initialize();
+        for existed in [false, true] {
+            for invalid_primary in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let residual = root.path().join("residual.im");
+                let companion = root.path().join("model.im");
+                if existed {
+                    test_image(Some(&residual), 2).unwrap();
+                    test_image(Some(&companion), 3).unwrap();
+                }
+                let result = publish_image_pair(
+                    residual.to_str().unwrap(),
+                    companion.to_str().unwrap(),
+                    true,
+                    |primary_path, companion_path| {
+                        let model = test_image(companion_path, 4)?;
+                        if invalid_primary {
+                            // Install a directory that fails native image reopen.
+                            std::fs::create_dir(primary_path.unwrap()).map_err(raised)?;
+                        }
+                        // With no staged directory, primary installation fails.
+                        Ok((test_image(None, 5)?, Some(model)))
+                    },
+                );
+                assert!(result.is_err());
+                if existed {
+                    assert_eq!(ImageHandle::open(&residual).unwrap().shape(), &[2]);
+                    assert_eq!(ImageHandle::open(&companion).unwrap().shape(), &[3]);
+                } else {
+                    assert!(!residual.exists());
+                    assert!(!companion.exists());
+                }
+                assert_eq!(
+                    root.path().read_dir().unwrap().count(),
+                    if existed { 2 } else { 0 }
+                );
+            }
+        }
     }
 }
