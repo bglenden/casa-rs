@@ -8581,3 +8581,29 @@ between output pixels `[0, 0]` and `[1, 0]`. The selected input pixels
 section geometry used by `image.subimage`, `image.pad`, and `image.pbcor`.
 casa-rs scales the PC matrix with the increments so that each selected
 pixel retains its sky position.
+
+## Fluxscale dictionaries can select the wrong windows in `setjy`
+
+CASA 6.7.6.14 documents `spw` as a selector for valid windows in a
+`fluxdict`. Its Python wrapper calls `ms.msseltoindex` on the class when
+`spw` is explicit, raising `AttributeError` before writing. With an implicit
+selection, all `fluxd=-1` and a nonzero fitted flux, the wrapper passes an
+empty window list. The imager interprets it as every window and can replace
+an existing model. casa-rs applies the intersection of the selected window
+IDs and the valid dictionary entries. An empty intersection leaves the
+scratch and virtual models intact.
+
+A `fluxscale(fitorder=0)` dictionary can also contain only the fitted
+intercept in `spidx`. CASA's wrapper indexes the first element after
+removing that intercept and can raise `IndexError`. casa-rs uses zero
+spectral index for this constant fit. The local oracle compares the
+corrected cases with equivalent CASA manual models and checks preservation
+of the input model. [#1519](https://github.com/bglenden/casa-rs/issues/1519)
+
+## Listing the Butler–JPL Horizons 2010 objects in setjy raises before displaying them
+
+With `listmodels=True` and `standard="Butler-JPL-Horizons 2010"`, CASA
+6.7.6.14 calls an unavailable `logsink.posta` method and raises
+`AttributeError`. The object names are already defined in the task.
+casa-rs displays that list and returns the empty listing result without
+opening a MeasurementSet. [#1519](https://github.com/bglenden/casa-rs/issues/1519)

@@ -10,13 +10,13 @@ use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Dimension, IxDyn};
 
-use crate::{ImageError, ImageInterface, ImagePixel, MutableImageInterface};
+use crate::{ImageError, ImageInterface, MutableImageInterface};
 
 use super::super::axes::{StridedSection, direction_plane_axes};
 use super::super::lel_mask::PreparedMask;
 use super::super::statistics_flux_scale;
 use super::read_window::PixelSections;
-use super::region::SubimageSelection;
+use super::region::{SubimageSelection, implicit_positional_axes};
 use super::{SubimagePlan, SubimageRegion};
 use median::{reduce, reduce_large};
 use statistics::Summary;
@@ -304,17 +304,6 @@ impl<'a> ImageCollapse<'a> {
         statistics_flux_scale(&self.section.coordinates, brightness, beam, None)
             .ok_or_else(|| invalid("Unable to calculate flux density"))
     }
-}
-
-fn implicit_positional_axes<T: ImagePixel>(image: &dyn ImageInterface<T>) -> Option<[usize; 2]> {
-    if image.find_axis(CoordinateType::Direction).is_some() {
-        return None;
-    }
-    let spectral = image.find_axis(CoordinateType::Spectral);
-    let stokes = image.find_axis(CoordinateType::Stokes);
-    let mut axes = (0..image.ndim()).filter(|&axis| Some(axis) != spectral && Some(axis) != stokes);
-    let leading = [axes.next()?, axes.next()?];
-    axes.next().map(|_| leading)
 }
 
 fn flux_units<T: CollapsePixel>(

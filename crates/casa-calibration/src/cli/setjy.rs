@@ -31,6 +31,9 @@ use crate::ft::setjy::{ManualFlux, sampled_point};
 use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
 
+mod fluxdict;
+mod model_files;
+
 enum FluxParameters {
     Manual(ManualFlux),
     Standard {
@@ -42,6 +45,9 @@ enum FluxParameters {
 type FieldModels = BTreeMap<i32, Vec<VirtualModelEntry>>;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if task.flag("listmodels")? {
+        return model_files::list(task);
+    }
     let path = task.input_path("vis")?;
     if super::multi_ms::partition_paths(&path)?.is_some() {
         return Err(TaskFailure::validation("setjy on a Multi-MS is pending #1519").at("vis"));
@@ -49,6 +55,20 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let scratch = task.flag("usescratch")?;
     let mut opened = OpenedMs::open(&path).map_err(execution)?;
     let mut selection = selection(task)?;
+    if task.text("standard")?.as_deref() == Some("fluxscale") {
+        // The wrapper validates the dictionary before its virtual imager
+        // call applies time, scan or observation predicates.
+        if scratch {
+            add_time_selection(task, &mut selection)?;
+        }
+        let selected = opened.resolve(&selection).map_err(execution)?;
+        if selected.selected_rows.is_empty() {
+            return empty_selection(task);
+        }
+        let result = fluxdict::run(task, opened, selection, &selected, scratch)?;
+        super::history::record_task(task, &path);
+        return TaskSuccess::new(result, &());
+    }
     // The task first checks field, SPW and intent for virtual models.
     // The imager then applies time, scan and observation to the model selection.
     let time_filtered = ["timerange", "scan", "observation"].into_iter().any(
@@ -113,10 +133,32 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             selected = opened.resolve(&selection).map_err(execution)?;
             selected.channel_selections.clear();
         }
+    }
+    publish_models(&mut opened, &selected, models, &spws, scratch)?;
+    opened.release().map_err(execution)?;
+    super::history::record_task(task, &path);
+    if partially_written {
+        // CASA's cleanup after the later failure raises once an earlier
+        // component list has already been applied and retired.
+        return Err(execution(
+            "flux coefficients are missing for a later field after earlier models were written",
+        ));
+    }
+    TaskSuccess::new(fluxes, &())
+}
+
+fn publish_models(
+    opened: &mut OpenedMs,
+    selected: &ResolvedMsSelection,
+    models: FieldModels,
+    spws: &[i32],
+    scratch: bool,
+) -> Result<(), TaskFailure> {
+    if scratch {
         let entries: Vec<_> = models.into_values().flatten().collect();
         write_model_scratch(
             &mut opened.measurement_set,
-            &selected,
+            selected,
             &entries,
             false,
             true,
@@ -133,21 +175,12 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                     &entries,
                     &mut opened.lock,
                     field,
-                    &spws,
+                    spws,
                 )
                 .map_err(execution)?;
         }
     }
-    opened.release().map_err(execution)?;
-    super::history::record_task(task, &path);
-    if partially_written {
-        // CASA's cleanup after the later failure raises once an earlier
-        // component list has already been applied and retired.
-        return Err(execution(
-            "flux coefficients are missing for a later field after earlier models were written",
-        ));
-    }
-    TaskSuccess::new(fluxes, &())
+    Ok(())
 }
 
 fn empty_selection(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -180,9 +213,6 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
         Some("Stevens-Reynolds 2016") => Some(FluxScale::Fixed(FixedScale::StevensReynolds2016)),
         _ => return Err(pending("standard")),
     };
-    if task.flag("listmodels")? {
-        return Err(pending("listmodels"));
-    }
     if task.text("model")?.is_some_and(|model| !model.is_empty()) {
         return Err(pending("model"));
     }

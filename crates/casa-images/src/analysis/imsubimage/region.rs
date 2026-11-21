@@ -109,6 +109,21 @@ pub(in crate::analysis) struct SubimageSelection {
     pub(in crate::analysis) has_multiple_regions: bool,
 }
 
+// CASA's implicit region selects a single pixel on two positional axes
+// when a multidimensional image has no direction coordinate.
+pub(super) fn implicit_positional_axes<T: ImagePixel>(
+    image: &dyn ImageInterface<T>,
+) -> Option<[usize; 2]> {
+    if image.find_axis(CoordinateType::Direction).is_some() {
+        return None;
+    }
+    let spectral = image.find_axis(CoordinateType::Spectral);
+    let stokes = image.find_axis(CoordinateType::Stokes);
+    let mut axes = (0..image.ndim()).filter(|&axis| Some(axis) != spectral && Some(axis) != stokes);
+    let leading = [axes.next()?, axes.next()?];
+    axes.next().map(|_| leading)
+}
+
 impl SubimageSelection {
     pub(super) fn resolve_for_insert<T: ImagePixel>(
         image: &dyn ImageInterface<T>,
