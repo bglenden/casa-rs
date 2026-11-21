@@ -8081,6 +8081,14 @@ pixel read fails because the original tile path no longer exists. casa-rs
 retains the operand while the lazy result is open and refuses the rename
 before moving either path.
 
+When a native table moves across filesystems, CASA 6.7.6.14 copies it and
+then deletes the original entries in place. If a child directory is readable
+but denies deletion of its contents, CASA raises after copying the image
+and can leave a partial table at the original name. casa-rs moves the
+original table to a private staging directory before copying, keeps the
+published image readable, and reports the staging path if cleanup fails.
+See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

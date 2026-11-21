@@ -100,17 +100,25 @@ impl TableUseLock {
 
     /// Check whether the table's original directory is still at `path`.
     pub fn matches_directory(&self, path: &Path) -> bool {
+        std::fs::metadata(path).is_ok_and(|current| self.matches_directory_metadata(&current))
+    }
+
+    /// Check a directory entry captured without following symbolic links.
+    pub fn matches_directory_metadata(&self, current: &std::fs::Metadata) -> bool {
+        if !current.is_dir() {
+            return false;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
 
-            let opened = self.directory.metadata();
-            let current = std::fs::metadata(path);
-            matches!((opened, current), (Ok(old), Ok(new)) if old.dev() == new.dev() && old.ino() == new.ino())
+            self.directory
+                .metadata()
+                .is_ok_and(|old| old.dev() == current.dev() && old.ino() == current.ino())
         }
         #[cfg(not(unix))]
         {
-            path.is_dir()
+            true
         }
     }
 }
