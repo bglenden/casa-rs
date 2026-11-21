@@ -256,8 +256,8 @@ const METHODS: &[Method] = &[
             param("convcriteria", K::Float, Float(0.0001)),
             param("stretch", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Yes,
     ),
     method(
         "deconvolvecomponentlist",

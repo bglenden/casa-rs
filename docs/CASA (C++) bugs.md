@@ -8729,3 +8729,27 @@ rebuilds the visibility iterator over the full MeasurementSet. A subsequent
 casa-rs preserves the existing selection when the new scan matches no rows.
 A paired test verifies the format-only return, unchanged model cells for the
 empty call, and the scope of the following `ft`.
+
+## Image decomposition counts masked emission and fits empty backgrounds
+
+CASA 6.7.6.14 counts masked samples in `image.decompose`. On a 9 × 11
+Float image with peaks 7 at [1, 2], 1 at [3, 4], and 4 at [5, 6],
+`decompose(simple=True, threshold=1, fit=False)` returns three islands
+after its default mask excludes [1, 2]. An expression mask accepting
+only the 7 peak also leaves all three bounds. The native
+decomposer reads raw pixels from the selected subimage. Casa-rs combines
+the default and requested masks with the selected region before
+thresholding so excluded samples cannot become sources.
+
+On an 11 × 13 zero image, CASA reports zero regions with
+`decompose(simple=True, fit=True, threshold=0.7)`, then starts fitting
+143 components to the background. Casa-rs returns empty component and
+bound matrices when the detection set is empty.
+
+A fit can also be underdetermined. Three samples with values 9, 3, and 1
+at [7, 7], [8, 7], and [8, 8] constrain fewer than the six parameters
+returned for a 2D Gaussian. With `threshold=0.7`, `maxretry=0`, and
+`maxrms=0.0001`, each implementation reconstructs all three samples to
+within 0.00001. The independent solvers can select different centers,
+widths, and angles from the valid solutions. Casa-rs also uses a fixed
+retry sequence so fits with identical inputs are reproducible.

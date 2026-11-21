@@ -26,6 +26,7 @@ mod create;
 mod crop;
 mod data_compat;
 mod decimate;
+mod decompose;
 mod deconvolve_components;
 mod default_record;
 mod fits_export;
