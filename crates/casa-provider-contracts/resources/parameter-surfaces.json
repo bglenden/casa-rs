@@ -24372,11 +24372,8 @@
             "python": {"name": "ntime", "type_hint": "str | float"},
             "presentation": {"label": "Time Chunk", "group": "Automatic", "advanced": true}
           },
-          "surface_note": "Time-averaged clipping and flag extension process each iterator chunk independently. Tfcrop and rflag chunk controls remain on #1616.",
-          "unimplemented": {"issue": 1616, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
-          ]}}
+          "surface_note": "Time-averaged clipping, TFCrop and flag extension process each iterator chunk independently. Rflag chunk controls remain on #1616.",
+          "unimplemented": {"issue": 1616, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
         },
         {
           "name": "combinescans",
@@ -24391,10 +24388,7 @@
             "python": {"name": "combinescans"},
             "presentation": {"label": "Combine Scans", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
-          ]}}
+          "unimplemented": {"issue": 1616, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
         },
         {
           "name": "timefit",
