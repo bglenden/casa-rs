@@ -62,6 +62,7 @@ use crate::plan::{
 mod availability;
 use availability::execute as execute_apply_plan;
 mod fields;
+mod fringe;
 mod ionosphere;
 pub(crate) use fields::load as load_interpolated_calibration_table;
 mod gain_validity;
@@ -2214,8 +2215,17 @@ fn apply_row_all_channels(
             key.observation_id = row.observation_id;
             key.scan_number = row.scan_number;
             key.data_spw_id = row.data_spw_id;
-            let calculate =
-                || fields::lookup(loaded_table, field_id, cal_spw_id, antenna, row, data_spw);
+            let calculate = || {
+                fields::lookup(
+                    loaded_table,
+                    field_id,
+                    cal_spw_id,
+                    antenna,
+                    row,
+                    data_spw,
+                    cal_spw_reference_frequency_hz(cal_spw),
+                )
+            };
             if let Some(cache) = cache {
                 cache.calibration_lookup(
                     key,
@@ -3676,6 +3686,7 @@ enum TimeParameterFamily {
     Tsys,
     PositionAngle,
     Tec,
+    Fringe,
     SwitchedPower,
 }
 
@@ -3690,6 +3701,7 @@ impl TimeParameterFamily {
             "B TSYS" => Some(Self::Tsys),
             "PosAng Jones" => Some(Self::PositionAngle),
             "F Jones" => Some(Self::Tec),
+            "Fringe Jones" => Some(Self::Fringe),
             "G EVLASWPOW" => Some(Self::SwitchedPower),
             _ => None,
         }
@@ -3711,6 +3723,7 @@ pub(crate) struct CalibrationSolution {
 pub(crate) enum CalibrationGrid {
     Complex(GainGrid),
     Delay(DelayGrid),
+    Fringe(GainGrid),
     Antpos(AntposGrid),
     GainCurve(GainCurveGrid),
     Opacity(OpacityGrid),
@@ -3796,6 +3809,7 @@ impl CalibrationGrid {
                 context.cal_ref_frequency_hz,
                 context.path,
             ),
+            Self::Fringe(grid) => fringe::sample(grid, receptor, data_chan_index, context),
             Self::Antpos(grid) => {
                 grid.sample(data_chan_index, field_id, antenna_id, time_seconds, context)
             }
@@ -4566,6 +4580,12 @@ fn load_parameters(
                 if (table_plan.summary.table_subtype == "PosAng Jones" || ionosphere.is_some())
                     && values.shape().first() != Some(&1)
                 {
+                    return Err(ApplyExecutionError::UnsupportedParameterShape {
+                        path: path.display().to_string(),
+                        shape: values.shape().to_vec(),
+                    });
+                }
+                if table_plan.summary.table_subtype == "Fringe Jones" && values.shape() != [8, 1] {
                     return Err(ApplyExecutionError::UnsupportedParameterShape {
                         path: path.display().to_string(),
                         shape: values.shape().to_vec(),

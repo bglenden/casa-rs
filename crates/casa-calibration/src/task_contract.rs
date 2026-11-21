@@ -197,6 +197,9 @@ pub struct GencalTaskRequest {
     /// Float CASA image of vertical TEC in longitude, latitude and time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tec_image: Option<PathBuf>,
+    /// Optional updates to the EOPs recorded in the MeasurementSet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eop_infile: Option<PathBuf>,
     /// Request an automatic VLA lookup, with the optional cutoff in days.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ant_pos_time_limit: Option<i64>,
@@ -224,6 +227,7 @@ impl GencalTaskRequest {
         match self.prior.caltype {
             crate::GencalType::Antpos => self.antpos_infile.as_deref(),
             crate::GencalType::Tecim => self.tec_image.as_deref(),
+            crate::GencalType::Eop => self.eop_infile.as_deref(),
             _ => self.gaincurve_infile.as_deref(),
         }
     }

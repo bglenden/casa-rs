@@ -3,6 +3,7 @@
 
 mod antpos_evla;
 mod antpos_file;
+mod eop;
 pub(crate) mod jyperk;
 mod power_curve;
 mod switched_power;
@@ -88,6 +89,8 @@ pub enum GencalType {
     Jyperk,
     /// Line-of-sight ionospheric total electron content (`F Jones`).
     Tecim,
+    /// Delay and phase corrections for updated Earth-orientation parameters.
+    Eop,
 }
 
 impl GencalType {
@@ -99,6 +102,7 @@ impl GencalType {
             Self::Gc | Self::Gceff | Self::Eff => "EGainCurve",
             Self::Tsys => "B TSYS",
             Self::Tecim => "F Jones",
+            Self::Eop => "Fringe Jones",
             Self::Opac => "TOpac",
             Self::Swpow | Self::Evlagain | Self::SwpOverRq | Self::Swpwts | Self::Rq => {
                 "G EVLASWPOW"
@@ -146,8 +150,9 @@ impl std::str::FromStr for GencalType {
             "rq" => Ok(Self::Rq),
             "jyperk" => Ok(Self::Jyperk),
             "tecim" => Ok(Self::Tecim),
+            "eop" => Ok(Self::Eop),
             other => Err(format!(
-                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, rq, jyperk, or tecim"
+                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, rq, jyperk, tecim, or eop"
             )),
         }
     }
@@ -252,6 +257,14 @@ pub enum GencalError {
     /// The MeasurementSet does not identify one observation for automatic lookup.
     #[error("{0}")]
     AutomaticPositionInput(String),
+    /// An explicitly supplied Earth-orientation file could not be read.
+    #[error("read Earth-orientation file {path}: {source}")]
+    EopFile {
+        /// File the caller selected.
+        path: PathBuf,
+        /// File-system error.
+        source: std::io::Error,
+    },
     /// A VLA archive request failed after the initial connection probe.
     #[error("{source} at {url}")]
     VlaArchive {
@@ -299,6 +312,9 @@ pub(crate) fn gencal_with_output_mode(
     uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
+    if request.caltype == GencalType::Eop {
+        return eop::generate(request, infile, mode);
+    }
     if request.caltype == GencalType::Tecim {
         return tecim::generate(request, infile, mode);
     }
@@ -397,6 +413,7 @@ pub(crate) fn gencal_with_output_mode(
         }
         GencalType::Jyperk => unreachable!("Jy/K has its own factor source"),
         GencalType::Tecim => unreachable!("TEC has its own image source"),
+        GencalType::Eop => unreachable!("EOP has its own measures source"),
     };
     let subtype = if embedded.is_some() {
         "EPowerCurve"
@@ -887,6 +904,9 @@ pub(crate) fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, GencalError> {
+    if request.caltype == GencalType::Eop {
+        return Ok(eop::input_paths(&request.measurement_set, infile));
+    }
     if matches!(request.caltype, GencalType::Antpos | GencalType::Tecim) {
         return Ok(infile.into_iter().map(Path::to_path_buf).collect());
     }
@@ -986,6 +1006,10 @@ fn write_prior_caltable(
             Value::Scalar(ScalarValue::Float64(tecim::height_km(&request.parameter))),
         );
     }
+    if request.caltype == GencalType::Eop {
+        // task_gencal appends directly in observation, scan and antenna order.
+        writer.preserve_row_order();
+    }
 
     for row in rows {
         let shape = IxDyn(row.parameters.shape());
@@ -1041,22 +1065,36 @@ fn write_prior_caltable(
                     record.upsert(column, value.clone());
                 }
             }
+            if request.caltype == GencalType::Eop
+                && let Some(weight) = prior.get(COL_WEIGHT)
+            {
+                record.upsert(COL_WEIGHT, weight.clone());
+            }
         }
         writer.append(record)?;
     }
 
-    writer.copy_subtables(&[
-        (SubtableId::Observation, "OBSERVATION"),
-        (SubtableId::Antenna, "ANTENNA"),
-        (SubtableId::Field, "FIELD"),
-        (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
-        (SubtableId::History, "HISTORY"),
-    ])?;
-    write_spectral_axis(
-        &writer.output_path().join("SPECTRAL_WINDOW"),
-        rows,
-        collapse_spw,
-    )?;
+    if request.caltype == GencalType::Eop {
+        crate::table_maintenance::write_standard_calibration_subtables(
+            ms,
+            writer.output_path(),
+            Some(crate::writer::SingleChannelFrequency::MiddleChannel),
+        )
+        .map_err(GencalError::InvalidRequest)?;
+    } else {
+        writer.copy_subtables(&[
+            (SubtableId::Observation, "OBSERVATION"),
+            (SubtableId::Antenna, "ANTENNA"),
+            (SubtableId::Field, "FIELD"),
+            (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
+            (SubtableId::History, "HISTORY"),
+        ])?;
+        write_spectral_axis(
+            &writer.output_path().join("SPECTRAL_WINDOW"),
+            rows,
+            collapse_spw,
+        )?;
+    }
     writer.save_main()?;
 
     let spectral_window_ids = rows

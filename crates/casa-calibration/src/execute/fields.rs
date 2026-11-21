@@ -148,6 +148,7 @@ pub(super) fn lookup(
     antenna: i32,
     row: &ApplyRowPlan,
     data_window: &crate::plan::SpectralWindowPlan,
+    calibration_frequency_hz: f64,
 ) -> Result<Option<GridAtTime>, ApplyExecutionError> {
     let pinned = |grid| GridAtTime {
         grid,
@@ -202,7 +203,15 @@ pub(super) fn lookup(
     if let Some(grid) = plan.registered_grid(&query, allow_raw_real) {
         return Ok(Some(pinned(grid)));
     }
-    let Some(solution) = plan.solution(&table.path, query)? else {
+    let solution = if matches!(
+        table.time_parameter_family,
+        Some(TimeParameterFamily::Fringe)
+    ) {
+        plan.fringe_solution(&table.path, query, calibration_frequency_hz)?
+    } else {
+        plan.solution(&table.path, query)?
+    };
+    let Some(solution) = solution else {
         return Ok(table.missing_grids.get(&window).cloned().map(pinned));
     };
     let shape = IxDyn(&[solution.receptors, solution.channels]);
@@ -242,6 +251,9 @@ fn physical_grid(
     let CalibrationGrid::Complex(grid) = raw.as_ref() else {
         unreachable!("real parameter carrier");
     };
+    if matches!(family, TimeParameterFamily::Fringe) {
+        return Ok(Arc::new(CalibrationGrid::Fringe(grid.clone())));
+    }
     let values = ArrayValue::Float32(grid.values.mapv(|value| value.re));
     let flags = ArrayValue::Bool(grid.flags.clone());
     Ok(Arc::new(match family {
@@ -259,7 +271,8 @@ fn physical_grid(
         }
         TimeParameterFamily::Tsys
         | TimeParameterFamily::PositionAngle
-        | TimeParameterFamily::Tec => {
+        | TimeParameterFamily::Tec
+        | TimeParameterFamily::Fringe => {
             unreachable!("coefficient uses the raw interpolated value")
         }
         TimeParameterFamily::SwitchedPower => CalibrationGrid::SwitchedPower(
@@ -272,7 +285,7 @@ fn physical_grid(
 pub(super) fn flagged(grid: &CalibrationGrid) -> Arc<CalibrationGrid> {
     let mut grid = grid.clone();
     match &mut grid {
-        CalibrationGrid::Complex(grid) => grid.flags.fill(true),
+        CalibrationGrid::Complex(grid) | CalibrationGrid::Fringe(grid) => grid.flags.fill(true),
         CalibrationGrid::Delay(grid) => grid.flags.fill(true),
         CalibrationGrid::Antpos(grid) => grid.flagged = true,
         CalibrationGrid::GainCurve(grid) => grid.flags.fill(true),

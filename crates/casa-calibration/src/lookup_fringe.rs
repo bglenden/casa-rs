@@ -21,26 +21,22 @@ impl CalibrationTableLookup {
         time: f64,
         frequency_hz: f64,
     ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
-        let Some(mut solution) =
-            self.simulation_solution(observation, scan, window, antenna, time, None)?
-        else {
-            return Ok(None);
-        };
-        if solution.receptors != 8
-            || solution.channels != 1
-            || !frequency_hz.is_finite()
-            || frequency_hz <= 0.
-        {
-            return Err(Self::table_error(
-                &self.path,
-                "invalid fringe parameters or reference frequency",
-            ));
-        }
-        let phases = self.fringe_phases(observation, scan, window, antenna, time, frequency_hz)?;
-        for (receptor, phase) in phases.into_iter().enumerate() {
-            solution.values[4 * receptor] = Complex32::new(phase, 0.);
-        }
-        Ok(Some(solution))
+        let plan = self
+            .advanced_time
+            .as_ref()
+            .ok_or_else(|| Self::table_error(&self.path, "fringe requires real time curves"))?;
+        plan.fringe_solution(
+            &self.path,
+            TimeQuery {
+                observation,
+                scan,
+                window,
+                antenna,
+                time,
+                frequency_hz: None,
+            },
+            frequency_hz,
+        )
     }
 }
 

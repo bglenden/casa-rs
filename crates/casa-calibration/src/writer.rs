@@ -91,8 +91,12 @@ impl<'a> CalibrationTableWriter<'a> {
         );
         // Simulation supplies its established row order and budgets one
         // materialized table. Do not duplicate it for task storeNCT sorting.
-        writer.sort_for_casa = false;
+        writer.preserve_row_order();
         Ok(writer)
+    }
+
+    pub(crate) fn preserve_row_order(&mut self) {
+        self.sort_for_casa = false;
     }
 
     pub(crate) fn with_mode(

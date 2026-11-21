@@ -212,6 +212,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         gaincurve_infile: None,
         antpos_infile: None,
         tec_image: None,
+        eop_infile: None,
         ant_pos_time_limit: None,
         uniform: None,
     })
