@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "task": "polfromgain",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "0c0a98513184e46c11f8cf1c6e1231fb01e365c1",
+  "parameters": {
+    "vis": {
+      "scope": "Existing MeasurementSet furnishing antenna positions, feed angles and field names. The gain table supplies the FIELD delay direction.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "gain-ratio-polarization"
+      ]
+    },
+    "tablein": {
+      "scope": "Existing gain calibration table with two receptor amplitudes and flags at the first channel.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "gain-ratio-polarization"
+      ]
+    },
+    "caltable": {
+      "scope": "Optional independent corrected gain table. The task preserves an existing destination and publishes a new output after successful correction.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "gain-ratio-polarization"
+      ]
+    },
+    "paoffset": {
+      "scope": "Position-angle offset in degrees added to the first receptor angle. Positive and negative offsets and invalid numerical inputs have paired coverage.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "gain-ratio-polarization"
+      ]
+    },
+    "minpacov": {
+      "scope": "Minimum unflagged parallactic-angle coverage in degrees, with at least three samples required for each fit. Antennas without a fit use the window mean in a corrected table.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "gain-ratio-polarization"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "gain-ratio-polarization",
+      "title": "Gain-ratio fractional polarization",
+      "status": "Implemented",
+      "scope": "Two fields and two spectral windows with independently planted per-antenna polarization, mixed receptor flags, sparse antenna coverage, distinct calibration and MeasurementSet FIELD directions, channel preservation and a rank-one fit.",
+      "gap": "The difference in publication after a failed correction is documented below.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "atomic-corrected-table",
+      "state": "Proposed",
+      "inputs": "Request a corrected caltable when an unflagged gain is nonfinite.",
+      "casa": "Raises Spurious fractional polarization! after creating the copied destination.",
+      "ours": "Raises the same diagnostic and leaves the requested destination absent.",
+      "rationale": "Publishing after correction keeps incomplete calibration tables from downstream tasks.",
+      "impact": "The caller can retry immediately with corrected input.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Two fields and two spectral windows with independently planted per-antenna polarization, mixed receptor flags, sparse antenna coverage, distinct calibration and MeasurementSet FIELD directions, channel preservation and a rank-one fit.",
+      "result": "240 first-channel complex gains matched exactly after CASA readback. All argument, scale, flag and metadata cases passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "0c0a98513184e46c11f8cf1c6e1231fb01e365c1",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/polfromgain_oracle.py --work <new-directory>",
+      "receipt": "resources/casa-compat/evidence/polfromgain-20261121.json",
+      "links": [
+        "tools/casa-compat/polfromgain_oracle.py"
+      ]
+    }
+  }
+}

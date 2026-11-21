@@ -2009,6 +2009,59 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 5, in CASA's order: yes
 - Defaults that differ: none
 
+#### polfromgain parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `0c0a98513184e46c11f8cf1c6e1231fb01e365c1`. Status counts: Default only: 0, Implemented: 5, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing MeasurementSet furnishing antenna positions, feed angles and field names. The gain table supplies the FIELD delay direction. [gain-ratio-polarization](#polfromgain-behavior-gain-ratio-polarization)<br>Catalog domain: `path` (measurement_set) | [paired](#polfromgain-evidence-paired) |
+| `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing gain calibration table with two receptor amplitudes and flags at the first channel. [gain-ratio-polarization](#polfromgain-behavior-gain-ratio-polarization)<br>Catalog domain: `path` (calibration_table) | [paired](#polfromgain-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Optional independent corrected gain table. The task preserves an existing destination and publishes a new output after successful correction. [gain-ratio-polarization](#polfromgain-behavior-gain-ratio-polarization)<br>Catalog domain: `path` (calibration_table) | [paired](#polfromgain-evidence-paired) |
+| `paoffset` | `0.0` | `0.0`; `paoffset` → `paoffset` | Implemented | Position-angle offset in degrees added to the first receptor angle. Positive and negative offsets and invalid numerical inputs have paired coverage. [gain-ratio-polarization](#polfromgain-behavior-gain-ratio-polarization)<br>Catalog domain: `float` | [paired](#polfromgain-evidence-paired) |
+| `minpacov` | `30.0` | `30.0`; `minpacov` → `minpacov` | Implemented | Minimum unflagged parallactic-angle coverage in degrees, with at least three samples required for each fit. Antennas without a fit use the window mean in a corrected table. [gain-ratio-polarization](#polfromgain-behavior-gain-ratio-polarization)<br>Catalog domain: `float` | [paired](#polfromgain-evidence-paired) |
+
+#### polfromgain interacting modes and task behavior
+
+<a id="polfromgain-behavior-gain-ratio-polarization"></a>
+##### Gain-ratio fractional polarization
+
+**Implemented** — Two fields and two spectral windows with independently planted per-antenna polarization, mixed receptor flags, sparse antenna coverage, distinct calibration and MeasurementSet FIELD directions, channel preservation and a rank-one fit.
+
+The difference in publication after a failed correction is documented below.
+
+Evidence: [paired](#polfromgain-evidence-paired).
+
+#### polfromgain deviations and unfinished work
+
+##### atomic-corrected-table: Proposed
+
+- Inputs: Request a corrected caltable when an unflagged gain is nonfinite.
+- CASA: Raises Spurious fractional polarization! after creating the copied destination.
+- casa-rs: Raises the same diagnostic and leaves the requested destination absent.
+- Rationale: Publishing after correction keeps incomplete calibration tables from downstream tasks.
+- User impact: The caller can retry immediately with corrected input.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#polfromgain-evidence-paired).
+
+#### polfromgain evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="polfromgain-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and casacore interchange — passed.** 240 first-channel complex gains matched exactly after CASA readback. All argument, scale, flag and metadata cases passed. Two fields and two spectral windows with independently planted per-antenna polarization, mixed receptor flags, sparse antenna coverage, distinct calibration and MeasurementSet FIELD directions, channel preservation and a rank-one fit.
+
+- [tools/casa-compat/polfromgain_oracle.py](https://github.com/bglenden/casa-rs/blob/0c0a98513184e46c11f8cf1c6e1231fb01e365c1/tools/casa-compat/polfromgain_oracle.py)
+- Revision: `0c0a98513184e46c11f8cf1c6e1231fb01e365c1`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/polfromgain_oracle.py --work <new-directory>`.
+- Receipt: `resources/casa-compat/evidence/polfromgain-20261121.json`.
+
 ### predictcomp
 
 - CASA source: `casatasks/predictcomp.py`, 15 parameters
