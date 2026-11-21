@@ -18,6 +18,7 @@ pub(super) mod region;
 mod region_write;
 pub use region_write::{put_image_region, validate_put_region_shapes};
 mod replace_masked;
+mod smoothing;
 
 pub use replace_masked::{
     MaskReplacementOptions, MaskReplacementOutcome, replace_masked_complex_pixels,
@@ -33,6 +34,7 @@ pub use pad::{ImagePad, ImagePadOptions};
 pub use pbcor::{ImagePbcor, ImagePbcorBeam, ImagePbcorOptions};
 pub use pixel_edit::ImagePixelSelection;
 pub use rebin::{ImageRebin, ImageRebinOptions};
+pub use smoothing::{ImageSmoothing, SmoothingKernel, SmoothingOptions, SmoothingPixel};
 
 use std::collections::BTreeSet;
 use std::fs;
