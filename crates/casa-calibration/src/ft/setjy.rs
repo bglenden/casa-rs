@@ -12,6 +12,7 @@ use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use super::invalid;
 
 pub(crate) mod image;
+pub(crate) mod solar2010;
 pub(crate) mod standards;
 
 pub(crate) struct ManualFlux {
@@ -174,6 +175,14 @@ pub(crate) fn sampled_point(
     frequencies: &[MFrequency],
     stokes: Vec<[f64; 4]>,
 ) -> MsResult<(SkyComponent, [f64; 4])> {
+    sampled_shape(ComponentShape::point(direction), frequencies, stokes)
+}
+
+pub(crate) fn sampled_shape(
+    shape: ComponentShape,
+    frequencies: &[MFrequency],
+    stokes: Vec<[f64; 4]>,
+) -> MsResult<(SkyComponent, [f64; 4])> {
     let first = frequencies
         .first()
         .ok_or_else(|| invalid("empty setjy spectral window"))?;
@@ -194,11 +203,7 @@ pub(crate) fn sampled_point(
         SpectralModel::new(first.clone(), SpectralKind::Tabular(spectrum))
     };
     let [i, q, u, v] = first_flux;
-    let component = SkyComponent::new(
-        Flux::stokes_jy(i, q, u, v),
-        ComponentShape::point(direction),
-        model,
-    );
+    let component = SkyComponent::new(Flux::stokes_jy(i, q, u, v), shape, model);
     Ok((component, first_flux))
 }
 
