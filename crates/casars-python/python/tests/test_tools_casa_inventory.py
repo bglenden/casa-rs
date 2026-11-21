@@ -62,7 +62,7 @@ IMPLEMENTED["coordsys"] = {
 IMPLEMENTED["image"] = {
     "boxcar", "collapse", "continuumsub", "convolve", "convolve2d", "decompose", "deviation", "fft", "findsources", "fitcomponents", "fitprofile", "hanning",
     "pad", "pbcor", "transpose",
-    "getslice",
+    "getprofile", "getslice",
     "crop",
     "decimate",
     "rebin",
