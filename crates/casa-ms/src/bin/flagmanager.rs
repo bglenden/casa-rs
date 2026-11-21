@@ -4,12 +4,12 @@
 
 use std::process::ExitCode;
 
+use casa_ms::flagging::save_disk_flag_version;
 use casa_ms::{
     FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, FlaggingError,
     MeasurementSet, delete_flag_version, flag_version_ms_path, flagmanager_list_record,
     flagmanager_task_schema_bundle, initialize_flag_versions, list_flag_versions, ms_task_success,
-    rename_flag_version, rename_flag_version_for_task, restore_flag_version, save_flag_version,
-    task_flag_merge,
+    rename_flag_version, rename_flag_version_for_task, restore_flag_version, task_flag_merge,
 };
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
@@ -85,7 +85,7 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
             let name = require_version("Illegal empty versionname: ''")?;
             let comment = request.comment.as_deref().unwrap_or("");
             keep_existing_version(&ms, &name)?;
-            save_flag_version(&ms, &name, comment, request.merge).map_err(failed)?;
+            save_disk_flag_version(&ms, &name, comment, request.merge).map_err(failed)?;
             mutation("save", Some(name), None)
         }
         "restore" => {
@@ -108,8 +108,10 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
                 }
                 error => failed(error),
             })?;
-            ms.save_main_table_only()
-                .map_err(|error| TaskFailure::execution(error.to_string()))?;
+            if ms.main_table().info().table_type != "Calibration" {
+                ms.save_main_table_only()
+                    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+            }
             mutation("restore", Some(name), None)
         }
         "delete" => {
