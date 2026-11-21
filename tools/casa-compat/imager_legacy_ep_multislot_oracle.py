@@ -14,7 +14,9 @@ from casatools import calibrater, imager, table
 import numpy as np
 
 from gaincal_oracle import relative_rms
-from imager_legacy_pbw_oracle import data, ft, make_input, read_virtual, recipe, reject_recipe
+from imager_legacy_pbw_oracle import (
+    cache_contents, configured_imager, data, ft, make_input, read_virtual, recipe, reject_recipe,
+)
 
 
 OFFSETS = 'casars_legacy_pbw_ep_offsets'
@@ -102,7 +104,7 @@ def nearest_controls(root, original, model, cache, offsets, epochs, native, resu
                 assert relative_rms(control[..., kept], expected[..., kept]) > .01
 
 
-def saved_offsets(dataset, offsets, epochs):
+def saved_offsets(dataset, offsets, epochs, description=0):
     record = recipe(dataset)
     times = record[EPOCHS]
     packed = record[OFFSETS]
@@ -117,10 +119,112 @@ def saved_offsets(dataset, offsets, epochs):
     np.testing.assert_array_equal(times, epochs)
     assert packed.shape == (3, 28, 3)
     order = np.lexsort((data(offsets, 'ANTENNA1'), data(offsets, 'TIME')))
+    order = order[data(offsets, 'CAL_DESC_ID')[order] == description]
     gain = data(offsets, 'GAIN')[:, 0, order].astype(np.float32)
     np.testing.assert_array_equal(packed[0], np.ones((28, 3), dtype=np.float32))
     np.testing.assert_array_equal(packed[1], gain[0].reshape((3, 28)).T)
     np.testing.assert_array_equal(packed[2], gain[2].reshape((3, 28)).T)
+
+
+def copy_row(table_path):
+    with casacore_table(str(table_path), readonly=False, ack=False) as target:
+        assert target.nrows() == 1
+        target.addrows(1)
+        for name in target.colnames():
+            if target.iscelldefined(name, 0):
+                target.putcell(name, 1, target.getcell(name, 0))
+
+
+def multiple_windows(root, original, model, cache, offsets, epochs, native, results):
+    seed = root / 'two-windows.ms'
+    make_input(original, seed, scratch=True)
+    copy_row(seed / 'SPECTRAL_WINDOW')
+    copy_row(seed / 'DATA_DESCRIPTION')
+    with casacore_table(str(seed / 'DATA_DESCRIPTION'), readonly=False, ack=False) as target:
+        target.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    with casacore_table(str(seed), readonly=False, ack=False) as target:
+        time = target.getcol('TIME')
+        last_windows = time != time.min()
+        assert last_windows.any() and not last_windows.all()
+        target.putcol('DATA_DESC_ID', last_windows.astype(np.int32))
+
+    # Put the zero-window solutions in description row 1 with different
+    # offsets. Both visibility windows use these offsets in pinned CASA.
+    reordered = root / 'reordered.EP'
+    shutil.copytree(offsets, reordered)
+    copy_row(reordered / 'CAL_DESC')
+    with casacore_table(str(reordered / 'CAL_DESC'), readonly=False, ack=False) as target:
+        target.putcell('SPECTRAL_WINDOW_ID', 0, np.array([1], dtype=np.int32))
+        target.putcell('SPECTRAL_WINDOW_ID', 1, np.array([0], dtype=np.int32))
+    with (casacore_table(str(offsets), ack=False) as source,
+          casacore_table(str(reordered), readonly=False, ack=False) as target):
+        rows = target.nrows()
+        source.copyrows(target)
+        assert target.nrows() == 2 * rows
+        for row in range(rows, target.nrows()):
+            target.putcell('CAL_DESC_ID', row, 1)
+            target.putcell('GAIN', row, target.getcell('GAIN', row) * 2.)
+
+    owner = imager()
+    assert owner.open(str(seed), usescratch=True) and owner.done()
+    original_values = data(seed, 'MODEL_DATA')
+    preserved = {column: data(seed, column) for column in ('DATA', 'FLAG', 'FLAG_ROW', 'WEIGHT')}
+    prior_cache = cache_contents(cache)
+    missing_zero = root / 'no-window-zero.EP'
+    shutil.copytree(offsets, missing_zero)
+    with casacore_table(str(missing_zero / 'CAL_DESC'), readonly=False, ack=False) as target:
+        target.putcell('SPECTRAL_WINDOW_ID', 0, np.array([1], dtype=np.int32))
+    for machine, record_name in (('pbwproject', 'nPBWProjectFT'), ('pbmosaic', 'PBMosaicFT')):
+        with TemporaryDirectory(dir=root) as attempt:
+            case = Path(attempt)
+            def predict_windows(label, factory, path, spw, *, scratch=True):
+                target = case / f'{label}.ms'
+                make_input(seed, target, scratch=scratch)
+                ft(factory, target, model, cache, scratch=scratch, machine=machine,
+                   pointing=True, ep_table=path, spw=spw)
+                return target
+
+            single = data(predict_windows('casa-single-desc', imager, offsets, '0,1'), 'MODEL_DATA')
+            native_single = predict_windows('native-single-desc', native, offsets, '0,1')
+            check(f'{machine}-two-windows-one-description', data(native_single, 'MODEL_DATA'),
+                  single, results)
+            retry = case / 'retry.ms'
+            make_input(seed, retry, scratch=True)
+            tool = configured_imager(native, retry, cache, scratch=True, machine=machine,
+                                     pointing=True, ep_table=missing_zero, spw='0,1')
+            assert not tool.ft(str(model))
+            np.testing.assert_array_equal(data(retry, 'MODEL_DATA'), original_values)
+            assert tool.setoptions(ftmachine=machine, cfcachedirname=str(cache),
+                                   applypointingoffsets=True, epjtablename=str(offsets),
+                                   wprojplanes=1, numthreads=1)
+            assert tool.ft(str(model)) and tool.done()
+            check(f'{machine}-retry', data(retry, 'MODEL_DATA'), single, results)
+            combined = data(predict_windows('casa-reordered', imager, reordered, '0,1'), 'MODEL_DATA')
+            actual = predict_windows('native-reordered', native, reordered, '0,1')
+            for window, selected in enumerate((~last_windows, last_windows)):
+                split = data(predict_windows(f'casa-window-{window}', imager, reordered, str(window)),
+                             'MODEL_DATA')
+                np.testing.assert_array_equal(combined[..., selected], split[..., selected])
+                np.testing.assert_array_equal(split[..., ~selected], original_values[..., ~selected])
+                assert relative_rms(single[..., selected], combined[..., selected]) > .01
+                check(f'{machine}-reordered-window-{window}', data(actual, 'MODEL_DATA')[..., selected],
+                      split[..., selected], results)
+            only_second = predict_windows('native-window-1', native, reordered, '1')
+            np.testing.assert_array_equal(data(only_second, 'MODEL_DATA')[..., ~last_windows],
+                                          original_values[..., ~last_windows])
+            check(f'{machine}-native-second-only', data(only_second, 'MODEL_DATA')[..., last_windows],
+                  combined[..., last_windows], results)
+            for column, expected in preserved.items():
+                np.testing.assert_array_equal(data(actual, column), expected)
+            saved = predict_windows('native-saved', native, reordered, '0,1', scratch=False)
+            saved_offsets(saved, reordered, epochs, description=1)
+            hidden = reordered.rename(case / 'unavailable.EP')
+            try:
+                check(f'{machine}-multi-window-saved', read_virtual(saved, name=record_name),
+                      combined, results)
+            finally:
+                hidden.rename(reordered)
+    assert cache_contents(cache) == prior_cache
 
 
 def bad_records(root, dataset, native_ms):
@@ -194,6 +298,7 @@ def run(root, original, model, cached):
                 finally:
                     moved.rename(offsets)
         nearest_controls(work, original, model, cache, offsets, epochs, native, results)
+        multiple_windows(work, original, model, cache, offsets, epochs, native, results)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
