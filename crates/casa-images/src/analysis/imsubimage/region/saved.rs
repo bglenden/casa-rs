@@ -332,7 +332,7 @@ fn decode_lc_slicer(
     let trc = resolve(&upper, "fractrc", "artrc", false)?;
     if blc.iter().zip(&trc).any(|(lo, hi)| lo > hi) {
         return Err(ImageError::CasaSelection(format!(
-            "saved region '{name}' lower bounds {blc:?} exceed upper bounds {trc:?}"
+            "LCSlicer::toSlicer - blc {blc:?} must be <= trc {trc:?}"
         )));
     }
     let fractional_step = read_bool_vec(rec.get("fracinc"), step.len());
