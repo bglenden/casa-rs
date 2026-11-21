@@ -70,7 +70,11 @@ impl PyImageTool {
 fn rotation_angle(value: Variant) -> PyResult<f64> {
     if matches!(
         value,
-        Variant::Bool(_) | Variant::Numbers(_) | Variant::Complexes(_) | Variant::Array { .. }
+        Variant::Bool(_)
+            | Variant::Numbers(_)
+            | Variant::Complexes(_)
+            | Variant::Array { .. }
+            | Variant::Other(_)
     ) {
         return Err(raised("Empty QuantumHolder argument for asQuantumDouble"));
     }

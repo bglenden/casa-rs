@@ -153,3 +153,33 @@ def test_rotate_right_angle_keeps_the_actual_sky_overlap():
             result.done()
     finally:
         source.done()
+
+
+@pytest.mark.parametrize("kind", ["direction", "linear"])
+def test_rotate_composes_with_a_preexisting_coordinate_shear(casa, kind):
+    data = _ramp()
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromshape(shape=list(data.shape), linear=kind == "linear")
+            assert source.putchunk(data)
+            coords = source.coordsys()
+            try:
+                assert coords.setlineartransform(type=kind, value=np.array([[.9, .4], [-.2, .8]]))
+                assert source.setcoordsys(coords.torecord())
+                existing = coords.lineartransform(type=kind)
+            finally:
+                coords.done()
+            product = source.rotate(pa=.52, replicate=True)
+            try:
+                rotated = product.coordsys()
+                try:
+                    np.testing.assert_allclose(rotated.lineartransform(type=kind),
+                                               _plane_rotation(.52) @ existing, atol=2e-14)
+                finally:
+                    rotated.done()
+                np.testing.assert_array_equal(product.getchunk(), data)
+            finally:
+                product.done()
+        finally:
+            source.done()
