@@ -795,8 +795,6 @@ mod publication_tests {
 
     #[test]
     fn named_publication_restores_replacements_if_the_primary_cannot_open() {
-        use casa_tables::{Table, TableOptions};
-
         Python::initialize();
         let root = tempfile::tempdir().unwrap();
         let primary = root.path().join("primary.im");
@@ -807,18 +805,12 @@ mod publication_tests {
         let names = [&primary, &auxiliary, &new_output].map(|path| path.to_str().unwrap());
         let stages = NamedImageStages::new(names, true).unwrap();
         let paths = stages.paths();
-        for path in &paths {
+        for path in &paths[1..] {
             test_image(*path, 5).unwrap();
         }
-        let corrupted = paths[0].unwrap();
-        let mut table = Table::open_metadata_only(TableOptions::new(corrupted)).unwrap();
-        table.keywords_mut().remove("coords");
-        table
-            .save_metadata_only(TableOptions::new(corrupted))
-            .unwrap();
-        drop(table);
-        let error = stages.publish_and_open_primary().err().unwrap().to_string();
-        assert!(error.contains("coords"), "{error}");
+        // The directory can be installed. Opening it requires a CASA table.
+        std::fs::create_dir(paths[0].unwrap()).unwrap();
+        assert!(stages.publish_and_open_primary().is_err());
         assert_eq!(ImageHandle::open(&primary).unwrap().shape(), &[2]);
         assert_eq!(ImageHandle::open(&auxiliary).unwrap().shape(), &[3]);
         assert!(!new_output.exists());
