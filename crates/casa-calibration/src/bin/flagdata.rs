@@ -1034,6 +1034,23 @@ mod tests {
     }
 
     #[test]
+    fn elevation_limits_are_numbers_in_the_cli() {
+        let request = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "elevation",
+            "--lowerlimit",
+            "-5.5",
+            "--upperlimit",
+            "82",
+        ])
+        .unwrap();
+        assert_eq!(request.mode, FlagDataMode::Elevation);
+        assert_eq!(request.elevation_limits_deg, [-5.5, 82.0]);
+    }
+
+    #[test]
     fn clipoutside_keeps_its_cli_switches_alongside_vector_values() {
         for (switch, expected) in [("--clipoutside", true), ("--no-clipoutside", false)] {
             let request = request_for(&["--vis", "in.ms", "--mode", "clip", switch]).unwrap();

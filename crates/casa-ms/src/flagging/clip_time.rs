@@ -45,6 +45,18 @@ impl ClipTimedRow {
     pub(super) fn description(&self) -> i32 {
         self.group[4]
     }
+
+    pub(super) fn field(&self) -> i32 {
+        self.group[3]
+    }
+
+    pub(super) fn antennas(&self) -> [i32; 2] {
+        [self.group[5], self.group[6]]
+    }
+
+    pub(super) fn time(&self) -> f64 {
+        self.seconds
+    }
 }
 
 pub(super) fn time_bin_seconds(text: &str) -> Option<f64> {
@@ -106,6 +118,14 @@ pub(super) fn read_clip_times(
     Ok(timed)
 }
 
+pub(super) fn sort_iterator_rows(rows: &mut [ClipTimedRow]) {
+    rows.sort_unstable_by(|left, right| {
+        left.group[..5]
+            .cmp(&right.group[..5])
+            .then_with(|| left.seconds.total_cmp(&right.seconds))
+    });
+}
+
 pub(super) fn clip_time_groups(
     mut rows: &[ClipTimedRow],
     interval: f64,
@@ -129,9 +149,7 @@ pub(super) fn clip_time_groups(
 fn mark_time_chunks(rows: &mut [ClipTimedRow], interval: f64) {
     let compare_group =
         |left: &ClipTimedRow, right: &ClipTimedRow| left.group[..5].cmp(&right.group[..5]);
-    rows.sort_unstable_by(|left, right| {
-        compare_group(left, right).then_with(|| left.seconds.total_cmp(&right.seconds))
-    });
+    sort_iterator_rows(rows);
     let mut chunk = 0;
     while let Some(first) = rows.get(chunk) {
         // The input iterator starts each chunk at its actual first timestamp,

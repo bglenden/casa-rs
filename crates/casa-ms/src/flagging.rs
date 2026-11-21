@@ -529,25 +529,14 @@ fn flagdata_with_persistence(
             correlations.as_ref(),
             request,
         )?,
-        FlagDataMode::Elevation => {
-            let outside = elevation::rows_outside_limits(
-                ms,
-                &selected_rows,
-                request.elevation_limits_deg,
-                &ms_path,
-            )?;
-            set_selected_flags(
-                ms,
-                &outside,
-                channel_selections.as_ref(),
-                correlations.as_ref(),
-                true,
-                selected_flag_row_policy(
-                    correlations.as_ref(),
-                    SelectedFlagRowPolicy::ChangedSamples,
-                ),
-            )?
-        }
+        FlagDataMode::Elevation => elevation::apply(
+            ms,
+            &selected_rows,
+            request.elevation_limits_deg,
+            channel_selections.as_ref(),
+            correlations.as_ref(),
+            &ms_path,
+        )?,
         FlagDataMode::Tfcrop => {
             apply_tfcrop_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
@@ -839,7 +828,7 @@ fn selected_rows(
     })
 }
 
-fn clip_read_plan(
+fn flag_read_plan(
     ms: &MeasurementSet,
     row_count: usize,
     primitive_bytes: usize,
@@ -905,7 +894,7 @@ fn clip_read_plan(
             maximum_elements.max(channel_count.checked_mul(correlation_count).ok_or_else(
                 || FlaggingError::MutateFlags {
                     path: path.clone(),
-                    reason: "clip row shape byte accounting overflowed".to_string(),
+                    reason: "flag row shape byte accounting overflowed".to_string(),
                 },
             )?);
     }
@@ -914,7 +903,7 @@ fn clip_read_plan(
         .and_then(|bytes| bytes.checked_add(usize::from(include_data_description) * 4))
         .ok_or_else(|| FlaggingError::MutateFlags {
             path: path.clone(),
-            reason: "clip row byte accounting overflowed".to_string(),
+            reason: "flag row byte accounting overflowed".to_string(),
         })?;
     let budget = MsSelectionIoBudget::from_system_memory(1, requested_bytes_per_row, None)
         .map_err(|source| FlaggingError::MutateFlags {
@@ -988,7 +977,7 @@ fn apply_clip_flags(
         || correlations.is_some()
         || columns.uses_weight_spectrum();
     let bytes_per_sample = columns.bytes_per_sample(ms.main_table(), &path)?;
-    let read_plan = clip_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
+    let read_plan = flag_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
     if let Some(Some(seconds)) = time_average {
         return TimeClip {
             seconds,

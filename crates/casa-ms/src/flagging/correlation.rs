@@ -136,8 +136,11 @@ impl CorrelationSelection {
         {
             return Err(unsupported());
         }
-        let decorated_stored_products =
-            has_operator && matches!(mode, FlagDataMode::Manual | FlagDataMode::Quack);
+        let decorated_stored_products = has_operator
+            && matches!(
+                mode,
+                FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Elevation
+            );
         if decorated_stored_products {
             let Some(products) = stored_products_with_operator(text) else {
                 return Ok(None);
