@@ -68,11 +68,13 @@ pub use command::append_flag_command;
 use correlation::{ClipProjection, CorrelationSelection};
 pub use shadow::{ShadowAntenna, ShadowOptions};
 mod version_backup;
+mod version_storage;
 pub use clip_models::{FlagDataModelFactory, FlagDataModelPredictor};
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{
     save_next_casa_flag_backup, save_next_flag_backup, save_next_partition_flag_backup,
 };
+pub use version_storage::{restore_flag_version, save_flag_version};
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
@@ -3055,201 +3057,6 @@ pub fn list_flag_versions(ms: &MeasurementSet) -> Result<Vec<FlagVersionEntry>, 
     list_flag_versions_for_path(path)
 }
 
-/// Save current MAIN flags to a named flag version.
-pub fn save_flag_version(
-    ms: &MeasurementSet,
-    versionname: &str,
-    comment: &str,
-    merge: FlagMerge,
-) -> Result<(), FlaggingError> {
-    validate_version_name(ms, versionname)?;
-    let path = ms_path(ms)?;
-    ensure_flagversions_dir(path)?;
-    let version_path = flag_version_table_path(path, versionname);
-    if version_path.exists() {
-        merge_flags_into_existing_version(ms, &version_path, merge)?;
-        update_flag_version_comment(path, versionname, comment)?;
-        return Ok(());
-    }
-    append_flag_version_entry(path, versionname, comment)?;
-    let mut table =
-        Table::with_schema(
-            flag_version_schema().map_err(|source| FlaggingError::FlagVersion {
-                path: path.display().to_string(),
-                reason: format!("build flag-version schema: {source}"),
-            })?,
-        );
-    for row in 0..ms.row_count() {
-        table
-            .add_row(RecordValue::new(vec![
-                RecordField::new(
-                    FLAG_COLUMN,
-                    Value::Array(ArrayValue::Bool(clone_flag_matrix(ms, row)?)),
-                ),
-                RecordField::new(
-                    FLAG_ROW_COLUMN,
-                    Value::Scalar(ScalarValue::Bool(flag_row_value(ms, row)?)),
-                ),
-            ]))
-            .map_err(|source| FlaggingError::FlagVersion {
-                path: path.display().to_string(),
-                reason: format!("add flag-version row: {source}"),
-            })?;
-    }
-    let mut bindings = HashMap::new();
-    bindings.insert(
-        FLAG_COLUMN.to_string(),
-        ColumnBinding {
-            data_manager: DataManagerKind::TiledShapeStMan,
-            tile_shape: None,
-        },
-    );
-    table
-        .save_with_bindings(
-            TableOptions::new(&version_path).with_data_manager(DataManagerKind::StandardStMan),
-            &bindings,
-        )
-        .map_err(|source| FlaggingError::FlagVersion {
-            path: path.display().to_string(),
-            reason: format!("save flag version {versionname:?}: {source}"),
-        })
-}
-
-/// Restore a named flag version to MAIN.
-pub fn restore_flag_version(
-    ms: &mut MeasurementSet,
-    versionname: &str,
-    merge: FlagMerge,
-) -> Result<(), FlaggingError> {
-    validate_version_name(ms, versionname)?;
-    let path = ms_path(ms)?.to_path_buf();
-    let version_path = flag_version_table_path(&path, versionname);
-    // The version is read under its read lock, held until the restore ends.
-    let table = open_flag_version_for_reading(&version_path).map_err(|source| {
-        if matches!(version_path.try_exists(), Ok(false)) {
-            return FlaggingError::MissingFlagVersion {
-                version: versionname.to_owned(),
-            };
-        }
-        FlaggingError::FlagVersion {
-            path: path.display().to_string(),
-            reason: format!("open flag version {versionname:?}: {source}"),
-        }
-    })?;
-    if table.row_count() != ms.row_count() {
-        return Err(FlaggingError::FlagVersion {
-            path: path.display().to_string(),
-            reason: format!(
-                "flag version {versionname:?} has {} rows; MAIN has {}",
-                table.row_count(),
-                ms.row_count()
-            ),
-        });
-    }
-    let maximum_flag_bytes =
-        maximum_visibility_cell_elements(ms).map_err(|source| FlaggingError::MutateFlags {
-            path: path.display().to_string(),
-            reason: format!("plan restored flags: {source}"),
-        })?;
-    let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(|source| {
-        FlaggingError::MutateFlags {
-            path: path.display().to_string(),
-            reason: format!("plan restored flags: {source}"),
-        }
-    })?;
-    let plan = MeasurementSetWritePlan::selected_row_mutation(
-        (0..ms.row_count()).collect(),
-        vec![
-            MeasurementSetWriteColumnPlan {
-                name: FLAG_COLUMN.to_string(),
-                bytes_per_row: maximum_flag_bytes,
-                mode: MeasurementSetColumnWriteMode::Replace,
-                storage_manager: MeasurementSetColumnStorage::Persisted,
-                tile_shape: None,
-                create_source_column: None,
-            },
-            MeasurementSetWriteColumnPlan {
-                name: FLAG_ROW_COLUMN.to_string(),
-                bytes_per_row: 1,
-                mode: MeasurementSetColumnWriteMode::Replace,
-                storage_manager: MeasurementSetColumnStorage::Persisted,
-                tile_shape: None,
-                create_source_column: None,
-            },
-        ],
-        resources,
-    )
-    .map_err(|source| FlaggingError::MutateFlags {
-        path: path.display().to_string(),
-        reason: format!("plan restored flags: {source}"),
-    })?;
-    let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation(ms, plan).map_err(|source| {
-            FlaggingError::MutateFlags {
-                path: path.display().to_string(),
-                reason: format!("start restored flags: {source}"),
-            }
-        })?;
-    while !session
-        .next_mutation_rows()
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.display().to_string(),
-            reason: format!("plan restored flag batch: {source}"),
-        })?
-        .is_empty()
-    {
-        let rows = session
-            .next_mutation_rows()
-            .map_err(|source| FlaggingError::MutateFlags {
-                path: path.display().to_string(),
-                reason: format!("plan restored flag batch: {source}"),
-            })?
-            .to_vec();
-        let mut flags = Vec::with_capacity(rows.len());
-        let mut flag_rows = Vec::with_capacity(rows.len());
-        for &row in &rows {
-            let source = table_flag_matrix(&table, row, FLAG_COLUMN, Some(&path))?;
-            let source_flag_row = table_bool(&table, row, FLAG_ROW_COLUMN, Some(&path))?;
-            let dest = clone_flag_matrix(ms, row)?;
-            let dest_flag_row = flag_row_value(ms, row)?;
-            flags.push(ArrayValue::Bool(merge_bool_arrays(&source, &dest, merge)?));
-            flag_rows.push(ScalarValue::Bool(merge_bool(
-                source_flag_row,
-                dest_flag_row,
-                merge,
-            )));
-        }
-        session
-            .write_mutation_batch(
-                ms,
-                MeasurementSetMutationBatch {
-                    row_indices: rows,
-                    columns: vec![
-                        MeasurementSetMutationColumnBatch {
-                            name: FLAG_COLUMN.to_string(),
-                            values: MeasurementSetMutationColumnValues::Arrays(flags),
-                        },
-                        MeasurementSetMutationColumnBatch {
-                            name: FLAG_ROW_COLUMN.to_string(),
-                            values: MeasurementSetMutationColumnValues::Scalars(flag_rows),
-                        },
-                    ],
-                },
-            )
-            .map_err(|source| FlaggingError::MutateFlags {
-                path: path.display().to_string(),
-                reason: format!("write restored flag batch: {source}"),
-            })?;
-    }
-    session
-        .finish_mutation()
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.display().to_string(),
-            reason: format!("finish restored flags: {source}"),
-        })?;
-    Ok(())
-}
-
 /// Refuse to delete or rename the table of flag version `versionname` of
 /// the MeasurementSet at `path` while a handle in this process or another
 /// process has it open, as casacore's `Table::deleteTable` and
@@ -3372,13 +3179,6 @@ pub fn rename_flag_version_for_task(
     rename_flag_version(ms, oldname, versionname, comment)
 }
 
-fn flag_version_schema() -> Result<TableSchema, casa_tables::SchemaError> {
-    TableSchema::new(vec![
-        ColumnSchema::array_variable(FLAG_COLUMN, PrimitiveType::Bool, Some(2)),
-        ColumnSchema::scalar(FLAG_ROW_COLUMN, PrimitiveType::Bool),
-    ])
-}
-
 fn list_flag_versions_for_path(path: &Path) -> Result<Vec<FlagVersionEntry>, FlaggingError> {
     let mut entries = vec![FlagVersionEntry {
         name: "main".to_string(),
@@ -3498,77 +3298,6 @@ fn open_flag_version_for_reading(version_path: &Path) -> Result<Table, TableErro
     {
         Table::open(TableOptions::new(version_path))
     }
-}
-
-/// Take casacore's write lock on an existing flag-version table before it is
-/// read and merged, waiting for another process as every in-place writer
-/// does. The table is read only once the lock is held, so a write another
-/// process published while this one waited is not stale here: the refusal
-/// [`TableWriteLock`] gives for it is answered by taking the lock again.
-fn lock_existing_flag_version(version_path: &Path) -> Result<TableWriteLock, TableError> {
-    TableWriteLock::acquire(version_path, 0).or_else(|_| TableWriteLock::acquire(version_path, 0))
-}
-
-fn merge_flags_into_existing_version(
-    ms: &MeasurementSet,
-    version_path: &Path,
-    merge: FlagMerge,
-) -> Result<(), FlaggingError> {
-    let path = ms_path(ms)?.to_path_buf();
-    let mut lock =
-        lock_existing_flag_version(version_path).map_err(|source| FlaggingError::FlagVersion {
-            path: path.display().to_string(),
-            reason: format!("lock existing flag version: {source}"),
-        })?;
-    let mut table = Table::open(TableOptions::new(version_path)).map_err(|source| {
-        FlaggingError::FlagVersion {
-            path: path.display().to_string(),
-            reason: format!("open existing flag version: {source}"),
-        }
-    })?;
-    for row in 0..ms.row_count() {
-        let source = clone_flag_matrix(ms, row)?;
-        let source_flag_row = flag_row_value(ms, row)?;
-        let dest = table_flag_matrix(&table, row, FLAG_COLUMN, Some(&path))?;
-        let dest_flag_row = table_bool(&table, row, FLAG_ROW_COLUMN, Some(&path))?;
-        let merged = merge_bool_arrays(&source, &dest, merge)?;
-        let merged_flag_row = merge_bool(source_flag_row, dest_flag_row, merge);
-        table
-            .cell_accessor_mut(row, FLAG_COLUMN)
-            .map_err(|source| FlaggingError::FlagVersion {
-                path: path.display().to_string(),
-                reason: format!("open existing FLAG row {row}: {source}"),
-            })?
-            .set(Value::Array(ArrayValue::Bool(merged)))
-            .map_err(|source| FlaggingError::FlagVersion {
-                path: path.display().to_string(),
-                reason: format!("write existing FLAG row {row}: {source}"),
-            })?;
-        table
-            .cell_accessor_mut(row, FLAG_ROW_COLUMN)
-            .map_err(|source| FlaggingError::FlagVersion {
-                path: path.display().to_string(),
-                reason: format!("open existing FLAG_ROW row {row}: {source}"),
-            })?
-            .set(Value::Scalar(ScalarValue::Bool(merged_flag_row)))
-            .map_err(|source| FlaggingError::FlagVersion {
-                path: path.display().to_string(),
-                reason: format!("write existing FLAG_ROW row {row}: {source}"),
-            })?;
-    }
-    // Recorded before the save, so an interrupted save still tells other
-    // processes to re-read the version.
-    lock.record_write();
-    table
-        .save(TableOptions::new(version_path))
-        .map_err(|source| FlaggingError::FlagVersion {
-            path: path.display().to_string(),
-            reason: format!("save existing flag version: {source}"),
-        })?;
-    lock.release().map_err(|source| FlaggingError::FlagVersion {
-        path: path.display().to_string(),
-        reason: format!("release existing flag version: {source}"),
-    })
 }
 
 fn merge_bool(source: bool, dest: bool, merge: FlagMerge) -> bool {

@@ -108,8 +108,10 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
                 }
                 error => failed(error),
             })?;
-            ms.save_main_table_only()
-                .map_err(|error| TaskFailure::execution(error.to_string()))?;
+            if ms.main_table().info().table_type != "Calibration" {
+                ms.save_main_table_only()
+                    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+            }
             mutation("restore", Some(name), None)
         }
         "delete" => {

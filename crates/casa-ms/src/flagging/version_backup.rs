@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Automatic flag versions for ordinary and partitioned MeasurementSets.
 
+use super::version_storage::flag_version_schema;
 use super::*;
 
 /// Save the MAIN flags to the next free `<task>_N` flag version.
@@ -59,7 +60,7 @@ pub fn save_next_partition_flag_backup(
         reason,
     };
     let mut table =
-        Table::with_schema(flag_version_schema().map_err(|error| failure(error.to_string()))?);
+        Table::with_schema(flag_version_schema(true).map_err(|error| failure(error.to_string()))?);
     for part in partitions {
         let ms =
             MeasurementSet::open(part).map_err(|source| FlaggingError::OpenMeasurementSet {
