@@ -41880,6 +41880,237 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "polfromgain",
+      "contract_version": 1,
+      "display_name": "Polarization from Gains",
+      "category": "Calibration",
+      "summary": "Estimate fractional linear polarization from receptor gain amplitude ratios.",
+      "provider_family": "calibration",
+      "casa_task": "polfromgain",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "polfromgain"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "caltable",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "caltable"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "tablein",
+          "concept": {
+            "id": "calibration.tablein",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--tablein"
+              ]
+            },
+            "provider": {
+              "field": "tablein",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "tablein"
+            },
+            "presentation": {
+              "label": "Input calibration table",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 2
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Corrected calibration table",
+              "group": "Polarization"
+            }
+          }
+        },
+        {
+          "name": "paoffset",
+          "concept": {
+            "id": "polfromgain.paoffset",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--paoffset"
+              ]
+            },
+            "provider": {
+              "field": "paoffset",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "paoffset"
+            },
+            "presentation": {
+              "label": "Manual feed position-angle offset (degrees)",
+              "group": "Polarization"
+            }
+          }
+        },
+        {
+          "name": "minpacov",
+          "concept": {
+            "id": "polfromgain.minpacov",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 30.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minpacov"
+              ]
+            },
+            "provider": {
+              "field": "minpacov",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minpacov"
+            },
+            "presentation": {
+              "label": "Minimum parallactic-angle coverage (degrees)",
+              "group": "Polarization"
+            }
+          }
+        }
+      ]
     }
   ]
 }

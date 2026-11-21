@@ -54,6 +54,7 @@ mod plotbandpass;
 #[doc(hidden)]
 pub mod plotms;
 mod plots;
+mod polfromgain;
 mod rerefant;
 mod selected_data;
 mod session;

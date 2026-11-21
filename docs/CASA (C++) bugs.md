@@ -7268,6 +7268,15 @@ CASA error and compares the two native append products. Invalid boolean
 arguments retain the native exception policy documented in
 `docs/python/api.md`.
 
+## `polfromgain` can leave an incomplete corrected gain table
+
+CASA 6.7.6.14 copies the input gain table to the requested destination before
+correcting it. With an unflagged nonfinite gain in a fitted antenna, the task
+raises `Spurious fractional polarization!` and leaves the copied table behind.
+Casa-rs stages the correction and publishes the result only after it succeeds.
+The paired regression checks the exception and the native destination state.
+[Paired oracle](../tools/casa-compat/polfromgain_oracle.py)
+
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
 In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet
