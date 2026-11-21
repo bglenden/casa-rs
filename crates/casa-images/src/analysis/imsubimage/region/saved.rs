@@ -8,6 +8,7 @@ use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Dimension;
 
+use crate::analysis::world_axes_for_plane;
 use crate::saved_region::map_world_region_axes;
 use crate::{AnyPagedImage, ImageError, PolygonRegion};
 
@@ -548,7 +549,7 @@ fn decode_wc_ellipsoid(
         let mut projected = relative::project_points(
             coords,
             shape,
-            super::world_axes_for_plane(coords, plane)?,
+            world_axes_for_plane(coords, plane)?,
             mapped,
             [first.unit().name(), second.unit().name()],
             [[first.value(), second.value()]],
@@ -568,7 +569,7 @@ fn decode_wc_ellipsoid(
         [pixel(first, x), pixel(second, y)]
     } else {
         let mut world = coords.reference_value();
-        let [wx, wy] = super::world_axes_for_plane(coords, plane)?;
+        let [wx, wy] = world_axes_for_plane(coords, plane)?;
         world[wx] = in_radians(first)?;
         world[wy] = in_radians(second)?;
         let pixel = coords.to_pixel(&world)?;

@@ -70,6 +70,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     }
     let mut found = false;
     for (index, (placement, ours)) in ordered.iter().enumerate() {
+        let ours = *ours;
         let axes: Vec<_> = placement.iter().copied().flatten().collect();
         let n_axes = axes.len();
         let Some(&first) = axes.first() else { continue };
@@ -89,6 +90,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             }
             continue;
         };
+        let theirs = *theirs;
         let target_lengths: Vec<_> = other
             .iter()
             .flatten()
@@ -151,7 +153,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 "cannot regrid a coordinate with a removed pixel axis",
             ));
         }
-        let coordinate = match (*ours, *theirs) {
+        let coordinate = match (ours, theirs) {
             (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
                 if n_axes == 2 =>
             {

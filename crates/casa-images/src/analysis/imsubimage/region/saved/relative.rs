@@ -6,6 +6,7 @@ use casa_types::quanta::{Quantity, Unit};
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
+use crate::analysis::world_axes_for_plane;
 use crate::saved_region::{
     PolygonPixelPlane, native_region_kind, parse_quantum_vector_field, polygon_pixel_plane,
 };
@@ -75,7 +76,7 @@ pub(super) fn polygon_plane(
     }
     // WCPolygon assigns its mode to the two mapped world axes.
     let mut modes = vec![1.0; coords.n_world_axes()];
-    let world_axes = super::super::world_axes_for_plane(coords, axes)?;
+    let world_axes = world_axes_for_plane(coords, axes)?;
     for axis in world_axes {
         modes[axis] = mode;
     }
