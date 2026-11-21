@@ -40,6 +40,7 @@ TOOLS = (
     "calibrater",
     "imager",
     "agentflagger",
+    "wvr",
 )
 
 

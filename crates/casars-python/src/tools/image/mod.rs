@@ -65,6 +65,7 @@ mod region_read;
 mod regrid;
 mod replace_masked;
 mod rotate;
+mod sepconvolve;
 mod serialization;
 mod slice;
 mod smoothing;
@@ -75,6 +76,7 @@ mod summary;
 pub(crate) mod surface;
 mod text_output;
 mod transpose;
+mod two_point;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

@@ -114,7 +114,7 @@ def main():
         shutil.copytree(root / 'source.ms', ms)
         original = flags(ms)
         for mode, settings, issue in [
-            ('tfcrop', {'channelavg': True}, 978),
+            ('rflag', {'channelavg': True}, 978),
             ('rflag', {'timeavg': True}, 978),
             ('rflag', {'ntime': '2s'}, 1616),
             ('rflag', {'combinescans': True}, 1616),

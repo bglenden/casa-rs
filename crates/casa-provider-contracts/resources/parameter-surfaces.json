@@ -24231,7 +24231,7 @@
             "python": {"name": "channelavg", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Channel Average", "group": "Clip", "advanced": true}
           },
-          "surface_note": "Calibration automatic agents use stored channels. MeasurementSet automatic averaging remains on #978."
+          "surface_note": "MeasurementSet TFCrop uses channel averaging. Calibration automatic agents use stored channels. MeasurementSet RFlag channel averaging remains on #978."
         },
         {
           "name": "chanbin",

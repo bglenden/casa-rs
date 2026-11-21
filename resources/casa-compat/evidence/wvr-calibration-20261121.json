@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "21eea39f94e248c733060694b7e746d6db08e1cb",
+  "casa_version": "6.7.6.14",
+  "result": "passed",
+  "scope": "Two compact ALMA fixtures with physical WVR temperatures, selected sky states and two source intervals.",
+  "commands": [
+    "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_oracle.py --work <new-directory>",
+    "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --work <new-directory>"
+  ],
+  "task_parameters": 24,
+  "tool_parameters": 26,
+  "seeds": [
+    0,
+    27,
+    79
+  ],
+  "apply_writer_reader_pairings": 4,
+  "solver_preapply_writer_reader_pairings": 4,
+  "phase_normalized_rms": {
+    "segmented": 0.0,
+    "pointing": 0.0,
+    "two-fits": 0.0,
+    "time-offset": 0.0,
+    "source-flag": 0.0,
+    "tied-sources": 0.0,
+    "unsegmented-source-flag": 0.0,
+    "stat-field": 0.0,
+    "stat-source": 0.0,
+    "stat-final-source": 0.0,
+    "temperature-offsets": 1.56765e-09,
+    "dispersed-window": 1.92373e-09,
+    "smooth-scale": 0.0,
+    "antenna-distance": 8.50177e-11,
+    "good-fraction": 0.0,
+    "fraction-above-one": 0.0,
+    "continuum": 1.40472e-09,
+    "tool-smooth-reverse": 0.0,
+    "tool-reverse-window": 0.0,
+    "zero-evidence antenna replacement": 0.0
+  },
+  "continuum_status": -2,
+  "publication_controls": [
+    "direct tool replacement",
+    "existing task output refusal",
+    "log overlap refusal",
+    "requested reference unavailable",
+    "invalid input and output window status",
+    "automatic replacement after zero Bayesian evidence"
+  ],
+  "recorded_harness_compact_checks": {
+    "cases": 3,
+    "gain_normalized_rms": 0.0,
+    "visibility_normalized_rms": 1.07326e-07
+  },
+  "recorded_alma_case": "Pending access to the recorded ALMA input on the Mac mini."
+}

@@ -3996,7 +3996,7 @@ task grows to the neighboring selected channels 1 and 5, as CASA does with
 the explicit channel list `0:1;3;5;7`.
 [Extension oracle](../tools/casa-compat/flagdata_extend_oracle.py)
 
-## Clip channel averaging can abort on a strided selection
+## Clip and TFCrop channel averaging can abort on a strided selection
 
 In CASA 6.7.6.14, `flagdata(mode="clip", channelavg=True, chanbin=2,
 spw="0:0~3^2", correlation="XX")` aborts with `ArraySlicerError` on a
@@ -4005,6 +4005,13 @@ works. Native flagdata groups the actual selected channels, averages the
 two samples and sets new flags on channels 0 and 2 when the bin meets the
 clip range. The channel clip oracle checks the mask independently from
 the input samples and from CASA with the equivalent explicit selection.
+
+TFCrop reproduces the same abort with `flagdimension="time"`,
+`channelavg=True`, `chanbin=2` and `spw="0:8~23^2"` on a 32-channel
+window. The independently injected broadband impulse flags just channels
+8, 10, 12, 14, 16, 18, 20 and 22 on that integration. The native strided
+selection and CASA's equivalent explicit channel list produce the same
+physical mask. [TFCrop channel averaging oracle](../tools/casa-compat/flagdata_tfcrop_channelavg_oracle.py)
 
 ## Clip channel averaging can flag nonzero data as zero
 
@@ -9281,6 +9288,54 @@ from `rotate(pa="35deg", method="linear")`. Both singleton axes are
 removed from the interpolation pass, leaving the initialized output pixel
 instead of copying the input. Casa-rs preserves the original pixel, mask
 and coordinates when the rotation has no sampled axis.
+
+### `image.sepconvolve` can replace an explicitly selected kernel axis
+
+On a `[13, 15]` Float image with an impulse at `[6, 7]`, the pinned
+CASA 6.7.6.14 call `sepconvolve(axes=[1], types=["boxcar"], widths=[4])`
+spreads the impulse along pixel axis 0. The parser assigns `-1` while
+checking the sole axis, so the request takes the default branch.
+Casa-rs respects the supplied axis and applies the kernel to axis 1.
+
+The Python wrappers for `image.sepconvolve` and
+`image.twopointcorrelation` also raise a `SystemError` for tuple-valued
+axes, such as `axes=(0, 1)` when the rest of the call is valid. Casa-rs
+reports a `TypeError` before creating or replacing an output.
+
+### `image.sepconvolve` accepts undefined kernel coefficients
+
+CASA 6.7.6.14 fills the processed profiles with NaN for a zero-pixel
+Gaussian width. With width `[-2]` on a `[10, 12]` image it can terminate
+while trying to allocate the kernel. Casa-rs rejects a nonpositive
+Gaussian pixel width before publishing an output.
+
+For an even profile length, the Hanning generator assigns symmetric
+coefficients around the lower middle sample and leaves its trailing
+coefficient uninitialized. Casa-rs assigns zero to the unused final
+coefficient. The assigned coefficients retain CASA's normalization and
+indexing.
+
+### `image.twopointcorrelation` can terminate the Python process on invalid axes
+
+For a `[5, 7]` Float image, CASA 6.7.6.14 can fault when a selected
+axis is negative, such as `axes=[-2, 1]`. It can also abort on
+`axes=[0, 0]` for a linear image. Casa-rs validates that the axes are
+in range and strictly increasing before creating or replacing an output.
+
+### `image.twopointcorrelation` can ignore a selected mask or region
+
+On an unmasked `[11, 11]` Float image whose value is its first pixel
+index, an external mask selecting values below 5 leaves 189 lags with
+at least one valid pair. CASA 6.7.6.14 reports all 441 lags as valid. Its
+correlation loop only checks the combined mask when the selected image
+has a physical pixel mask. Adding an all-true pixel mask makes CASA
+honor the selection. The same behavior occurs for a polygon region.
+Casa-rs applies the combined validity to both endpoints of every pair.
+
+For a direction image of shape `[1, 7]` with an all-false pixel mask,
+repeated CASA 6.7.6.14 calls can also report valid samples near the zero
+lag. Casa-rs reports every lag as masked because the input contains no
+valid pairs.
 
 ## WVR global phase reversal can miss sparse spectral-window selections
 

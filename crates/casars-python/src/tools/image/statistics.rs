@@ -3,8 +3,8 @@
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, format_world_display};
 use casa_images::{ImageInterface, ImagePixel};
 use casa_lattices::{
-    ExecutionResources, FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm,
-    StatsElement,
+    ExecutionResources, FitHalfCenter, Lattice, LatticeStatistics, ScratchSpace, Statistic,
+    StatisticsAlgorithm, StatsElement, TempStoragePolicy,
 };
 use casa_types::Value;
 use casa_types::measures::MeasFrame;
@@ -18,12 +18,12 @@ use crate::convert::{DoubleList, IntList, Variant, value::CasaValue};
 use crate::tools::coordsys::stored_velocity_settings;
 use crate::tools::{LogLine, emit};
 
+use super::PyImageTool;
 use super::copy_region::Selection;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::mask_expression::{MaskTarget, evaluate_mask};
 use super::pixels::{Chunk, and_mask, collapse_axes};
 use super::region_read::region_argument;
-use super::{PyImageTool, stub};
 
 mod flux;
 mod report;
@@ -135,6 +135,7 @@ struct StatsOptions<'a> {
     include: Option<[f64; 2]>,
     exclude: Option<[f64; 2]>,
     robust: bool,
+    disk: bool,
     expression: Option<ArrayD<bool>>,
     algorithm: StatisticsAlgorithm,
     single_precision: bool,
@@ -225,6 +226,11 @@ fn calculate<T: ImagePixel + StatsElement>(
             &selection
         };
     let mut stats = LatticeStatistics::new(lattice);
+    if options.disk {
+        stats.set_cache_storage(TempStoragePolicy::Paged {
+            scratch: ScratchSpace::SystemTemp,
+        });
+    }
     if options.fits_backed {
         // Keep queued FITS sections bounded while workers reduce their tiles.
         stats.set_execution_resources(ExecutionResources {
@@ -442,9 +448,6 @@ impl PyImageTool {
                 (zscore, maxiter),
                 niter,
             )?;
-            if disk {
-                return Err(stub("statistics").unwrap_err());
-            }
             // casatools stores its public thresholds as Float even when the
             // underlying image and the reported statistics use Double.
             let single = |limits: [f64; 2]| limits.map(|bound| f64::from(bound as f32));
@@ -490,6 +493,7 @@ impl PyImageTool {
                     include,
                     exclude,
                     robust,
+                    disk,
                     expression,
                     algorithm,
                     single_precision,

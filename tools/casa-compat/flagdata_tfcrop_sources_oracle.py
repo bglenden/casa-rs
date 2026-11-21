@@ -66,7 +66,8 @@ def seed_sources():
 
 
 def science_state(path):
-    names = {"DATA", "CORRECTED_DATA", "MODEL_DATA", "FLOAT_DATA", "WEIGHT", "WEIGHT_SPECTRUM", "SIGMA"}
+    names = {"DATA", "CORRECTED_DATA", "MODEL_DATA", "FLOAT_DATA", "WEIGHT", "WEIGHT_SPECTRUM",
+             "SIGMA", "SIGMA_SPECTRUM"}
     with table(path, ack=False) as main:
         return {column: main.getcol(column) for column in names.intersection(main.colnames())}
 

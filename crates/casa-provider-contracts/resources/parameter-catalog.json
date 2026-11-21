@@ -9426,7 +9426,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Average selected channels before clipping.", "details": "When a bin clips, set flags on its original selected channels. A Boolean vector is accepted by the CASA parameter validator and rejected by the clipping agent.", "examples": ["false", "true"]},
+      "documentation": {"summary": "Average selected channels before clipping or TFCrop.", "details": "Write flags from the averaged bin to its original selected channels. A Boolean vector is accepted by the CASA parameter validator and rejected by the flagging agent.", "examples": ["false", "true"]},
       "persistence_class": "profile"
     },
     {
@@ -9450,7 +9450,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Channel averaging width for clipping.", "details": "Use one integer for all spectral windows or one width per spectral-window row. A width of zero passes through channels. A width of one averages the whole selected window. CASA accepts Boolean and NumPy integer scalars and uses the default width for them.", "examples": ["1", "[2, 0]"]},
+      "documentation": {"summary": "Channel averaging width for clipping or TFCrop.", "details": "Use one integer for all spectral windows or one width per spectral-window row. A width of zero passes through channels. A width of one averages the whole selected window. CASA accepts Boolean and NumPy integer scalars and uses the default width for them.", "examples": ["1", "[2, 0]"]},
       "persistence_class": "profile"
     },
     {
