@@ -8,7 +8,7 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use casa_ms::flagging::flagdata_path_with_model;
+use casa_ms::flagging::{ShadowOptions, flagdata_path_with_model};
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
@@ -680,7 +680,7 @@ fn flagdata_request(
         quackmode,
         quackincrement,
         elevation_limits_deg: [task.number("lowerlimit")?, task.number("upperlimit")?],
-        shadow: Default::default(),
+        shadow: ShadowOptions::default(),
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         timedevscale: task.number("timedevscale")?,

@@ -4028,7 +4028,7 @@ and accumulates each weight spectrum over its actual contributing
 integrations. The test calculates the expected masks from the stored values,
 then compares flags and data using both CASA and casacore readback.
 
-## Decorated manual, quack, elevation and extension selections can flag unnamed correlations
+## Decorated flag selections can alter unnamed correlations
 
 In CASA 6.7.6.14, manual, quack and elevation flagging ignore the correlation scope
 when a recognized visibility operator appears in the expression. For example,
@@ -4046,6 +4046,12 @@ comparison starts with four flagged XX channels. With `growfreq=50`,
 YY, matching the explicit CASA `XX` product.
 [Elevation oracle](../tools/casa-compat/flagdata_elevation_oracle.py)
 · [Extension oracle](../tools/casa-compat/flagdata_extend_oracle.py)
+
+The shadow oracle also reproduces CASA's widening of decorated correlation
+selections. `ABS_YY` and `ABS_UNKNOWN` change both stored planes in CASA.
+Native shadow flagging matches explicit `YY` for the first expression and
+leaves the flags unchanged when the expression names no stored product.
+[Shadow oracle](../tools/casa-compat/flagdata_shadow_oracle.py)
 
 ## Time-averaged clipping can derive row flags from a subset of channels
 
@@ -4076,11 +4082,6 @@ The padded file and dictionary with the supplied coordinates agree on
 casa-rs reads the complete coordinate and reproduces the mask verified
 by the padded file, dictionary, and independent Measures projection.
 [Shadow oracle](../tools/casa-compat/flagdata_shadow_oracle.py)
-
-The shadow oracle also reproduces CASA's widening of decorated correlation
-selections. `ABS_YY` and `ABS_UNKNOWN` change both stored planes in CASA.
-Native shadow flagging matches explicit `YY` for the first expression and
-leaves the flags unchanged when the expression names no stored product.
 
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 

@@ -9,7 +9,6 @@ use casa_types::{ArrayValue, ScalarValue};
 
 use crate::derived::engine::MsCalEngine;
 use crate::selection::syntax::ChannelSelection;
-use crate::subtables::SubTable;
 use crate::{MeasurementSet, MsResult, open_measures_runtime};
 
 use super::clip_time::{ClipTimedRow, read_clip_times, sort_iterator_rows};
