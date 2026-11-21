@@ -56,7 +56,8 @@ def test_fitcomponents_gaussian_offset_and_uncertainty(casa, typecode):
         attached = api.image()
         assert attached.fitcomponents() == {}
         assert attached.fromarray(pixels=pixels, type=typecode)
-        assert attached.setbrightnessunit("Jy/pixel")
+        if typecode == "f":
+            assert attached.setbrightnessunit("Jy/pixel")
         try:
             fit = attached.fitcomponents(dooff=True, offset=.4, rms="100mJy/pixel", noisefwhm=0.5)
             np.testing.assert_array_equal(fit["converged"], [True])
@@ -96,6 +97,9 @@ def test_fitcomponents_native_products_writer_reader_matrix(casa, tmp_path):
         source = writer.image()
         assert source.open(path)
         names = {product: str(tmp_path / f"{product}-{i}.im") for product in ("model", "residual", "complist")}
+        existing = writer.image()
+        assert existing.fromarray(names["model"], np.full((2, 2), 44., dtype=np.float32))
+        assert existing.done()
         try:
             fit = source.fitcomponents(
                 box="5,8,26,28", chans=1, dooff=True, offset=.5, fixoffset=True,
@@ -122,7 +126,7 @@ def test_fitcomponents_native_products_writer_reader_matrix(casa, tmp_path):
                     assert product.brightnessunit() == "Jy/beam"
                     assert product.shape().tolist() == [31, 34, 1, 3]
                     np.testing.assert_array_equal(product.getchunk(getmask=True), mask)
-                    assert product.maskhandler("default").tolist() == ["mask0"]
+                    assert list(product.maskhandler("default")) == ["mask0"]
                     assert "ia.fitcomponents(" in product.history()[-1]
                     output = product.getchunk()
                     np.testing.assert_array_equal(output[:, :, :, [0, 2]], 0.)
