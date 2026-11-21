@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Python adapter for legacy, calibration-facing imager operations.
 
+mod flux;
 mod geometry;
 mod options;
 pub(crate) mod surface;
@@ -509,6 +510,90 @@ impl PyImager {
                 .map_err(runtime_error)?;
             Ok(true)
         })
+    }
+
+    #[pyo3(signature = (field = Variant::Empty, spw = Variant::Empty, modimage = "", fluxdensity = Variant::Numbers(vec![0.; 4]), standard = "SOURCE", scalebychan = false, spix = Variant::Numbers(vec![0.]), reffreq = Variant::Empty, polindex = Variant::Numbers(vec![0.]), polangle = Variant::Numbers(vec![0.]), rotmeas = 0.0, time = "", scan = "", intent = "", observation = "", interpolation = "nearest"), text_signature = "($self, field=[], spw=[], modimage='', fluxdensity=[0.0, 0.0, 0.0, 0.0], standard='SOURCE', scalebychan=False, spix=[0.0], reffreq=[], polindex=[0.0], polangle=[0.0], rotmeas=0.0, time='', scan='', intent='', observation='', interpolation='nearest')")]
+    #[allow(clippy::too_many_arguments)]
+    fn setjy(
+        &self,
+        py: Python<'_>,
+        field: Variant,
+        spw: Variant,
+        modimage: &str,
+        fluxdensity: Variant,
+        standard: &str,
+        scalebychan: bool,
+        spix: Variant,
+        reffreq: Variant,
+        polindex: Variant,
+        polangle: Variant,
+        rotmeas: f64,
+        time: &str,
+        scan: &str,
+        intent: &str,
+        observation: &str,
+        interpolation: &str,
+    ) -> PyResult<Py<PyAny>> {
+        use casa_calibration::{ImagerSetJyRequest, imager_setjy};
+        use casa_provider_contracts::CasaValue;
+
+        let request = ImagerSetJyRequest {
+            workspace: std::env::current_dir().map_err(runtime_error)?,
+            selection: MsSelection {
+                field: wildcard_selector(&field),
+                spw: wildcard_selector(&spw),
+                timerange: nonempty(time),
+                scan: nonempty(scan),
+                intent: nonempty(intent),
+                observation: nonempty(observation),
+                ..MsSelection::default()
+            },
+            image: (!modimage.is_empty()).then(|| PathBuf::from(modimage)),
+            flux_jy: flux::flux(fluxdensity)?,
+            standard: standard.to_owned(),
+            by_channel: scalebychan,
+            spectral_index: flux::coefficients(spix, "spix")?,
+            reference: flux::reference(&reffreq)?,
+            polarization_index: flux::coefficients(polindex, "polindex")?,
+            polarization_angle: flux::coefficients(polangle, "polangle")?,
+            rotation_measure: rotmeas,
+            interpolation: interpolation.to_owned(),
+        };
+        let answer = self.with_state(py, |state| {
+            if !state.valid {
+                return Ok(None);
+            }
+            let answer = imager_setjy(&mut state.attachments, &request).map_err(runtime_error)?;
+            if matches!(&answer, CasaValue::Dict { entries } if entries.len() > 1) {
+                state.reset_sky_model();
+            }
+            Ok(Some(answer))
+        })?;
+        let answer = match answer {
+            Some(answer) => answer,
+            None => {
+                emit(
+                    py,
+                    LOGGER,
+                    &[LogLine::error(
+                        "No MeasurementSet has been assigned, please run open.",
+                    )],
+                )?;
+                CasaValue::Dict {
+                    entries: Vec::new(),
+                }
+            }
+        };
+        crate::convert::reply_value::reply_value(py, &answer)
+    }
+
+    fn ssoflux(&self, py: Python<'_>) -> PyResult<bool> {
+        emit(
+            py,
+            LOGGER,
+            &[LogLine::error("ssoflux is no longer supported. Use setjy.")],
+        )?;
+        Ok(false)
     }
 
     #[pyo3(signature = (model = None, complist = "", incremental = false, phasecentertime = -1.0), text_signature = "($self, model=[], complist='', incremental=False, phasecentertime=-1.0)")]
