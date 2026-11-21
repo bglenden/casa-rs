@@ -62,6 +62,11 @@ use crate::execution::{
 };
 use crate::{Lattice, LatticeElement, LatticeError, TraversalCursorIter, TraversalSpec};
 
+mod order;
+pub(crate) use order::{
+    OrderStatsSummary, framework_order_summary, quartiles_and_median, selection_median,
+};
+
 /// Marker trait for lattice element types that support numerical statistics.
 ///
 /// Implemented for all numeric casacore-native types (bool, integers, floats).
@@ -536,7 +541,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
                     LatticeError::InvalidTraversal("statistics state byte overflow".into())
                 })?,
         )?;
-        let values = try_reduce_read_chunks(
+        let mut values = try_reduce_read_chunks(
             self.lattice,
             self.traversal_spec_for_strategy(strategy),
             strategy,
@@ -552,7 +557,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             return Ok(OrderStatsCache::empty_global());
         }
 
-        let summary = compute_order_summary(&values)?;
+        let summary = compute_order_summary(&mut values);
         Ok(OrderStatsCache::from_summaries(&[1], &[summary]))
     }
 
@@ -592,11 +597,11 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         )?;
 
         let mut summaries = Vec::with_capacity(layout.n_out);
-        for values in buckets {
+        for mut values in buckets {
             if values.is_empty() {
                 summaries.push(OrderStatsSummary::nan());
             } else {
-                summaries.push(compute_order_summary(&values)?);
+                summaries.push(compute_order_summary(&mut values));
             }
         }
 
@@ -1142,27 +1147,6 @@ impl RunningStats {
     }
 }
 
-#[derive(Clone, Copy)]
-struct OrderStatsSummary {
-    median: f64,
-    q1: f64,
-    q3: f64,
-    quartile: f64,
-    mad: f64,
-}
-
-impl OrderStatsSummary {
-    fn nan() -> Self {
-        Self {
-            median: f64::NAN,
-            q1: f64::NAN,
-            q3: f64::NAN,
-            quartile: f64::NAN,
-            mad: f64::NAN,
-        }
-    }
-}
-
 #[derive(Clone)]
 struct AxisLayout {
     out_axes: Vec<usize>,
@@ -1318,7 +1302,7 @@ pub(crate) fn compute_statistic(values: &[f64], stat: Statistic) -> f64 {
     debug_assert!(!values.is_empty());
 
     if stat.is_order_stat() {
-        let summary = compute_order_summary(values).expect("valid order-stat summary");
+        let summary = compute_order_summary(&mut values.to_vec());
         return match stat {
             Statistic::Median => summary.median,
             Statistic::Q1 => summary.q1,
@@ -1345,55 +1329,11 @@ impl Statistic {
     }
 }
 
-fn compute_order_summary(values: &[f64]) -> Result<OrderStatsSummary, LatticeError> {
+fn compute_order_summary(values: &mut [f64]) -> OrderStatsSummary {
     if values.iter().any(|value| value.is_nan()) {
-        return Ok(legacy_order_summary(values));
+        return legacy_order_summary(values);
     }
-
-    let mut ordered = values.to_vec();
-    ordered.sort_by(|left, right| left.total_cmp(right));
-    // casacore's statistics framework takes the quantile at fraction q of
-    // n sorted values at index ceil(q * n) - 1, without interpolation;
-    // the median still averages an even sample's middle pair.
-    let q1 = framework_fractile(&ordered, 0.25);
-    let q3 = framework_fractile(&ordered, 0.75);
-    let median = averaging_median(&ordered);
-
-    let mut deviations: Vec<f64> = values.iter().map(|value| (value - median).abs()).collect();
-    deviations.sort_by(|left, right| left.total_cmp(right));
-    let mad = averaging_median(&deviations);
-    Ok(OrderStatsSummary {
-        median,
-        q1,
-        q3,
-        quartile: q3 - q1,
-        mad,
-    })
-}
-
-/// The framework's fractile at `q`: the sorted value at
-/// `ceil(q * n) - 1`.
-fn framework_fractile(sorted: &[f64], q: f64) -> f64 {
-    let n = sorted.len();
-    if n == 0 {
-        return f64::NAN;
-    }
-    let index = (q * n as f64).ceil() as isize - 1;
-    sorted[index.clamp(0, n as isize - 1) as usize]
-}
-
-/// The framework's median: the middle value, or the average of an even
-/// sample's middle pair.
-fn averaging_median(sorted: &[f64]) -> f64 {
-    let n = sorted.len();
-    if n == 0 {
-        return f64::NAN;
-    }
-    if n.is_multiple_of(2) {
-        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
-    } else {
-        sorted[n / 2]
-    }
+    framework_order_summary(values)
 }
 
 fn legacy_order_summary(values: &[f64]) -> OrderStatsSummary {
