@@ -8,7 +8,7 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use casa_ms::flagging::{ShadowOptions, flagdata_path_with_model};
+use casa_ms::flagging::{AntennaIntegrationOptions, ShadowOptions, flagdata_path_with_model};
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
@@ -58,6 +58,10 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
+    let mode = task.required_text("mode")?;
+    if mode == "antint" {
+        antint_min_channel_fraction(task)?;
+    }
     let vector_selector = selector_argument(task)?;
     let column = flagdata_column_argument(task)?;
     let time_chunk = time_chunk_argument(task).or_else(|error| {
@@ -66,7 +70,6 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         Err(error)
     })?;
-    let mode = task.required_text("mode")?;
     let display_option = task.required_text("display")?;
     if column.is_none() && matches!(mode.as_str(), "clip" | "tfcrop" | "rflag") {
         backup_before_failed_apply(task, &action)?;
@@ -157,6 +160,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                 | FlagDataMode::Elevation
                 | FlagDataMode::Extend
                 | FlagDataMode::Shadow
+                | FlagDataMode::Antint
         )
     {
         return Err(not_yet("action", &action));
@@ -263,6 +267,7 @@ fn save_flag_parameters(
             "flagnearfreq",
         ],
         "shadow" => &["tolerance", "addantenna"],
+        "antint" => &["antint_ref_antenna", "minchanfrac", "verbose"],
         _ => return Err(not_yet("savepars", mode)),
     };
     for &field in fields {
@@ -473,7 +478,8 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                     ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value),
                 ) => python_repr(value),
                 (
-                    "extendpols" | "combinescans" | "growaround" | "flagneartime" | "flagnearfreq",
+                    "extendpols" | "combinescans" | "growaround" | "flagneartime" | "flagnearfreq"
+                    | "verbose",
                     value,
                 ) => task
                     .argument_text(name)
@@ -683,6 +689,11 @@ fn flagdata_request(
         quackincrement,
         elevation_limits_deg: [task.number("lowerlimit")?, task.number("upperlimit")?],
         shadow: ShadowOptions::default(),
+        antint: AntennaIntegrationOptions {
+            reference_antenna: task.required_text("antint_ref_antenna")?,
+            min_channel_fraction: antint_min_channel_fraction(task)?,
+            verbose: task.flag("verbose")?,
+        },
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         timedevscale: task.number("timedevscale")?,
@@ -700,6 +711,17 @@ fn flagdata_request(
         growtime: task.number("growtime")?,
         growfreq: task.number("growfreq")?,
     })
+}
+
+fn antint_min_channel_fraction(task: &TaskInvocation<'_>) -> Result<f64, TaskFailure> {
+    if let Some(ParameterValue::NumpyScalar { value, .. }) = task.value("minchanfrac") {
+        match value.as_ref() {
+            ParameterValue::Float(value) => return Ok(*value),
+            ParameterValue::Integer(value) => return Ok(*value as f64),
+            _ => {}
+        }
+    }
+    task.number("minchanfrac")
 }
 
 fn clip_time_bin(
@@ -865,11 +887,12 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
         "quack" => flag(FlagDataMode::Quack),
         "elevation" => flag(FlagDataMode::Elevation),
         "shadow" => flag(FlagDataMode::Shadow),
+        "antint" => flag(FlagDataMode::Antint),
         "tfcrop" => flag(FlagDataMode::Tfcrop),
         "rflag" => flag(FlagDataMode::Rflag),
         "extend" => flag(FlagDataMode::Extend),
         "summary" => flag(FlagDataMode::Summary),
-        "list" | "antint" => Err(not_yet("mode", text)),
+        "list" => Err(not_yet("mode", text)),
         _ => Err(unknown(
             "mode",
             text,
@@ -1170,11 +1193,9 @@ mod tests {
 
     #[test]
     fn casa_values_not_implemented_yet_name_978() {
-        for (name, value) in [("--mode", "antint"), ("--mode", "list")] {
-            let error = request_for(&["--vis", "in.ms", name, value]).unwrap_err();
-            assert!(error.message.contains("#978"), "{name} {value}: {error:?}");
-            assert_eq!(error.parameter.as_deref(), Some(&name[2..]));
-        }
+        let error = request_for(&["--vis", "in.ms", "--mode", "list"]).unwrap_err();
+        assert!(error.message.contains("#978"), "{error:?}");
+        assert_eq!(error.parameter.as_deref(), Some("mode"));
         let error = request_for(&["--vis", "in.ms", "--mode", "rflag", "--datacolumn", "MODEL"])
             .unwrap_err();
         assert!(error.message.contains("#978"));
