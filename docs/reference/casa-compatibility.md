@@ -505,6 +505,50 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 6, in CASA's order: yes
 - Defaults that differ: none
 
+#### flagmanager parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `053d037aae381f2d3148c7076f4e3e6dd305de2c`. Status counts: Default only: 0, Implemented: 0, Not implemented: 0, Partial: 6, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `vis` | Partial | Existing MeasurementSet or current calibration table. [versions](#flagmanager-behavior-versions)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [calibration-versions](#flagmanager-evidence-calibration-versions) |
+| `mode` | `'list'` | `'list'`; `mode` → `mode` | Partial | List, save, restore, delete or rename. [versions](#flagmanager-behavior-versions)<br>Catalog domain: `delete`, `list`, `rename`, `restore`, `save` | [calibration-versions](#flagmanager-evidence-calibration-versions) |
+| `versionname` | `''` | `''`; `versionname` → `versionname` | Partial | Literal snapshot name. [versions](#flagmanager-behavior-versions)<br>Catalog domain: `string` | [calibration-versions](#flagmanager-evidence-calibration-versions) |
+| `oldname` | `''` | `''`; `oldname` → `oldname` | Partial | Current name when renaming. [versions](#flagmanager-behavior-versions)<br>Catalog domain: `string` | [calibration-versions](#flagmanager-evidence-calibration-versions) |
+| `comment` | `''` | `''`; `comment` → `comment` | Partial | Snapshot comment for save and rename. [versions](#flagmanager-behavior-versions)<br>Catalog domain: `string` | [calibration-versions](#flagmanager-evidence-calibration-versions) |
+| `merge` | `'replace'` | `'replace'`; `merge` → `merge` | Partial | Replace, OR, or AND flags during restore. [versions](#flagmanager-behavior-versions)<br>Catalog domain: `and`, `or`, `replace` | [calibration-versions](#flagmanager-evidence-calibration-versions) |
+
+#### flagmanager interacting modes and task behavior
+
+<a id="flagmanager-behavior-versions"></a>
+##### Manage persisted flag versions
+
+**Partial** — Create, list, rename, delete and restore CASA-readable snapshots. Preserve a calibration table’s FLAG-only schema and its stored science data.
+
+Further shared version parameter and error-domain behavior is tracked under #978 and #1617.
+
+Evidence: [calibration-versions](#flagmanager-evidence-calibration-versions).
+
+#### flagmanager deviations and unfinished work
+
+#### flagmanager evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="flagmanager-evidence-calibration-versions"></a>
+##### calibration-versions
+
+**Same-input bidirectional CASA flag versions — passed.** Four calibration version workflows, 24 replace/OR/AND restores, four renamed restores and four missing-version cases passed. A live casacore writer and a failed stage verified read-lock consistency and retry. Other calibration columns and metadata were preserved. CASA-written complex bandpass and real delay tables, with flag versions produced and restored through both public Python implementations.
+
+- [tools/casa-compat/flagmanager_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/053d037aae381f2d3148c7076f4e3e6dd305de2c/tools/casa-compat/flagmanager_calibration_oracle.py)
+- Revision: `053d037aae381f2d3148c7076f4e3e6dd305de2c`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/flagmanager_calibration_oracle.py --work <new-dir> --native-bin <flagmanager>`.
+- Receipt: `resources/casa-compat/evidence/flagmanager-calibration-20261121.json`.
+
 ### fluxscale
 
 - CASA source: `casatasks/fluxscale.py`, 15 parameters
