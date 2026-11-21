@@ -79,7 +79,7 @@ fn run_multi(
     // has no selected rows or the requested prediction is virtual.
     for part in paths {
         OpenedMs::open(part)
-            .and_then(|opened| opened.initialize(VisibilityDataColumn::ModelData))
+            .and_then(|opened| opened.initialize_calibrater(false, false, true))
             .and_then(OpenedMs::release)
             .map_err(execution)?;
     }
@@ -113,8 +113,9 @@ fn run_multi(
         }
     }
     first.ok_or_else(|| {
-        last_failure
-            .unwrap_or_else(|| execution("Error in parallel processing of MMS: no selected rows"))
+        let reason =
+            last_failure.map_or_else(|| "no selected rows".to_owned(), |error| error.message);
+        execution(format!("Error in parallel processing of MMS: {reason}"))
     })
 }
 
@@ -138,7 +139,7 @@ fn run_ms(
             return empty_selection(task, partition);
         }
         let result = fluxdict::run(task, opened, parts, selection, &selected, scratch)?;
-        super::history::record_task(task, path);
+        record_history(task, path, partition);
         return Ok(result);
     }
     // The task first checks field, SPW and intent for virtual models.
@@ -206,7 +207,7 @@ fn run_ms(
     }
     publish_models(&mut opened, parts, &selected, models, &spws, scratch)?;
     opened.release().map_err(execution)?;
-    super::history::record_task(task, path);
+    record_history(task, path, partition);
     if partially_written {
         // CASA's cleanup after the later failure raises once an earlier
         // component list has already been applied and retired.
@@ -215,6 +216,25 @@ fn run_ms(
         ));
     }
     Ok(fluxes)
+}
+
+fn record_history(task: &TaskInvocation<'_>, path: &Path, partition: bool) {
+    if !partition {
+        super::history::record_task(task, path);
+        return;
+    }
+    let mut session = task.session().clone();
+    let updated = session
+        .set(
+            "vis",
+            ParameterValue::String(path.to_string_lossy().into_owned()),
+        )
+        .and_then(|()| session.set("ismms", ParameterValue::Bool(true)));
+    if let Err(error) = updated {
+        tracing::warn!(partition = %path.display(), %error, "updating setjy partition HISTORY");
+        return;
+    }
+    super::history::record_task(&TaskInvocation::new(&session, task.workspace()), path);
 }
 
 fn publish_models(

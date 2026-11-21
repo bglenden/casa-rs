@@ -142,6 +142,30 @@ fn a_model_is_filed_under_source_as_casa_files_it() {
     assert_eq!(found.record, record);
 }
 
+#[test]
+fn replacing_windows_with_a_stale_target_preserves_the_model() {
+    let root = tempfile::tempdir().expect("root");
+    let path = with_source(root.path());
+    let mut ms = MeasurementSet::open(&path).expect("open");
+    let mut lock = TableWriteLock::acquire_to_reread(&path, 1).expect("lock");
+    let first = entry(&[[0, 0, 1, -1]], "first");
+    let replacement = entry(&[[0, 0, 1, -1]], "replacement");
+    put_virtual_model_holding(&mut ms, &first, true, &mut lock).expect("seed");
+    let canonical_main = path.canonicalize().expect("MAIN path");
+    let mut publication = VirtualModelPublication::default();
+    let error = publication
+        .replace_windows_at_holding(&mut ms, [&replacement], &mut lock, 0, &[0], &canonical_main)
+        .expect_err("SOURCE now owns the model");
+    assert!(error.to_string().contains("storage target changed"));
+    assert!(!publication.may_reference_images());
+    lock.release().expect("release");
+    let reopened = MeasurementSet::open(&path).expect("reopen");
+    let found = virtual_model(&reopened, 0)
+        .expect("read")
+        .expect("seed model");
+    assert_eq!(label(&found.record, "ft_0"), "first");
+}
+
 #[cfg(unix)]
 fn shared_source(root: &Path) -> (PathBuf, PathBuf) {
     let left_root = root.join("left");

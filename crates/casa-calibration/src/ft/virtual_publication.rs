@@ -171,12 +171,13 @@ impl VirtualFtPublication {
                     .map(|(index, model)| (&model.entry, self.incremental || index > 0)),
             );
             let result = if let Some(windows) = &self.replace_windows {
-                target.publication.replace_windows_holding(
+                target.publication.replace_windows_at_holding(
                     table,
                     entries.map(|(entry, _)| entry),
                     lock,
                     field,
                     windows,
+                    &self.inputs[target.input].storage,
                 )
             } else {
                 target.publication.publish_holding(

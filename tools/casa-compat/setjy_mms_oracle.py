@@ -30,6 +30,15 @@ def mms(source, path, *, missing_source=False):
     return members
 
 
+def history(member):
+    history = member / 'HISTORY'
+    messages = data(history, 'MESSAGE')[data(history, 'ORIGIN') == 'setjy']
+    assert any(line.split('=', 1)[0].strip() == 'vis' and str(member) in line
+               for line in messages), messages
+    assert any(line.split('=', 1)[0].strip() == 'ismms' and line.endswith('True')
+               for line in messages), messages
+
+
 def verify(source, root, name, *, usescratch, missing_source=False, **options):
     results = []
     with TemporaryDirectory(prefix=f'{name}-', dir=root) as directory:
@@ -39,6 +48,10 @@ def verify(source, root, name, *, usescratch, missing_source=False, **options):
             members = mms(source, path, missing_source=missing_source)
             got = tasks.setjy(str(path), usescratch=usescratch, **options)
             cells = [data(member, 'MODEL_DATA') for member in members]
+            if usescratch:
+                for member, cell in zip(members, cells):
+                    if np.max(np.abs(cell)) > 2.:
+                        history(member)
             reopened = []
             if not usescratch:
                 for index, member in enumerate(members):
@@ -79,6 +92,46 @@ def empty(source, root):
                     assert np.max(np.abs(data(member, 'MODEL_DATA'))) == 1.
 
 
+def all_predictions_fail(source, root):
+    with TemporaryDirectory(dir=root) as directory:
+        work = Path(directory)
+        for label, tasks in (('casa', casa), ('rust', rust)):
+            path = work / f'{label}.mms'
+            members = mms(source, path)
+            try:
+                tasks.setjy(str(path), usescratch=True, standard='manual', fluxdensity=2.4,
+                            model=str(work / 'missing.im'))
+            except RuntimeError as error:
+                assert 'Error in parallel processing of MMS' in str(error), error
+            else:
+                raise AssertionError(f'{label} accepted an invalid model in every partition')
+            for member in members:
+                assert np.max(np.abs(data(member, 'MODEL_DATA'))) == 1.
+
+
+def preserve_other_field(source, root, *, missing_source=False):
+    results = []
+    with TemporaryDirectory(dir=root) as directory:
+        work = Path(directory)
+        for label, tasks in (('casa', casa), ('rust', rust)):
+            path = work / f'{label}.mms'
+            members = mms(source, path, missing_source=missing_source)
+            for field, flux in (('0', 2.4), ('1', 3.7)):
+                tasks.setjy(str(path), field=field, standard='manual', fluxdensity=flux,
+                            usescratch=False)
+            predictions = []
+            for index, (member, flux) in enumerate(zip(members, (2.4, 3.7))):
+                for reader, factory in (('casa', casa_ms), ('rust', rust_ms)):
+                    copy = work / f'{label}-{index}-{reader}.ms'
+                    make_input(member, copy, scratch=False)
+                    model = consume(factory, copy)
+                    np.testing.assert_allclose(np.max(np.abs(model)), flux, rtol=1e-6)
+                    predictions.append(model)
+            results.append(predictions)
+        for index, (want, got) in enumerate(zip(*results)):
+            compare(f'preserve other virtual field {missing_source} reader {index}', got, want)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', type=Path)
@@ -94,6 +147,9 @@ def main():
         verify(source, args.root, f'scan-{scratch}', usescratch=scratch, field='0',
                selectdata=True, scan='1', **options)
     empty(source, args.root)
+    all_predictions_fail(source, args.root)
+    preserve_other_field(source, args.root)
+    preserve_other_field(source, args.root, missing_source=True)
     verify(source, args.root, 'physical-main-models', usescratch=False, field='0',
            missing_source=True, **options)
     image = args.root / 'calibrator.im'
