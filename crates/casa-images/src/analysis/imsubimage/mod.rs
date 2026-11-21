@@ -4,6 +4,8 @@
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
 mod bounding_box;
+mod collapse;
+pub use collapse::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub(super) mod coords;
 mod crop;
 mod decimate;

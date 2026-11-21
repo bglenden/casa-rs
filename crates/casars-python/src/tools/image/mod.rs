@@ -12,6 +12,7 @@ mod beam_view;
 mod beams;
 mod bounding_box;
 mod calc;
+mod collapse;
 mod concatenate;
 mod conformance;
 mod convertflux;

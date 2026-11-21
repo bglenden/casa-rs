@@ -316,7 +316,17 @@ impl ImmathSelection {
                 saved_mask,
                 strided_plan: None,
                 channel_axis: saved.channel_axis,
-                channel_indices: saved.channel_indices,
+                channel_indices: (!saved.channel_spans.is_empty()).then(|| {
+                    let mut indices = saved
+                        .channel_spans
+                        .iter()
+                        .copied()
+                        .flat_map(crate::analysis::ChannelSpan::indices)
+                        .collect::<Vec<_>>();
+                    indices.sort_unstable();
+                    indices.dedup();
+                    indices
+                }),
                 stokes_axis: saved.stokes_axis,
                 stokes_indices: saved.stokes_indices,
                 selected_stokes: saved.selected_stokes,

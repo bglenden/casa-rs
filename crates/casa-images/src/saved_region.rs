@@ -482,7 +482,8 @@ fn statistics_of(mut values: Vec<f64>, unit: &str) -> Option<RegionStatistics> {
 /// within their bounding box, or `None` when the box misses the image.
 pub(crate) struct PolygonPixelPlane {
     pub(crate) start: [usize; 2],
-    pub(crate) mask: Array2<bool>,
+    extent: [usize; 2],
+    polygons: Vec<Vec<[f64; 2]>>,
 }
 
 impl PolygonPixelPlane {
@@ -491,34 +492,48 @@ impl PolygonPixelPlane {
         start[x] = self.start[0];
         start[y] = self.start[1];
         let mut shape = shape.to_vec();
-        shape[x] = self.mask.nrows();
-        shape[y] = self.mask.ncols();
+        shape[x] = self.extent[0];
+        shape[y] = self.extent[1];
         (start, shape)
+    }
+
+    pub(crate) fn contains(&self, x: usize, y: usize) -> bool {
+        let point = [x as f64, y as f64];
+        self.polygons
+            .iter()
+            .any(|polygon| polygon_contains_pixel(polygon, point))
     }
 }
 
 pub(crate) fn polygon_pixel_plane(
     polygons: &[Vec<[f64; 2]>],
     shape: &[usize],
-    axes: [usize; 2],
+    [x, y]: [usize; 2],
 ) -> Option<PolygonPixelPlane> {
-    let plane = select_plane(polygons, shape, axes)?;
-    let mut low = [plane.inside.nrows(), plane.inside.ncols()];
-    let mut high = [0, 0];
-    for ((x, y), &included) in plane.inside.indexed_iter() {
-        if included {
-            low[0] = low[0].min(x);
-            low[1] = low[1].min(y);
-            high[0] = high[0].max(x);
-            high[1] = high[1].max(y);
+    let (x0, x1) = pixel_range(polygons, 0, shape[x])?;
+    let (y0, y1) = pixel_range(polygons, 1, shape[y])?;
+    let mut low = [x1, y1];
+    let mut high = [x0, y0];
+    let mut any = false;
+    for x in x0..=x1 {
+        for y in y0..=y1 {
+            let point = [x as f64, y as f64];
+            if polygons
+                .iter()
+                .any(|polygon| polygon_contains_pixel(polygon, point))
+            {
+                low[0] = low[0].min(x);
+                low[1] = low[1].min(y);
+                high[0] = high[0].max(x);
+                high[1] = high[1].max(y);
+                any = true;
+            }
         }
     }
-    Some(PolygonPixelPlane {
-        start: [plane.start[axes[0]] + low[0], plane.start[axes[1]] + low[1]],
-        mask: plane
-            .inside
-            .slice(ndarray::s![low[0]..=high[0], low[1]..=high[1]])
-            .to_owned(),
+    any.then(|| PolygonPixelPlane {
+        start: low,
+        extent: [high[0] - low[0] + 1, high[1] - low[1] + 1],
+        polygons: polygons.to_vec(),
     })
 }
 

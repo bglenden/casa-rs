@@ -8082,6 +8082,24 @@ pattern uses a zero-valued imaginary image owned by the same grid.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
 [`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
 
+## Image collapse can abort or shift a wrapped longitude by 180 degrees
+
+CASA 6.7.6.14 aborts for negative or duplicate axes, for example
+`ia.collapse("sum", [-1])` and `ia.collapse("sum", [0, 0])`. casa-rs
+raises a Python error before replacing the output.
+
+On a default 4 × 4 direction image, `ia.collapse("sum", [0, 1])` also
+averages longitudes on opposite sides of the 0-degree meridian as ordinary
+numbers. CASA reports a longitude near 180 degrees for a footprint centered
+about half an arcminute from the meridian. casa-rs unwraps both endpoints around the interior sky position before
+averaging, so the result remains on the selected footprint. This also
+keeps the midpoint on fields broader than 180 degrees.
+
+CASA 6.7.6.14 also segfaults collapsing a Stokes–Frequency image whose
+native record puts Frequency at pixel axis 1 and world axis 0. casa-rs
+resolves `axes="Frequency"` through the native world-to-pixel map and
+collapses the corresponding pixel axis.
+
 ## A zero-stride region aborts `image.modify`
 
 CASA 6.7.6.14 terminates with SIGABRT and an uncaught

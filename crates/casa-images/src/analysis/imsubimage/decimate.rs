@@ -12,7 +12,7 @@ use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel, MutableImageInter
 use super::super::axes::StridedSection;
 use super::super::lel_mask::PreparedMask;
 use super::read_window::{PixelSections, sample_slice};
-use super::region::SubimageSelection;
+use super::region::{SubimageSelection, implicit_positional_axes};
 use super::{SubimageOptions, SubimagePlan, SubimageRegion};
 
 /// How to combine the selected input planes along the decimation axis.
@@ -124,7 +124,7 @@ impl<'a> ImageDecimation<'a> {
             .map(|_| native_coordinates.clone());
         let implicit_axes = region
             .is_none()
-            .then(|| implicit_decimation_axes(image))
+            .then(|| implicit_positional_axes(image))
             .flatten();
         let mut plan = if let Some(axes) = implicit_axes {
             let mut selection = SubimageSelection::resolve_section(image, None, None, None, None)?;
@@ -251,21 +251,6 @@ impl<'a> ImageDecimation<'a> {
         }
         Ok(mask_out)
     }
-}
-
-// CASA's implicit region selects a single pixel on two positional axes
-// when a multidimensional image has no direction coordinate.
-pub(super) fn implicit_decimation_axes<T: ImagePixel>(
-    image: &dyn ImageInterface<T>,
-) -> Option<[usize; 2]> {
-    if image.find_axis(CoordinateType::Direction).is_some() {
-        return None;
-    }
-    let spectral = image.find_axis(CoordinateType::Spectral);
-    let stokes = image.find_axis(CoordinateType::Stokes);
-    let mut axes = (0..image.ndim()).filter(|&axis| Some(axis) != spectral && Some(axis) != stokes);
-    let leading = [axes.next()?, axes.next()?];
-    axes.next().map(|_| leading)
 }
 
 pub(super) fn apply_decimation(
