@@ -276,8 +276,11 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise RuntimeError("Error in Calibrater::setsolve.") from error
             raise
     if name == "gencal":
+        if arguments["caltype"] == "jyperk":
+            _validate_required_path(values, "vis", arguments["vis"], search_data=True)
         return _call_gencal(values)
     if name == "getjyperkalma":
+        _validate_required_path(values, "vis", arguments["vis"], search_data=True)
         return _call_jyperk(name, values)
     if name == "getantposalma":
         return _call_getantposalma(values)

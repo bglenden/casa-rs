@@ -607,7 +607,19 @@ fn apply_specified_rows(
                     let parameters = &mut rows[window * antenna_count + antenna].parameters;
                     for receptor in *receptors {
                         match parameters {
-                            ArrayValue::Complex32(gains) => gains[[*receptor, 0]] *= value,
+                            ArrayValue::Complex32(gains) => {
+                                let gain = &mut gains[[*receptor, 0]];
+                                *gain *= value;
+                                if request.caltype == GencalType::Jyperk
+                                    && (!gain.re.is_finite()
+                                        || !gain.im.is_finite()
+                                        || (gain.re == 0.0 && gain.im == 0.0))
+                                {
+                                    return Err(invalid(format!(
+                                        "Accumulated Jy/K gain must be finite and nonzero for antenna {antenna}, SPW {window}, receptor {receptor}."
+                                    )));
+                                }
+                            }
                             ArrayValue::Float32(values) => values[[*receptor, 0]] += value.re,
                             _ => unreachable!(
                                 "specified prior columns contain complex or real parameters"

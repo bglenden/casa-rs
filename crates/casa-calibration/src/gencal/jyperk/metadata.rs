@@ -43,16 +43,14 @@ pub(super) fn number(value: f64) -> String {
 }
 
 pub(super) fn select_windows(ms: &MeasurementSet, selector: &str) -> MsResult<Vec<usize>> {
-    Ok(if selector.is_empty() || selector == "*" {
-        (0..ms.spectral_window()?.row_count()).collect()
-    } else {
-        ms.resolve_spw_selector(selector)?.spw_ids().to_vec()
-    })
+    let selector = if selector.is_empty() { "*" } else { selector };
+    Ok(ms.resolve_spw_selector(selector)?.spw_ids().to_vec())
 }
 
 impl QueryMetadata {
     pub(super) fn load(ms: &MeasurementSet, selected: &[usize], selector: &str) -> MsResult<Self> {
         let spw = ms.spectral_window()?;
+        let active = select_windows(ms, "*")?;
         let names = (0..spw.row_count())
             .map(|row| spw.name(row))
             .collect::<MsResult<Vec<_>>>()?;
@@ -73,7 +71,7 @@ impl QueryMetadata {
                 let frequency = mean_frequency(&spw, id)?;
                 let band = match receiver_band(&names[id]) {
                     Some(band) => band,
-                    None => nearest_band(&spw, &names, frequency)?,
+                    None => nearest_band(&spw, &names, &active, frequency)?,
                 };
                 let baseband = match spw.table().cell_accessor(id, "BBC_NO")?.scalar()? {
                     ScalarValue::Int32(value) => *value,
@@ -189,11 +187,12 @@ fn mean_frequency(
 fn nearest_band(
     windows: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
     names: &[String],
+    active: &[usize],
     frequency: f64,
 ) -> MsResult<i32> {
     let mut nearest = None::<(f64, i32)>;
-    for (id, name) in names.iter().enumerate() {
-        if let Some(band) = receiver_band(name) {
+    for &id in active {
+        if let Some(band) = receiver_band(&names[id]) {
             let difference = (frequency - mean_frequency(windows, id)?).abs();
             if nearest.is_none_or(|(best, _)| difference < best) {
                 nearest = Some((difference, band));

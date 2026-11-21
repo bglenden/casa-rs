@@ -168,6 +168,13 @@ fn read_factors(path: &Path, measurement_set: &str) -> Result<Vec<Factor>, Jyper
     if content.is_empty() {
         return Err(JyperkError::EmptyFile);
     }
+    // Validate before CSV removes separators. Otherwise malformed adjacent
+    // fields could form a UTF-8 character spanning one of the field offsets.
+    let encoding_error = |source| JyperkError::ParseFile {
+        path: path.to_path_buf(),
+        source,
+    };
+    std::str::from_utf8(&content).map_err(encoding_error)?;
     let mut input = content.as_slice();
     let mut reader = csv_core::Reader::new();
     let mut record = vec![0; 256];
@@ -195,11 +202,7 @@ fn read_factors(path: &Path, measurement_set: &str) -> Result<Vec<Factor>, Jyper
             }
             ReadRecordResult::Record => {}
         }
-        let text =
-            std::str::from_utf8(&record[..len]).map_err(|source| JyperkError::ParseFile {
-                path: path.to_path_buf(),
-                source,
-            })?;
+        let text = std::str::from_utf8(&record[..len]).map_err(encoding_error)?;
         let name = &text[..ends[0]];
         if !(name.is_empty()
             || name.starts_with('#')

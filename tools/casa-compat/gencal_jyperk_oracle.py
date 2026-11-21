@@ -55,7 +55,8 @@ def compare_file(root, vis, engines):
                             0, 0, 0, -1, 'unused', 'unused', 'unused', [123.], False)
         assert result is None
         task = root/f'{label}-getjyperkalma.cal'
-        result = api.getjyperkalma(str(vis), str(task), str(factor_file), spw='unused', pol='unused')
+        tilde_path = '~/' + os.path.relpath(vis, Path.home())
+        result = api.getjyperkalma(tilde_path, str(task), str(factor_file), spw='unused', pol='unused')
         assert result is None
         for path in (gencal, task):
             np.testing.assert_allclose(gains(path), expected, rtol=2e-7)
@@ -92,6 +93,16 @@ def compare_file(root, vis, engines):
                 results.append(refusal(lambda: task(str(vis), str(output), infile=str(source), **options), output))
             assert results[0] == results[1], (task_name, label, results)
 
+    for task_name in ('gencal', 'getjyperkalma'):
+        for vis_arg in ({}, {'vis': str(root/'missing.ms')}):
+            results = []
+            for label, api in engines.items():
+                output = root/f'{label}-{task_name}-missing-vis.cal'
+                task = getattr(api, task_name)
+                options = {'caltype': 'jyperk'} if task_name == 'gencal' else {}
+                results.append(refusal(lambda: task(caltable=str(output), **vis_arg, **options), output))
+            assert results[0] == results[1] and results[0][0] is AssertionError, results
+
     # CASA publishes an unflagged nonfinite gain for these factors. Check the
     # native refusal before changing an existing table or creating a new one.
     invalid = root/'invalid-factor.csv'
@@ -109,6 +120,29 @@ def compare_file(root, vis, engines):
     else:
         raise AssertionError('Invalid Jy/K factor changed an existing table')
     compare_mapping(columns(products['native']), current, False)
+    malformed = root/'bad-encoding.csv'
+    malformed.write_bytes(f'{name},A0,0,'.encode() + b'\xc2,\xa2\n')
+    for label, api in engines.items():
+        output = root/f'{label}-encoding.cal'
+        error_type, message = refusal(
+            lambda: api.getjyperkalma(str(vis), str(output), str(malformed)), output
+        )
+        assert error_type is (UnicodeDecodeError if label == 'casa' else RuntimeError)
+        assert 'utf-8' in message.lower()
+    for factor in ('1e-40', '1e60'):
+        invalid.write_text(2 * f'{name},A0,0,XX,{factor}\n')
+        output = root/f'cumulative-{factor}.cal'
+        error_type, message = refusal(
+            lambda: engines['native'].getjyperkalma(str(vis), str(output), str(invalid)), output
+        )
+        assert error_type is RuntimeError and 'Accumulated Jy/K gain' in message
+        try:
+            engines['native'].getjyperkalma(str(vis), str(products['native']), str(invalid))
+        except RuntimeError as error:
+            assert 'Accumulated Jy/K gain' in str(error)
+        else:
+            raise AssertionError('Extreme Jy/K factors changed an existing table')
+        compare_mapping(columns(products['native']), current, False)
     return products, expected
 
 
@@ -175,9 +209,15 @@ def database(responder):
             query = {key: values[0] for key, values in parse_qs(path.query).items()}
             recorded.append((path.path, query, time.monotonic()))
             status, body = responder(path.path, query, len(recorded))
+            progressing = path.path.startswith('/progress/')
+            if progressing:
+                time.sleep(.65)
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
+            if progressing:
+                self.wfile.flush()
+                time.sleep(.65)
             try:
                 self.wfile.write(body if isinstance(body, bytes) else json.dumps(body).encode())
             except BrokenPipeError:
@@ -196,6 +236,11 @@ def database(responder):
 def service_fixture(vis):
     with opened(vis/'SPECTRAL_WINDOW', True) as spw:
         spw.putcell('NAME', 0, 'TEST#ALMA_RB_03#BB_2#SW-01#FULL_RES')
+        prototype = {key: spw.getcell(key, 0) for key in spw.colnames() if spw.iscelldefined(key, 0)}
+        spw.addrows(1)
+        for key, value in prototype.items():
+            spw.putcell(key, 1, value)
+        spw.putcell('NAME', 1, 'UNUSED#ALMA_RB_08#BB_4#SW-02#FULL_RES')
     with table(str(vis/'SPECTRAL_WINDOW'), readonly=False, ack=False) as spw:
         spw.addcols(maketabdesc(makescacoldesc('BBC_NO', 0)))
         spw.putcell('BBC_NO', 0, 2)
@@ -232,7 +277,7 @@ def compare_services(root, vis, engines):
     interpolation_queries = {}
     asdm_factors = [{'MS': vis.name, 'Antenna': 'A0', 'Spwid': 0, 'factor': 4.},
                     {'MS': vis.name, 'Antenna': 'A0', 'Spwid': '0', 'factor': 9.},
-                    {'MS': vis.name, 'Antenna': 'A1', 'Spwid': 4, 'factor': 64.},
+                    {'MS': vis.name, 'Antenna': 'A1', 'Spwid': 1, 'factor': 64.},
                     {'MS': 'other.ms', 'Antenna': 'A2', 'Spwid': 0, 'factor': 81.}]
     fallback = root/'file-fallback.csv'
     fallback.write_text(f'{vis.name},A0,0,I,25\n')
@@ -269,6 +314,7 @@ def compare_services(root, vis, engines):
 
         for case, host_path, backups, use_file, gain, paths in (
             ('retry', 'retry', [], False, 1./6., ['retry/asdm']*2),
+            ('progress', 'progress', [], True, 1./6., ['progress/asdm']),
             ('timeout', 'timeout', [], True, .2, ['timeout/asdm']*2),
             ('backup', 'syntax', ['rejected', 'empty', 'success'], True, 1./6.,
              ['syntax/asdm', 'rejected/asdm', 'empty/asdm', 'success/asdm']),
@@ -278,7 +324,7 @@ def compare_services(root, vis, engines):
                 os.environ['JYPERKDB_URL'] = f'{url}/{host_path}'
                 output = root/f'{label}-{case}.cal'
                 api.getjyperkalma(str(vis), str(output), str(fallback) if use_file else '',
-                                 'asdm', 1, 2, int(case == 'retry'), '0', 'ignored',
+                                 'asdm', 1, 2, int(case == 'retry'), '', 'ignored',
                                  [f'{url}/{host}' for host in backups])
             assert [path.strip('/') for path, _, _ in records] == paths, records
             assert all(query == {'uid': 'uid://A002/X85c183/X36f'} for _, query, _ in records)
@@ -311,7 +357,7 @@ def compare_services(root, vis, engines):
             np.testing.assert_allclose(gains(output), np.broadcast_to(expected, (2, 5)), rtol=2e-7)
             service_outputs[label, endpoint] = output
     os.environ.pop('JYPERKDB_URL', None)
-    for case in ('retry', 'timeout', 'backup', 'file-fallback', 'interpolation', 'model-fit'):
+    for case in ('retry', 'progress', 'timeout', 'backup', 'file-fallback', 'interpolation', 'model-fit'):
         compare_mapping(columns(service_outputs['native', case]), columns(service_outputs['casa', case]), False)
 
 

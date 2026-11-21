@@ -187,9 +187,17 @@ fn fetch(
     options: &ServiceOptions,
 ) -> Result<Value, JyperkError> {
     for attempt in 0..options.attempts {
+        let timeout = Some(Duration::from_secs(options.timeout as u64));
         match agent
             .get(url)
             .query_pairs(query.iter().map(|(k, v)| (*k, v)))
+            .config()
+            .timeout_global(None)
+            .timeout_connect(timeout)
+            .timeout_send_request(timeout)
+            .timeout_recv_response(timeout)
+            .timeout_recv_body(timeout)
+            .build()
             .call()
             .and_then(|mut response| response.body_mut().read_to_vec())
         {
