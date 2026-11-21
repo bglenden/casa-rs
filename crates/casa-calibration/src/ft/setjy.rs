@@ -11,6 +11,8 @@ use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::invalid;
 
+pub(crate) mod standards;
+
 pub(crate) struct ManualFlux {
     flux_jy: [f64; 4],
     reference: MFrequency,
@@ -41,7 +43,6 @@ impl ManualFlux {
             || reference.hz() <= 0.
             || !rotation_measure.is_finite()
             || i < 0.
-            || (i == 0. && (q != 0. || u != 0.))
         {
             return Err(invalid("invalid manual flux or spectral coefficients"));
         }
@@ -53,6 +54,7 @@ impl ManualFlux {
                 fraction.resize(1, 0.);
                 angle.resize(1, 0.);
             }
+            // Zero I with explicit Q/U yields CASA's undefined linear fraction.
             fraction[0] = q.hypot(u) / i;
             angle[0] = 0.5 * u.atan2(q);
         }
@@ -78,50 +80,30 @@ impl ManualFlux {
         let first = frequencies
             .first()
             .ok_or_else(|| invalid("empty setjy spectral window"))?;
-        let first_flux = self.at_frequency(first, frame)?;
-        let (flux, model) = if self.tabulate && frequencies.len() == 1 {
-            // CASA changes only the reference value of a ConstantSpectrum.
-            (
-                first_flux,
-                SpectralModel::new(
-                    MFrequency::new(first.hz(), FrequencyRef::LSRK),
-                    SpectralKind::Constant,
-                ),
-            )
-        } else if self.tabulate {
+        if self.tabulate {
             let stokes_flux = frequencies
                 .iter()
                 .map(|frequency| self.at_frequency(frequency, frame))
                 .collect::<MsResult<Vec<_>>>()?;
-            let spectrum = TabularSpectrum::new(
-                first.refer(),
-                frequencies.iter().map(MFrequency::hz).collect(),
-                stokes_flux,
-            )
-            .map_err(invalid)?;
-            (
-                first_flux,
-                SpectralModel::new(first.clone(), SpectralKind::Tabular(spectrum)),
-            )
+            return sampled_point(direction, frequencies, stokes_flux);
+        }
+        let first_flux = self.at_frequency(first, frame)?;
+        let alpha = self.spectral_index.first().copied().unwrap_or_default();
+        let kind = SpectralKind::SpectralIndex(SpectralIndex::new(alpha).with_stokes_indices([
+            alpha,
+            0.,
+            self.rotation_measure,
+            0.,
+        ]));
+        let defined_polarization = self.flux_jy[1..].iter().any(|&flux| flux != 0.)
+            || (!self.fraction.is_empty() && !self.angle.is_empty());
+        let (flux, model) = if defined_polarization {
+            (first_flux, SpectralModel::new(first.clone(), kind))
         } else {
-            let alpha = self.spectral_index.first().copied().unwrap_or_default();
-            let kind =
-                SpectralKind::SpectralIndex(SpectralIndex::new(alpha).with_stokes_indices([
-                    alpha,
-                    0.,
-                    self.rotation_measure,
-                    0.,
-                ]));
-            let defined_polarization = self.flux_jy[1..].iter().any(|&flux| flux != 0.)
-                || (!self.fraction.is_empty() && !self.angle.is_empty());
-            if defined_polarization {
-                (first_flux, SpectralModel::new(first.clone(), kind))
-            } else {
-                (
-                    self.flux_jy,
-                    SpectralModel::new(self.reference.clone(), kind),
-                )
-            }
+            (
+                self.flux_jy,
+                SpectralModel::new(self.reference.clone(), kind),
+            )
         };
         let [i, q, u, v] = flux;
         Ok((
@@ -149,7 +131,8 @@ impl ManualFlux {
                 .map_err(invalid)?;
             i * (converted.hz() / f0).powf(alpha)
         };
-        let (q_at_f, u_at_f) = if self.fraction.is_empty() || self.angle.is_empty() {
+        let linear_model = !self.fraction.is_empty() && !self.angle.is_empty();
+        let (q_at_f, u_at_f) = if !linear_model {
             (q, u)
         } else {
             let offset = (f - f0) / f0;
@@ -163,9 +146,48 @@ impl ManualFlux {
             i_at_f,
             q_at_f,
             u_at_f,
-            if i == 0. { v } else { v * i_at_f / i },
+            if i != 0. {
+                v * i_at_f / i
+            } else if linear_model {
+                0.
+            } else {
+                v
+            },
         ])
     }
+}
+
+pub(crate) fn sampled_point(
+    direction: MDirection,
+    frequencies: &[MFrequency],
+    stokes: Vec<[f64; 4]>,
+) -> MsResult<(SkyComponent, [f64; 4])> {
+    let first = frequencies
+        .first()
+        .ok_or_else(|| invalid("empty setjy spectral window"))?;
+    let first_flux = stokes[0];
+    let model = if frequencies.len() == 1 {
+        // CASA changes only the reference value of a ConstantSpectrum.
+        SpectralModel::new(
+            MFrequency::new(first.hz(), FrequencyRef::LSRK),
+            SpectralKind::Constant,
+        )
+    } else {
+        let spectrum = TabularSpectrum::new(
+            first.refer(),
+            frequencies.iter().map(MFrequency::hz).collect(),
+            stokes,
+        )
+        .map_err(invalid)?;
+        SpectralModel::new(first.clone(), SpectralKind::Tabular(spectrum))
+    };
+    let [i, q, u, v] = first_flux;
+    let component = SkyComponent::new(
+        Flux::stokes_jy(i, q, u, v),
+        ComponentShape::point(direction),
+        model,
+    );
+    Ok((component, first_flux))
 }
 
 fn polynomial(coefficients: &[f64], x: f64) -> f64 {
