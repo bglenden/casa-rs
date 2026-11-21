@@ -50,7 +50,7 @@ impl<T: ConvolutionPixel> ConvolutionKernel<'_, T> {
 
     fn read(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<T>, ImageError> {
         match self {
-            Self::Image(image) => image.get_slice(start, shape, &vec![1; shape.len()]),
+            Self::Image(image) => Ok(image.get_slice(start, shape, &vec![1; shape.len()])?),
             Self::Array(array) => Ok(array
                 .slice_each_axis(|axis| slice(start[axis.axis.index()], shape[axis.axis.index()]))
                 .to_owned()),
