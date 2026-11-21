@@ -50,6 +50,7 @@ mod world_header;
 mod immoments;
 mod impbcor;
 mod impv;
+mod imstat_log;
 mod lel_mask;
 
 use self::axes::{direction_plane_axes, world_axes_for_plane};
@@ -2310,6 +2311,7 @@ where
         blcf,
         trcf,
         display_shape,
+        plane_log: String::new(),
         npts: Vec::with_capacity(plane_count),
         min: Vec::with_capacity(plane_count),
         max: Vec::with_capacity(plane_count),
@@ -2326,11 +2328,13 @@ where
         flux: None,
         biweight,
     };
+    let mut iterations = Vec::new();
     for bucket in &buckets {
         let mut sample = bucket.clone();
         sample.sort_by_key(|point| point.position);
         match compute_robust_stats(&sample, algorithm)? {
             RobustStats::Sample(stats) => {
+                iterations.push(stats.chauvenet_iterations);
                 planes.npts.push(stats.npts);
                 planes.min.push(stats.min);
                 planes.max.push(stats.max);
@@ -2378,6 +2382,20 @@ where
     }
     if biweight {
         planes.flux = None;
+    }
+    if request.listit
+        || request
+            .logfile
+            .as_deref()
+            .is_some_and(|name| !name.is_empty())
+    {
+        planes.plane_log = imstat_log::plane_table(
+            image,
+            &planes,
+            display_axes,
+            &display_positions,
+            &iterations,
+        )?;
     }
     Ok(planes)
 }
@@ -2457,9 +2475,14 @@ fn image_mask_expression<T>(
 where
     T: ImagePixel + ImageExprValue + PartialOrd + ExprValueConvert,
 {
-    // The expression names its images in quotes; open each as the
+    // Open each referenced image as the
     // target's pixel type and hand them to the parser's resolver.
-    let names = quoted_expression_names(expr);
+    let names = crate::expr_parser::referenced_images(expr).map_err(|error| {
+        ImageError::CasaSelection(format!(
+            "Input mask specification is incorrect: {}",
+            mask_error_wording(error)
+        ))
+    })?;
     let mut opened: Vec<PagedImage<T>> = Vec::with_capacity(names.len());
     for name in &names {
         let opened_image = PagedImage::<T>::open(name).map_err(|_| {

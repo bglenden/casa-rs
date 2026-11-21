@@ -496,15 +496,13 @@ fn biweight_location_scale(
     if npts <= 1 {
         return Err(RobustStatsError::BiweightNeedsTwoPoints { npts });
     }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|left, right| left.total_cmp(right));
-    let mut location = averaging_median(&sorted);
-    let mut deviations: Vec<f64> = values
-        .iter()
-        .map(|value| (value - location).abs())
-        .collect();
-    deviations.sort_by(|left, right| left.total_cmp(right));
-    let mut scale = PROBIT_3_4 * averaging_median(&deviations);
+    let mut workspace = values.to_vec();
+    let mut location = selection_median(&mut workspace);
+    for (deviation, value) in workspace.iter_mut().zip(values) {
+        *deviation = (value - location).abs();
+    }
+    let mut scale = PROBIT_3_4 * selection_median(&mut workspace);
+    drop(workspace);
 
     let mut spread = c * scale;
     let (mut low, mut high) = (location - spread, location + spread);
@@ -551,10 +549,27 @@ fn biweight_location_scale(
             high = location + spread;
         }
     } else {
-        location = location_sums(location, scale, low, high);
-        scale = scale_sums(location, scale, low, high);
+        let initial_location = location;
+        location = location_sums(initial_location, scale, low, high);
+        scale = scale_sums(initial_location, scale, low, high);
     }
     Ok((location, scale))
+}
+
+fn selection_median(values: &mut [f64]) -> f64 {
+    let mid = values.len() / 2;
+    let even = values.len().is_multiple_of(2);
+    let (lower, median, _) = values.select_nth_unstable_by(mid, f64::total_cmp);
+    if even {
+        let lower_middle = lower
+            .iter()
+            .copied()
+            .max_by(f64::total_cmp)
+            .expect("two central values");
+        (lower_middle + *median) / 2.0
+    } else {
+        *median
+    }
 }
 
 /// The maximum z-score Chauvenet's criterion allows for a sample of

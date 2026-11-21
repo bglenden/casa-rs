@@ -497,19 +497,7 @@ fn planes_block(
             "  -- top-right corner (world) [trcf]:   {}",
             summary.trcf
         );
-        let _ = writeln!(
-            out,
-            "planes: {} (display shape {:?})",
-            summary.npts.len(),
-            summary.display_shape
-        );
-        for (plane, npts) in summary.npts.iter().enumerate() {
-            let _ = writeln!(
-                out,
-                "plane {plane}: npts {npts} mean {} sigma {}",
-                summary.mean[plane], summary.sigma[plane]
-            );
-        }
+        out.push_str(&summary.plane_log);
     }
     out
 }

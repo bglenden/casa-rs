@@ -259,6 +259,9 @@ pub struct ImstatPlanesSummary {
     pub trcf: String,
     /// The display shape, with CASA's degenerate display axes dropped.
     pub display_shape: Vec<usize>,
+    /// Text table of plane coordinates and statistics for the task log.
+    #[serde(skip)]
+    pub plane_log: String,
     /// Number of points in each plane.
     pub npts: Vec<f64>,
     /// Each plane's minimum.
