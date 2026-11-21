@@ -220,11 +220,7 @@ pub(super) fn identify(
     direction: &MDirection,
     cone_table: Option<&Path>,
 ) -> MsResult<Option<&'static str>> {
-    let field = field.to_ascii_uppercase();
-    if let Some((name, _)) = CALIBRATORS
-        .iter()
-        .find(|(_, aliases)| aliases.iter().any(|alias| field.contains(*alias)))
-    {
+    if let Some(name) = named(field) {
         return Ok(Some(name));
     }
     let Some(path) = cone_table else {
@@ -259,4 +255,59 @@ pub(super) fn identify(
             .find(|known| name == known));
     }
     Ok(None)
+}
+
+fn named(field: &str) -> Option<&'static str> {
+    let field = field.to_ascii_uppercase();
+    CALIBRATORS.iter().find_map(|&(name, aliases)| {
+        aliases
+            .iter()
+            .any(|alias| field.contains(*alias))
+            .then_some(name)
+    })
+}
+
+/// The reference position catalog used by FluxStandard::computeCL.
+pub(super) fn source_direction(
+    field: &str,
+    cone_table: Option<&Path>,
+) -> MsResult<Option<MDirection>> {
+    use casa_types::measures::direction::DirectionRef;
+
+    let Some(name) = named(field) else {
+        return Ok(None);
+    };
+    if let Some(path) = cone_table {
+        let table = Table::open(TableOptions::new(path))?;
+        let names = table.column_accessor("Name")?;
+        let ra = table.column_accessor("RA_J2000")?;
+        let dec = table.column_accessor("Dec_J2000")?;
+        for row in 0..table.row_count() {
+            if matches!(names.scalar_cell(row)?, ScalarValue::String(value) if value == name)
+                && let (ScalarValue::Float64(ra), ScalarValue::Float64(dec)) =
+                    (ra.scalar_cell(row)?, dec.scalar_cell(row)?)
+            {
+                return Ok(Some(MDirection::from_angles(
+                    *ra,
+                    *dec,
+                    DirectionRef::J2000,
+                )));
+            }
+        }
+    }
+    // CASA includes the original calibrator coordinates even when its
+    // optional position matching table is unavailable.
+    let [ra, dec] = match name {
+        "3C286" => [3.539257626070549, 0.5324850225220917],
+        "3C48" => [0.4262457643630985, 0.5787463318245085],
+        "3C147" => [1.4948817765383597, 0.8700805690768509],
+        "3C138" => [1.401346673041897, 0.2904130912582342],
+        "1934-638" => [5.146176021557448, -1.1119977478136984],
+        "3C295" => [3.7146787856873478, 0.9111103509091509],
+        "3C196" => [2.1537362969610023, 0.8415541320803659],
+        "3C123" => [1.2089586878736391, 0.5178480078663621],
+        "3C380" => [4.84123669, 0.85078092],
+        _ => return Ok(None),
+    };
+    Ok(Some(MDirection::from_angles(ra, dec, DirectionRef::J2000)))
 }

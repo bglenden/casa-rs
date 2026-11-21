@@ -12,7 +12,7 @@ pub(super) fn coefficients(value: Variant, name: &str) -> PyResult<Vec<f64>> {
         Variant::Number(value) => Ok(vec![value]),
         Variant::Numbers(values) => Ok(values),
         _ => Err(PyTypeError::new_err(format!(
-            "imager.setjy {name} requires a number or a numeric vector"
+            "{name} requires a number or a numeric vector"
         ))),
     }
 }

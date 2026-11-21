@@ -587,6 +587,46 @@ impl PyImager {
         crate::convert::reply_value::reply_value(py, &answer)
     }
 
+    #[pyo3(signature = (objname = "", standard = "", epoch = Variant::Empty, freqs = None, pfx = "predictcomp"), text_signature = "($self, objname='', standard='', epoch=[], freqs=[100000000000.0], pfx='predictcomp')")]
+    fn predictcomp(
+        &self,
+        py: Python<'_>,
+        objname: &str,
+        standard: &str,
+        epoch: Variant,
+        freqs: Option<Variant>,
+        pfx: &str,
+    ) -> PyResult<String> {
+        use casa_calibration::predict_calibrator_component;
+        use casa_types::measures::{EpochRef, MEpoch};
+
+        let epoch = crate::convert::measures::epoch(&epoch)?
+            .unwrap_or_else(|| MEpoch::from_mjd(0., EpochRef::UTC));
+        let frequencies = match freqs {
+            Some(freqs) => flux::coefficients(freqs, "freqs")?,
+            None => vec![1e11],
+        };
+        let workspace = std::env::current_dir().map_err(runtime_error)?;
+        py.detach(|| {
+            let Some(predicted) = predict_calibrator_component(
+                &workspace,
+                objname,
+                standard,
+                &epoch,
+                &frequencies,
+                pfx,
+            )
+            .map_err(runtime_error)?
+            else {
+                return Ok(String::new());
+            };
+            predicted
+                .write_if_absent(&workspace)
+                .map_err(runtime_error)?;
+            Ok(predicted.filename)
+        })
+    }
+
     fn ssoflux(&self, py: Python<'_>) -> PyResult<bool> {
         emit(
             py,

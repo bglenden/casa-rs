@@ -145,6 +145,10 @@ impl FluxCatalog {
         })
     }
 
+    pub(crate) fn source_direction(&self, field: &str) -> MsResult<Option<MDirection>> {
+        sources::source_direction(field, self.cone_table.as_deref())
+    }
+
     pub(crate) fn spectrum(
         &self,
         field: &str,
