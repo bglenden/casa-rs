@@ -4,14 +4,14 @@ use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_lattices::{ScratchSpace, TempStoragePolicy};
-use casa_types::{ArrayD, RecordValue, measures::doppler::DopplerRef};
+use casa_types::{ArrayD, RecordValue, Value, measures::doppler::DopplerRef};
 use ndarray::{IxDyn, ShapeBuilder};
 
 use crate::analysis::imsubimage::fitprofile::selection::ProfileSelection;
 use crate::analysis::imsubimage::{
     SubimagePlan, SubimageRegion, reduce_subimage_coordinate_record,
 };
-use crate::{ImageError, ImageInterface, TempImage};
+use crate::{GaussianBeam, ImageError, ImageInterface, TempImage};
 
 use super::axis::MomentAxis;
 use super::collapse::{MomentSamples, PixelClip};
@@ -150,7 +150,7 @@ pub fn make_image_moments(
         options.region = None;
         options.mask = None;
     }
-    let moments = reduce(
+    let mut moments = reduce(
         source,
         plan,
         smoothed.as_ref(),
@@ -159,7 +159,45 @@ pub fn make_image_moments(
         method,
         &options,
     )?;
+    if let Some(beams) = beams {
+        retain_beam_units(&mut moments, beams)?;
+    }
     Ok(ImageMomentProducts { moments, smoothed })
+}
+
+fn retain_beam_units(
+    products: &mut [TempImage<f32>],
+    input_info: &RecordValue,
+) -> Result<(), ImageError> {
+    let info = products[0].image_info()?;
+    let Some(target) = info.beam_set.single_beam() else {
+        return Ok(());
+    };
+    let as_beam = |value: &Value| match value {
+        Value::Record(record) => GaussianBeam::from_record(record).is_ok_and(|beam| beam == target),
+        _ => false,
+    };
+    let original = input_info
+        .get("restoringbeam")
+        .filter(|value| as_beam(value))
+        .or_else(|| {
+            let Value::Record(planes) = input_info.get("perplanebeams")? else {
+                return None;
+            };
+            planes
+                .fields()
+                .iter()
+                .map(|field| &field.value)
+                .find(|value| as_beam(value))
+        });
+    if let Some(beam) = original {
+        let mut record = info.to_record();
+        record.upsert("restoringbeam", beam.clone());
+        for product in products {
+            product.set_image_info_record(record.clone())?;
+        }
+    }
+    Ok(())
 }
 
 fn reduce(

@@ -56,10 +56,10 @@ pub(in crate::analysis) fn fit_gaussian_profile(
         .into_iter()
         .map(|(x, y)| Sample { x, y, weight: 1. })
         .collect::<Vec<_>>();
-    let solution = solver::solve(&curve, &samples)?;
-    solution
-        .converged
-        .then(|| std::array::from_fn(|index| solution.values.get(index).copied().unwrap_or(0.)))
+    let values = solver::solve_moment_gaussian(&curve, &samples)?;
+    let mut fit = std::array::from_fn(|index| values.get(index).copied().unwrap_or(0.));
+    fit[2] = fit[2].abs();
+    (fit[2] > 0.).then_some(fit)
 }
 
 /// Pixel selection and fit controls for a set of image profiles.

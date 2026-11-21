@@ -72,7 +72,11 @@ impl PyImageTool {
         let widths = smoothwidths.map_or_else(|| vec![0.], |value| value.0);
         let include = includepix.map_or_else(|| vec![-1.], |value| value.0);
         let exclude = excludepix.map_or_else(|| vec![-1.], |value| value.0);
-        let parsed = doppler.parse::<DopplerRef>();
+        let parsed = if doppler.eq_ignore_ascii_case("TRUE") {
+            Ok(DopplerRef::BETA)
+        } else {
+            doppler.parse::<DopplerRef>()
+        };
         let logs = (!doppler.is_empty() && parsed.is_err())
             .then(|| LogLine::warning(format!("Illegal velocity type {doppler}. Using RADIO")))
             .into_iter()
@@ -182,24 +186,20 @@ fn build(
                 details,
             ]
         });
-        for (path, image) in stages.paths().into_iter().zip(
-            products
-                .moments
-                .iter_mut()
-                .map(Some)
-                .chain([products.smoothed.as_mut()]),
-        ) {
-            if let Some(image) = image {
-                image.append_history_entries(&entries).map_err(raised)?;
-                if let Some(command) = &command {
-                    image
-                        .append_history_at("image::moments", command)
-                        .map_err(raised)?;
-                }
-                if let Some(path) = path {
-                    image.save_as(path).map_err(raised)?;
-                }
+        let paths = stages.paths();
+        for (path, image) in paths.iter().zip(&mut products.moments) {
+            image.append_history_entries(&entries).map_err(raised)?;
+            if let Some(command) = &command {
+                image
+                    .append_history_at("image::moments", command)
+                    .map_err(raised)?;
             }
+            if let Some(path) = path {
+                image.save_as(path).map_err(raised)?;
+            }
+        }
+        if let (Some(path), Some(image)) = (paths[products.moments.len()], &products.smoothed) {
+            image.save_as(path).map_err(raised)?;
         }
         let output = main.is_empty().then(|| products.moments.remove(0));
         Ok((stages, main, output))

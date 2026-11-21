@@ -205,8 +205,10 @@ fn materialize(
     zero_masked: bool,
 ) -> Result<TempImage<f32>, ImageError> {
     let mut result = temp_image(plan.shape.clone(), plan.coordinates.clone(), 1)?;
-    result.set_units(image.units())?;
-    result.set_image_info(&plan.image_info)?;
+    if !zero_masked {
+        result.set_units(image.units())?;
+        result.set_image_info(&plan.image_info)?;
+    }
     result.set_misc_info(image.misc_info())?;
     let selection = &plan.selection;
     let ones = vec![1; image.ndim()];
