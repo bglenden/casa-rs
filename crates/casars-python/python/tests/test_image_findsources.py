@@ -208,11 +208,11 @@ def test_findsources_selected_cube_and_nan_cutoff(casa):
     _compare(results[1], results[0])
 
 
-@pytest.mark.parametrize("dtype", [np.complex64, np.float64, np.complex128])
-def test_findsources_refuses_non_float_images(casa, dtype):
+@pytest.mark.parametrize("kind", ["c", "d", "cd"])
+def test_findsources_refuses_non_float_images(casa, kind):
     for api in (casa, tools):
         source = api.image()
-        assert source.fromarray(pixels=np.zeros((12, 12), dtype=dtype))
+        assert source.fromshape(shape=[12, 12], type=kind)
         try:
             with pytest.raises(RuntimeError, match="only float-valued images"):
                 source.findsources()
