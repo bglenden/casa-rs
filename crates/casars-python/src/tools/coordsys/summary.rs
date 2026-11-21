@@ -109,7 +109,7 @@ fn metadata(state: &CoordinateState, name: &str) -> String {
     let date = obs
         .date
         .as_ref()
-        .map(|epoch| epoch.as_mjd())
+        .map(|epoch| epoch.value().as_mjd())
         .filter(|mjd| mjd.floor() != 0.0)
         .map_or_else(|| "UNKNOWN".into(), |mjd| format_time(mjd, YMD, 12));
     let _ = writeln!(output, "Date observation    : {date}");
