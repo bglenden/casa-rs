@@ -197,3 +197,22 @@ def test_decompose_bounds_merge_runs_across_tiles_and_cube_faces():
         np.testing.assert_array_equal(corners["trc"], [[49162, 3, 2], [500002, 2, 2]])
     finally:
         source.done()
+
+
+def test_decompose_reports_fitted_sky_centers_in_the_stored_units(casa):
+    x, y = np.indices((17, 19), dtype=float)
+    values = (6 * np.exp(-((x - 11.3)**2 / 11 + (y - 13.1)**2 / 3))).astype(np.float32)
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        coords = source.coordsys()
+        expected = coords.toworld([11.3, 13.1])["numeric"]
+        coords.done()
+        try:
+            result = source.decompose(threshold=.7, fit=True)["components"][0]
+            assert result[0] == pytest.approx(6., rel=2e-4)
+            np.testing.assert_allclose(result[1:3], expected, rtol=1e-6)
+            assert result[3] == pytest.approx(2.47745776, abs=6e-5)
+            assert result[4] == pytest.approx(np.sqrt(3 / 11), rel=2e-4)
+        finally:
+            source.done()

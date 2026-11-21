@@ -8714,7 +8714,7 @@ CASA 6.7.6.14 counts masked samples in `image.decompose`. On a 9 × 11
 Float image with peaks 7 at [1, 2], 1 at [3, 4], and 4 at [5, 6],
 `decompose(simple=True, threshold=1, fit=False)` returns three islands
 after its default mask excludes [1, 2]. An expression mask accepting
-only the 7 and 4 peaks also leaves all three bounds. The native
+only the 7 peak also leaves all three bounds. The native
 decomposer reads raw pixels from the selected subimage. Casa-rs combines
 the default and requested masks with the selected region before
 thresholding so excluded samples cannot become sources.

@@ -245,7 +245,7 @@ fn optimize(
             .sum::<f64>()
     };
     let mut best = seeds.to_vec();
-    let mut best_cost = error(&best);
+    let mut best_cost = f64::INFINITY;
     let retries = if options.retries < 0 {
         rank * seeds.len()
     } else {
@@ -262,10 +262,14 @@ fn optimize(
             }
         }
         let mut score = error(&model);
+        let mut converged = score <= options.criterion.powi(2).max(1e-16);
         let mut damping = 0.001;
         let mut candidate = model.clone();
         let mut slope = vec![0.; variables.len()];
         for _ in 0..options.iterations {
+            if converged {
+                break;
+            }
             let size = variables.len();
             let mut gram = vec![0.; size * size];
             let mut rhs = vec![0.; size];
@@ -311,8 +315,7 @@ fn optimize(
             let cost = error(&candidate);
             if cost < score {
                 model.copy_from_slice(&candidate);
-                let converged =
-                    (score - cost) <= options.criterion.powi(2).max(1e-16) * score.max(1.);
+                converged = (score - cost) <= options.criterion.powi(2).max(1e-16) * score.max(1.);
                 score = cost;
                 damping *= 0.25;
                 if converged {
@@ -325,13 +328,16 @@ fn optimize(
                 }
             }
         }
-        if score < best_cost {
+        if converged && score < best_cost {
             best_cost = score;
             best = model;
         }
         if (best_cost / observations.len() as f64).sqrt() <= options.maximum_rms.max(1e-6) {
             break;
         }
+    }
+    if !best_cost.is_finite() {
+        return seeds.to_vec();
     }
     for component in &mut best {
         if rank == 2 {
@@ -343,6 +349,16 @@ fn optimize(
             component[5] = component[5].rem_euclid(PI);
             if (component[5] - PI).abs() < 1e-7 {
                 component[5] = 0.;
+            }
+        } else {
+            for (angle, width) in [(7, 5), (8, 6)] {
+                let position = (component[angle] + PI / 2.).rem_euclid(PI) - PI / 2.;
+                component[angle] = if position.abs() > PI / 4. {
+                    component.swap(4, width);
+                    position - position.signum() * PI / 2.
+                } else {
+                    position
+                };
             }
         }
     }

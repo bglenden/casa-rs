@@ -5,7 +5,7 @@ mod gaussian;
 mod points;
 mod runs;
 
-use casa_coordinates::CoordinateSystem;
+use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::IxDyn;
 
@@ -226,9 +226,17 @@ fn world_parameters(
     // term in two dimensions is an axial ratio and remains dimensionless.
     let pixels = pixels.map(|value| f64::from(value as f32));
     let mut result = pixels[..rank * 3].to_vec();
-    let center = coordinates.to_world(&pixels[1..1 + rank])?;
+    let mut center = coordinates.to_world(&pixels[1..1 + rank])?;
     let mut widths = coordinates.to_world(&pixels[1 + rank..1 + 2 * rank])?;
     coordinates.convert_world_offsets(&mut widths, false)?;
+    for axis in 0..center.len() {
+        if let Some((owner, local)) = coordinates.world_axis_owner(axis)
+            && let CoordinateModel::Direction(direction) = coordinates.coordinate(owner)
+        {
+            center[axis] = direction.in_world_units([center[axis]; 2])[local];
+            widths[axis] = direction.in_world_units([widths[axis]; 2])[local];
+        }
+    }
     for axis in 0..rank {
         result[1 + axis] = center.get(axis).copied().unwrap_or(pixels[1 + axis]);
         if rank != 2 || axis == 0 {
