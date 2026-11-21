@@ -89,6 +89,56 @@ def test_statistics_reads_persisted_masks_and_region(casa, tmp_path):
         assert image.done()
 
 
+@pytest.mark.parametrize("pixel_type", ["f", "d"])
+@pytest.mark.parametrize("options", [
+    {},
+    dict(axes=[0, 1], robust=True),
+    dict(axes=[0, 1], algorithm="hinges", fence=1.5, robust=True),
+    dict(axes=[0, 1], algorithm="fittohalf", center="median", lside=False, robust=True),
+    dict(axes=[0, 1], algorithm="chauvenet", zscore=3.0, maxiter=2, robust=True),
+    dict(axes=[0, 1], algorithm="biweight", niter=3),
+    dict(axes=[0, 1], includepix=[-300., 200.], robust=True),
+])
+def test_statistics_disk_matches_memory_and_casa(casa, pixel_type, options):
+    x, y, _, frequency = np.ogrid[:13, :15, :1, :7]
+    pixels = (x + 2*y + 11*frequency).astype(np.float32)
+    pixels[6, 7, 0, 3] = 500.
+    valid = pixels % 5 != 1
+    saved = []
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.fromshape(shape=list(pixels.shape), type=pixel_type)
+            assert image.putchunk(pixels)
+            assert image.putregion(pixelmask=valid)
+            memory = image.statistics(disk=False, **options)
+            disk = image.statistics(disk=True, **options)
+            _assert_value(disk, memory)
+            saved.append(disk)
+        finally:
+            image.done()
+    _assert_value(saved[1], saved[0])
+    if not options:
+        assert saved[1]["npts"].item() == np.count_nonzero(valid)
+        np.testing.assert_allclose(saved[1]["sum"], [pixels[valid].sum(dtype=np.float64)])
+
+
+def test_statistics_disk_tracks_a_rejected_edit_and_an_accepted_edit():
+    image = tools.image()
+    try:
+        values = np.arange(42, dtype=np.float32).reshape(6, 7)
+        assert image.fromarray(pixels=values)
+        expected = image.statistics(disk=True)["sum"]
+        with pytest.raises(RuntimeError):
+            image.statistics(disk=True, includepix=[0, 4], excludepix=[10, 20])
+        np.testing.assert_array_equal(image.statistics(disk=True)["sum"], expected)
+        assert image.putchunk(np.array([[100.]], dtype=np.float32), blc=[0, 0])
+        np.testing.assert_array_equal(image.statistics(disk=True, force=True)["sum"], expected + 100)
+        np.testing.assert_array_equal(image.statistics(disk=False)["sum"], expected + 100)
+    finally:
+        image.done()
+
+
 @pytest.mark.parametrize("bitpix,blank", [(16, -999), (-32, np.nan)])
 def test_statistics_on_attached_fits_matches_casa_and_excludes_blanks(casa, tmp_path, bitpix, blank):
     path = tmp_path / "masked.fits"
