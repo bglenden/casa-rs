@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "task": "uvsub",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "87daaf296408d74c2589b50d28d6407f0b128523",
+  "parameters": {
+    "vis": {
+      "scope": "Existing MeasurementSet or partitioned input with observed, corrected, scratch or virtual data.",
+      "status": "Implemented",
+      "behaviors": [
+        "subtraction"
+      ],
+      "evidence": [
+        "subtraction",
+        "arguments"
+      ]
+    },
+    "reverse": {
+      "scope": "Add the model instead of subtracting it, with the same inputs and untouched flags and weights.",
+      "status": "Implemented",
+      "behaviors": [
+        "subtraction"
+      ],
+      "evidence": [
+        "subtraction",
+        "arguments"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "subtraction",
+      "title": "Apply or reverse the visibility model",
+      "status": "Implemented",
+      "scope": "Scratch and saved models, observed and corrected data, reverse subtraction, and retained write locks.",
+      "gap": "The listed paired task cases match CASA.",
+      "evidence": [
+        "subtraction",
+        "arguments"
+      ]
+    }
+  ],
+  "decisions": [],
+  "evidence": {
+    "subtraction": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Scratch and saved models, observed and corrected data, reverse subtraction, and retained write locks.",
+      "result": "16 paired case groups passed across this oracle.",
+      "casa_version": "6.7.6.14",
+      "revision": "9ab00af35fcee2d932757a367eed2adf255c1f33",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_uvsub_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/model-task-arguments-20261120.json",
+      "links": [
+        "tools/casa-compat/calibration_uvsub_oracle.py",
+        "https://github.com/bglenden/casa-rs/pull/1806"
+      ]
+    },
+    "arguments": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Public wrapper types, NumPy scalars, iterables, exception classes, and persisted state.",
+      "result": "23 paired case groups passed across this oracle.",
+      "casa_version": "6.7.6.14",
+      "revision": "9ab00af35fcee2d932757a367eed2adf255c1f33",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_model_arguments_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/model-task-arguments-20261120.json",
+      "links": [
+        "tools/casa-compat/calibration_model_arguments_oracle.py",
+        "https://github.com/bglenden/casa-rs/pull/1806"
+      ]
+    },
+    "performance": {
+      "kind": "Matched release performance",
+      "state": "planned",
+      "scope": "Throughput, I/O and compute phases, worker counts, and peak memory.",
+      "result": "Scheduled during calibration performance qualification.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/979"
+      ]
+    }
+  }
+}
