@@ -9086,3 +9086,11 @@ For a region retaining channels 1, 3 and 5, CASA returns samples at
 those channels but numbers the `planes` array 1, 2 and 3. The same
 contiguous numbers appear in `coords` when pixel units are requested.
 Casa-rs reports the original sampled pixel numbers.
+
+### `image.histograms` can abort on duplicate axes
+
+On a 5 × 3 Float image with `axes=[1, 1]`, CASA 6.7.6.14 aborts
+inside the lattice collapse. It checks each axis in isolation and
+passes a duplicated axis to the tile iterator. Casa-rs raises a Python
+error for duplicate axes and keeps the image attached and its pixels
+intact.

@@ -40,6 +40,7 @@ mod fits_import;
 mod fits_rename;
 mod getprofile;
 mod handle;
+mod histograms;
 mod imagecalc;
 mod insert;
 mod lifecycle;

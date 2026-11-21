@@ -24,6 +24,7 @@ pub use getprofile::{
 };
 mod fitcomponents;
 mod fitprofile;
+mod histogram;
 pub use fitcomponents::{
     ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
     fit_image_components,
@@ -32,6 +33,7 @@ pub use fitprofile::{
     ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
     ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
 };
+pub use histogram::{HistogramOptions, HistogramPixel, image_histogram};
 mod fourier;
 pub use decompose::{DecompositionOptions, ImageDecomposition, decompose_image};
 pub use deviation::{DeviationOptions, ImageDeviation};
