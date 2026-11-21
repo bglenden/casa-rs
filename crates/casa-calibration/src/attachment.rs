@@ -598,6 +598,16 @@ impl ImagerAttachments {
         Ok(active)
     }
 
+    pub(crate) fn retain_setjy_selection(
+        &mut self,
+        selection: MsSelection,
+    ) -> Result<(), AttachmentError> {
+        let input = self.inputs.last_mut().ok_or(AttachmentError::Unattached)?;
+        input.replace_selection(selection)?;
+        self.current_only = input.mode == AttachmentMode::Selection;
+        Ok(())
+    }
+
     /// Narrow the currently selected input.
     ///
     /// # Errors

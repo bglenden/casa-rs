@@ -24,7 +24,46 @@ pub(crate) enum FluxScale {
     Fixed(FixedScale),
 }
 
+/// Match the descriptive scale strings accepted by the legacy imager.
+pub(crate) fn canonical_tool_standard(name: &str) -> Option<&'static str> {
+    let name = name.to_ascii_lowercase();
+    let patterns: &[(&str, &[&str])] = &[
+        ("Perley 90", &["perley", "90"]),
+        ("Perley-Taylor 95", &["perley", "taylor", "95"]),
+        ("Perley-Taylor 99", &["perley", "taylor", "99"]),
+        ("Perley-Butler 2010", &["perley", "butler", "10"]),
+        ("Perley-Butler 2013", &["perley", "butler", "13"]),
+        ("Perley-Butler 2017", &["perley", "butler", "17"]),
+        ("Scaife-Heald 2012", &["scaife", "heald", "12"]),
+        ("Stevens-Reynolds 2016", &["stevens", "reynolds", "16"]),
+        ("Baars", &["baars"]),
+        ("Butler-JPL-Horizons 2010", &["jpl"]),
+        ("Butler-JPL-Horizons 2010", &["horizons"]),
+    ];
+    patterns.iter().find_map(|&(standard, words)| {
+        words
+            .iter()
+            .all(|word| name.contains(word))
+            .then_some(standard)
+    })
+}
+
 impl FluxScale {
+    pub(crate) fn named(name: &str) -> Option<Self> {
+        Some(match name {
+            "Perley-Butler 2017" => Self::Table(CatalogScale::PerleyButler2017),
+            "Perley-Butler 2013" => Self::Table(CatalogScale::PerleyButler2013),
+            "Scaife-Heald 2012" => Self::Table(CatalogScale::ScaifeHeald2012),
+            "Baars" => Self::Fixed(FixedScale::Baars),
+            "Perley 90" => Self::Fixed(FixedScale::Perley90),
+            "Perley-Taylor 95" => Self::Fixed(FixedScale::PerleyTaylor95),
+            "Perley-Taylor 99" => Self::Fixed(FixedScale::PerleyTaylor99),
+            "Perley-Butler 2010" => Self::Fixed(FixedScale::PerleyButler2010),
+            "Stevens-Reynolds 2016" => Self::Fixed(FixedScale::StevensReynolds2016),
+            _ => return None,
+        })
+    }
+
     pub(crate) fn time_interpolation(self) -> bool {
         matches!(self, Self::Table(scale) if scale.time_interpolation())
     }

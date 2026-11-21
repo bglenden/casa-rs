@@ -164,7 +164,9 @@ def test_calibrater_method_returns_before_open() -> None:
         instance.setptmodel()
 
 
-IMAGER_CALIBRATION = {"open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft"}
+IMAGER_CALIBRATION = {
+    "open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft", "setjy", "ssoflux",
+}
 IMAGER_SETTINGS = {"defineimage", "setoptions", "setsdoptions", "setvp"}
 
 
