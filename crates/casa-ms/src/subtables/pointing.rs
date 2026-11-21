@@ -25,6 +25,51 @@ crate::subtables::define_generic_subtable!(
 );
 
 impl MsPointing<'_> {
+    /// Resolve the recorded direction for each `(MAIN row, antenna, time)`
+    /// as `pointingdirection(interpolate=False, initialrow=MAIN row)` does.
+    ///
+    /// # Errors
+    /// A pointing is missing or its direction or time samples are invalid.
+    pub fn metadata_directions(&self, requests: &[(usize, i32, f64)]) -> MsResult<Vec<MDirection>> {
+        let mut antennas: BTreeMap<_, Vec<_>> = requests
+            .iter()
+            .map(|&(_, antenna, _)| (antenna, Vec::new()))
+            .collect();
+        for row in 0..self.row_count() {
+            if let Some(samples) = antennas.get_mut(&self.i32(row, "ANTENNA_ID")?) {
+                samples.push((row, self.f64(row, "TIME")?, self.f64(row, "INTERVAL")?));
+            }
+        }
+        for samples in antennas.values_mut() {
+            infer_buffer_half_intervals(samples);
+        }
+        let mut directions = BTreeMap::new();
+        requests
+            .iter()
+            .map(|&(guess, antenna, time)| {
+                let samples = &antennas[&antenna];
+                let start = samples.partition_point(|&(row, _, _)| row < guess);
+                let &(row, _, _) = samples[start..]
+                    .iter()
+                    .chain(&samples[..start])
+                    .find(|&&(_, epoch, interval)| {
+                        interval <= 0.0 || (epoch - time).abs() <= interval
+                    })
+                    .ok_or_else(|| {
+                        MsError::InvalidInput(format!(
+                            "No POINTING direction for antenna {antenna} at time {time}"
+                        ))
+                    })?;
+                if let Some(direction) = directions.get(&row) {
+                    return Ok(MDirection::clone(direction));
+                }
+                let direction = self.read_direction(row, None)?;
+                directions.insert(row, direction.clone());
+                Ok(direction)
+            })
+            .collect()
+    }
+
     /// Read the pointing used by CASA's legacy visibility buffer for an
     /// antenna and visibility time. The returned direction is the recorded
     /// direction at the pointing row's epoch.

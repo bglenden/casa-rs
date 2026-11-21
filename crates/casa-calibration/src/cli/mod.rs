@@ -28,6 +28,7 @@ mod getantposalma;
 mod getcalmodvla;
 mod history;
 mod initweights;
+mod jyperk;
 mod listcal;
 mod model_columns;
 mod multi_ms;
@@ -73,6 +74,11 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if task.surface() == "getjyperkalma"
+        || (task.surface() == "gencal" && task.required_text("caltype")? == "jyperk")
+    {
+        return jyperk::run(task);
+    }
     if task.surface() == "polcal"
         || (task.surface() == "gaincal"
             && matches!(task.required_text("gaintype")?.as_str(), "XY+QU" | "XYf+QU"))

@@ -3,6 +3,7 @@
 
 mod antpos_evla;
 mod antpos_file;
+pub(crate) mod jyperk;
 mod power_curve;
 mod switched_power;
 mod tsys;
@@ -82,12 +83,14 @@ pub enum GencalType {
     Swpwts,
     /// VLA requantizer gain and corresponding weight scale.
     Rq,
+    /// Convert an ALMA power scale from kelvins to Jy (`G Jones`).
+    Jyperk,
 }
 
 impl GencalType {
     fn table_subtype(self) -> &'static str {
         match self {
-            Self::Amp | Self::Ph => "G Jones",
+            Self::Amp | Self::Ph | Self::Jyperk => "G Jones",
             Self::Sbd | Self::Mbd => "K Jones",
             Self::Antpos | Self::AntposVla => "KAntPos Jones",
             Self::Gc | Self::Gceff | Self::Eff => "EGainCurve",
@@ -101,7 +104,9 @@ impl GencalType {
 
     fn parameter_column(self) -> (&'static str, PrimitiveType, &'static str) {
         match self {
-            Self::Amp | Self::Ph => (COL_CPARAM, PrimitiveType::Complex32, "Complex"),
+            Self::Amp | Self::Ph | Self::Jyperk => {
+                (COL_CPARAM, PrimitiveType::Complex32, "Complex")
+            }
             _ => (COL_FPARAM, PrimitiveType::Float32, "Float"),
         }
     }
@@ -135,8 +140,9 @@ impl std::str::FromStr for GencalType {
             "swp/rq" => Ok(Self::SwpOverRq),
             "swpwts" => Ok(Self::Swpwts),
             "rq" => Ok(Self::Rq),
+            "jyperk" => Ok(Self::Jyperk),
             other => Err(format!(
-                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, or rq"
+                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, tsys, swpow, evlagain, swp/rq, swpwts, rq, or jyperk"
             )),
         }
     }
@@ -288,6 +294,16 @@ pub(crate) fn gencal_with_output_mode(
     uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
+    if request.caltype == GencalType::Jyperk {
+        return jyperk::calibrate(
+            request,
+            infile,
+            &jyperk::ServiceOptions::default(),
+            None,
+            mode,
+        )
+        .map_err(|error| GencalError::InvalidRequest(error.to_string()));
+    }
     let ms = open_measurement_set(&request.measurement_set)?;
     let switched_power = request
         .caltype
@@ -371,6 +387,7 @@ pub(crate) fn gencal_with_output_mode(
             let (power, noise_cal) = switched_power.expect("switched-power inputs resolved");
             switched_power::rows(&ms, &power, &noise_cal, request.caltype)?
         }
+        GencalType::Jyperk => unreachable!("Jy/K has its own factor source"),
     };
     let subtype = if embedded.is_some() {
         "EPowerCurve"
@@ -469,6 +486,18 @@ fn specified_rows(
     polarization: &str,
     updating: bool,
 ) -> Result<Vec<PriorCalRow>, GencalError> {
+    let mut rows = None;
+    apply_specified_rows(ms, request, polarization, updating, &mut rows)?;
+    Ok(rows.expect("specified rows have been initialized"))
+}
+
+fn apply_specified_rows(
+    ms: &MeasurementSet,
+    request: &GencalRequest,
+    polarization: &str,
+    updating: bool,
+    rows: &mut Option<Vec<PriorCalRow>>,
+) -> Result<(), GencalError> {
     let invalid = |message: String| {
         GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {message}"))
     };
@@ -527,29 +556,32 @@ fn specified_rows(
             "Inconsistent number of parameters specified (expected 1 or {required}, got {given}).",
         )));
     }
-    let complex = matches!(request.caltype, GencalType::Amp | GencalType::Ph);
-    let identity = if complex {
-        complex_column([Complex32::new(1.0, 0.0); 2])
-    } else {
-        f32_column(&[0.0; 2][..if scalar { 1 } else { 2 }])
-    };
-    let mut rows = (0..antenna_count * window_count)
-        .map(|row| PriorCalRow {
-            time_seconds: 0.0,
-            interval_seconds: 0.0,
-            field_id: -1,
-            spw_id: (row / antenna_count) as i32,
-            antenna_id: (row % antenna_count) as i32,
-            observation_id: 0,
-            scan_number: -1,
-            parameters: identity.clone(),
-            snr_value: 1.0,
-            preserved: None,
-        })
-        .collect::<Vec<_>>();
-    if updating {
-        apply_existing_parameters(request, &mut rows)?;
+    if rows.is_none() {
+        let identity = if request.caltype.parameter_column().1 == PrimitiveType::Complex32 {
+            complex_column([Complex32::new(1.0, 0.0); 2])
+        } else {
+            f32_column(&[0.0; 2][..if scalar { 1 } else { 2 }])
+        };
+        let mut nominal = (0..antenna_count * window_count)
+            .map(|row| PriorCalRow {
+                time_seconds: 0.0,
+                interval_seconds: 0.0,
+                field_id: -1,
+                spw_id: (row / antenna_count) as i32,
+                antenna_id: (row % antenna_count) as i32,
+                observation_id: 0,
+                scan_number: -1,
+                parameters: identity.clone(),
+                snr_value: 1.0,
+                preserved: None,
+            })
+            .collect::<Vec<_>>();
+        if updating {
+            apply_existing_parameters(request, &mut nominal)?;
+        }
+        *rows = Some(nominal);
     }
+    let rows = rows.as_mut().expect("specified rows have been initialized");
     let factors = request
         .parameter
         .iter()
@@ -575,7 +607,19 @@ fn specified_rows(
                     let parameters = &mut rows[window * antenna_count + antenna].parameters;
                     for receptor in *receptors {
                         match parameters {
-                            ArrayValue::Complex32(gains) => gains[[*receptor, 0]] *= value,
+                            ArrayValue::Complex32(gains) => {
+                                let gain = &mut gains[[*receptor, 0]];
+                                *gain *= value;
+                                if request.caltype == GencalType::Jyperk
+                                    && (!gain.re.is_finite()
+                                        || !gain.im.is_finite()
+                                        || (gain.re == 0.0 && gain.im == 0.0))
+                                {
+                                    return Err(invalid(format!(
+                                        "Accumulated Jy/K gain must be finite and nonzero for antenna {antenna}, SPW {window}, receptor {receptor}."
+                                    )));
+                                }
+                            }
                             ArrayValue::Float32(values) => values[[*receptor, 0]] += value.re,
                             _ => unreachable!(
                                 "specified prior columns contain complex or real parameters"
@@ -587,7 +631,7 @@ fn specified_rows(
         }
     }
 
-    Ok(rows)
+    Ok(())
 }
 
 fn complex_column(values: [Complex32; 2]) -> ArrayValue {

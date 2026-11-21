@@ -237,6 +237,30 @@
       "persistence_class": "profile"
     },
     {
+      "id": "jyperk.backup_hosts",
+      "semantic_revision": 1,
+      "casa_name": "backup_hosts",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "service_reference"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Jy/K database URLs to try in order after JYPERKDB_URL.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "getantposalma.hosts",
       "semantic_revision": 1,
       "casa_name": "hosts",
@@ -10926,7 +10950,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Web service the ALMA antenna positions come from.", "details": null, "examples": ["'asdm'"]},
+      "documentation": {"summary": "ALMA Jy/K database query endpoint.", "details": null, "examples": ["'asdm'"]},
       "persistence_class": "profile"
     },
     {
@@ -10974,7 +10998,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Times the antenna-position web service is asked again.", "details": null, "examples": ["3"]},
+      "documentation": {"summary": "Number of attempts to contact the ALMA Jy/K database.", "details": null, "examples": ["3"]},
       "persistence_class": "profile"
     },
     {

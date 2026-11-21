@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "task": "getjyperkalma",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "0886835f74c8d8215774fd93b1577fad093d9321",
+  "parameters": {
+    "vis": {
+      "scope": "Input MeasurementSet path, with CASA required-path validation and expansion.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "caltable": {
+      "scope": "Create or update a G Jones table with accumulated factors.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "infile": {
+      "scope": "CSV fallback after the configured primary and backup services.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "endpoint": {
+      "scope": "ASDM, interpolation or model-fit service endpoint.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "timeout": {
+      "scope": "Seconds allowed for the HTTP connection, headers and response body.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "retry": {
+      "scope": "Number of service attempts per request.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "retry_wait_time": {
+      "scope": "Seconds between failed service attempts.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "spw": {
+      "scope": "Filter service responses and request metadata for selected windows. Factor files use their row selectors.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "pol": {
+      "scope": "The public argument is accepted. The source provides the receptor label.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    },
+    "backup_hosts": {
+      "scope": "Ordered Jy/K service URLs tried after JYPERKDB_URL and before the file.",
+      "status": "Implemented",
+      "behaviors": [
+        "jyperk"
+      ],
+      "evidence": [
+        "jyperk"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "jyperk",
+      "title": "ALMA Jy/K factor files and service",
+      "status": "Implemented",
+      "scope": "Read receptor-specific CSV factors and generate CASA-readable G Jones tables with cumulative positive gains. Compare queries, calibrated tables and fallback for ASDM, interpolation and model fit. Test the public ASDM service separately.",
+      "gap": "Dedicated performance acceptance remains in #979.",
+      "evidence": [
+        "jyperk"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "finite-jyperk-gains",
+      "state": "Previously agreed",
+      "record": "Invalid Jy/K factors can publish unflagged nonfinite gains",
+      "inputs": "Zero or negative factors, or repeated factors exceeding the representable gain range.",
+      "casa": "Can publish unflagged nonfinite or zero complex gains.",
+      "ours": "Refuses the correction before publishing either a fresh or updated product.",
+      "rationale": "An unusable gain can corrupt calibrated visibilities.",
+      "impact": "Usable gains retain CASA multiplication and selector semantics.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "jyperk"
+      ]
+    }
+  ],
+  "evidence": {
+    "jyperk": {
+      "kind": "Pinned CASA task products and writer-reader interchange",
+      "state": "passed",
+      "scope": "Read receptor-specific CSV factors and generate CASA-readable G Jones tables with cumulative positive gains. Compare queries, calibrated tables and fallback for ASDM, interpolation and model fit. Test the public ASDM service separately.",
+      "result": "Weighted application and solver preapply pass through all four writer-reader pairs. Separate live ASDM test agrees for SPW 17.",
+      "revision": "0886835f74c8d8215774fd93b1577fad093d9321",
+      "command": "CASARS_CALIBRATE_BIN=<native-bin> casa-python tools/casa-compat/gencal_jyperk_oracle.py <new-dir>",
+      "casa_version": "6.7.6.14",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1969",
+      "links": [
+        "tools/casa-compat/gencal_jyperk_oracle.py",
+        "docs/CASA (C++) bugs.md"
+      ]
+    }
+  }
+}
