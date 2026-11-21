@@ -161,6 +161,8 @@ pub(crate) struct PreparedVoltagePattern {
     frame: MeasFrame,
     projected_model: bool,
     squint: Option<BeamSquint>,
+    // GOFIGURE prepares circular component flux even on a radial beam.
+    component_squint: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -206,7 +208,7 @@ impl ComponentVoltage<'_> {
         let values = *flux.values();
         flux.set_values(std::array::from_fn(|index| values[index] * gains[index]));
         flux.convert_polarisation(self.original.polarisation());
-        let sample_basis = if self.pattern.squint.is_some() && !first_channel {
+        let sample_basis = if self.pattern.component_squint && !first_channel {
             // PBMath converts the input to circular during the first channel's
             // application. Later channels sample that converted component.
             Polarisation::Circular
@@ -600,6 +602,7 @@ impl ImagerVoltagePattern {
             .transpose()?
             .flatten();
         // PBMath1DEVLA supplies its radial fit even when dosquint was set.
+        let component_squint = squint;
         let squint = squint && !matches!(default_beam, Some((PrimaryBeam::Evla, _)));
         if squint && scratch && mixed_arrays {
             return Err(invalid(
@@ -688,6 +691,7 @@ impl ImagerVoltagePattern {
             frame,
             projected_model: telescope == "VLA" && self.table.is_none(),
             squint,
+            component_squint,
         })
     }
 }
@@ -731,7 +735,7 @@ impl PreparedVoltagePattern {
         let mut original = Flux::stokes_jy(i, q, u, v);
         original.convert_polarisation(basis);
         let mut beam_flux = original.clone();
-        if self.squint.is_some() {
+        if self.component_squint {
             beam_flux.convert_polarisation(Polarisation::Circular);
         }
         Ok(ComponentVoltage {
@@ -759,6 +763,7 @@ impl PreparedVoltagePattern {
             frame: MeasFrame::new(),
             projected_model: false,
             squint: None,
+            component_squint: false,
         }
     }
 

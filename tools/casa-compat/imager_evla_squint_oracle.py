@@ -9,7 +9,7 @@ import shutil
 from tempfile import TemporaryDirectory
 
 import casatasks
-from casatools import imager as casa_imager, ms as casa_ms, table
+from casatools import componentlist, imager as casa_imager, ms as casa_ms, table
 import numpy as np
 
 from gaincal_oracle import relative_rms
@@ -64,7 +64,13 @@ def run(root, dataset, model):
         evla_input(dataset, seed)
         component = work / 'source.cl'
         source(component, seed, [3.7, .4, -.6, -.8])
-        for name, arguments in [('component', {'complist': str(component)}), ('image', {'model': str(model)})]:
+        linear = work / 'linear.cl'
+        shutil.copytree(component, linear)
+        tool = componentlist()
+        assert tool.open(str(linear)) and tool.convertfluxpol(0, 'Linear') and tool.done()
+        cases = [('component', {'complist': str(component)}), ('linear', {'complist': str(linear)}),
+                 ('image', {'model': str(model)})]
+        for name, arguments in cases:
             baseline, expected = None, None
             for choice, beam, squint in [('no-beam', False, False), ('radial', True, False), ('squint', True, True)]:
                 for label, factory in [('casa', casa_imager), ('native', native_imager)]:
@@ -79,6 +85,10 @@ def run(root, dataset, model):
                         elif choice == 'radial':
                             expected = values
                             assert relative_rms(expected, baseline) > 1.e-2
+                        elif name == 'linear':
+                            # GOFIGURE still converts a stored Linear component
+                            # into circular while applying the radial beam.
+                            assert relative_rms(values, expected) > .1
                         else:
                             np.testing.assert_array_equal(values, expected)
                     elif beam:
