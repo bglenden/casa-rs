@@ -98,6 +98,9 @@ impl CoordinateSystem {
             (old.n_pixel_axes(), old.n_world_axes()),
             "a replacing coordinate has the same axes"
         );
+        if let Some(maps) = &mut self.maps {
+            maps.replace_coordinate(index, old, &coord);
+        }
         std::mem::replace(&mut self.coordinates[index], coord)
     }
 

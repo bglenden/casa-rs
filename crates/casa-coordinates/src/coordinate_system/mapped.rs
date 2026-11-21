@@ -2,6 +2,7 @@
 
 //! Casacore axis placement over full local coordinate models.
 
+use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, Value};
 use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
 
@@ -252,6 +253,86 @@ impl AxisMaps {
         self.n_world += coordinate.n_world_axes();
     }
 
+    pub(super) fn replace_coordinate(
+        &mut self,
+        index: usize,
+        old: &CoordinateModel,
+        new: &CoordinateModel,
+    ) {
+        let world = &mut self.placements[index].world;
+        if old.coordinate_type() == new.coordinate_type() {
+            let old_units = record_units(old);
+            let new_units = record_units(new);
+            let scaled = old_units
+                .iter()
+                .zip(&new_units)
+                .zip(&world.replacements)
+                .map(|((from, to), &value)| {
+                    if from == to {
+                        return Some(value);
+                    }
+                    let quantity = Quantity::new(value, from).ok()?;
+                    let unit = Unit::new(to).ok()?;
+                    quantity.get_value_in(&unit).ok()
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(scaled) = scaled
+                && world
+                    .indices
+                    .iter()
+                    .zip(&scaled)
+                    .all(|(&axis, value)| axis >= 0 || value.is_finite())
+            {
+                world.replacements = scaled;
+                return;
+            }
+        }
+        let reference = if let CoordinateModel::Direction(direction) = new {
+            direction.reference_and_increment_in_world_units().0
+        } else {
+            new.reference_value()
+        };
+        for ((&axis, value), reference) in world
+            .indices
+            .iter()
+            .zip(&mut world.replacements)
+            .zip(reference)
+        {
+            *value = if axis < 0 { reference } else { 0.0 };
+        }
+    }
+
+    fn update_order(&mut self) {
+        self.concatenated =
+            is_concatenated(self.placements.iter().map(|p| p.pixel.indices.as_slice()))
+                && is_concatenated(self.placements.iter().map(|p| p.world.indices.as_slice()));
+    }
+
+    fn remove_axis(&mut self, axis: usize, replacement: f64, pixels: bool) {
+        let axis = axis as i32;
+        for placement in &mut self.placements {
+            let side = if pixels {
+                &mut placement.pixel
+            } else {
+                &mut placement.world
+            };
+            for (index, value) in side.indices.iter_mut().zip(&mut side.replacements) {
+                if *index == axis {
+                    *index = -axis - 1;
+                    *value = replacement;
+                } else if *index > axis {
+                    *index -= 1;
+                }
+            }
+        }
+        if pixels {
+            self.n_pixel -= 1;
+        } else {
+            self.n_world -= 1;
+        }
+        self.concatenated = false;
+    }
+
     pub(super) fn to_world(
         &self,
         models: &[CoordinateModel],
@@ -314,9 +395,69 @@ fn is_concatenated<'a>(axes: impl Iterator<Item = &'a [i32]>) -> bool {
         .all(|(index, axis)| i32::try_from(index).ok() == Some(axis))
 }
 
+fn record_units(model: &CoordinateModel) -> Vec<String> {
+    if let CoordinateModel::Direction(direction) = model {
+        direction.world_units().to_vec()
+    } else {
+        model.axis_units()
+    }
+}
+
+fn inverse_order(order: &[usize], rank: usize, kind: &str) -> Result<Vec<i32>, CoordinateError> {
+    let invalid = || {
+        CoordinateError::InvalidRecord(format!(
+            "{kind} transpose order must contain each of its {rank} axes once"
+        ))
+    };
+    if order.len() != rank {
+        return Err(invalid());
+    }
+    let mut inverse = vec![-1; rank];
+    for (new, &old) in order.iter().enumerate() {
+        let axis = inverse.get_mut(old).ok_or_else(&invalid)?;
+        if *axis >= 0 {
+            return Err(invalid());
+        }
+        *axis = i32::try_from(new).map_err(|_| invalid())?;
+    }
+    Ok(inverse)
+}
+
+fn check_removal(axis: usize, naxes: usize, replacement: f64) -> Result<(), CoordinateError> {
+    if axis >= naxes {
+        return Err(CoordinateError::AxisOutOfRange { index: axis, naxes });
+    }
+    if !replacement.is_finite() {
+        return Err(CoordinateError::InvalidRecord(
+            "axis replacement must be finite".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl CoordinateSystem {
     pub(super) fn nonconsecutive_maps(&self) -> Option<&AxisMaps> {
         self.maps.as_ref().filter(|maps| !maps.concatenated)
+    }
+
+    fn ensure_axis_maps(&mut self) -> Result<&mut AxisMaps, CoordinateError> {
+        if self.maps.is_none() {
+            if self.coordinates.iter().any(|model| {
+                matches!(model, CoordinateModel::Direction(direction) if direction.removed_axis().is_some())
+            }) {
+                // Restore the full model for a direction slice made by the contiguous reader.
+                let mapped = Self::from_mapped_record(&self.to_record())?;
+                self.coordinates = mapped.coordinates;
+                self.maps = mapped.maps;
+            } else {
+                let mut maps = AxisMaps::from_placements(Vec::new())?;
+                for coordinate in &self.coordinates {
+                    maps.append(coordinate);
+                }
+                self.maps = Some(maps);
+            }
+        }
+        Ok(self.maps.as_mut().expect("axis maps initialized"))
     }
 
     /// Reads a casacore record in coordinate creation order, retaining
@@ -409,6 +550,103 @@ impl CoordinateSystem {
                 .for_each(|(out, value)| *out = value);
         }
         Ok(result)
+    }
+
+    /// Reorders the world and pixel axes independently. Each entry names
+    /// the old public axis to place at that position in the new order.
+    ///
+    /// # Errors
+    /// An order is not a permutation of the corresponding axes.
+    pub fn transpose_axes(
+        &mut self,
+        world_order: &[usize],
+        pixel_order: &[usize],
+    ) -> Result<(), CoordinateError> {
+        let world = inverse_order(world_order, self.n_world_axes(), "world")?;
+        let pixel = inverse_order(pixel_order, self.n_pixel_axes(), "pixel")?;
+        let maps = self.ensure_axis_maps()?;
+        for placement in &mut maps.placements {
+            for (axis_map, order) in [
+                (&mut placement.world, &world),
+                (&mut placement.pixel, &pixel),
+            ] {
+                for axis in &mut axis_map.indices {
+                    if let Ok(old) = usize::try_from(*axis) {
+                        *axis = order[old];
+                    }
+                }
+            }
+        }
+        maps.update_order();
+        Ok(())
+    }
+
+    /// Removes a public pixel axis, using `replacement` for its local pixel
+    /// during forward conversion. The world axes are unaffected.
+    ///
+    /// # Errors
+    /// The axis is out of range or the replacement is non-finite.
+    pub fn remove_pixel_axis(
+        &mut self,
+        axis: usize,
+        replacement: f64,
+    ) -> Result<(), CoordinateError> {
+        check_removal(axis, self.n_pixel_axes(), replacement)?;
+        self.ensure_axis_maps()?
+            .remove_axis(axis, replacement, true);
+        Ok(())
+    }
+
+    /// Removes a public world axis. If its corresponding pixel axis is
+    /// visible, it is removed at the pixel corresponding to this world
+    /// value and the other axes' reference values. Direction replacements
+    /// are passed in radians, as in `to_pixel`.
+    ///
+    /// # Errors
+    /// The axis or replacement is invalid, or projecting the replacement fails.
+    pub fn remove_world_axis(
+        &mut self,
+        axis: usize,
+        replacement: f64,
+    ) -> Result<(), CoordinateError> {
+        check_removal(axis, self.n_world_axes(), replacement)?;
+        let (index, local) = self.world_axis_owner(axis).expect("validated world axis");
+        let pixel_axis = self
+            .coordinate_pixel_axes(index)
+            .and_then(|axes| axes.get(local).copied().flatten());
+        let pixel = pixel_axis
+            .map(|pixel_axis| {
+                let mut world = vec![0.0; self.n_world_axes()];
+                for (index, coordinate) in self.coordinates.iter().enumerate() {
+                    let axes = self
+                        .coordinate_world_axes(index)
+                        .expect("existing coordinate");
+                    for (axis, value) in axes.into_iter().zip(coordinate.reference_value()) {
+                        if let Some(axis) = axis {
+                            world[axis] = value;
+                        }
+                    }
+                }
+                world[axis] = replacement;
+                let position = self.to_pixel(&world)?[pixel_axis];
+                check_removal(pixel_axis, self.n_pixel_axes(), position)?;
+                Ok::<_, CoordinateError>((pixel_axis, position))
+            })
+            .transpose()?;
+
+        let replacement = if let CoordinateModel::Direction(direction) = &self.coordinates[index] {
+            let units = direction.visible_world_units();
+            convert_value_to_unit(replacement, "rad", &units[local], "worldreplace")?
+        } else {
+            replacement
+        };
+        check_removal(axis, self.n_world_axes(), replacement)?;
+        let maps = self.ensure_axis_maps()?;
+        if let Some((axis, position)) = pixel {
+            maps.remove_axis(axis, position, true);
+        }
+        maps.remove_axis(axis, replacement, false);
+        Ok(())
     }
 
     /// The public pixel axis for each local axis of a coordinate.
@@ -619,5 +857,92 @@ mod tests {
                 .to_string()
                 .contains("world maps")
         );
+    }
+
+    #[test]
+    fn edits_use_public_axes_and_retain_repeated_removal_markers() {
+        let mut mapped = CoordinateSystem::new();
+        mapped.add_coordinate(LinearCoordinate::new(3, Vec::new(), Vec::new()));
+        let original = mapped.to_record();
+        assert!(mapped.transpose_axes(&[0, 0, 2], &[0, 1, 2]).is_err());
+        assert_eq!(mapped.to_record(), original);
+        mapped.transpose_axes(&[2, 0, 1], &[1, 2, 0]).unwrap();
+        assert_eq!(
+            mapped.to_world(&[10.0, 20.0, 30.0]).unwrap(),
+            [20.0, 30.0, 10.0]
+        );
+        assert_eq!(
+            mapped.to_pixel(&[20.0, 30.0, 10.0]).unwrap(),
+            [10.0, 20.0, 30.0]
+        );
+        mapped.remove_pixel_axis(0, 40.0).unwrap();
+        mapped.remove_pixel_axis(0, 50.0).unwrap();
+        assert_eq!(mapped.to_world(&[60.0]).unwrap(), [50.0, 60.0, 40.0]);
+        let record = mapped.to_record();
+        assert_eq!(
+            get_required_vec_i32(&record, "pixelmap0").unwrap(),
+            [0, -1, -1]
+        );
+        assert_eq!(
+            get_required_vec_f64(&record, "pixelreplace0").unwrap(),
+            [0.0, 40.0, 50.0]
+        );
+        let reopened = CoordinateSystem::from_mapped_record(&record).unwrap();
+        assert_eq!(reopened.to_world(&[60.0]).unwrap(), [50.0, 60.0, 40.0]);
+    }
+
+    #[test]
+    fn removing_world_axis_projects_its_value_before_removing_pixel_axis() {
+        let mut mapped = CoordinateSystem::new();
+        mapped.add_coordinate(
+            LinearCoordinate::new(2, Vec::new(), Vec::new())
+                .with_reference_value(vec![100.0, 200.0])
+                .with_pc_matrix(array![[2.0, 1.0], [1.0, 3.0]]),
+        );
+        mapped.remove_world_axis(1, 230.0).unwrap();
+        let record = mapped.to_record();
+        assert!((get_required_vec_f64(&record, "pixelreplace0").unwrap()[1] - 12.0).abs() < 1e-12);
+        assert_eq!(get_required_vec_i32(&record, "worldmap0").unwrap(), [0, -2]);
+        assert_eq!(mapped.to_world(&[4.0]).unwrap(), [120.0]);
+        assert!((mapped.to_pixel(&[120.0]).unwrap()[0] - 6.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn whole_coordinate_replacement_converts_or_resets_hidden_world_values() {
+        let linear = |units: [&str; 2]| {
+            LinearCoordinate::new(2, Vec::new(), units.map(str::to_owned).into())
+                .with_reference_value(vec![10.0, 20.0])
+        };
+        let mut mapped = CoordinateSystem::new();
+        mapped.add_coordinate(linear(["MHz", "m"]));
+        mapped.remove_world_axis(0, 42.0).unwrap();
+        mapped.replace_coordinate(0, linear(["kHz", "m"]));
+        let raw = mapped.to_record();
+        assert!((get_required_vec_f64(&raw, "worldreplace0").unwrap()[0] - 42_000.0).abs() < 1e-9);
+        assert_eq!(
+            get_required_vec_f64(&raw, "pixelreplace0").unwrap()[0],
+            32.0
+        );
+        mapped.replace_coordinate(0, linear(["s", "m"]));
+        assert_eq!(
+            get_required_vec_f64(&mapped.to_record(), "worldreplace0").unwrap(),
+            [10.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn mapless_and_all_visible_records_need_no_replacement_fields() {
+        let mut source = CoordinateSystem::new();
+        source.add_coordinate(LinearCoordinate::new(2, Vec::new(), Vec::new()));
+        let mut record = source.to_record();
+        record.remove("pixelreplace0");
+        record.remove("worldreplace0");
+        let explicit = CoordinateSystem::from_mapped_record(&record).unwrap();
+        assert!(explicit.nonconsecutive_maps().is_none());
+        record.remove("pixelmap0");
+        record.remove("worldmap0");
+        let mapless = CoordinateSystem::from_mapped_record(&record).unwrap();
+        assert_eq!(mapless.to_world(&[2.0, 3.0]).unwrap(), [2.0, 3.0]);
+        assert_eq!(mapless.to_record(), explicit.to_record());
     }
 }
