@@ -132,7 +132,7 @@ def test_findsources_fitted_ellipses_and_flux(casa, brightness, height):
         componentlist = api.componentlist()
         try:
             record = {"component0": results[-1][0], "nelements": 1}
-            if api is casa and brightness == "Jy/beam.km/s":
+            if brightness == "Jy/beam.km/s":
                 with pytest.raises(RuntimeError, match="dimensions of the units"):
                     componentlist.fromrecord(record)
             else:
