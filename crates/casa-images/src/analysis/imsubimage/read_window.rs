@@ -10,14 +10,14 @@ use super::super::lel_mask::PreparedMask;
 use super::and_opt_mask;
 use super::region::SubimageSelection;
 
-pub(super) struct PixelSections<'a, T: ImagePixel> {
-    pub(super) image: &'a dyn ImageInterface<T>,
-    pub(super) selection: &'a SubimageSelection,
-    pub(super) mask: Option<PreparedMask<'a>>,
+pub(in crate::analysis) struct PixelSections<'a, T: ImagePixel> {
+    pub(in crate::analysis) image: &'a dyn ImageInterface<T>,
+    pub(in crate::analysis) selection: &'a SubimageSelection,
+    pub(in crate::analysis) mask: Option<PreparedMask<'a>>,
 }
 
 impl<T: ImagePixel> PixelSections<'_, T> {
-    pub(super) fn read(
+    pub(in crate::analysis) fn read(
         &self,
         start: &[usize],
         shape: &[usize],

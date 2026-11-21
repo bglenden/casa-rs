@@ -57,6 +57,7 @@ mod pixel_edit;
 mod pixels;
 mod point;
 mod put_region;
+mod pv;
 mod rebin;
 mod records;
 mod region_read;

@@ -78,6 +78,7 @@ mod world_header;
 mod immoments;
 mod impbcor;
 mod impv;
+pub use impv::{ImagePvProduct, generate_image_pv};
 mod imstat_log;
 mod lel_mask;
 

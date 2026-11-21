@@ -100,7 +100,7 @@ pub(in crate::analysis) fn subset_beam_set(
     subset_beam_section(beam_set, input_coords, ndim, start, shape, None)
 }
 
-fn subset_beam_section(
+pub(in crate::analysis) fn subset_beam_section(
     beam_set: &ImageBeamSet,
     input_coords: &CoordinateSystem,
     ndim: usize,

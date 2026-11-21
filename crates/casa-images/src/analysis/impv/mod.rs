@@ -3,6 +3,9 @@
 
 mod geometry;
 mod position;
+mod tool;
+
+pub use tool::{ImagePvProduct, generate_image_pv};
 
 use std::io;
 use std::path::Path;
@@ -19,8 +22,8 @@ use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{IxDyn, ShapeBuilder};
 
 use super::axes::{
-    direction_plane_axes, legacy_subimage_coordinates_with_stokes, stokes_for_axis,
-    subimage_coordinates_with_stokes,
+    direction_plane_axes, replace_stokes_in_record, section_record_reference_pixels,
+    stokes_for_axis, subimage_coordinate_record, subimage_coordinates_with_stokes,
 };
 use super::imsubimage::{
     SubimageRegion,
@@ -30,7 +33,7 @@ use super::imsubimage::{
 use super::{combined_selection_mask, ensure_outfile_does_not_alias_input};
 use crate::plane::PlaneIndex;
 use crate::regrid::{Plane, RegridMethod};
-use crate::{ImageError, ImagePixel, ImpvRequest, PagedImage, PvImageSummary};
+use crate::{ImageError, ImageInterface, ImagePixel, ImpvRequest, PagedImage, PvImageSummary};
 
 pub(super) fn run<T>(
     image: &PagedImage<T>,
@@ -62,8 +65,12 @@ where
             "All selected pixels are masked".into(),
         ));
     }
+    let native = match image.table().keywords().get("coords") {
+        Some(Value::Record(record)) => Some(record.clone()),
+        _ => None,
+    };
     let (coordinates, record, secondary) =
-        output_coordinates(image, &selection, plane, &strip, &request.unit)?;
+        output_coordinates(image, native, &selection, plane, &strip, &request.unit)?;
     let mut info = image.image_info()?;
     info.beam_set = subset_beam_set(
         &info.beam_set,
@@ -147,6 +154,16 @@ fn selection<T: ImagePixel>(
             _ => None,
         }
     };
+    resolve_selection(image, request, plane, region, false)
+}
+
+fn resolve_selection<T: ImagePixel>(
+    image: &dyn ImageInterface<T>,
+    request: &ImpvRequest,
+    plane: [usize; 2],
+    region: Option<SubimageRegion<'_>>,
+    allow_strides: bool,
+) -> Result<SubimageSelection, ImageError> {
     let chans = request
         .chans
         .as_deref()
@@ -159,7 +176,11 @@ fn selection<T: ImagePixel>(
         .map(|s| s.trim_start_matches('[').trim_end_matches(']').trim())
         .filter(|s| !s.eq_ignore_ascii_case("all") && !s.eq_ignore_ascii_case("none"))
         .map(|s| s.replace(';', ","));
-    let resolved = SubimageSelection::resolve(image, None, region, chans, stokes.as_deref())?;
+    let resolved = if allow_strides {
+        SubimageSelection::resolve_section(image, None, region, chans, stokes.as_deref())?
+    } else {
+        SubimageSelection::resolve(image, None, region, chans, stokes.as_deref())?
+    };
     if resolved.has_multiple_regions {
         return Err(ImageError::CasaSelection(
             "Only a single n-dimensional rectangular region is supported".into(),
@@ -239,7 +260,8 @@ where
 }
 
 fn output_coordinates<T: ImagePixel>(
-    image: &PagedImage<T>,
+    image: &dyn ImageInterface<T>,
+    native: Option<RecordValue>,
     selection: &SubimageSelection,
     plane: [usize; 2],
     strip: &geometry::Strip,
@@ -253,28 +275,52 @@ fn output_coordinates<T: ImagePixel>(
         .map_err(|e| ImageError::CasaSelection(e.to_string()))?;
     let mut selected_stokes = selection.selected_stokes.clone();
     if selected_stokes.is_none()
-        && let Some(axis) = selection.stokes_axis
+        && let Some(axis) = image.find_axis(CoordinateType::Stokes)
         && selection.shape[axis] != image.shape()[axis]
     {
         let stokes = stokes_for_axis(image.coordinates(), axis)?;
         let start = selection.start[axis];
-        selected_stokes = Some(stokes[start..start + selection.shape[axis]].to_vec());
+        let step = selection.stride.as_ref().map_or(1, |stride| stride[axis]);
+        selected_stokes = Some(
+            stokes[start..start + selection.shape[axis]]
+                .iter()
+                .copied()
+                .step_by(step)
+                .collect(),
+        );
     }
     let selected_stokes = selected_stokes.as_deref();
-    let mut record = match legacy_subimage_coordinates_with_stokes(
-        image,
-        &selection.start,
-        &selection.shape,
-        selected_stokes,
-    ) {
-        Some(record) => record,
-        None => subimage_coordinates_with_stokes(
-            image.coordinates(),
+    let native = native.filter(|record| {
+        record
+            .fields()
+            .iter()
+            .any(|field| field.name.starts_with("pixelmap"))
+    });
+    let mut record = if let Some(stride) = selection.stride.as_deref() {
+        let mut record = native.unwrap_or_else(|| image.coordinates().to_record());
+        section_record_reference_pixels(
+            &mut record,
             &selection.start,
-            &selection.shape,
-            selected_stokes,
-        )?
-        .to_record(),
+            &selection.packed_shape(),
+            Some(stride),
+        )?;
+        if let Some(stokes) = selected_stokes {
+            replace_stokes_in_record(&mut record, stokes)?;
+        }
+        record
+    } else {
+        match native.and_then(|record| {
+            subimage_coordinate_record(record, &selection.start, &selection.shape, selected_stokes)
+        }) {
+            Some(record) => record,
+            None => subimage_coordinates_with_stokes(
+                image.coordinates(),
+                &selection.start,
+                &selection.shape,
+                selected_stokes,
+            )?
+            .to_record(),
+        }
     };
     let direction = CoordinateSystem::record_coordinates(&record)?
         .into_iter()

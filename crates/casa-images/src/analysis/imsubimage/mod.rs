@@ -45,7 +45,7 @@ mod noise;
 mod pad;
 mod pbcor;
 mod pixel_edit;
-mod read_window;
+pub(in crate::analysis) mod read_window;
 mod rebin;
 pub(super) mod region;
 mod region_write;
