@@ -218,7 +218,7 @@ impl<'a> ImageTwoPoint<'a> {
         let mask = output.create_filled_pixel_mask(true)?;
         let [x, y] = self.axes;
         let mut input_plane_shape = ones.clone();
-        let mut output_plane_shape = ones;
+        let mut output_plane_shape = ones.clone();
         let input_size = self.axes.map(|axis| self.source.shape[axis]);
         let output_size = self.axes.map(|axis| self.shape[axis]);
         [input_plane_shape[x], input_plane_shape[y]] = input_size;
