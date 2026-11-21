@@ -12,7 +12,7 @@ use casa_types::measures::epoch::EpochRef;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
 
-use super::{FeedMount, FieldMotion, MsCalEngine};
+use super::{AttachedFieldEphemeris, FeedMount, FieldMotion, MsCalEngine};
 use crate::error::MsResult;
 
 impl MsCalEngine {
@@ -87,7 +87,9 @@ impl MsCalEngine {
             });
             field_reference_epochs.push(field.reference_epoch.clone());
             field_motions.push(match &field.ephemeris {
-                Some(ephemeris) => FieldMotion::Ephemeris(Arc::clone(ephemeris)),
+                Some(ephemeris) => {
+                    FieldMotion::Ephemeris(AttachedFieldEphemeris::Inertial(Arc::clone(ephemeris)))
+                }
                 None => FieldMotion::Fixed,
             });
         }

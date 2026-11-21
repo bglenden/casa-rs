@@ -9,6 +9,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
+use casa_measures_data::CometTable;
 use casa_observation::FieldEphemeris;
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -229,21 +230,6 @@ pub(crate) fn evaluate(
     })
 }
 
-/// The ephemeris attached to the fields of the MeasurementSet at `root`
-/// whose `EPHEMERIS_ID` is `ephemeris_id`: the one table
-/// `FIELD/EPHEM<id>_*.tab`, as the boundary holds it.
-///
-/// # Errors
-///
-/// When no table or several match, or the table is not one an ephemeris
-/// is read from ([`PhaseCentreEphemeris::external`]'s checks).
-pub(crate) fn attached_ephemeris(
-    root: &Path,
-    ephemeris_id: i32,
-) -> Result<FieldEphemeris, PhaseCentreEphemerisError> {
-    EphemerisSeriesPreflight::open(&find_field_ephemeris(root, ephemeris_id)?)?.load()
-}
-
 /// The `EPHEMERIS_ID` each FIELD row of `measurement_set` follows: `None`
 /// for none (an id below zero or no column) and for a row whose `NUM_POLY`
 /// is above zero, whose direction casacore's `phaseDirMeas` takes from its
@@ -301,13 +287,54 @@ pub(crate) fn reference_direction(
     )?)
 }
 
+/// A typed inertial ephemeris or a legacy geocentric apparent table.
+#[derive(Clone, Debug)]
+pub(crate) enum AttachedFieldEphemeris {
+    Inertial(Arc<FieldEphemeris>),
+    Apparent(Arc<CometTable>),
+}
+
+impl AttachedFieldEphemeris {
+    pub(crate) fn reference_direction(
+        &self,
+        mjd: f64,
+        offset: [f64; 2],
+        exclude_last: bool,
+    ) -> Result<MDirection, MsError> {
+        match self {
+            Self::Inertial(series) => {
+                if exclude_last && series.times_mjd().last().is_some_and(|&last| mjd >= last) {
+                    return Err(MsError::InvalidInput(format!(
+                        "UTC MJD {mjd} is outside the ephemeris interpolation range"
+                    )));
+                }
+                reference_direction(series, mjd, offset)
+            }
+            Self::Apparent(series) => {
+                let sample = series
+                    .direction_at(mjd)
+                    .map_err(|error| MsError::InvalidInput(error.to_string()))?
+                    .ok_or_else(|| {
+                        MsError::InvalidInput(format!(
+                            "MJD {mjd} is outside the apparent ephemeris interpolation range"
+                        ))
+                    })?;
+                Ok(casa_types::measures::ephemeris::offset_true_angle(
+                    &sample.direction,
+                    offset,
+                )?)
+            }
+        }
+    }
+}
+
 /// What a FIELD row's direction follows.
 #[derive(Clone, Debug)]
 pub(crate) enum FieldMotion {
     /// Its `PHASE_DIR` (or `PHASE_DIR` polynomial).
     Fixed,
     /// Its attached ephemeris, `PHASE_DIR` then the offset from the body.
-    Ephemeris(Arc<FieldEphemeris>),
+    Ephemeris(AttachedFieldEphemeris),
     /// An attached ephemeris that could not be read, and why: refused
     /// wherever the field's direction is asked for, not before.
     Unreadable(Arc<str>),
@@ -315,15 +342,17 @@ pub(crate) enum FieldMotion {
 
 /// What each FIELD row of `measurement_set` follows
 /// ([`field_ephemeris_ids`]), each table read once however many rows share
-/// it ([`attached_ephemeris`]). A table that cannot be read leaves its
+/// it ([`find_field_ephemeris`]). A table that cannot be read leaves its
 /// fields [`FieldMotion::Unreadable`]: casacore opens such a MeasurementSet,
-/// and a run that never asks for those fields' directions images as before.
+/// and a run that never asks for those fields' directions proceeds as before.
+/// Calibration can use geocentric apparent tables through the comet reader.
 ///
 /// # Errors
 ///
 /// FIELD cannot be read.
 pub(crate) fn field_motions(
     measurement_set: &MeasurementSet,
+    allow_apparent: bool,
 ) -> Result<Box<[FieldMotion]>, MsError> {
     let ids = field_ephemeris_ids(measurement_set)?;
     let mut read: BTreeMap<i32, FieldMotion> = BTreeMap::new();
@@ -335,18 +364,48 @@ pub(crate) fn field_motions(
             };
             read.entry(id)
                 .or_insert_with(|| {
-                    let series = measurement_set
+                    let path = measurement_set
                         .path()
                         .ok_or(PhaseCentreEphemerisError::UnbackedMeasurementSet)
-                        .and_then(|root| attached_ephemeris(root, id));
-                    match series {
-                        Ok(series) => FieldMotion::Ephemeris(Arc::new(series)),
+                        .and_then(|root| find_field_ephemeris(root, id));
+                    match path {
+                        Ok(path) => read_field_motion(&path, allow_apparent),
                         Err(error) => FieldMotion::Unreadable(Arc::from(error.to_string())),
                     }
                 })
                 .clone()
         })
         .collect())
+}
+
+fn read_field_motion(path: &Path, allow_apparent: bool) -> FieldMotion {
+    match EphemerisSeriesPreflight::open(path).and_then(EphemerisSeriesPreflight::load) {
+        Ok(series) => FieldMotion::Ephemeris(AttachedFieldEphemeris::Inertial(Arc::new(series))),
+        Err(error) => {
+            // Pre-ICRS Horizons tables have no posrefsys. Geocentric ones
+            // default to APP in casacore, and retain that frame after
+            // interpolating the two bracketing Cartesian positions.
+            let apparent = match &error {
+                PhaseCentreEphemerisError::InvalidKeyword { keyword } => keyword == "posrefsys",
+                PhaseCentreEphemerisError::UnsupportedPositionReference { reference } => {
+                    reference.eq_ignore_ascii_case("APP")
+                }
+                _ => false,
+            };
+            if !allow_apparent || !apparent {
+                return FieldMotion::Unreadable(Arc::from(error.to_string()));
+            }
+            match CometTable::open(path) {
+                Ok(series) if series.topocentre_m().is_none() => {
+                    FieldMotion::Ephemeris(AttachedFieldEphemeris::Apparent(Arc::new(series)))
+                }
+                Ok(_) => FieldMotion::Unreadable(Arc::from(
+                    "a topocentric legacy FIELD ephemeris requires an observing-site conversion",
+                )),
+                Err(error) => FieldMotion::Unreadable(Arc::from(error.to_string())),
+            }
+        }
+    }
 }
 
 impl EphemerisSeriesPreflight {

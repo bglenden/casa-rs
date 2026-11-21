@@ -8,7 +8,6 @@
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
-use casa_observation::FieldEphemeris;
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::MeasuresProvider;
@@ -23,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::PhaseCentreEphemeris;
-use crate::ephemeris::FieldMotion;
+use crate::ephemeris::{AttachedFieldEphemeris, FieldMotion};
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
 use crate::subtables::SubTable;
@@ -215,7 +214,7 @@ impl MsCalEngine {
     ///
     /// FIELD cannot be read.
     pub fn with_field_ephemerides(mut self, ms: &MeasurementSet) -> MsResult<Self> {
-        self.field_motions = crate::ephemeris::field_motions(ms)?;
+        self.field_motions = crate::ephemeris::field_motions(ms, false)?;
         Ok(self)
     }
 
@@ -226,7 +225,8 @@ impl MsCalEngine {
     ///
     /// Returns an error if the antenna or field metadata cannot be opened.
     pub fn for_calibration(ms: &MeasurementSet) -> MsResult<Self> {
-        let mut engine = Self::new(ms)?.with_field_ephemerides(ms)?;
+        let mut engine = Self::new(ms)?;
+        engine.field_motions = crate::ephemeris::field_motions(ms, true)?;
         engine.calibration_field_directions = true;
         Ok(engine)
     }
@@ -452,16 +452,7 @@ impl MsCalEngine {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
         let mjd = epoch.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
-        if ephemeris
-            .times_mjd()
-            .last()
-            .is_some_and(|&last| mjd >= last)
-        {
-            return Err(MsError::InvalidInput(format!(
-                "UTC MJD {mjd} is outside the ephemeris interpolation range"
-            )));
-        }
-        crate::ephemeris::reference_direction(ephemeris, mjd, offset).map(Some)
+        ephemeris.reference_direction(mjd, offset, true).map(Some)
     }
 
     fn sampled_ephemeris_direction_j2000(
@@ -505,16 +496,7 @@ impl MsCalEngine {
         };
         if self.calibration_field_directions {
             let mjd = self.ephemeris_mjd_utc(time_mjd_sec)?;
-            if ephemeris
-                .times_mjd()
-                .last()
-                .is_some_and(|&last| mjd >= last)
-            {
-                return Err(MsError::InvalidInput(format!(
-                    "UTC MJD {mjd} is outside the ephemeris interpolation range"
-                )));
-            }
-            let reference = crate::ephemeris::reference_direction(ephemeris, mjd, offset)?;
+            let reference = ephemeris.reference_direction(mjd, offset, true)?;
             let frame =
                 self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
             return Ok(Cow::Owned(
@@ -543,11 +525,22 @@ impl MsCalEngine {
     fn field_body_direction(
         &self,
         time_mjd_sec: f64,
-        ephemeris: &FieldEphemeris,
+        ephemeris: &AttachedFieldEphemeris,
     ) -> MsResult<MDirection> {
-        let sample = crate::ephemeris::evaluate(ephemeris, self.ephemeris_mjd_tdb(time_mjd_sec)?)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
+        let mjd = self.ephemeris_mjd_tdb(time_mjd_sec)?;
+        match ephemeris {
+            AttachedFieldEphemeris::Inertial(series) => {
+                let sample = crate::ephemeris::evaluate(series, mjd)
+                    .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+                self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
+            }
+            AttachedFieldEphemeris::Apparent(_) => {
+                let direction = ephemeris.reference_direction(mjd, [0.; 2], true)?;
+                let frame =
+                    self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+                Ok(direction.convert_to(DirectionRef::J2000, &frame)?)
+            }
+        }
     }
 
     /// casacore's `MSFieldColumns::phaseDirMeas(field_id)` asked at no time,
@@ -604,13 +597,17 @@ impl MsCalEngine {
             .flatten()
             .unwrap_or_else(|| MEpoch::from_mjd_seconds(first_time_mjd_sec, self.time_reference));
         let mjd_utc = origin.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
-        crate::ephemeris::reference_direction(ephemeris, mjd_utc, offset.unwrap_or(phase_offset))
+        ephemeris
+            .reference_direction(mjd_utc, offset.unwrap_or(phase_offset), false)
             .map(Some)
     }
 
     /// The ephemeris `field_id` follows and its `PHASE_DIR` offset, or
     /// `None` for a fixed field.
-    fn field_series(&self, field_id: usize) -> MsResult<Option<(&FieldEphemeris, [f64; 2])>> {
+    fn field_series(
+        &self,
+        field_id: usize,
+    ) -> MsResult<Option<(&AttachedFieldEphemeris, [f64; 2])>> {
         let ephemeris = match self.field_motions.get(field_id) {
             None | Some(FieldMotion::Fixed) => return Ok(None),
             Some(FieldMotion::Ephemeris(ephemeris)) => ephemeris,
@@ -624,7 +621,7 @@ impl MsCalEngine {
             .field_phase_offsets
             .get(field_id)
             .ok_or_else(|| MsError::InvalidInput(format!("FIELD_ID {field_id} out of range")))?;
-        Ok(Some((ephemeris.as_ref(), offset)))
+        Ok(Some((ephemeris, offset)))
     }
 
     /// Get the field direction for the given field_id.
