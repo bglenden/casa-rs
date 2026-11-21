@@ -362,10 +362,7 @@ fn validate_shape(
     match parameter_family {
         CalibrationParameterFamily::Complex => {}
         CalibrationParameterFamily::Float
-            if matches!(
-                keywords.vis_cal.as_deref(),
-                Some("K Jones" | "Kcross Jones" | "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac" | "B TSYS")
-            ) => {}
+            if keywords.vis_cal.as_deref().is_some_and(crate::model::supports_float_apply_subtype) => {}
         CalibrationParameterFamily::Float => issues.push(issue(
             "unsupported-float-family",
             CalibrationIssueSeverity::Error,

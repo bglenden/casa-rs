@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "60bd0ef1b26a967759620446aa7820cd7840a21d",
+  "casa_version": "6.7.6.14",
+  "scope": "Sequential CPARAM and FPARAM calibration flagdata command programs, input types, reason selection, buffer padding, command and threshold products, backups and safe refusals.",
+  "command": "casa-python tools/casa-compat/flagdata_calibration_list_oracle.py --work <new-dir> --native-bin <flagdata>",
+  "result": "passed",
+  "paired_workflows": 104,
+  "bidirectional_saved_command_replays": 4,
+  "native_unmatched_selector_refusals": 6,
+  "casa_antint_abort_controls": 2,
+  "native_antint_safe_refusals": 4,
+  "negated_antenna_mask_checks": 4,
+  "native_cli_calculate_and_measurementset_refusal_checked": true,
+  "flag_snapshots_and_non_flag_columns_checked": true
+}

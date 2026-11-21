@@ -1094,9 +1094,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
 | <code>mode</code> | <code>flagdata.mode@r2</code> | <code>choice (13 values)</code> | <code>"manual"</code>; optional | Flagging | Flagging mode. |
 | <code>autocorr</code> | <code>flagdata.autocorr@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Flag only the autocorrelations of the selection. |
-| <code>inpfile</code> | <code>flagdata.inpfile@r1</code> | <code>string</code> | <code>""</code>; optional | Input | File, files or list of flag commands to apply in list mode. |
-| <code>reason</code> | <code>flagdata.reason@r1</code> | <code>string</code> | <code>"any"</code>; optional | Input | Select list-mode flag commands by their reason. |
-| <code>tbuff</code> | <code>flagdata.tbuff@r1</code> | <code>float</code> | <code>0.0</code>; optional | Input | Time buffer in seconds that pads each flag command's time range. |
+| <code>inpfile</code> | <code>flagdata.inpfile@r1</code> | <code>variant</code> | <code>""</code>; optional | Input | File, files or list of flag commands to apply in list mode. |
+| <code>reason</code> | <code>flagdata.reason@r1</code> | <code>variant</code> | <code>"any"</code>; optional | Input | Select list-mode flag commands by their reason. |
+| <code>tbuff</code> | <code>flagdata.tbuff@r1</code> | <code>variant</code> | <code>0.0</code>; optional | Input | Time buffer in seconds that pads each flag command's time range. |
 | <code>spw</code> | <code>ms.selection.spw@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata spw selector. |
 | <code>field</code> | <code>ms.selection.field@r8</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata field selector. |
 | <code>antenna</code> | <code>ms.selection.antenna@r7</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata antenna selector. |

@@ -110,12 +110,12 @@ fn position(value: &ParameterValue) -> Option<[f64; 3]> {
     Some([number(x)?, number(y)?, number(z)?])
 }
 
-struct AntennaList {
-    value: ParameterValue,
-    command: Option<String>,
+pub(super) struct AntennaList {
+    pub(super) value: ParameterValue,
+    pub(super) command: Option<String>,
 }
 
-fn read_list(path: &str) -> Result<AntennaList, TaskFailure> {
+pub(super) fn read_list(path: &str) -> Result<AntennaList, TaskFailure> {
     let contents = std::fs::read_to_string(path).map_err(|_| {
         let message = if Path::new(path).exists() {
             format!("Error opening file {path}")

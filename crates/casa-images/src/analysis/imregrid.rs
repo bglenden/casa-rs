@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Template acquisition and persistent products for the `imregrid` task.
 
+mod rotation;
+mod tool;
+
+pub use tool::{ImageRegridOptions, ImageRegridProduct, ImageRegridTarget, regrid_image};
+
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -195,6 +200,7 @@ fn write_product<T: RegridPixel>(
                         decimate: request.decimate,
                         replicate: request.replicate,
                         method,
+                        image_tool: None,
                     },
                 )?,
                 0.0,

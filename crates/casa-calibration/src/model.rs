@@ -142,29 +142,34 @@ impl CalibrationTableSummary {
     ///
     /// - complex `CPARAM` antenna-based tables, or
     /// - float `FPARAM` support for `K Jones`, `Kcross Jones` and the VLA prior families
-    ///   `KAntPos Jones`, `EGainCurve`, and `TOpac`, plus `B TSYS`
+    ///   `KAntPos Jones`, `EGainCurve`, `EPowerCurve`, `G EVLASWPOW`, and
+    ///   `TOpac`, plus `B TSYS`
     /// - legacy `BPOLY` bandpass tables
     ///
     /// and carries no error-level validation issues.
     pub fn supported_for_v1_apply(&self) -> bool {
         self.table_type == crate::constants::TABLE_INFO_TYPE
-            && (matches!(
-                (&self.parameter_family, self.table_subtype.as_str()),
-                (CalibrationParameterFamily::Complex, _)
-                    | (
-                        CalibrationParameterFamily::Float,
-                        "K Jones" | "Kcross Jones"
-                    )
-                    | (CalibrationParameterFamily::Float, "KAntPos Jones")
-                    | (
-                        CalibrationParameterFamily::Float,
-                        "EGainCurve" | "EPowerCurve"
-                    )
-                    | (CalibrationParameterFamily::Float, "TOpac" | "B TSYS")
-            ) || self.table_subtype == "BPOLY")
+            && (self.parameter_family == CalibrationParameterFamily::Complex
+                || (self.parameter_family == CalibrationParameterFamily::Float
+                    && supports_float_apply_subtype(&self.table_subtype))
+                || self.table_subtype == "BPOLY")
             && self
                 .issues
                 .iter()
                 .all(|issue| issue.severity != CalibrationIssueSeverity::Error)
     }
+}
+
+pub(crate) fn supports_float_apply_subtype(subtype: &str) -> bool {
+    matches!(
+        subtype,
+        "K Jones"
+            | "Kcross Jones"
+            | "KAntPos Jones"
+            | "EGainCurve"
+            | "EPowerCurve"
+            | "TOpac"
+            | "B TSYS"
+            | "G EVLASWPOW"
+    )
 }
