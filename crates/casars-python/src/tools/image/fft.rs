@@ -169,9 +169,11 @@ impl Request<'_> {
             if let Some(path) = staged[index] {
                 let mut output = create_product(&plan, path)?;
                 with_storage!(&mut output, image =>
-                    plan.write_product(input, &scratch, image.as_mut(), &image_info, index == 3, component)
+                    plan.write_product(input, &scratch, image.as_mut(), index == 3, component)
                 )
                 .map_err(raised)?;
+                with_storage!(&mut output, image => image.set_image_info_record(image_info.clone()))
+                    .map_err(raised)?;
                 let mut output = T::Scalar::wrap(output);
                 output.set_coordinate_record(plan.coordinate_record().clone())?;
                 output.append_history_entries(&history)?;
@@ -183,7 +185,9 @@ impl Request<'_> {
         }
         if let Some(path) = staged[4] {
             let mut output = create_product(&plan, path)?;
-            with_storage!(&mut output, image => plan.write_product(input, &scratch, image.as_mut(), &image_info, false, |value| value))
+            with_storage!(&mut output, image => plan.write_product(input, &scratch, image.as_mut(), false, |value| value))
+                .map_err(raised)?;
+            with_storage!(&mut output, image => image.set_image_info_record(image_info))
                 .map_err(raised)?;
             let mut output = Complex::<T::Scalar>::wrap(output);
             output.set_coordinate_record(plan.coordinate_record().clone())?;

@@ -335,12 +335,10 @@ impl<'a> ImageFourier<'a> {
         source: &dyn ImageInterface<S>,
         scratch: &dyn ImageInterface<C>,
         output: &mut dyn MutableImageInterface<D>,
-        image_info: &RecordValue,
         phase: bool,
         component: impl Fn(C) -> D,
     ) -> Result<(), ImageError> {
         self.section.copy_metadata(source, output)?;
-        output.set_image_info_record(image_info.clone())?;
         let unit = if phase {
             "rad"
         } else {
