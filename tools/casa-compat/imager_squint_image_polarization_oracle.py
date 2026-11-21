@@ -33,6 +33,7 @@ def image_planes(original, work):
         'q': (['Q'], [q]),
         'three-receptors': (['RR', 'RL', 'LL'], [i + v, q, i - v]),
         'iu': (['I', 'U'], [i, u]),
+        'ui': (['U', 'I'], [u, i]),
     }
     for name, (axis, planes) in cases.items():
         assert np.max(np.abs(planes)) > 0., name
@@ -68,15 +69,7 @@ def read_grid(path):
 def admission_control(work, seed, name, model):
     from casars.tools import imager as native_imager
 
-    if name == 'iu':
-        reference = work / 'iu-casa-saved.ms'
-        make_input(seed, reference, scratch=False)
-        predict(casa_imager, reference, None, model=model, scratch=False, squint=True)
-        axes, values = read_grid(reference)
-        assert axes == ['I', 'U'] and np.max(np.abs(values)) > .1
     for engine, factory in [('casa', casa_imager), ('native', native_imager)]:
-        if engine == 'casa' and name == 'iu':
-            continue
         target = work / f'{name}-{engine}-refusal.ms'
         make_input(seed, target, scratch=True)
         tool = factory()
@@ -87,6 +80,18 @@ def admission_control(work, seed, name, model):
         np.testing.assert_array_equal(data(target, 'MODEL_DATA'), previous)
 
 
+def unmapped_iu_control(work, seed, model, label, codes, products=None):
+    source = work / f'{label}.ms'
+    make_input(seed, source, scratch=True)
+    writer = table()
+    assert writer.open(str(source / 'POLARIZATION'), nomodify=False)
+    assert writer.putcell('CORR_TYPE', 0, np.array(codes, np.int32))
+    if products is not None:
+        assert writer.putcell('CORR_PRODUCT', 0, np.array(products, np.int32))
+    assert writer.done()
+    admission_control(work, source, label, model)
+
+
 def saved_exchange(work, seed, name, model, expected, results):
     from casars.tools import imager as native_imager, ms as native_ms
 
@@ -95,9 +100,13 @@ def saved_exchange(work, seed, name, model, expected, results):
         path = work / f'{name}-{writer}-saved.ms'
         make_input(seed, path, scratch=False)
         predict(factory, path, None, model=model, scratch=False, squint=True)
-        if name in ('iq', 'q'):
+        if name in ('iq', 'q', 'iu', 'ui'):
             axes, pixels = read_grid(path)
-            assert axes == (['RL', 'LR'] if name == 'q' else ['RR', 'RL', 'LR', 'LL'])
+            expected_axes = {
+                'iq': ['RR', 'RL', 'LR', 'LL'], 'q': ['RL', 'LR'],
+                'iu': ['I', 'U'], 'ui': ['U', 'I'],
+            }
+            assert axes == expected_axes[name]
             if writer == 'casa':
                 pinned_grid = pixels
             else:
@@ -127,15 +136,26 @@ def run(root, seed, model):
     with TemporaryDirectory(dir=root) as attempt:
         work = Path(attempt)
         for name, target in image_planes(model, work):
-            if name in ('three-receptors', 'iu'):
+            if name == 'three-receptors':
                 admission_control(work, seed, name, target)
                 continue
+            if name == 'iu':
+                unmapped_iu_control(work, seed, target, 'iu-cross-only', [6, 7], [[0, 1], [1, 0]])
+                unmapped_iu_control(work, seed, target, 'iu-qv-only', [2, 4])
             radial = scratch_pair(work, seed, None, results, f'{name}-radial', model=target)
             shifted = scratch_pair(work, seed, None, results, f'{name}-squint', model=target,
                                    squint=True)
             assert results[f'{name}-squint'] < 1.e-5
             if name == 'q':
                 assert not np.any(shifted)
+            elif name in ('iu', 'ui'):
+                np.testing.assert_array_equal(radial, shifted)
+                np.testing.assert_array_equal(shifted[0], shifted[1])
+                peak = np.max(np.abs(shifted))
+                if name == 'iu':
+                    assert peak > 1.
+                else:
+                    assert 1.e-3 < peak < .1
             else:
                 assert relative_rms(shifted, radial) > 1.e-4
             saved_exchange(work, seed, name, target, shifted, results)
