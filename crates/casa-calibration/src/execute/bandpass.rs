@@ -165,8 +165,8 @@ fn inverse_mean_tsys(grid: &GainGrid, receptor: usize, channels: DataChannelGrid
 
 pub(super) fn receptors(correlations: &[i32], index: usize) -> Option<(usize, usize)> {
     let pair = correlation_receptors(correlations[index])?;
-    // CASA uses one scalar Jones term for single-correlation B apply,
-    // including a sole YY or LL product.
+    // CASA uses the first receptor for single-correlation bandpass and
+    // switched-power application, including a sole YY or LL product.
     Some(if correlations.len() == 1 {
         (0, 0)
     } else {

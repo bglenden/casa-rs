@@ -19451,7 +19451,12 @@
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tsys"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "opac"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antposvla"}}
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antposvla"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "evlagain"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swpow"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swp/rq"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "swpwts"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "rq"}}
           ]}}}
         },
         {
@@ -24226,7 +24231,7 @@
             "python": {"name": "channelavg", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Channel Average", "group": "Clip", "advanced": true}
           },
-          "surface_note": "Calibration automatic agents use stored channels. MeasurementSet automatic averaging remains on #978."
+          "surface_note": "MeasurementSet TFCrop uses channel averaging. Calibration automatic agents use stored channels. MeasurementSet RFlag channel averaging remains on #978."
         },
         {
           "name": "chanbin",
