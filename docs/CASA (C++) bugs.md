@@ -8718,3 +8718,14 @@ with a zero reference frequency, which the component library rejects.
 casa-rs supplies the task's 1 GHz reference when the tool parameter is
 omitted. The fixed-flux comparison uses that explicit frequency in CASA
 and the default in casa-rs.
+
+## An empty imager.setjy selection can widen the next ft
+
+In CASA 6.7.6.14, `imager.setjy(field="0", scan="999", ...)` returns
+a format-only record when the scan matches no data. The call also
+rebuilds the visibility iterator over the full MeasurementSet. A subsequent
+`ft` can then replace model cells outside the preceding `selectvis`.
+
+casa-rs preserves the existing selection when the new scan matches no rows.
+A paired test verifies the format-only return, unchanged model cells for the
+empty call, and the scope of the following `ft`.

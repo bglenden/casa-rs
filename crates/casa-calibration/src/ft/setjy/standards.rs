@@ -24,6 +24,30 @@ pub(crate) enum FluxScale {
     Fixed(FixedScale),
 }
 
+/// Match the descriptive scale strings accepted by the legacy imager.
+pub(crate) fn canonical_tool_standard(name: &str) -> Option<&'static str> {
+    let name = name.to_ascii_lowercase();
+    let patterns: &[(&str, &[&str])] = &[
+        ("Perley 90", &["perley", "90"]),
+        ("Perley-Taylor 95", &["perley", "taylor", "95"]),
+        ("Perley-Taylor 99", &["perley", "taylor", "99"]),
+        ("Perley-Butler 2010", &["perley", "butler", "10"]),
+        ("Perley-Butler 2013", &["perley", "butler", "13"]),
+        ("Perley-Butler 2017", &["perley", "butler", "17"]),
+        ("Scaife-Heald 2012", &["scaife", "heald", "12"]),
+        ("Stevens-Reynolds 2016", &["stevens", "reynolds", "16"]),
+        ("Baars", &["baars"]),
+        ("Butler-JPL-Horizons 2010", &["jpl"]),
+        ("Butler-JPL-Horizons 2010", &["horizons"]),
+    ];
+    patterns.iter().find_map(|&(standard, words)| {
+        words
+            .iter()
+            .all(|word| name.contains(word))
+            .then_some(standard)
+    })
+}
+
 impl FluxScale {
     pub(crate) fn named(name: &str) -> Option<Self> {
         Some(match name {

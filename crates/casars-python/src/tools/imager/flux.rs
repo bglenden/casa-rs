@@ -4,7 +4,7 @@
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use pyo3::{PyResult, exceptions::PyTypeError};
 
-use crate::convert::{Variant, quantity_value};
+use crate::convert::{Variant, measures::frequency};
 
 pub(super) fn coefficients(value: Variant, name: &str) -> PyResult<Vec<f64>> {
     match value {
@@ -27,10 +27,9 @@ pub(super) fn flux(value: Variant) -> PyResult<[f64; 4]> {
 }
 
 pub(super) fn reference(value: &Variant) -> PyResult<MFrequency> {
-    let hz = if matches!(value, Variant::Empty) {
-        1e9
-    } else {
-        quantity_value(value, "Hz")?
-    };
-    Ok(MFrequency::new(hz, FrequencyRef::LSRK))
+    let default = || MFrequency::new(1e9, FrequencyRef::LSRK);
+    if matches!(value, Variant::Empty) {
+        return Ok(default());
+    }
+    Ok(frequency(value)?.0.unwrap_or_else(default))
 }

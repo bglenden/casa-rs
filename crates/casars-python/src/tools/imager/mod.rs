@@ -512,7 +512,7 @@ impl PyImager {
         })
     }
 
-    #[pyo3(signature = (field = Variant::Empty, spw = Variant::Empty, modimage = "", fluxdensity = Variant::Empty, standard = "SOURCE", scalebychan = false, spix = Variant::Empty, reffreq = Variant::Empty, polindex = Variant::Empty, polangle = Variant::Empty, rotmeas = 0.0, time = "", scan = "", intent = "", observation = "", interpolation = "nearest"), text_signature = "($self, field=[], spw=[], modimage='', fluxdensity=[0.0, 0.0, 0.0, 0.0], standard='SOURCE', scalebychan=False, spix=[0.0], reffreq=[], polindex=[0.0], polangle=[0.0], rotmeas=0.0, time='', scan='', intent='', observation='', interpolation='nearest')")]
+    #[pyo3(signature = (field = Variant::Empty, spw = Variant::Empty, modimage = "", fluxdensity = Variant::Numbers(vec![0.; 4]), standard = "SOURCE", scalebychan = false, spix = Variant::Numbers(vec![0.]), reffreq = Variant::Empty, polindex = Variant::Numbers(vec![0.]), polangle = Variant::Numbers(vec![0.]), rotmeas = 0.0, time = "", scan = "", intent = "", observation = "", interpolation = "nearest"), text_signature = "($self, field=[], spw=[], modimage='', fluxdensity=[0.0, 0.0, 0.0, 0.0], standard='SOURCE', scalebychan=False, spix=[0.0], reffreq=[], polindex=[0.0], polangle=[0.0], rotmeas=0.0, time='', scan='', intent='', observation='', interpolation='nearest')")]
     #[allow(clippy::too_many_arguments)]
     fn setjy(
         &self,

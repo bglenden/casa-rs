@@ -592,7 +592,14 @@ fn prepare(
                 .frequency_reference(spw as usize)
                 .map_err(execution)?;
             let num_channels = i32::try_from(all_hz.len()).map_err(execution)?;
-            let planned = selected_frequencies(all_hz, frequency_frame, by_channel)?;
+            // CASA assigns the scalar median through Vector::set, which
+            // constructs an MFrequency in the default LSRK frame.
+            let frame_ref = if by_channel {
+                frequency_frame
+            } else {
+                FrequencyRef::LSRK
+            };
+            let planned = selected_frequencies(all_hz, frame_ref, by_channel)?;
             let (component, stokes) = if image.is_some() {
                 (
                     None,
