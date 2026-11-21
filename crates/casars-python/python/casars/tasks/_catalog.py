@@ -992,7 +992,7 @@ def flagdata(
     usewindowstats: str = 'none',
     halfwin: int = 1,
     extendflags: bool = True,
-    winsize: int = 3,
+    winsize: ParameterData = 3,
     timedev: float | Literal['', 'none'] = '',
     freqdev: float | Literal['', 'none'] = '',
     timedevscale: float = 5.0,
@@ -1031,7 +1031,7 @@ def flagdata(
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``inpfile``, ``reason``, ``tbuff``, ``channelavg``, ``chanbin``,
-    ``timeavg``, ``timebin``, ``winsize``, ``savepars``.
+    ``timeavg``, ``timebin``, ``savepars``.
     Accepted only at CASA's default, where CASA reads them, until #1616:
     ``ntime``, ``combinescans``.
     """

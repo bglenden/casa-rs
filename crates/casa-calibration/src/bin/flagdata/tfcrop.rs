@@ -57,7 +57,10 @@ pub(super) fn parameters(task: &TaskInvocation<'_>) -> Result<Option<TfcropOptio
     }
 }
 
-fn integer_setting(task: &TaskInvocation<'_>, name: &str) -> Result<Option<i64>, TaskFailure> {
+pub(super) fn integer_setting(
+    task: &TaskInvocation<'_>,
+    name: &str,
+) -> Result<Option<i64>, TaskFailure> {
     let value = match task.value(name) {
         Some(ParameterValue::NumpyScalar { value, .. }) => Some(value.as_ref()),
         other => other,
