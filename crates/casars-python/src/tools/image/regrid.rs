@@ -40,7 +40,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for GridCoordinates {
         if record.is_empty() {
             Ok(Self::default())
         } else {
-            Ok(Self(Some(casa_record(value.py(), Some(record))?)))
+            Ok(Self(Some(casa_record(value.py(), Some(&record))?)))
         }
     }
 }
