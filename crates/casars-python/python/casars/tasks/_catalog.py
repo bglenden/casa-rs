@@ -945,8 +945,6 @@ def plotms(
     ``rowindex``, ``colindex``, ``plotindex``, ``xframe``, ``xinterp``,
     ``yframe``, ``yinterp``, ``phasecenter``, ``extendflag``, ``extcorr``,
     ``extchannel``, ``clearplots``.
-    Accepted only at CASA's default, where CASA reads them, until #1526:
-    ``colorizeoverlay``.
     """
     return _call_casa(plotms, locals())
 

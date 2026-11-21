@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Render calibrated MeasurementSet visibility data with the PlotMS presenter.
+//! Build figures for calibrated MeasurementSet visibilities and atmospheric curves.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::calibration::figure::plot_limits;
-use super::{MsAxis, MsPlotPayload};
+use super::plotms_atmosphere::Curve;
+use super::{MsAxis, MsPlotPayload, MsScatterGridPayload};
 use crate::plot_document::{
-    PlotFigure, PlotLayerData, PlotLayerStyle, PlotPayloadStrategy, PlotPayloadWriter,
+    PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
+    PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy, PlotPayloadWriter,
     plotms_visibility_document,
 };
 
@@ -18,86 +21,345 @@ pub(super) fn prepare(
     arrays: &Path,
     output: Option<&Path>,
     show: bool,
-) -> Result<PlotFigure, TaskFailure> {
-    let MsPlotPayload::Scatter(scatter) = payload else {
-        return Err(TaskFailure::validation(
-            "iterated MeasurementSet callibrary figures are pending #1526",
-        ));
+    overlays: &[Vec<Curve>],
+) -> Result<Vec<PlotFigure>, TaskFailure> {
+    let (x, y, second, grid) = match payload {
+        MsPlotPayload::Scatter(plot) => (plot.x_axis, plot.y_axis, plot.secondary_y_axis, None),
+        MsPlotPayload::ScatterGrid(grid) => (grid.x_axis, grid.y_axis, None, Some(grid)),
+        _ => {
+            return Err(TaskFailure::validation(
+                "PlotMS figures require visibility scatter data",
+            ));
+        }
     };
     let mut document = plotms_visibility_document(payload);
     document.show_legend = task.flag("showlegend")?;
     let limits = plot_limits(task.value("plotrange"))?;
-    let frequency_axis = |id: &str| match id {
-        "x" => scatter.x_axis == MsAxis::Frequency,
-        "y" => scatter.y_axis == MsAxis::Frequency,
-        "y-secondary" => scatter.secondary_y_axis == Some(MsAxis::Frequency),
-        _ => false,
+    let style = PanelStyle {
+        frequency: [
+            x == MsAxis::Frequency,
+            y == MsAxis::Frequency,
+            second == Some(MsAxis::Frequency),
+        ],
+        limits,
+        connect: task.flag("timeconnector")?
+            || task
+                .text("xconnector")?
+                .as_deref()
+                .is_some_and(|value| matches!(value, "line" | "step")),
+        colorize: task.flag("colorizeoverlay")?
+            && task
+                .text("coloraxis")?
+                .is_some_and(|value| !value.is_empty() && !value.eq_ignore_ascii_case("none")),
     };
-    for axis in &mut document.axes {
-        if frequency_axis(&axis.id) {
-            axis.lower /= 1e9;
-            axis.upper /= 1e9;
-            axis.unit = "GHz".into();
-            if axis.label == "Frequency (Hz)" {
-                axis.label = "Frequency (GHz)".into();
+    let mut writer = PlotPayloadWriter::open(arrays).map_err(write_failure)?;
+    let figures = if let Some(grid) = grid {
+        for (index, panel) in document.panels.iter_mut().enumerate() {
+            style.prepare(
+                index,
+                &mut writer,
+                &mut panel.axes,
+                &mut panel.layers,
+                overlays.get(index).map(Vec::as_slice),
+            )?;
+        }
+        paginate(task, document, grid, output, show)?
+    } else {
+        style.prepare(
+            0,
+            &mut writer,
+            &mut document.axes,
+            &mut document.layers,
+            overlays.first().map(Vec::as_slice),
+        )?;
+        vec![PlotFigure {
+            output_file: output.map(Path::to_owned),
+            show,
+            document,
+        }]
+    };
+    let bytes = writer.finish().map_err(write_failure)?;
+    for figure in &figures {
+        figure
+            .document
+            .validate_payload(bytes)
+            .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    }
+    Ok(figures)
+}
+
+struct PanelStyle {
+    frequency: [bool; 3],
+    limits: [f64; 4],
+    connect: bool,
+    colorize: bool,
+}
+
+impl PanelStyle {
+    fn frequency_axis(&self, id: &str) -> bool {
+        match id {
+            "x" => self.frequency[0],
+            "y" => self.frequency[1],
+            "y-secondary" => self.frequency[2],
+            _ => false,
+        }
+    }
+
+    fn prepare(
+        &self,
+        panel: usize,
+        writer: &mut PlotPayloadWriter,
+        axes: &mut Vec<PlotDocumentAxis>,
+        layers: &mut Vec<PlotDocumentLayer>,
+        overlays: Option<&[Curve]>,
+    ) -> Result<(), TaskFailure> {
+        for axis in axes.iter_mut() {
+            if self.frequency_axis(&axis.id) {
+                axis.lower /= 1e9;
+                axis.upper /= 1e9;
+                axis.unit = "GHz".into();
+                if axis.label == "Frequency (Hz)" {
+                    axis.label = "Frequency (GHz)".into();
+                }
+            }
+            let offset = if axis.id == "x" { 0 } else { 2 };
+            if self.limits[offset] != 0.0 || self.limits[offset + 1] != 0.0 {
+                axis.lower = self.limits[offset];
+                axis.upper = self.limits[offset + 1];
             }
         }
-        let offset = if axis.id == "x" { 0 } else { 2 };
-        if limits[offset] != 0.0 || limits[offset + 1] != 0.0 {
-            axis.lower = limits[offset];
-            axis.upper = limits[offset + 1];
+        for (index, layer) in layers.iter_mut().enumerate() {
+            let (x_scale, y_scale) = (
+                if self.frequency_axis(&layer.x_axis_id) {
+                    1e9
+                } else {
+                    1.0
+                },
+                if self.frequency_axis(&layer.y_axis_id) {
+                    1e9
+                } else {
+                    1.0
+                },
+            );
+            let x = writer
+                .values(
+                    std::mem::take(&mut layer.x_values)
+                        .into_iter()
+                        .map(|v| v / x_scale),
+                )
+                .map_err(write_failure)?;
+            let y = writer
+                .values(
+                    std::mem::take(&mut layer.y_values)
+                        .into_iter()
+                        .map(|v| v / y_scale),
+                )
+                .map_err(write_failure)?;
+            layer.id = format!("{index}-visibility-{panel}");
+            layer.data = Some(PlotLayerData::Points { x, y });
+            layer.payload_strategy = PlotPayloadStrategy::BinaryArrays;
+            if self.connect {
+                layer.style = Some(PlotLayerStyle {
+                    color: None,
+                    marker: None,
+                    line_style: Some("-".into()),
+                });
+            }
         }
+        if let Some(curves) = overlays {
+            self.append_curves(panel, writer, axes, layers, curves)?;
+        }
+        Ok(())
     }
-    let io =
-        |error: std::io::Error| TaskFailure::execution(format!("write PlotMS arrays: {error}"));
-    let mut writer = PlotPayloadWriter::open(arrays).map_err(io)?;
-    let connect = task.flag("timeconnector")?
-        || task
-            .text("xconnector")?
-            .as_deref()
-            .is_some_and(|value| matches!(value, "line" | "step"));
-    for (index, layer) in document.layers.iter_mut().enumerate() {
-        let (x_scale, y_scale) = (
-            if frequency_axis(&layer.x_axis_id) {
-                1e9
-            } else {
-                1.0
-            },
-            if frequency_axis(&layer.y_axis_id) {
-                1e9
-            } else {
-                1.0
-            },
-        );
-        let x = writer
-            .values(
-                std::mem::take(&mut layer.x_values)
-                    .into_iter()
-                    .map(|v| v / x_scale),
-            )
-            .map_err(io)?;
-        let y = writer
-            .values(
-                std::mem::take(&mut layer.y_values)
-                    .into_iter()
-                    .map(|v| v / y_scale),
-            )
-            .map_err(io)?;
-        layer.id = format!("{index}-visibility");
-        layer.data = Some(PlotLayerData::Points { x, y });
-        layer.payload_strategy = PlotPayloadStrategy::BinaryArrays;
-        if connect {
-            layer.style = Some(PlotLayerStyle {
-                color: None,
-                marker: None,
-                line_style: Some("-".into()),
+
+    fn append_curves(
+        &self,
+        panel: usize,
+        writer: &mut PlotPayloadWriter,
+        axes: &mut Vec<PlotDocumentAxis>,
+        layers: &mut Vec<PlotDocumentLayer>,
+        curves: &[Curve],
+    ) -> Result<(), TaskFailure> {
+        let Some(first) = curves.first() else {
+            return Ok(());
+        };
+        let mut bounds = [f64::INFINITY, f64::NEG_INFINITY];
+        for (index, curve) in curves.iter().enumerate() {
+            let mut groups = BTreeMap::<&str, Vec<_>>::new();
+            for sample in curve
+                .samples
+                .iter()
+                .filter(|sample| sample.y.is_finite() && sample.x.is_finite())
+            {
+                bounds = [bounds[0].min(sample.y), bounds[1].max(sample.y)];
+                let group = if self.colorize {
+                    sample.color_group.as_str()
+                } else {
+                    ""
+                };
+                groups.entry(group).or_default().push(sample);
+            }
+            for (group_index, (group, points)) in groups.into_iter().enumerate() {
+                let xscale = if self.frequency[0] { 1e9 } else { 1.0 };
+                let x = writer
+                    .values(points.iter().map(|sample| sample.x / xscale))
+                    .map_err(write_failure)?;
+                let y = writer
+                    .values(points.iter().map(|sample| sample.y))
+                    .map_err(write_failure)?;
+                layers.push(PlotDocumentLayer {
+                    id: format!("atmosphere-{panel}-{index}-{group_index}"),
+                    title: curve.axis.label().into(),
+                    kind: PlotLayerKind::Line,
+                    x_axis_id: "x".into(),
+                    y_axis_id: "atmosphere".into(),
+                    x_values: Vec::new(),
+                    y_values: Vec::new(),
+                    point_labels: Vec::new(),
+                    point_symbol_sizes: Vec::new(),
+                    interval_x_start: Vec::new(),
+                    interval_x_end: Vec::new(),
+                    interval_y: Vec::new(),
+                    interval_height: Vec::new(),
+                    interval_labels: Vec::new(),
+                    provenance: Vec::new(),
+                    color_group: group.into(),
+                    symbol_size: 0.0,
+                    line_width: 1.0,
+                    opacity: 1.0,
+                    source_sample_count: points.len() as u64,
+                    payload_strategy: PlotPayloadStrategy::BinaryArrays,
+                    provenance_summary: "Atmospheric model over the selected channels".into(),
+                    data: Some(PlotLayerData::Points { x, y }),
+                    style: Some(PlotLayerStyle {
+                        color: (!self.colorize).then(|| default_overlay_color(index).into()),
+                        marker: None,
+                        line_style: Some("-".into()),
+                    }),
+                });
+            }
+        }
+        if bounds[0].is_finite() {
+            if bounds[0] == bounds[1] {
+                bounds = [bounds[0] - 0.5, bounds[1] + 0.5];
+            }
+            axes.push(PlotDocumentAxis {
+                id: "atmosphere".into(),
+                label: format!("{} ({})", first.axis.label(), first.axis.unit()),
+                unit: first.axis.unit().into(),
+                lower: bounds[0],
+                upper: bounds[1],
+                scale: PlotAxisScale::Linear,
+                lane_labels: Vec::new(),
+                draws_on_trailing_edge: true,
             });
         }
+        Ok(())
     }
-    writer.finish().map_err(io)?;
-    Ok(PlotFigure {
-        output_file: output.map(Path::to_owned),
-        show,
-        document,
-    })
+}
+
+fn write_failure(error: std::io::Error) -> TaskFailure {
+    TaskFailure::execution(format!("write PlotMS arrays: {error}"))
+}
+
+fn paginate(
+    task: &TaskInvocation<'_>,
+    mut document: PlotDocument,
+    grid: &MsScatterGridPayload,
+    output: Option<&Path>,
+    show: bool,
+) -> Result<Vec<PlotFigure>, TaskFailure> {
+    let [rows, columns] = requested_grid(task)?;
+    document.layout = Some(PlotLayout {
+        rows,
+        columns,
+        aspect: None,
+        margins: None,
+        font_size: None,
+    });
+    let capacity = (rows as usize).saturating_mul(columns as usize);
+    let panels = std::mem::take(&mut document.panels);
+    let pages = if task.text("exprange")?.as_deref() == Some("all") {
+        panels.len().div_ceil(capacity)
+    } else {
+        1
+    };
+    let mut figures = Vec::new();
+    for (page, page_panels) in panels.chunks(capacity).take(pages).enumerate() {
+        let mut document = document.clone();
+        document.panels.extend_from_slice(page_panels);
+        let labels = grid.panels[page * capacity..page * capacity + page_panels.len()]
+            .iter()
+            .map(|panel| match grid.iteraxis {
+                super::MsIterationAxis::Scan => {
+                    panel.label.strip_prefix("Scan ").unwrap_or(&panel.label)
+                }
+                super::MsIterationAxis::SpectralWindow => {
+                    panel.key.strip_prefix("spw-").unwrap_or(&panel.label)
+                }
+                _ => &panel.label,
+            });
+        let output_file = output
+            .map(|path| iteration_filename(path, iteration_name(grid.iteraxis), page, labels));
+        figures.push(PlotFigure {
+            output_file,
+            show: show && page == 0,
+            document,
+        });
+    }
+    let paths = figures
+        .iter()
+        .map(|figure| ("plotfile", figure.output_file.as_deref()))
+        .collect::<Vec<_>>();
+    super::task_contract::refuse_unwritable_outputs(
+        &paths,
+        task.flag("overwrite")?,
+        "set overwrite=True to replace it",
+    )
+    .map_err(TaskFailure::validation)?;
+    Ok(figures)
+}
+
+pub(in crate::msexplore) fn default_overlay_color(index: usize) -> &'static str {
+    if index == 0 { "#d88400" } else { "#b32673" }
+}
+
+pub(super) fn iteration_name(axis: super::MsIterationAxis) -> &'static str {
+    match axis {
+        super::MsIterationAxis::SpectralWindow => "Spw",
+        super::MsIterationAxis::Correlation => "Corr",
+        _ => axis.display_name(),
+    }
+}
+
+pub(super) fn requested_grid(task: &TaskInvocation<'_>) -> Result<[u32; 2], TaskFailure> {
+    let count = |name| {
+        u32::try_from(task.integer(name)?.max(1))
+            .map_err(|_| TaskFailure::validation(format!("{name} is too large")).at(name))
+    };
+    Ok([count("gridrows")?, count("gridcols")?])
+}
+
+pub(in crate::msexplore) fn iteration_filename<'a>(
+    destination: &Path,
+    axis: &str,
+    page: usize,
+    labels: impl Iterator<Item = &'a str>,
+) -> std::path::PathBuf {
+    let labels = labels
+        .map(|label| label.replace(" & ", "_with_").replace('/', "-"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let suffix = if page == 0 {
+        String::new()
+    } else {
+        format!("_{}", page + 1)
+    };
+    let mut name = destination.file_stem().unwrap_or_default().to_os_string();
+    name.push(format!("_{axis}{labels}{suffix}"));
+    if let Some(extension) = destination.extension() {
+        name.push(".");
+        name.push(extension);
+    }
+    destination.with_file_name(name)
 }

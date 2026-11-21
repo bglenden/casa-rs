@@ -27,6 +27,7 @@
 mod atmosphere;
 mod calibration;
 pub mod cli;
+mod plotms_atmosphere;
 mod plotms_figure;
 mod plotms_text;
 pub mod task_contract;
@@ -2431,12 +2432,20 @@ pub struct PlotMsCalibration {
     pub x_data_column: Option<MsDataColumn>,
 }
 
+/// CASA row and channel selection, optionally with transient calibrated arrays.
+struct PlotMsInput<'a> {
+    row_order: &'a [usize],
+    channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
+    rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
+    x_data_column: Option<MsDataColumn>,
+}
+
 fn build_msexplore_plot_payload_validated(
     ms: &MeasurementSet,
     selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
-    calibration: Option<&PlotMsCalibration>,
+    calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
     if spec.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
         return build_stacked_amplitude_phase_time_page(ms, selection, spec, point_budget);
@@ -2472,7 +2481,7 @@ fn build_msexplore_payload_internal(
     ms: &MeasurementSet,
     spec: &MsExploreSpec,
     allow_decimation: bool,
-    calibration: Option<&PlotMsCalibration>,
+    calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
     let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
@@ -2633,7 +2642,42 @@ pub(crate) fn build_calibrated_plotms_payload(
     spec: &MsExploreSpec,
     calibration: &PlotMsCalibration,
 ) -> Result<MsPlotPayload, String> {
-    build_msexplore_payload_internal(ms, spec, true, Some(calibration))
+    let input = PlotMsInput {
+        row_order: &calibration.row_order,
+        channels: &calibration.channels,
+        rows: Some(&calibration.rows),
+        x_data_column: calibration.x_data_column,
+    };
+    build_msexplore_payload_internal(ms, spec, true, Some(&input))
+}
+
+fn build_uncalibrated_plotms_payload(
+    ms: &MeasurementSet,
+    spec: &MsExploreSpec,
+    x_data_column: Option<MsDataColumn>,
+) -> Result<MsPlotPayload, String> {
+    let row_order = crate::selection::resolve_casa_row_indices(ms, &spec.selection)
+        .map_err(|error| error.to_string())?;
+    let spw = spec
+        .selection
+        .spw
+        .as_deref()
+        .filter(|_| spec.selection.selectdata)
+        .unwrap_or("*");
+    let selection = ms
+        .resolve_spw_selector(spw)
+        .map_err(|error| error.to_string())?;
+    let mut channels = BTreeMap::<i32, Vec<ChannelRange>>::new();
+    for &range in selection.channel_list() {
+        channels.entry(range.spw_id as i32).or_default().push(range);
+    }
+    let input = PlotMsInput {
+        row_order: &row_order,
+        channels: &channels,
+        rows: None,
+        x_data_column,
+    };
+    build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
 
 /// Open a MeasurementSet path from a full `msexplore` request and build the
@@ -3620,7 +3664,7 @@ fn build_generic_visibility_scatter(
     selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
-    calibration: Option<&PlotMsCalibration>,
+    calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
     let timing_enabled = VisibilityScatterTiming::enabled();
     let scatter_started = Instant::now();
@@ -3638,7 +3682,7 @@ fn build_generic_visibility_scatter(
 
     let listobs_options = selection.to_summary_options();
     let row_numbers = match calibration {
-        Some(calibration) => calibration.row_order.clone(),
+        Some(calibration) => calibration.row_order.to_vec(),
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
     let selected_row_count = row_numbers.len();
@@ -4615,11 +4659,11 @@ fn build_generic_visibility_scatter_with_averaging(
     selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
-    calibration: Option<&PlotMsCalibration>,
+    calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
     let listobs_options = selection.to_summary_options();
     let row_numbers = match calibration {
-        Some(calibration) => calibration.row_order.clone(),
+        Some(calibration) => calibration.row_order.to_vec(),
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
 
@@ -5639,7 +5683,7 @@ fn plot_channel_bins_for_window<'a>(
     chan_count: usize,
     spec: &MsPlotSpec,
     spw_id: i32,
-    calibration: Option<&PlotMsCalibration>,
+    calibration: Option<&PlotMsInput<'_>>,
     cache: &'a mut HashMap<(i32, usize), Vec<ChannelBin>>,
 ) -> Result<Cow<'a, [ChannelBin]>, String> {
     let Some(ranges) = calibration.and_then(|input| input.channels.get(&spw_id)) else {
@@ -6581,12 +6625,12 @@ fn selected_uvw_values(
 fn selected_plot_weight_spectrum<'a>(
     ms: &MeasurementSet,
     rows: &[usize],
-    calibration: Option<&'a PlotMsCalibration>,
+    calibration: Option<&PlotMsInput<'a>>,
 ) -> Result<Option<SelectedArrayColumn<'a>>, String> {
-    let has_spectrum = match calibration {
-        Some(input) => rows
+    let has_spectrum = match calibration.and_then(|input| input.rows) {
+        Some(calibrated) => rows
             .first()
-            .and_then(|row| input.rows.get(row))
+            .and_then(|row| calibrated.get(row))
             .is_some_and(|row| row.weight_spectrum.is_some()),
         None => WeightSpectrumColumn::new(ms.main_table()).is_ok(),
     };
@@ -6629,7 +6673,7 @@ impl<'a> SelectedArrayColumn<'a> {
         table: &Table,
         column: &'static str,
         rows: &[usize],
-        calibration: Option<&'a PlotMsCalibration>,
+        calibration: Option<&PlotMsInput<'a>>,
     ) -> Result<Self, String> {
         let cell: fn(&PlotMsCalibratedRow) -> Option<&ArrayValue> = match column {
             "CORRECTED_DATA" => |row| Some(&row.corrected_data),
@@ -6638,12 +6682,12 @@ impl<'a> SelectedArrayColumn<'a> {
             "WEIGHT_SPECTRUM" => |row| row.weight_spectrum.as_ref(),
             _ => return Self::load(table, column, rows),
         };
-        let Some(calibration) = calibration else {
+        let Some(calibrated) = calibration.and_then(|input| input.rows) else {
             return Self::load(table, column, rows);
         };
         let values = rows
             .iter()
-            .map(|row| calibration.rows.get(row).and_then(cell))
+            .map(|row| calibrated.get(row).and_then(cell))
             .collect();
         Ok(Self {
             column,
@@ -6684,7 +6728,7 @@ impl<'a> PreparedSelectedDataSource<'a> {
         ms: &MeasurementSet,
         column: MsDataColumn,
         row_indices: &[usize],
-        calibration: Option<&'a PlotMsCalibration>,
+        calibration: Option<&PlotMsInput<'a>>,
     ) -> Result<Self, String> {
         let load = |name| {
             SelectedArrayColumn::load_for_plot(ms.main_table(), name, row_indices, calibration)

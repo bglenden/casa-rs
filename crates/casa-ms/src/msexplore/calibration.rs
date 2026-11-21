@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Calibration table input for the shared PlotMS provider.
 
-mod atmosphere;
+pub(super) mod atmosphere;
 pub(super) mod averaging;
-mod axis;
+pub(super) mod axis;
 pub(super) mod figure;
 mod iteration;
 mod samples;

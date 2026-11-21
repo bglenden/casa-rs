@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Compare MeasurementSet PlotMS atmospheric curves with pinned CASA."""
+
+import argparse
+from contextlib import chdir
+import os
+from pathlib import Path
+from unittest.mock import patch
+
+import casatasks as casa
+from casaplotms import plotms as reference
+import numpy as np
+from matplotlib.colors import to_rgba
+from PIL import Image
+
+from plotms_atmosphere_oracle import atmosphere_inputs, fixture, opened
+from plotms_calibration_oracle import plotms_launcher
+from calibration_smoothcal_oracle import copy_ms
+from plotms_callibrary_oracle import snapshot, verify_source
+
+
+def read_sections(path):
+    headers, sections = [], []
+    for line in path.read_text().splitlines():
+        if line.startswith('#'):
+            headers.append(line)
+            if line.endswith('MJD(seconds) GHz None None None'):
+                label = line.split(' None', 1)[0]
+                sections.append((label, []))
+        elif line.strip():
+            sections[-1][1].append(line.split())
+    return headers, sections
+
+
+def arrays(rows):
+    return np.array([row[:2] for row in rows], dtype=float)
+
+
+def paired_text(root, native, name, request):
+    casa_path = root / f'{name}.casa.txt'
+    native_path = root / f'{name}.native.txt'
+    assert reference(**request, plotfile=str(casa_path), expformat='txt') is None
+    assert native(**request, plotfile=str(native_path), expformat='txt') is None
+    headers, expected = read_sections(casa_path)
+    actual_headers, actual = read_sections(native_path)
+    assert actual_headers == headers, (actual_headers, headers)
+    nrms = 0.0
+    points = 0
+    for (label, a), (_, b) in zip(actual, expected, strict=True):
+        assert a and len(a) == len(b), (label, len(a), len(b))
+        assert [row[2:] for row in a] == [row[2:] for row in b], label
+        observed, target = arrays(a), arrays(b)
+        atmospheric = any(axis in label for axis in ('Atm Transmission', 'Tsky', 'Image Sideband'))
+        np.testing.assert_array_equal(observed[:, 0], target[:, 0], err_msg=label)
+        np.testing.assert_allclose(observed[:, 1], target[:, 1], rtol=2e-4 if atmospheric else 1.2e-5,
+                                   atol=1e-7, err_msg=label)
+        y = target[:, 1]
+        finite = np.isfinite(y)
+        if atmospheric and np.linalg.norm(y[finite]):
+            nrms = max(nrms, np.linalg.norm((observed[:, 1] - y)[finite]) / np.linalg.norm(y[finite]))
+        points += len(a)
+    print(f'{name}: {points} points, maximum overlay NRMS {nrms:.6g}', flush=True)
+    return expected, points, nrms
+
+
+def images(root, native, name, request, expected, *, colored=False, pages=False):
+    from casars import _plot_document
+
+    directories = [root / f'{name}-{engine}' for engine in ('casa', 'native')]
+    for directory in directories:
+        directory.mkdir()
+    captured = []
+    render = _plot_document.render_document
+
+    def record(*args, **kwargs):
+        fig, axes = render(*args, **kwargs)
+        captured.extend((axis.get_ylabel(), [(to_rgba(line.get_color()), line.get_xydata())
+                                            for line in axis.lines]) for axis in fig.axes
+                        if axis.get_ylabel().startswith('Atm Transmission'))
+        return fig, axes
+
+    options = dict(expformat='png', width=500, height=360, dpi=100)
+    assert reference(**request, **options, plotfile=str(directories[0] / 'overlay.png')) is None
+    with patch.object(_plot_document, 'render_document', record):
+        assert native(**request, **options, plotfile=str(directories[1] / 'overlay.png')) is None
+    filenames = [sorted(path.name for path in directory.glob('*.png')) for directory in directories]
+    assert filenames[0] and filenames[0] == filenames[1], filenames
+    assert len(filenames[0]) == (2 if pages else 1), filenames
+    for filename in filenames[1]:
+        with Image.open(directories[1] / filename) as image:
+            assert image.size == (500, 360)
+    reference_curves = [arrays(rows) for label, rows in expected if 'Atm Transmission' in label]
+    colors = []
+    if pages:
+        assert len(captured) == len(reference_curves) == 2
+    else:
+        assert len(captured) == len(reference_curves) == 1
+    for (label, lines), values in zip(captured, reference_curves, strict=True):
+        assert label == 'Atm Transmission (%)'
+        assert len(lines) == (2 if colored else 1)
+        colors.extend(color for color, _ in lines)
+        np.testing.assert_allclose(np.concatenate([points for _, points in lines]), values,
+                                   rtol=2e-4, atol=1e-7)
+    if colored:
+        assert len(set(colors)) == 2
+        with Image.open(directories[0] / filenames[0][0]) as image:
+            rgb = np.asarray(image.convert('RGB'))
+            # CASA's uncolored atmosphere uses opaque magenta. Both scan
+            # color groups replace that curve in the colorized image.
+            assert not np.any(np.all(rgb == [255, 0, 255], axis=-1))
+    print(f'{name}: {len(filenames[0])} matching figure names and '
+          f'{sum(map(len, reference_curves))} rendered points', flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--native-bin', type=Path, required=True)
+    parser.add_argument('--calibrate-bin', type=Path, required=True)
+    parser.add_argument('--app-run', type=Path)
+    args = parser.parse_args()
+    root = args.work.resolve()
+    root.mkdir()
+    os.environ['CASARS_MSEXPLORE_BIN'] = str(args.native_bin.resolve())
+    os.environ['CASARS_CALIBRATE_BIN'] = str(args.calibrate_bin.resolve())
+    from casars.tasks import plotms as native
+
+    assert casa.version_string() == '6.7.6.14'
+    ms, cal, wide = (root / name for name in ('source.ms', 'amplitude.cal', 'wide.ms'))
+    fixture(ms, root / 'gain.cal')
+    cal_options = dict(vis=str(ms), caltable=str(cal), caltype='amp', parameter=[2.0])
+    casa.gencal(**cal_options)
+    bandpass = root / 'bandpass.cal'
+    casa.bandpass(str(ms), str(bandpass), refant='A0', solint='inf', minsnr=0.0)
+    atmosphere_inputs(ms)
+    copy_ms(ms, wide)
+    with opened(wide / 'SPECTRAL_WINDOW', True) as table:
+        table.putcell('CHAN_FREQ', 0, np.linspace(179e9, 186e9, 8))
+        table.putcell('CHAN_WIDTH', 0, np.full(8, 1e9))
+        table.putcell('REF_FREQUENCY', 0, 182.5e9)
+    with opened(wide / 'ASDM_RECEIVER', True) as table:
+        table.putcell('freqLO', 0, np.array([182e9]))
+    base = dict(vis=str(ms), yaxis='amp', spw='0', antenna='A0&A1', correlation='XX',
+                showgui=False, overwrite=True)
+    freq = dict(xaxis='frequency', showatm=True)
+    sky = dict(xaxis='frequency', showtsky=True)
+    scans = dict(iteraxis='scan', gridrows=2)
+    color = dict(coloraxis='scan', colorizeoverlay=True)
+    cases = dict(
+        default=dict(showatm=True), channel=dict(xaxis='channel', showatm=True),
+        frequency=freq, image=freq | dict(showimage=True), sky=sky,
+        gaps=freq | dict(spw='0:2;4;5'), scan=freq | scans, avg=freq | dict(avgchannel='2'),
+        all=freq | dict(antenna='', correlation=''), both_correlations=freq | dict(correlation=''),
+        scan_color=freq | color, time_average=freq | dict(avgtime='30'),
+        wide=sky | dict(vis=str(wide), showimage=True),
+        wide_gaps=sky | dict(vis=str(wide), spw='0:0;3;6'),
+        callibrary=freq | dict(ydatacolumn='corrected',
+                               callib=f"caltable='{cal}' calwt=False tinterp='nearest' finterp='linear'"),
+    )
+    with chdir(root), plotms_launcher(args.app_run):
+        original = snapshot(ms)
+        results = {name: paired_text(root, native, name, base | options)
+                   for name, options in cases.items()}
+        images(root, native, 'frequency', base | freq, results['frequency'][0])
+        images(root, native, 'scan-colors', base | freq | color, results['scan_color'][0], colored=True)
+        images(root, native, 'scan-pages', base | freq | dict(iteraxis='scan', exprange='all'),
+               results['scan'][0], pages=True)
+        cal_request = dict(caltable=str(bandpass), yaxis='amp', antenna='A0', spw='0',
+                           showgui=False, overwrite=True) | freq | color
+        results['calibration_color'] = paired_text(root, native, 'calibration-color', cal_request)
+        images(root, native, 'calibration-colors', cal_request,
+               results['calibration_color'][0], colored=True)
+        verify_source(ms, original)
+    print(f'{len(results)} paired exports and {sum(item[1] for item in results.values())} points matched. '
+          f'Maximum overlay NRMS {max(item[2] for item in results.values()):.6g}.', flush=True)
+
+
+if __name__ == '__main__':
+    main()
