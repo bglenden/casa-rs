@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_coordinates::{Coordinate, CoordinateSystem, CoordinateType};
+use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_lattices::{ScratchSpace, TempStoragePolicy};
 use casa_types::RecordValue;
 
