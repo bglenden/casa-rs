@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Atmospheric overlays on visibility plots, with the original point metadata.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use casa_task_runtime::TaskFailure;
 
@@ -10,7 +10,10 @@ use super::calibration::{
     axis::Axis,
 };
 use super::plotms_text::Metadata;
-use super::{MsAxis, MsPlotPayload, MsScatterPlotMsMetadata, MsScatterPointRef, MsScatterSeries};
+use super::{
+    MsAxis, MsColorAxis, MsPlotPayload, MsPlotSpec, MsScatterPlotMsMetadata, MsScatterPointRef,
+    MsScatterSeries, plot_selected_channel_bins,
+};
 use crate::{MeasurementSet, MsSelection};
 
 pub(super) struct Curve {
@@ -32,11 +35,10 @@ pub(super) fn build(
     selection: &MsSelection,
     payload: &MsPlotPayload,
     options: Options,
-    average_channels: Option<usize>,
+    spec: &MsPlotSpec,
 ) -> Result<Vec<Vec<Curve>>, TaskFailure> {
     let context = Context::open_ms(ms, selection, options.image).map_err(TaskFailure::execution)?;
-    let grids =
-        grids(ms, selection, average_channels.unwrap_or(1)).map_err(TaskFailure::execution)?;
+    let grids = grids(ms, selection, spec).map_err(TaskFailure::execution)?;
     let mut metadata =
         Metadata::new(ms).map_err(|error| TaskFailure::execution(error.to_string()))?;
     let (x_axis, panels) = match payload {
@@ -81,19 +83,23 @@ pub(super) fn build(
                         &options,
                     )?),
                 };
-                for (index, (channel, sample)) in group.channels.into_iter().enumerate() {
+                for ((channel, sample), (&correlation, color)) in group
+                    .channels
+                    .into_iter()
+                    .zip(group.correlations.iter().cycle())
+                {
                     let Some(&bin) = grid.indices.get(&channel) else {
                         continue;
                     };
-                    let correlation = group.correlations[index % group.correlations.len()];
                     let mut point = sample.point;
                     point.corr = correlation;
+                    let color = if spec.color_by == MsColorAxis::Correlation {
+                        color
+                    } else {
+                        &sample.color_group
+                    };
                     let display = MsScatterPlotMsMetadata {
-                        channel: if average_channels.is_some_and(|width| width > 1) {
-                            bin
-                        } else {
-                            channel
-                        },
+                        channel: grid.display_channels[bin],
                         average_time: sample.average_time,
                     };
                     let result = |y| CurveSample {
@@ -102,7 +108,7 @@ pub(super) fn build(
                         point: point.clone(),
                         display,
                         frequency: grid.frequencies[bin],
-                        color_group: sample.color_group.clone(),
+                        color_group: color.clone(),
                     };
                     signal.samples.push(result(signal_values[bin]));
                     if options.image {
@@ -149,7 +155,7 @@ type Integration = (i32, i32, i32, i32, u64);
 #[derive(Default)]
 struct IntegrationPoints {
     channels: BTreeMap<usize, SourcePoint>,
-    correlations: Vec<usize>,
+    correlations: BTreeMap<usize, String>,
 }
 
 struct SourcePoint {
@@ -183,9 +189,10 @@ fn chunks(
                 average.unwrap_or(row.time).to_bits(),
             );
             let chunk = chunks.entry(key).or_default();
-            if !chunk.correlations.contains(&point.corr) {
-                chunk.correlations.push(point.corr);
-            }
+            chunk
+                .correlations
+                .entry(point.corr)
+                .or_insert_with(|| series.color_group.clone());
             let slots = chunk.channels.entry(point.chan_start);
             use std::collections::btree_map::Entry;
             let sample = || SourcePoint {
@@ -207,21 +214,19 @@ fn chunks(
             }
         }
     }
-    for points in chunks.values_mut() {
-        points.correlations.sort_unstable();
-    }
     Ok(chunks)
 }
 
 struct Grid {
     frequencies: Vec<f64>,
+    display_channels: Vec<usize>,
     indices: BTreeMap<usize, usize>,
 }
 
 fn grids(
     ms: &MeasurementSet,
     selection: &MsSelection,
-    average: usize,
+    spec: &MsPlotSpec,
 ) -> Result<BTreeMap<i32, Grid>, String> {
     let spw = selection
         .spw
@@ -232,34 +237,28 @@ fn grids(
         .resolve_spw_selector(spw)
         .map_err(|error| error.to_string())?;
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
-    let mut windows = BTreeMap::<i32, BTreeSet<usize>>::new();
-    for range in selection.channel_list() {
-        windows.entry(range.spw_id as i32).or_default().extend(
-            (range.start..=range.stop)
-                .step_by(range.step.max(1) as usize)
-                .filter_map(|channel| usize::try_from(channel).ok()),
-        );
+    let mut windows = BTreeMap::<i32, Vec<_>>::new();
+    for &range in selection.channel_list() {
+        windows.entry(range.spw_id as i32).or_default().push(range);
     }
     windows
         .into_iter()
-        .map(|(window, indices)| {
+        .map(|(window, ranges)| {
             let frequencies = spectral_window
                 .chan_freq(window as usize)
                 .map_err(|error| error.to_string())?;
-            let selected: Vec<_> = indices
-                .into_iter()
-                .filter(|&index| index < frequencies.len())
-                .collect();
-            let groups = selected.chunks(average.max(1));
+            let bins = plot_selected_channel_bins(frequencies.len(), spec, &ranges)?;
             let mut grid = Grid {
-                frequencies: Vec::with_capacity(groups.len()),
+                frequencies: Vec::with_capacity(bins.len()),
+                display_channels: Vec::with_capacity(bins.len()),
                 indices: BTreeMap::new(),
             };
-            for (bin, group) in groups.enumerate() {
-                grid.indices.insert(group[0], bin);
-                grid.frequencies.push(
-                    group.iter().map(|&index| frequencies[index]).sum::<f64>() / group.len() as f64,
-                );
+            for bin in bins {
+                let group = &frequencies[bin.start..bin.end];
+                grid.indices.insert(bin.start, grid.frequencies.len());
+                grid.frequencies
+                    .push(group.iter().sum::<f64>() / group.len() as f64);
+                grid.display_channels.push(bin.display_channel());
             }
             Ok((window, grid))
         })

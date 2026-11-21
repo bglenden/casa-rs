@@ -65,24 +65,29 @@ def paired_text(root, native, name, request):
 
 
 def images(root, native, name, request, expected, *, colored=False, pages=False):
-    from casars import _plot_document
+    from casars.tasks import _plotms_plot
 
     directories = [root / f'{name}-{engine}' for engine in ('casa', 'native')]
     for directory in directories:
         directory.mkdir()
     captured = []
-    render = _plot_document.render_document
+    configure = _plotms_plot.configure
 
-    def record(*args, **kwargs):
-        fig, axes = render(*args, **kwargs)
+    def record(fig, axes, document, options):
+        configure(fig, axes, document, options)
+        visible = [line for axis in fig.axes for line in axis.lines if len(line.get_xydata())]
+        assert visible
+        for line in visible:
+            assert line.get_marker() not in (None, '', 'None', ' ')
+            assert line.get_markersize() > 0.0
+            assert line.get_linestyle() in ('None', '', ' ')
         captured.extend((axis.get_ylabel(), [(to_rgba(line.get_color()), line.get_xydata())
                                             for line in axis.lines]) for axis in fig.axes
                         if axis.get_ylabel().startswith('Atm Transmission'))
-        return fig, axes
 
     options = dict(expformat='png', width=500, height=360, dpi=100)
     assert reference(**request, **options, plotfile=str(directories[0] / 'overlay.png')) is None
-    with patch.object(_plot_document, 'render_document', record):
+    with patch.object(_plotms_plot, 'configure', record):
         assert native(**request, **options, plotfile=str(directories[1] / 'overlay.png')) is None
     filenames = [sorted(path.name for path in directory.glob('*.png')) for directory in directories]
     assert filenames[0] and filenames[0] == filenames[1], filenames
@@ -90,7 +95,14 @@ def images(root, native, name, request, expected, *, colored=False, pages=False)
     for filename in filenames[1]:
         with Image.open(directories[1] / filename) as image:
             assert image.size == (500, 360)
-    reference_curves = [arrays(rows) for label, rows in expected if 'Atm Transmission' in label]
+    corr_colors = request.get('coloraxis') == 'corr'
+    reference_curves = []
+    for label, rows in expected:
+        if 'Atm Transmission' not in label:
+            continue
+        if corr_colors:
+            rows = sorted(rows, key=lambda row: row[-2])
+        reference_curves.append(arrays(rows))
     colors = []
     if pages:
         assert len(captured) == len(reference_curves) == 2
@@ -109,6 +121,9 @@ def images(root, native, name, request, expected, *, colored=False, pages=False)
             # CASA's uncolored atmosphere uses opaque magenta. Both scan
             # color groups replace that curve in the colorized image.
             assert not np.any(np.all(rgb == [255, 0, 255], axis=-1))
+            if corr_colors:
+                assert all(np.any(np.all(rgb == color, axis=-1))
+                           for color in ([211, 179, 235], [239, 186, 127]))
     print(f'{name}: {len(filenames[0])} matching figure names and '
           f'{sum(map(len, reference_curves))} rendered points', flush=True)
 
@@ -151,6 +166,7 @@ def main():
         default=dict(showatm=True), channel=dict(xaxis='channel', showatm=True),
         frequency=freq, image=freq | dict(showimage=True), sky=sky,
         gaps=freq | dict(spw='0:2;4;5'), scan=freq | scans, avg=freq | dict(avgchannel='2'),
+        average_gaps=freq | dict(spw='0:0~2;5~7', avgchannel='2'),
         all=freq | dict(antenna='', correlation=''), both_correlations=freq | dict(correlation=''),
         scan_color=freq | color, time_average=freq | dict(avgtime='30'),
         wide=sky | dict(vis=str(wide), showimage=True),
@@ -164,6 +180,9 @@ def main():
                    for name, options in cases.items()}
         images(root, native, 'frequency', base | freq, results['frequency'][0])
         images(root, native, 'scan-colors', base | freq | color, results['scan_color'][0], colored=True)
+        corr_colors = dict(correlation='', coloraxis='corr', colorizeoverlay=True)
+        images(root, native, 'correlation-colors', base | freq | corr_colors,
+               results['both_correlations'][0], colored=True)
         images(root, native, 'scan-pages', base | freq | dict(iteraxis='scan', exprange='all'),
                results['scan'][0], pages=True)
         cal_request = dict(caltable=str(bandpass), yaxis='amp', antenna='A0', spw='0',

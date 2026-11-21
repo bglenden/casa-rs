@@ -203,8 +203,11 @@ fn make_panel(
         payload,
         panel,
         index,
-        ranges.flagged_symbols,
-        colorize_overlay,
+        AtmosphereStyle {
+            flagged_symbols: ranges.flagged_symbols,
+            color: colorize_overlay,
+            connect,
+        },
         &mut axes,
         &mut layers,
     )?;
@@ -223,12 +226,17 @@ fn make_panel(
     })
 }
 
+struct AtmosphereStyle<'a> {
+    flagged_symbols: Option<&'a ParameterValue>,
+    color: Option<Axis>,
+    connect: bool,
+}
+
 fn append_atmosphere(
     payload: &mut PlotPayloadWriter,
     panel: &Panel,
     index: usize,
-    flagged_symbols: Option<&ParameterValue>,
-    color: Option<Axis>,
+    style: AtmosphereStyle<'_>,
     axes: &mut Vec<PlotDocumentAxis>,
     layers: &mut Vec<PlotDocumentLayer>,
 ) -> Result<(), TaskFailure> {
@@ -238,13 +246,13 @@ fn append_atmosphere(
     let mut bounds = [f64::INFINITY, f64::NEG_INFINITY];
     for (overlay_id, series) in panel.overlay.iter().enumerate() {
         let series_index = panel.series.len() + overlay_id;
-        let show_flagged = shows_flagged(flagged_symbols, series_index);
+        let show_flagged = shows_flagged(style.flagged_symbols, series_index);
         let mut groups = BTreeMap::<String, Vec<&Point>>::new();
         for point in series.points.iter().filter(|point| {
             point.x.is_finite() && point.y.is_finite() && (show_flagged || !point.flagged)
         }) {
             bounds = [bounds[0].min(point.y), bounds[1].max(point.y)];
-            let group = color.map_or_else(
+            let group = style.color.map_or_else(
                 || series.y.label().to_string(),
                 |axis| {
                     format!(
@@ -263,15 +271,14 @@ fn append_atmosphere(
                 false,
                 group,
                 points,
-                true,
+                style.connect,
             )?;
             curve.title = series.y.label().into();
             curve.provenance_summary = "Atmospheric model over the selected channels".into();
-            if let Some(style) = &mut curve.style {
-                style.color = color.is_none().then(|| {
+            if let Some(layer_style) = &mut curve.style {
+                layer_style.color = style.color.is_none().then(|| {
                     crate::msexplore::plotms_figure::default_overlay_color(overlay_id).into()
                 });
-                style.marker = None;
             }
             layers.push(curve);
         }

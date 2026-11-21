@@ -158,13 +158,11 @@ impl PanelStyle {
             layer.id = format!("{index}-visibility-{panel}");
             layer.data = Some(PlotLayerData::Points { x, y });
             layer.payload_strategy = PlotPayloadStrategy::BinaryArrays;
-            if self.connect {
-                layer.style = Some(PlotLayerStyle {
-                    color: None,
-                    marker: None,
-                    line_style: Some("-".into()),
-                });
-            }
+            layer.style = Some(PlotLayerStyle {
+                color: None,
+                marker: Some("o".into()),
+                line_style: self.connect.then(|| "-".into()),
+            });
         }
         if let Some(curves) = overlays {
             self.append_curves(panel, writer, axes, layers, curves)?;
@@ -210,7 +208,11 @@ impl PanelStyle {
                 layers.push(PlotDocumentLayer {
                     id: format!("atmosphere-{panel}-{index}-{group_index}"),
                     title: curve.axis.label().into(),
-                    kind: PlotLayerKind::Line,
+                    kind: if self.connect {
+                        PlotLayerKind::Line
+                    } else {
+                        PlotLayerKind::Scatter
+                    },
                     x_axis_id: "x".into(),
                     y_axis_id: "atmosphere".into(),
                     x_values: Vec::new(),
@@ -224,7 +226,7 @@ impl PanelStyle {
                     interval_labels: Vec::new(),
                     provenance: Vec::new(),
                     color_group: group.into(),
-                    symbol_size: 0.0,
+                    symbol_size: 2.0,
                     line_width: 1.0,
                     opacity: 1.0,
                     source_sample_count: points.len() as u64,
@@ -233,8 +235,8 @@ impl PanelStyle {
                     data: Some(PlotLayerData::Points { x, y }),
                     style: Some(PlotLayerStyle {
                         color: (!self.colorize).then(|| default_overlay_color(index).into()),
-                        marker: None,
-                        line_style: Some("-".into()),
+                        marker: Some("o".into()),
+                        line_style: self.connect.then(|| "-".into()),
                     }),
                 });
             }

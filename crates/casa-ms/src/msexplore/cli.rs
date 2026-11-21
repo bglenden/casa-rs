@@ -300,7 +300,7 @@ fn run_visibility_plot(
                 &options.selection,
                 &payload,
                 atmosphere,
-                options.avgchannel,
+                &spec.plots[0],
             )?
         } else {
             Vec::new()
