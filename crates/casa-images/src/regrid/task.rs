@@ -148,7 +148,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         }
         found = true;
         let lengths: Vec<_> = axes.iter().map(|&axis| shape[axis]).collect();
-        if n_axes != ours.n_pixel_axes() {
+        if n_axes != ours.n_pixel_axes() && ours.coordinate_type() != CoordinateType::Linear {
             return Err(invalid(
                 "cannot regrid a coordinate with a removed pixel axis",
             ));
@@ -187,7 +187,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 regrid_linear_coordinate(
                     &mut result,
                     input.units(),
-                    &axes,
+                    placement,
                     (&input_lengths, &lengths),
                     (ours, theirs),
                     &selected,
@@ -243,13 +243,13 @@ pub(crate) fn regrid_task<T: RegridPixel>(
 fn regrid_linear_coordinate<T: RegridPixel>(
     result: &mut Regridded<T>,
     units: &str,
-    axes: &[usize],
+    placement: &[Option<usize>],
     (input_lengths, lengths): (&[usize], &[usize]),
     (input, target): (&LinearCoordinate, &LinearCoordinate),
     selected: &[bool],
     options: &TaskRegridOptions<'_>,
 ) -> Result<CoordinateModel, ImageError> {
-    if let [x, y] = axes {
+    if let [Some(x), Some(y)] = placement {
         if options.decimate < 0 {
             return Err(invalid("decimate must be nonnegative"));
         }
@@ -264,7 +264,24 @@ fn regrid_linear_coordinate<T: RegridPixel>(
             )?;
         }
     } else {
-        apply_linear_axes(result, axes, lengths, selected, (input, target), options)?;
+        if input_lengths
+            .iter()
+            .zip(lengths)
+            .zip(selected)
+            .any(|((old, new), selected)| !selected && old != new)
+        {
+            return Err(invalid(
+                "an axis not being regridded must keep its input length",
+            ));
+        }
+        apply_linear_axes(
+            result,
+            placement,
+            lengths,
+            selected,
+            (input, target),
+            options,
+        )?;
     }
     Ok(target.clone().into())
 }
@@ -639,34 +656,42 @@ fn linear_axis_unit_factor(input: &str, target: &str, axis: usize) -> Result<f64
 
 fn apply_linear_axes<T: RegridPixel>(
     result: &mut Regridded<T>,
-    pixel_axes: &[usize],
+    placement: &[Option<usize>],
     lengths: &[usize],
     selected: &[bool],
     (input, target): (&LinearCoordinate, &LinearCoordinate),
     options: &TaskRegridOptions<'_>,
 ) -> Result<(), ImageError> {
-    let mut axes: Vec<_> = (0..lengths.len()).filter(|&axis| selected[axis]).collect();
-    axes.sort_by_key(|&axis| {
+    let mut passes: Vec<_> = placement
+        .iter()
+        .enumerate()
+        .filter_map(|(local, &axis)| axis.map(|axis| (local, axis)))
+        .zip(lengths.iter().zip(selected))
+        .filter_map(|((local, axis), (&length, &selected))| {
+            selected.then_some((local, axis, length))
+        })
+        .collect();
+    passes.sort_by_key(|&(_, axis, _)| {
         options
             .axes
             .iter()
-            .position(|&i| i == pixel_axes[axis] as i64)
+            .position(|&selected| selected == axis as i64)
             .unwrap_or(axis)
     });
     let input_units = input.axis_units();
     let target_units = target.axis_units();
-    let mut factors = vec![1.0; lengths.len()];
+    let mut factors = vec![1.0; placement.len()];
     let mut target_pixel = target.reference_pixel();
     let same_grid = same_linear_grid(input, target);
-    for local in axes {
-        let axis = pixel_axes[local];
-        let length = lengths[local];
+    for (local, axis, length) in passes {
         let old_length = result.data.shape()[axis];
         // casacore aligns the selected axis's units and retains earlier conversions.
         factors[local] = linear_axis_unit_factor(&input_units[local], &target_units[local], axis)?;
         if same_grid && length == old_length {
             continue;
         }
+        // The coordinate transform uses the full local model. Keep its other
+        // axes at their reference pixels for this one-axis pass.
         let reference_pixel = target_pixel[local];
         let positions = (0..length)
             .map(|pixel| {

@@ -14,7 +14,7 @@ from casatools import coordsys, image
 
 INPUTS = ("cube.im", "template.im", "single.im", "masked.im", "transposed.im", "cube_pol.im", "template_pol.im", "double.im",
           "complex.im", "dcomplex.im", "complex_sfl.im", "linear.im", "linear_template.im",
-          "linear_cube.im", "linear_cube_template.im", "direction_slice.im")
+          "linear_cube.im", "linear_cube_template.im", "direction_slice.im", "removed_linear.im", "removed_linear_template.im")
 CASES = {
     "frequency": {},
     "velocity": {"asvelocity": True},
@@ -55,6 +55,9 @@ CASES = {
     "linear_cube_replicate": {"imagename": "linear_cube.im", "template": "linear_cube_template.im", "axes": [2, 0], "replicate": True},
     "one_linear_axis": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0]},
     "unchanged_direction_slice": {"imagename": "direction_slice.im", "template": "direction_slice.im", "axes": [0]},
+    "removed_linear_first_axis": {"imagename": "removed_linear.im", "template": "removed_linear_template.im", "axes": [0]},
+    "removed_linear_both_axes": {"imagename": "removed_linear.im", "template": "removed_linear_template.im", "axes": [1, 0]},
+    "removed_linear_unselected_length": {"imagename": "removed_linear.im", "template": "removed_linear_template.im", "axes": [0], "shape": [4, 4]},
     "replicate_linear_plane": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0, 1], "replicate": True},
 }
 
@@ -214,6 +217,28 @@ def make_direction_slice():
     imsubimage(imagename="narrow_direction.im", outfile="direction_slice.im", dropdeg=True)
 
 
+def make_removed_linear():
+    for name, shape in (("removed_linear.im", (7, 6)), ("removed_linear_template.im", (4, 4))):
+        cs = coordsys().newcoordsys(linear=3)
+        ia = image()
+        try:
+            assert cs.setlineartransform(type="linear", value=[[1., .1, 0.], [.25, 1., 0.], [0., 0., 1.]])
+            if name == "removed_linear_template.im":
+                assert cs.setreferencevalue([.3, 0., .4], type="linear")
+                assert cs.setincrement([1.2, 1., 1.1], type="linear")
+            record = cs.torecord()
+            record["pixelmap0"] = [0, -2, 1]
+            record["worldmap0"] = [0, -2, 1]
+            record["pixelreplace0"][1] = 1.
+            x, y = np.indices(shape, dtype=np.float32)
+            assert ia.fromarray(name, x + 10 * y, csys=record)
+            if name == "removed_linear.im":
+                assert ia.putregion(pixelmask=(x + y != 6))
+        finally:
+            cs.done()
+            ia.done()
+
+
 def same_shape_linear_shift():
     template = imregrid(imagename="linear_cube.im", template="get")
     template["csys"]["linear0"]["crval"][0] += 0.25
@@ -248,6 +273,7 @@ def run_cases():
     make_complex()
     make_linear()
     make_direction_slice()
+    make_removed_linear()
     dictionary = imregrid(imagename="template.im", template="get")
     reference = imregrid(imagename="cube.im", template="get")
     def edit(direction=None, spectral=None):
@@ -288,6 +314,8 @@ def run_cases():
                 if name != "complex_sfl_frame" or "a projection of SFL" not in str(error):
                     raise
             case["error"] = str(error).splitlines()[0].replace(f"{Path.cwd()}/", "")
+            if name == "removed_linear_unselected_length":
+                case["error"] = case["error"].split(" at File: ", 1)[0]
             if "existing" in case:
                 assert snapshot(product) == snapshot(case["existing"])
         else:
