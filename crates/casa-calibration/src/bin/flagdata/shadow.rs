@@ -117,7 +117,8 @@ fn read_list(path: &str) -> Result<AntennaList, TaskFailure> {
         .map(str::trim_end)
         .filter(|line| line.len() >= 5 && !line.starts_with('#'))
         .collect();
-    if !lines.len().is_multiple_of(3) {
+    let (dishes, remainder) = lines.as_chunks::<3>();
+    if !remainder.is_empty() {
         tracing::warn!("The file needs to have 3 entries per antenna, on separate lines");
         return Ok(AntennaList {
             value: ParameterValue::Bool(false),
@@ -126,7 +127,7 @@ fn read_list(path: &str) -> Result<AntennaList, TaskFailure> {
     }
     let mut records = BTreeMap::new();
     let mut command = Vec::new();
-    for (index, lines) in lines.chunks_exact(3).enumerate() {
+    for (index, lines) in dishes.iter().enumerate() {
         let mut record = BTreeMap::new();
         let mut fields = Vec::new();
         for line in lines {

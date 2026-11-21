@@ -867,7 +867,7 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
         "rflag" => flag(FlagDataMode::Rflag),
         "extend" => flag(FlagDataMode::Extend),
         "summary" => flag(FlagDataMode::Summary),
-        "list" | "shadow" | "antint" => Err(not_yet("mode", text)),
+        "list" | "antint" => Err(not_yet("mode", text)),
         _ => Err(unknown(
             "mode",
             text,
