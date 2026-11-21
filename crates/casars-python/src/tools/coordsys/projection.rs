@@ -31,12 +31,16 @@ pub(super) fn direction_projection(name: &str, mut parameters: Vec<f64>) -> PyRe
     let kind = ProjectionType::from_name(name)
         .ok_or_else(|| raised("Projection::nParameters() - unknown projection"))?;
     if parameters.len() < *count as usize {
-        // A short vector is replaced by casacore's full projection default.
-        parameters = if name == "SIN" {
+        // Casacore resizes this vector without copying the supplied prefix,
+        // then fills the missing suffix with the projection's defaults.
+        let supplied = parameters.len();
+        let mut defaults = if name == "SIN" {
             vec![0.0; 2]
         } else {
             kind.fits_parameter_defaults().to_vec()
         };
+        defaults[..supplied].fill(0.0);
+        parameters = defaults;
     }
     Ok(Projection::with_parameters(kind, parameters))
 }

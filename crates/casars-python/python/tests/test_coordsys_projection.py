@@ -35,6 +35,7 @@ def setup_direction(api):
     ("TAN", [2.0], "TAN", [2.0]),
     ("GLS", [], "SFL", []),
     ("CYP", [], "CYP", [1., 1.]),
+    ("CYP", [2.], "CYP", [0., 1.]),
     ("CEA", [], "CEA", [1.]),
 ])
 def test_setprojection_rebuilds_the_direction_and_preserves_pixel_geometry(casa, name, parameters, stored, expected):
@@ -86,6 +87,21 @@ def test_projection_errors_keep_the_previous_transform(casa):
             with pytest.raises(RuntimeError):
                 coords.setprojection(name, parameters)
             _assert_value(coords.torecord(), prior)
+
+
+def test_every_casa_projection_is_selectable(casa):
+    reference = setup_direction(casa)
+    choices = reference.projection("all")["types"]
+    for name in choices:
+        parameters = {
+            "ZPN": [0., 1.] + [0.] * 18,
+            "COP": [30., 10.], "COD": [30., 10.],
+            "COE": [30., 10.], "COO": [30., 10.], "BON": [30.],
+        }.get(name, [])
+        for api in (tools, casa):
+            coords = setup_direction(api)
+            assert coords.setprojection(name, parameters)
+            assert coords.projection()["type"] == name
 
 
 @pytest.mark.parametrize("name", ["COP", "COD", "COE", "COO"])
