@@ -3,8 +3,8 @@
 use std::ops::{Add, Div, Mul, Range, Sub};
 use std::path::Path;
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::{ArrayD, RecordValue};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Axis, IxDyn, Zip};
 
 use crate::{ImageError, ImageInfo, ImageInterface, MutableImageInterface};
@@ -538,12 +538,36 @@ fn shift_boxcar_reference(
         .coordinate_record
         .take()
         .unwrap_or_else(|| section.coordinates.to_record());
-    let (coordinates, _) = CoordinateSystem::set_reference_value_in_record(
-        &mut record,
-        axis,
-        reference[local] + increment[local] * center,
-    )?;
-    section.coordinates = coordinates;
+    let shift = increment[local] * center;
+    section.coordinates = if let CoordinateModel::Tabular(table) = coordinate {
+        let field = &section.coordinates.coordinates_in_record(&record)?[index].field;
+        let Some(Value::Record(native)) = record.get_mut(field) else {
+            return Err(selection_error(
+                "Tabular coordinate is missing from its record",
+            ));
+        };
+        // Shift the live reference and the evaluated samples by the same
+        // offset. Keep the affine pixel reference from the selected grid.
+        let live = table.clone().with_live_reference(native)?;
+        let world = table
+            .world_values()
+            .iter()
+            .map(|value| value + shift)
+            .collect();
+        native.upsert("worldvalues", ArrayValue::from_f64_vec(world).into());
+        native.upsert(
+            "crval",
+            ArrayValue::from_f64_vec(vec![live.reference_value()[0] + shift]).into(),
+        );
+        CoordinateSystem::from_record(&record)?
+    } else {
+        CoordinateSystem::set_reference_value_in_record(
+            &mut record,
+            axis,
+            reference[local] + shift,
+        )?
+        .0
+    };
     section.coordinate_record = Some(record);
     Ok(())
 }
