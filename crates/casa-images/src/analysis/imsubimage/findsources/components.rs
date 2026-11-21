@@ -43,8 +43,11 @@ impl SkyPlane<'_> {
         ellipse: Option<PixelEllipse>,
     ) -> Result<SkyComponent, ImageError> {
         let center = self.world(peak.position)?;
-        let direction =
-            MDirection::from_angles(center[0], center[1], self.direction.direction_ref());
+        let direction = MDirection::from_angles(
+            center[0],
+            center[1],
+            self.direction.conversion_direction_ref(),
+        );
         let (shape, value, unit) = if let Some(ellipse) = ellipse {
             let axes = self.world_ellipse(peak.position, center, ellipse)?;
             let area = gaussian_area(axes.major_axis(), axes.minor_axis());
@@ -136,13 +139,19 @@ impl SkyPlane<'_> {
                 },
             ),
         ];
+        // CASA's integrated-temperature and velocity exceptions are keyed
+        // by the original brightness spelling. Other non-Jy integrals fall
+        // back to Jy/pixel, even when their physical dimensions conform.
+        let name = match self.brightness {
+            "K" => "K.rad.rad",
+            "Jy/beam.km/s" => "Jy.km/s",
+            _ => "Jy",
+        };
         if let Ok(unit) = Unit::with_local_definitions(self.brightness, &local) {
             let integrated = *unit.val() * *rad2.val();
-            for name in ["Jy", "Jy.km/s", "K.rad.rad"] {
-                let output = unit_named(name);
-                if integrated.conformant(output.val()) {
-                    return (peak * area * integrated.factor / output.val().factor, name);
-                }
+            let output = unit_named(name);
+            if integrated.conformant(output.val()) {
+                return (peak * area * integrated.factor / output.val().factor, name);
             }
         }
         (peak * area / pixel_area, "Jy")

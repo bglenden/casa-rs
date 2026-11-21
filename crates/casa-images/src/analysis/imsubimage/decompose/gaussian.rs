@@ -249,24 +249,32 @@ pub(super) fn fit(
     solution
 }
 
+pub(in crate::analysis::imsubimage) enum WindowFit {
+    Point,
+    DefaultWidth,
+    Fitted(Parameters),
+}
+
 // Fit2D's initial guess uses absolute moments above five percent of
 // the largest magnitude. Lower samples still enter the least-squares fit.
 pub(in crate::analysis::imsubimage) fn fit_window(
     pixels: impl IntoIterator<Item = ([f64; 2], f32)>,
     peak: f64,
-) -> Option<Parameters> {
+) -> WindowFit {
     const FACTOR: f64 = 4. * LN_2;
     let mut samples: Vec<_> = pixels
         .into_iter()
-        .filter(|&(_, pixel)| pixel.is_finite())
         .map(|([x, y], pixel)| Observation {
             position: [x, y, 0.],
             value: f64::from(pixel),
         })
         .collect();
+    if samples.iter().any(|row| !row.value.is_finite()) {
+        return WindowFit::Point;
+    }
     let scale = samples.iter().map(|row| row.value.abs()).fold(0., f64::max);
     if samples.len() < 6 || scale == 0. {
-        return None;
+        return WindowFit::Point;
     }
     let clip = f64::from((0.05 * scale) as f32);
     let mut moments = [0.; 6];
@@ -290,7 +298,7 @@ pub(in crate::analysis::imsubimage) fn fit_window(
     let major = 0.95 * (FACTOR * (xx + yy + span)).sqrt();
     let minor = (FACTOR * (xx + yy - span)).sqrt();
     if minor <= 0. || !major.is_finite() || !minor.is_finite() {
-        return None;
+        return WindowFit::Point;
     }
     let angle = 0.5 * (2. * xy).atan2(yy - xx);
     let seed = [peak / scale, x, y, major, minor / major, -angle, 0., 0., 0.];
@@ -300,9 +308,13 @@ pub(in crate::analysis::imsubimage) fn fit_window(
         iterations: 1000,
         criterion: 0.0001,
     };
-    let mut result = optimize(&samples, &[seed], 2, &options, scale)?.pop()?;
+    let Some(mut result) =
+        optimize(&samples, &[seed], 2, &options, scale).and_then(|mut fit| fit.pop())
+    else {
+        return WindowFit::DefaultWidth;
+    };
     result[0] *= scale;
-    Some(result)
+    WindowFit::Fitted(result)
 }
 
 fn optimize(

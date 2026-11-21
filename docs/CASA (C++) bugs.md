@@ -8847,3 +8847,11 @@ inverse. On a 16 × 17 Float image with a compact peak centered at row 1 or
 masked off, CASA reports the source anyway. Casa-rs preserves the regular
 scan starting at row 3 for both masks, so rows excluded by the mask cannot
 contribute to these detections.
+
+For a native J2000 sky coordinate with its conversion type set to Galactic,
+`findsources` returns Galactic longitude and latitude, approximately
+`(1.68201, -1.05039)` radians for an off-center point in a synthetic image
+centered at J2000 zero. CASA tags these values as J2000, so a component list
+using that record interprets a different sky position. Casa-rs tags the
+angles with the frame used to compute them. Gaussian directions and their
+position angles are computed in that same frame.

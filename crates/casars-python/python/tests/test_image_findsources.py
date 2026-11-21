@@ -95,7 +95,10 @@ def test_findsources_native_writer_reader_matrix(casa, tmp_path):
             _compare(actual, expected)
 
 
-@pytest.mark.parametrize("brightness", ["", "mJy/beam", "Jy/pixel", "K"])
+@pytest.mark.parametrize("brightness", [
+    "", "mJy/beam", "Jy/pixel", "K", "mK", "Jy/beam.km/s",
+    "mJy/beam.km/s", "Jy.km/s/pixel",
+])
 @pytest.mark.parametrize("height", [7., -7.])
 def test_findsources_fitted_ellipses_and_flux(casa, brightness, height):
     values = _sources((31, 34), [(height, 14.2, 17.7, 6., 2.5)])
@@ -113,11 +116,12 @@ def test_findsources_fitted_ellipses_and_flux(casa, brightness, height):
             assert component["shape"]["type"] == "Gaussian"
             assert component["shape"]["majoraxis"]["value"] == pytest.approx(120. * np.sqrt(6. * np.log(2.)), rel=.001)
             assert component["shape"]["minoraxis"]["value"] == pytest.approx(120. * np.sqrt(2.5 * np.log(2.)), rel=.001)
-            if brightness in ("", "Jy/pixel"):
+            if brightness in ("", "Jy/pixel", "mK", "mJy/beam.km/s", "Jy.km/s/pixel"):
                 integral = height * np.pi * np.sqrt(6. * 2.5)
                 assert component["flux"]["value"][0] == pytest.approx(integral, rel=.001)
-            elif "beam" in brightness:
-                integral = height * 1e-3 * 60.**2 * 4. * np.log(2.) * np.sqrt(6. * 2.5) / (140. * 90.)
+            elif brightness in ("mJy/beam", "Jy/beam.km/s"):
+                gain = 1e-3 if brightness == "mJy/beam" else 1.
+                integral = height * gain * 60.**2 * 4. * np.log(2.) * np.sqrt(6. * 2.5) / (140. * 90.)
                 assert component["flux"]["value"][0] == pytest.approx(integral, rel=.001)
             results.append(components)
         finally:
@@ -127,8 +131,13 @@ def test_findsources_fitted_ellipses_and_flux(casa, brightness, height):
     for api in (casa, tools):
         componentlist = api.componentlist()
         try:
-            assert componentlist.fromrecord({"component0": results[-1][0], "nelements": 1})
-            assert componentlist.length() == 1
+            record = {"component0": results[-1][0], "nelements": 1}
+            if api is casa and brightness == "Jy/beam.km/s":
+                with pytest.raises(RuntimeError, match="dimensions of the units"):
+                    componentlist.fromrecord(record)
+            else:
+                assert componentlist.fromrecord(record)
+                assert componentlist.length() == 1
         finally:
             componentlist.done()
 
@@ -254,5 +263,93 @@ def test_findsources_early_rows_do_not_admit_masked_pixels(casa, center):
             assert source.findsources()["nelements"] == 0
             assert source.putregion(pixelmask=valid)
             assert source.findsources()["nelements"] == (1 if api is casa else 0)
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("point", [True, False])
+def test_findsources_labels_the_coordinate_conversion_frame(casa, point):
+    values = _sources((31, 34), [(7., 14.2, 17.7, 6., 2.5)])
+    original = casa.image()
+    assert original.fromarray(pixels=values)
+    coordinates = original.coordsys()
+    assert coordinates.setconversiontype(direction="GALACTIC")
+    record = coordinates.torecord()
+    coordinates.done()
+    original.done()
+    directions = []
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values, csys=record)
+        try:
+            result = _components(source.findsources(point=point))
+            direction = result[0]["shape"]["direction"]
+            assert direction["refer"] == ("J2000" if api is casa else "GALACTIC")
+            directions.append([direction["m0"]["value"], direction["m1"]["value"]])
+        finally:
+            source.done()
+    np.testing.assert_allclose(directions[1], directions[0], rtol=0., atol=7e-8 if not point else 2e-10)
+    reference = [1.68201015445542, -1.0503864157] if point else [1.68199966643, -1.0503952928]
+    np.testing.assert_allclose(directions[1], reference, rtol=0., atol=7e-8)
+
+
+@pytest.mark.parametrize("width", [-2, 12])
+def test_findsources_default_gaussian_when_window_is_unavailable(casa, width):
+    values = _sources((31, 34), [(7., 8.2, 17.7, 6., 2.5)])
+    fitted = []
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        try:
+            point = _components(source.findsources())[0]
+            result = _components(source.findsources(point=False, width=width))
+            assert result[0]["shape"]["type"] == "Gaussian"
+            np.testing.assert_allclose(_direction(result[0]), _direction(point), rtol=0., atol=1e-10)
+            expected = point["flux"]["value"][0] * np.pi / (4. * np.log(2.)) * width**2
+            assert result[0]["flux"]["value"][0] == pytest.approx(expected, rel=.001)
+            fitted.append(result)
+        finally:
+            source.done()
+    _compare(fitted[1], fitted[0], fitted=True)
+
+
+@pytest.mark.parametrize("case", ["single_pixel", "rank_one", "invalid", "masked_invalid"])
+def test_findsources_gaussian_fallback_for_degenerate_or_invalid_fits(casa, case):
+    values = np.zeros((31, 34), dtype=np.float32)
+    if case == "single_pixel":
+        values[14, 18] = 7.
+    elif case == "rank_one":
+        values[14, 17:20] = [1., 7., 1.]
+    else:
+        values = _sources((31, 34), [(7., 14.2, 17.7, 6., 2.5)])
+        values[17, 19] = np.nan
+    records = []
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        try:
+            if case == "masked_invalid":
+                assert source.putregion(pixelmask=np.isfinite(values))
+            result = _components(source.findsources(point=False))
+            if case == "masked_invalid":
+                assert result[0]["shape"]["type"] == "Gaussian"
+            else:
+                assert result[0]["shape"]["type"] == "Point"
+                _compare(result, _components(source.findsources()))
+            records.append(result)
+        finally:
+            source.done()
+    _compare(records[1], records[0], fitted=True)
+
+
+@pytest.mark.parametrize("argument", [{"region": 3}, {"mask": 3}])
+def test_findsources_checks_attachment_and_pixel_type_before_variant_arguments(casa, argument):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.findsources(**argument) == {}
+        assert source.fromshape(shape=[12, 12], type="d")
+        try:
+            with pytest.raises(RuntimeError, match="only float-valued images"):
+                source.findsources(**argument)
         finally:
             source.done()

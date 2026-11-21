@@ -14,18 +14,33 @@ use super::subimage::{RegionArgument, mask_argument, require_bool};
 impl PyImageTool {
     /// Find compact emission sources in the selected sky plane.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (nmax=20, cutoff=0.1, region=RegionArgument::default(), mask=None, point=true, width=5, negfind=false), text_signature = "($self, nmax=20, cutoff=0.1, region={}, mask='', point=True, width=5, negfind=False)")]
+    #[pyo3(signature = (nmax=20, cutoff=0.1, region=None, mask=None, point=true, width=5, negfind=false), text_signature = "($self, nmax=20, cutoff=0.1, region={}, mask='', point=True, width=5, negfind=False)")]
     fn findsources<'py>(
         &self,
         py: Python<'py>,
         nmax: i64,
         cutoff: f64,
-        region: RegionArgument,
+        region: Option<&Bound<'py, PyAny>>,
         mask: Option<&Bound<'py, PyAny>>,
         #[pyo3(from_py_with = require_bool)] point: bool,
         width: i64,
         #[pyo3(from_py_with = require_bool)] negfind: bool,
     ) -> PyResult<Py<PyAny>> {
+        let attached_float = py.detach(|| {
+            self.state()
+                .image
+                .as_ref()
+                .map(|source| matches!(*source.lock(), ImageHandle::Float(_)))
+        });
+        match attached_float {
+            None => return record_to_py(py, Default::default()),
+            Some(false) => {
+                return Err(raised("This application supports only float-valued images"));
+            }
+            Some(true) => {}
+        }
+        let region: RegionArgument =
+            region.map_or_else(|| Ok(Default::default()), Bound::extract)?;
         let mask = mask_argument(mask)?;
         let record = py.detach(|| {
             let state = self.state();

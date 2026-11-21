@@ -12,7 +12,7 @@ use crate::{ImageError, ImageInterface};
 
 use self::components::{PixelEllipse, SkyPlane};
 use self::peaks::Peak;
-use super::decompose::fit_window;
+use super::decompose::{WindowFit, fit_window};
 use super::read_window::PixelSections;
 use super::{StridedSection, SubimageOptions, SubimagePlan, SubimageRegion};
 
@@ -116,10 +116,9 @@ pub fn find_image_sources(
     let mut components = ComponentList::new();
     for peak in candidates {
         let mut model = None;
-        if !options.point && options.fit_width > 0 {
-            let width = options.fit_width as usize;
-            let (fitted, ellipse) = fit_source(&reader, &section, &plan, shape, peak, width)?;
-            model = sky.component(fitted, Some(ellipse)).ok();
+        if !options.point && options.fit_width != 0 {
+            model = fit_source(&reader, &section, &plan, shape, peak, options.fit_width)?
+                .and_then(|(fitted, ellipse)| sky.component(fitted, Some(ellipse)).ok());
         }
         let component = match model {
             Some(component) => component,
@@ -144,16 +143,20 @@ fn fit_source(
     plan: &SubimagePlan,
     shape: [usize; 2],
     peak: Peak,
-    width: usize,
-) -> Result<(Peak, PixelEllipse), ImageError> {
+    width: i64,
+) -> Result<Option<(Peak, PixelEllipse)>, ImageError> {
     let default = PixelEllipse {
         major: width as f64,
         minor: width as f64,
         x_to_y: 0.,
     };
+    if width < 0 {
+        return Ok(Some((peak, default)));
+    }
+    let width = width as usize;
     let center = peak.position.map(|pixel| pixel as usize);
     if (0..2).any(|axis| width > center[axis] || width >= shape[axis] - center[axis]) {
-        return Ok((peak, default));
+        return Ok(Some((peak, default)));
     }
     let lower = center.map(|c| c - width);
     let [x_axis, y_axis] = [plan.kept_axes[0], plan.kept_axes[1]];
@@ -179,10 +182,12 @@ fn fit_source(
             }
         }
     }
-    let Some([height, x, y, major, ratio, pa, ..]) = fit_window(observations, peak.height) else {
-        return Ok((peak, default));
+    let [height, x, y, major, ratio, pa, ..] = match fit_window(observations, peak.height) {
+        WindowFit::Point => return Ok(None),
+        WindowFit::DefaultWidth => return Ok(Some((peak, default))),
+        WindowFit::Fitted(solution) => solution,
     };
-    Ok((
+    Ok(Some((
         Peak {
             position: [x + lower[0] as f64, y + lower[1] as f64],
             height,
@@ -192,5 +197,5 @@ fn fit_source(
             minor: major * ratio,
             x_to_y: pa + std::f64::consts::FRAC_PI_2,
         },
-    ))
+    )))
 }
