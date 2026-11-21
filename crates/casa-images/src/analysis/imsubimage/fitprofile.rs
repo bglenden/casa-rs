@@ -63,6 +63,10 @@ pub struct ProfileFitOptions<'a> {
     pub divisor: ProfileDivisor,
     /// Optional sigma image or array, broadcast along the other axes if needed.
     pub sigma: Option<ProfileSigma<'a>>,
+    /// Additional artifact paths that must remain distinct from input mask operands.
+    pub other_artifact: Option<&'a Path>,
+    /// Attachment-local restoring beams, if different from the native table metadata.
+    pub beam_record: Option<&'a RecordValue>,
 }
 
 /// Region expression applied before fitting profiles.
@@ -79,7 +83,7 @@ pub struct ProfileRegion<'a> {
 }
 
 /// Abscissa normalization used by power-log and log-transformed models.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub enum ProfileDivisor {
     /// Derive the divisor from the range of the selected coordinate.
     #[default]
@@ -91,7 +95,7 @@ pub enum ProfileDivisor {
 }
 
 /// Initial parameters for Gaussian or Lorentzian singlets and Gaussian multiplets.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct ProfilePeaks<'a> {
     /// One peak value per component.
     pub amplitudes: &'a [f64],
@@ -115,7 +119,7 @@ impl<'a> From<ProfilePeaks<'a>> for PeakLists<'a> {
 }
 
 /// Supplied profile model families and parameter constraints.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct ProfileEstimates<'a> {
     /// Independent peaks.
     pub singlets: ProfilePeaks<'a>,
@@ -136,7 +140,7 @@ pub struct ProfileEstimates<'a> {
 }
 
 /// Destination names for the native products of a profile fit.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct ProfileOutputNames<'a> {
     /// Model and residual image paths.
     pub spectra: [&'a str; 2],
@@ -180,6 +184,7 @@ impl<'a> ImageProfileFit<'a> {
             region.chans,
             region.stokes,
             options.axis,
+            options.beam_record,
         )?;
         let models = models(&mut options)?;
         if models.spectral_polynomial.is_some() && options.polynomial.is_some() {
@@ -241,16 +246,20 @@ impl<'a> ImageProfileFit<'a> {
     ///
     /// # Errors
     /// Input reads, mask or sigma preparation, native metadata or output writes failed.
-    pub fn fit(mut self, staged: &[Option<&Path>]) -> Result<RecordValue, ImageError> {
+    pub fn fit(self, staged: &[Option<&Path>]) -> Result<RecordValue, ImageError> {
         let axis = ProfileAxis::new(&self.selection, self.models.spectral_polynomial.is_some())?;
         let plane_mask = self.selection.selected_planes(self.options.planes)?;
-        let reader = self
-            .selection
-            .reader(self.source, self.options.mask, self.options.stretch)?;
+        let reader = self.selection.reader(
+            self.source,
+            self.options.mask,
+            self.options.stretch,
+            self.destinations()
+                .map(Path::new)
+                .chain(self.options.other_artifact),
+        )?;
         let sigma = self
             .options
             .sigma
-            .take()
             .map(|input| Sigma::new(input, self.source.shape(), self.selection.axis))
             .transpose()?;
         let mut products = ProfileProducts::new(&self, staged)?;

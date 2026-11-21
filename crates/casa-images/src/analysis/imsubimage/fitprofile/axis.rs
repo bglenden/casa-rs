@@ -35,7 +35,7 @@ impl<'a> ProfileAxis<'a> {
         let spectral_owner = coordinates
             .find_coordinate(CoordinateType::Spectral)
             .ok_or_else(|| invalid("Image has no spectral coordinate"))?;
-        let spectral_unit = coordinates.coordinate(spectral_owner).world_axis_units()[0].clone();
+        let spectral_unit = coordinates.coordinate(spectral_owner).axis_units()[0].clone();
         let spectral = owner.and_then(|(index, _)| match coordinates.coordinate(index) {
             CoordinateModel::Spectral(coordinate) => Some(coordinate.as_ref()),
             _ => None,

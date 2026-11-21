@@ -6,7 +6,7 @@ use casa_coordinates::CoordinateSystem;
 use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Axis, IxDyn};
 
-use crate::{Image, ImageError, ImageInterface, MutableImageInterface};
+use crate::{Image, ImageError, MutableImageInterface};
 
 use super::models::{LineKind, ProfileModels};
 use super::selection::Lane;
@@ -267,7 +267,7 @@ impl ProfileProducts {
         sigma: Option<&Sigma<'_>>,
         axis_unit: &str,
     ) -> Result<(), ImageError> {
-        for spectrum in [self.model, self.residual].into_iter().flatten() {
+        for mut spectrum in [self.model, self.residual].into_iter().flatten() {
             spectrum.image.save()?;
         }
         let mut shape = self.shape;
@@ -312,7 +312,7 @@ impl ProfileProducts {
 }
 
 struct SpectrumProduct {
-    image: Image<f32>,
+    image: Image,
     mask: Option<String>,
 }
 
@@ -334,11 +334,7 @@ impl SpectrumProduct {
     }
 }
 
-fn create(
-    shape: Vec<usize>,
-    coordinates: &RecordValue,
-    path: &Path,
-) -> Result<Image<f32>, ImageError> {
+fn create(shape: Vec<usize>, coordinates: &RecordValue, path: &Path) -> Result<Image, ImageError> {
     let mut image = Image::create(shape, CoordinateSystem::from_record(coordinates)?, path)?;
     image.set_coordinate_record(coordinates.clone())?;
     Ok(image)
@@ -357,7 +353,7 @@ fn write_field(
         .index_axis(Axis(values.ndim() - 1), index)
         .mapv(|value| value as f32);
     let mask = values.mapv(f32::is_finite);
-    image.put(&values)?;
+    image.put_slice(&values, &vec![0; values.ndim()])?;
     if mask.iter().any(|&value| !value) {
         image.put_mask("mask0", &mask)?;
         image.set_default_mask("mask0")?;

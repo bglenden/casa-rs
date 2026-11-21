@@ -10,6 +10,7 @@ use crate::{ImageError, ImageInterface};
 use super::selection::{Lane, ProfileSelection};
 
 /// Standard deviations for a spectral profile objective.
+#[derive(Clone, Copy)]
 pub enum ProfileSigma<'a> {
     /// Owned by the caller as a channel vector, broadcast array or full array.
     Values(&'a ArrayD<f32>),

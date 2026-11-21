@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::path::Path;
+
 use casa_coordinates::CoordinateType;
 use casa_types::RecordValue;
 
@@ -27,6 +29,7 @@ impl ProfileSelection {
         channels: Option<&str>,
         stokes: Option<&str>,
         axis: i64,
+        beam_record: Option<&RecordValue>,
     ) -> Result<Self, ImageError> {
         let axis = if axis < 0 {
             input.find_axis(CoordinateType::Spectral).unwrap_or(0)
@@ -41,8 +44,14 @@ impl ProfileSelection {
         }
         let selection =
             SubimageSelection::resolve_section(input, pixel_box, region, channels, stokes)?;
-        let plan =
-            SubimagePlan::from_selection(input, Some(coordinates), selection, false, &[], None)?;
+        let plan = SubimagePlan::from_selection(
+            input,
+            Some(coordinates),
+            selection,
+            false,
+            &[],
+            beam_record,
+        )?;
         let stride = plan
             .selection
             .stride
@@ -68,11 +77,18 @@ impl ProfileSelection {
         input: &'a dyn ImageInterface<f32>,
         mask: Option<&str>,
         stretch: bool,
+        destinations: impl IntoIterator<Item = &'a Path>,
     ) -> Result<PixelSections<'a, f32>, ImageError> {
         Ok(PixelSections {
             image: input,
             selection: &self.plan.selection,
-            mask: PreparedMask::new(mask, input.shape(), input.coordinates(), stretch)?,
+            mask: PreparedMask::new_for_outputs(
+                mask,
+                input.shape(),
+                input.coordinates(),
+                stretch,
+                destinations,
+            )?,
         })
     }
 

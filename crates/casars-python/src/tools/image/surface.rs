@@ -425,7 +425,7 @@ const METHODS: &[Method] = &[
             param("planes", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fitsheader",

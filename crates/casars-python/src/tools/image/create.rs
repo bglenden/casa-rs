@@ -440,44 +440,86 @@ pub(super) fn publish_image_set<T, const N: usize>(
     overwrite: bool,
     build: impl FnOnce([Option<&Path>; N]) -> PyResult<T>,
 ) -> PyResult<T> {
-    let stages = outputs
-        .into_iter()
-        .map(StagedImage::allocate)
-        .collect::<PyResult<Vec<_>>>()?;
-    let check = || {
-        for (index, stage) in stages.iter().enumerate() {
-            for previous in &stages[..index] {
+    let stages = NamedImageStages::new(outputs, overwrite)?;
+    let paths = stages.paths();
+    let product = build(std::array::from_fn(|index| paths[index]))?;
+    stages.publish(false)?;
+    Ok(product)
+}
+
+pub(super) struct NamedImageStages {
+    stages: Vec<Option<StagedImage>>,
+    overwrite: bool,
+}
+
+impl NamedImageStages {
+    pub(super) fn new<'a>(
+        outputs: impl IntoIterator<Item = &'a str>,
+        overwrite: bool,
+    ) -> PyResult<Self> {
+        let stages = outputs
+            .into_iter()
+            .map(StagedImage::allocate)
+            .collect::<PyResult<Vec<_>>>()?;
+        let set = Self { stages, overwrite };
+        set.check_distinct()?;
+        if !overwrite {
+            for stage in set.stages.iter().flatten() {
+                if stage.target.symlink_metadata().is_ok() {
+                    return Err(raised(format!("File {} already exists", stage.requested)));
+                }
+            }
+        }
+        Ok(set)
+    }
+
+    fn check_distinct(&self) -> PyResult<()> {
+        for (index, stage) in self.stages.iter().enumerate() {
+            for previous in &self.stages[..index] {
                 check_distinct(stage.as_ref(), previous.as_ref())?;
             }
         }
-        Ok::<_, PyErr>(())
-    };
-    check()?;
-    if !overwrite {
-        for stage in stages.iter().flatten() {
-            if stage.target.symlink_metadata().is_ok() {
-                return Err(raised(format!("File {} already exists", stage.requested)));
+        Ok(())
+    }
+
+    pub(super) fn paths(&self) -> Vec<Option<&Path>> {
+        self.stages
+            .iter()
+            .map(|stage| stage.as_ref().map(|stage| stage.product.as_path()))
+            .collect()
+    }
+
+    pub(super) fn publish(mut self, allow_missing: bool) -> PyResult<()> {
+        if allow_missing {
+            for slot in &mut self.stages {
+                if let Some(stage) = slot
+                    && let Err(error) = stage.product.symlink_metadata()
+                {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        *slot = None;
+                    } else {
+                        return Err(raised(error));
+                    }
+                }
             }
         }
+        let registry = attachment::registry();
+        self.check_distinct()?;
+        let _product_locks = self
+            .stages
+            .iter()
+            .flatten()
+            .map(|stage| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
+            .collect::<PyResult<Vec<_>>>()?;
+        let mut locks = BTreeMap::new();
+        install_images(
+            self.stages.into_iter().flatten(),
+            self.overwrite,
+            &registry,
+            &mut locks,
+        )?;
+        Ok(())
     }
-    let product = build(std::array::from_fn(|index| {
-        stages[index].as_ref().map(|stage| stage.product.as_path())
-    }))?;
-    let registry = attachment::registry();
-    check()?;
-    let _product_locks = stages
-        .iter()
-        .flatten()
-        .map(|stage| TableWriteLock::acquire(&stage.product, 1).map_err(raised))
-        .collect::<PyResult<Vec<_>>>()?;
-    let mut locks = BTreeMap::new();
-    install_images(
-        stages.into_iter().flatten(),
-        overwrite,
-        &registry,
-        &mut locks,
-    )?;
-    Ok(product)
 }
 
 fn install_images(
