@@ -37,6 +37,8 @@ mod read;
 mod render;
 mod rerefant;
 mod setjy;
+
+pub use setjy::direct::{ImagerSetJyRequest, imager_setjy};
 mod smoothcal;
 mod statwt;
 mod uvmodelfit;

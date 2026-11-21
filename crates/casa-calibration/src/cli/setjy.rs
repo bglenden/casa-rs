@@ -16,6 +16,7 @@ use casa_ms::{
 use casa_provider_contracts::{
     CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype, ParameterValue,
 };
+use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::ScalarValue;
 use casa_types::measures::direction::MDirection;
@@ -28,15 +29,14 @@ use crate::attachment::OpenedMs;
 use crate::ft::image::ImageModel;
 use crate::ft::setjy::solar2010::Solar2010;
 use crate::ft::setjy::standards::fixed::FixedScale;
-use crate::ft::setjy::standards::{
-    CalibratorSpectrum, CatalogMatch, CatalogScale, FluxCatalog, FluxScale,
-};
+use crate::ft::setjy::standards::{CalibratorSpectrum, CatalogMatch, FluxCatalog, FluxScale};
 use crate::ft::setjy::{ManualFlux, sampled_point};
 use crate::ft::virtual_publication::VirtualFtPublication;
 use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
 use crate::solve::grouping::VisibilityModels;
 
+pub(super) mod direct;
 mod fluxdict;
 mod model_files;
 mod resolved;
@@ -280,48 +280,15 @@ fn publish_models(
     calibration_directions: bool,
 ) -> Result<(), TaskFailure> {
     if scratch {
-        let entries: Vec<_> = models
-            .values()
-            .flat_map(|model| model.entries.iter().cloned())
-            .collect();
-        let geometry = if calibration_directions && !entries.is_empty() {
-            let ms = &opened.measurement_set;
-            Some(
-                VisibilityModels::from_entries(ms, &selected.selected_rows, &entries)
-                    .and_then(|models| models.with_calibration_field_directions(ms))
-                    .map_err(execution)?,
-            )
-        } else {
-            None
-        };
-        write_model_scratch(
+        publish_scratch(
             &mut opened.measurement_set,
-            selected,
-            &entries,
-            false,
-            true,
-            geometry,
             &mut opened.lock,
-        )
-        .map_err(execution)?;
+            selected,
+            models,
+            calibration_directions,
+        )?;
     } else if parts.is_empty() {
-        // Fields can place records in different tables, depending on SOURCE_ID.
-        for (field, mut model) in models.into_iter().rev() {
-            let mut publication = VirtualModelPublication::default();
-            let published = publication.replace_windows_holding(
-                &mut opened.measurement_set,
-                &model.entries,
-                &mut opened.lock,
-                field,
-                spws,
-            );
-            if publication.may_reference_images() {
-                for image in &mut model.images {
-                    image.retain();
-                }
-            }
-            published.map_err(execution)?;
-        }
+        publish_virtual(&mut opened.measurement_set, &mut opened.lock, models, spws)?;
     } else {
         for (field, model) in models.into_iter().rev() {
             let inputs = std::iter::once(&opened.measurement_set)
@@ -353,6 +320,50 @@ fn publish_models(
     Ok(())
 }
 
+fn publish_scratch(
+    ms: &mut MeasurementSet,
+    lock: &mut TableWriteLock,
+    selected: &ResolvedMsSelection,
+    models: FieldModels,
+    calibration_directions: bool,
+) -> Result<(), TaskFailure> {
+    // Keep the temporary image owners alive through the scratch write.
+    let entries: Vec<_> = models
+        .values()
+        .flat_map(|model| model.entries.iter().cloned())
+        .collect();
+    let geometry = if calibration_directions && !entries.is_empty() {
+        Some(
+            VisibilityModels::from_entries(ms, &selected.selected_rows, &entries)
+                .and_then(|models| models.with_calibration_field_directions(ms))
+                .map_err(execution)?,
+        )
+    } else {
+        None
+    };
+    write_model_scratch(ms, selected, &entries, false, true, geometry, lock).map_err(execution)
+}
+
+fn publish_virtual(
+    ms: &mut MeasurementSet,
+    lock: &mut TableWriteLock,
+    models: FieldModels,
+    windows: &[i32],
+) -> Result<(), TaskFailure> {
+    for (field, mut model) in models.into_iter().rev() {
+        let mut publication = VirtualModelPublication::default();
+        let published =
+            publication.replace_windows_holding(ms, &model.entries, lock, field, windows);
+        if publication.may_reference_images() {
+            for image in &mut model.images {
+                image.retain();
+            }
+        }
+        published.map_err(execution)?;
+    }
+    Ok(())
+}
+
 fn empty_selection(task: &TaskInvocation<'_>, partition: bool) -> Result<CasaValue, TaskFailure> {
     if partition || task.flag("ismms")? {
         return Ok(CasaValue::Dict {
@@ -370,16 +381,8 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
     let standard = task.text("standard")?;
     let scale = match standard.as_deref() {
         Some("manual" | "Butler-JPL-Horizons 2010") => None,
-        Some("Perley-Butler 2017") => Some(FluxScale::Table(CatalogScale::PerleyButler2017)),
-        Some("Perley-Butler 2013") => Some(FluxScale::Table(CatalogScale::PerleyButler2013)),
-        Some("Scaife-Heald 2012") => Some(FluxScale::Table(CatalogScale::ScaifeHeald2012)),
-        Some("Baars") => Some(FluxScale::Fixed(FixedScale::Baars)),
-        Some("Perley 90") => Some(FluxScale::Fixed(FixedScale::Perley90)),
-        Some("Perley-Taylor 95") => Some(FluxScale::Fixed(FixedScale::PerleyTaylor95)),
-        Some("Perley-Taylor 99") => Some(FluxScale::Fixed(FixedScale::PerleyTaylor99)),
-        Some("Perley-Butler 2010") => Some(FluxScale::Fixed(FixedScale::PerleyButler2010)),
-        Some("Stevens-Reynolds 2016") => Some(FluxScale::Fixed(FixedScale::StevensReynolds2016)),
-        _ => return Err(pending("standard")),
+        Some(name) => Some(FluxScale::named(name).ok_or_else(|| pending("standard"))?),
+        None => return Err(pending("standard")),
     };
     if !matches!(task.value("fluxdict"), Some(ParameterValue::Table(_))) {
         return Err(TaskFailure::validation("fluxdict must be a dictionary").at("fluxdict"));

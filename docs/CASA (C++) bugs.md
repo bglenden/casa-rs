@@ -8707,3 +8707,14 @@ selecting a row, while `observation=1` reaches the same documented selector.
 casa-rs resolves either form. The 2012 Solar System comparison uses the
 integer form in CASA and the string form in casa-rs against an MS with two
 observatory rows.
+
+## imager.setjy can abort when the manual reference frequency is omitted
+
+CASA 6.7.6.14 can terminate the Python process when
+`imager.setjy(fluxdensity=[5, 0.6, 0.2, 0.1], standard="Perley-Butler 2017")`
+uses the declared empty `reffreq` default. The binding constructs a spectrum
+with a zero reference frequency, which the component library rejects.
+
+casa-rs supplies the task's 1 GHz reference when the tool parameter is
+omitted. The fixed-flux comparison uses that explicit frequency in CASA
+and the default in casa-rs.

@@ -25,6 +25,21 @@ pub(crate) enum FluxScale {
 }
 
 impl FluxScale {
+    pub(crate) fn named(name: &str) -> Option<Self> {
+        Some(match name {
+            "Perley-Butler 2017" => Self::Table(CatalogScale::PerleyButler2017),
+            "Perley-Butler 2013" => Self::Table(CatalogScale::PerleyButler2013),
+            "Scaife-Heald 2012" => Self::Table(CatalogScale::ScaifeHeald2012),
+            "Baars" => Self::Fixed(FixedScale::Baars),
+            "Perley 90" => Self::Fixed(FixedScale::Perley90),
+            "Perley-Taylor 95" => Self::Fixed(FixedScale::PerleyTaylor95),
+            "Perley-Taylor 99" => Self::Fixed(FixedScale::PerleyTaylor99),
+            "Perley-Butler 2010" => Self::Fixed(FixedScale::PerleyButler2010),
+            "Stevens-Reynolds 2016" => Self::Fixed(FixedScale::StevensReynolds2016),
+            _ => return None,
+        })
+    }
+
     pub(crate) fn time_interpolation(self) -> bool {
         matches!(self, Self::Table(scale) if scale.time_interpolation())
     }
