@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, Div, Mul, Range, Sub};
 use std::path::Path;
 
-use casa_coordinates::CoordinateType;
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Axis, IxDyn, Zip};
 
@@ -11,7 +11,9 @@ use crate::{ImageError, ImageInfo, ImageInterface, MutableImageInterface};
 
 use super::super::axes::StridedSection;
 use super::super::lel_mask::PreparedMask;
-use super::decimate::{DecimationMethod, DecimationPixel};
+use super::decimate::{
+    DecimationMethod, DecimationPixel, apply_decimation, implicit_decimation_axes,
+};
 use super::read_window::PixelSections;
 use super::region::SubimageSelection;
 use super::{SubimagePlan, SubimageRegion};
@@ -166,25 +168,45 @@ impl<'a> ImageSmoothing<'a> {
             ));
         }
         let mut shape = input.packed_shape();
-        let samples = Samples::describe(options.kernel, shape[axis], options.decimate)?;
-        shape[axis] = samples.count;
+        let length = shape[axis];
+        let samples = Samples::describe(options.kernel, length, options.decimate)?;
+        // Match the CASA sequence: smooth a cropped grid, then optionally
+        // decimate its coordinates while retaining the cropped Stokes labels.
+        shape[axis] = match (options.kernel, options.decimate) {
+            (SmoothingKernel::Boxcar(width), Some(DecimationMethod::Copy)) => {
+                (samples.count - 1) * width + 1
+            }
+            (SmoothingKernel::Boxcar(width), _) => length - width + 1,
+            (SmoothingKernel::Hanning, Some(_)) => samples.count * 2,
+            (SmoothingKernel::Hanning, None) => length,
+        };
+        if matches!(options.kernel, SmoothingKernel::Boxcar(_))
+            && options.decimate.is_some()
+            && shape[axis] > 1
+            && let Some(axes) = implicit_decimation_axes(image)
+        {
+            for index in axes {
+                shape[index] = 1;
+            }
+        }
         let mut metadata = SubimageSelection::resolve_section(image, None, None, None, None)?;
         metadata.start.clone_from(&input.start);
-        let mut step = input
+        let stride = input
             .stride
             .clone()
             .unwrap_or_else(|| vec![1; image.ndim()]);
-        metadata.start[axis] += samples.first * step[axis];
-        step[axis] = step[axis]
-            .checked_mul(samples.step)
-            .ok_or_else(|| selection_error("Smoothing stride exceeds the supported pixel range"))?;
+        metadata.start[axis] += samples.first * stride[axis];
         metadata.shape = shape
             .iter()
-            .zip(&step)
+            .zip(&stride)
             .map(|(&length, &step)| (length - 1) * step + 1)
             .collect();
-        metadata.stride = step.iter().any(|&step| step != 1).then_some(step);
-        let section = SubimagePlan::from_selection(
+        metadata.stride.clone_from(&input.stride);
+        let tabular = image
+            .coordinates()
+            .find_coordinate(CoordinateType::Tabular)
+            .map(|_| coordinates.clone());
+        let mut section = SubimagePlan::from_selection(
             image,
             Some(coordinates),
             metadata,
@@ -192,6 +214,18 @@ impl<'a> ImageSmoothing<'a> {
             &[],
             Some(beam_record),
         )?;
+        apply_decimation(
+            &mut section,
+            tabular.as_ref(),
+            axis,
+            samples.step,
+            options.decimate.unwrap_or(DecimationMethod::Copy),
+        )?;
+        if let SmoothingKernel::Boxcar(width) = options.kernel
+            && width > 1
+        {
+            shift_boxcar_reference(&mut section, axis, width, samples.step)?;
+        }
         Ok(Self {
             section,
             input,
@@ -206,7 +240,7 @@ impl<'a> ImageSmoothing<'a> {
         self.axis
     }
 
-    /// Stream tiles containing complete selected lines into an allocated output.
+    /// Stream bounded tiles of selected samples into an allocated output.
     ///
     /// # Errors
     /// Input I/O or mask evaluation failed, or a mean bin has no valid pixels.
@@ -235,59 +269,206 @@ impl<'a> ImageSmoothing<'a> {
             shape: &shape,
             stride: self.input.stride.as_deref().unwrap_or(&ones),
         };
-        let mut lines = shape.clone();
+        let mut lines = self.section.shape.clone();
         lines[axis] = 1;
         let positions = StridedSection {
             start: &vec![0; source.ndim()],
             shape: &lines,
             stride: &ones,
         };
-        let mut line_budget = (MAX_TILE_SAMPLES / shape[axis]).max(1);
+        let dense_length = self.input.shape[axis];
+        let mut line_budget = (MAX_TILE_SAMPLES / dense_length).max(1);
         let cursor = source
             .nice_cursor_shape()
             .into_iter()
             .enumerate()
             .map(|(index, pixels)| {
+                let stride = input.stride[index];
                 let width = if axis == index {
                     1
                 } else {
-                    pixels
-                        .div_ceil(input.stride[index])
-                        .max(1)
-                        .min(line_budget)
-                        .min(shape[index])
+                    pixels.min(line_budget).div_ceil(stride).min(lines[index])
                 };
-                line_budget /= width;
+                line_budget = (line_budget / ((width - 1) * stride + 1)).max(1);
                 width
             })
-            .collect();
-        let mut bins_have_data = vec![false; self.samples.count];
+            .collect::<Vec<_>>();
         let mut active_mask = None;
-        for tile in positions.cursors(cursor) {
+        for tile in positions.cursors(cursor.clone()) {
             let tile = tile?;
-            let start = input.source_start(&tile.position);
-            let mut input_shape = tile.shape;
-            input_shape[axis] = shape[axis];
-            let (pixels, valid) = reader.read(&start, &input_shape, input.stride)?;
-            let valid = valid.unwrap_or_else(|| ArrayD::from_elem(IxDyn(&input_shape), true));
-            let (values, validity) = self.smooth_tile(&pixels, &valid, &mut bins_have_data);
-            output.put_slice(&values, &tile.position)?;
-            if validity.iter().any(|&valid| !valid) {
-                if active_mask.is_none() {
-                    active_mask = Some(output.create_filled_pixel_mask(true)?);
-                }
-                output.put_mask_slice(
-                    active_mask.as_deref().expect("active mask"),
-                    &validity,
-                    &tile.position,
-                )?;
+            if dense_length > MAX_TILE_SAMPLES {
+                let line = LineSections {
+                    reader: &reader,
+                    input: &input,
+                    position: &tile.position,
+                    axis,
+                };
+                self.copy_long_line(&line, output, &mut active_mask)?;
+            } else {
+                let start = input.source_start(&tile.position);
+                let mut input_shape = tile.shape;
+                input_shape[axis] = shape[axis];
+                let (pixels, valid) = reader.read(&start, &input_shape, input.stride)?;
+                let valid = valid.unwrap_or_else(|| ArrayD::from_elem(IxDyn(&input_shape), true));
+                let (values, validity) = self.smooth_tile(&pixels, &valid);
+                write_tile(output, &mut active_mask, &tile.position, &values, &validity)?;
             }
         }
-        if matches!(self.options.decimate, Some(DecimationMethod::Mean))
+        if active_mask.is_some()
+            && matches!(self.options.decimate, Some(DecimationMethod::Mean))
             && self.samples.step > 1
-            && bins_have_data.contains(&false)
         {
-            return Err(selection_error("All selected pixels are masked"));
+            self.check_mean_bins(output, &positions, &cursor)?;
+        }
+        Ok(())
+    }
+
+    fn check_mean_bins<T: SmoothingPixel>(
+        &self,
+        output: &dyn ImageInterface<T>,
+        lines: &StridedSection<'_>,
+        cursor: &[usize],
+    ) -> Result<(), ImageError> {
+        let axis = self.axis;
+        let block = MAX_TILE_SAMPLES / cursor.iter().product::<usize>();
+        for start in (0..self.samples.count).step_by(block) {
+            let count = block.min(self.samples.count - start);
+            let mut present = vec![false; count];
+            for tile in lines.cursors(cursor.to_vec()) {
+                let mut tile = tile?;
+                tile.position[axis] = start;
+                tile.shape[axis] = count;
+                let Some(valid) =
+                    output.get_mask_slice(&tile.position, &tile.shape, lines.stride)?
+                else {
+                    return Ok(());
+                };
+                for lane in valid.lanes(Axis(axis)) {
+                    for (found, &valid) in present.iter_mut().zip(lane) {
+                        *found |= valid;
+                    }
+                }
+                if present.iter().all(|&found| found) {
+                    break;
+                }
+            }
+            if present.contains(&false) {
+                return Err(selection_error("All selected pixels are masked"));
+            }
+        }
+        Ok(())
+    }
+
+    fn copy_long_line<T: SmoothingPixel>(
+        &self,
+        line: &LineSections<'_, T>,
+        output: &mut dyn MutableImageInterface<T>,
+        active_mask: &mut Option<String>,
+    ) -> Result<(), ImageError> {
+        let axis = self.axis;
+        let mut position = line.position.to_vec();
+        let mut shape = vec![1; position.len()];
+        let block = MAX_TILE_SAMPLES.min(self.samples.count);
+        let mut values = Vec::with_capacity(block);
+        let mut validity = Vec::with_capacity(block);
+        let mut write = |pixel, valid| -> Result<(), ImageError> {
+            values.push(pixel);
+            validity.push(valid);
+            let count = values.len();
+            if count == block || position[axis] + count == self.samples.count {
+                shape[axis] = count;
+                let pixels = ArrayD::from_shape_vec(IxDyn(&shape), std::mem::take(&mut values))
+                    .expect("one output line block");
+                let valid = ArrayD::from_shape_vec(IxDyn(&shape), std::mem::take(&mut validity))
+                    .expect("one output mask block");
+                write_tile(output, active_mask, &position, &pixels, &valid)?;
+                position[axis] += count;
+            }
+            Ok(())
+        };
+        let length = line.input.shape[axis];
+        if let (SmoothingKernel::Boxcar(width), Some(DecimationMethod::Copy)) =
+            (self.options.kernel, self.options.decimate)
+        {
+            let mut input = line.samples(0..self.samples.count * width);
+            for _ in 0..self.samples.count {
+                let (first, valid) = next_sample(&mut input)?;
+                let total = input
+                    .by_ref()
+                    .take(width - 1)
+                    .try_fold(first, |sum, sample| Ok::<_, ImageError>(sum + sample?.0))?;
+                write(total / width as f32, valid)?;
+            }
+            return Ok(());
+        }
+        let Samples { first, step, count } = self.samples;
+        let use_mean = matches!(self.options.decimate, Some(DecimationMethod::Mean));
+        let end = first + (count - 1) * step + if use_mean { step } else { 1 };
+        let mut mean_sum = T::Sum::default();
+        let mut mean_count = 0;
+        let mut emit = |index, pixel: T, valid| -> Result<(), ImageError> {
+            if index < first {
+                return Ok(());
+            }
+            let group_index = (index - first) % step;
+            if use_mean {
+                if valid {
+                    mean_sum += pixel.widen();
+                    mean_count += 1;
+                }
+                if group_index == step - 1 {
+                    let present = mean_count != 0;
+                    let value = if present {
+                        T::narrow(mean_sum / mean_count as f64)
+                    } else {
+                        T::default()
+                    };
+                    write(value, present)?;
+                    mean_sum = T::Sum::default();
+                    mean_count = 0;
+                }
+            } else if group_index == 0 {
+                write(pixel, valid)?;
+            }
+            Ok(())
+        };
+        match self.options.kernel {
+            SmoothingKernel::Boxcar(width) => {
+                let mut total = line
+                    .samples(0..width)
+                    .try_fold(T::default(), |sum, sample| {
+                        Ok::<_, ImageError>(sum + sample?.0)
+                    })?;
+                let mut incoming = line.samples(width..width + end - 1);
+                for (index, departing) in line.samples(0..end).enumerate() {
+                    let (leaving, valid) = departing?;
+                    emit(index, total / width as f32, valid)?;
+                    if index + 1 < end {
+                        total = total + (next_sample(&mut incoming)?.0 - leaving);
+                    }
+                }
+            }
+            SmoothingKernel::Hanning => {
+                let mut input = line.samples(0..(end + 1).min(length));
+                let (mut previous, valid) = next_sample(&mut input)?;
+                let (mut current, mut current_valid) = next_sample(&mut input)?;
+                emit(0, (previous + current) * 0.5, valid)?;
+                for index in 1..end {
+                    if index + 1 == length {
+                        emit(index, (previous + current) * 0.5, current_valid)?;
+                    } else {
+                        let (next, next_valid) = next_sample(&mut input)?;
+                        emit(
+                            index,
+                            hanning_interior(previous, current, next),
+                            current_valid,
+                        )?;
+                        previous = current;
+                        current = next;
+                        current_valid = next_valid;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -296,7 +477,6 @@ impl<'a> ImageSmoothing<'a> {
         &self,
         input: &ArrayD<T>,
         input_valid: &ArrayD<bool>,
-        bins_have_data: &mut [bool],
     ) -> (ArrayD<T>, ArrayD<bool>) {
         let axis = Axis(self.axis);
         let mut shape = input.shape().to_vec();
@@ -324,15 +504,126 @@ impl<'a> ImageSmoothing<'a> {
                 for (slot, pixel) in value_out.iter_mut().zip(smooth) {
                     *slot = pixel;
                 }
-                for ((slot, found), present) in
-                    mask_out.iter_mut().zip(&mut *bins_have_data).zip(valid)
-                {
+                for (slot, present) in mask_out.iter_mut().zip(valid) {
                     *slot = present;
-                    *found |= present;
                 }
             });
         (values, valid)
     }
+}
+
+fn shift_boxcar_reference(
+    section: &mut SubimagePlan,
+    axis: usize,
+    width: usize,
+    factor: usize,
+) -> Result<(), ImageError> {
+    let Some((index, local)) = section.coordinates.pixel_axis_owner(axis) else {
+        return Ok(());
+    };
+    let coordinate = section.coordinates.coordinate(index);
+    if matches!(
+        coordinate,
+        CoordinateModel::Stokes(_) | CoordinateModel::Quality(_)
+    ) {
+        return Ok(());
+    }
+    let (reference, increment) = match coordinate {
+        CoordinateModel::Direction(direction) => direction.reference_and_increment_in_world_units(),
+        _ => (coordinate.reference_value(), coordinate.increment()),
+    };
+    let center = (width - 1) as f64 / (2.0 * factor as f64);
+    // The stored increment already includes the input stride and decimation.
+    let mut record = section
+        .coordinate_record
+        .take()
+        .unwrap_or_else(|| section.coordinates.to_record());
+    let (coordinates, _) = CoordinateSystem::set_reference_value_in_record(
+        &mut record,
+        axis,
+        reference[local] + increment[local] * center,
+    )?;
+    section.coordinates = coordinates;
+    section.coordinate_record = Some(record);
+    Ok(())
+}
+
+fn write_tile<T: SmoothingPixel>(
+    output: &mut dyn MutableImageInterface<T>,
+    mask: &mut Option<String>,
+    position: &[usize],
+    values: &ArrayD<T>,
+    valid: &ArrayD<bool>,
+) -> Result<(), ImageError> {
+    output.put_slice(values, position)?;
+    if valid.iter().any(|&value| !value) {
+        if mask.is_none() {
+            *mask = Some(output.create_filled_pixel_mask(true)?);
+        }
+        output.put_mask_slice(mask.as_deref().expect("active mask"), valid, position)?;
+    }
+    Ok(())
+}
+
+struct LineSections<'a, T: SmoothingPixel> {
+    reader: &'a PixelSections<'a, T>,
+    input: &'a StridedSection<'a>,
+    position: &'a [usize],
+    axis: usize,
+}
+
+impl<T: SmoothingPixel> LineSections<'_, T> {
+    fn samples(
+        &self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = Result<(T, bool), ImageError>> + '_ {
+        let axis = self.axis;
+        let step = self.input.stride[axis];
+        let block_size = MAX_TILE_SAMPLES.div_ceil(step);
+        let mut position = self.input.source_start(self.position);
+        let base = position[axis];
+        let mut shape = vec![1; position.len()];
+        let mut offset = range.start;
+        let mut samples = Vec::new().into_iter();
+        std::iter::from_fn(move || {
+            if let Some(sample) = samples.next() {
+                return Some(Ok(sample));
+            }
+            if offset == range.end {
+                return None;
+            }
+            position[axis] = base + offset * step;
+            shape[axis] = block_size.min(range.end - offset);
+            offset += shape[axis];
+            match self.reader.read(&position, &shape, self.input.stride) {
+                Ok((pixels, valid)) => {
+                    samples = match valid {
+                        Some(mask) => pixels
+                            .iter()
+                            .zip(mask.iter())
+                            .map(|(&value, &valid)| {
+                                (if valid { value } else { T::default() }, valid)
+                            })
+                            .collect::<Vec<_>>(),
+                        None => pixels.iter().map(|&value| (value, true)).collect(),
+                    }
+                    .into_iter();
+                    samples.next().map(Ok)
+                }
+                Err(error) => Some(Err(error)),
+            }
+        })
+    }
+}
+
+fn next_sample<T>(
+    input: &mut impl Iterator<Item = Result<(T, bool), ImageError>>,
+) -> Result<(T, bool), ImageError> {
+    input.next().expect("sample within the input line")
+}
+
+fn hanning_interior<T: SmoothingPixel>(previous: T, current: T, next: T) -> T {
+    (previous + next) * 0.25 + current * 0.5
 }
 
 fn smooth_line<T: SmoothingPixel>(
@@ -371,7 +662,7 @@ fn smooth_line<T: SmoothingPixel>(
             windows.extend(
                 pixels
                     .windows(3)
-                    .map(|row| (row[0] + row[2]) * 0.25 + row[1] * 0.5),
+                    .map(|row| hanning_interior(row[0], row[1], row[2])),
             );
             let end = pixels.len() - 1;
             windows.push((pixels[end - 1] + pixels[end]) * 0.5);

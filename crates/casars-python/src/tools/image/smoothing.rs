@@ -192,7 +192,15 @@ impl Request<'_> {
         });
         with_pixels!(&mut output, storage => with_storage!(storage, product => product.append_history_entries(&history_rows))).map_err(raised)?;
         if history {
-            output.record_history(self.name(), self.call_history(axis))?;
+            match self.kernel {
+                SmoothingKernel::Boxcar(_) => {
+                    output.record_history(self.name(), self.call_history(axis))?
+                }
+                SmoothingKernel::Hanning => output.append_history_at(
+                    "::image::_hanning",
+                    &["Ran ia.hanning".into(), self.call_history(axis)],
+                )?,
+            }
         }
         let source_name = image.path().map_or_else(
             || "Temporary_Image".into(),
@@ -200,7 +208,7 @@ impl Request<'_> {
         );
         let origin = match self.kernel {
             SmoothingKernel::Boxcar(_) => "::ImageBoxcarSmoother::_reportOldNewImageShapes",
-            SmoothingKernel::Hanning => "::ImageHanningSmoother::_reportOldNewImageShapes",
+            SmoothingKernel::Hanning => "::HanningSmoother::_reportOldNewImageShapes",
         };
         output.append_history_at(
             origin,

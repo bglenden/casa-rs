@@ -118,23 +118,17 @@ impl<'a> ImageDecimation<'a> {
                 "This application does not support images with multiple beams. Please convolve your image with a single beam and run this application using that image.".into(),
             ));
         }
-        let spectral = image.find_axis(CoordinateType::Spectral);
-        let stokes = image.find_axis(CoordinateType::Stokes);
-        let positional_axes: Vec<_> = (0..image.ndim())
-            .filter(|&axis| Some(axis) != spectral && Some(axis) != stokes)
-            .collect();
         let tabular_source = image
             .coordinates()
             .find_coordinate(CoordinateType::Tabular)
             .map(|_| native_coordinates.clone());
-        let mut plan = if region.is_none()
-            && positional_axes.len() > 2
-            && image.find_axis(CoordinateType::Direction).is_none()
-        {
-            // CASA's implicit region selects a single pixel on two spatial
-            // axes when a multidimensional image has no direction coordinate.
+        let implicit_axes = region
+            .is_none()
+            .then(|| implicit_decimation_axes(image))
+            .flatten();
+        let mut plan = if let Some(axes) = implicit_axes {
             let mut selection = SubimageSelection::resolve_section(image, None, None, None, None)?;
-            for axis in positional_axes.into_iter().take(2) {
+            for axis in axes {
                 selection.shape[axis] = 1;
             }
             SubimagePlan::from_selection(
@@ -157,52 +151,7 @@ impl<'a> ImageDecimation<'a> {
                 Some(beam_record),
             )?
         };
-        if factor > plan.shape[axis] {
-            return Err(ImageError::CasaSelection(match method {
-                DecimationMethod::Copy => {
-                    "LatticeStepper::setCursorShape: cursorShape <=0 or > latticeShape".into()
-                }
-                DecimationMethod::Mean => "TiledShape: shape has to be > 0".into(),
-            }));
-        }
-        if factor > 1 || tabular_source.is_some() {
-            let mut record = plan
-                .coordinate_record
-                .take()
-                .unwrap_or_else(|| plan.coordinates.to_record());
-            if factor > 1 && plan.coordinates.pixel_axis_type(axis) != Some(CoordinateType::Tabular)
-            {
-                let (index, local) = plan.coordinates.pixel_axis_owner(axis).ok_or_else(|| {
-                    ImageError::CasaSelection("Decimation axis has no coordinate".into())
-                })?;
-                let coordinate = plan.coordinates.coordinate(index);
-                CoordinateSystem::set_reference_pixel_in_record(
-                    &mut record,
-                    axis,
-                    coordinate.reference_pixel()[local] / factor as f64,
-                )?;
-                let increments = match coordinate {
-                    CoordinateModel::Direction(direction) => {
-                        direction.reference_and_increment_in_world_units().1
-                    }
-                    _ => coordinate.increment(),
-                };
-                CoordinateSystem::set_increment_in_record(
-                    &mut record,
-                    axis,
-                    increments[local] * factor as f64,
-                )?;
-            }
-            if let Some(source) = &tabular_source {
-                adjust_tabular_record(source, &plan.selection, axis, factor, &mut record)?;
-            }
-            plan.shape[axis] = match method {
-                DecimationMethod::Copy => plan.shape[axis].div_ceil(factor),
-                DecimationMethod::Mean => plan.shape[axis] / factor,
-            };
-            plan.coordinates = CoordinateSystem::from_record(&record)?;
-            plan.coordinate_record = Some(record);
-        }
+        apply_decimation(&mut plan, tabular_source.as_ref(), axis, factor, method)?;
         Ok(Self { plan, options })
     }
 
@@ -302,6 +251,76 @@ impl<'a> ImageDecimation<'a> {
         }
         Ok(mask_out)
     }
+}
+
+// CASA's implicit region selects a single pixel on two positional axes
+// when a multidimensional image has no direction coordinate.
+pub(super) fn implicit_decimation_axes<T: ImagePixel>(
+    image: &dyn ImageInterface<T>,
+) -> Option<[usize; 2]> {
+    if image.find_axis(CoordinateType::Direction).is_some() {
+        return None;
+    }
+    let spectral = image.find_axis(CoordinateType::Spectral);
+    let stokes = image.find_axis(CoordinateType::Stokes);
+    let mut axes = (0..image.ndim()).filter(|&axis| Some(axis) != spectral && Some(axis) != stokes);
+    let leading = [axes.next()?, axes.next()?];
+    axes.next().map(|_| leading)
+}
+
+pub(super) fn apply_decimation(
+    plan: &mut SubimagePlan,
+    tabular_source: Option<&RecordValue>,
+    axis: usize,
+    factor: usize,
+    method: DecimationMethod,
+) -> Result<(), ImageError> {
+    if factor > plan.shape[axis] {
+        return Err(ImageError::CasaSelection(match method {
+            DecimationMethod::Copy => {
+                "LatticeStepper::setCursorShape: cursorShape <=0 or > latticeShape".into()
+            }
+            DecimationMethod::Mean => "TiledShape: shape has to be > 0".into(),
+        }));
+    }
+    if factor > 1 || tabular_source.is_some() {
+        let mut record = plan
+            .coordinate_record
+            .take()
+            .unwrap_or_else(|| plan.coordinates.to_record());
+        if factor > 1 && plan.coordinates.pixel_axis_type(axis) != Some(CoordinateType::Tabular) {
+            let (index, local) = plan.coordinates.pixel_axis_owner(axis).ok_or_else(|| {
+                ImageError::CasaSelection("Decimation axis has no coordinate".into())
+            })?;
+            let coordinate = plan.coordinates.coordinate(index);
+            CoordinateSystem::set_reference_pixel_in_record(
+                &mut record,
+                axis,
+                coordinate.reference_pixel()[local] / factor as f64,
+            )?;
+            let increments = match coordinate {
+                CoordinateModel::Direction(direction) => {
+                    direction.reference_and_increment_in_world_units().1
+                }
+                _ => coordinate.increment(),
+            };
+            CoordinateSystem::set_increment_in_record(
+                &mut record,
+                axis,
+                increments[local] * factor as f64,
+            )?;
+        }
+        if let Some(source) = tabular_source {
+            adjust_tabular_record(source, &plan.selection, axis, factor, &mut record)?;
+        }
+        plan.shape[axis] = match method {
+            DecimationMethod::Copy => plan.shape[axis].div_ceil(factor),
+            DecimationMethod::Mean => plan.shape[axis] / factor,
+        };
+        plan.coordinates = CoordinateSystem::from_record(&record)?;
+        plan.coordinate_record = Some(record);
+    }
+    Ok(())
 }
 
 fn adjust_tabular_record(
