@@ -19,12 +19,14 @@ use casa_provider_contracts::{
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::ScalarValue;
 use casa_types::measures::direction::MDirection;
+use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{CasaFrequencyFrame, FrequencyRef, MFrequency};
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::attachment::OpenedMs;
 use crate::ft::image::ImageModel;
+use crate::ft::setjy::solar2010::Solar2010;
 use crate::ft::setjy::standards::fixed::FixedScale;
 use crate::ft::setjy::standards::{
     CalibratorSpectrum, CatalogMatch, CatalogScale, FluxCatalog, FluxScale,
@@ -33,6 +35,7 @@ use crate::ft::setjy::{ManualFlux, sampled_point};
 use crate::ft::virtual_publication::VirtualFtPublication;
 use crate::ft::write_model_scratch;
 use crate::interpolation::Curve;
+use crate::solve::grouping::VisibilityModels;
 
 mod fluxdict;
 mod model_files;
@@ -40,6 +43,7 @@ mod resolved;
 
 enum FluxParameters {
     Manual(ManualFlux),
+    Solar2010(PathBuf),
     Standard {
         catalog: FluxCatalog,
         interpolation: Curve,
@@ -127,8 +131,18 @@ fn run_ms(
     scratch: bool,
     partition: bool,
 ) -> Result<CasaValue, TaskFailure> {
+    let standard = task.text("standard")?;
+    if !scratch
+        && standard
+            .as_ref()
+            .is_some_and(|scale| scale.starts_with("Butler-JPL-Horizons"))
+    {
+        return Err(execution(
+            "Virtual model can not be used for an ephemeris object calibrator. Use usescratch=True.",
+        ));
+    }
     let mut selection = selection(task)?;
-    if task.text("standard")?.as_deref() == Some("fluxscale") {
+    if standard.as_deref() == Some("fluxscale") {
         // The wrapper validates the dictionary before its virtual imager
         // call applies time, scan or observation predicates.
         if scratch {
@@ -176,6 +190,7 @@ fn run_ms(
     selected.channel_selections.clear();
     let spws = requested_windows(&opened.measurement_set, selection.spw.as_deref())?;
     let image = model_files::task_image(task)?;
+    let calibration_directions = matches!(flux, FluxParameters::Solar2010(_)) && image.is_none();
     let (models, fluxes, completed) = prepare(
         &opened.measurement_set,
         &selected,
@@ -205,7 +220,15 @@ fn run_ms(
             selected.channel_selections.clear();
         }
     }
-    publish_models(&mut opened, parts, &selected, models, &spws, scratch)?;
+    publish_models(
+        &mut opened,
+        parts,
+        &selected,
+        models,
+        &spws,
+        scratch,
+        calibration_directions,
+    )?;
     opened.release().map_err(execution)?;
     record_history(task, path, partition);
     if partially_written {
@@ -244,19 +267,30 @@ fn publish_models(
     models: FieldModels,
     spws: &[i32],
     scratch: bool,
+    calibration_directions: bool,
 ) -> Result<(), TaskFailure> {
     if scratch {
         let entries: Vec<_> = models
             .values()
             .flat_map(|model| model.entries.iter().cloned())
             .collect();
+        let geometry = if calibration_directions && !entries.is_empty() {
+            let ms = &opened.measurement_set;
+            Some(
+                VisibilityModels::from_entries(ms, &selected.selected_rows, &entries)
+                    .and_then(|models| models.with_calibration_field_directions(ms))
+                    .map_err(execution)?,
+            )
+        } else {
+            None
+        };
         write_model_scratch(
             &mut opened.measurement_set,
             selected,
             &entries,
             false,
             true,
-            None,
+            geometry,
             &mut opened.lock,
         )
         .map_err(execution)?;
@@ -323,8 +357,9 @@ fn empty_selection(task: &TaskInvocation<'_>, partition: bool) -> Result<CasaVal
 fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, TaskFailure> {
     let pending =
         |name| TaskFailure::validation("this setjy model configuration is pending #1519").at(name);
-    let scale = match task.text("standard")?.as_deref() {
-        Some("manual") => None,
+    let standard = task.text("standard")?;
+    let scale = match standard.as_deref() {
+        Some("manual" | "Butler-JPL-Horizons 2010") => None,
         Some("Perley-Butler 2017") => Some(FluxScale::Table(CatalogScale::PerleyButler2017)),
         Some("Perley-Butler 2013") => Some(FluxScale::Table(CatalogScale::PerleyButler2013)),
         Some("Scaife-Heald 2012") => Some(FluxScale::Table(CatalogScale::ScaifeHeald2012)),
@@ -362,6 +397,11 @@ fn flux_parameters(task: &TaskInvocation<'_>) -> Result<Option<FluxParameters>, 
     let Some(&intensity) = input.first() else {
         return Err(TaskFailure::validation("fluxdensity must contain Stokes I").at("fluxdensity"));
     };
+    if intensity != 0. && standard.as_deref() == Some("Butler-JPL-Horizons 2010") {
+        return Ok(Some(FluxParameters::Solar2010(
+            task.workspace().to_path_buf(),
+        )));
+    }
     let scale = scale
         .or_else(|| (intensity < 0.).then_some(FluxScale::Fixed(FixedScale::PerleyButler2010)));
     if let Some(scale) = scale {
@@ -464,7 +504,12 @@ fn prepare(
             .or_default()
             .push(row.row_index);
     }
-    let engine = MsCalEngine::new(ms).map_err(execution)?;
+    let engine = if matches!(flux, FluxParameters::Solar2010(_)) && image.is_none() {
+        MsCalEngine::for_calibration(ms)
+    } else {
+        MsCalEngine::new(ms)
+    }
+    .map_err(execution)?;
     let field_table = ms.field().map_err(execution)?;
     let windows = ms.spectral_window().map_err(execution)?;
     let time = ms.main_table().column_accessor("TIME").map_err(execution)?;
@@ -505,7 +550,25 @@ fn prepare(
                     }
                 }
             }
-            FluxParameters::Manual(_) => None,
+            FluxParameters::Manual(_) | FluxParameters::Solar2010(_) => None,
+        };
+        let solar = if let FluxParameters::Solar2010(workspace) = flux
+            && image.is_none()
+        {
+            let midpoint = MEpoch::from_mjd(
+                field_midpoint(&time, &windows_for_field)?,
+                engine.time_reference(),
+            );
+            match Solar2010::open(workspace, &name, &midpoint, &frame) {
+                Ok(solar) => Some(solar),
+                Err(error) => {
+                    tracing::warn!(field = %name, %error, "no 2010 Solar System flux model");
+                    completed = false;
+                    break;
+                }
+            }
+        } else {
+            None
         };
         let model = models.entry(field).or_default();
         let mut field_flux = BTreeMap::new();
@@ -529,6 +592,11 @@ fn prepare(
                         0.,
                     ],
                 )
+            } else if let Some(solar) = &solar {
+                let (component, stokes) = solar
+                    .component(Some(direction.clone()), &planned)
+                    .map_err(execution)?;
+                (Some(component), stokes)
             } else {
                 point_model(flux, spectrum.as_ref(), &direction, &planned, &frame)?
             };
@@ -590,6 +658,7 @@ fn prepare(
                 FluxParameters::Standard { .. } => {
                     ResolvedFlux::Catalog(image_spectrum.as_ref(), first_jy.unwrap_or(1.))
                 }
+                FluxParameters::Solar2010(_) => ResolvedFlux::Catalog(None, 1.),
                 _ => ResolvedFlux::Unscaled,
             };
             model.images = params.prepare(ms, selected, &frame, field, flux)?;

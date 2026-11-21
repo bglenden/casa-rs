@@ -198,6 +198,17 @@ impl ModelInputs {
         self.component_voltage = Some(ComponentVoltageCache::new(voltage));
     }
 
+    pub(super) fn use_calibration_field_directions(
+        &mut self,
+        ms: &MeasurementSet,
+    ) -> Result<(), GainSolveError> {
+        if !self.dynamic_fields.is_empty() {
+            self.geometry =
+                Some(MsCalEngine::for_calibration(ms).map_err(|source| read_error(ms, source))?);
+        }
+        Ok(())
+    }
+
     fn load_geometry(
         &mut self,
         ms: &MeasurementSet,
