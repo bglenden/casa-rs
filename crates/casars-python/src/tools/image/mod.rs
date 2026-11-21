@@ -15,6 +15,7 @@ mod calc;
 mod collapse;
 mod concatenate;
 mod conformance;
+mod continuum;
 mod convertflux;
 mod coordinate_conversion;
 mod copy;

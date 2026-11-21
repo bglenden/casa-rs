@@ -8100,6 +8100,15 @@ native record puts Frequency at pixel axis 1 and world axis 0. casa-rs
 resolves `axes="Frequency"` through the native world-to-pixel map and
 collapses the corresponding pixel axis.
 
+## Continuum subtraction leaves a partial product for aliased outputs
+
+CASA 6.7.6.14 accepts the same initially absent path for `outline` and
+`outcont` in `image.continuumsub`. It writes the continuum model before
+raising an error while publishing the residual. With overwrite enabled,
+CASA still reports an error after writing the model. casa-rs rejects
+aliased destinations before fitting and verifies both destinations before
+publishing either image.
+
 ## A zero-stride region aborts `image.modify`
 
 CASA 6.7.6.14 terminates with SIGABRT and an uncaught
