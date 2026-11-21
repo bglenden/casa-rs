@@ -139,10 +139,14 @@ def test_two_point_defaults_boolean_and_axis_refusals(casa, tmp_path, linear):
             assert source.twopointcorrelation() is True
             assert prior.fromarray(output, pixels=data+5.)
             prior.done()
-            for options in (
-                {"axes": [0]}, {"axes": [1,0]}, {"axes": [0,0]},
-                {"axes": [-2,1]}, {"axes": [0,3]}, {"method": "correlation"},
-            ):
+            errors = [
+                {"axes": [0]}, {"axes": [1,0]}, {"axes": [0,3]}, {"method": "correlation"},
+            ]
+            if not linear or api is tools:
+                errors.append({"axes": [0,0]})
+            if api is tools:
+                errors.append({"axes": [-2,1]})
+            for options in errors:
                 with pytest.raises(RuntimeError):
                     source.twopointcorrelation(output, overwrite=True, **options)
             assert prior.open(output)

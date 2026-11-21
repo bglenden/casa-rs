@@ -9314,3 +9314,10 @@ coefficients around the lower middle sample and leaves its trailing
 coefficient uninitialized. Casa-rs assigns zero to the unused final
 coefficient. The assigned coefficients retain CASA's normalization and
 indexing.
+
+### `image.twopointcorrelation` can terminate the Python process on invalid axes
+
+For a `[5, 7]` Float image, CASA 6.7.6.14 can fault when a selected
+axis is negative, such as `axes=[-2, 1]`. It can also abort on
+`axes=[0, 0]` for a linear image. Casa-rs validates that the axes are
+in range and strictly increasing before creating or replacing an output.
