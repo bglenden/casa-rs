@@ -73,6 +73,15 @@ impl SourceFit {
     }
 
     pub(super) fn finish(self, mode: SourceFitMode) -> Option<Complex32> {
+        if self.weight == 0.0 {
+            // CASA's normal-equation fitter substitutes unit diagonals
+            // for parameters with no observations. The resulting slope
+            // is zero, giving zero QU or an identity angle correction.
+            return Some(match mode {
+                SourceFitMode::Polarization => Complex32::ZERO,
+                SourceFitMode::Angle => Complex32::ONE,
+            });
+        }
         let (coefficients, rank) = casa_numerics::solve_complex_normal_equations(
             vec![
                 self.weight.into(),
