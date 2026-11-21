@@ -51,6 +51,7 @@ pub(super) mod region;
 mod region_write;
 pub use region_write::{put_image_region, validate_put_region_shapes};
 mod replace_masked;
+mod sepconvolve;
 mod smoothing;
 mod two_point;
 
@@ -69,6 +70,7 @@ pub use pad::{ImagePad, ImagePadOptions};
 pub use pbcor::{ImagePbcor, ImagePbcorBeam, ImagePbcorOptions};
 pub use pixel_edit::ImagePixelSelection;
 pub use rebin::{ImageRebin, ImageRebinOptions};
+pub use sepconvolve::{ImageSepConvolution, SepConvolutionOptions};
 pub use smoothing::{ImageSmoothing, SmoothingKernel, SmoothingOptions, SmoothingPixel};
 pub use two_point::{ImageTwoPoint, StructurePixel, TwoPointOptions};
 
