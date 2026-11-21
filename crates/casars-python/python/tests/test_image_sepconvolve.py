@@ -245,7 +245,7 @@ def test_sepconvolve_flattens_numeric_widths_in_casa_axis_order(casa):
         source = api.image()
         output = None
         try:
-            assert source.fromshape(shape=shape, linear=True)
+            assert source.fromshape(shape=list(shape), linear=True)
             assert source.putchunk(data)
             output = source.sepconvolve(widths=widths)
             np.testing.assert_allclose(output.getchunk(), expected, atol=3e-7)
