@@ -15,7 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::convert::{DoubleList, IntList, StringList, Variant, quantity};
-use crate::tools::{LogLine, emit};
+use crate::tools::{LogLine, emit, logger};
 
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
@@ -177,7 +177,11 @@ impl PyImageTool {
             },
             logfile,
             append,
-            logresults,
+            logresults: logresults
+                && logger(py, "casars.tools.image")?
+                    .bind(py)
+                    .call_method1("isEnabledFor", (20,))?
+                    .extract()?,
         };
         let result = py.detach(|| {
             let state = self.state();
@@ -209,6 +213,16 @@ impl ProfileRequest<'_> {
         })?;
         stages.publish(true)?;
         let mut logs: Vec<_> = summary.iter().cloned().map(LogLine::info).collect();
+        if self.ngauss < 0 {
+            logs.push(LogLine::warning(
+                "ngauss < 0 is meaningless. Setting ngauss = 0",
+            ));
+        }
+        if !self.outputs.sigma.is_empty() && matches!(self.sigma, SigmaArgument::None) {
+            logs.push(LogLine::warning(
+                "Ignoring outsigma because no sigma image or array was specified",
+            ));
+        }
         if self.logresults || !self.logfile.is_empty() {
             let details = self.log_text(&record);
             if !self.logfile.is_empty() {

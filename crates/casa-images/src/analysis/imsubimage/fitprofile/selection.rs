@@ -9,9 +9,10 @@ use ndarray::IxDyn;
 use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInterface};
 
+use super::super::SubimagePlan;
 use super::super::read_window::PixelSections;
 use super::super::region::SubimageSelection;
-use super::super::{SubimagePlan, SubimageRegion};
+use super::ProfileRegion;
 
 pub(super) struct ProfileSelection {
     pub(super) plan: SubimagePlan,
@@ -25,10 +26,7 @@ impl ProfileSelection {
     pub(super) fn new(
         input: &dyn ImageInterface<f32>,
         coordinates: RecordValue,
-        pixel_box: Option<&str>,
-        region: Option<SubimageRegion<'_>>,
-        channels: Option<&str>,
-        stokes: Option<&str>,
+        region: ProfileRegion<'_>,
         axis: i64,
         beam_record: Option<&RecordValue>,
     ) -> Result<Self, ImageError> {
@@ -43,8 +41,13 @@ impl ProfileSelection {
                 input.ndim(),
             )));
         }
-        let selection =
-            SubimageSelection::resolve_section(input, pixel_box, region, channels, stokes)?;
+        let selection = SubimageSelection::resolve_section(
+            input,
+            region.pixel_box,
+            region.region,
+            region.chans,
+            region.stokes,
+        )?;
         let plan = SubimagePlan::from_selection(
             input,
             Some(coordinates),

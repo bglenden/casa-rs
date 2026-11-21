@@ -175,14 +175,10 @@ impl<'a> ImageProfileFit<'a> {
         mut options: ProfileFitOptions<'a>,
         names: ProfileOutputNames<'_>,
     ) -> Result<Self, ImageError> {
-        let region = &mut options.selection;
         let selection = ProfileSelection::new(
             source,
             coordinates.clone(),
-            region.pixel_box,
-            region.region.take(),
-            region.chans,
-            region.stokes,
+            std::mem::take(&mut options.selection),
             options.axis,
             options.beam_record,
         )?;
@@ -298,12 +294,11 @@ impl<'a> ImageProfileFit<'a> {
             let (data, weights) = self.read_fit_lane(&mut reader, sigma.as_ref(), &position)?;
             let outcome = self.fit_lane(
                 &axis,
-                &position,
                 &world_pixel,
                 &data,
                 weights.as_ref(),
                 &plane_mask,
-                &previous,
+                nearest(&position, &previous),
             )?;
             if let Some(outcome) = &outcome {
                 attempts += 1;
@@ -405,12 +400,11 @@ impl<'a> ImageProfileFit<'a> {
     fn fit_lane(
         &self,
         axis: &ProfileAxis<'_>,
-        position: &[usize],
         world_pixel: &[f64],
         data: &Lane,
         weights: Option<&Lane>,
         planes: &[bool],
-        previous: &[(Vec<usize>, Vec<f64>)],
+        previous: Option<&[f64]>,
     ) -> Result<Option<FitLane>, ImageError> {
         if data.has_mask
             && data.valid.iter().filter(|&&valid| valid).count() < self.options.min_points
@@ -445,7 +439,7 @@ impl<'a> ImageProfileFit<'a> {
 
         let automatic = estimates::automatic(&data.values, self.automatic);
         let mut curve = Curve::new(&self.models, &automatic, self.options.polynomial);
-        if let Some(near) = nearest(position, previous) {
+        if let Some(near) = previous {
             curve.parameters.copy_from_slice(near);
         }
         let attempted = !curve.parameters.is_empty();
@@ -476,14 +470,19 @@ impl<'a> ImageProfileFit<'a> {
             .map(|pixel| axis.native(position, pixel as f64).map(f64::abs))
             .collect::<Result<Vec<_>, _>>()?;
         let divisor = match &self.options.divisor {
-            ProfileDivisor::Number(value) if *value != 0. => *value,
-            ProfileDivisor::Quantity(value) if value.value() != 0. => {
+            ProfileDivisor::Number(value) => *value,
+            ProfileDivisor::Quantity(value) => {
                 let unit = Unit::new(&axis.unit).map_err(|error| invalid(error.to_string()))?;
                 value
                     .get_value_in(&unit)
                     .map_err(|error| invalid(error.to_string()))?
             }
-            _ => automatic_divisor(&x),
+            ProfileDivisor::Automatic => 0.,
+        };
+        let divisor = if divisor == 0. {
+            automatic_divisor(&x)
+        } else {
+            divisor
         };
         if !divisor.is_finite() || divisor <= 0. {
             return Err(invalid("Abscissa divisor must be finite and positive"));
