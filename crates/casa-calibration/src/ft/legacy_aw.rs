@@ -32,6 +32,8 @@ use super::settings::{ImagerLegacyAwOptions, PredictionGeometry};
 
 pub(crate) const CACHE: &str = "CASARS_LEGACY_AW_CACHE";
 pub(crate) const MACHINE: &str = "AWProjectWBFT";
+pub(super) const MISSING_SENSITIVITY: &str =
+    "LatticeIterInterface::ok - Navigator Lattice and Data Lattice have different shapes";
 const COLD_STAGE: &str = ".casars-legacy-aw-";
 const OWNED_STAGE: &str = "preparing";
 const CELL_JOURNAL: &str = "promoting";
@@ -122,7 +124,7 @@ pub(super) fn prepare_model(
         &options.cache_directory,
         spectral,
         || {
-            if options.correct_primary_beam || !options.wideband || !switches[1] {
+            if !options.wideband || !switches[1] {
                 return Err(invalid(
                     "this cold legacy AW term configuration is pending #1520",
                 ));
@@ -178,6 +180,9 @@ pub(super) fn prepare_model(
             beam.get().map_err(invalid)
         })
         .transpose()?;
+    if options.correct_primary_beam && average.is_none() {
+        return Err(invalid(MISSING_SENSITIVITY));
+    }
     let cutoff = options
         .correct_primary_beam
         .then_some(options.primary_beam_limit as f32);
