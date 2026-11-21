@@ -392,14 +392,18 @@ fn read_field_motion(path: &Path, allow_apparent: bool) -> FieldMotion {
                 }
                 _ => false,
             };
-            if allow_apparent
-                && apparent
-                && let Ok(series) = CometTable::open(path)
-                && series.topocentre_m().is_none()
-            {
-                return FieldMotion::Ephemeris(AttachedFieldEphemeris::Apparent(Arc::new(series)));
+            if !allow_apparent || !apparent {
+                return FieldMotion::Unreadable(Arc::from(error.to_string()));
             }
-            FieldMotion::Unreadable(Arc::from(error.to_string()))
+            match CometTable::open(path) {
+                Ok(series) if series.topocentre_m().is_none() => {
+                    FieldMotion::Ephemeris(AttachedFieldEphemeris::Apparent(Arc::new(series)))
+                }
+                Ok(_) => FieldMotion::Unreadable(Arc::from(
+                    "a topocentric legacy FIELD ephemeris requires an observing-site conversion",
+                )),
+                Err(error) => FieldMotion::Unreadable(Arc::from(error.to_string())),
+            }
         }
     }
 }

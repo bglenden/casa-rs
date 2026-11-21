@@ -141,6 +141,29 @@ def read_scratch_in_both(path, model):
         np.testing.assert_array_equal(data(path, 'CORRECTED_DATA'), model)
 
 
+def refuses_invalid_legacy_grid(seed, root, apparent):
+    with TemporaryDirectory(dir=root, prefix='invalid-legacy-grid-') as tmp:
+        path = Path(tmp) / 'invalid.ms'
+        make_input(seed, path, scratch=True)
+        ephemeris_observation(path, 'Uranus', 55000.12345, 100.e9)
+        attachment = ms()
+        assert attachment.open(str(path), nomodify=False)
+        assert attachment.addephemeris(0, str(apparent), 'Uranus', [0])
+        assert attachment.done()
+        ephemeris = next((path / 'FIELD').glob('EPHEM0_*.tab'))
+        writer = table()
+        assert writer.open(str(ephemeris), nomodify=False)
+        assert writer.putkeyword('dMJD', 0.) and writer.done()
+        original = data(path, 'MODEL_DATA')
+        try:
+            rust.setjy(str(path), field='0', standard=SCALE)
+        except RuntimeError as error:
+            assert 'invalid MJD sampling grid' in str(error), error
+        else:
+            raise AssertionError('a zero ephemeris step was accepted')
+        np.testing.assert_array_equal(data(path, 'MODEL_DATA'), original)
+
+
 def refuses_virtual(seed, root):
     with TemporaryDirectory(dir=root) as tmp:
         for label, module in (('casa', casa), ('rust', rust)):
@@ -205,6 +228,7 @@ def main():
     paired(seed, args.root, 'Uranus', 55000.12345, frequency=100.e9,
            direction=(1.e-6, -2.e-6), attached_ephemeris=apparent, direct_tool=True,
            reffreq='100GHz', fluxdensity=-1.)
+    refuses_invalid_legacy_grid(seed, args.root, apparent)
     custom = args.root.resolve() / 'custom-ephemeris'
     custom.mkdir()
     override = custom / 'Mars_54708-55437dUTC.tab'
