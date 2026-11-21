@@ -44,7 +44,7 @@ use crate::record_utils::{
 /// affine mapping from pixel to intermediate coordinates.
 ///
 /// Corresponds to C++ `DirectionCoordinate`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DirectionCoordinate {
     /// The map projection used for this coordinate.
     projection: Projection,
@@ -76,7 +76,7 @@ pub struct DirectionCoordinate {
     removed_axis: Option<RemovedAxis>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RemovedAxis {
     pub index: usize,
     pub pixel: f64,
