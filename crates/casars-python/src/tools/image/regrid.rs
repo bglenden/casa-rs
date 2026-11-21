@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_images::{
-    ImageError, ImageInterface,
+    ImageInterface,
     analysis::{
         ImageRegridOptions, ImageRegridProduct, SubimageRegion, ensure_artifacts_do_not_overlap,
         ensure_outfile_does_not_alias_input, regrid_image,
@@ -100,7 +100,7 @@ impl PyImageTool {
                     let region = region.as_ref().map_or_else(|| "{}".into(), Region::history);
                     let csys = if target.is_some() { "{...}" } else { "{}" };
                     output.record_history("regrid", format!(
-                        "ia.regrid(outfile={outfile:?}, shape={:?}, csys={csys}, axes={:?}, region={region}, mask={mask:?}, method={method:?}, decimate={decimate}, replicate={replicate}, doref={doref}, dropdeg={dropdeg}, overwrite={overwrite}, force={force}, asvelocity={asvelocity}, stretch={stretch})",
+                        "ia.regrid(outfile={outfile:?}, shape={:?}, csys={csys}, axes={:?}, region={region}, mask={mask:?}, method={method:?}, decimate={decimate}, replicate={replicate}, doref={doref}, dropdegen={dropdeg}, overwrite={overwrite}, force={force}, asvelocity={asvelocity}, stretch={stretch})",
                         shape.0, axes.0,
                     ))?;
                 }
@@ -150,16 +150,15 @@ fn make_product<T: RegridPixel>(
     )
     .map_err(raised)?;
     with_storage!(&mut storage, image => {
-        image.set_units(source.units())?;
-        image.set_misc_info(source.misc_info())?;
-        image.set_image_info_record(info)?;
+        image.set_units(source.units()).map_err(raised)?;
+        image.set_misc_info(source.misc_info()).map_err(raised)?;
+        image.set_image_info_record(info).map_err(raised)?;
         if regridded.mask.iter().any(|&valid| !valid) {
-            image.put_mask("mask0", &regridded.mask)?;
-            image.set_default_mask("mask0")?;
+            image.put_mask("mask0", &regridded.mask).map_err(raised)?;
+            image.set_default_mask("mask0").map_err(raised)?;
         }
-        Ok::<(), ImageError>(())
-    })
-    .map_err(raised)?;
+        Ok::<(), PyErr>(())
+    })?;
     match &mut storage {
         Storage::Paged(image) => image
             .set_coordinate_record(coordinate_record)

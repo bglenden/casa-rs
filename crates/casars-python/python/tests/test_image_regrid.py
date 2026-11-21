@@ -35,9 +35,9 @@ def _read(image):
         kind = image.pixeltype()
         return (
             image.getchunk(), image.getchunk(getmask=True),
-            image.brightnessunit() if kind in ("float", "complex") else None,
+            image.brightnessunit(),
             coords.referencepixel()["numeric"], coords.increment()["numeric"],
-            coords.axiscoordinatetypes(), image.pixeltype(),
+            coords.axiscoordinatetypes(), kind,
         )
     finally:
         coords.done()
