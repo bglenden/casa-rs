@@ -192,6 +192,8 @@ pub(super) fn leakage_request(
 
     let poltype = task.required_text("poltype")?;
     let kind = match poltype.as_str() {
+        "D" => LeakageSolveKind::D,
+        "Df" => LeakageSolveKind::Df,
         "Dlls" => LeakageSolveKind::Dlls,
         "Dflls" => LeakageSolveKind::Dflls,
         _ => {
@@ -215,6 +217,8 @@ pub(super) fn leakage_request(
         frequency_interval: parse_frequency_solint(frequency)?,
         combine: combine(task)?,
         preaverage_seconds: task.number("preavg")?,
+        min_baselines: task.integer("minblperant")?.max(0) as usize,
+        min_snr: task.number("minsnr")? as f32,
         refant: bandpass_refant(&task.required_text("refant")?),
         append: task.flag("append")?,
     })

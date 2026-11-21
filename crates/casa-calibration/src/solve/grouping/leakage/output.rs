@@ -3,7 +3,7 @@
 
 use super::{LeakageSolution, LeakageSolveRequest, SelectedSolveRow};
 use casa_ms::{MeasurementSet, schema::SubtableId};
-use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use std::collections::BTreeMap;
 
@@ -80,12 +80,17 @@ pub(super) fn write(
 fn solution_row(interval: &LeakageSolution, antenna: usize) -> RecordValue {
     let shape = IxDyn(&[2, interval.values.len()]).f();
     let complex = ArrayD::from_shape_fn(shape.clone(), |index| {
-        interval.values[index[1]][antenna].map_or(Complex32::ZERO, |pair| pair[index[0]])
+        interval.values[index[1]][antenna].gain[index[0]]
     });
     let flags = ArrayD::from_shape_fn(shape.clone(), |index| {
-        interval.values[index[1]][antenna].is_none()
+        !interval.values[index[1]][antenna].valid[index[0]]
     });
-    let real = ArrayD::<f32>::zeros(shape);
+    let errors = ArrayD::from_shape_fn(shape.clone(), |index| {
+        interval.values[index[1]][antenna].error[index[0]]
+    });
+    let snr = ArrayD::from_shape_fn(shape, |index| {
+        interval.values[index[1]][antenna].snr[index[0]]
+    });
     let integer = |name, value| RecordField::new(name, Value::Scalar(ScalarValue::Int32(value)));
     let float = |name, value| RecordField::new(name, Value::Scalar(ScalarValue::Float64(value)));
     let array = |name, value| RecordField::new(name, Value::Array(value));
@@ -100,7 +105,7 @@ fn solution_row(interval: &LeakageSolution, antenna: usize) -> RecordValue {
         integer("ANTENNA2", interval.reference),
         array("CPARAM", ArrayValue::Complex32(complex)),
         array("FLAG", ArrayValue::Bool(flags)),
-        array("PARAMERR", ArrayValue::Float32(real.clone())),
-        array("SNR", ArrayValue::Float32(real)),
+        array("PARAMERR", ArrayValue::Float32(errors)),
+        array("SNR", ArrayValue::Float32(snr)),
     ])
 }
