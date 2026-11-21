@@ -537,6 +537,14 @@ impl CoordinateSystem {
         values
     }
 
+    /// A coordinate's stored replacement pixel vector, including entries
+    /// on visible axes. Unmapped systems have no replacement vector.
+    pub fn local_pixel_replacements(&self, index: usize) -> Option<&[f64]> {
+        self.nonconsecutive_maps()
+            .and_then(|maps| maps.placements.get(index))
+            .map(|placement| placement.pixel.replacements.as_slice())
+    }
+
     /// Units of the values returned by `to_world`, in public world-axis order.
     pub fn world_axis_units(&self) -> Vec<String> {
         let mut units = vec![String::new(); self.n_world_axes()];

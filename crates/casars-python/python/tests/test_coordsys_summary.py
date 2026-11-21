@@ -108,3 +108,24 @@ def test_native_writer_reader_pairs_report_the_mapped_grid(casa, tmp_path):
                 assert actual == expected
             finally:
                 opened.done()
+
+
+def test_retained_world_axis_uses_the_complete_replacement_pixel(casa):
+    source = with_metadata(casa.coordsys().newcoordsys(direction=True, spectral=True))
+    assert source.setunits(["deg", "deg", "Hz"])
+    assert source.setreferencepixel([2.0, 3.0, 4.0])
+    assert source.setreferencevalue([25.0, 17.0, 1.0e9])
+    assert source.setincrement([-0.1, 0.1, 1000.0])
+    record = source.torecord()
+    record["pixelmap0"] = np.array([-1, 0], dtype=np.int32)
+    record["pixelmap1"] = np.array([1], dtype=np.int32)
+    record["pixelreplace0"] = np.array([5.0, 8.0])
+    got = []
+    for api in (tools, casa):
+        cs = api.coordsys()
+        assert cs.fromrecord(record)
+        got.append(cs.summary(list=False))
+    assert got[0] == got[1]
+    row = next(line for line in got[0][0].splitlines() if line.startswith(".."))
+    assert "Right Ascension" in row
+    assert "01:38:44.506     5.00" in row

@@ -20,6 +20,7 @@ use crate::tools::{LogLine, emit};
 
 use super::conversion_frames::FrameName;
 use super::doppler::VelocityConversion;
+use super::inspect::coordinate_index;
 use super::{CoordinateState, PyCoordsys};
 
 const COLUMNS: [&str; 9] = [
@@ -42,15 +43,21 @@ fn reference_frame(result: &mut String, label: &str, native: &str, current: &str
     result.push('\n');
 }
 
-fn metadata(state: &CoordinateState, name: &str) -> String {
+fn metadata(state: &CoordinateState, numbers: &[usize], name: &str) -> String {
     let coordinates = &state.coordinates;
     let obs = coordinates.obs_info();
-    let direction = coordinates
-        .find_coordinate(CoordinateType::Direction)
-        .and_then(|index| match coordinates.coordinate(index) {
-            CoordinateModel::Direction(direction) => Some(direction),
-            _ => None,
-        });
+    let first = |kind| {
+        numbers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| coordinates.coordinate(*index).coordinate_type() == kind)
+            .min_by_key(|(_, number)| *number)
+            .map(|(index, _)| coordinates.coordinate(index))
+    };
+    let direction = first(CoordinateType::Direction).and_then(|model| match model {
+        CoordinateModel::Direction(direction) => Some(direction),
+        _ => None,
+    });
     let mut output = String::from("\n");
     if let Some(direction) = direction {
         reference_frame(
@@ -60,9 +67,7 @@ fn metadata(state: &CoordinateState, name: &str) -> String {
             direction.conversion_direction_ref().as_str(),
         );
     }
-    if let Some(index) = coordinates.find_coordinate(CoordinateType::Spectral)
-        && let CoordinateModel::Spectral(spectral) = coordinates.coordinate(index)
-    {
+    if let Some(CoordinateModel::Spectral(spectral)) = first(CoordinateType::Spectral) {
         let native = spectral.frequency_ref();
         reference_frame(
             &mut output,
@@ -246,16 +251,20 @@ impl AxisRow {
     }
 }
 
-fn axis_rows(state: &CoordinateState, doppler: DopplerRef) -> PyResult<Vec<AxisRow>> {
+fn axis_rows(
+    state: &CoordinateState,
+    numbers: &[usize],
+    doppler: DopplerRef,
+) -> PyResult<Vec<AxisRow>> {
     let cs = &state.coordinates;
     let mut rows = Vec::new();
     for pixel in 0..cs.n_pixel_axes() {
         let (index, local) = cs.pixel_axis_owner(pixel).expect("public pixel axis");
-        let model = cs.coordinate(index);
+        let number = numbers[index];
         rows.extend(coordinate_rows(
             cs,
             index,
-            model,
+            number,
             local,
             Some(pixel),
             doppler,
@@ -265,19 +274,18 @@ fn axis_rows(state: &CoordinateState, doppler: DopplerRef) -> PyResult<Vec<AxisR
             let worlds = cs.coordinate_world_axes(index).expect("placed coordinate");
             for (local, (pixel, world)) in pixels.iter().zip(worlds).enumerate() {
                 if pixel.is_none() && world.is_some() {
-                    rows.extend(coordinate_rows(cs, index, model, local, None, doppler)?);
+                    rows.extend(coordinate_rows(cs, index, number, local, None, doppler)?);
                 }
             }
         }
     }
-    for index in 0..cs.n_coordinates() {
+    for (index, &number) in numbers.iter().enumerate() {
         let pixels = cs.coordinate_pixel_axes(index).expect("placed coordinate");
         if pixels.iter().all(Option::is_none) {
             let worlds = cs.coordinate_world_axes(index).expect("placed coordinate");
             for (local, world) in worlds.into_iter().enumerate() {
                 if world.is_some() {
-                    let model = cs.coordinate(index);
-                    let mut hidden = coordinate_rows(cs, index, model, local, None, doppler)?;
+                    let mut hidden = coordinate_rows(cs, index, number, local, None, doppler)?;
                     for row in &mut hidden {
                         row.visible = false;
                     }
@@ -292,19 +300,23 @@ fn axis_rows(state: &CoordinateState, doppler: DopplerRef) -> PyResult<Vec<AxisR
 fn coordinate_rows(
     cs: &casa_coordinates::CoordinateSystem,
     index: usize,
-    model: &CoordinateModel,
+    number: usize,
     local: usize,
     pixel: Option<usize>,
     doppler: DopplerRef,
 ) -> PyResult<Vec<AxisRow>> {
+    let model = cs.coordinate(index);
     let mut fields = std::array::from_fn(|_| String::new());
     fields[0] = pixel.map_or_else(|| "..".into(), |axis| axis.to_string());
-    fields[1] = index.to_string();
+    fields[1] = number.to_string();
     fields[2] = model.coordinate_type().to_string();
     fields[3] = model.axis_names()[local].clone();
-    let fixed = cs.local_reference_pixel(index);
+    let reference_pixel = model.reference_pixel();
+    let fixed = cs
+        .local_pixel_replacements(index)
+        .unwrap_or(&reference_pixel);
     let ref_pixel = if pixel.is_some() {
-        model.reference_pixel()[local]
+        reference_pixel[local]
     } else {
         fixed[local]
     };
@@ -318,7 +330,7 @@ fn coordinate_rows(
                 .join(" ")
         } else {
             model
-                .to_world(&fixed)
+                .to_world(fixed)
                 .ok()
                 .and_then(|world| StokesType::from_code(world[local] as i32))
                 .map_or_else(|| "?".into(), |label| label.name().into())
@@ -333,7 +345,7 @@ fn coordinate_rows(
         model.reference_value()[local]
     } else {
         model
-            .to_world(&fixed)
+            .to_world(fixed)
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?[local]
     };
     let increment = model.increment()[local];
@@ -420,8 +432,13 @@ fn coordinate_summary(
     doppler: DopplerRef,
     name: &str,
 ) -> PyResult<String> {
-    let mut output = metadata(state, name);
-    let rows = axis_rows(state, doppler)?;
+    let placements = state
+        .coordinates
+        .coordinates_in_record(&state.record)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    let numbers = placements.iter().map(coordinate_index).collect::<Vec<_>>();
+    let mut output = metadata(state, &numbers, name);
+    let rows = axis_rows(state, &numbers, doppler)?;
     let header = AxisRow {
         fields: COLUMNS.map(str::to_owned),
         visible: true,
