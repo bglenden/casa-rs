@@ -8816,3 +8816,42 @@ unconverted increment. A four-pixel axis with 2 MHz spacing produces
 `0.125 Hz` instead of 125 Hz. Casa-rs converts the spacing to hertz or
 seconds before taking the reciprocal so equivalent inputs give the same
 Fourier coordinates.
+
+### `image.findsources` can abort on a transposed plane or an invalid source count
+
+On a Float image of shape `[21, 23]` with a compact off-center source,
+CASA 6.7.6.14 finds the source in the original sky plane.
+After `transpose(order="10")`, the default point search aborts with a heap
+error in a separate process. `SkyComponentFactory::encodeSkyComponent`
+swaps flux and the first position on a latitude-first sky plane and accesses
+the sixth parameter even for a three-parameter point source. A transposed
+four-axis image with two singleton axes can instead return an incorrect sky
+position. Casa-rs maps both pixel positions and ellipse endpoints through the
+direction coordinate's axis order. The search area still uses the selected
+image's pixel order.
+
+A search on a Float image with an unselected third nondegenerate axis aborts
+with `Slicer error:IPosition-lengths differ` in CASA, which uses a
+two-dimensional slice after dropping singleton axes. Casa-rs requires a
+two-dimensional sky plane and reports a Python error before reading pixels if
+more than two nondegenerate axes remain. Selecting one channel or polarization
+before the search still works.
+
+`nmax=0` crashes CASA because the search accesses an empty result matrix.
+Casa-rs returns an empty component list. A negative count aborts on CASA's
+negative matrix dimension and raises a Python error in casa-rs.
+
+The first two mask rows initialize `inDone` from the mask instead of its
+inverse. On a 16 × 17 Float image with a compact peak centered at row 1 or
+2, CASA finds no source with an all-true mask. When the first two rows are
+masked off, CASA reports the source anyway. Casa-rs preserves the regular
+scan starting at row 3 for both masks, so rows excluded by the mask cannot
+contribute to these detections.
+
+For a native J2000 sky coordinate with its conversion type set to Galactic,
+`findsources` returns Galactic longitude and latitude, approximately
+`(1.68201, -1.05039)` radians for an off-center point in a synthetic image
+centered at J2000 zero. CASA tags these values as J2000, so a component list
+using that record interprets a different sky position. Casa-rs tags the
+angles with the frame used to compute them. Gaussian directions and their
+position angles are computed in that same frame.

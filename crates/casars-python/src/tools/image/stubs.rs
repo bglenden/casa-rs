@@ -15,21 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (nmax = None, cutoff = None, region = None, mask = None, point = None, width = None, negfind = None), text_signature = "($self, nmax=20, cutoff=0.1, region={}, mask='', point=True, width=5, negfind=False)")]
-    fn findsources(
-        &self,
-        nmax: Option<&Bound<'_, PyAny>>,
-        cutoff: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        point: Option<&Bound<'_, PyAny>>,
-        width: Option<&Bound<'_, PyAny>>,
-        negfind: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("findsources")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#box = None, region = None, chans = None, stokes = None, mask = None, includepix = None, excludepix = None, residual = None, model = None, estimates = None, logfile = None, append = None, newestimates = None, complist = None, overwrite = None, dooff = None, offset = None, fixoffset = None, stretch = None, rms = None, noisefwhm = None, summary = None), text_signature = "($self, box='', region=[], chans=[], stokes='', mask='', includepix=[-1.0], excludepix=[-1.0], residual='', model='', estimates='', logfile='', append=True, newestimates='', complist='', overwrite=False, dooff=False, offset=0.0, fixoffset=False, stretch=False, rms='', noisefwhm='', summary='')")]
     fn fitcomponents(
         &self,

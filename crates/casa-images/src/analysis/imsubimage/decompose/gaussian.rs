@@ -7,7 +7,7 @@ use casa_numerics::solve_symmetric_positive_definite;
 use super::points::{Pixels, neighborhood};
 use super::{ImageError, PixelSections, SubimagePlan};
 
-pub(super) type Parameters = [f64; 9];
+pub(in crate::analysis::imsubimage) type Parameters = [f64; 9];
 
 pub(super) struct FitOptions {
     pub(super) maximum_rms: f64,
@@ -242,11 +242,79 @@ pub(super) fn fit(
     for component in &mut estimates {
         component[0] /= scale;
     }
-    let mut solution = optimize(&sample, &estimates, rank, options, scale);
+    let mut solution = optimize(&sample, &estimates, rank, options, scale).unwrap_or(estimates);
     for component in &mut solution {
         component[0] *= scale;
     }
     solution
+}
+
+pub(in crate::analysis::imsubimage) enum WindowFit {
+    Point,
+    DefaultWidth,
+    Fitted(Parameters),
+}
+
+// Fit2D's initial guess uses absolute moments above five percent of
+// the largest magnitude. Lower samples still enter the least-squares fit.
+pub(in crate::analysis::imsubimage) fn fit_window(
+    pixels: impl IntoIterator<Item = ([f64; 2], f32)>,
+    peak: f64,
+) -> WindowFit {
+    const FACTOR: f64 = 4. * LN_2;
+    let mut samples: Vec<_> = pixels
+        .into_iter()
+        .map(|([x, y], pixel)| Observation {
+            position: [x, y, 0.],
+            value: f64::from(pixel),
+        })
+        .collect();
+    if samples.iter().any(|row| !row.value.is_finite()) {
+        return WindowFit::Point;
+    }
+    let scale = samples.iter().map(|row| row.value.abs()).fold(0., f64::max);
+    if samples.len() < 6 || scale == 0. {
+        return WindowFit::Point;
+    }
+    let clip = f64::from((0.05 * scale) as f32);
+    let mut moments = [0.; 6];
+    for row in &mut samples {
+        let magnitude = row.value.abs();
+        row.value /= scale;
+        if magnitude > clip {
+            let [x, y, _] = row.position;
+            for (sum, term) in moments.iter_mut().zip([1., x, y, x * y, x * x, y * y]) {
+                *sum += magnitude * term;
+            }
+        }
+    }
+    let [sum, x, y, xy, xx, yy] = moments;
+    let x = x / sum;
+    let y = y / sum;
+    let xy = xy / sum - x * y;
+    let xx = xx / sum - x * x;
+    let yy = yy / sum - y * y;
+    let span = (xx - yy).hypot(2. * xy);
+    let major = 0.95 * (FACTOR * (xx + yy + span)).sqrt();
+    let minor = (FACTOR * (xx + yy - span)).sqrt();
+    if minor <= 0. || !major.is_finite() || !minor.is_finite() {
+        return WindowFit::Point;
+    }
+    let angle = 0.5 * (2. * xy).atan2(yy - xx);
+    let seed = [peak / scale, x, y, major, minor / major, -angle, 0., 0., 0.];
+    let options = FitOptions {
+        maximum_rms: -1.,
+        retries: 0,
+        iterations: 1000,
+        criterion: 0.0001,
+    };
+    let Some(mut result) =
+        optimize(&samples, &[seed], 2, &options, scale).and_then(|mut fit| fit.pop())
+    else {
+        return WindowFit::DefaultWidth;
+    };
+    result[0] *= scale;
+    WindowFit::Fitted(result)
 }
 
 fn optimize(
@@ -255,7 +323,7 @@ fn optimize(
     rank: usize,
     options: &FitOptions,
     scale: f64,
-) -> Vec<Parameters> {
+) -> Option<Vec<Parameters>> {
     let count = rank * 3;
     let mut variables = (0..seeds.len())
         .flat_map(|i| (0..count).map(move |j| (i, j)))
@@ -360,7 +428,7 @@ fn optimize(
         }
     }
     if !best_cost.is_finite() {
-        return seeds.to_vec();
+        return None;
     }
     for component in &mut best {
         if rank == 2 {
@@ -385,7 +453,7 @@ fn optimize(
             }
         }
     }
-    best
+    Some(best)
 }
 
 fn damped_step(

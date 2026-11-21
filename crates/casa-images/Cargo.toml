@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+casa-components = { path = "../casa-components" }
 casa-fft = { path = "../casa-fft" }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
