@@ -323,7 +323,13 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, [a1, a2]: [usize;
     let projection = direction.projection();
     let projection_type = projection.projection_type();
     let start = projection_type.fits_parameter_start();
-    for (index, &default) in projection_type.fits_parameter_defaults().iter().enumerate() {
+    let defaults = projection_type.fits_parameter_defaults();
+    let count = if projection_type == ProjectionType::ZPN {
+        projection.parameters().len().min(defaults.len())
+    } else {
+        defaults.len()
+    };
+    for (index, &default) in defaults[..count].iter().enumerate() {
         let value = projection
             .parameters()
             .get(index)
@@ -785,9 +791,17 @@ fn parse_direction(
     let specified = (start..start + defaults.len())
         .map(|index| h.get_float(&format!("PV{a2}_{index}")))
         .collect::<Vec<_>>();
-    let parameters = if specified.iter().any(Option::is_some) {
+    let parameters = if let Some(last) = specified.iter().rposition(Option::is_some) {
+        // CASA's coordinate record defaults to 20 polynomial terms. FITS
+        // can specify higher terms sparsely through WCSLIB's 30th slot.
+        let count = if proj_type == ProjectionType::ZPN {
+            (last + 1).max(20)
+        } else {
+            defaults.len()
+        };
         specified
             .into_iter()
+            .take(count)
             .zip(defaults)
             .map(|(value, &default)| value.unwrap_or(default))
             .collect()

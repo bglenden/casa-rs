@@ -2,6 +2,7 @@
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
+use crate::direction::wcslib_sin_cos_degrees;
 use crate::{CoordinateError, ProjectionType};
 
 // Calabretta & Greisen (2002), section 5.4. The four conic projections use
@@ -26,14 +27,16 @@ fn bad_projection(message: &str) -> CoordinateError {
 
 impl Conic {
     pub(super) fn new(kind: ProjectionType, parameters: &[f64]) -> Result<Self, CoordinateError> {
-        let sigma = parameters.first().copied().unwrap_or(f64::NAN).to_radians();
-        let delta = parameters.get(1).copied().unwrap_or_default().to_radians();
-        let (first, second) = (sigma - delta, sigma + delta);
-        let (sin_sigma, cos_sigma) = sigma.sin_cos();
-        let (sin_delta, cos_delta) = delta.sin_cos();
+        let sigma_degrees = parameters.first().copied().unwrap_or(f64::NAN);
+        let delta_degrees = parameters.get(1).copied().unwrap_or_default();
+        let sigma = sigma_degrees.to_radians();
+        let delta = delta_degrees.to_radians();
+        let (first, second) = (sigma_degrees - delta_degrees, sigma_degrees + delta_degrees);
+        let (sin_sigma, cos_sigma) = wcslib_sin_cos_degrees(sigma_degrees);
+        let (sin_delta, cos_delta) = wcslib_sin_cos_degrees(delta_degrees);
         let (cone, fiducial_radius, radius) = match kind {
             ProjectionType::COP => {
-                if cos_delta.abs() < f64::EPSILON {
+                if cos_delta == 0.0 {
                     return Err(bad_projection("Invalid COP parallel separation"));
                 }
                 (
@@ -51,7 +54,8 @@ impl Conic {
                 (cone, cos_delta * cos_sigma / cone, Radius::Equidistant)
             }
             ProjectionType::COE => {
-                let (s1, s2) = (first.sin(), second.sin());
+                let (s1, _) = wcslib_sin_cos_degrees(first);
+                let (s2, _) = wcslib_sin_cos_degrees(second);
                 let cone = (s1 + s2) / 2.0;
                 let offset = 1.0 + s1 * s2;
                 (
@@ -61,9 +65,13 @@ impl Conic {
                 )
             }
             ProjectionType::COO => {
-                let tangent = |latitude: f64| ((FRAC_PI_2 - latitude) / 2.0).tan();
+                let tangent = |latitude: f64| {
+                    let (sine, cosine) = wcslib_sin_cos_degrees((90.0 - latitude) / 2.0);
+                    sine / cosine
+                };
                 let (t1, t2) = (tangent(first), tangent(second));
-                let (c1, c2) = (first.cos(), second.cos());
+                let (_, c1) = wcslib_sin_cos_degrees(first);
+                let (_, c2) = wcslib_sin_cos_degrees(second);
                 let cone = if first == second {
                     sin_sigma
                 } else {
@@ -75,7 +83,7 @@ impl Conic {
                 }
                 (
                     cone,
-                    scale * tangent(sigma).powf(cone),
+                    scale * tangent(sigma_degrees).powf(cone),
                     Radius::Orthomorphic { scale },
                 )
             }

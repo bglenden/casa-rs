@@ -8436,6 +8436,16 @@ to reopen the file as a linear coordinate. casa-rs writes the coefficients
 from `PV i_0`. Both readers recover the original sky positions from that
 header.
 
+## A rejected latitude edit can leave a projected coordinate unusable
+
+In CASA 6.7.6.14, a CEA coordinate with zero reference latitude and
+`LONPOLE=0°` cannot move its reference to `-0.5` radians with the same
+pole. `coordsys.setreferencevalue` raises for this edit but leaves the new
+latitude in the coordinate record. The same failure occurs for other
+projections when the requested latitude cannot use the existing pole.
+casa-rs checks the pole before committing the reference edit and preserves
+the usable coordinate if the edit fails.
+
 ## A display frame can shift an adjusted native coordinate reference twice
 
 CASA 6.7.6.14's `coordsys.setreferencecode` can pass the displayed

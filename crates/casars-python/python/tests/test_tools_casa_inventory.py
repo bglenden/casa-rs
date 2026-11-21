@@ -46,6 +46,8 @@ PARTIAL = {
 }
 
 IMPLEMENTED["coordsys"] = {
+    "convertdirection", "reorder", "replace", "setconversiontype", "setprojection",
+    "setreferencecode", "setspectral", "settabular", "subimage", "transpose",
     "setlineartransform",
     "frequencytofrequency", "frequencytovelocity", "velocitytofrequency",
     "increment", "referencevalue",

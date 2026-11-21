@@ -86,7 +86,7 @@ pub(crate) struct RemovedAxis {
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
-fn fiducial_latitude_degrees(proj: &Projection) -> f64 {
+pub(crate) fn fiducial_latitude_degrees(proj: &Projection) -> f64 {
     use crate::projection::ProjectionType;
     match proj.projection_type() {
         ProjectionType::CAR
@@ -564,6 +564,7 @@ impl DirectionCoordinate {
         .with_normalized_pc_matrix(self.pc.clone())?;
         rebuilt.latpole = rebuilt.native_pole[1];
         rebuilt.world_units = self.world_units.clone();
+        rebuilt.removed_axis = self.removed_axis;
         Ok(rebuilt)
     }
 

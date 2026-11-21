@@ -134,7 +134,7 @@ impl ProjectionType {
     pub fn fits_parameter_defaults(self) -> &'static [f64] {
         match self {
             Self::AZP => &[0.0, 0.0],
-            Self::ZPN => &[0.0; 20],
+            Self::ZPN => &[0.0; 30],
             Self::SZP => &[0.0, 0.0, 90.0],
             Self::AIR => &[90.0],
             Self::CYP => &[1.0, 1.0],

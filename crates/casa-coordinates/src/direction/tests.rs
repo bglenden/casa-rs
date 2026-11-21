@@ -1,6 +1,27 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::*;
+
+#[test]
+fn rebuilding_a_projection_keeps_the_removed_direction_axis() {
+    let mut direction = DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [0.4, 0.6],
+        [-1e-3, 1e-3],
+        [0.0, 0.0],
+    );
+    direction.remove_record_axis(0, 13.0, 0.4).unwrap();
+    let rebuilt = direction
+        .with_rebuilt_projection(Projection::new(ProjectionType::TAN))
+        .unwrap();
+    assert_eq!(rebuilt.n_pixel_axes(), 1);
+    assert_eq!(rebuilt.n_world_axes(), 1);
+    let removed = rebuilt.removed_axis().unwrap();
+    assert_eq!(removed.index, 0);
+    assert_eq!(removed.pixel, 13.0);
+    assert_eq!(removed.world_rad, 0.4);
+}
 use crate::projection::ProjectionType;
 
 const TOL: f64 = 1e-10;

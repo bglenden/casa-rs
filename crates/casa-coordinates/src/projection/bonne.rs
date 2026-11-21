@@ -33,17 +33,19 @@ pub(super) fn project(phi: f64, theta: f64, theta1: f64) -> Result<(f64, f64), C
 }
 
 pub(super) fn deproject(x: f64, y: f64, theta1: f64) -> Result<(f64, f64), CoordinateError> {
-    if theta1 == 0.0 {
-        return deproject_sfl(x, y);
-    }
-    let radius0 = 1.0 / theta1.tan() + theta1;
-    let dy = radius0 - y;
-    let radius = x.hypot(dy).copysign(theta1);
-    let theta = radius0 - radius;
-    let phi = if theta.abs() == FRAC_PI_2 || radius == 0.0 {
-        0.0
+    let (phi, theta) = if theta1 == 0.0 {
+        deproject_sfl(x, y)?
     } else {
-        (x / radius).atan2(dy / radius) * radius / theta.cos()
+        let radius0 = 1.0 / theta1.tan() + theta1;
+        let dy = radius0 - y;
+        let radius = x.hypot(dy).copysign(theta1);
+        let theta = radius0 - radius;
+        let phi = if theta.abs() == FRAC_PI_2 || radius == 0.0 {
+            0.0
+        } else {
+            (x / radius).atan2(dy / radius) * radius / theta.cos()
+        };
+        (phi, theta)
     };
     if phi.abs() <= PI + 2e-13 && theta.abs() <= FRAC_PI_2 + 2e-13 {
         Ok((phi.clamp(-PI, PI), theta.clamp(-FRAC_PI_2, FRAC_PI_2)))

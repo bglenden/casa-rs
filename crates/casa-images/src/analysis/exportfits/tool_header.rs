@@ -587,10 +587,12 @@ pub(super) fn projection_parameters(
             let projection = direction.projection();
             let params = projection.parameters();
             let start = projection.projection_type().fits_parameter_start();
-            let count = if projection.projection_type() == ProjectionType::SIN {
-                2
-            } else {
-                params.len()
+            let count = match projection.projection_type() {
+                ProjectionType::SIN => 2,
+                ProjectionType::ZPN => params
+                    .len()
+                    .min(projection.projection_type().fits_parameter_defaults().len()),
+                _ => params.len(),
             };
             for index in 0..count {
                 result.push((
