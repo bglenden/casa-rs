@@ -8,6 +8,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use casa_coordinates::{SpectralCoordinate, StokesType};
 use casa_imaging_model::{EvlaAwCellRequest, NativeAwRequestInput};
 
 use super::cell_image::{CellMisc, write_cell};
@@ -16,6 +17,12 @@ use super::{
     AwCatalogError, EvlaApertureModel, EvlaAwWorkspace, IMAGING_PREFIX, MUELLER_ELEMENTS,
     WEIGHT_PREFIX, conjugate_frequency, nearest,
 };
+
+#[derive(Clone, Copy)]
+pub(super) struct GenerationOptions<'a> {
+    pub only_missing: bool,
+    pub legacy_vla: Option<(&'a str, &'a SpectralCoordinate)>,
+}
 
 /// One worker's share: the cells of one (parallactic angle, frequency,
 /// Mueller element), indices into `input`'s lists, at the w planes of a
@@ -133,7 +140,7 @@ pub(super) fn generate(
     root: &Path,
     input: &NativeAwRequestInput,
     units: &[Unit],
-    only_missing: bool,
+    options: GenerationOptions<'_>,
     workers: usize,
 ) -> Result<(), AwCatalogError> {
     let model = EvlaApertureModel::new(input.surface.clone());
@@ -146,7 +153,7 @@ pub(super) fn generate(
             let Some(unit) = units.get(next.fetch_add(1, Ordering::Relaxed)) else {
                 break;
             };
-            let generated = generate_unit(root, input, &model, unit, only_missing, &mut workspace);
+            let generated = generate_unit(root, input, &model, unit, options, &mut workspace);
             if let Err(error) = generated {
                 failed.store(true, Ordering::Relaxed);
                 return Err(error);
@@ -180,7 +187,10 @@ fn generate_unit(
     input: &NativeAwRequestInput,
     model: &EvlaApertureModel,
     unit: &Unit,
-    only_missing: bool,
+    GenerationOptions {
+        only_missing,
+        legacy_vla,
+    }: GenerationOptions<'_>,
     workspace: &mut Option<EvlaAwWorkspace>,
 ) -> Result<(), AwCatalogError> {
     let grid = input.grid;
@@ -204,6 +214,17 @@ fn generate_unit(
         frequency
     };
     let mueller = input.mueller_elements[unit.mueller];
+    let conjugate_mueller = if legacy_vla.is_some() {
+        // The legacy writer stores the first Stokes code from the conjugate
+        // polarization axis in every imaging and weight cell.
+        (if input.mueller_elements[0] == 0 {
+            StokesType::LL
+        } else {
+            StokesType::RR
+        }) as u32
+    } else {
+        MUELLER_ELEMENTS - 1 - mueller as u32
+    };
     for iw in unit.w_planes.clone() {
         // No other worker writes this unit's cells, so what is present now
         // is what was present when the units were made.
@@ -225,7 +246,10 @@ fn generate_unit(
         };
         let workspace = match workspace {
             Some(workspace) => workspace,
-            None => workspace.insert(EvlaAwWorkspace::new(model.clone(), request)?),
+            None => workspace.insert(
+                EvlaAwWorkspace::new(model.clone(), request)?
+                    .with_legacy_vla_feed(legacy_vla.is_some()),
+            ),
         };
         // Only the W screen depends on w: the aperture and the weight cell
         // are formed once per unit.
@@ -238,10 +262,11 @@ fn generate_unit(
             w_value: w,
             w_increment: input.w_increment,
             conjugate_frequency,
-            conjugate_mueller: MUELLER_ELEMENTS - 1 - mueller as u32,
+            conjugate_mueller,
             diameter_m: input.antenna_diameter_m,
             sky_increment_rad: grid.sky_increment_rad[1].abs(),
             working_size: grid.size,
+            legacy_vla,
         };
         let suffix = cell_suffix(unit.pa, unit.frequency, iw, unit.mueller);
         write_cell(
