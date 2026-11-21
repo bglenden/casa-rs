@@ -227,6 +227,16 @@ impl NativeAwRequestInput {
     /// distinct frequency groups in the EVLA bands, a single reference group
     /// without wideband selection, and a bounded non-empty cell count.
     pub fn validate(&self) -> Result<(), NativeAwRequestError> {
+        self.validate_layout(false)
+    }
+
+    /// Validate the legacy `getChanFreqList` layout. Separate ranges of the
+    /// same spectral window retain their own distinct endpoints and order.
+    pub fn validate_legacy_vla(&self) -> Result<(), NativeAwRequestError> {
+        self.validate_layout(true)
+    }
+
+    fn validate_layout(&self, legacy_vla: bool) -> Result<(), NativeAwRequestError> {
         let Self {
             frequencies,
             w_values,
@@ -246,6 +256,22 @@ impl NativeAwRequestInput {
         let strictly_sorted = |values: &[f64]| {
             values.iter().all(|v| v.is_finite()) && values.windows(2).all(|pair| pair[0] < pair[1])
         };
+        let repeated_or_unordered = if legacy_vla {
+            frequencies.iter().enumerate().any(|(i, group)| {
+                frequencies[..i]
+                    .iter()
+                    .any(|previous| previous.cf_frequency_hz == group.cf_frequency_hz)
+            })
+        } else {
+            frequencies
+                .windows(2)
+                .any(|pair| pair[0].cf_frequency_hz >= pair[1].cf_frequency_hz)
+                || frequencies.iter().enumerate().any(|(i, group)| {
+                    frequencies[..i]
+                        .iter()
+                        .any(|previous| previous.spectral_window == group.spectral_window)
+                })
+        };
         if self.antenna_diameter_m != 25.0
             || !strictly_sorted(w_values)
             || w_values[0] < 0.0
@@ -257,9 +283,7 @@ impl NativeAwRequestInput {
             || self.reference_frequency_hz <= 0.0
             || mueller_elements.iter().any(|m| !matches!(m, 0 | 15))
             || mueller_elements.windows(2).any(|p| p[0] >= p[1])
-            || frequencies
-                .windows(2)
-                .any(|p| p[0].cf_frequency_hz >= p[1].cf_frequency_hz)
+            || repeated_or_unordered
             || frequencies.iter().any(|group| {
                 !group.cf_frequency_hz.is_finite()
                     || !(0.9e9..=8e9).contains(&group.cf_frequency_hz)
@@ -268,11 +292,6 @@ impl NativeAwRequestInput {
                         .channel_frequencies_hz
                         .iter()
                         .any(|f| !f.is_finite() || *f <= 0.0)
-            })
-            || frequencies.iter().enumerate().any(|(i, g)| {
-                frequencies[..i]
-                    .iter()
-                    .any(|p| p.spectral_window == g.spectral_window)
             })
             || (!terms.w_term && w_values.as_slice() != [0.0])
             || (!terms.wideband

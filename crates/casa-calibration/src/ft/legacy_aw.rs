@@ -16,7 +16,9 @@ use casa_imaging_operator::{
 };
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
+use casa_ms::{
+    ChannelSelection, ChannelSelectionSegment, MeasurementSet, MsResult, ResolvedMsSelection,
+};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::epoch::EpochRef;
 use casa_types::{ArrayValue, Correlation, RecordValue, ScalarValue, Value};
@@ -256,43 +258,64 @@ fn cold_request(
     let window = ms.spectral_window()?;
     let band = window.name(spw as usize)?;
     let frequencies = window.chan_freq(spw as usize)?;
-    let (channels, stop) = match selected.channel_selections.get(&spw) {
-        Some(selection) => {
-            let [segment] = selection.segments.as_slice() else {
-                return Err(invalid(
-                    "cold legacy A/W needs one channel range per SPW (#1520)",
-                ));
-            };
-            (selection.indices(frequencies.len())?, segment.end as usize)
-        }
-        None => (
-            (0..frequencies.len()).collect(),
-            frequencies.len().saturating_sub(1),
-        ),
+    let entire = ChannelSelectionSegment {
+        start: 0,
+        end: i32::try_from(
+            frequencies
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| invalid("the legacy A/W window has no channels"))?,
+        )
+        .map_err(invalid)?,
+        stride: 1,
     };
-    let cf_frequency_hz = *frequencies
-        .get(stop)
-        .ok_or_else(|| invalid("the cold A/W channel range is outside its window"))?;
-    let channel_frequencies_hz: Vec<_> = channels
-        .into_iter()
-        .map(|channel| frequencies[channel])
-        .collect();
-    if std::iter::once(&cf_frequency_hz)
-        .chain(&channel_frequencies_hz)
-        .any(|frequency| !(1.0e9..=2.0e9).contains(frequency))
-    {
-        return Err(invalid("cold VLA A/W needs L-band visibility channels"));
-    }
+    let segments = selected
+        .channel_selections
+        .get(&spw)
+        .map_or(std::slice::from_ref(&entire), |selection| {
+            selection.segments.as_slice()
+        });
+    let spectral_window = spw.try_into().map_err(invalid)?;
+    // Keep getChanFreqList's original range order in the cell names and in
+    // the conjugate-frequency tie break, including multiple ranges of one SPW.
+    let groups = segments
+        .iter()
+        .map(|segment| {
+            let selection = ChannelSelection {
+                segments: vec![segment.clone()],
+            };
+            let channel_frequencies_hz: Vec<_> = selection
+                .indices(frequencies.len())?
+                .into_iter()
+                .map(|index| frequencies[index])
+                .collect();
+            let stop = usize::try_from(segment.end).map_err(invalid)?;
+            let cf_frequency_hz = *frequencies
+                .get(stop)
+                .ok_or_else(|| invalid("the cold A/W channel range is outside its window"))?;
+            if std::iter::once(&cf_frequency_hz)
+                .chain(&channel_frequencies_hz)
+                .any(|frequency| !(1.0e9..=2.0e9).contains(frequency))
+            {
+                return Err(invalid("cold VLA A/W needs L-band visibility channels"));
+            }
+            Ok(NativeAwFrequencyGroup {
+                spectral_window,
+                channel_frequencies_hz,
+                cf_frequency_hz,
+            })
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    let maximum_cells = groups
+        .len()
+        .checked_mul(2)
+        .ok_or_else(|| invalid("too many legacy A/W channel ranges"))?;
     let (fft_side, oversampling) = (2048, 20);
     let image = grid.image();
     let input = NativeAwRequestInput {
         surface: legacy_vla_surface()?,
         antenna_diameter_m: 25.,
-        frequencies: vec![NativeAwFrequencyGroup {
-            spectral_window: spw.try_into().map_err(invalid)?,
-            channel_frequencies_hz,
-            cf_frequency_hz,
-        }],
+        frequencies: groups,
         w_values: vec![0.],
         w_increment: 0.,
         pa_values: vec![pa],
@@ -306,7 +329,7 @@ fn cold_request(
             oversampling,
         },
         terms,
-        maximum_cells: 2,
+        maximum_cells,
     };
     Ok((input, band))
 }

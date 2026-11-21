@@ -147,6 +147,9 @@ def compare_cold(root, dataset, model):
             assert max(results[case].values()) < 1.e-3
     with TemporaryDirectory(dir=root) as control:
         results['stepped'] = stepped_range(Path(control), dataset, model)
+    for selector, stops in (('0:0;3', (0, 3)), ('0:3;0', (3, 0))):
+        with TemporaryDirectory(dir=root) as control:
+            results[selector] = disjoint_ranges(Path(control), dataset, model, selector, stops)
     with TemporaryDirectory(dir=root) as control:
         refuses_unsupported_cells(Path(control), dataset, model)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
@@ -239,9 +242,9 @@ def preserve_replaced_cell(root, dataset, model, source_cache, machine, terms, e
     return relative_rms(actual[:, 0, :], expected[:, 0, :])
 
 
-def compare_cells(actual, expected):
+def compare_cells(actual, expected, *, count=4):
     names = sorted(path.name for path in expected.glob('*CFS_*.im'))
-    assert len(names) == 4
+    assert len(names) == count
     assert sorted(path.name for path in actual.glob('*CFS_*.im')) == names
     errors = []
     for name in names:
@@ -315,8 +318,58 @@ def stepped_range(root, dataset, model, *, reference=None):
     return errors
 
 
+def disjoint_ranges(root, dataset, model, selector, stops, *, reference=None):
+    if reference is None:
+        pinned, casa_cache = root / 'pinned.ms', root / 'casa-cache'
+        make_input(dataset, pinned, scratch=True)
+        predict(pinned, model, casa_cache, 'awproject', False, factory=casa_imager,
+                spw=selector, wbawp=True)
+    else:
+        pinned, casa_cache = reference / 'fixture.ms', reference / 'cache'
+    expected = data(pinned, 'MODEL_DATA')
+    native, native_cache = root / 'native.ms', root / 'native-cache'
+    make_input(dataset, native, scratch=True)
+    predict(native, model, native_cache, 'awproject', False, spw=selector, wbawp=True)
+    errors = {'cache': compare_cells(native_cache, casa_cache, count=8)}
+    frequencies = data(dataset / 'SPECTRAL_WINDOW', 'CHAN_FREQ')[:, 0]
+    for group, stop in enumerate(stops):
+        reader = table()
+        assert reader.open(str(native_cache / f'CFS_0_0_CF_{group}_0_0.im'))
+        assert reader.getkeyword('coords')['spectral2']['wcs']['crval'] == frequencies[stop]
+        assert reader.done()
+    reopened = root / 'casa-reopened.ms'
+    make_input(dataset, reopened, scratch=True)
+    cached = cache_contents(native_cache)
+    predict(reopened, model, native_cache, 'awproject', False, factory=casa_imager,
+            spw=selector, wbawp=True)
+    assert cache_contents(native_cache) == cached
+    for name, target in (('native', native), ('casa_reopened', reopened)):
+        actual = data(target, 'MODEL_DATA')
+        np.testing.assert_array_equal(actual[:, 4:, :], expected[:, 4:, :])
+        errors[name] = relative_rms(actual[:, :4, :], expected[:, :4, :])
+
+    if stops == (0, 3):
+        saved, saved_cache = root / 'saved.ms', root / 'saved-cache'
+        make_input(dataset, saved, scratch=False)
+        predict(saved, model, saved_cache, 'awproject', False, scratch=False, spw=selector, wbawp=True)
+        entry = recipe(saved)
+        assert entry['name'] == 'AWProjectWBFT'
+        assert compare_cells(Path(entry['diskimage']) / 'CASARS_LEGACY_AW_CACHE', casa_cache, count=8) < 1.e-3
+        saved_cache.rename(root / 'unavailable-cache')
+        before = corrected_or_data(saved)
+        tool = ms()
+        assert tool.open(str(saved), nomodify=False)
+        assert tool.msselect({'field': '0'}) and tool.uvsub() and tool.done()
+        replayed = before - data(saved, 'CORRECTED_DATA')
+        assert not np.any(replayed[:, 4:, :])
+        errors['saved'] = relative_rms(replayed[:, :4, :], expected[:, :4, :])
+    print(selector, 'independent cache and prediction NRMS', errors, flush=True)
+    assert max(errors.values()) < 1.e-3
+    return errors
+
+
 def refuses_unsupported_cells(root, dataset, model):
-    for label, spw in (('disjoint', '0:0;3'), ('cross-hand', '0:0'), ('s-band', '0:0')):
+    for label in ('cross-hand', 's-band'):
         target, cache = root / f'{label}.ms', root / f'{label}-cache'
         make_input(dataset, target, scratch=True)
         if label == 's-band':
@@ -331,7 +384,7 @@ def refuses_unsupported_cells(root, dataset, model):
             assert editor.putcell('CORR_TYPE', 0, np.array([5, 6], dtype=np.int32))
             assert editor.putcell('CORR_PRODUCT', 0, np.array([[0, 0], [0, 1]], dtype=np.int32))
             assert editor.done()
-        predict(target, model, cache, 'awproject', False, accepts=False, spw=spw, wbawp=True)
+        predict(target, model, cache, 'awproject', False, accepts=False, wbawp=True)
         assert not list(cache.glob('*CFS_*.im'))
         print(label, 'refused before publishing any cells', flush=True)
 def cold_correction_retry(root, dataset, model, machine, *, scratch, factory):

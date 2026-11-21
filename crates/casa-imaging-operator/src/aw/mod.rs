@@ -669,7 +669,7 @@ impl AwCatalog {
         workers: usize,
     ) -> Result<(), AwCatalogError> {
         input
-            .validate()
+            .validate_legacy_vla()
             .map_err(|error| cache_error(root, format!("invalid legacy A/W request: {error}")))?;
         let units = generation::units(root, input, false, workers);
         generation::generate(
