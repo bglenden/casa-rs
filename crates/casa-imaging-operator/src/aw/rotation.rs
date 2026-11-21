@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use super::{AwIndexing, first_covered_pa};
+
 /// Feed angles at the selected observation times and the rotation threshold.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AwPaRotation {
@@ -55,6 +57,150 @@ impl AwPaRotation {
             // radians. Thresholds use their original radian values.
             fresh as f32 == replay as f32
         })
+    }
+}
+
+/// Original apertures followed by the rotation epochs required by selected
+/// rows. Each legacy rotation retains cells from its own base PA only.
+#[derive(Debug)]
+pub(super) enum PaSchedule {
+    Unrotated,
+    Single(Vec<(f64, f64)>),
+    Legacy {
+        epochs: Vec<(f64, usize, Option<usize>)>,
+        variants: Vec<(usize, f64)>,
+    },
+}
+
+impl PaSchedule {
+    pub(super) fn new(
+        indexing: &AwIndexing,
+        pa_deg: &[f64],
+        rotatable: bool,
+        legacy: bool,
+    ) -> Result<Self, &'static str> {
+        let Some(rotation) = &indexing.rotation else {
+            return Ok(Self::Unrotated);
+        };
+        if !rotatable {
+            return Err("runtime rotation needs axis-aligned linear cells (#1070)");
+        }
+        if legacy {
+            return Self::legacy(rotation, pa_deg, indexing.pa_tolerance_rad);
+        }
+        if pa_deg.len() != 1 {
+            return Err("runtime rotation needs one PA buffer (#1070)");
+        }
+        rotation.schedule(pa_deg[0]).map(Self::Single).ok_or(
+            "runtime rotation needs the same effective PA schedule across wideband passes (#1070)",
+        )
+    }
+
+    fn legacy(
+        rotation: &AwPaRotation,
+        pa_deg: &[f64],
+        tolerance_rad: f32,
+    ) -> Result<Self, &'static str> {
+        let mut active = pa_deg
+            .iter()
+            .map(|&degrees| {
+                let base = f64::from(degrees as f32).to_radians();
+                (base, base, None)
+            })
+            .collect::<Vec<_>>();
+        let mut variants = Vec::new();
+        let mut epochs = Vec::new();
+        for &(time, angle) in rotation.samples.iter() {
+            let pa = first_covered_pa(pa_deg, angle, tolerance_rad)
+                .ok_or("no imported AW buffer within pastep of a selected row")?;
+            let (base, current, variant) = &mut active[pa];
+            let angle = f64::from(angle);
+            if (*current - angle).abs() > rotation.step_rad {
+                *current = angle;
+                *variant = Some(variants.len());
+                variants.push((pa, *base - angle));
+            }
+            if !epochs
+                .last()
+                .is_some_and(|&(_, p, v)| (p, v) == (pa, *variant))
+            {
+                epochs.push((time, pa, *variant));
+            }
+        }
+        Ok(Self::Legacy { epochs, variants })
+    }
+
+    pub(super) fn group_count(&self, base: usize, per_pa: usize) -> Option<usize> {
+        let extra = match self {
+            Self::Unrotated => 0,
+            Self::Single(epochs) => epochs.len().checked_mul(base)?,
+            Self::Legacy { variants, .. } => variants.len().checked_mul(per_pa)?,
+        };
+        base.checked_add(extra)
+    }
+
+    pub(super) fn resident_bytes(&self) -> usize {
+        match self {
+            Self::Unrotated => 0,
+            Self::Single(epochs) => epochs.capacity() * size_of::<(f64, f64)>(),
+            Self::Legacy { epochs, variants } => {
+                epochs.capacity() * size_of::<(f64, usize, Option<usize>)>()
+                    + variants.capacity() * size_of::<(usize, f64)>()
+            }
+        }
+    }
+
+    pub(super) fn has_rotation(&self) -> bool {
+        match self {
+            Self::Unrotated => false,
+            Self::Single(epochs) => !epochs.is_empty(),
+            Self::Legacy { variants, .. } => !variants.is_empty(),
+        }
+    }
+
+    pub(super) fn legacy_pa(&self, time: f64) -> Option<usize> {
+        self.legacy_epoch(time).map(|(pa, _)| pa)
+    }
+
+    fn legacy_epoch(&self, time: f64) -> Option<(usize, Option<usize>)> {
+        let Self::Legacy { epochs, .. } = self else {
+            return None;
+        };
+        let end = epochs.partition_point(|&(start, _, _)| start <= time);
+        if end == 0 {
+            epochs.first().map(|&(_, pa, _)| (pa, None))
+        } else {
+            let (_, pa, variant) = epochs[end - 1];
+            Some((pa, variant))
+        }
+    }
+
+    /// Base offset of the selected PA block within the flattened group IDs.
+    pub(super) fn group_start(&self, time: f64, pa: usize, base: usize, per_pa: usize) -> usize {
+        match self {
+            Self::Single(epochs) => {
+                pa * per_pa + epochs.partition_point(|&(start, _)| start <= time) * base
+            }
+            Self::Legacy { .. } => self
+                .legacy_epoch(time)
+                .and_then(|(_, variant)| variant)
+                .map_or(pa * per_pa, |variant| base + variant * per_pa),
+            Self::Unrotated => pa * per_pa,
+        }
+    }
+
+    pub(super) fn source(&self, group: usize, base: usize, per_pa: usize) -> (usize, f64) {
+        let Some(extra) = group.checked_sub(base) else {
+            return (group, 0.);
+        };
+        match self {
+            Self::Single(epochs) => (extra % base, epochs[extra / base].1),
+            Self::Legacy { variants, .. } => {
+                let (pa, angle) = variants[extra / per_pa];
+                (pa * per_pa + extra % per_pa, angle)
+            }
+            Self::Unrotated => unreachable!("unrotated group is within the original cells"),
+        }
     }
 }
 

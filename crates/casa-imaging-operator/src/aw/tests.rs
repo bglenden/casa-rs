@@ -143,7 +143,7 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
         cells: Vec::new(),
         header_opening_bytes: 0,
         groups,
-        rotations: Vec::new(),
+        rotations: PaSchedule::Unrotated,
         oversampling: 2,
         max_half_support: [0, 0],
         mueller: MuellerRouting::scalar(&[Some(0)], 1),
@@ -374,13 +374,13 @@ fn rotation_epochs_key_the_current_group_and_bound_memory() {
         require_repeatable_schedule: false,
         samples: Arc::new([(1.0, 0.0), (2.0, 0.25), (3.0, 0.5)]),
     };
-    catalog.rotations = rotation.schedule(0.0).unwrap();
+    catalog.rotations = PaSchedule::Single(rotation.schedule(0.0).unwrap());
     catalog.indexing.rotation = Some(rotation);
     let slots = &mut catalog.lru.get_mut().unwrap().slots;
     let original_slots = slots.capacity();
     slots.resize_with(3, || Slot::Empty);
     let slot_bytes = (slots.capacity() - original_slots) * size_of::<Slot>();
-    let added_index = catalog.rotations.capacity() * size_of::<(f64, f64)>()
+    let added_index = catalog.rotations.resident_bytes()
         + 3 * size_of::<(f64, f32)>()
         + 2 * size_of::<usize>()
         + slot_bytes;

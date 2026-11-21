@@ -12,7 +12,7 @@ use casa_imaging_model::{
 };
 use casa_imaging_operator::{
     AwCatalog, AwIndexing, AwLegacyFrequencyMap, AwPaRotation, GridGeometry, GridPadding,
-    ImageExtent, NativeCacheLock, PolarizationRouting,
+    ImageExtent, NativeCacheLock, PolarizationRouting, first_covered_pa,
 };
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
@@ -39,6 +39,8 @@ const OWNED_STAGE: &str = "preparing";
 const CELL_JOURNAL: &str = "promoting";
 const CELL_OWNER: &str = ".casars-legacy-aw-owner";
 const FREQUENCY_MAP: &str = "casars_legacy_aw_frequency_map";
+const COMPUTE_PA_STEP: &str = "casars_legacy_aw_compute_pa_step";
+const ROTATE_PA_STEP: &str = "casars_legacy_aw_rotate_pa_step";
 
 pub(super) fn prepare_model(
     ms: &MeasurementSet,
@@ -49,12 +51,10 @@ pub(super) fn prepare_model(
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
-    if options.apply_pointing_offsets
-        || options.pa_step_deg != 360.
-        || options.rotation_step_deg != 5.
-    {
+    if options.apply_pointing_offsets {
         return Err(invalid("this legacy AW configuration is pending #1520"));
     }
+    let (pa_tolerance, _) = pa_steps(options.pa_step_deg, options.rotation_step_deg)?;
     if options.cache_directory.as_os_str().is_empty() {
         return Err(invalid("legacy AW requires a convolution cache directory"));
     }
@@ -123,11 +123,28 @@ pub(super) fn prepare_model(
         ));
     }
     let frequency_map = selected_frequency_map(ms, selected, row.spectral_window_id)?;
-    let _cache_lock = ready_cache(
+    let (_cache_lock, catalog, cache_memory) = ready_cache(
         &options.cache_directory,
         spectral,
-        telescope == "VLA",
+        (telescope == "VLA", geometry.native_threads),
+        &host,
         || {
+            open_catalog(
+                &options.cache_directory,
+                &grid,
+                &routing,
+                reference_hz,
+                options.conjugate_beams,
+                None,
+                false,
+            )
+        },
+        |catalog| {
+            samples.iter().all(|&(_, angle)| {
+                first_covered_pa(catalog.parallactic_angles_deg(), angle, pa_tolerance).is_some()
+            })
+        },
+        |cached| {
             for row in 1..observations.row_count() {
                 if observations.string(row, "TELESCOPE_NAME")? != telescope {
                     return Err(invalid(
@@ -148,30 +165,16 @@ pub(super) fn prepare_model(
                     "cold VLA A/W currently needs the RR and LL correlation layout",
                 ));
             }
-            let (_, pa) = samples
-                .first()
-                .ok_or_else(|| invalid("legacy AW has no first visibility buffer"))?;
             cold_request(
                 ms,
                 selected,
                 row.spectral_window_id,
                 &grid,
-                (reference_hz, f64::from(*pa)),
+                (reference_hz, &samples, cached),
                 (options, *switches),
                 &host,
             )
         },
-        &host,
-        geometry.native_threads,
-    )?;
-    let (catalog, cache_memory) = open_catalog(
-        &options.cache_directory,
-        &grid,
-        &routing,
-        reference_hz,
-        options.conjugate_beams,
-        None,
-        false,
     )?;
     let beam = options.cache_directory.join("avgPB");
     let average = beam
@@ -229,10 +232,14 @@ pub(super) fn prepare_model(
                 &routing,
                 reference_hz,
                 options.conjugate_beams,
-                Some(rotation(samples.clone())),
+                Some(rotation(
+                    samples.clone(),
+                    options.pa_step_deg,
+                    options.rotation_step_deg,
+                )?),
                 true,
             )?;
-            save_metadata(record, options.conjugate_beams, samples, frequency_map);
+            save_metadata(record, options, samples, frequency_map);
             Ok(())
         },
     )
@@ -240,14 +247,22 @@ pub(super) fn prepare_model(
 
 fn save_metadata(
     record: &mut RecordValue,
-    conjugate_beams: bool,
+    options: &ImagerLegacyAwOptions,
     samples: Vec<(f64, f32)>,
     frequency_map: Option<AwLegacyFrequencyMap>,
 ) {
     record.upsert("name", Value::Scalar(ScalarValue::String(MACHINE.into())));
     record.upsert(
         "casars_legacy_aw_conjbeams",
-        Value::Scalar(ScalarValue::Bool(conjugate_beams)),
+        Value::Scalar(ScalarValue::Bool(options.conjugate_beams)),
+    );
+    record.upsert(
+        COMPUTE_PA_STEP,
+        Value::Scalar(ScalarValue::Float64(options.pa_step_deg)),
+    );
+    record.upsert(
+        ROTATE_PA_STEP,
+        Value::Scalar(ScalarValue::Float64(options.rotation_step_deg)),
     );
     record.upsert(
         "casars_legacy_aw_angles",
@@ -356,7 +371,7 @@ fn cold_request(
     selected: &ResolvedMsSelection,
     spw: i32,
     grid: &GridGeometry,
-    (reference_frequency_hz, pa): (f64, f64),
+    (reference_frequency_hz, samples, cached): (f64, &[(f64, f32)], Option<&AwCatalog>),
     (options, switches): (&ImagerLegacyAwOptions, [bool; 2]),
     host: &HostResources,
 ) -> MsResult<(NativeAwRequestInput, String, Reservation)> {
@@ -386,6 +401,9 @@ fn cold_request(
         .checked_mul(w_planes)
         .filter(|&count| (1..=usize::from(u16::MAX) + 1).contains(&count))
         .ok_or_else(|| invalid("legacy A/W frequency and W groups exceed the cache index range"))?;
+    let covered = cached.map_or(&[][..], AwCatalog::parallactic_angles_deg);
+    let max_angles = ((usize::from(u16::MAX) + 1) / group_count).saturating_sub(covered.len());
+    let (pa_tolerance, _) = pa_steps(options.pa_step_deg, options.rotation_step_deg)?;
     let memory = admit(
         host,
         &ResourcePolicy::Balanced,
@@ -393,12 +411,15 @@ fn cold_request(
             phase: "legacy A/W frequency and W planning",
             // Each group retains one sample. Include the temporary endpoint index.
             memory: (segments.len() * (size_of::<NativeAwFrequencyGroup>() + size_of::<f64>() + 32)
-                + w_planes * size_of::<f64>()) as u64,
+                + (w_planes + samples.len().min(max_angles)) * size_of::<f64>())
+                as u64,
         },
     )
     .map_err(invalid)?;
     let spectral_window = spw.try_into().map_err(invalid)?;
     let groups = legacy_frequency_groups(segments, &frequencies, spectral_window)?;
+    let pa_values = cold_pa_values(samples, covered, pa_tolerance, max_angles)?;
+    let maximum_cells = group_count * pa_values.len() * 2;
     let (fft_side, oversampling) = (2048, 20);
     let image = grid.image();
     // AWConvFunc spaces W planes quadratically out to the largest W
@@ -412,13 +433,29 @@ fn cold_request(
             .map(|plane| (plane as f64).powi(2) / w_increment)
             .collect()
     };
+    if let Some(cached) = cached {
+        // CASA's on-disk catalog lists cell frequencies in Float precision.
+        let mut cell_frequencies = groups
+            .iter()
+            .map(|group| f64::from(group.cf_frequency_hz as f32))
+            .collect::<Vec<_>>();
+        cell_frequencies.sort_by(f64::total_cmp);
+        if cached.frequencies_hz() != cell_frequencies
+            || cached.w_values() != w_values
+            || cached.w_increment() != w_increment
+        {
+            return Err(invalid(
+                "new legacy A/W PA cells must match the cached W and frequencies",
+            ));
+        }
+    }
     let input = NativeAwRequestInput {
         surface: legacy_vla_surface()?,
         antenna_diameter_m: 25.,
         frequencies: groups,
         w_values,
         w_increment,
-        pa_values: vec![pa],
+        pa_values,
         mueller_elements: vec![0, 15],
         reference_frequency_hz,
         grid: NativeAwGrid {
@@ -435,9 +472,37 @@ fn cold_request(
             wideband: options.wideband,
             conjugate_beams: options.conjugate_beams,
         },
-        maximum_cells: group_count * 2,
+        maximum_cells,
     };
     Ok((input, band, memory))
+}
+
+fn cold_pa_values(
+    samples: &[(f64, f32)],
+    covered: &[f64],
+    tolerance: f32,
+    max_angles: usize,
+) -> MsResult<Vec<f64>> {
+    if samples.is_empty() {
+        return Err(invalid("legacy AW has no first visibility buffer"));
+    }
+    let mut angles: Vec<f64> = Vec::with_capacity(samples.len().min(max_angles));
+    for &(_, angle) in samples {
+        if first_covered_pa(covered, angle, tolerance).is_some()
+            || angles
+                .iter()
+                .any(|&cached| (cached as f32 - angle).abs() < tolerance)
+        {
+            continue;
+        }
+        if angles.len() == max_angles {
+            return Err(invalid(
+                "legacy AW parallactic angles exceed the cache index range",
+            ));
+        }
+        angles.push(f64::from(angle));
+    }
+    Ok(angles)
 }
 
 fn legacy_frequency_groups(
@@ -578,22 +643,29 @@ fn cell_owned_by(path: &Path, owner: &str) -> MsResult<bool> {
 fn ready_cache(
     root: &Path,
     spectral: &SpectralCoordinate,
-    legacy_vla_feed: bool,
-    request: impl FnOnce() -> MsResult<(NativeAwRequestInput, String, Reservation)>,
+    (legacy_vla_feed, desired_workers): (bool, i32),
     host: &HostResources,
-    desired_workers: i32,
-) -> MsResult<NativeCacheLock> {
+    open: impl Fn() -> MsResult<(AwCatalog, Reservation)>,
+    covered: impl Fn(&AwCatalog) -> bool,
+    request: impl FnOnce(Option<&AwCatalog>) -> MsResult<(NativeAwRequestInput, String, Reservation)>,
+) -> MsResult<(NativeCacheLock, AwCatalog, Reservation)> {
     let lock = NativeCacheLock::shared(root).map_err(invalid)?;
     if has_cells(root)? && staged_caches(root)?.is_empty() {
-        return Ok(lock);
+        let (catalog, memory) = open()?;
+        if covered(&catalog) {
+            return Ok((lock, catalog, memory));
+        }
     }
     drop(lock);
     let lock = NativeCacheLock::exclusive(root).map_err(invalid)?;
     for stage in staged_caches(root)? {
         recover_stage(root, &stage)?;
     }
-    if !has_cells(root)? {
-        let (input, band, _planning_memory) = request()?;
+    let cached = has_cells(root)?.then(&open).transpose()?;
+    if cached.as_ref().is_none_or(|(catalog, _)| !covered(catalog)) {
+        let (input, band, _planning_memory) = request(cached.as_ref().map(|(catalog, _)| catalog))?;
+        let offset = next_cache_pa(root)?;
+        drop(cached);
         let workers = if desired_workers > 1 { 2 } else { 1 };
         let _memory = admit(
             host,
@@ -609,19 +681,42 @@ fn ready_cache(
             .tempdir_in(root)
             .map_err(invalid)?;
         std::fs::File::create(stage.path().join(OWNED_STAGE)).map_err(invalid)?;
-        AwCatalog::generate_legacy_l_band(
+        AwCatalog::generate_legacy_l_band_at(
             stage.path(),
             &input,
             &band,
             spectral,
             legacy_vla_feed,
             workers,
+            offset,
         )
         .map_err(invalid)?;
         promote_cells(root, stage)?;
     }
     drop(lock);
-    NativeCacheLock::shared(root).map_err(invalid)
+    let lock = NativeCacheLock::shared(root).map_err(invalid)?;
+    let (catalog, memory) = open()?;
+    Ok((lock, catalog, memory))
+}
+
+fn next_cache_pa(root: &Path) -> MsResult<usize> {
+    let mut next = 0;
+    for entry in std::fs::read_dir(root).map_err(invalid)? {
+        let name = entry.map_err(invalid)?.file_name();
+        let name = name.to_string_lossy();
+        if let Some(cell) = name
+            .strip_prefix("CFS_")
+            .or_else(|| name.strip_prefix("WTCFS_"))
+        {
+            let index = cell
+                .split('_')
+                .next()
+                .and_then(|number| number.parse::<u16>().ok())
+                .ok_or_else(|| invalid("invalid PA index in legacy A/W cache cell name"))?;
+            next = next.max(usize::from(index) + 1);
+        }
+    }
+    Ok(next)
 }
 
 fn promote_cells(root: &Path, stage: tempfile::TempDir) -> MsResult<()> {
@@ -712,7 +807,7 @@ fn zero_timestamp_pa(engine: &MsCalEngine, field: usize) -> MsResult<f64> {
     Ok((cos_lat * sin_h).atan2(sin_lat * cos_dec - cos_lat * sin_dec * cos_h))
 }
 
-pub(crate) fn record_rotation(record: &RecordValue) -> MsResult<AwPaRotation> {
+pub(crate) fn record_rotation(record: &RecordValue) -> MsResult<(f32, AwPaRotation)> {
     let Some(Value::Array(ArrayValue::Float64(values))) = record.get("casars_legacy_aw_angles")
     else {
         return Err(invalid("legacy AW recipe has no visibility-buffer angles"));
@@ -734,20 +829,45 @@ pub(crate) fn record_rotation(record: &RecordValue) -> MsResult<AwPaRotation> {
             "legacy AW recipe has malformed visibility-buffer angles",
         ));
     }
-    Ok(rotation(
+    let step = |name, default| match record.get(name) {
+        None => Ok(default),
+        Some(Value::Scalar(ScalarValue::Float64(value))) => Ok(*value),
+        _ => Err(invalid(
+            "legacy AW recipe has malformed parallactic-angle steps",
+        )),
+    };
+    rotation(
         pairs
             .iter()
             .map(|&[time, angle]| (time, angle as f32))
             .collect(),
-    ))
+        step(COMPUTE_PA_STEP, 360.)?,
+        step(ROTATE_PA_STEP, 5.)?,
+    )
 }
 
-fn rotation(samples: Vec<(f64, f32)>) -> AwPaRotation {
-    AwPaRotation {
-        step_rad: 5_f64.to_radians(),
-        require_repeatable_schedule: false,
-        samples: samples.into(),
+fn pa_steps(compute_deg: f64, rotate_deg: f64) -> MsResult<(f32, f64)> {
+    let compute = compute_deg.to_radians() as f32;
+    if !compute.is_finite() || compute <= 0. || !rotate_deg.is_finite() {
+        return Err(invalid("invalid legacy AW parallactic-angle steps"));
     }
+    Ok((compute, rotate_deg.to_radians().abs()))
+}
+
+fn rotation(
+    samples: Vec<(f64, f32)>,
+    compute_deg: f64,
+    rotate_deg: f64,
+) -> MsResult<(f32, AwPaRotation)> {
+    let (tolerance, step_rad) = pa_steps(compute_deg, rotate_deg)?;
+    Ok((
+        tolerance,
+        AwPaRotation {
+            step_rad,
+            require_repeatable_schedule: false,
+            samples: samples.into(),
+        },
+    ))
 }
 
 fn check_owned(directory: &Path) -> MsResult<()> {
@@ -773,22 +893,23 @@ pub(crate) fn open_catalog(
     routing: &PolarizationRouting,
     reference_hz: f64,
     conjugate_beams: bool,
-    rotation: Option<AwPaRotation>,
+    rotation: Option<(f32, AwPaRotation)>,
     preload: bool,
 ) -> MsResult<(AwCatalog, Reservation)> {
+    let (pa_tolerance_rad, rotation) = rotation
+        .map_or((std::f32::consts::TAU, None), |(tolerance, rotation)| {
+            (tolerance, Some(rotation))
+        });
     let index = AwIndexing {
         conjugate_beams,
         image_reference_hz: reference_hz,
-        pa_tolerance_rad: std::f32::consts::TAU,
+        pa_tolerance_rad,
         feed_zero_angles_rad: None,
         rotation,
     };
     let terms = AwCatalog::open_legacy_casa(path, index, grid, routing, 16 << 20)
         .map_err(invalid)?
         .with_native_prediction_frequency(true);
-    if terms.parallactic_angles_deg().len() != 1 {
-        return Err(invalid("this legacy AW cache geometry is pending #1520"));
-    }
     let host = HostResources::detect().map_err(invalid)?;
     let charge = terms.cache_charge();
     let bound = terms.cache_bound();

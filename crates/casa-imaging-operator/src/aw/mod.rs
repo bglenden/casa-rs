@@ -31,6 +31,7 @@ pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
 pub use pa::{first_covered_pa, stored_pa_rad};
 pub use rotation::AwPaRotation;
+use rotation::PaSchedule;
 
 #[cfg(test)]
 use cell_image::{convolution_origin, dense_cell_padded};
@@ -311,7 +312,7 @@ pub struct AwCatalog {
     /// Temporary header and path storage while opening before PA coalescing.
     header_opening_bytes: usize,
     groups: Vec<Group>,
-    rotations: Vec<(f64, f64)>,
+    rotations: PaSchedule,
     oversampling: u16,
     max_half_support: [u16; 2],
     mueller: MuellerRouting,
@@ -460,7 +461,7 @@ impl AwCatalog {
             values
         };
         let pa_deg = unique(cells.iter().map(|cell| cell.imaging.pa_deg).collect());
-        if indexing.feed_zero_angles_rad.is_none() && pa_deg.len() != 1 {
+        if !legacy && indexing.feed_zero_angles_rad.is_none() && pa_deg.len() != 1 {
             return Err(cache_error(
                 &root,
                 "multiple PA buffers require feed-0 angles",
@@ -519,30 +520,15 @@ impl AwCatalog {
                     .max(cell.weight.support[axis])
             })
         });
-        let groups = index_groups(&cells, elements, frequencies_hz.len() * w_values.len());
-        let rotations = if let Some(rotation) = &indexing.rotation {
-            if pa_deg.len() != 1
-                || cells
-                    .iter()
-                    .any(|cell| !cell.imaging.rotatable || !cell.weight.rotatable)
-            {
-                return Err(cache_error(
-                    &root,
-                    "runtime rotation needs one PA buffer with axis-aligned linear cells (#1070)",
-                ));
-            }
-            rotation.schedule(pa_deg[0]).ok_or_else(|| {
-                cache_error(
-                    &root,
-                    "runtime rotation needs the same effective PA schedule across wideband passes (#1070)",
-                )
-            })?
-        } else {
-            Vec::new()
-        };
-        let variants = groups
-            .len()
-            .checked_mul(rotations.len() + 1)
+        let per_pa = frequencies_hz.len() * w_values.len();
+        let groups = index_groups(&cells, elements, per_pa);
+        let rotatable = cells
+            .iter()
+            .all(|cell| cell.imaging.rotatable && cell.weight.rotatable);
+        let rotations = PaSchedule::new(&indexing, &pa_deg, rotatable, legacy)
+            .map_err(|error| cache_error(&root, error))?;
+        let variants = rotations
+            .group_count(groups.len(), per_pa)
             .filter(|&count| count <= usize::from(u16::MAX) + 1)
             .ok_or_else(|| {
                 cache_error(
@@ -685,6 +671,7 @@ impl AwCatalog {
                 only_missing,
                 legacy_coordinates: None,
                 legacy_vla_feed: false,
+                pa_index_offset: 0,
             },
             workers,
         )?;
@@ -717,21 +704,7 @@ impl AwCatalog {
         legacy_vla_feed: bool,
         workers: usize,
     ) -> Result<(), AwCatalogError> {
-        input
-            .validate_legacy_vla()
-            .map_err(|error| cache_error(root, format!("invalid legacy A/W request: {error}")))?;
-        let units = generation::units(root, input, false, workers);
-        generation::generate(
-            root,
-            input,
-            &units,
-            generation::GenerationOptions {
-                only_missing: false,
-                legacy_coordinates: Some((band, spectral)),
-                legacy_vla_feed,
-            },
-            workers,
-        )
+        Self::generate_legacy_l_band_at(root, input, band, spectral, legacy_vla_feed, workers, 0)
     }
 
     /// The cache directory.
@@ -803,7 +776,9 @@ impl AwCatalog {
     /// Number of (PA, frequency, w) groups, including rotated variants.
     #[must_use]
     pub fn groups(&self) -> usize {
-        self.groups.len() * (self.rotations.len() + 1)
+        self.rotations
+            .group_count(self.groups.len(), self.groups_per_pa())
+            .expect("validated group count")
     }
 
     /// Bytes of cells resident in the cache now.
@@ -866,7 +841,7 @@ impl AwCatalog {
             + size_of::<usize>()
             + paths.clone().sum::<usize>()
             + self.groups.capacity() * size_of::<Group>()
-            + self.rotations.capacity() * size_of::<(f64, f64)>()
+            + self.rotations.resident_bytes()
             + self
                 .indexing
                 .rotation
@@ -898,7 +873,7 @@ impl AwCatalog {
             // `load_group`'s header and plane lists.
             let lists = elements
                 * (size_of::<&CellHeader>() + size_of::<(Vec<Complex32>, [usize; 2], [u16; 2])>());
-            let rotation = if self.rotations.is_empty() {
+            let rotation = if !self.rotations.has_rotation() {
                 0
             } else {
                 // The rotated output and its two f64 interpolation planes.
@@ -916,7 +891,9 @@ impl AwCatalog {
         CacheCharge {
             kept: index as u64 + self.mueller.bytes() + self.correction.resident_bytes(),
             opening,
-            every: self.groups.iter().map(group).sum::<u64>() * (self.rotations.len() as u64 + 1),
+            every: (0..lru.slots.len())
+                .map(|id| group(&self.groups[self.source_group(id)]))
+                .sum(),
             largest: self.groups.iter().map(group).max().unwrap_or(0),
             groups: lru.slots.len() as u64,
             reading: self
@@ -929,11 +906,13 @@ impl AwCatalog {
     }
 
     fn source_group(&self, group: usize) -> usize {
-        if group < self.groups.len() {
-            group
-        } else {
-            group % self.groups.len()
-        }
+        self.rotations
+            .source(group, self.groups.len(), self.groups_per_pa())
+            .0
+    }
+
+    fn groups_per_pa(&self) -> usize {
+        self.frequencies_hz.len() * self.w_values.len()
     }
 
     /// Group `group`'s cells, one per Mueller element.
@@ -951,14 +930,17 @@ impl AwCatalog {
     }
 
     fn row_pa_cell(&self, row: &RowContext) -> Option<usize> {
-        self.indexing
-            .feed_zero_angles_rad
-            .as_ref()
-            .map_or(Some(0), |angles| {
-                self.pa_cell(
-                    (-row.parallactic_angle_rad[0]) as f32 + angles[row.spectral_window as usize],
-                )
-            })
+        self.rotations.legacy_pa(row.time_s).or_else(|| {
+            self.indexing
+                .feed_zero_angles_rad
+                .as_ref()
+                .map_or(Some(0), |angles| {
+                    self.pa_cell(
+                        (-row.parallactic_angle_rad[0]) as f32
+                            + angles[row.spectral_window as usize],
+                    )
+                })
+        })
     }
 
     /// The frequency cell of a row at `freq_hz`: the nearest listed
@@ -1029,11 +1011,9 @@ impl AwCatalog {
             catalog: self,
             group,
         };
-        let source = self.source_group(group);
-        let rotation = group / self.groups.len();
-        let angle = rotation
-            .checked_sub(1)
-            .map_or(0.0, |index| self.rotations[index].1);
+        let (source, angle) = self
+            .rotations
+            .source(group, self.groups.len(), self.groups_per_pa());
         let mut loaded = load_group(
             self.group_cells(source),
             &self.groups[source],
@@ -1126,21 +1106,18 @@ impl AwCatalog {
             .expect("AW row PA coverage was checked");
         let w = self.w_cell(w_lambda);
         let native_frequency_hz = freq_hz * row.native_frequency_ratio;
-        let rotation = self
-            .rotations
-            .partition_point(|(start, _)| *start <= row.time_s);
-        let group = self.group_index(pa, self.frequency_cell(native_frequency_hz), w)
-            + rotation * self.groups.len();
+        let start =
+            self.rotations
+                .group_start(row.time_s, pa, self.groups.len(), self.groups_per_pa());
+        let group = start + self.frequency_cell(native_frequency_hz) * self.w_values.len() + w;
         let prediction_w = self.w_cell(self.prediction_w(row, freq_hz, w_lambda));
-        let native = self.group_index(
-            pa,
-            nearest(
+        let native = start
+            + nearest(
                 &self.frequencies_hz,
                 prediction_hz.unwrap_or(native_frequency_hz),
             )
-            .0,
-            prediction_w,
-        ) + rotation * self.groups.len();
+            .0 * self.w_values.len()
+            + prediction_w;
         CfKey::new(
             u16::try_from(group).expect("AW group fits u16"),
             u16::try_from(native).expect("AW group fits u16"),
@@ -1258,7 +1235,8 @@ impl ConvolutionFunctionSet for AwCatalog {
     fn tap_footprint(&self) -> TapFootprint {
         let rows = crate::geometry::CellLocation::fine_rows(self.oversampling) as u64;
         let planes = self.mueller_elements.len() as u64;
-        let cells = 2 * self.cells.len() * (self.rotations.len() + 1);
+        let rotated = self.groups() - self.groups.len();
+        let cells = 2 * (self.cells.len() + rotated * self.mueller_elements.len());
         TapFootprint {
             tap_bytes: self.bound.bytes() as u64,
             norm_bytes: cells as u64
