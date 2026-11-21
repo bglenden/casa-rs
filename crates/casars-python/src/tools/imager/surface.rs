@@ -184,6 +184,21 @@ const METHODS: &[Method] = &[
         R::Bool,
         S::Partial,
     ),
+    Method {
+        mutating: true,
+        ..method(
+            "predictcomp",
+            &[
+                param("objname", K::Text, D::Text("")),
+                param("standard", K::Text, D::Text("")),
+                param("epoch", K::Measure, D::Empty),
+                param("freqs", K::Floats, D::Floats(&[1e11])),
+                param("pfx", K::Text, D::Text("predictcomp")),
+            ],
+            R::Text,
+            S::Implemented,
+        )
+    },
     method("ssoflux", &[], R::Bool, S::Implemented),
     method(
         "uvrange",

@@ -220,11 +220,7 @@ pub(super) fn identify(
     direction: &MDirection,
     cone_table: Option<&Path>,
 ) -> MsResult<Option<&'static str>> {
-    let field = field.to_ascii_uppercase();
-    if let Some((name, _)) = CALIBRATORS
-        .iter()
-        .find(|(_, aliases)| aliases.iter().any(|alias| field.contains(*alias)))
-    {
+    if let Some(name) = named(field) {
         return Ok(Some(name));
     }
     let Some(path) = cone_table else {
@@ -259,4 +255,47 @@ pub(super) fn identify(
             .find(|known| name == known));
     }
     Ok(None)
+}
+
+fn named(field: &str) -> Option<&'static str> {
+    let field = field.to_ascii_uppercase();
+    CALIBRATORS.iter().find_map(|&(name, aliases)| {
+        aliases
+            .iter()
+            .any(|alias| field.contains(*alias))
+            .then_some(name)
+    })
+}
+
+/// The reference positions compiled into CASA's FluxStdSrcs.
+pub(crate) fn source_direction(field: &str) -> Option<MDirection> {
+    use casa_types::measures::direction::DirectionRef;
+
+    // fluxcalibrator.data is used for positional source identification.
+    // The component still uses the calibrated source's fixed J2000 position.
+    let [ra, dec] = match named(field)? {
+        "3C286" => [3.539257626070549, 0.5324850225220917],
+        "3C48" => [0.4262457643630985, 0.5787463318245085],
+        "3C147" => [1.4948817765383597, 0.8700805690768509],
+        "3C138" => [1.401346673041897, 0.2904130912582342],
+        "1934-638" => [5.146176021557448, -1.1119977478136984],
+        "3C295" => [3.7146787856873478, 0.9111103509091509],
+        "3C196" => [2.1537362969610023, 0.8415541320803659],
+        "3C123" => [1.2089586878736391, 0.5178480078663621],
+        "3C380" => [4.84123669, 0.85078092],
+        "0133-3629" => [0.40998511349868466, -0.636928821694464],
+        "FORNAX_A" => [0.8844302540951193, -0.649405598740554],
+        "J0444-2809" => [1.2419253902826484, -0.49157683196101404],
+        "PICTOR_A" => [1.3955160370653494, -0.7989916117952379],
+        "TAURUS_A" => [1.4596748494230258, 0.3842250233666105],
+        "HYDRA_A" => [2.4351465533014114, -0.21110704143990625],
+        "VIRGO_A" => [-3.0070987886171765, 0.2162659001873615],
+        "HERCULES_A" => [-1.871273156204919, 0.08713711430959646],
+        "3C353" => [-1.7432823443920011, -0.017099960309150668],
+        "CYGNUS_A" => [-1.0494987241821205, 0.7109409485219165],
+        "3C444" => [-0.46063951349110815, -0.2971727999325764],
+        "CASSIOPEIA_A" => [-0.15969762655748126, 1.0265153995604648],
+        _ => return None,
+    };
+    Some(MDirection::from_angles(ra, dec, DirectionRef::J2000))
 }

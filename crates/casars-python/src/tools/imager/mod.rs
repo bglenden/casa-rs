@@ -587,6 +587,56 @@ impl PyImager {
         crate::convert::reply_value::reply_value(py, &answer)
     }
 
+    #[pyo3(signature = (objname = "", standard = "", epoch = Variant::Empty, freqs = None, pfx = "predictcomp"), text_signature = "($self, objname='', standard='', epoch=[], freqs=[100000000000.0], pfx='predictcomp')")]
+    fn predictcomp(
+        &self,
+        py: Python<'_>,
+        objname: &str,
+        standard: &str,
+        epoch: Variant,
+        freqs: Option<Variant>,
+        pfx: &str,
+    ) -> PyResult<String> {
+        use casa_calibration::predict_calibrator_component;
+        use casa_types::measures::{EpochRef, MEpoch};
+
+        let epoch = match epoch {
+            Variant::Numbers(values) | Variant::Array { values, .. } => Some(MEpoch::from_mjd(
+                values.first().copied().unwrap_or_default(),
+                EpochRef::UTC,
+            )),
+            Variant::Bool(flag) => Some(MEpoch::from_mjd(f64::from(flag), EpochRef::UTC)),
+            _ => crate::convert::measures::epoch(&epoch)?,
+        };
+        let Some(epoch) = epoch else {
+            return Ok(String::new());
+        };
+        let frequencies = match freqs {
+            Some(Variant::Array { values, .. }) => values,
+            Some(freqs) => flux::coefficients(freqs, "freqs")?,
+            None => vec![1e11],
+        };
+        let workspace = std::env::current_dir().map_err(runtime_error)?;
+        py.detach(|| {
+            let Some(predicted) = predict_calibrator_component(
+                &workspace,
+                objname,
+                standard,
+                &epoch,
+                &frequencies,
+                pfx,
+            )
+            .map_err(runtime_error)?
+            else {
+                return Ok(String::new());
+            };
+            predicted
+                .write_if_absent(&workspace)
+                .map_err(runtime_error)?;
+            Ok(predicted.filename)
+        })
+    }
+
     fn ssoflux(&self, py: Python<'_>) -> PyResult<bool> {
         emit(
             py,
