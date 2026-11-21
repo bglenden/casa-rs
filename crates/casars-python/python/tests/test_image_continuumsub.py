@@ -166,6 +166,8 @@ def test_continuum_preflights_both_destinations_before_overwrite(tmp_path):
             source.continuumsub(str(line), str(line), overwrite=True)
         with pytest.raises(RuntimeError, match="not a true table"):
             source.continuumsub(str(line), str(blocked), overwrite=True)
+        with pytest.raises(RuntimeError, match="not a true table"):
+            source.continuumsub(str(blocked), str(line), overwrite=True)
         with pytest.raises(RuntimeError, match="There are not enough points"):
             source.continuumsub(str(line), str(tmp_path / "other.im"), fitorder=4, overwrite=True)
         assert set(tmp_path.iterdir()) == before
@@ -175,3 +177,26 @@ def test_continuum_preflights_both_destinations_before_overwrite(tmp_path):
     finally:
         retained.done()
         source.done()
+
+def test_continuum_fits_each_quadratic_profile_independently(casa, tmp_path):
+    x = np.arange(9, dtype=np.float32)
+    offsets = np.arange(6, dtype=np.float32).reshape(2, 3, 1)
+    model = (offsets + 1.) + (offsets - 2.) * x + .5 * x**2
+    signal = np.zeros_like(model)
+    signal[0, 2, 3] = 21.
+    signal[1, 1, 7] = 37.
+    observed = model + signal
+    for api in (casa, tools):
+        original = api.image()
+        assert original.fromarray(pixels=observed)
+        dst = str(tmp_path / f"quad-{api.__name__}.im")
+        result = original.continuumsub(outcont=dst, channels=[0, 1, 2, 4, 5, 6, 8], fitorder=2)
+        fitted = api.image()
+        assert fitted.open(dst)
+        try:
+            np.testing.assert_allclose(fitted.getchunk(), model, atol=5e-6)
+            np.testing.assert_allclose(result.getchunk(), signal, atol=5e-6)
+        finally:
+            fitted.done()
+            result.done()
+            original.done()
