@@ -57,9 +57,9 @@ impl CoordinateSystem {
     ///
     /// The new coordinate's axes are appended after all existing axes.
     pub fn add_coordinate(&mut self, coord: impl Into<CoordinateModel>) {
-        let coord = coord.into();
+        let mut coord = coord.into();
         if let Some(maps) = &mut self.maps {
-            maps.append(&coord);
+            maps.append(&mut coord);
         }
         self.coordinates.push(coord);
     }
@@ -91,7 +91,7 @@ impl CoordinateSystem {
         index: usize,
         coord: impl Into<CoordinateModel>,
     ) -> CoordinateModel {
-        let coord = coord.into();
+        let mut coord = coord.into();
         let old = &self.coordinates[index];
         assert_eq!(
             (coord.n_pixel_axes(), coord.n_world_axes()),
@@ -99,7 +99,7 @@ impl CoordinateSystem {
             "a replacing coordinate has the same axes"
         );
         if let Some(maps) = &mut self.maps {
-            maps.replace_coordinate(index, old, &coord);
+            maps.replace_coordinate(index, old, &mut coord);
         }
         std::mem::replace(&mut self.coordinates[index], coord)
     }

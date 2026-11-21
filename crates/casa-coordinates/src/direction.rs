@@ -249,6 +249,10 @@ impl DirectionCoordinate {
         self.removed_axis
     }
 
+    pub(crate) fn take_removed_axis(&mut self) -> Option<RemovedAxis> {
+        self.removed_axis.take()
+    }
+
     fn select_axis<T>(&self, values: [T; 2]) -> Vec<T> {
         let [x, y] = values;
         match self.removed_axis.map(|axis| axis.index) {
