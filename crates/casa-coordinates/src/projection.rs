@@ -749,7 +749,7 @@ fn deproject_bon(x: f64, y: f64, theta1: f64) -> Result<(f64, f64), CoordinateEr
     } else {
         (x / radius).atan2(dy / radius) * radius / theta.cos()
     };
-    if phi.abs() <= PI + 2.e - 13 && theta.abs() <= FRAC_PI_2 + 2.e - 13 {
+    if phi.abs() <= PI + 2e-13 && theta.abs() <= FRAC_PI_2 + 2e-13 {
         Ok((phi.clamp(-PI, PI), theta.clamp(-FRAC_PI_2, FRAC_PI_2)))
     } else {
         Err(CoordinateError::ConversionFailed(

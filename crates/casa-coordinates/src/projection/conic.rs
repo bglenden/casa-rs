@@ -149,7 +149,7 @@ impl Conic {
             Radius::Equidistant => self.fiducial_radius + self.mean_latitude - r,
             Radius::EqualArea { offset } => {
                 let sine = (offset - (self.cone * r).powi(2)) / (2.0 * self.cone);
-                if sine.abs() > 1.0 + 1.e - 12 {
+                if sine.abs() > 1.0 + 1e-12 {
                     return Err(bad_projection("Pixel is outside the COE projection"));
                 }
                 sine.clamp(-1.0, 1.0).asin()
@@ -161,7 +161,7 @@ impl Conic {
                 FRAC_PI_2 - 2.0 * (r / scale).powf(1.0 / self.cone).atan()
             }
         };
-        if phi.abs() <= PI + 1.e - 13 && theta.abs() <= FRAC_PI_2 + 1.e - 13 {
+        if phi.abs() <= PI + 1e-13 && theta.abs() <= FRAC_PI_2 + 1e-13 {
             Ok((phi.clamp(-PI, PI), theta.clamp(-FRAC_PI_2, FRAC_PI_2)))
         } else {
             Err(bad_projection("Pixel is outside the conic projection"))
