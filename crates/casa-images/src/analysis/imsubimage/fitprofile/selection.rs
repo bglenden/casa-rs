@@ -3,8 +3,9 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateType;
+use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayD, RecordValue};
-use ndarray::{AxisDescription, Slice};
+use ndarray::{Axis, AxisDescription, Slice, Zip};
 
 use crate::analysis::axes::stokes_for_axis;
 use crate::analysis::lel_mask::PreparedMask;
@@ -199,23 +200,8 @@ impl ProfileLaneReader<'_> {
                 .zip(&self.geometry)
                 .map(|(&pixel, &count)| pixel / count * count)
                 .collect();
-            let shape: Vec<_> = self
-                .selection
-                .plan
-                .shape
-                .iter()
-                .zip(&origin)
-                .zip(&self.geometry)
-                .map(|((&extent, &start), &width)| width.min(extent - start))
-                .collect();
-            let start = self.selection.source_pixel(&origin);
             self.cached = None;
-            let (pixels, mask) = self.windows.read(&start, &shape, &self.selection.stride)?;
-            self.cached = Some(ProfileBlock {
-                origin,
-                pixels,
-                mask,
-            });
+            self.cached = Some(self.load_block(origin)?);
         }
         let block = self.cached.as_ref().expect("profile block populated");
         let offset: Vec<_> = position
@@ -248,6 +234,42 @@ impl ProfileLaneReader<'_> {
             has_mask: block.mask.is_some(),
         })
     }
+
+    fn load_block(&self, origin: Vec<usize>) -> Result<ProfileBlock, ImageError> {
+        let shape: Vec<_> = self
+            .selection
+            .plan
+            .shape
+            .iter()
+            .zip(&origin)
+            .zip(&self.geometry)
+            .map(|((&extent, &start), &width)| width.min(extent - start))
+            .collect();
+        let start = self.selection.source_pixel(&origin);
+        let (pixels, mask) = self.windows.read(&start, &shape, &self.selection.stride)?;
+        Ok(ProfileBlock {
+            origin,
+            pixels,
+            mask,
+        })
+    }
+
+    pub(super) fn mean(&mut self) -> Result<Lane, ImageError> {
+        let axis = self.selection.axis;
+        let length = self.selection.plan.shape[axis];
+        let mut mean = MeanLane::new(length);
+        let mut cursor = self.geometry.clone();
+        cursor[axis] = 1;
+        for tile in TraversalCursorIter::new(
+            self.selection.row_shape.clone(),
+            cursor,
+            TraversalSpec::tiles(),
+        ) {
+            let block = self.load_block(tile?.position)?;
+            mean.add_block(&block, axis);
+        }
+        Ok(mean.finish())
+    }
 }
 
 pub(super) struct Lane {
@@ -275,6 +297,31 @@ impl MeanLane {
                 self.sums[index] += f64::from(value);
                 self.count[index] += 1;
             }
+        }
+    }
+
+    fn add_block(&mut self, block: &ProfileBlock, axis: usize) {
+        let axis = Axis(axis);
+        for (channel, values) in block.pixels.axis_iter(axis).enumerate() {
+            let (sum, count) = if let Some(mask) = &block.mask {
+                Zip::from(values).and(mask.index_axis(axis, channel)).fold(
+                    (0_f64, 0_usize),
+                    |(sum, count), &value, &valid| {
+                        if valid {
+                            (sum + f64::from(value), count + 1)
+                        } else {
+                            (sum, count)
+                        }
+                    },
+                )
+            } else {
+                (
+                    values.iter().map(|&value| f64::from(value)).sum(),
+                    values.len(),
+                )
+            };
+            self.sums[channel] += sum;
+            self.count[channel] += count;
         }
     }
 

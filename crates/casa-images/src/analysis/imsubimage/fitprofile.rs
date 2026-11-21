@@ -425,21 +425,22 @@ impl<'a> ImageProfileFit<'a> {
                 .transpose()?;
             return Ok((data, weights));
         }
-        let length = self.selection.plan.shape[self.selection.axis];
-        let mut mean = MeanLane::new(length);
-        let mut mean_sigma = sigma.map(|_| MeanLane::new(length));
-        for lane in 0..self.selection.lanes {
-            let lane_pixel = self.selection.position(lane);
-            mean.add(&reader.read(&lane_pixel)?);
-            if let (Some(sigma), Some(mean_sigma)) = (sigma, &mut mean_sigma) {
-                let mut weights = sigma.lane(&self.selection, &lane_pixel)?;
-                for (valid, &value) in weights.valid.iter_mut().zip(&weights.values) {
-                    *valid &= value > 0.;
+        let data = reader.mean()?;
+        let mean_sigma = sigma
+            .map(|sigma| {
+                let mut mean = MeanLane::new(data.values.len());
+                for lane in 0..self.selection.lanes {
+                    let lane_pixel = self.selection.position(lane);
+                    let mut weights = sigma.lane(&self.selection, &lane_pixel)?;
+                    for (valid, &value) in weights.valid.iter_mut().zip(&weights.values) {
+                        *valid &= value > 0.;
+                    }
+                    mean.add(&weights);
                 }
-                mean_sigma.add(&weights);
-            }
-        }
-        Ok((mean.finish(), mean_sigma.map(MeanLane::finish)))
+                Ok::<_, ImageError>(mean.finish())
+            })
+            .transpose()?;
+        Ok((data, mean_sigma))
     }
 
     fn has_supplied_models(&self) -> bool {
