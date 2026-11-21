@@ -14,8 +14,12 @@ use casa_types::quanta::casacore::mvangle_radians;
 
 use crate::saved_region::PolygonPixelPlane;
 
-use crate::analysis::axes::{direction_plane_axes, stokes_for_axis};
-use crate::analysis::{ChannelSpan, PixelRegion, parse_box_region, parse_stokes_selection};
+use crate::analysis::axes::{
+    direction_plane_axes, direction_plane_axes_for_coordinates, stokes_for_axis,
+};
+use crate::analysis::{
+    ChannelSpan, PixelRegion, parse_box_region, parse_stokes_names, parse_stokes_selection,
+};
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::SubimageRegion;
@@ -24,12 +28,14 @@ mod channels;
 mod insert_region;
 pub(super) mod saved;
 mod sections;
+mod text_origin;
 mod window_masks;
 
 pub(super) use sections::StridedSection;
 
 use channels::resolve_channels;
 use saved::{load_saved_region, parse_saved_region};
+pub(super) use text_origin::{TextRegionContext, overlaps_image};
 
 #[derive(Debug, Clone)]
 pub(super) enum SpatialShape {
@@ -139,8 +145,13 @@ impl SubimageSelection {
             selection.shape = slicer.count;
             return Ok((selection, slicer.stride));
         }
+        let text_context = TextRegionContext {
+            coordinates: Some(target.coordinates()),
+            table: image.name(),
+            shape: None,
+        };
         let mut selection =
-            Self::resolve_with_origin(image, None, region, None, None, Some(target))?;
+            Self::resolve_with_origin(image, None, region, None, None, Some(text_context))?;
         selection.shape = selection.packed_shape();
         let stride = selection
             .stride
@@ -189,13 +200,13 @@ impl SubimageSelection {
         Self::resolve_with_origin(image, box_arg, region_arg, chans_arg, stokes_arg, None)
     }
 
-    fn resolve_with_origin<T: ImagePixel>(
+    pub(super) fn resolve_with_origin<T: ImagePixel>(
         image: &dyn ImageInterface<T>,
         box_arg: Option<&str>,
         region_arg: Option<SubimageRegion<'_>>,
         chans_arg: Option<&str>,
         stokes_arg: Option<&str>,
-        text_origin: Option<&dyn ImageInterface<T>>,
+        text_context: Option<TextRegionContext<'_>>,
     ) -> Result<Self, ImageError> {
         let ndim = image.ndim();
         let full_shape = image.shape().to_vec();
@@ -225,7 +236,7 @@ impl SubimageSelection {
         if let Some(region) = region_arg {
             let parsed = match region {
                 SubimageRegion::Text(text) => {
-                    parse_region_argument(image, text, &full_shape, plane, text_origin)?
+                    parse_region_argument(image, text, &full_shape, plane, text_context)?
                 }
                 SubimageRegion::Record(record) => {
                     parse_saved_region("region", record, image.coordinates(), &full_shape, plane)?
@@ -389,7 +400,7 @@ fn parse_region_argument<T: ImagePixel>(
     text: &str,
     full_shape: &[usize],
     plane: [usize; 2],
-    text_origin: Option<&dyn ImageInterface<T>>,
+    text_context: Option<TextRegionContext<'_>>,
 ) -> Result<ParsedRegion, ImageError> {
     if let Some((path, name)) = saved_region_source(text) {
         return load_saved_region(path, name, image.coordinates(), full_shape, plane);
@@ -445,7 +456,10 @@ fn parse_region_argument<T: ImagePixel>(
             .map_err(|e| ImageError::Io(format!("read CRTF file {text}: {e}")))?
     } else if looks_like_inline_crtf(text) {
         text.to_string()
-    } else if let Some(path) = image.name().filter(|path| path.is_dir()) {
+    } else if let Some(path) = text_context
+        .map_or_else(|| image.name(), |context| context.table)
+        .filter(|path| path.is_dir())
+    {
         return load_saved_region(path, text, image.coordinates(), full_shape, plane);
     } else {
         return Err(ImageError::CasaSelection(format!(
@@ -453,7 +467,7 @@ fn parse_region_argument<T: ImagePixel>(
         )));
     };
 
-    parse_crtf_document(image, &crtf_text, full_shape, plane, text_origin)
+    parse_crtf_document(image, &crtf_text, full_shape, plane, text_context)
 }
 
 fn looks_like_four_ints(text: &str) -> bool {
@@ -495,18 +509,20 @@ fn parse_crtf_document<T: ImagePixel>(
     text: &str,
     full_shape: &[usize],
     plane: [usize; 2],
-    text_origin: Option<&dyn ImageInterface<T>>,
+    text_context: Option<TextRegionContext<'_>>,
 ) -> Result<ParsedRegion, ImageError> {
     let mut shapes = Vec::new();
     let mut defaults = PlaneSelection::default();
-    let origin = text_origin.unwrap_or(image);
+    let text_origin = text_context.and_then(|context| context.coordinates);
+    let origin = text_origin.unwrap_or_else(|| image.coordinates());
     let origin_plane = text_origin
-        .map(direction_plane_axes)
+        .map(direction_plane_axes_for_coordinates)
         .transpose()?
         .unwrap_or(plane);
     let projection = text_origin
-        .map(|origin| insert_region::Projection::new(origin.coordinates(), image.coordinates()))
+        .map(|origin| insert_region::Projection::new(origin, image.coordinates()))
         .transpose()?;
+    let origin_shape = text_context.and_then(|context| context.shape);
 
     for raw_stmt in text.split(['\n', ';']) {
         let stmt = raw_stmt.trim();
@@ -531,7 +547,12 @@ fn parse_crtf_document<T: ImagePixel>(
         let Some(first) = tokens.first() else {
             continue;
         };
-        let spatial = parse_crtf_shape(origin, first, origin_plane)?;
+        let spatial = parse_crtf_shape(origin, first, origin_plane, origin_shape.is_some())?;
+        if let Some(shape) = origin_shape
+            && !overlaps_image(&spatial, shape, origin_plane)
+        {
+            continue;
+        }
         let spatial = match &projection {
             Some(projection) => projection.project_shape(spatial)?,
             None => spatial,
@@ -542,9 +563,12 @@ fn parse_crtf_document<T: ImagePixel>(
     }
 
     if shapes.is_empty() {
-        return Err(ImageError::CasaSelection(format!(
-            "No valid CRTF region definitions found in {text:?}"
-        )));
+        let message = if origin_shape.is_some() {
+            "Exception: No regions found.".into()
+        } else {
+            format!("No valid CRTF region definitions found in {text:?}")
+        };
+        return Err(ImageError::CasaSelection(message));
     }
     Ok(ParsedRegion {
         is_compound: false,
@@ -561,7 +585,7 @@ fn parse_crtf_qualifiers<T: ImagePixel>(
     image: &dyn ImageInterface<T>,
     full_shape: &[usize],
     planes: &mut PlaneSelection,
-    text_origin: Option<&dyn ImageInterface<T>>,
+    text_origin: Option<&CoordinateSystem>,
 ) -> Result<(), ImageError> {
     for tok in tokens {
         let trimmed = tok.trim();
@@ -585,12 +609,12 @@ fn parse_crtf_qualifiers<T: ImagePixel>(
                 let selected = if let Some(origin) = text_origin {
                     let missing =
                         || ImageError::CasaSelection("Exception: No regions found.".into());
-                    let selected =
-                        parse_stokes_selection(origin, &joined).map_err(|_| missing())?;
-                    let axis = origin
-                        .find_axis(CoordinateType::Stokes)
+                    let axis = (0..origin.n_pixel_axes())
+                        .find(|&axis| origin.pixel_axis_type(axis) == Some(CoordinateType::Stokes))
                         .ok_or_else(missing)?;
-                    let origin_values = stokes_for_axis(origin.coordinates(), axis)?;
+                    let selected =
+                        parse_stokes_names(origin, axis, &joined).map_err(|_| missing())?;
+                    let origin_values = stokes_for_axis(origin, axis)?;
                     let axis = image
                         .find_axis(CoordinateType::Stokes)
                         .ok_or_else(missing)?;
@@ -621,7 +645,7 @@ fn parse_crtf_qualifiers<T: ImagePixel>(
                 image.coordinates(),
                 spec_ax,
                 full_shape[spec_ax],
-                text_origin.map(|origin| origin.coordinates()),
+                text_origin,
             )?;
             planes.channels = Some(indices);
         }
@@ -725,10 +749,11 @@ fn spectral_coordinate(coordinates: &CoordinateSystem) -> Result<&SpectralCoordi
     ))
 }
 
-fn parse_crtf_shape<T: ImagePixel>(
-    image: &dyn ImageInterface<T>,
+fn parse_crtf_shape(
+    coordinates: &CoordinateSystem,
     stmt: &str,
     plane: [usize; 2],
+    polygon_box: bool,
 ) -> Result<SpatialShape, ImageError> {
     let trimmed = stmt.trim();
     let Some(bracket) = trimmed.find('[') else {
@@ -762,8 +787,16 @@ fn parse_crtf_shape<T: ImagePixel>(
                     "invalid CRTF box {trimmed:?}"
                 )));
             }
-            let [x0, y0] = crtf_point_to_pixel(image, args[0], plane)?;
-            let [x1, y1] = crtf_point_to_pixel(image, args[1], plane)?;
+            let [x0, y0] = crtf_point_to_pixel(coordinates, args[0], plane)?;
+            let [x1, y1] = crtf_point_to_pixel(coordinates, args[1], plane)?;
+            if polygon_box {
+                return Ok(SpatialShape::Polygon(vec![
+                    [x0, y0],
+                    [x1, y0],
+                    [x1, y1],
+                    [x0, y1],
+                ]));
+            }
             let lo_x = x0.min(x1).max(0.0).round() as usize;
             let hi_x = x0.max(x1).max(0.0).round() as usize;
             let lo_y = y0.min(y1).max(0.0).round() as usize;
@@ -776,8 +809,8 @@ fn parse_crtf_shape<T: ImagePixel>(
                     "invalid CRTF centerbox {trimmed:?}"
                 )));
             }
-            let [cx, cy] = crtf_point_to_pixel(image, args[0], plane)?;
-            let [wx, wy] = crtf_extent_pair_to_pixels(image, args[1], plane)?;
+            let [cx, cy] = crtf_point_to_pixel(coordinates, args[0], plane)?;
+            let [wx, wy] = crtf_extent_pair_to_pixels(coordinates, args[1])?;
             Ok(SpatialShape::CenterBox {
                 cx,
                 cy,
@@ -791,8 +824,8 @@ fn parse_crtf_shape<T: ImagePixel>(
                     "invalid CRTF rotbox {trimmed:?}"
                 )));
             }
-            let [cx, cy] = crtf_point_to_pixel(image, args[0], plane)?;
-            let [wx, wy] = crtf_extent_pair_to_pixels(image, args[1], plane)?;
+            let [cx, cy] = crtf_point_to_pixel(coordinates, args[0], plane)?;
+            let [wx, wy] = crtf_extent_pair_to_pixels(coordinates, args[1])?;
             let pa = parse_world_angle(args[2])?;
             Ok(SpatialShape::RotBox {
                 cx,
@@ -809,8 +842,8 @@ fn parse_crtf_shape<T: ImagePixel>(
                     "invalid CRTF circle {trimmed:?}"
                 )));
             }
-            let [cx, cy] = crtf_point_to_pixel(image, args[0], plane)?;
-            let [rx, ry] = crtf_radius_to_pixels(image, args[1], plane)?;
+            let [cx, cy] = crtf_point_to_pixel(coordinates, args[0], plane)?;
+            let [rx, ry] = crtf_radius_to_pixels(coordinates, args[1])?;
             Ok(SpatialShape::Circle { cx, cy, rx, ry })
         }
         "ellipse" => {
@@ -819,8 +852,8 @@ fn parse_crtf_shape<T: ImagePixel>(
                     "invalid CRTF ellipse {trimmed:?}"
                 )));
             }
-            let [cx, cy] = crtf_point_to_pixel(image, args[0], plane)?;
-            let [a, b] = crtf_extent_pair_to_pixels(image, args[1], plane)?;
+            let [cx, cy] = crtf_point_to_pixel(coordinates, args[0], plane)?;
+            let [a, b] = crtf_extent_pair_to_pixels(coordinates, args[1])?;
             let pa = parse_world_angle(args[2])?;
             Ok(SpatialShape::Ellipse {
                 cx,
@@ -839,7 +872,7 @@ fn parse_crtf_shape<T: ImagePixel>(
             }
             let mut verts = Vec::with_capacity(args.len());
             for arg in args {
-                verts.push(crtf_point_to_pixel(image, arg, plane)?);
+                verts.push(crtf_point_to_pixel(coordinates, arg, plane)?);
             }
             Ok(SpatialShape::Polygon(verts))
         }
@@ -849,8 +882,8 @@ fn parse_crtf_shape<T: ImagePixel>(
     }
 }
 
-fn crtf_point_to_pixel<T: ImagePixel>(
-    image: &dyn ImageInterface<T>,
+fn crtf_point_to_pixel(
+    coordinates: &CoordinateSystem,
     pair_text: &str,
     plane: [usize; 2],
 ) -> Result<[f64; 2], ImageError> {
@@ -874,19 +907,19 @@ fn crtf_point_to_pixel<T: ImagePixel>(
     match (px, py) {
         (Some(x), Some(y)) => Ok([x, y]),
         (None, None) => {
-            let coords = image.coordinates();
-            if coords.n_pixel_axes() < 2 || coords.n_world_axes() < 2 {
+            if coordinates.n_pixel_axes() < 2 || coordinates.n_world_axes() < 2 {
                 return Err(ImageError::InvalidMetadata(
                     "world CRTF regions require at least 2 coordinate axes".into(),
                 ));
             }
             let [ax, ay] = plane;
-            let [longitude, latitude] = super::super::axes::world_axes_for_plane(coords, plane)?;
-            let base = vec![0.0; coords.n_pixel_axes()];
-            let mut world = coords.to_world(&base)?;
+            let [longitude, latitude] =
+                super::super::axes::world_axes_for_plane(coordinates, plane)?;
+            let base = vec![0.0; coordinates.n_pixel_axes()];
+            let mut world = coordinates.to_world(&base)?;
             world[longitude] = parse_world_angle(parts[0])?;
             world[latitude] = parse_world_angle(parts[1])?;
-            let pix = coords.to_pixel(&world)?;
+            let pix = coordinates.to_pixel(&world)?;
             Ok([pix[ax], pix[ay]])
         }
         _ => Err(ImageError::InvalidMetadata(
@@ -895,10 +928,9 @@ fn crtf_point_to_pixel<T: ImagePixel>(
     }
 }
 
-fn crtf_extent_pair_to_pixels<T: ImagePixel>(
-    image: &dyn ImageInterface<T>,
+fn crtf_extent_pair_to_pixels(
+    coordinates: &CoordinateSystem,
     pair_text: &str,
-    plane: [usize; 2],
 ) -> Result<[f64; 2], ImageError> {
     let inner = pair_text
         .trim()
@@ -913,23 +945,22 @@ fn crtf_extent_pair_to_pixels<T: ImagePixel>(
             "expected [wx, wy] pair, got {pair_text:?}"
         )));
     }
-    let scale = direction_pixel_scales(image.coordinates(), plane);
+    let scale = direction_pixel_scales(coordinates);
     Ok([
         parse_extent_single(parts[0], scale.map(|s| s[0]))?,
         parse_extent_single(parts[1], scale.map(|s| s[1]))?,
     ])
 }
 
-fn crtf_radius_to_pixels<T: ImagePixel>(
-    image: &dyn ImageInterface<T>,
+fn crtf_radius_to_pixels(
+    coordinates: &CoordinateSystem,
     text: &str,
-    plane: [usize; 2],
 ) -> Result<[f64; 2], ImageError> {
     if let Some(r) = parse_crtf_pix(text)? {
         return Ok([r, r]);
     }
     let rad = parse_world_angle(text)?;
-    let [sx, sy] = direction_pixel_scales(image.coordinates(), plane).ok_or_else(|| {
+    let [sx, sy] = direction_pixel_scales(coordinates).ok_or_else(|| {
         ImageError::InvalidMetadata(
             "angular CRTF radius requires a Direction or 2D linear coordinate".into(),
         )
@@ -950,8 +981,7 @@ fn parse_extent_single(text: &str, scale_rad_per_px: Option<f64>) -> Result<f64,
     Ok(rad / scale)
 }
 
-fn direction_pixel_scales(coords: &CoordinateSystem, plane: [usize; 2]) -> Option<[f64; 2]> {
-    let mut offset = 0usize;
+fn direction_pixel_scales(coords: &CoordinateSystem) -> Option<[f64; 2]> {
     for idx in 0..coords.n_coordinates() {
         let coord = coords.coordinate(idx);
         let np = coord.n_pixel_axes();
@@ -963,10 +993,7 @@ fn direction_pixel_scales(coords: &CoordinateSystem, plane: [usize; 2]) -> Optio
                 return Some([sx, sy]);
             }
         }
-        offset += np;
     }
-    let _ = offset;
-    let _ = plane;
     None
 }
 
