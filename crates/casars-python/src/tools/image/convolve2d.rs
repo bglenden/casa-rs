@@ -3,20 +3,21 @@
 use std::path::Path;
 
 use casa_images::{
-    ImageInterface,
+    BeamComponent, GaussianBeam, ImageInfo, ImageInterface, StoredGaussianBeam,
     analysis::{
         ConvolutionOptions, ConvolutionPixel, GaussianConvolutionOptions, ImageGaussianConvolution,
         ensure_outfile_does_not_alias_input,
     },
 };
 use casa_types::RecordValue;
-use casa_types::quanta::Quantity;
+use casa_types::quanta::{Quantity, casacore::stream_double};
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant, quantity};
 
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
+use super::beams::{image_info_record, stored_beam_record};
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
@@ -178,6 +179,25 @@ impl Request<'_> {
         if self.history {
             output.record_history("convolve2d", self.history_call())?;
         }
+        output.append_history_at(
+            "Image2DConvolver::_dealWithRestoringBeam",
+            &[
+                beam_history(
+                    &format!(
+                        "Original {}",
+                        source.path().map_or_else(
+                            || "Temporary_Image".to_owned(),
+                            |path| path.display().to_string()
+                        )
+                    ),
+                    Some(beams.record()),
+                )?,
+                beam_history(
+                    &format!("Output {}", self.outfile),
+                    image_info_record(&output),
+                )?,
+            ],
+        )?;
         output.save().map_err(raised)?;
         Ok(output)
     }
@@ -230,7 +250,6 @@ impl Request<'_> {
             overwrite,
             stretch,
             targetres,
-            beam,
             ..
         } = self;
         let widths = widths.each_ref().map(|value| match value {
@@ -245,11 +264,56 @@ impl Request<'_> {
             .collect::<Vec<_>>()
             .join(",");
         let region = region.history();
-        let beam = beam.describe();
+        let beam = "{...}";
         let kind = r#type;
         format!(
             "ia.convolve2d(outfile={outfile:?}, axes=[{axes}], type={kind:?}, major={major}, minor={minor}, pa={pa}, scale={scale:.6}, region={region}, mask={mask:?}, overwrite={overwrite}, stretch={stretch}, targetres={targetres}, beam={beam})"
         )
+    }
+}
+
+fn beam_history(description: &str, record: Option<&RecordValue>) -> PyResult<String> {
+    let Some(info) = record else {
+        return Ok(format!("{description} has no beam"));
+    };
+    let beams = ImageInfo::from_record(info).map_err(raised)?.beam_set;
+    let format_beam = |beam: GaussianBeam| -> PyResult<String> {
+        let mut stored = None;
+        for pol in 0..beams.n_stokes() {
+            for channel in 0..beams.n_channels() {
+                if *beams.beam(channel, pol) == beam {
+                    stored = Some(stored_beam_record(Some(info), &beams, channel, pol));
+                    break;
+                }
+            }
+        }
+        let record = stored.unwrap_or_else(|| beam.to_record());
+        let stored = StoredGaussianBeam::from_record(&record).map_err(raised)?;
+        Ok([
+            BeamComponent::Major,
+            BeamComponent::Minor,
+            BeamComponent::PositionAngle,
+        ]
+        .into_iter()
+        .zip(["major", "minor", "pa"])
+        .map(|(component, name)| {
+            let q = stored.component(component);
+            format!("{name}: {} {}", stream_double(q.value()), q.unit().name())
+        })
+        .collect::<Vec<_>>()
+        .join(", "))
+    };
+    if beams.is_multi() {
+        let min = format_beam(beams.min_area_beam().copied().unwrap_or_default())?;
+        let max = format_beam(beams.max_area_beam().copied().unwrap_or_default())?;
+        let median = format_beam(beams.median_area_beam().unwrap_or_default())?;
+        Ok(format!(
+            "{description} has multiple beams. Min area beam: {min}. Max area beam: {max}. Median area beam {median}"
+        ))
+    } else if let Some(beam) = beams.single_beam().filter(|beam| !beam.is_null()) {
+        Ok(format!("{description} resolution {}", format_beam(beam)?))
+    } else {
+        Ok(format!("{description} has no beam"))
     }
 }
 

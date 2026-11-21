@@ -186,8 +186,12 @@ impl ImageGaussianConvolution {
         let active = (0..shape.len())
             .map(|axis| shape[axis] > 1 && self.axes.contains(&axis))
             .collect::<Vec<_>>();
-        let plan =
-            |plane: Plane| KernelPlan::gaussian(plane.samples, self.axes, shape, plane.scale);
+        let plan = |plane: Plane| {
+            plane
+                .samples
+                .map(|samples| KernelPlan::gaussian(samples, self.axes, shape, plane.scale))
+                .transpose()
+        };
         if self.beam_axes.iter().all(Option::is_none)
             && let Some(workspace) = plan(self.planes[0])?
         {

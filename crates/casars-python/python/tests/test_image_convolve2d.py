@@ -102,7 +102,13 @@ def test_convolve2d_record_and_string_native_products(casa, kind, tmp_path):
                 np.testing.assert_array_equal(result.getchunk(getmask=True), mask)
                 assert result.pixeltype() == ("float" if kind == "f" else "double")
                 assert result.getchunk().dtype == np.float64
-                assert any("Ran ia.convolve2d" == line for line in result.history())
+                history = result.history()
+                assert history[-4] == "Ran ia.convolve2d"
+                assert "beam={...}" in history[-3]
+                assert history[-2:] == [
+                    "Original Temporary_Image has no beam",
+                    f"Output {path} has no beam",
+                ]
             finally:
                 result.done()
 
@@ -224,4 +230,22 @@ def test_unreachable_target_resolution_preserves_existing_product(casa, tmp_path
             np.testing.assert_array_equal(product.getchunk(), [5., 6., 7.])
         finally:
             product.done()
+            source.done()
+
+
+def test_convolve2d_beam_history_is_written_with_call_history_disabled(casa):
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromshape(shape=[11, 13])
+        assert source.setbrightnessunit("Jy/pixel")
+        before = source.history()
+        source.dohistory(False)
+        result = source.convolve2d(major="180arcsec", minor="120arcsec", pa="25deg")
+        try:
+            assert result.history()[len(before):] == [
+                "Original Temporary_Image has no beam",
+                "Output  resolution major: 180 arcsec, minor: 120 arcsec, pa: 25 deg",
+            ]
+        finally:
+            result.done()
             source.done()
