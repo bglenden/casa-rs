@@ -8991,3 +8991,9 @@ For a Gaussian multiplet with tied peaks of 6 and 3 and an accepted
 amplitude range of 4 to 7, CASA accepts both peaks because its
 constraint loop repeatedly examines the first peak. Casa-rs checks
 the range against every component of the multiplet.
+
+A synthetic Gaussian centered at channel 15 with its peak and width
+fixed gives a different center in CASA after its peak and sample values
+are scaled from 1 to 10⁻¹⁵. The velocity center shifts by about
+0.0175 km/s. Casa-rs scales the solver's damping to its curvature and
+fits the same physical center at both intensities.
