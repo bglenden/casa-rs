@@ -259,8 +259,7 @@ impl<'a> ImageFourier<'a> {
         for tile in TraversalCursorIter::new(self.shape().to_vec(), cursor, TraversalSpec::tiles())
         {
             let tile = tile?;
-            let mut pixels =
-                scratch.get_slice(&tile.position, &tile.shape, &vec![1; self.shape().len()])?;
+            let mut pixels = scratch.get_slice(&tile.position, &tile.shape)?;
             for mut lane in pixels.lanes_mut(Axis(axis)) {
                 for (index, entry) in lane_buffer.iter_mut().enumerate() {
                     *entry = lane[(index + length / 2) % length];
