@@ -31,6 +31,7 @@ mod immath;
 mod importfits;
 mod imregrid;
 mod imsubimage;
+pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use imsubimage::{
     DecimationMethod, DecimationPixel, ImageCrop, ImageCropOptions, ImageDecimation,
     ImageDecimationOptions, ImageInsertion, ImagePad, ImagePadOptions, ImagePbcor, ImagePbcorBeam,
