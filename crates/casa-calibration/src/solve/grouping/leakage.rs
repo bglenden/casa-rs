@@ -3,6 +3,7 @@
 
 mod channel_samples;
 mod fit;
+mod general;
 mod interval;
 mod joint;
 mod output;
@@ -24,6 +25,12 @@ pub(crate) enum LeakageSolveKind {
     DfQu,
     DX,
     DfX,
+    DGen,
+    DfGen,
+    DGenQu,
+    DfGenQu,
+    DGenX,
+    DfGenX,
     Dlls,
     Dflls,
 }
@@ -33,13 +40,24 @@ impl LeakageSolveKind {
         match self {
             Self::D | Self::DQu | Self::DX => "D Jones",
             Self::Df | Self::DfQu | Self::DfX => "Df Jones",
+            Self::DGen | Self::DGenQu | Self::DGenX => "Dgen Jones",
+            Self::DfGen | Self::DfGenQu | Self::DfGenX => "Dfgen Jones",
             Self::Dlls => "DLLS Jones",
             Self::Dflls => "DfLLS Jones",
         }
     }
 
     fn channelized(self) -> bool {
-        matches!(self, Self::Df | Self::DfQu | Self::DfX | Self::Dflls)
+        matches!(
+            self,
+            Self::Df
+                | Self::DfQu
+                | Self::DfX
+                | Self::DfGen
+                | Self::DfGenQu
+                | Self::DfGenX
+                | Self::Dflls
+        )
     }
 
     fn iterative(self) -> bool {
@@ -48,9 +66,22 @@ impl LeakageSolveKind {
 
     fn source(self) -> Option<SourceFitMode> {
         match self {
-            Self::DQu | Self::DfQu => Some(SourceFitMode::Polarization),
-            Self::DX | Self::DfX => Some(SourceFitMode::Angle),
+            Self::DQu | Self::DfQu | Self::DGenQu | Self::DfGenQu => {
+                Some(SourceFitMode::Polarization)
+            }
+            Self::DX | Self::DfX | Self::DGenX | Self::DfGenX => Some(SourceFitMode::Angle),
             _ => None,
+        }
+    }
+
+    fn algebra(self) -> standard::LeakageAlgebra {
+        if matches!(
+            self,
+            Self::DGen | Self::DGenQu | Self::DGenX | Self::DfGen | Self::DfGenQu | Self::DfGenX
+        ) {
+            standard::LeakageAlgebra::General
+        } else {
+            standard::LeakageAlgebra::Linearized
         }
     }
 }

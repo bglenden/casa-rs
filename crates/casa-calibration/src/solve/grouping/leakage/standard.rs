@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Iterative linearized D Jones solves and formal solution errors.
+//! Iterative D Jones solves and formal solution errors.
 
 use num_complex::{Complex32, Complex64};
 
 use crate::solve::kernel::complex32_to_64;
 
 use super::LeakageEstimate;
+use super::general;
+
+#[derive(Clone, Copy)]
+pub(super) enum LeakageAlgebra {
+    Linearized,
+    General,
+}
 
 pub(super) struct StandardSample {
     pub(super) pair: [usize; 2],
-    pub(super) cross_hands: [Complex32; 2],
+    pub(super) data: [Complex32; 4],
     pub(super) model: [Complex32; 4],
-    pub(super) weights: [f32; 2],
+    pub(super) weights: [f32; 4],
 }
 
 /// Start at the preceding channel's solution. CASA traverses channels from
@@ -21,6 +28,7 @@ pub(super) fn solve_channel(
     gains: &mut Vec<[Complex32; 2]>,
     min_baselines: usize,
     min_snr: f32,
+    algebra: LeakageAlgebra,
 ) -> Result<Vec<LeakageEstimate>, Vec<[bool; 2]>> {
     let eligible = eligible_antennas(samples, gains.len(), min_baselines);
     let mut valid = eligible
@@ -45,7 +53,7 @@ pub(super) fn solve_channel(
     let mut direction = vec![[Complex32::ZERO; 2]; gains.len()];
     let mut derivatives = Derivatives::new(gains.len());
     for _ in 0..=50 {
-        let loss = chi_squared(&usable, gains);
+        let loss = chi_squared(&usable, gains, algebra);
         if !loss.is_finite() {
             gains.clone_from(&last_gains);
             return Err(vec![[false; 2]; gains.len()]);
@@ -62,7 +70,7 @@ pub(super) fn solve_channel(
             stable_steps = stable_steps.saturating_sub(1);
         }
         if stable_steps > 5 {
-            derivatives.accumulate(&usable, gains);
+            derivatives.accumulate(&usable, gains, algebra);
             return Ok(estimate(
                 gains,
                 &valid,
@@ -74,7 +82,7 @@ pub(super) fn solve_channel(
         }
         if change <= 0.0 {
             last_loss = loss;
-            derivatives.accumulate(&usable, gains);
+            derivatives.accumulate(&usable, gains, algebra);
             for (antenna, deltas) in direction.iter_mut().enumerate() {
                 for (receptor, delta) in deltas.iter_mut().enumerate() {
                     let hessian = derivatives.hessian[antenna][receptor];
@@ -93,7 +101,13 @@ pub(super) fn solve_channel(
         if !valid.iter().flatten().any(|&usable| usable) {
             return Err(valid);
         }
-        let scale = step_scale(&usable, gains, &direction, loss);
+        let scale = match algebra {
+            LeakageAlgebra::Linearized => step_scale(&usable, gains, &direction, loss),
+            // CASA materializes full Jones matrices and refreshes them on
+            // accepted parameter updates. Its trial steps see the same
+            // matrices, keeping the nominal damped step for Dgen.
+            LeakageAlgebra::General => 1.0,
+        };
         last_gains.clone_from(gains);
         update(gains, &direction, scale);
     }
@@ -137,22 +151,37 @@ impl Derivatives {
         }
     }
 
-    fn accumulate(&mut self, samples: &[&StandardSample], gains: &[[Complex32; 2]]) {
+    fn accumulate(
+        &mut self,
+        samples: &[&StandardSample],
+        gains: &[[Complex32; 2]],
+        algebra: LeakageAlgebra,
+    ) {
         self.gradient.fill([Complex64::ZERO; 2]);
         self.hessian.fill([0.0; 2]);
         for sample in samples {
             let [left, right] = sample.pair;
-            let (residual, partials) = sample.residual(gains);
+            let (residual, partials) = sample.residual(gains, algebra);
             let [xx, _, _, yy] = sample.model;
             for (side, antenna) in [left, right].into_iter().enumerate() {
                 for receptor in 0..2 {
-                    let mut derivative = partials[side];
-                    // GenLinear's differentiated Jones application adds to
-                    // the partial coherency, including its existing cross-hands.
-                    let hand = receptor ^ side;
-                    derivative[hand] += [yy, xx][receptor];
+                    let derivative = match algebra {
+                        LeakageAlgebra::Linearized => {
+                            let mut derivative = partials[side];
+                            // GenLinear adds to the partial coherency and
+                            // retains its existing cross-hands.
+                            derivative[1 + (receptor ^ side)] += [yy, xx][receptor];
+                            derivative
+                        }
+                        LeakageAlgebra::General => {
+                            general::derivative(partials[side], side, receptor)
+                        }
+                    };
                     for (corr, coefficient) in derivative.into_iter().enumerate() {
                         let weight = sample.weights[corr];
+                        if weight <= 0.0 {
+                            continue;
+                        }
                         let gradient = residual[corr] * coefficient.conj();
                         self.gradient[antenna][receptor] += complex32_to_64(
                             if side == 0 { gradient } else { gradient.conj() } * weight,
@@ -167,25 +196,43 @@ impl Derivatives {
 }
 
 impl StandardSample {
-    fn residual(&self, gains: &[[Complex32; 2]]) -> ([Complex32; 2], [[Complex32; 2]; 2]) {
+    fn residual(
+        &self,
+        gains: &[[Complex32; 2]],
+        algebra: LeakageAlgebra,
+    ) -> ([Complex32; 4], [[Complex32; 4]; 2]) {
         let [left, right] = self.pair.map(|antenna| gains[antenna]);
+        if matches!(algebra, LeakageAlgebra::General) {
+            let left_model = general::left(self.model, left);
+            let right_model = general::right(self.model, right);
+            let corrupted = general::right(left_model, right);
+            let residual = std::array::from_fn(|corr| corrupted[corr] - self.data[corr]);
+            return (residual, [right_model, left_model]);
+        }
         let [xx, xy, yx, yy] = self.model;
-        let left_offset = [left[0] * yy, left[1] * xx];
-        let right_offset = [right[1].conj() * xx, right[0].conj() * yy];
-        let left_model = [xy + left_offset[0], yx + left_offset[1]];
-        let right_model = [xy + right_offset[0], yx + right_offset[1]];
-        let residual = std::array::from_fn(|hand| {
-            left_model[hand] + right_offset[hand] - self.cross_hands[hand]
-        });
+        let zero = Complex32::ZERO;
+        let [right_xy, right_yx] = [right[1].conj() * xx, right[0].conj() * yy];
+        let left_model = [zero, xy + left[0] * yy, yx + left[1] * xx, zero];
+        let right_model = [zero, xy + right_xy, yx + right_yx, zero];
+        let residual = [
+            zero,
+            left_model[1] + right_xy - self.data[1],
+            left_model[2] + right_yx - self.data[2],
+            zero,
+        ];
         (residual, [right_model, left_model])
     }
 }
 
-fn chi_squared(samples: &[&StandardSample], gains: &[[Complex32; 2]]) -> f64 {
+fn chi_squared(
+    samples: &[&StandardSample],
+    gains: &[[Complex32; 2]],
+    algebra: LeakageAlgebra,
+) -> f64 {
     samples
         .iter()
         .map(|sample| {
-            let (residual, _) = sample.residual(gains);
+            let (residual, _) = sample.residual(gains, algebra);
             residual
                 .into_iter()
                 .zip(sample.weights)
@@ -213,7 +260,7 @@ fn step_scale(
     let mut evaluate = |scale| {
         trial.copy_from_slice(gains);
         update(&mut trial, direction, scale);
-        chi_squared(samples, &trial)
+        chi_squared(samples, &trial, LeakageAlgebra::Linearized)
     };
     let mut step = 1.0;
     let mut mid = evaluate(step);
