@@ -214,7 +214,7 @@ def test_unequal_strides_keep_rotated_directions(casa):
             try:
                 np.testing.assert_allclose(coords.toworld(pixel)["numeric"], expected, atol=1e-11)
                 np.testing.assert_allclose(
-                    coords.lineartransform("direction"), [[0., -.5], [2., 0.]],
+                    coords.torecord()["direction0"]["pc"], [[0., -2.], [.5, 0.]],
                 )
             finally:
                 coords.done()

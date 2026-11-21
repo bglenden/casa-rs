@@ -402,18 +402,18 @@ fn section_pixels(record: &mut RecordValue, shifts: &[f64], steps: &[f64]) {
             Some(Value::Scalar(ScalarValue::Float64(cdelt))) => *cdelt *= step(0),
             _ => {}
         }
-        // CDELT scales rows. Adjust PC as well when unequal pixel steps
-        // would otherwise change the world positions of coupled axes.
+        // CDELT scales world rows. The stored PC transposes the matrix
+        // used by the transform, so its first index is the input axis.
         let shape = [steps.len(), steps.len()];
         match record.get_mut("pc") {
             Some(Value::Array(ArrayValue::Float64(matrix))) if matrix.shape() == shape => {
                 for (index, coefficient) in matrix.indexed_iter_mut() {
-                    *coefficient *= steps[index[1]] / steps[index[0]];
+                    *coefficient *= steps[index[0]] / steps[index[1]];
                 }
             }
             Some(Value::Array(ArrayValue::Float32(matrix))) if matrix.shape() == shape => {
                 for (index, coefficient) in matrix.indexed_iter_mut() {
-                    *coefficient *= (steps[index[1]] / steps[index[0]]) as f32;
+                    *coefficient *= (steps[index[0]] / steps[index[1]]) as f32;
                 }
             }
             _ => {}
