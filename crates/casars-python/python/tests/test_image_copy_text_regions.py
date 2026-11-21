@@ -20,12 +20,14 @@ def test_copy_text_uses_the_casa_origin_even_when_pixel_types_differ(
 ):
     x, y, _, channel = np.ogrid[:21, :23, :1, :3]
     pixels = (x + 10 * y + 100 * channel).astype(np.float32)
+    lower = (2, 2) if method == "fromimage" else (4, 5)
     name = str(tmp_path / "source.im")
     source = casa.image()
     coordinates = None
     try:
         assert source.fromarray(name, pixels)
         coordinates = source.coordsys()
+        expected_origin = coordinates.toworld([*lower, 0, 0])["numeric"]
         reference = coordinates.referencepixel()["numeric"]
         assert coordinates.setreferencepixel(reference + [2, 3, 0, 0])
         attachment = coordinates.torecord()
@@ -39,15 +41,17 @@ def test_copy_text_uses_the_casa_origin_even_when_pixel_types_differ(
         path = tmp_path / "region.crtf"
         path.write_text(f"#CRTFv0\n{text}\n")
         text = str(path)
-    lower = (2, 2) if method == "fromimage" else (4, 5)
     expected = pixels[lower[0]:lower[0] + 7, lower[1]:lower[1] + 8]
 
     for api in (casa, tools):
+        destination = str(tmp_path / f"{api.__name__}-copy.im")
         active = api.image()
         product = None
         try:
             assert active.fromshape(shape=list(pixels.shape), csys=attachment, type="c")
-            result = getattr(active, method)(infile=name, region=text)
+            result = getattr(active, method)(
+                infile=name, outfile=destination, region=text,
+            )
             if method == "fromimage":
                 assert result is True
                 product = active
@@ -61,6 +65,22 @@ def test_copy_text_uses_the_casa_origin_even_when_pixel_types_differ(
             if product is not None and product is not active:
                 product.done()
             active.done()
+        for reader_api in (casa, tools):
+            reader = reader_api.image()
+            coordinates = None
+            try:
+                assert reader.open(destination)
+                coordinates = reader.coordsys()
+                np.testing.assert_allclose(
+                    coordinates.toworld([0, 0, 0, 0])["numeric"],
+                    expected_origin, rtol=1e-10, atol=2e-8,
+                )
+                np.testing.assert_array_equal(reader.getchunk(), expected)
+                np.testing.assert_array_equal(reader.getchunk(getmask=True), True)
+            finally:
+                if coordinates is not None:
+                    coordinates.done()
+                reader.done()
 
 
 @pytest.mark.parametrize("method, error", [
