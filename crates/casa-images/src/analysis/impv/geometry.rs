@@ -89,6 +89,16 @@ impl Strip {
         self.rotation.is_some()
     }
 
+    pub(super) fn input_offsets(&self) -> Result<Vec<Vec<[f64; 2]>>, ImageError> {
+        (0..self.shape[0])
+            .map(|step| {
+                (0..self.shape[1])
+                    .map(|across| self.input_pixel(step, across))
+                    .collect()
+            })
+            .collect()
+    }
+
     pub(super) fn input_pixel(&self, x: usize, y: usize) -> Result<[f64; 2], ImageError> {
         let pixel = [
             self.lower[0] as f64 + x as f64,

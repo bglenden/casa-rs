@@ -12,8 +12,8 @@ use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInfo, ImageInterface, ImpvRequest, TempImage};
 
 use super::{
-    Plane, RegridMethod, direction, direction_plane_axes, geometry, output_coordinates, position,
-    resolve_selection,
+    Plane, RegridMethod, collapse_width, direction, direction_plane_axes, geometry,
+    output_coordinates, position, resolve_selection,
 };
 
 /// A position-velocity image and its CASA axis-map record.
@@ -75,13 +75,7 @@ pub fn generate_image_pv(
     )?;
     let mut misc = image.misc_info();
     misc.upsert("secondary_coordinates", Value::Record(secondary));
-    let mut offsets = (0..strip.shape[0])
-        .map(|step| {
-            (0..strip.shape[1])
-                .map(|across| strip.input_pixel(step, across))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut offsets = strip.input_offsets()?;
     let [x, y] = plane;
     let mut shape = packed.clone();
     shape[x] = strip.shape[0];
@@ -137,6 +131,10 @@ pub fn generate_image_pv(
     output_tile[x - usize::from(y < x)] = strip.shape[0];
     let mut any_good = false;
     let mut has_mask = false;
+    let order: Vec<_> = [x, y]
+        .into_iter()
+        .chain((0..tile.len()).filter(|axis| *axis != x && *axis != y))
+        .collect();
     for plane in TraversalCursorIter::new(grid, ones, TraversalSpec::tiles()) {
         let mut plane_start = plane?.position;
         let mut output_start = plane_start.clone();
@@ -145,15 +143,11 @@ pub fn generate_image_pv(
         plane_start[y] = origin[1];
         let (pixels, mask) =
             windows.read(&section.source_start(&plane_start), &tile, section.stride)?;
-        let order: Vec<_> = [x, y]
-            .into_iter()
-            .chain((0..tile.len()).filter(|axis| *axis != x && *axis != y))
-            .collect();
         let pixels = pixels.permuted_axes(order.clone()).reversed_axes();
         let pixels: Vec<_> = pixels.iter().map(|&value| f64::from(value)).collect();
         let mask = mask.map(|valid| {
             valid
-                .permuted_axes(order)
+                .permuted_axes(order.clone())
                 .reversed_axes()
                 .iter()
                 .copied()
@@ -167,19 +161,10 @@ pub fn generate_image_pv(
         let mut values = Vec::with_capacity(offsets.len());
         let mut good = Vec::with_capacity(offsets.len());
         for across in &offsets {
-            let (sum, n) = across
-                .iter()
-                .filter_map(|&at| sky.sample(method, at))
-                .fold((0., 0), |(sum, n), value| {
-                    (sum + f64::from(value as f32), n + 1)
-                });
-            values.push(if n == 0 {
-                0.
-            } else {
-                (sum / f64::from(n)) as f32
-            });
-            any_good |= n > 0;
-            good.push(n > 0);
+            let value = collapse_width(&sky, method, across);
+            any_good |= value.is_some();
+            good.push(value.is_some());
+            values.push(value.unwrap_or(0.));
         }
         let values =
             ArrayD::from_shape_vec(IxDyn(&output_tile).f(), values).expect("PV row length");

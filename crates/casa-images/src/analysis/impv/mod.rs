@@ -208,13 +208,7 @@ where
     let [x, y] = plane;
     let plane_shape = [input.shape()[x], input.shape()[y]];
     let planes = PlaneIndex::new(input.shape(), plane);
-    let offsets = (0..strip.shape[0])
-        .map(|i| {
-            (0..strip.shape[1])
-                .map(|j| strip.input_pixel(i, j))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let offsets = strip.input_offsets()?;
     let mut out_shape = input.shape().to_vec();
     out_shape[x] = strip.shape[0];
     out_shape.remove(y);
@@ -243,20 +237,24 @@ where
             .map(|axis| planes.pixel(i, axis))
             .collect();
         for (i, section) in offsets.iter().enumerate() {
-            let (sum, n) = section
-                .iter()
-                .filter_map(|&at| plane.sample(method, at))
-                .fold((0.0, 0), |(sum, n), value| {
-                    (sum + f64::from(value as f32), n + 1)
-                });
-            if n > 0 {
+            if let Some(value) = collapse_width(&plane, method, section) {
                 output_index[offset_axis] = i;
-                result[IxDyn(&output_index)] = (sum / f64::from(n)) as f32;
+                result[IxDyn(&output_index)] = value;
                 valid[IxDyn(&output_index)] = true;
             }
         }
     }
     Ok((result, valid))
+}
+
+fn collapse_width(plane: &Plane<'_>, method: RegridMethod, points: &[[f64; 2]]) -> Option<f32> {
+    let (sum, count) = points
+        .iter()
+        .filter_map(|&at| plane.sample(method, at))
+        .fold((0., 0), |(sum, count), value| {
+            (sum + f64::from(value as f32), count + 1)
+        });
+    (count != 0).then(|| (sum / f64::from(count)) as f32)
 }
 
 fn output_coordinates<T: ImagePixel>(
