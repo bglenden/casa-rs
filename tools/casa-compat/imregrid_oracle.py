@@ -9,12 +9,12 @@ import shutil
 import tempfile
 
 import numpy as np
-from casatasks import imregrid, version_string
+from casatasks import imregrid, imsubimage, version_string
 from casatools import coordsys, image
 
 INPUTS = ("cube.im", "template.im", "single.im", "masked.im", "transposed.im", "cube_pol.im", "template_pol.im", "double.im",
           "complex.im", "dcomplex.im", "complex_sfl.im", "linear.im", "linear_template.im",
-          "linear_cube.im", "linear_cube_template.im")
+          "linear_cube.im", "linear_cube_template.im", "direction_slice.im")
 CASES = {
     "frequency": {},
     "velocity": {"asvelocity": True},
@@ -54,6 +54,7 @@ CASES = {
     "linear_cube_two_axes": {"imagename": "linear_cube.im", "template": "linear_cube_template.im", "axes": [2, 0]},
     "linear_cube_replicate": {"imagename": "linear_cube.im", "template": "linear_cube_template.im", "axes": [2, 0], "replicate": True},
     "one_linear_axis": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0]},
+    "unchanged_direction_slice": {"imagename": "direction_slice.im", "template": "direction_slice.im", "axes": [0]},
     "replicate_linear_plane": {"imagename": "linear.im", "template": "linear_template.im", "axes": [0, 1], "replicate": True},
 }
 
@@ -208,6 +209,11 @@ def make_linear():
             ia.done()
 
 
+def make_direction_slice():
+    cube("narrow_direction.im", (1, 3, 2, 5), 1.4e9, 2e6, 1.42e9, polarizations=["I", "Q"])
+    imsubimage(imagename="narrow_direction.im", outfile="direction_slice.im", dropdeg=True)
+
+
 def same_shape_linear_shift():
     template = imregrid(imagename="linear_cube.im", template="get")
     template["csys"]["linear0"]["crval"][0] += 0.25
@@ -241,6 +247,7 @@ def run_cases():
     make_double()
     make_complex()
     make_linear()
+    make_direction_slice()
     dictionary = imregrid(imagename="template.im", template="get")
     reference = imregrid(imagename="cube.im", template="get")
     def edit(direction=None, spectral=None):
@@ -257,6 +264,7 @@ def run_cases():
         return record
 
     extra = {
+        "unchanged_direction_slice_record": {"imagename": "direction_slice.im", "template": imregrid(imagename="direction_slice.im", template="get"), "axes": [0]},
         "same_shape_linear_shift": same_shape_linear_shift(),
         "dictionary": {"template": dictionary, "shape": [3, 4]},
         "b1950_same_numerical_grid": {"template": edit(direction={"system": "B1950", "conversionSystem": "B1950"}), "axes": [0, 1]},

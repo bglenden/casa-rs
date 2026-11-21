@@ -160,6 +160,11 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 }
                 CoordinateModel::Direction(theirs.clone())
             }
+            (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
+                if n_axes == 1 && input_lengths == lengths && ours == theirs =>
+            {
+                CoordinateModel::Direction(theirs.clone())
+            }
             (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) if n_axes == 2 => {
                 let dimensions = [lengths[0], lengths[1]];
                 if options.decimate < 0 {
