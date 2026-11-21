@@ -28,19 +28,4 @@ impl PyImageTool {
     ) -> PyResult<Py<PyAny>> {
         stub("fromcomplist")
     }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, region = None, mask = None, axes = None, method = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', region={}, mask='', axes=[-1], method='structurefunction', overwrite=False, stretch=False)")]
-    fn twopointcorrelation(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        axes: Option<&Bound<'_, PyAny>>,
-        method: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("twopointcorrelation")
-    }
 }

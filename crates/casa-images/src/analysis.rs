@@ -66,6 +66,7 @@ pub use imsubimage::{
     ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile,
 };
 pub use imsubimage::{ImageSepConvolution, SepConvolutionOptions};
+pub use imsubimage::{ImageTwoPoint, StructurePixel, TwoPointOptions};
 mod list_log;
 mod projection_header;
 mod quantity_input;
