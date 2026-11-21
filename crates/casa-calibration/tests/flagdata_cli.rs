@@ -156,35 +156,31 @@ fn rflag_scales_a_given_threshold_as_it_scales_a_computed_one() {
 }
 
 #[test]
-fn rflag_thresholds_take_casas_empty_list_and_name_978_for_its_other_forms() {
-    // Astra's #997 F9: CASA's [] is rflag's own threshold, as '' is; its
-    // per-field and per-window thresholds and threshold files are #978.
-    let temp = tempdir().expect("tempdir");
-    let ms_path = create_msexplore_fixture_ms(temp.path());
-    for (value, refused) in [
-        (serde_json::json!([]), false),
-        (serde_json::json!(""), false),
-        (serde_json::json!([[0, 0, 1.5]]), true),
-        (serde_json::json!("thresholds.txt"), true),
-    ] {
-        for name in ["timedev", "freqdev"] {
+fn rflag_accepts_computed_matrix_and_file_thresholds() {
+    // Empty lists and strings request automatic thresholds. Per-field/SPW
+    // values from a matrix and a CASA threshold file use the same cutoff.
+    for name in ["timedev", "freqdev"] {
+        let fixture = tempdir().expect("tempdir");
+        let threshold_file = fixture.path().join("thresholds.txt");
+        std::fs::write(&threshold_file, format!("{{'{name}': [[0, 0, 1.5]]}}\n"))
+            .expect("write CASA threshold file");
+        let threshold = |value: serde_json::Value| {
+            let temp = tempdir().expect("tempdir");
+            let ms_path = create_msexplore_fixture_ms(temp.path());
             let reply = flagdata_json_run(serde_json::json!({
                 "vis": ms_path, "mode": "rflag", "flagbackup": false, name: value,
             }));
-            match (refused, reply) {
-                (false, casa_provider_contracts::TaskReply::Succeeded { .. }) => {}
-                (
-                    true,
-                    casa_provider_contracts::TaskReply::Failed {
-                        parameter, message, ..
-                    },
-                ) => {
-                    assert_eq!(parameter.as_deref(), Some(name), "{message}");
-                    assert!(message.contains("#978"), "{name}={value}: {message}");
-                }
-                (_, other) => panic!("{name}={value}: {other:?}"),
-            }
-        }
+            let casa_provider_contracts::TaskReply::Succeeded { result, .. } = reply else {
+                panic!("{name}={value}: {reply:?}");
+            };
+            result[name].as_f64().expect("reported RFlag cutoff")
+        };
+        assert_eq!(
+            threshold(serde_json::json!([])),
+            threshold(serde_json::json!(""))
+        );
+        assert_eq!(threshold(serde_json::json!([[0, 0, 1.5]])), 7.5);
+        assert_eq!(threshold(serde_json::json!(threshold_file)), 7.5);
     }
 }
 
