@@ -3152,8 +3152,8 @@ fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
         .iter()
         .map(|pair| {
             let mut world = base_world.clone();
-            world[x] = parse_crtf_world_quantity(&pair[0])?;
-            world[y] = parse_crtf_world_quantity(&pair[1])?;
+            world[longitude] = parse_crtf_world_quantity(&pair[0])?;
+            world[latitude] = parse_crtf_world_quantity(&pair[1])?;
             let pixel = coordinates.to_pixel(&world)?;
             Ok([
                 rounded_nonnegative_pixel_value(pixel[x], "CRTF polygon world x")?,
@@ -3266,6 +3266,7 @@ fn crtf_world_box_pixels<T: ImagePixel>(
     let [x, y] = direction_plane_axes(image)?;
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let mut first_world = coordinates.to_world(&base_pixel)?;
+    let [longitude, latitude] = world_axes_for_plane(coordinates, [x, y])?;
     let mut second_world = first_world.clone();
     first_world[longitude] = world_box[0];
     first_world[latitude] = world_box[1];
