@@ -15,6 +15,7 @@ from calibration_smoothcal_oracle import opened
 from record_casa_returns import make_cal_ms
 
 Q_U = np.array([[[.084, -.037], [.061, .052]], [[-.051, .029], [.037, -.064]]])
+ANTENNA_Q_U = np.array([[.024, -.012], [-.018, -.008], [.014, .026], [-.020, -.006]])
 
 
 def prepare_metadata(vis):
@@ -47,8 +48,13 @@ def plant_gains(vis, gains, feed_angles):
     assert cb.open(str(vis), addcorr=False, addmodel=False)
     assert cb.createcaltable(str(gains), 'Complex', 'G Jones', True)
     assert cb.close()
-    with opened(gains / 'FIELD') as table:
-        directions = table.getcol('DELAY_DIR')[:, 0, :].T
+    with opened(gains / 'FIELD', True) as table:
+        directions = table.getcol('DELAY_DIR')
+        directions[:, 0, :] += np.array([[.08, -.09], [.07, .04]])
+        table.putcol('DELAY_DIR', directions)
+        directions = directions[:, 0, :].T
+    with opened(vis / 'FIELD') as table:
+        assert not np.allclose(directions, table.getcol('DELAY_DIR')[:, 0, :].T)
     with opened(vis) as table:
         first = min(table.getcol('TIME'))
     md = msmetadata()
@@ -71,6 +77,8 @@ def plant_gains(vis, gains, feed_angles):
                     q, u = Q_U[field, window]
                     if antenna == 4:
                         q, u = q + .045, u + .023
+                    else:
+                        q, u = np.array([q, u]) + ANTENNA_Q_U[antenna]
                     ratio = 1.25 * (1 + 2*q*np.cos(2*angle) + 2*u*np.sin(2*angle))
                     polar = np.array([[np.sqrt(ratio)*np.exp(.07j*slot), 2+.3j, .9+.2j],
                                       [np.exp(-.12j*slot), 1+.8j, 4+.2j]], dtype=np.complex64)
@@ -125,7 +133,9 @@ def compare_tables(actual, reference, original, rows, angles, original_data):
     with opened(reference) as want, opened(actual) as got, opened(original) as source:
         expected = want.getcol('CPARAM')
         values = got.getcol('CPARAM')
+        np.testing.assert_equal(got.getdminfo(), want.getdminfo())
         for col in source.colnames():
+            np.testing.assert_equal(got.getcoldesc(col), want.getcoldesc(col), err_msg=col)
             if col != 'CPARAM':
                 present = [source.iscelldefined(col, row) for row in range(source.nrows())]
                 assert present == [want.iscelldefined(col, row) for row in range(want.nrows())]
@@ -140,13 +150,16 @@ def compare_tables(actual, reference, original, rows, angles, original_data):
         np.testing.assert_array_equal(source.getcol('CPARAM'), original_data)
     np.testing.assert_allclose(values, expected, rtol=3e-6, atol=2e-7)
     np.testing.assert_array_equal(values[:, 1:, :], original_data[:, 1:, :])
-    q, u = Q_U[rows[:, 1].astype(int), rows[:, 2].astype(int)].T
+    per_antenna = np.vstack((ANTENNA_Q_U, [0., 0.]))
+    q, u = (Q_U[rows[:, 1].astype(int), rows[:, 2].astype(int)]
+            + per_antenna[rows[:, 3].astype(int)]).T
     fraction = q*np.cos(2*angles) + u*np.sin(2*angles)
     factors = np.sqrt(1. + np.stack((fraction, -fraction)))
     np.testing.assert_allclose(values[:, 0, :], original_data[:, 0, :] / factors,
                                rtol=3e-6, atol=2e-7)
     assert np.count_nonzero(values[:, 0, :] != original_data[:, 0, :]) == 2 * len(rows)
-    return float(np.linalg.norm(values - expected) / np.linalg.norm(expected))
+    return float(np.linalg.norm(values[:, 0, :] - expected[:, 0, :])
+                 / np.linalg.norm(expected[:, 0, :]))
 
 
 def rank_deficient(root, vis, gains, angles, native):
@@ -171,6 +184,69 @@ def rank_deficient(root, vis, gains, angles, native):
     angle = angles[first]
     planted = [1., .5*np.cos(2*angle), .5*np.sin(2*angle), 0.]
     np.testing.assert_allclose(actual['FLUX']['Spw0'], planted, atol=2e-7)
+
+
+def amplitude_limits(root, vis, gains, native):
+    scaled = root / 'small-amplitude.cal'
+    copy_ms(gains, scaled)
+    with opened(scaled, True) as table:
+        data = table.getcol('CPARAM')
+        data[0, 0, :] *= 1e-24
+        table.putcol('CPARAM', data)
+    expected = casa.polfromgain(str(vis), str(scaled))
+    actual = native.polfromgain(str(vis), str(scaled))
+    planted_result(expected, 0.)
+    compare_record(actual, expected)
+
+    nonfinite = root / 'nonfinite.cal'
+    copy_ms(gains, nonfinite)
+    with opened(nonfinite, True) as table:
+        first = table.getcell('CPARAM', 0)
+        first[0, 0] = complex(np.nan, 0.)
+        table.putcell('CPARAM', 0, first)
+    expected = casa.polfromgain(str(vis), str(nonfinite))
+    actual = native.polfromgain(str(vis), str(nonfinite))
+    assert np.isnan(expected['FLUX']['Spw0'][1:3]).all()
+    compare_record(actual, expected)
+    for label, api in (('casa', casa), ('native', native)):
+        output = root / f'{label}-nonfinite.cal'
+        try:
+            api.polfromgain(str(vis), str(nonfinite), str(output))
+        except RuntimeError as error:
+            assert 'Spurious fractional polarization!' in str(error)
+        else:
+            raise AssertionError('polfromgain corrected a nonfinite polarization')
+        if label == 'native':
+            assert not output.exists(), 'failed native corrections must remain unpublished'
+
+
+def task_arguments(root, vis, gains, native):
+    for args, kwargs, expected_type in (
+        ((), {}, AssertionError),
+        ((str(root / 'missing.ms'), str(gains)), {}, AssertionError),
+        ((str(vis), str(root / 'missing.cal')), {}, AssertionError),
+        ((str(vis), str(gains)), {'caltable': None}, AssertionError),
+        ((str(vis), str(gains)), {'minpacov': '30.0'}, AssertionError),
+        ((str(vis), str(gains)), {'paoffset': np.int16(12)}, AssertionError),
+        ((str(vis), str(gains)), {'paoffset': np.nan}, np.linalg.LinAlgError),
+        ((str(vis), str(gains)), {'paoffset': np.inf}, np.linalg.LinAlgError),
+    ):
+        messages = []
+        for api in (casa, native):
+            try:
+                api.polfromgain(*args, **kwargs)
+            except expected_type as error:
+                messages.append(str(error))
+            else:
+                raise AssertionError(f'polfromgain accepted invalid arguments {args}, {kwargs}')
+        assert messages[0] == messages[1], messages
+
+    for offset, minimum in ((np.int32(-25), True), (np.float32(13), -np.inf),
+                            (0., np.nan), (0., np.inf)):
+        args = {'vis': str(vis), 'tablein': str(gains), 'paoffset': offset, 'minpacov': minimum}
+        expected = casa.polfromgain(**args)
+        actual = native.polfromgain(**args)
+        compare_record(actual, expected)
 
 
 def main():
@@ -209,7 +285,6 @@ def main():
         report = (tasks.polfromgain(str(vis), str(gains)) if minimum == 30.
                   else tasks.polfromgain(str(vis), str(gains), output, offset, minimum))
         compare_record(report, values)
-    compare_tables(actual, expected, gains, rows, angles, data)
     for api, output in ((casa, expected), (tasks, actual)):
         try:
             api.polfromgain(str(vis), str(gains), str(output), minpacov=10.)
@@ -220,7 +295,9 @@ def main():
     error = compare_tables(actual, expected, gains, rows, angles, data)
     print(f'Corrected gain normalized RMS {error:.6g}')
     rank_deficient(root, vis, gains, angles, tasks)
-    print('Two fields and windows, 240 first-plane complex gains, angles, flagged and undersampled antennas, coverage and rank passed.')
+    amplitude_limits(root, vis, gains, tasks)
+    task_arguments(root, vis, gains, tasks)
+    print('Two fields and windows, 240 first-plane complex gains, angles, flagged and undersampled antennas, coverage, rank and amplitude limits passed.')
 
 
 if __name__ == '__main__':

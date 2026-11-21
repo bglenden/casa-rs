@@ -265,6 +265,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             raise AssertionError(str(error)) from error
     if name == "applycal":
         return _call_applycal(values)
+    if name == "polfromgain":
+        return _call_polfromgain(values, arguments)
     if name == "gencal":
         return _call_gencal(values)
     if name == "getantposalma":
@@ -1467,6 +1469,36 @@ def _resolve_relative_data_path(path: str) -> str:
         if candidate.exists():
             return str(candidate)
     return path
+
+
+def _call_polfromgain(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    import numpy as np
+
+    for name in ("vis", "tablein"):
+        _validate_required_path(values, name, arguments[name], search_data=True)
+    output = arguments["caltable"]
+    if not isinstance(output, (str, PathLike)):
+        message = "null value not allowed" if output is None else "must be of cStr type"
+        raise AssertionError(str({"caltable": [message]}))
+    for name in ("paoffset", "minpacov"):
+        value = arguments[name]
+        if not isinstance(value, (float, int, np.float32, np.float64, np.int32, np.int64)):
+            message = "null value not allowed" if value is None else "must be of cFloat type"
+            raise AssertionError(str({name: [message]}))
+        if name in values:
+            number = float(value)
+            limit = sys.float_info.max
+            # The finite transport value overflows in CASA's degrees-to-radians
+            # operation. NaN coverage disables the minimum comparison.
+            if isnan(number):
+                number = -limit if name == "minpacov" else limit
+            values[name] = max(-limit, min(number, limit))
+    try:
+        return run("polfromgain", **values).value
+    except TaskExecutionError as error:
+        if error.completion.message == "SVD did not converge in Linear Least Squares":
+            raise np.linalg.LinAlgError(error.completion.message) from error
+        raise
 
 
 def _call_applycal(values: dict[str, Any]) -> Any:

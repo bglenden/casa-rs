@@ -2,7 +2,7 @@
 //! Estimate fractional linear polarization from receptor gain amplitude ratios.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 use std::path::Path;
 
 use casa_ms::{MeasurementSet, derived::engine::MsCalEngine, subtables::MsField};
@@ -26,12 +26,9 @@ pub(crate) fn polarization_from_gain(
     angle_offset_degrees: f64,
     coverage_degrees: f64,
 ) -> Result<FractionalPolarization, String> {
-    if !angle_offset_degrees.is_finite() || !coverage_degrees.is_finite() {
-        return Err("parallactic-angle offset and coverage must be finite".into());
-    }
     let ms = MeasurementSet::open(ms_path).map_err(error_text)?;
-    let geometry = FeedGeometry::new(&ms, angle_offset_degrees.to_radians())?;
-    let coverage = coverage_degrees.to_radians();
+    let geometry = FeedGeometry::new(&ms, angle_offset_degrees * PI / 180.0)?;
+    let coverage = coverage_degrees * PI / 180.0;
     let mut result = BTreeMap::new();
     if let Some(output) = output {
         if overlap(ms_path, output).map_err(error_text)? {
@@ -43,7 +40,9 @@ pub(crate) fn polarization_from_gain(
             CalibrationOutputMode::Create,
             |table, stage| {
                 result = estimate(table, stage, &geometry, coverage, true)?;
-                table.flush().map_err(error_text)
+                table
+                    .save_metadata_only(TableOptions::new(stage))
+                    .map_err(error_text)
             },
         )?;
     } else {
@@ -208,6 +207,7 @@ fn estimate(
     let field_table = Table::open(TableOptions::new(field_path)).map_err(error_text)?;
     let fields = MsField::new(&field_table);
     let mut result = BTreeMap::new();
+    let mut changed_rows = Vec::new();
     for &field in &rows.fields {
         let direction = delay_direction(&fields, field)?;
         let mut spectrum = BTreeMap::new();
@@ -223,7 +223,7 @@ fn estimate(
                             read_sample(table, row, angle)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let coefficients = fit_antenna(&samples, coverage);
+                    let coefficients = fit_antenna(&samples, coverage)?;
                     series.push((samples, coefficients));
                 }
             }
@@ -235,7 +235,13 @@ fn estimate(
             if correct {
                 for (samples, fit) in series {
                     if let Some(polarization) = fit.or(average) {
-                        correct_series(table, &samples, polarization, fit.is_some())?;
+                        correct_series(
+                            table,
+                            &samples,
+                            polarization,
+                            fit.is_some(),
+                            &mut changed_rows,
+                        )?;
                     }
                 }
             }
@@ -244,6 +250,13 @@ fn estimate(
             spectrum.insert("SpwAve".into(), [1.0, q, u, 0.0]);
         }
         result.insert(geometry.fields[field].clone(), spectrum);
+    }
+    if !changed_rows.is_empty() {
+        changed_rows.sort_unstable();
+        table
+            .prepare_write()
+            .save_selected_rows(&["CPARAM"], &changed_rows)
+            .map_err(error_text)?;
     }
     Ok(result)
 }
@@ -294,10 +307,10 @@ fn read_sample(table: &Table, row: usize, angle: f64) -> Result<GainSample, Stri
     let unflagged = !flags[[0, 0]] && !flags[[1, 0]];
     let squared_amplitude_ratio = unflagged.then(|| {
         let replace_zero = |gain: Complex32| {
-            let amplitude = gain.norm();
+            let amplitude = f64::from(gain.re).hypot(f64::from(gain.im));
             if amplitude == 0.0 { 1.0 } else { amplitude }
         };
-        f64::from((replace_zero(gains[[0, 0]]) / replace_zero(gains[[1, 0]])).powi(2))
+        (replace_zero(gains[[0, 0]]) / replace_zero(gains[[1, 0]])).powi(2)
     });
     let (sine, cosine) = (2.0 * angle).sin_cos();
     Ok(GainSample {
@@ -309,7 +322,7 @@ fn read_sample(table: &Table, row: usize, angle: f64) -> Result<GainSample, Stri
     })
 }
 
-fn fit_antenna(samples: &[GainSample], coverage: f64) -> Option<[f64; 2]> {
+fn fit_antenna(samples: &[GainSample], coverage: f64) -> Result<Option<[f64; 2]>, String> {
     let mut bounds = [f64::INFINITY, f64::NEG_INFINITY];
     let mut good = 0;
     let points: Vec<_> = samples
@@ -324,11 +337,21 @@ fn fit_antenna(samples: &[GainSample], coverage: f64) -> Option<[f64; 2]> {
             ([1.0, sample.cosine, sample.sine], observed)
         })
         .collect();
-    if good < 3 || bounds[1] - bounds[0] < coverage {
-        return None;
+    if good < 3 {
+        return Ok(None);
     }
-    let fit = casa_numerics::solve_least_squares(&points)?;
-    (fit[0] > 0.0).then(|| [fit[1] / (2.0 * fit[0]), fit[2] / (2.0 * fit[0])])
+    if points.iter().any(|(basis, _)| !basis[1].is_finite()) {
+        return Err("SVD did not converge in Linear Least Squares".into());
+    }
+    if bounds[1] - bounds[0] < coverage {
+        return Ok(None);
+    }
+    if points.iter().any(|(_, observed)| !observed.is_finite()) {
+        return Ok(Some([f64::NAN; 2]));
+    }
+    let [intercept, cosine, sine] = casa_numerics::solve_least_squares(&points)
+        .ok_or("SVD did not converge in Linear Least Squares")?;
+    Ok((intercept >= 0.0).then(|| [cosine / intercept / 2.0, sine / intercept / 2.0]))
 }
 
 fn mean_polarization(fits: impl Iterator<Item = [f64; 2]>) -> Option<[f64; 2]> {
@@ -343,30 +366,40 @@ fn correct_series(
     samples: &[GainSample],
     [q, u]: [f64; 2],
     fitted: bool,
+    changed_rows: &mut Vec<usize>,
 ) -> Result<(), String> {
-    if q.hypot(u) >= 1.0 {
+    let fraction = q.hypot(u);
+    if !fraction.is_finite() || fraction >= 1.0 {
         return if fitted {
             Err("Spurious fractional polarization!".into())
         } else {
             Ok(())
         };
     }
+    let mut writer = table
+        .row_accessor_mut()
+        .prepare(&["CPARAM"])
+        .map_err(error_text)?;
     for sample in samples {
-        let ArrayValue::Complex32(gains) = table
-            .cell_accessor(sample.row, "CPARAM")
-            .and_then(|cell| cell.array())
-            .map_err(error_text)?
+        let Some(Value::Array(ArrayValue::Complex32(gains))) =
+            writer.load(sample.row).map_err(error_text)?.get("CPARAM")
         else {
             return Err("calibration CPARAM must contain complex gains".into());
         };
         let mut gains = gains.clone();
         let polarized = q * sample.cosine + u * sample.sine;
-        gains[[0, 0]] /= (1.0 + polarized).sqrt() as f32;
-        gains[[1, 0]] /= (1.0 - polarized).sqrt() as f32;
-        table
-            .cell_accessor_mut(sample.row, "CPARAM")
-            .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(gains))))
+        for (receptor, power) in [(0, 1.0 + polarized), (1, 1.0 - polarized)] {
+            let gain = &mut gains[[receptor, 0]];
+            let amplitude = power.sqrt();
+            *gain = Complex32::new(
+                (f64::from(gain.re) / amplitude) as f32,
+                (f64::from(gain.im) / amplitude) as f32,
+            );
+        }
+        writer
+            .set_value_at(0, Value::Array(ArrayValue::Complex32(gains)))
             .map_err(error_text)?;
+        changed_rows.push(sample.row);
     }
-    Ok(())
+    writer.flush().map_err(error_text)
 }
