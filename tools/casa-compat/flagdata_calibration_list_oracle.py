@@ -34,6 +34,9 @@ def cases(column, time):
     yield 'apply-files', dict(inpfile=['commands.txt'])
     yield 'calculate', dict(inpfile=COMMANDS, action='calculate')
     yield 'only-science', dict(inpfile=COMMANDS, reason='science')
+    yield 'local-antenna-pair', dict(inpfile=[
+        "mode='manual' antenna='A0&A1'", "mode='summary'",
+    ])
     yield 'reason-list', dict(inpfile=COMMANDS, reason=['science', 'inspect'])
     yield 'empty-reason-list', dict(inpfile=COMMANDS, reason=[])
     yield 'reason-index', dict(inpfile=["mode='manual'", "mode='summary' reason=''"], reason='')

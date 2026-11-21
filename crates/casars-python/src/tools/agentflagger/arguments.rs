@@ -86,11 +86,6 @@ pub(super) fn selection(record: &Parameters) -> PyResult<MsSelection> {
             "RecordInterface::asString - invalid data type",
         )),
     };
-    let time = if record.contains_key("timerange") {
-        "timerange"
-    } else {
-        "time"
-    };
     Ok(Selectors {
         field: text("field")?,
         spw: text("spw")?,
@@ -99,7 +94,7 @@ pub(super) fn selection(record: &Parameters) -> PyResult<MsSelection> {
         scan: text("scan")?,
         antenna: text("antenna")?,
         uvrange: text("uvrange")?,
-        timerange: text(time)?,
+        timerange: text("timerange")?,
         correlation: text("correlation")?,
         intent: text("intent")?,
         observation: text("observation")?,
@@ -142,6 +137,12 @@ impl Agent {
                 ))
             && (self.request.mode != FlagDataMode::Quack
                 || self.request.quackmode != QuackMode::Disabled)
+            && (self.request.mode != FlagDataMode::Tfcrop
+                || self.request.tfcrop.is_some()
+                || self.request.extendflags)
+            && (self.request.mode != FlagDataMode::Rflag
+                || self.request.rflag_window.is_some()
+                || self.request.extendflags)
     }
 }
 
@@ -168,15 +169,10 @@ pub(super) fn agent(values: &Parameters, tool_ntime: Option<f64>) -> Option<Agen
     {
         selection.correlation = Some("SOL1".to_owned());
     }
-    if mode == FlagDataMode::Summary {
-        selection.observation = None;
-        if selection.array.is_some() || selection.uvrange.is_some() || selection.intent.is_some() {
-            selection = MsSelection {
-                correlation: selection.correlation,
-                ..MsSelection::default()
-            };
-        }
-    }
+    selection.observation = None;
+    selection.array = None;
+    selection.uvrange = None;
+    selection.intent = None;
     let data_column = match record
         .text("datacolumn", "DATA")
         .to_ascii_uppercase()
@@ -188,6 +184,9 @@ pub(super) fn agent(values: &Parameters, tool_ntime: Option<f64>) -> Option<Agen
         _ => FlagDataColumn::Data,
     };
     let flag = record.text("mode", "") != "unflag" && record.flag("apply", true);
+    let time_thresholds = record.thresholds("timedev");
+    let freq_thresholds = record.thresholds("freqdev");
+    let thresholds_valid = time_thresholds.is_some() && freq_thresholds.is_some();
     let mut request = FlagDataRequest {
         spw: selection.spw.clone(),
         correlation: selection.correlation.clone(),
@@ -228,12 +227,14 @@ pub(super) fn agent(values: &Parameters, tool_ntime: Option<f64>) -> Option<Agen
         freqdevscale: record.number("freqdevscale", 5.0),
         spectralmax: record.number("spectralmax", 1e6),
         spectralmin: record.number("spectralmin", 0.0),
-        rflag_window: record.width("winsize", 3).filter(|&value| value > 0),
+        rflag_window: record
+            .width("winsize", 3)
+            .filter(|&value| value > 0 && thresholds_valid),
         rflag_calculate: (mode == FlagDataMode::Rflag).then(|| !record.flag("writeflags", true)),
         timedev: record.numeric("timedev"),
         freqdev: record.numeric("freqdev"),
-        timedev_by_field_spw: record.thresholds("timedev"),
-        freqdev_by_field_spw: record.thresholds("freqdev"),
+        timedev_by_field_spw: time_thresholds.unwrap_or_default(),
+        freqdev_by_field_spw: freq_thresholds.unwrap_or_default(),
         extendflags: record.flag("extendflags", true),
         extendpols: record.flag("extendpols", true),
         growtime: record.number("growtime", 50.0),
@@ -266,15 +267,15 @@ pub(super) fn agent(values: &Parameters, tool_ntime: Option<f64>) -> Option<Agen
     request.clip_time_bin = record
         .flag("timeavg", false)
         .then(|| record.text("timebin", "").to_owned());
-    request.tfcrop = record.tfcrop_options();
-    let default_name = if mode == FlagDataMode::Rflag {
-        "Rflag"
-    } else {
-        ""
-    };
-    let name = record
-        .text("name", record.text("agentname", default_name))
-        .to_owned();
+    request.tfcrop = record.tfcrop_options().filter(|options| {
+        (1..=9).contains(&options.max_pieces) && (1..=3).contains(&options.half_window)
+    });
+    let name = match mode {
+        FlagDataMode::Summary => record.text("name", "Summary"),
+        FlagDataMode::Rflag => record.text("agentname", "Rflag"),
+        _ => "",
+    }
+    .to_owned();
     let configurable = !matches!(mode, FlagDataMode::Elevation | FlagDataMode::Shadow);
     Some(Agent {
         request,
@@ -360,23 +361,27 @@ impl Options<'_> {
         }
     }
 
-    fn thresholds(&self, name: &str) -> BTreeMap<(i32, i32), f64> {
-        self.array(name)
-            .into_iter()
-            .flatten()
-            .filter_map(|row| {
-                let ParameterValue::Array(row) = row else {
-                    return None;
-                };
-                let [field, window, count] = row.as_slice() else {
-                    return None;
-                };
-                Some((
-                    (numeric(field)? as i32, numeric(window)? as i32),
-                    numeric(count)?,
-                ))
-            })
-            .collect()
+    fn thresholds(&self, name: &str) -> Option<BTreeMap<(i32, i32), f64>> {
+        match self.0.get(name) {
+            None | Some(ParameterValue::EmptyArray { .. }) => Some(BTreeMap::new()),
+            Some(value) if numeric(value).is_some() => Some(BTreeMap::new()),
+            Some(ParameterValue::Array(rows)) => rows
+                .iter()
+                .map(|row| {
+                    let ParameterValue::Array(row) = row else {
+                        return None;
+                    };
+                    let [field, window, count] = row.as_slice() else {
+                        return None;
+                    };
+                    Some((
+                        (numeric(field)? as i32, numeric(window)? as i32),
+                        numeric(count)?,
+                    ))
+                })
+                .collect(),
+            _ => None,
+        }
     }
 
     fn tfcrop_options(&self) -> Option<TfcropOptions> {
