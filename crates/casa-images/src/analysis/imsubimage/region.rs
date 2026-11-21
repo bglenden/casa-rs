@@ -759,8 +759,8 @@ fn parse_crtf_shape(
                         cy,
                         semi_major: radius * sx / sy,
                         semi_minor: radius * sy / sx,
-                        cos_pa: 1.0,
-                        sin_pa: 0.0,
+                        cos_pa: 0.0,
+                        sin_pa: 1.0,
                     });
                 }
                 let radius = if plane[0] < plane[1] { rx } else { ry };
