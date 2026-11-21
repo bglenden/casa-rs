@@ -651,7 +651,7 @@ impl AwCatalog {
             &units,
             generation::GenerationOptions {
                 only_missing,
-                legacy_vla_band: None,
+                legacy_vla: None,
             },
             workers,
         )?;
@@ -665,6 +665,7 @@ impl AwCatalog {
         root: &Path,
         input: &NativeAwRequestInput,
         band: &str,
+        spectral: &casa_coordinates::SpectralCoordinate,
         workers: usize,
     ) -> Result<(), AwCatalogError> {
         input
@@ -677,7 +678,7 @@ impl AwCatalog {
             &units,
             generation::GenerationOptions {
                 only_missing: false,
-                legacy_vla_band: Some(band),
+                legacy_vla: Some((band, spectral)),
             },
             workers,
         )

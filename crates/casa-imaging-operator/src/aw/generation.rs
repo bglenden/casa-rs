@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use casa_coordinates::StokesType;
+use casa_coordinates::{SpectralCoordinate, StokesType};
 use casa_imaging_model::{EvlaAwCellRequest, NativeAwRequestInput};
 
 use super::cell_image::{CellMisc, write_cell};
@@ -21,7 +21,7 @@ use super::{
 #[derive(Clone, Copy)]
 pub(super) struct GenerationOptions<'a> {
     pub only_missing: bool,
-    pub legacy_vla_band: Option<&'a str>,
+    pub legacy_vla: Option<(&'a str, &'a SpectralCoordinate)>,
 }
 
 /// One worker's share: the cells of one (parallactic angle, frequency,
@@ -189,7 +189,7 @@ fn generate_unit(
     unit: &Unit,
     GenerationOptions {
         only_missing,
-        legacy_vla_band,
+        legacy_vla,
     }: GenerationOptions<'_>,
     workspace: &mut Option<EvlaAwWorkspace>,
 ) -> Result<(), AwCatalogError> {
@@ -214,7 +214,7 @@ fn generate_unit(
         frequency
     };
     let mueller = input.mueller_elements[unit.mueller];
-    let conjugate_mueller = if legacy_vla_band.is_some() {
+    let conjugate_mueller = if legacy_vla.is_some() {
         // The legacy writer stores the first Stokes code from the conjugate
         // polarization axis in every imaging and weight cell.
         (if input.mueller_elements[0] == 0 {
@@ -248,7 +248,7 @@ fn generate_unit(
             Some(workspace) => workspace,
             None => workspace.insert(
                 EvlaAwWorkspace::new(model.clone(), request)?
-                    .with_legacy_vla_feed(legacy_vla_band.is_some()),
+                    .with_legacy_vla_feed(legacy_vla.is_some()),
             ),
         };
         // Only the W screen depends on w: the aperture and the weight cell
@@ -266,7 +266,7 @@ fn generate_unit(
             diameter_m: input.antenna_diameter_m,
             sky_increment_rad: grid.sky_increment_rad[1].abs(),
             working_size: grid.size,
-            legacy_vla_band,
+            legacy_vla,
         };
         let suffix = cell_suffix(unit.pa, unit.frequency, iw, unit.mueller);
         write_cell(

@@ -19,10 +19,10 @@ from imager_legacy_pbw_oracle import (
 
 
 def predict(dataset, model, cache, machine, correction, *, scratch=True, limit=.05,
-            accepts=True, factory=imager, **terms):
+            accepts=True, factory=imager, spw='0:0', **terms):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
-    assert tool.selectvis(field=0, spw='0:0')
+    assert tool.selectvis(field=0, spw=spw)
     assert tool.defineimage(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
                             phasecenter=0, stokes='IQUV', outframe='TOPO')
     assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
@@ -144,6 +144,10 @@ def compare_cold(root, dataset, model):
                 results[case] = cold_case(Path(attempt), dataset, model, machine, terms)
             print(case, results[case], flush=True)
             assert max(results[case].values()) < 1.e-3
+    with TemporaryDirectory(dir=root) as control:
+        results['stepped'] = stepped_range(Path(control), dataset, model)
+    with TemporaryDirectory(dir=root) as control:
+        refuses_unsupported_cells(Path(control), dataset, model)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
@@ -169,6 +173,7 @@ def cold_case(root, dataset, model, machine, terms, *, reference=None):
     cell = 'CFS_0_0_CF_0_0_1.im'
     (interrupted / 'promoting').write_text(cell)
     (native_cache / cell).mkdir()
+    (native_cache / cell / '.casars-legacy-aw-owner').write_text(interrupted.name)
     preparing = native_cache / '.casars-legacy-aw-preparing'
     preparing.mkdir()
     (preparing / 'preparing').touch()
@@ -195,6 +200,7 @@ def cold_case(root, dataset, model, machine, terms, *, reference=None):
     # One cold saved run per machine checks replay and C++ readback of the
     # copied kernel products after the independently generated cache moves.
     if len(terms) == 1:
+        errors['replacement'] = preserve_replaced_cell(root, dataset, model, casa_cache, machine, terms, expected)
         saved, saved_cache = root / 'saved.ms', root / 'saved-cache'
         make_input(dataset, saved, scratch=False)
         predict(saved, model, saved_cache, machine, False, scratch=False, **terms)
@@ -214,6 +220,24 @@ def cold_case(root, dataset, model, machine, terms, *, reference=None):
     return errors
 
 
+def preserve_replaced_cell(root, dataset, model, source_cache, machine, terms, expected):
+    cache, target = root / 'replaced-cache', root / 'replaced.ms'
+    shutil.copytree(source_cache, cache)
+    cell = 'CFS_0_0_CF_0_0_1.im'
+    (cache / cell / 'new-producer').write_text('preserve')
+    before = cache_contents(cache)
+    stage = cache / '.casars-legacy-aw-obsolete'
+    stage.mkdir()
+    (stage / 'preparing').touch()
+    (stage / 'promoting').write_text(cell)
+    make_input(dataset, target, scratch=True)
+    predict(target, model, cache, machine, False, **terms)
+    assert cache_contents(cache) == before
+    actual = data(target, 'MODEL_DATA')
+    np.testing.assert_array_equal(actual[:, 1:, :], expected[:, 1:, :])
+    return relative_rms(actual[:, 0, :], expected[:, 0, :])
+
+
 def compare_cells(actual, expected):
     names = sorted(path.name for path in expected.glob('*CFS_*.im'))
     assert len(names) == 4
@@ -225,16 +249,88 @@ def compare_cells(actual, expected):
             assert tool.open(str(path))
             pixels, metadata = tool.getchunk(), tool.miscinfo()
             assert tool.done()
-            return pixels, metadata
+            reader = table()
+            assert reader.open(str(path))
+            coordinates = reader.getkeyword('coords')
+            assert reader.done()
+            return pixels, metadata, coordinates
 
-        got, got_meta = read(actual / name)
-        wanted, wanted_meta = read(expected / name)
+        got, got_meta, got_coords = read(actual / name)
+        wanted, wanted_meta, wanted_coords = read(expected / name)
         assert got.shape == wanted.shape, name
         for key in ('Xsupport', 'Ysupport', 'Sampling', 'MuellerElement', 'WValue', 'WIncr',
                     'ConjFreq', 'ConjPoln', 'TelescopeName', 'BandName'):
             assert got_meta[key] == wanted_meta[key], (name, key)
+        compare_cell_coordinates(got_coords, wanted_coords)
         errors.append(relative_rms(got, wanted))
     return max(errors)
+
+
+def compare_cell_coordinates(actual, expected):
+    for key in ('axes', 'units'):
+        np.testing.assert_array_equal(actual['linear0'][key], expected['linear0'][key])
+    for key in ('crpix', 'crval', 'cdelt', 'pc'):
+        np.testing.assert_allclose(actual['linear0'][key], expected['linear0'][key], rtol=1.e-8)
+    np.testing.assert_array_equal(actual['stokes1']['stokes'], expected['stokes1']['stokes'])
+    lhs, rhs = actual['spectral2'], expected['spectral2']
+    for key in ('system', 'unit'):
+        assert lhs[key] == rhs[key], key
+    np.testing.assert_allclose(lhs['restfreq'], rhs['restfreq'], rtol=1.e-13)
+    assert lhs['wcs']['ctype'] == rhs['wcs']['ctype']
+    for key in ('crpix', 'crval', 'cdelt', 'pc'):
+        np.testing.assert_allclose(lhs['wcs'][key], rhs['wcs'][key], rtol=1.e-13)
+
+
+def stepped_range(root, dataset, model, *, reference=None):
+    selector = '0:0~5^2'
+    if reference is None:
+        pinned, casa_cache = root / 'pinned.ms', root / 'casa-cache'
+        make_input(dataset, pinned, scratch=True)
+        predict(pinned, model, casa_cache, 'awproject', False, factory=casa_imager,
+                spw=selector, wbawp=True)
+    else:
+        pinned, casa_cache = reference / 'fixture.ms', reference / 'cache'
+    native, native_cache = root / 'native.ms', root / 'native-cache'
+    make_input(dataset, native, scratch=True)
+    predict(native, model, native_cache, 'awproject', False, spw=selector, wbawp=True)
+    wanted, got = data(pinned, 'MODEL_DATA'), data(native, 'MODEL_DATA')
+    indices = [0, 2, 4]
+    untouched = np.ones(wanted.shape[1], dtype=bool)
+    untouched[indices] = False
+    np.testing.assert_array_equal(got[:, untouched, :], wanted[:, untouched, :])
+    reference_hz = data(dataset / 'SPECTRAL_WINDOW', 'CHAN_FREQ')[5, 0]
+    reader = table()
+    assert reader.open(str(native_cache / 'CFS_0_0_CF_0_0_0.im'))
+    actual_hz = reader.getkeyword('coords')['spectral2']['wcs']['crval']
+    assert reader.done() and actual_hz == reference_hz
+    errors = {
+        'cells': compare_cells(native_cache, casa_cache),
+        'prediction': relative_rms(got[:, indices, :], wanted[:, indices, :]),
+    }
+    print('stepped 0:0~5^2 uses stop channel 5', errors, flush=True)
+    assert max(errors.values()) < 1.e-3
+    return errors
+
+
+def refuses_unsupported_cells(root, dataset, model):
+    for label, spw in (('disjoint', '0:0;3'), ('cross-hand', '0:0'), ('s-band', '0:0')):
+        target, cache = root / f'{label}.ms', root / f'{label}-cache'
+        make_input(dataset, target, scratch=True)
+        if label == 's-band':
+            editor = table()
+            assert editor.open(str(target / 'SPECTRAL_WINDOW'), nomodify=False)
+            for column in ('CHAN_FREQ', 'REF_FREQUENCY'):
+                assert editor.putcell(column, 0, editor.getcell(column, 0) + 1.6e9)
+            assert editor.done()
+        if label == 'cross-hand':
+            editor = table()
+            assert editor.open(str(target / 'POLARIZATION'), nomodify=False)
+            assert editor.putcell('CORR_TYPE', 0, np.array([5, 6], dtype=np.int32))
+            assert editor.putcell('CORR_PRODUCT', 0, np.array([[0, 0], [0, 1]], dtype=np.int32))
+            assert editor.done()
+        predict(target, model, cache, 'awproject', False, accepts=False, spw=spw, wbawp=True)
+        assert not list(cache.glob('*CFS_*.im'))
+        print(label, 'refused before publishing any cells', flush=True)
 
 
 def main():

@@ -554,8 +554,16 @@ fn legacy_aw_generation_holds_at_most_its_charge() {
     request.maximum_cells = 2;
     let root = tempfile::tempdir().unwrap();
     let workers = 2;
-    let (peak, _, result) =
-        measure(|| AwCatalog::generate_legacy_vla(root.path(), &request, "test", workers));
+    let spectral = casa_coordinates::SpectralCoordinate::new(
+        casa_types::measures::frequency::FrequencyRef::TOPO,
+        1.4e9,
+        2.4e4,
+        0.,
+        1.42e9,
+    );
+    let (peak, _, result) = measure(|| {
+        AwCatalog::generate_legacy_vla(root.path(), &request, "test", &spectral, workers)
+    });
     result.unwrap();
     let charge = AwCatalog::generation_bytes(&request, workers);
     assert!(peak <= charge, "legacy A/W held {peak}, charged {charge}");
