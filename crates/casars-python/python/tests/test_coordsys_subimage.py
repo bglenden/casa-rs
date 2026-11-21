@@ -44,7 +44,7 @@ def test_interleaved_axes_stokes_and_fractional_origin_match_casa(casa):
         assert new.fromrecord(result)
         _assert_value(new.stokes(), ["Q", "U"])
         np.testing.assert_allclose(new.toworld(point)["numeric"], cs.toworld(point + shift)["numeric"])
-        _assert_value(result["pixelmap0"], [3, 0])
+        np.testing.assert_array_equal(result["pixelmap0"], [3, 0])
         np.testing.assert_array_equal(result["worldreplace1"], before["worldreplace1"])
         _assert_value(cs.torecord(), before)
         records.append(result)
