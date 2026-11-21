@@ -47,6 +47,7 @@ pub use imsubimage::{
     replace_masked_complex_pixels, replace_masked_real_pixels, validate_put_region_shapes,
 };
 pub use imsubimage::{DecompositionOptions, ImageDecomposition, decompose_image};
+pub use imsubimage::{FourierOptions, FourierPixel, ImageFourier};
 pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
 mod list_log;
 mod planes;

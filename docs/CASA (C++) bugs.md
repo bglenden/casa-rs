@@ -8753,3 +8753,18 @@ returned for a 2D Gaussian. With `threshold=0.7`, `maxretry=0`, and
 within 0.00001. The independent solvers can select different centers,
 widths, and angles from the valid solutions. Casa-rs also uses a fixed
 retry sequence so fits with identical inputs are reproducible.
+
+## Image FFT can use the wrong explicit axis or abort on a coupled coordinate
+
+CASA 6.7.6.14 indexes its array of requested FFT axes with the requested
+axis value itself. On a 7 × 8 linear image, `image.fft(axes=[1], complex=...)`
+can transform the first axis. The requested value 1 is outside the one-entry
+list. Casa-rs transforms the requested second axis and rejects axes outside
+the image's rank before creating outputs.
+
+CASA can also terminate the process when only one axis of a coupled
+linear coordinate is selected. A 7 × 8 image with linear transform
+`[[1, 0.2], [0.5, 1]]` and `fft(axes=[0], complex=...)` reproduces it.
+The linear-coordinate Fourier operation rejects the partial inversion,
+after which the tool dereferences the absent coordinate. Casa-rs returns
+the coordinate error and leaves the output destinations untouched.

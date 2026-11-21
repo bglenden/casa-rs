@@ -37,23 +37,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (real = None, imag = None, amp = None, phase = None, axes = None, region = None, mask = None, stretch = None, complex = None), text_signature = "($self, real='', imag='', amp='', phase='', axes=[-1], region={}, mask='', stretch=False, complex='')")]
-    fn fft(
-        &self,
-        real: Option<&Bound<'_, PyAny>>,
-        imag: Option<&Bound<'_, PyAny>>,
-        amp: Option<&Bound<'_, PyAny>>,
-        phase: Option<&Bound<'_, PyAny>>,
-        axes: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        complex: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fft")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (nmax = None, cutoff = None, region = None, mask = None, point = None, width = None, negfind = None), text_signature = "($self, nmax=20, cutoff=0.1, region={}, mask='', point=True, width=5, negfind=False)")]
     fn findsources(
         &self,

@@ -29,6 +29,7 @@ mod decimate;
 mod decompose;
 mod deconvolve_components;
 mod default_record;
+mod fft;
 mod fits_export;
 mod fits_header;
 mod fits_import;

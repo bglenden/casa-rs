@@ -325,7 +325,7 @@ const METHODS: &[Method] = &[
             param("complex", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "findsources",
