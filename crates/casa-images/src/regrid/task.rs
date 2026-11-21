@@ -178,33 +178,16 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 }
                 CoordinateModel::Direction(theirs.clone())
             }
-            (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) if n_axes == 2 => {
-                let dimensions = [lengths[0], lengths[1]];
-                if options.decimate < 0 {
-                    return Err(invalid("decimate must be nonnegative"));
-                }
-                if input_lengths != lengths || !same_linear_grid(ours, theirs) {
-                    apply_linear_plane(
-                        &mut result,
-                        [axes[0], axes[1]],
-                        input.units(),
-                        (ours, theirs),
-                        dimensions,
-                        &options,
-                    )?;
-                }
-                CoordinateModel::Linear(theirs.clone())
-            }
             (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) => {
-                apply_linear_axes(
+                regrid_linear_coordinate(
                     &mut result,
+                    input.units(),
                     &axes,
-                    &lengths,
-                    &selected,
+                    (&input_lengths, &lengths),
                     (ours, theirs),
+                    &selected,
                     &options,
-                )?;
-                CoordinateModel::Linear(theirs.clone())
+                )?
             }
             (CoordinateModel::Spectral(ours), CoordinateModel::Spectral(theirs)) => {
                 regrid_spectral_coordinate(
@@ -250,6 +233,35 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         return Err(invalid("All output pixels are masked"));
     }
     Ok(result)
+}
+
+fn regrid_linear_coordinate<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    units: &str,
+    axes: &[usize],
+    (input_lengths, lengths): (&[usize], &[usize]),
+    (input, target): (&LinearCoordinate, &LinearCoordinate),
+    selected: &[bool],
+    options: &TaskRegridOptions<'_>,
+) -> Result<CoordinateModel, ImageError> {
+    if let [x, y] = axes {
+        if options.decimate < 0 {
+            return Err(invalid("decimate must be nonnegative"));
+        }
+        if input_lengths != lengths || !same_linear_grid(input, target) {
+            apply_linear_plane(
+                result,
+                [*x, *y],
+                units,
+                (input, target),
+                [lengths[0], lengths[1]],
+                options,
+            )?;
+        }
+    } else {
+        apply_linear_axes(result, axes, lengths, selected, (input, target), options)?;
+    }
+    Ok(target.clone().into())
 }
 
 fn regrid_spectral_coordinate<T: RegridPixel>(
