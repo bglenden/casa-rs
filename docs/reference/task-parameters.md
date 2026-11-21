@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 829
-- Surfaces: 45 (45 task, 0 session)
-- Surface bindings: 1089
+- Concepts: 842
+- Surfaces: 46 (46 task, 0 session)
+- Surface bindings: 1112
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -33,6 +33,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
 | [Subtract Visibility Model](#surface-uvsub)<br><code>uvsub</code> | task | 1 | <code>calibration</code> | 2 | Subtract or restore the current visibility model in corrected data. |
 | [Predict Visibility Model](#surface-ft)<br><code>ft</code> | task | 1 | <code>calibration</code> | 15 | Predict model visibilities from component lists and model images. |
+| [Set Calibrator Flux Density](#surface-setjy)<br><code>setjy</code> | task | 1 | <code>calibration</code> | 23 | Populate a calibrator visibility model with setjy. |
 | [Fit Visibility Component](#surface-uvmodelfit)<br><code>uvmodelfit</code> | task | 1 | <code>calibration</code> | 14 | Fit a single sky component to selected visibilities. |
 | [Clear Calibration](#surface-clearcal)<br><code>clearcal</code> | task | 1 | <code>calibration</code> | 5 | Initialize or reset scratch visibility columns. |
 | [Delete Model](#surface-delmod)<br><code>delmod</code> | task | 1 | <code>calibration</code> | 4 | Remove scratch or virtual model visibilities. |
@@ -831,6 +832,42 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>complist</code> | <code>parameter.complist@r1</code> | <code>path (product)</code> | <code>""</code>; optional | Model | Component list. |
 | <code>incremental</code> | <code>parameter.incremental@r1</code> | <code>bool</code> | <code>false</code>; optional | Model | Write incremental correction factors instead of absolute transfer gains |
 | <code>usescratch</code> | <code>parameter.usescratch@r1</code> | <code>bool</code> | <code>false</code>; optional | Model | Write MODEL_DATA. |
+
+<a id="surface-setjy"></a>
+
+## Set Calibrator Flux Density (<code>setjy</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Populate a calibrator visibility model with setjy.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | CASA field selector text. Empty selects every field. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal spw selector text. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
+| <code>timerange</code> | <code>ms.selection.timerange@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata timerange selector. |
+| <code>scan</code> | <code>ms.selection.scan@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata scan selector. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Intent selector. |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
+| <code>scalebychan</code> | <code>setjy.scalebychan@r1</code> | <code>bool</code> | <code>true</code>; optional | Calibrator model | Evaluate calibrator flux density per channel. |
+| <code>standard</code> | <code>setjy.standard@r1</code> | <code>choice (13 values)</code> | <code>"Perley-Butler 2017"</code>; optional | Calibrator model | Flux density standard for the calibrator model. |
+| <code>model</code> | <code>setjy.model@r1</code> | <code>string</code> | <code>""</code>; optional | Calibrator model | Input image or calibrator model name. |
+| <code>listmodels</code> | <code>setjy.listmodels@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibrator model | List available calibrator model images. |
+| <code>fluxdensity</code> | <code>setjy.fluxdensity@r1</code> | <code>array&lt;float&gt;</code> | <code>-1</code>; optional | Calibrator model | Manual Stokes I, Q, U and V flux densities in Jy. |
+| <code>spix</code> | <code>setjy.spix@r1</code> | <code>array&lt;float&gt;</code> | <code>0.0</code>; optional | Calibrator model | Spectral index and curvature coefficients. |
+| <code>reffreq</code> | <code>parameter.reffreq@r1</code> | <code>string</code> | <code>"1GHz"</code>; optional | Calibrator model | Reference frequency. |
+| <code>polindex</code> | <code>setjy.polindex@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Calibrator model | Coefficients of the fractional linear polarization. |
+| <code>polangle</code> | <code>setjy.polangle@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Calibrator model | Coefficients of the linear polarization angle in radians. |
+| <code>rotmeas</code> | <code>setjy.rotmeas@r1</code> | <code>float</code> | <code>0.0</code>; optional | Calibrator model | Rotation measure in rad/m². |
+| <code>fluxdict</code> | <code>setjy.fluxdict@r1</code> | <code>variant</code> | <code>{}</code>; optional | Calibrator model | Flux dictionary returned by fluxscale with incremental disabled. |
+| <code>useephemdir</code> | <code>setjy.useephemdir@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibrator model | Use the ephemeris position for a Solar System calibrator. |
+| <code>interpolation</code> | <code>setjy.interpolation@r1</code> | <code>choice (5 values)</code> | <code>"nearest"</code>; optional | Calibrator model | Time interpolation of calibrator flux coefficients. |
+| <code>usescratch</code> | <code>parameter.usescratch@r1</code> | <code>bool</code> | <code>true</code>; optional | Model | Write MODEL_DATA. |
+| <code>ismms</code> | <code>setjy.ismms@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibrator model | Allow an empty local selection while processing a Multi-MS. |
 
 <a id="surface-uvmodelfit"></a>
 

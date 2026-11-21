@@ -12,6 +12,7 @@ from collections.abc import Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
 from enum import Enum
 from importlib import import_module
+from json import dumps, loads
 from os import PathLike
 from pathlib import Path
 from typing import Any, ClassVar, TypeAlias
@@ -409,11 +410,18 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
                                               or (self.surface == "flagdata"
                                                   and name in ("chanbin", "timedev", "freqdev")))}
         projected = _native().parameter_provider_invocation(self.surface, explicit, originals)
+        stdin = projected["stdin"]
+        supplied = self._overrides.get("fluxdict")
+        if self.surface == "setjy" and "fluxdict" in explicit and isinstance(supplied, Mapping) and stdin:
+            # Preserve the caller's field order across the canonical table transport.
+            request = loads(stdin)
+            request.setdefault("argument_text", {})["fluxdict"] = dumps(list(supplied))
+            stdin = dumps(request)
         return ProviderInvocation(
             protocol_name=projected["protocol_name"],
             protocol_version=projected["protocol_version"],
             args=tuple(projected["args"]),
-            stdin=projected["stdin"],
+            stdin=stdin,
         )
 
     def _resolved_values(self) -> dict[str, ParameterData]:
