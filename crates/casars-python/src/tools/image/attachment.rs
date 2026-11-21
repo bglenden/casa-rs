@@ -19,7 +19,7 @@ use pyo3::prelude::*;
 use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
-use super::handle::{ImageHandle, raised};
+use super::handle::{ImageHandle, raised, same_file_snapshot};
 use super::stub;
 
 pub(super) struct SharedImage {
@@ -500,7 +500,7 @@ impl AttachedImage {
                 source.display()
             )));
         }
-        let backup = move_native_table(source, &target, target_metadata.is_some())?;
+        let backup = move_native_table(source, &target, target_metadata.as_ref())?;
         // Keep both root locks during reattachment, but release child
         // locks so the log-table writer can append the rename history.
         locks.retain(|path, _| path == source || path == &target);
@@ -723,18 +723,19 @@ fn move_error(error: std::io::Error) -> PyErr {
 fn move_native_table(
     source: &Path,
     target: &Path,
-    replaces: bool,
+    target_metadata: Option<&fs::Metadata>,
 ) -> PyResult<Option<tempfile::TempDir>> {
-    if !replaces {
+    let Some(expected) = target_metadata else {
         rename_without_replacing(source, target).map_err(move_error)?;
         return Ok(None);
-    }
+    };
     let parent = source
         .parent()
         .ok_or_else(|| raised("Invalid source image path"))?;
     let backup = tempfile::tempdir_in(parent).map_err(raised)?;
     exchange_directories(source, target).map_err(move_error)?;
-    if let Err(error) = rename_without_replacing(source, &backup.path().join("previous")) {
+    let previous = backup.path().join("previous");
+    if let Err(error) = rename_without_replacing(source, &previous) {
         if let Err(restore) = exchange_directories(source, target) {
             return Err(raised(format!(
                 "Could not complete image rename ({error}) or restore by exchanging {} and {} ({restore})",
@@ -743,6 +744,21 @@ fn move_native_table(
             )));
         }
         return Err(move_error(error));
+    }
+    if expected.is_symlink()
+        && !previous
+            .symlink_metadata()
+            .is_ok_and(|actual| actual.is_symlink() && same_file_snapshot(expected, &actual))
+    {
+        return restore_native_move(
+            source,
+            target,
+            Some(backup),
+            raised(format!(
+                "The destination link at {} has changed",
+                target.display()
+            )),
+        );
     }
     Ok(Some(backup))
 }
