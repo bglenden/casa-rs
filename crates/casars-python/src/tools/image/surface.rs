@@ -339,7 +339,7 @@ const METHODS: &[Method] = &[
             param("negfind", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fitcomponents",

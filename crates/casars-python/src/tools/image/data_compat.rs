@@ -270,7 +270,7 @@ fn normalize_image_stride(shape: &[usize], stride: Option<Vec<usize>>) -> PyResu
     Ok(stride)
 }
 
-fn record_to_py(py: Python<'_>, record: RecordValue) -> PyResult<Py<PyAny>> {
+pub(super) fn record_to_py(py: Python<'_>, record: RecordValue) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     for field in record.into_fields() {
         dict.set_item(field.name.as_str(), value_to_py(py, field.value)?.bind(py))?;

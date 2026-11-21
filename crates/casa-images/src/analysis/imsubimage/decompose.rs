@@ -2,6 +2,7 @@
 
 mod contours;
 mod gaussian;
+pub(super) use gaussian::fit_window;
 mod points;
 mod runs;
 
