@@ -9050,3 +9050,11 @@ fixed gives a different center in CASA after its peak and sample values
 are scaled from 1 to 10⁻¹⁵. The velocity center shifts by about
 0.0175 km/s. Casa-rs scales the solver's damping to its curvature and
 fits the same physical center at both intensities.
+
+### `image.histograms` can abort on duplicate axes
+
+On a 5 × 3 Float image with `axes=[1, 1]`, CASA 6.7.6.14 aborts
+inside the lattice collapse. It checks each axis in isolation and
+passes a duplicated axis to the tile iterator. Casa-rs raises a Python
+error for duplicate axes and keeps the image attached and its pixels
+intact.

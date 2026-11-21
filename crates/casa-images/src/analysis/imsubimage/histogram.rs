@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
-use ndarray::{Dimension, IxDyn};
+use ndarray::{Dimension, IxDyn, Zip};
 
 use crate::analysis::axes::StridedSection;
 use crate::analysis::lel_mask::PreparedMask;
@@ -180,16 +180,30 @@ impl<T: HistogramPixel> HistogramScan<'_, T> {
             let (values, mask) = self
                 .windows
                 .read(&start, &block.shape, self.section.stride)?;
+            if self.kept.is_empty() {
+                let mut keep = |value: T| {
+                    let value = value.into();
+                    if self.accepts(value) {
+                        sample(0, value);
+                    }
+                };
+                if let Some(mask) = &mask {
+                    Zip::from(&values).and(mask).for_each(|&value, &valid| {
+                        if valid {
+                            keep(value);
+                        }
+                    });
+                } else {
+                    values.iter().copied().for_each(keep);
+                }
+                continue;
+            }
             for (index, &value) in values.indexed_iter() {
                 if mask.as_ref().is_some_and(|mask| !mask[&index]) {
                     continue;
                 }
                 let value = value.into();
-                if !value.is_finite()
-                    || self
-                        .include
-                        .is_some_and(|[min, max]| value < min || value > max)
-                {
+                if !self.accepts(value) {
                     continue;
                 }
                 let at = index.slice();
@@ -200,6 +214,13 @@ impl<T: HistogramPixel> HistogramScan<'_, T> {
             }
         }
         Ok(())
+    }
+
+    fn accepts(&self, value: f64) -> bool {
+        value.is_finite()
+            && self
+                .include
+                .is_none_or(|[min, max]| min <= value && value <= max)
     }
 }
 
