@@ -67,8 +67,7 @@ def receptor_control(root, source, model, baseline):
     compare('rotated feed receptors', actual, expected)
 
 
-def projected_radius_control(root, source, original):
-    model = root / 'shifted-tangent.im'
+def shifted_tangent_model(original, model):
     shutil.copytree(original, model)
     tool = image()
     assert tool.open(str(model))
@@ -88,6 +87,11 @@ def projected_radius_control(root, source, original):
     pixels = np.zeros(tool.shape(), np.float32)
     pixels[128, 188, :, 0] = [1.3, .2, .15, -.1]
     assert tool.putchunk(pixels) and tool.done()
+
+
+def projected_radius_control(root, source, original):
+    model = root / 'shifted-tangent.im'
+    shifted_tangent_model(original, model)
     grids = []
     for engine, factory in (('pinned', casa_imager), ('native', imager)):
         dataset = root / f'{engine}-shifted-tangent.ms'

@@ -754,19 +754,16 @@ impl ImagerPrediction {
             .as_ref()
             .filter(|_| self.apply_voltage_pattern && !mosaic)
             .filter(|_| !model.images.is_empty() || (scratch && !model.incremental));
+        let ordinary_grid = self.supports_voltage_batches();
         if self.voltage_squint
             && pattern.is_some_and(|pattern| pattern.table.is_some())
-            && !self.supports_voltage_batches()
+            && !ordinary_grid
         {
             return Err(invalid(
                 "custom voltage-pattern squint for this legacy Fourier mode is pending #1520",
             ));
         }
-        if scratch
-            && pattern.is_some()
-            && model.components.is_some()
-            && !self.supports_voltage_batches()
-        {
+        if scratch && pattern.is_some() && model.components.is_some() && !ordinary_grid {
             return Err(invalid(
                 "component voltage patterns for this legacy Fourier mode are pending #1520",
             ));
@@ -879,7 +876,8 @@ impl ImagerPrediction {
                 let mut field = selected.clone();
                 for (_, rows) in fields {
                     field.selected_rows = rows;
-                    let voltage_pattern = pattern.prepare(ms, &field, self.voltage_squint, true)?;
+                    let voltage_pattern =
+                        pattern.prepare(ms, &field, self.voltage_squint, true, ordinary_grid)?;
                     if !components.is_empty() {
                         component_voltage = Some(voltage_pattern.clone());
                     }
@@ -898,7 +896,9 @@ impl ImagerPrediction {
                 // virtual combinations. Its scratch iterator can change
                 // the beam as it advances to another field.
                 let voltage_pattern = pattern
-                    .map(|pattern| pattern.prepare(ms, selected, self.voltage_squint, scratch))
+                    .map(|pattern| {
+                        pattern.prepare(ms, selected, self.voltage_squint, scratch, ordinary_grid)
+                    })
                     .transpose()?;
                 images = self.prepare_images(
                     ms,
