@@ -120,3 +120,112 @@ def test_rename_restores_both_images_if_history_write_fails(tmp_path):
     assert destination.open(str(new))
     assert destination.shape().tolist() == [3, 2]
     assert destination.done()
+
+
+@pytest.mark.parametrize("writer", ["casa", "casars"])
+@pytest.mark.parametrize("target_link", ["separate", "source"])
+def test_rename_native_image_moves_past_links_without_changing_referent(
+    tmp_path, writer, target_link,
+):
+    casa = _backend("casa")
+    api = casa if writer == "casa" else tools
+    source = tmp_path / "source.im"
+    alias = tmp_path / "source-link.im"
+    output = tmp_path / "output.im"
+    referent = tmp_path / "existing.im"
+    owner = api.image()
+    peer = api.image()
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    try:
+        assert owner.fromarray(str(source), pixels)
+        assert owner.calcmask(f'"{source}" > 4', "valid")
+        assert owner.setbrightnessunit("Jy/pixel")
+        assert owner.done()
+        alias.symlink_to(source, target_is_directory=True)
+        if target_link == "separate":
+            assert peer.fromarray(str(referent), pixels + 50)
+            assert peer.done()
+            assert peer.open(str(referent))
+            output.symlink_to(referent, target_is_directory=True)
+        else:
+            output.symlink_to(source, target_is_directory=True)
+        assert owner.open(str(alias))
+        assert owner.rename(str(output), overwrite=True)
+        assert owner.name() == str(output)
+        assert not source.exists()
+        assert alias.is_symlink() and not alias.exists()
+        assert output.is_dir() and not output.is_symlink()
+        if target_link == "separate":
+            assert referent.is_dir()
+            np.testing.assert_array_equal(peer.getchunk(), pixels + 50)
+        assert owner.history()[-3:] == [
+            "Ran ia.rename", f'ia.rename(name="{output}", overwrite=true)',
+            f"original name was {alias}",
+        ]
+    finally:
+        owner.done()
+        peer.done()
+
+    for reader in (casa, tools):
+        reopened = reader.image()
+        try:
+            assert reopened.open(str(output))
+            np.testing.assert_array_equal(reopened.getchunk(), pixels)
+            np.testing.assert_array_equal(reopened.getchunk(getmask=True), pixels > 4)
+            assert reopened.brightnessunit() == "Jy/pixel"
+        finally:
+            reopened.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_rename_rejects_a_dangling_destination_link(tmp_path, backend):
+    api = _backend(backend)
+    source = tmp_path / "source.im"
+    output = tmp_path / "output.im"
+    missing = tmp_path / "absent.im"
+    output.symlink_to(missing, target_is_directory=True)
+    image = api.image()
+    try:
+        assert image.fromarray(str(source), np.ones((3, 4), dtype=np.float32))
+        with pytest.raises(RuntimeError, match="target file .* already exists and is not writable"):
+            image.rename(str(output), overwrite=True)
+        assert not image.isopen()
+        assert output.is_symlink() and output.readlink() == missing
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), 1)
+    finally:
+        image.done()
+
+
+def test_rename_restores_source_and_target_links_after_history_failure(tmp_path):
+    source = tmp_path / "source.im"
+    alias = tmp_path / "source-link.im"
+    output = tmp_path / "output.im"
+    referent = tmp_path / "existing.im"
+    owner = tools.image()
+    other = tools.image()
+    try:
+        assert owner.fromarray(str(source), np.full((3, 4), 7, dtype=np.float32))
+        assert owner.done()
+        assert other.fromarray(str(referent), np.full((3, 4), 9, dtype=np.float32))
+        alias.symlink_to(source, target_is_directory=True)
+        output.symlink_to(referent, target_is_directory=True)
+        assert owner.open(str(alias))
+        log = source / "logtable" / "table.dat"
+        original = log.read_bytes()
+        log.write_bytes(b"invalid CASA table")
+        try:
+            with pytest.raises(RuntimeError):
+                owner.rename(str(output), overwrite=True)
+            assert not owner.isopen()
+            assert alias.is_symlink() and alias.resolve() == source
+            assert output.is_symlink() and output.resolve() == referent
+            assert source.is_dir() and referent.is_dir()
+        finally:
+            log.write_bytes(original)
+        assert owner.open(str(source))
+        np.testing.assert_array_equal(owner.getchunk(), 7)
+        np.testing.assert_array_equal(other.getchunk(), 9)
+    finally:
+        owner.done()
+        other.done()

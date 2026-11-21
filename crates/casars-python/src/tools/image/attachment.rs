@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
-use casa_tables::publication::{exchange_directories, rename_without_replacing};
+use casa_tables::publication::{
+    check_write_access, exchange_directories, rename_without_replacing,
+};
 use casa_tables::{Table, TableError, TableOptions, TableUseLock, TableWriteLock};
 use casa_types::RecordValue;
 use pyo3::prelude::*;
@@ -445,18 +447,24 @@ impl AttachedImage {
                 live_coordinates: self.live_coordinates.clone(),
             });
         }
-        if old_name
-            .symlink_metadata()
-            .is_ok_and(|entry| entry.is_symlink())
-            || target_metadata
-                .as_ref()
-                .is_some_and(|entry| entry.is_symlink())
-            || target.starts_with(source)
-            || source.starts_with(&target)
-        {
+        if target.starts_with(source) || source.starts_with(&target) {
             return Err(stub("rename").unwrap_err());
         }
+        let replaces_link = target_metadata
+            .as_ref()
+            .is_some_and(|entry| entry.is_symlink());
+        if replaces_link && check_write_access(&target).is_err() {
+            return Err(raised(format!(
+                "RegularFile::copy/move: target file {} already exists and is not writable",
+                target.display()
+            )));
+        }
         for (path, expected) in [(source.as_path(), 1), (target.as_path(), 0)] {
+            // Replacing a destination link leaves its referent and any
+            // attachments to that referent in place.
+            if replaces_link && path == target {
+                continue;
+            }
             if conflicting_images(&registry, path, expected)
                 || crate::tools::table::path_is_in_use(path)
             {
