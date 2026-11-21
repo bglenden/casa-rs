@@ -272,7 +272,7 @@ impl CoordinateState {
                 && live_tabular_factor(self.coordinates.coordinate(index)).is_some()
             {
                 let native = recorded_coordinate(record, &placement.field)?;
-                let base = change_tabular_matrix(self.coordinates.coordinate(index), 1.0)?;
+                let base = placement.model(record).map_err(raised)?;
                 let mut model = live_tabular_model(&base, native)?;
                 match &mut model {
                     CoordinateModel::Tabular(table) => {

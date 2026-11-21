@@ -14,6 +14,8 @@ use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
 use crate::record_utils::{get_optional_string, get_optional_vec_string, get_required_vec_f64};
 
+const CASACORE_PIXEL_TOLERANCE: f64 = 1e-13;
+
 /// An edit to one of a tabular coordinate's live reference parameters.
 #[derive(Clone, Copy)]
 pub enum TabularEdit {
@@ -284,7 +286,7 @@ impl TabularCoordinate {
             // can evaluate or serialize the world samples.
             if pixel
                 .windows(2)
-                .any(|pair| (pair[1] - pair[0]).abs() <= 1e-13)
+                .any(|pair| (pair[1] - pair[0]).abs() <= CASACORE_PIXEL_TOLERANCE)
             {
                 return Err(invalid("tabular table has repeated pixel values"));
             }
@@ -514,8 +516,13 @@ impl TabularCoordinate {
 /// Linear interpolation: given tables `xs` and `ys`, find the `y` value
 /// corresponding to `x` by interpolating (or extrapolating) between the
 /// nearest bracketing entries.
-fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
-    let n = xs.len();
+fn interpolate(
+    xs: impl Fn(usize) -> f64,
+    ys: &[f64],
+    x: f64,
+    tolerance: f64,
+) -> Result<f64, CoordinateError> {
+    let n = ys.len();
     if n < 2 || x.is_nan() {
         return Err(CoordinateError::ConversionFailed(
             "tabular interpolation requires a valid argument and at least 2 entries".into(),
@@ -523,7 +530,7 @@ fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
     }
 
     // Determine if xs is increasing or decreasing
-    let increasing = xs[n - 1] > xs[0];
+    let increasing = xs(n - 1) > xs(0);
 
     // Search in sample order with the lower middle position, as casacore
     // does. The first interval can run opposite to the others.
@@ -531,7 +538,8 @@ fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
     let mut hi = n;
     while lo < hi {
         let mid = lo + (hi - lo - 1) / 2;
-        if (increasing && xs[mid] < x) || (!increasing && xs[mid] > x) {
+        let sample = xs(mid);
+        if (increasing && sample < x) || (!increasing && sample > x) {
             lo = mid + 1;
         } else {
             hi = mid;
@@ -542,19 +550,21 @@ fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
     let lo = lo.saturating_sub(1).min(n - 2);
     let hi = lo + 1;
 
-    let dx = xs[hi] - xs[lo];
-    if !dx.is_finite() || dx.abs() < 1e-300 {
+    let lower = xs(lo);
+    let upper = xs(hi);
+    let dx = upper - lower;
+    if !dx.is_finite() || dx.abs() <= tolerance {
         return Err(CoordinateError::ConversionFailed(
-            "duplicate pixel values in tabular coordinate".into(),
+            "Interpolate1D::operator() data has repeated x values".into(),
         ));
     }
-    if x == xs[lo] {
+    if x == lower {
         return Ok(ys[lo]);
     }
-    if x == xs[hi] {
+    if x == upper {
         return Ok(ys[hi]);
     }
-    let t = (x - xs[lo]) / dx;
+    let t = (x - lower) / dx;
     Ok(ys[lo] + t * (ys[hi] - ys[lo]))
 }
 
@@ -584,9 +594,10 @@ impl Coordinate for TabularCoordinate {
             self.constant_world()
         } else {
             self.scaled_world(interpolate(
-                &self.pixel_values,
+                |index| self.pixel_values[index],
                 &self.world_values,
                 pixel[0],
+                0.0,
             )?)
         };
         Ok(vec![world])
@@ -609,12 +620,21 @@ impl Coordinate for TabularCoordinate {
         } else if self.pixel_values.len() == 1 {
             self.pixel_values[0]
         } else {
-            let mut value = world[0];
-            if self.linear_transform != 1.0 {
-                let reference = self.reference_world();
-                value = reference + (value - reference) / self.linear_transform;
-            }
-            interpolate(&self.world_values, &self.pixel_values, value)?
+            let last = self.pixel_values.len() - 1;
+            let pixel_origin = self.pixel_values[0];
+            let world_origin = self.world_values[0];
+            let increment =
+                (self.world_values[last] - world_origin) / (self.pixel_values[last] - pixel_origin);
+            let corrected_pixel = |value| (value - world_origin) / increment + pixel_origin;
+            let reference = self.reference_world();
+            let target = corrected_pixel(reference)
+                + (world[0] - reference) / (increment * self.linear_transform);
+            interpolate(
+                |index| corrected_pixel(self.world_values[index]),
+                &self.pixel_values,
+                target,
+                CASACORE_PIXEL_TOLERANCE,
+            )?
         };
         Ok(vec![pixel])
     }
@@ -708,7 +728,13 @@ impl TabularCoordinate {
                 .zip(&self.world_values)
                 .map(|(&pixel, &world)| {
                     self.scaled_world(
-                        interpolate(&self.pixel_values, &self.world_values, pixel).unwrap_or(world),
+                        interpolate(
+                            |index| self.pixel_values[index],
+                            &self.world_values,
+                            pixel,
+                            0.0,
+                        )
+                        .unwrap_or(world),
                     )
                 })
                 .collect()

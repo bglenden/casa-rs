@@ -58,6 +58,27 @@ def test_identity_matrix_keeps_live_reference_edits_until_samples_are_replaced(c
         np.testing.assert_allclose(cs.torecord()["tabular0"]["worldvalues"], [11, 15, 31])
 
 
+@pytest.mark.parametrize(("factor", "samples"), [(1.0, [12, 16, 32]), (2.0, [8, 16, 48])])
+def test_reference_location_applies_both_live_edits_before_replacing_samples(casa, factor, samples):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(tabular=True)
+        assert cs.settabular([0, 2, 5], [10, 14, 30])
+        assert cs.setlineartransform("tabular", [[factor]])
+        assert cs.setreferencelocation([1.0], [16.0])
+        assert cs.settabular(pixel=[0, 2, 5])
+        np.testing.assert_allclose(cs.torecord()["tabular0"]["worldvalues"], samples)
+
+
+def test_inverse_detects_repeated_abscissae_in_corrected_pixel_units(casa):
+    for api in (tools, casa):
+        cs = api.coordsys().newcoordsys(tabular=True)
+        assert cs.settabular([0.0, 1.0], [0.0, 1e-301])
+        np.testing.assert_allclose(cs.topixel([5e-302])["numeric"], [0.5])
+        assert cs.settabular([0.0, 1.0, 2.0], [0.0, 1e-15, 1.0])
+        with pytest.raises(RuntimeError, match="repeated x values"):
+            cs.topixel([5e-16])
+
+
 @pytest.mark.parametrize("both_supplied", [True, False])
 def test_constant_mapping_live_edits_and_public_restore(casa, both_supplied):
     records = []
