@@ -18,11 +18,11 @@ impl ImageComponentFit {
     ///
     /// # Errors
     /// A product allocation, sample read, mask update or pixel write failed.
-    pub fn write_images<T: ComponentFitPixel>(
+    pub fn write_images<'a, T: ComponentFitPixel>(
         &self,
         source: &dyn ImageInterface<T>,
-        mut model: Option<&mut dyn MutableImageInterface<f32>>,
-        mut residual: Option<&mut dyn MutableImageInterface<f32>>,
+        mut model: Option<&'a mut dyn MutableImageInterface<f32>>,
+        mut residual: Option<&'a mut dyn MutableImageInterface<f32>>,
     ) -> Result<(), ImageError> {
         if model.is_none() && residual.is_none() {
             return Ok(());
