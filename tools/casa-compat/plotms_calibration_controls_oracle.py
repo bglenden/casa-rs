@@ -11,9 +11,10 @@ from unittest.mock import patch
 
 import casatasks as casa
 from casaplotms import plotms as reference
+import numpy as np
 from PIL import Image
 
-from calibration_smoothcal_oracle import fixture, opened
+from calibration_smoothcal_oracle import copy_ms, fixture, opened
 from plotms_calibration_oracle import plotms_launcher
 
 
@@ -39,9 +40,19 @@ def figures(root, native, request, headers):
     def capture(figure, axes, document, params):
         configure(figure, axes, document, params)
         rendered.extend(text.get_text() for text in figure.texts)
+        figure.canvas.draw()
+        bounds = [item.get_window_extent() for item in figure.texts
+                  if item.get_text() in document['header_lines']]
+        assert len(bounds) == len(document['header_lines'])
+        assert all(0 <= box.x0 < box.x1 <= figure.bbox.width for box in bounds)
+        assert all(0 <= box.y0 < box.y1 <= figure.bbox.height for box in bounds)
+        assert all(upper.y0 > lower.y1 for upper, lower in zip(bounds, bounds[1:]))
 
     with patch.object(_plotms_plot, 'configure', capture):
         assert native(**request, **options, headeritems=headers, plotfile=str(native_path)) is None
+        high_resolution = options | dict(dpi=-1, highres=True)
+        high_path = root / 'header.high.png'
+        assert native(**request, **high_resolution, headeritems=headers, plotfile=str(high_path)) is None
     upstream = subprocess.run(['tesseract', str(reference_path), 'stdout', '--psm', '11'],
                               check=True, capture_output=True, text=True).stdout
     actual = '\n'.join(rendered)
@@ -55,9 +66,52 @@ def figures(root, native, request, headers):
     date = actual.split('Observation date:', 1)[1].split('Observation time:', 1)[0]
     assert ':' not in date and date.strip()
     assert 'Unrecognized' not in actual
-    with Image.open(native_path) as image:
-        assert image.size == (1000, 400)
+    for path in native_path, high_path:
+        with Image.open(path) as image:
+            assert image.size == (1000, 400)
     print('CASA page labels, native table metadata and the requested PNG dimensions verified.', flush=True)
+
+
+def page_metadata(root, native, request, product):
+    from casars.tasks import _plotms_plot
+
+    captures = []
+    configure = _plotms_plot.configure
+
+    def capture(figure, axes, document, params):
+        configure(figure, axes, document, params)
+        captures.append(' '.join(' '.join(document['header_lines']).split()))
+
+    base = request | dict(field='', headeritems='observer,projid,targname,targdir', expformat='png')
+    with patch.object(_plotms_plot, 'configure', capture):
+        assert native(**base, iteraxis='field', exprange='all', plotfile=str(root / 'pages.png')) is None
+        assert len(captures) == 2
+        assert 'Target name: FLUX' in captures[0] and '-30.00.00.00000' in captures[0]
+        assert 'Target name: PHASE' in captures[1] and '01:00:00.000000' in captures[1]
+
+        unknown = root / 'wildcard.cal'
+        copy_ms(product, unknown)
+        with opened(unknown, True) as table:
+            for column in ('FIELD_ID', 'OBSERVATION_ID'):
+                values = table.getcol(column)
+                values.fill(-1)
+                table.putcol(column, values)
+        assert native(**(base | dict(caltable=str(unknown))), plotfile=str(root / 'wildcard.png')) is None
+        assert captures[-1] == 'Observer: Project ID: Target name: Target direction:', captures[-1]
+
+        polynomial = root / 'polynomial.cal'
+        copy_ms(product, polynomial)
+        with opened(polynomial / 'FIELD', True) as field:
+            field.putcell('NUM_POLY', 0, 1)
+            field.putcell('PHASE_DIR', 0, np.array([[0.0, 0.0001], [-np.pi / 6, 0.0002]]))
+            field.putcolkeyword('PHASE_DIR', 'MEASINFO', dict(
+                type='direction', VarRefCol='NUM_POLY', TabRefTypes=['J2000', 'B1950'],
+                TabRefCodes=np.array([0, 1], dtype=np.uint32),
+            ))
+        assert native(**(base | dict(caltable=str(polynomial), field='FLUX')),
+                      plotfile=str(root / 'polynomial.png')) is None
+        assert '00:00:00.000000 -30.00.00.00000 B1950' in captures[-1], captures[-1]
+    print('Independent field pages, wildcard metadata and polynomial direction verified.', flush=True)
 
 
 def main():
@@ -93,6 +147,7 @@ def main():
             assert native(**controls, **settings, plotfile=str(output), expformat='txt') is None
             assert output.read_bytes() == base
         figures(root, native, controls, headers)
+        page_metadata(root, native, controls, product)
     print('Three paired exports and both active native transform cases preserved the calibration coordinates.', flush=True)
 
 

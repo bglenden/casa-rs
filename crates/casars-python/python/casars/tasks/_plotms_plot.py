@@ -66,18 +66,14 @@ def configure(figure, panel_axes, document, options):
     """Set figure formatting after the shared renderer draws the native layers."""
 
     headers = document["header_lines"]
+    title_y = None
     if headers:
-        height = figure.get_figheight()
-        row_height = min(0.18 / height, 0.24 / len(headers))
-        top = 0.98 - len(headers) * row_height
-        for index, line in enumerate(headers):
-            figure.text(0.025, 0.98 - index * row_height, line, va="top", fontsize=9)
+        title_y = _layout_page_headers(figure, headers)
         if document["title"]:
-            figure.suptitle(document["title"], y=top)
-        figure.subplots_adjust(top=min(figure.subplotpars.top, top - 0.06))
+            figure.suptitle(document["title"], y=title_y)
     font = options.get("titlefont")
     if font > 0 and document["title"]:
-        figure.suptitle(document["title"], fontsize=font, y=top if headers else None)
+        figure.suptitle(document["title"], fontsize=font, y=title_y)
     if isinstance(panel_axes, list) and len(panel_axes) > 1:
         if document.get("layout"):
             _share_axes(panel_axes, document["layout"], options)
@@ -121,6 +117,22 @@ def configure(figure, panel_axes, document, options):
         location, anchor = _LEGEND[options.get("legendposition") or "upperRight"]
         if handles:
             figure.axes[0].legend(handles, labels, loc=location, bbox_to_anchor=anchor)
+
+
+def _layout_page_headers(figure, headers):
+    labels = [figure.text(0.025, 0.98, line, va="top", fontsize=9) for line in headers]
+    boxes = [label.get_window_extent() for label in labels]
+    width, height = figure.bbox.size
+    scale = min(1.0, width * 0.95 / max(box.width for box in boxes),
+                height * 0.23 / (len(labels) * max(box.height for box in boxes) * 1.25))
+    for label in labels:
+        label.set_fontsize(9 * scale)
+    row_height = 1.25 * max(label.get_window_extent().height for label in labels) / height
+    for index, label in enumerate(labels):
+        label.set_y(0.98 - index * row_height)
+    top = 0.98 - len(labels) * row_height
+    figure.subplots_adjust(top=min(figure.subplotpars.top, top - 0.06))
+    return top
 
 
 def _share_axes(axes, layout, options):

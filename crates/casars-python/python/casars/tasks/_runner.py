@@ -1589,13 +1589,15 @@ def _render_task_plots(plots, payload: Path, workspace: Path, plotms=None) -> No
                 if plotms is not None:
                     from ._plotms_plot import configure
 
+                    if plot["output_file"] is not None:
+                        dpi = _size_plotms_figure(figure, plotms)
                     configure(figure, panel_axes, plot["document"], plotms)
                 if plot["output_file"] is not None:
                     output = workspace / plot["output_file"]
                     if plotms is None:
                         _save_figure(figure, output)
                     else:
-                        _save_plotms_figure(figure, output, plotms)
+                        _save_plotms_figure(figure, output, plotms, dpi)
                 if plot["show"]:
                     figure.show()
                 completed = True
@@ -1606,8 +1608,7 @@ def _render_task_plots(plots, payload: Path, workspace: Path, plotms=None) -> No
         del mapped
 
 
-def _save_plotms_figure(figure, destination: Path, options) -> None:
-    format_ = options.get("expformat") or destination.suffix.lstrip(".") or "png"
+def _size_plotms_figure(figure, options):
     dpi = options.get("dpi")
     if dpi <= 0:
         dpi = 300 if options.get("highres") else figure.dpi
@@ -1616,6 +1617,12 @@ def _save_plotms_figure(figure, destination: Path, options) -> None:
         current_width, current_height = figure.get_size_inches()
         figure.set_size_inches(width / dpi if width > 0 else current_width,
                                height / dpi if height > 0 else current_height)
+    figure.set_dpi(dpi)
+    return dpi
+
+
+def _save_plotms_figure(figure, destination: Path, options, dpi) -> None:
+    format_ = options.get("expformat") or destination.suffix.lstrip(".") or "png"
     _save_figure(figure, destination, replace_existing=options.get("overwrite"), format=format_.lower(), dpi=dpi)
 
 

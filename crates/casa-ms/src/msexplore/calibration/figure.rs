@@ -23,7 +23,7 @@ pub(super) fn prepare(
     show: bool,
     overwrite: bool,
     panels: &PlotPanels,
-    header: &[String],
+    header: impl Fn(&[Panel]) -> Vec<String>,
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
     let pages = panels.pages().collect::<Vec<_>>();
     let destinations = pages
@@ -60,7 +60,7 @@ pub(super) fn prepare(
             id: format!("plotms-calibration-{page}"),
             title: title.clone(),
             subtitle: String::new(),
-            header_lines: header.to_vec(),
+            header_lines: header(source),
             axes: Vec::new(),
             layers: Vec::new(),
             annotations: Vec::new(),

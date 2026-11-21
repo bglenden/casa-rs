@@ -200,10 +200,15 @@ pub(super) fn run(
     }
     let show = task.flag("showgui")?;
     let plots = match payload {
-        Some(payload) => {
-            let lines = header::lines(&header_items, &table, path, &panels);
-            figure::prepare(task, payload, figure_path, show, overwrite, &panels, &lines)?
-        }
+        Some(payload) => figure::prepare(
+            task,
+            payload,
+            figure_path,
+            show,
+            overwrite,
+            &panels,
+            |source| header::lines(&header_items, &table, path, source),
+        )?,
         None if figure_path.is_some() => {
             return Err(TaskFailure::validation(
                 "use casars.tasks.plotms for rendered figures",
