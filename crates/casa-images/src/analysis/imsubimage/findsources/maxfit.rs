@@ -280,7 +280,7 @@ fn displayed_world(coordinates: &CoordinateSystem, units: &[String], world: &[f6
 mod tests {
     use std::{any::Any, path::Path};
 
-    use casa_coordinates::{DirectionCoordinate, Projection, SpectralCoordinate};
+    use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate};
     use casa_lattices::{Lattice, LatticeError};
     use casa_types::{
         ArrayD,
@@ -337,7 +337,7 @@ mod tests {
         let mut coords = CoordinateSystem::new();
         coords.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
-            Projection::TAN,
+            Projection::new(ProjectionType::TAN),
             [0.; 2],
             [-1e-5, 1e-5],
             [0.; 2],
