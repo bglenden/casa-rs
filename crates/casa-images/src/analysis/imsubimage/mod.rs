@@ -6,8 +6,8 @@
 mod bounding_box;
 mod collapse;
 mod continuum;
-pub use continuum::{ContinuumSummary, ImageContinuum};
 pub use collapse::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
+pub use continuum::{ContinuumSummary, ImageContinuum};
 pub(super) mod coords;
 mod crop;
 mod decimate;

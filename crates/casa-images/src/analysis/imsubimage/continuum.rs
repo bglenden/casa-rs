@@ -180,7 +180,6 @@ impl ImageContinuum {
                 &input,
                 &mut position,
                 &mut shape,
-                length,
                 axial_block,
                 |lane, index, value| {
                     coverage[lane].observe(index, value, self.selected(index));
@@ -196,7 +195,6 @@ impl ImageContinuum {
                     &input,
                     &mut position,
                     &mut shape,
-                    length,
                     axial_block,
                     |lane, index, value| {
                         if self.selected(index) {
@@ -286,11 +284,11 @@ impl ImageContinuum {
         input: &StridedSection<'_>,
         position: &mut [usize],
         shape: &mut [usize],
-        length: usize,
         block: usize,
         mut visit: impl FnMut(usize, usize, f32),
     ) -> Result<(), ImageError> {
         let axis = self.axis;
+        let length = self.section.shape[axis];
         for first in (0..length).step_by(block) {
             position[axis] = first;
             shape[axis] = block.min(length - first);
