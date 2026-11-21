@@ -157,3 +157,41 @@ def test_duplicate_axes_are_refused_without_losing_the_attachment():
         np.testing.assert_array_equal(image.getchunk(), pixels)
     finally:
         image.done()
+
+
+def test_expression_mask_stretch_uses_original_group_geometry(casa, tmp_path):
+    data = np.arange(5 * 3 * 4, dtype=np.float32).reshape(5, 3, 1, 4)
+    eligible = np.arange(15).reshape(5, 3, 1, 1) % 3 != 0
+    mask_path = tmp_path / "sky.im"
+    mask = casa.image()
+    assert mask.fromarray(str(mask_path), eligible.astype(np.float32))
+    assert mask.done()
+    expression = f'"{mask_path}">0'
+    outputs = []
+    for api in (casa, tools):
+        image = api.image()
+        assert image.fromarray(pixels=data)
+        try:
+            with pytest.raises(RuntimeError):
+                image.histograms(axes=[0, 1, 2], mask=expression)
+            outputs.append(image.histograms(axes=[0, 1, 2], mask=expression, nbins=4, stretch=True))
+        finally:
+            image.done()
+    native, pinned = outputs[::-1]
+    _compare(native, pinned)
+    np.testing.assert_allclose(native["mean"], data[eligible[..., 0]].mean(axis=0))
+    np.testing.assert_array_equal(native["counts"].sum(axis=0), eligible.sum())
+
+
+def test_complex_attachment_is_preserved_after_histogram_refusal(casa):
+    data = (_data() + 1j * _data() / 2).astype(np.complex64)
+    for api in (casa, tools):
+        image = api.image()
+        assert image.fromarray(pixels=data)
+        try:
+            with pytest.raises(RuntimeError, match="only supports real-valued images"):
+                image.histograms()
+            assert image.pixeltype() == "complex"
+            np.testing.assert_array_equal(image.getchunk(), data)
+        finally:
+            image.done()
