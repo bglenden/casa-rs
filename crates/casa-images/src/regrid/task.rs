@@ -45,15 +45,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     let mut shape = resized.clone().unwrap_or_else(|| input_shape.to_vec());
     let ordered = index_coordinates(input.coordinates());
     let target_order = index_coordinates(&template.coordinates);
-    let after_singleton = match options.axes {
-        [axis] if *axis >= 0 => ordered.iter().any(|(_, axes, coordinate)| {
-            axes.as_slice() == [*axis as usize]
-                && coordinate.coordinate_type() == CoordinateType::Spectral
-                && input_shape[axes[0]] == 1
-                && shape[axes[0]] > 1
-        }),
-        _ => false,
-    };
+    let after_singleton = expands_singleton_spectral(options.axes, &ordered, input_shape, &shape);
     let mut result = Regridded {
         data: input.get()?,
         mask: input
@@ -239,6 +231,23 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         return Err(invalid("All output pixels are masked"));
     }
     Ok(result)
+}
+
+fn expands_singleton_spectral(
+    requested: &[i64],
+    ordered: &[(usize, Vec<usize>, &CoordinateModel)],
+    input_shape: &[usize],
+    shape: &[usize],
+) -> bool {
+    match requested {
+        [axis] if *axis >= 0 => ordered.iter().any(|(_, axes, coordinate)| {
+            axes.as_slice() == [*axis as usize]
+                && coordinate.coordinate_type() == CoordinateType::Spectral
+                && input_shape[axes[0]] == 1
+                && shape[axes[0]] > 1
+        }),
+        _ => false,
+    }
 }
 
 fn require_lengths(
