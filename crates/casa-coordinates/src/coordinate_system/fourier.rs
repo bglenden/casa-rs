@@ -157,7 +157,11 @@ fn invert_pc(
         let mut inverse = matrix.clone();
         for (i, length) in lengths.iter().enumerate() {
             if length.is_some() {
-                inverse[[i, i]] = inverse[[i, i]].recip();
+                let reciprocal = inverse[[i, i]].recip();
+                if !reciprocal.is_finite() {
+                    return Err(CoordinateError::SingularTransform("singular PC matrix"));
+                }
+                inverse[[i, i]] = reciprocal;
             }
         }
         Ok(inverse)

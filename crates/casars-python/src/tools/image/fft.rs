@@ -4,7 +4,10 @@ use std::path::Path;
 
 use casa_images::{
     ImageInterface, ImagePixel,
-    analysis::{FourierOptions, FourierPixel, ImageFourier, ensure_outfile_does_not_alias_input},
+    analysis::{
+        FourierOptions, FourierPixel, ImageFourier, SubimageRegion,
+        ensure_outfile_does_not_alias_input,
+    },
 };
 use num_complex::{Complex, Complex32, Complex64};
 use pyo3::prelude::*;
@@ -163,7 +166,7 @@ impl Request<'_> {
     }
 
     fn history_call(&self) -> String {
-        let [real, imag, amp, phase, complex] = self.outfiles;
+        let [real, imag, amp, phase, complex] = self.outfiles.map(history_string);
         let axes = self
             .axes
             .0
@@ -171,13 +174,20 @@ impl Request<'_> {
             .map(i64::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        let region = self.region.history();
-        let mask = &self.mask;
+        let region = match self.region.selection() {
+            Some(SubimageRegion::Text(text)) => history_string(text),
+            _ => self.region.history(),
+        };
+        let mask = history_string(&self.mask);
         let stretch = self.stretch;
         format!(
-            "ia.fft(real={real:?}, imag={imag:?}, amp={amp:?}, phase={phase:?}, axes=[{axes}], region={region}, mask={mask:?}, stretch={stretch}, complex={complex:?})"
+            "ia.fft(real={real}, imag={imag}, amp={amp}, phase={phase}, axes=[{axes}], region={region}, mask={mask}, stretch={stretch}, complex={complex})"
         )
     }
+}
+
+fn history_string(value: &str) -> String {
+    format!("\"{}\"", if value.len() > 300 { "..." } else { value })
 }
 
 #[pymethods]

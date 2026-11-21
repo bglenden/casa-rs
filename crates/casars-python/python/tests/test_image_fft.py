@@ -199,6 +199,7 @@ def test_image_fft_stretches_a_named_mask_before_transforming(casa, tmp_path):
                 np.testing.assert_array_equal(output.getchunk(), np.broadcast_to([2., 5.], values.shape))
                 np.testing.assert_array_equal(output.getchunk(getmask=True),
                                               np.broadcast_to(mask[:, :, None] != 0., values.shape))
+                assert f'mask=""{mask_path}" > 0", stretch=true' in output.history()[-1]
             finally:
                 output.done()
         finally:
