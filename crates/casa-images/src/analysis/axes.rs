@@ -293,27 +293,12 @@ pub(super) fn section_record_reference_pixels(
         };
         if coordinate_record.get("quality").is_some() {
             if let [Some(axis)] = coordinate.pixel_axes.as_slice() {
-                let quality = QualityCoordinate::from_record(coordinate_record)?;
-                let step = stride.map_or(1, |stride| stride[*axis]);
-                if step == 0 {
-                    return Err(ImageError::InvalidMetadata(
-                        "Quality image section requires a positive stride".into(),
-                    ));
-                }
-                let labels: Vec<_> = quality
-                    .values()
-                    .iter()
-                    .copied()
-                    .skip(start[*axis])
-                    .step_by(step)
-                    .take(shape[*axis])
-                    .collect();
-                if labels.len() != shape[*axis] {
-                    return Err(ImageError::InvalidMetadata(
-                        "Quality axis has fewer planes than the image section".into(),
-                    ));
-                }
-                write_quality_labels(coordinate_record, &labels)?;
+                section_quality_labels(
+                    coordinate_record,
+                    start[*axis],
+                    shape[*axis],
+                    stride.map_or(1, |stride| stride[*axis]),
+                )?;
             }
             continue;
         }
@@ -339,6 +324,38 @@ pub(super) fn section_record_reference_pixels(
         }
     }
     Ok(())
+}
+
+/// Keep the planes selected by the image section in a native Quality subrecord.
+///
+/// # Errors
+/// The stride must be positive and every selected plane must have a label.
+pub fn section_quality_labels(
+    record: &mut RecordValue,
+    start: usize,
+    count: usize,
+    stride: usize,
+) -> Result<(), ImageError> {
+    if stride == 0 {
+        return Err(ImageError::InvalidMetadata(
+            "Quality image section requires a positive stride".into(),
+        ));
+    }
+    let quality = QualityCoordinate::from_record(record)?;
+    let labels: Vec<_> = quality
+        .values()
+        .iter()
+        .copied()
+        .skip(start)
+        .step_by(stride)
+        .take(count)
+        .collect();
+    if labels.len() != count {
+        return Err(ImageError::InvalidMetadata(
+            "Quality axis has fewer planes than the image section".into(),
+        ));
+    }
+    write_quality_labels(record, &labels)
 }
 
 /// Replace the plane labels and reference values of a native Quality subrecord.

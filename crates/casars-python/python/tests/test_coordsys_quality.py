@@ -161,7 +161,8 @@ def test_fits_export_refuses_to_discard_quality_planes(tmp_path):
         source.done()
 
 
-def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path):
+@pytest.mark.parametrize("method", ["subimage", "fromimage", "newimagefromimage"])
+def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path, method):
     seed = casa.coordsys().newcoordsys(linear=1, tabular=True)
     record = seed.torecord()
     record.pop("tabular1")
@@ -176,10 +177,15 @@ def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path):
     region_maker.done()
     for api in (tools, casa):
         parent = api.image()
-        assert parent.open(source)
-        child = parent.subimage(
-            str(tmp_path / f"section-{api.__name__}.im"), region=region, list=False,
-        )
+        destination = str(tmp_path / f"section-{api.__name__}.im")
+        if method == "subimage":
+            assert parent.open(source)
+            child = parent.subimage(destination, region=region, list=False)
+        elif method == "fromimage":
+            assert parent.fromimage(infile=source, outfile=destination, region=region)
+            child = parent
+        else:
+            child = parent.newimagefromimage(infile=source, outfile=destination, region=region)
         try:
             np.testing.assert_array_equal(child.getchunk(), data[:, 1:])
             coords = child.coordsys()
@@ -190,7 +196,8 @@ def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path):
                 coords.done()
         finally:
             child.done()
-            parent.done()
+            if child is not parent:
+                parent.done()
 
 
 def test_reflection_preserves_quality_labels_with_the_pixels(casa, tmp_path):
