@@ -33,11 +33,21 @@ impl Region {
         let region = Self::capture(py, value)?;
         if let Some(Self::Record(record)) = &region
             && !matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name)))
-                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"))
+                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"
+                    | "WCDifference" | "WCIntersection" | "WCComplement"))
         {
             return Err(super::stub(method).unwrap_err());
         }
         Ok(region)
+    }
+
+    pub(super) fn reject_compound_record(region: Option<&Self>) -> PyResult<()> {
+        if matches!(region, Some(Self::Record(record)) if record.get("regions").is_some()) {
+            return Err(raised(
+                "Exception: Only a single n-dimensional rectangular region is supported.",
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn capture(
