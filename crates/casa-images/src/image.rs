@@ -289,6 +289,15 @@ impl AnyPagedImage {
         }
     }
 
+    pub(crate) fn coordinates(&self) -> &CoordinateSystem {
+        match self {
+            Self::Float32(image) => image.coordinates(),
+            Self::Float64(image) => image.coordinates(),
+            Self::Complex32(image) => image.coordinates(),
+            Self::Complex64(image) => image.coordinates(),
+        }
+    }
+
     /// Returns the names of all stored image-attached regions.
     pub fn region_names(&self) -> Vec<String> {
         match self {
@@ -1838,7 +1847,7 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
-    fn edit_coordinates<R>(
+    pub(crate) fn edit_coordinates<R>(
         &mut self,
         edit: impl FnOnce(
             &mut RecordValue,

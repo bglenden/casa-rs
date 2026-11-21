@@ -4113,6 +4113,30 @@ Its stored sample masks match explicit CASA selection of each spectral
 window and preserve the other window's flags in the combined operation.
 [Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
 
+## TFCrop can fit frequency during a time-only pass
+
+CASA 6.7.6.14 identifies the active axis by its length in part of TFCrop.
+With 32 integrations and 32 channels, `flagdimension='time'`,
+`timefit='poly'` and `timecutoff=3`, a stationary narrowband signal flags
+channel 16 in all 32 integrations. With 33 integrations, the time-only pass
+leaves the same stationary signal clear.
+
+Native TFCrop uses the named time axis regardless of the buffer shape.
+Both fixture sizes yield the same empty flag mask for this signal.
+[TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
+
+## TFCrop post-extension can flag channels outside an explicit selection
+
+CASA 6.7.6.14 applies TFCrop's automatic extension to the full spectral
+window. With `spw='0:0~7'` on a 32-channel window, an existing XX flag at
+channel 16 is copied to YY even though the selection excludes channel 16.
+
+Native TFCrop uses the full-window counts and writes the extension results
+within the selected range. The paired fixture also verifies that seven
+existing flags in an eight-channel selection do not meet the 80 percent
+frequency threshold for the 32-channel window.
+[TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
+
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 
 In CASA 6.7.6.14, run `flagdata(mode="clip", timeavg=True, timebin="40s",
@@ -8018,6 +8042,21 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## Calibration flagdata ignores a channel stride
+
+CASA 6.7.6.14 manually flags channels 1 through 5 on current CPARAM
+bandpass and FPARAM Tsys tables for `spw='0:1~5^2'`. The channel stride
+selects channels 1, 3, and 5. Casa-rs flags those channels and preserves
+channels 2 and 4. The calibration flagdata oracle checks both outcomes.
+
+## Calibration flagdata summary can crash on a wildcard field
+
+CASA 6.7.6.14 `flagdata(mode='summary')` can segfault on a delay table
+created by `gencal(caltype='sbd')`, whose FIELD_ID is -1. Casa-rs counts
+the flags and uses the literal `-1` key for the wildcard field. The
+calibration flagdata oracle runs the CASA call in a separate process and
+verifies the native report and unchanged input.
+
 ## PlotMS shows the excluded antenna on a GSPLINE plot
 
 On a GSPLINE table with antennas A0 through A4, CASA 6.7.6.14 and
@@ -8919,3 +8958,57 @@ selected at pixel 1 shows the same mismatch. The output write position is
 initialized to zero and only the spectral position is updated. Casa-rs
 writes the fitted result to the selected polarization and ancillary position.
 The input grid and validity mask remain present in both requested images.
+
+### `image.fitprofile` can mislabel or leave part of a fitted spectrum
+
+In CASA 6.7.6.14, collapsing the spatial axes of a cube centered on
+J2000 zero can place the averaged spectrum near the antipode. On a
+5 × 7 × 27 synthetic line cube the direction record reports a right
+ascension of 12 hours. With default detailed logging the inverse
+projection can fail and the call raises even though the spectral fit
+converged. Casa-rs uses the original direction coordinate evaluated
+at the selected spatial pixel midpoint, including for its model and
+residual products.
+
+In the same process, fit an 11-channel spectrum with a model image and
+then reject a fit to a 23-channel spectrum using an amplitude range.
+CASA's failure buffer keeps the first call's 11-channel shape. Only the
+first 11 channels of the rejected model are NaN and masked. A later
+shorter fit can instead attempt a slice larger than its output.
+Casa-rs uses the current spectrum's shape to mark every rejected
+channel invalid. Profiles skipped by `minpts` still retain the input
+pixels and mask in the products.
+
+A log-transformed polynomial with every coefficient fixed crashes
+CASA during fitting. Casa-rs evaluates the given coefficients in log
+space and reports their zero parameter errors without trying to estimate
+a covariance. Pixels outside the log function's domain remain masked.
+
+For an explicit direction-axis fit on a spectral cube, CASA rejects
+the fit with `The X vector must have some elements` even though the
+box supplies 23 pixels on the requested axis. The spectral-axis branch
+precomputes its abscissa and the alternate-axis branch fails to supply
+one. Casa-rs derives the fit abscissa from the requested pixel axis and
+reports its center and width in that axis's world units.
+
+With a Galactic conversion frame on a J2000 image, the angles in the
+`fitprofile` direction record are Galactic but CASA labels and formats
+them as equatorial. Casa-rs reports the conversion frame and displays
+its longitude and latitude in degrees.
+
+CASA calculates the reported integral uncertainty by multiplying
+relative errors by the signed line integral. A fitted absorption
+line therefore has a negative uncertainty. Casa-rs preserves its
+negative integral and reports the standard error as a nonnegative
+magnitude.
+
+For a Gaussian multiplet with tied peaks of 6 and 3 and an accepted
+amplitude range of 4 to 7, CASA accepts both peaks because its
+constraint loop repeatedly examines the first peak. Casa-rs checks
+the range against every component of the multiplet.
+
+A synthetic Gaussian centered at channel 15 with its peak and width
+fixed gives a different center in CASA after its peak and sample values
+are scaled from 1 to 10⁻¹⁵. The velocity center shifts by about
+0.0175 km/s. Casa-rs scales the solver's damping to its curvature and
+fits the same physical center at both intensities.

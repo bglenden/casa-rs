@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::clip_time::{mark_time_chunks, read_clip_times};
+use super::clip_time::ordered_baseline_chunks;
 use super::{
     ChangeSet, ChannelSelection, CorrelationSelection, FlagDataRequest, FlaggingError,
     MeasurementSet, Sample, load_samples, stage_flag_mask, write_touched_flag_updates,
@@ -51,24 +51,8 @@ pub(super) fn apply(
         tracing::error!("There is no agent to run in list");
         return Ok(changed);
     }
-    let mut timed = read_clip_times(ms, selected, path)?;
-    if request.combinescans {
-        for row in &mut timed {
-            row.combine_scans();
-        }
-    }
-    if let Some(seconds) = request
-        .time_chunk
-        .filter(|seconds| *seconds > 0.0 && seconds.is_finite())
-    {
-        mark_time_chunks(&mut timed, seconds);
-    }
-    timed.sort_unstable_by(|left, right| {
-        left.baseline_key()
-            .cmp(&right.baseline_key())
-            .then_with(|| left.time().total_cmp(&right.time()))
-            .then_with(|| left.row.cmp(&right.row))
-    });
+    let timed =
+        ordered_baseline_chunks(ms, selected, request.time_chunk, request.combinescans, path)?;
     // Stage changed cells only. Later invalid rows must not leave a
     // caller with a partially updated MeasurementSet open in memory.
     let mut pending = BTreeMap::new();

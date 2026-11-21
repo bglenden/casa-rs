@@ -26,6 +26,8 @@ use casa_types::quanta::Quantity;
 
 #[path = "flagdata/shadow.rs"]
 mod shadow;
+#[path = "flagdata/tfcrop.rs"]
+mod tfcrop;
 
 const STRING_SELECTORS: [&str; 9] = [
     "field",
@@ -71,6 +73,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         Err(error)
     })?;
     let display_option = task.required_text("display")?;
+    if mode == "tfcrop" {
+        tfcrop::validate_types(task)?;
+    }
     if column.is_none() && matches!(mode.as_str(), "clip" | "tfcrop" | "rflag") {
         backup_before_failed_apply(task, &action)?;
         return Err(
@@ -125,8 +130,16 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             TaskFailure::execution(format!("argument _{selector} must be a string")).at(selector),
         );
     }
-    let mut request =
-        flagdata_request(task, column.unwrap_or_default(), channel_bins).or_else(|error| {
+    if mode == "tfcrop" {
+        tfcrop::validate_agent_record(task).or_else(|error| {
+            backup_before_failed_apply(task, &action)?;
+            Err(error)
+        })?;
+    }
+    let path = task.path("vis")?;
+    let calibration = is_calibration_table(&path);
+    let mut request = flagdata_request(task, column.unwrap_or_default(), channel_bins, calibration)
+        .or_else(|error| {
             let parameter = error.parameter.as_deref();
             if matches!(parameter, Some("datacolumn" | "field" | "spw"))
                 || (matches!(parameter, Some("channelavg" | "timeavg"))
@@ -147,7 +160,6 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if save_parameters && !display_option.is_empty() {
         tracing::warn!("Disabling savepars for the display");
     }
-    let path = task.path("vis")?;
     // The CASA task derives persistence from action, including when the
     // caller supplied its hidden writeflags argument explicitly.
     if calculate
@@ -161,6 +173,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                 | FlagDataMode::Extend
                 | FlagDataMode::Shadow
                 | FlagDataMode::Antint
+                | FlagDataMode::Tfcrop
         )
     {
         return Err(not_yet("action", &action));
@@ -175,7 +188,10 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         FlaggingError::MissingCorrelationSummary => {
             TaskFailure::execution(error.to_string()).at("correlation")
         }
-        FlaggingError::MissingClipColumn => {
+        FlaggingError::CalibrationSelection(_) => {
+            TaskFailure::execution(error.to_string()).at("calibration-selection")
+        }
+        FlaggingError::MissingClipColumn | FlaggingError::MissingTfcropColumn => {
             TaskFailure::validation(error.to_string()).at("datacolumn")
         }
         FlaggingError::DisplayColumnVector => {
@@ -190,6 +206,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         save_flag_parameters(task, &path, &mode, &action, time_chunk, shadow_command)?;
     }
     if !calculate
+        && !calibration
         && request.mode != FlagDataMode::Summary
         && let Err(error) =
             append_task_history(&path, &flagdata_history(task, &path, &display_option))
@@ -211,6 +228,17 @@ fn save_flag_parameters(
     time_chunk: Option<f64>,
     shadow_command: Option<&str>,
 ) -> Result<(), TaskFailure> {
+    let outfile = task.required_text("outfile")?;
+    if outfile.is_empty() && is_calibration_table(vis) {
+        if matches!(action, "" | "none") {
+            return Err(TaskFailure::execution(format!(
+                "Error opening FLAG_CMD table {}",
+                vis.join("FLAG_CMD").display(),
+            ))
+            .at("calibration-save-command"));
+        }
+        return Ok(());
+    }
     let mut arguments = Vec::new();
     for name in STRING_SELECTORS {
         if let Some(text) = task.argument_text(name) {
@@ -268,6 +296,24 @@ fn save_flag_parameters(
         ],
         "shadow" => &["tolerance", "addantenna"],
         "antint" => &["antint_ref_antenna", "minchanfrac", "verbose"],
+        "tfcrop" => &[
+            "ntime",
+            "combinescans",
+            "datacolumn",
+            "timecutoff",
+            "freqcutoff",
+            "timefit",
+            "freqfit",
+            "maxnpieces",
+            "flagdimension",
+            "usewindowstats",
+            "halfwin",
+            "extendflags",
+            "channelavg",
+            "chanbin",
+            "timeavg",
+            "timebin",
+        ],
         _ => return Err(not_yet("savepars", mode)),
     };
     for &field in fields {
@@ -329,7 +375,6 @@ fn save_flag_parameters(
     );
 
     let reason = task.required_text("cmdreason")?;
-    let outfile = task.required_text("outfile")?;
     if outfile.is_empty() {
         return append_flag_command(vis, &arguments.join(" "), &reason, action == "apply")
             .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"));
@@ -376,6 +421,11 @@ fn save_flag_parameters(
         TaskFailure::execution(format!("Error writing flag commands to {outfile}: {error}"))
             .at(parameter)
     })
+}
+
+fn is_calibration_table(path: &Path) -> bool {
+    std::fs::read_to_string(path.join("table.info"))
+        .is_ok_and(|info| casa_tables::TableInfo::parse(&info).table_type == "Calibration")
 }
 
 fn push_command_argument(arguments: &mut Vec<String>, name: &str, value: &ParameterValue) {
@@ -464,6 +514,9 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                     .map_or_else(|| python_repr(value), str::to_owned),
                 ("addantenna", ParameterValue::Table(_)) => task
                     .argument_text("addantenna")
+                    .map_or_else(|| python_repr(value), str::to_owned),
+                ("maxnpieces" | "halfwin", _) => task
+                    .argument_text(name)
                     .map_or_else(|| python_repr(value), str::to_owned),
                 ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
                     "\"\"".to_string()
@@ -624,6 +677,7 @@ fn flagdata_request(
     task: &TaskInvocation<'_>,
     column: &str,
     channel_bins: Vec<u32>,
+    calibration: bool,
 ) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
     let spw = task_selection_text(task, "spw")?;
@@ -664,7 +718,7 @@ fn flagdata_request(
         mode,
         action,
         autocorr: task.flag("autocorr")?,
-        data_column: data_column(column, mode)?,
+        data_column: data_column(column, mode, calibration)?,
         display_column_is_scalar: true,
         flagbackup: task.flag("flagbackup")?,
         summary_options: FlagSummaryOptions {
@@ -696,6 +750,11 @@ fn flagdata_request(
         },
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
+        tfcrop: if mode == FlagDataMode::Tfcrop {
+            tfcrop::parameters(task)?
+        } else {
+            Some(casa_ms::flagging::TfcropOptions::default())
+        },
         timedevscale: task.number("timedevscale")?,
         freqdevscale: task.number("freqdevscale")?,
         spectralmax: task.number("spectralmax")?,
@@ -902,7 +961,11 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
 }
 
 /// The visibility or weight source for the active flagging agent.
-fn data_column(text: &str, mode: FlagDataMode) -> Result<FlagDataColumn, TaskFailure> {
+fn data_column(
+    text: &str,
+    mode: FlagDataMode,
+    calibration: bool,
+) -> Result<FlagDataColumn, TaskFailure> {
     if !matches!(
         mode,
         FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
@@ -918,6 +981,10 @@ fn data_column(text: &str, mode: FlagDataMode) -> Result<FlagDataColumn, TaskFai
         "RESIDUAL_DATA" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::ResidualData),
         "WEIGHT" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::Weight),
         "WEIGHT_SPECTRUM" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::WeightSpectrum),
+        "CPARAM" if calibration => Ok(FlagDataColumn::Cparam),
+        "FPARAM" if calibration => Ok(FlagDataColumn::Fparam),
+        "PARAMERR" if calibration => Ok(FlagDataColumn::ParamErr),
+        "SNR" if calibration => Ok(FlagDataColumn::Snr),
         "MODEL" | "RESIDUAL" | "RESIDUAL_DATA" | "FLOAT_DATA" | "WEIGHT_SPECTRUM" | "WEIGHT"
         | "FPARAM" | "CPARAM" | "PARAMERR" | "SNR" => Err(not_yet("datacolumn", text)),
         _ if mode == FlagDataMode::Clip => Err(TaskFailure::validation(
@@ -1051,6 +1118,7 @@ mod tests {
                 task,
                 flagdata_column_argument(task)?.unwrap_or_default(),
                 channel_bin_widths(task)?,
+                false,
             )
         })
     }

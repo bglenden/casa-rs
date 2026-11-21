@@ -15,64 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#box = None, region = None, chans = None, stokes = None, axis = None, mask = None, ngauss = None, poly = None, estimates = None, minpts = None, multifit = None, model = None, residual = None, amp = None, amperr = None, center = None, centererr = None, fwhm = None, fwhmerr = None, integral = None, integralerr = None, stretch = None, logresults = None, pampest = None, pcenterest = None, pfwhmest = None, pfix = None, gmncomps = None, gmampcon = None, gmcentercon = None, gmfwhmcon = None, gmampest = None, gmcenterest = None, gmfwhmest = None, gmfix = None, spxtype = None, spxest = None, spxfix = None, div = None, spxsol = None, spxerr = None, logfile = None, append = None, pfunc = None, goodamprange = None, goodcenterrange = None, goodfwhmrange = None, sigma = None, outsigma = None, planes = None), text_signature = "($self, box='', region='', chans='', stokes='', axis=-1, mask='', ngauss=1, poly=-1, estimates='', minpts=1, multifit=False, model='', residual='', amp='', amperr='', center='', centererr='', fwhm='', fwhmerr='', integral='', integralerr='', stretch=False, logresults=True, pampest=[], pcenterest=[], pfwhmest=[], pfix='', gmncomps=0, gmampcon=[], gmcentercon=[], gmfwhmcon=[], gmampest=[0.0], gmcenterest=[0.0], gmfwhmest=[0.0], gmfix='', spxtype='', spxest=[], spxfix=[], div=[], spxsol='', spxerr='', logfile='', append=True, pfunc='', goodamprange=[0.0], goodcenterrange=[0.0], goodfwhmrange=[0.0], sigma='', outsigma='', planes=[])")]
-    fn fitprofile(
-        &self,
-        r#box: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        chans: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        axis: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        ngauss: Option<&Bound<'_, PyAny>>,
-        poly: Option<&Bound<'_, PyAny>>,
-        estimates: Option<&Bound<'_, PyAny>>,
-        minpts: Option<&Bound<'_, PyAny>>,
-        multifit: Option<&Bound<'_, PyAny>>,
-        model: Option<&Bound<'_, PyAny>>,
-        residual: Option<&Bound<'_, PyAny>>,
-        amp: Option<&Bound<'_, PyAny>>,
-        amperr: Option<&Bound<'_, PyAny>>,
-        center: Option<&Bound<'_, PyAny>>,
-        centererr: Option<&Bound<'_, PyAny>>,
-        fwhm: Option<&Bound<'_, PyAny>>,
-        fwhmerr: Option<&Bound<'_, PyAny>>,
-        integral: Option<&Bound<'_, PyAny>>,
-        integralerr: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        logresults: Option<&Bound<'_, PyAny>>,
-        pampest: Option<&Bound<'_, PyAny>>,
-        pcenterest: Option<&Bound<'_, PyAny>>,
-        pfwhmest: Option<&Bound<'_, PyAny>>,
-        pfix: Option<&Bound<'_, PyAny>>,
-        gmncomps: Option<&Bound<'_, PyAny>>,
-        gmampcon: Option<&Bound<'_, PyAny>>,
-        gmcentercon: Option<&Bound<'_, PyAny>>,
-        gmfwhmcon: Option<&Bound<'_, PyAny>>,
-        gmampest: Option<&Bound<'_, PyAny>>,
-        gmcenterest: Option<&Bound<'_, PyAny>>,
-        gmfwhmest: Option<&Bound<'_, PyAny>>,
-        gmfix: Option<&Bound<'_, PyAny>>,
-        spxtype: Option<&Bound<'_, PyAny>>,
-        spxest: Option<&Bound<'_, PyAny>>,
-        spxfix: Option<&Bound<'_, PyAny>>,
-        div: Option<&Bound<'_, PyAny>>,
-        spxsol: Option<&Bound<'_, PyAny>>,
-        spxerr: Option<&Bound<'_, PyAny>>,
-        logfile: Option<&Bound<'_, PyAny>>,
-        append: Option<&Bound<'_, PyAny>>,
-        pfunc: Option<&Bound<'_, PyAny>>,
-        goodamprange: Option<&Bound<'_, PyAny>>,
-        goodcenterrange: Option<&Bound<'_, PyAny>>,
-        goodfwhmrange: Option<&Bound<'_, PyAny>>,
-        sigma: Option<&Bound<'_, PyAny>>,
-        outsigma: Option<&Bound<'_, PyAny>>,
-        planes: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fitprofile")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, shape = None, cl = None, csys = None, overwrite = None, log = None, cache = None), text_signature = "($self, outfile='', shape=[], cl='', csys={}, overwrite=False, log=True, cache=True)")]
     fn fromcomplist(
         &self,

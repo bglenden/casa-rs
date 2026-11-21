@@ -1004,13 +1004,13 @@ impl Default for ImportFitsRequest {
 /// Basic axis metadata used by header summaries.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImageAxisSummary {
-    /// Zero-based image pixel axis.
+    /// Zero-based axis in the containing pixel or world ordering.
     pub axis: usize,
     /// Coordinate type for this axis.
     pub coordinate_type: String,
     /// Human-readable axis name.
     pub name: String,
-    /// Axis length in pixels.
+    /// Corresponding pixel axis length, or zero for a world-only axis.
     pub shape: usize,
     /// World-coordinate value at the reference pixel.
     pub reference_value: f64,
@@ -1070,8 +1070,10 @@ pub struct ImageHeaderSummary {
     pub per_plane_beams: Option<Box<PerPlaneBeamSummary>>,
     /// Pixel extrema when the task requested them.
     pub extrema: Option<Box<ImageExtrema>>,
-    /// Axis metadata.
+    /// Axis metadata in pixel order, as reported by CASA's summary mode.
     pub axes: Vec<ImageAxisSummary>,
+    /// Axis metadata in world order for numbered header keywords.
+    pub world_axes: Vec<ImageAxisSummary>,
 }
 
 impl ImageHeaderSummary {

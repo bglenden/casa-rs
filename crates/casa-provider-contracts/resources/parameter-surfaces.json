@@ -24372,11 +24372,8 @@
             "python": {"name": "ntime", "type_hint": "str | float"},
             "presentation": {"label": "Time Chunk", "group": "Automatic", "advanced": true}
           },
-          "surface_note": "Time-averaged clipping and flag extension process each iterator chunk independently. Tfcrop and rflag chunk controls remain on #1616.",
-          "unimplemented": {"issue": 1616, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
-          ]}}
+          "surface_note": "Time-averaged clipping, TFCrop and flag extension process each iterator chunk independently. Rflag chunk controls remain on #1616.",
+          "unimplemented": {"issue": 1616, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
         },
         {
           "name": "combinescans",
@@ -24391,10 +24388,7 @@
             "python": {"name": "combinescans"},
             "presentation": {"label": "Combine Scans", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
-          ]}}
+          "unimplemented": {"issue": 1616, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
         },
         {
           "name": "timefit",
@@ -24408,8 +24402,7 @@
             "provider": {"field": "timefit"},
             "python": {"name": "timefit"},
             "presentation": {"label": "Time Fit", "group": "Automatic", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+          }
         },
         {
           "name": "freqfit",
@@ -24423,12 +24416,11 @@
             "provider": {"field": "freqfit"},
             "python": {"name": "freqfit"},
             "presentation": {"label": "Frequency Fit", "group": "Automatic", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+          }
         },
         {
           "name": "maxnpieces",
-          "concept": {"id": "flagdata.maxnpieces", "semantic_revision": 1},
+          "concept": {"id": "flagdata.maxnpieces", "semantic_revision": 2},
           "order": 38,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 7}},
           "required_when": {"kind": "never"},
@@ -24436,10 +24428,9 @@
           "projections": {
             "cli": {"flags": ["--maxnpieces"], "metavar": "N"},
             "provider": {"field": "maxnpieces"},
-            "python": {"name": "maxnpieces"},
+            "python": {"name": "maxnpieces", "type_hint": "int"},
             "presentation": {"label": "Max Pieces", "group": "Automatic", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+          }
         },
         {
           "name": "flagdimension",
@@ -24453,8 +24444,7 @@
             "provider": {"field": "flagdimension"},
             "python": {"name": "flagdimension"},
             "presentation": {"label": "Flag Dimension", "group": "Automatic", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+          }
         },
         {
           "name": "usewindowstats",
@@ -24468,12 +24458,11 @@
             "provider": {"field": "usewindowstats"},
             "python": {"name": "usewindowstats"},
             "presentation": {"label": "Window Statistics", "group": "Automatic", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+          }
         },
         {
           "name": "halfwin",
-          "concept": {"id": "flagdata.halfwin", "semantic_revision": 1},
+          "concept": {"id": "flagdata.halfwin", "semantic_revision": 2},
           "order": 41,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
           "required_when": {"kind": "never"},
@@ -24481,10 +24470,9 @@
           "projections": {
             "cli": {"flags": ["--halfwin"], "metavar": "N"},
             "provider": {"field": "halfwin"},
-            "python": {"name": "halfwin"},
+            "python": {"name": "halfwin", "type_hint": "int"},
             "presentation": {"label": "Half Window", "group": "Automatic", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+          }
         },
         {
           "name": "winsize",
@@ -24824,7 +24812,6 @@
             "presentation": {"label": "Save Parameters", "group": "Output", "advanced": true}
           },
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}
           ]}}
