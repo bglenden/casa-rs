@@ -2,17 +2,21 @@
 //! Group polarized samples and solve known-source leakage.
 
 mod fit;
+mod interval;
 mod output;
+mod standard;
 
 use super::*;
 use crate::execute::coherency_order;
 use crate::session::prepare_calibration_solve;
 use std::path::PathBuf;
 
-use fit::LeakageFit;
+use interval::IntervalFits;
 
 #[derive(Clone, Copy)]
 pub(crate) enum LeakageSolveKind {
+    D,
+    Df,
     Dlls,
     Dflls,
 }
@@ -20,13 +24,19 @@ pub(crate) enum LeakageSolveKind {
 impl LeakageSolveKind {
     pub(crate) fn subtype(self) -> &'static str {
         match self {
+            Self::D => "D Jones",
+            Self::Df => "Df Jones",
             Self::Dlls => "DLLS Jones",
             Self::Dflls => "DfLLS Jones",
         }
     }
 
     fn channelized(self) -> bool {
-        matches!(self, Self::Dflls)
+        matches!(self, Self::Df | Self::Dflls)
+    }
+
+    fn iterative(self) -> bool {
+        matches!(self, Self::D | Self::Df)
     }
 }
 
@@ -41,6 +51,8 @@ pub(crate) struct LeakageSolveRequest {
     pub(crate) frequency_interval: Option<crate::BandpassFrequencyInterval>,
     pub(crate) combine: GainSolveCombine,
     pub(crate) preaverage_seconds: f64,
+    pub(crate) min_baselines: usize,
+    pub(crate) min_snr: f32,
     pub(crate) refant: RefAntSelector,
     pub(crate) append: bool,
 }
@@ -53,7 +65,15 @@ pub(crate) struct LeakageSolution {
     pub(crate) time: f64,
     pub(crate) reference: i32,
     /// Channel-major solutions with one pair of leakage terms per antenna.
-    pub(crate) values: Vec<Vec<Option<[Complex32; 2]>>>,
+    pub(crate) values: Vec<Vec<LeakageEstimate>>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LeakageEstimate {
+    gain: [Complex32; 2],
+    valid: [bool; 2],
+    error: [f32; 2],
+    snr: [f32; 2],
 }
 
 pub(crate) fn solve_leakage(
@@ -176,6 +196,9 @@ pub(crate) fn solve_leakage(
             solutions.push(solution);
         }
     }
+    if request.kind.iterative() {
+        interval::reference_iterative_solutions(&mut solutions, &mut references);
+    }
     let bin_widths = windows
         .iter()
         .map(|(&id, window)| (id, window.bin_width))
@@ -233,9 +256,7 @@ impl LeakageInputs<'_> {
         };
         // For preavg=0 CASA averages throughout the enclosing solint.
         let span = (requested > f64::from(f32::EPSILON)).then_some(0.999 * requested);
-        let mut fits = (0..count)
-            .map(|_| LeakageFit::new(antennas))
-            .collect::<Vec<_>>();
+        let mut fits = IntervalFits::new(count, antennas, self.request.kind);
         let mut averages = BTreeMap::new();
         let mut time = WeightedTime::default();
         for batch in rows.chunks(256) {
@@ -270,7 +291,7 @@ impl LeakageInputs<'_> {
                         bins: vec![CoherencyMean::default(); count],
                     });
                 if span.is_some_and(|span| row.time_seconds - active.start > span) {
-                    accumulate_averages(pair, &mut active.bins, &mut fits, antennas);
+                    fits.accumulate(pair, &mut active.bins, antennas);
                     active.start = row.time_seconds;
                 }
                 let weight = self.average_row(
@@ -283,47 +304,19 @@ impl LeakageInputs<'_> {
             }
         }
         for ((_, _, pair), mut active) in averages {
-            accumulate_averages(pair, &mut active.bins, &mut fits, antennas);
+            fits.accumulate(pair, &mut active.bins, antennas);
         }
-        let reference = references
-            .iter()
-            .copied()
-            .find(|&antenna| {
-                fits.iter().any(|fit| fit.has_antenna(antenna))
-                    && previous.is_none_or(|previous| {
-                        previous.values.iter().any(|channel| {
-                            channel.get(antenna as usize).is_some_and(Option::is_some)
-                        })
-                    })
-            })
-            .unwrap_or(-1);
-        let mut nonempty = false;
-        let mut values = Vec::with_capacity(count);
-        for (channel_index, fit) in fits.into_iter().enumerate() {
-            let reference_value = previous
-                .and_then(|previous| previous.values.get(channel_index))
-                .and_then(|solutions| solutions.get(reference as usize))
-                .copied()
-                .flatten()
-                .map_or(Complex32::ZERO, |[first, _]| first);
-            let mut channel = fit
-                .solve(reference, reference_value)
-                .unwrap_or_else(|| vec![None; antennas]);
-            nonempty |= channel.iter().any(Option::is_some);
-            if !references.is_empty() && reference < 0 {
-                channel.fill(None);
-            }
-            values.push(channel);
-        }
-        Ok(nonempty.then(|| LeakageSolution {
-            spectral_window,
-            field: first.field_id,
-            observation: first.observation_id,
-            scan: first.scan_number,
-            time: time.mean().unwrap_or(first.time_seconds),
-            reference,
-            values,
-        }))
+        Ok(fits
+            .finish(antennas, references, previous, self.request)
+            .map(|(reference, values)| LeakageSolution {
+                spectral_window,
+                field: first.field_id,
+                observation: first.observation_id,
+                scan: first.scan_number,
+                time: time.mean().unwrap_or(first.time_seconds),
+                reference,
+                values,
+            }))
     }
 
     fn average_row(
@@ -415,23 +408,6 @@ impl LeakageInputs<'_> {
 fn prior_error(source: crate::ApplyExecutionError) -> GainSolveError {
     GainSolveError::PriorCalibrationApply {
         source: Box::new(source),
-    }
-}
-
-fn accumulate_averages(
-    pair: [i32; 2],
-    bins: &mut [CoherencyMean],
-    fits: &mut [LeakageFit],
-    antennas: usize,
-) {
-    let pair = pair.map(|antenna| antenna as usize);
-    if pair.iter().any(|&antenna| antenna >= antennas) {
-        return;
-    }
-    for (fit, mean) in fits.iter_mut().zip(bins) {
-        if let Some((data, model, weights)) = std::mem::take(mean).finish() {
-            fit.add_baseline(pair, data, model, weights);
-        }
     }
 }
 
