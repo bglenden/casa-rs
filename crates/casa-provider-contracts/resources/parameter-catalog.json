@@ -5151,13 +5151,13 @@
     },
     {
       "id": "parameter.oldname",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "oldname",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -7487,13 +7487,13 @@
     },
     {
       "id": "parameter.versionname",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "versionname",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -9396,6 +9396,18 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Highest elevation, in degrees, that elevation mode keeps.", "details": null, "examples": ["90.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.datacolumn.flagdata",
+      "semantic_revision": 1,
+      "casa_name": "datacolumn",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Visibility data column selected by the clip, tfcrop and rflag agents.", "details": "Other routine agents disregard the value. The CASA argument also admits string vectors, which raise an error when an agent or a display needs a scalar column name.", "examples": ["'DATA'", "'CORRECTED'", "'MODEL'"]},
       "persistence_class": "profile"
     },
     {

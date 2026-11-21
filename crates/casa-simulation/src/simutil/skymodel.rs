@@ -148,16 +148,13 @@ pub(crate) fn pixel_axes(
     coordinates: &CoordinateSystem,
     kind: CoordinateType,
 ) -> Option<(usize, Vec<usize>)> {
-    let mut first = 0;
-    for index in 0..coordinates.n_coordinates() {
-        let coordinate = coordinates.coordinate(index);
-        let count = coordinate.n_pixel_axes();
-        if coordinate.coordinate_type() == kind {
-            return Some((index, (first..first + count).collect()));
-        }
-        first += count;
-    }
-    None
+    let index = coordinates.find_coordinate(kind)?;
+    let axes: Vec<_> = coordinates
+        .coordinate_pixel_axes(index)?
+        .into_iter()
+        .flatten()
+        .collect();
+    (!axes.is_empty()).then_some((index, axes))
 }
 
 fn require_native_direction_frame(
@@ -253,6 +250,44 @@ mod frame_tests {
                 .unwrap_err()
                 .to_string()
                 .contains("#977")
+        );
+    }
+
+    #[test]
+    fn a_spectral_coordinate_with_no_pixel_axis_is_absent_from_the_sky_grid() {
+        use casa_coordinates::SpectralCoordinate;
+        use casa_types::measures::frequency::FrequencyRef;
+
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::TOPO,
+            1e9,
+            1e6,
+            0.0,
+            0.0,
+        ));
+        coordinates.remove_pixel_axis(0, 0.0).unwrap();
+        assert!(pixel_axes(&coordinates, CoordinateType::Spectral).is_none());
+    }
+
+    #[test]
+    fn flatimage_requires_a_complete_direction_plane() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../casa-images/tests/data/casa-6.7.6/axis_maps/dropdeg_ra.image");
+        let scratch = tempfile::tempdir().unwrap();
+        let image = scratch.path().join("sliced.image");
+        std::fs::create_dir(&image).unwrap();
+        for file in std::fs::read_dir(source).unwrap() {
+            let file = file.unwrap();
+            if file.file_type().unwrap().is_file() {
+                std::fs::copy(file.path(), image.join(file.file_name())).unwrap();
+            }
+        }
+        let error = flat_image(&image, None).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("flatimage needs both direction axes")
         );
     }
 }

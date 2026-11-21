@@ -212,7 +212,7 @@ fn phase_origin_uses_the_selected_pa_buffer_and_tap_kind() {
     ];
     let catalog = catalog_with_groups(index_groups(&cells, 2, 2));
     for (group, imaging) in [(0, true), (1, true), (2, false), (3, false)] {
-        let key = CfKey { group, cube: 0 };
+        let key = CfKey::new(group, 0);
         assert_eq!(catalog.pointing_origin_shift(key, false), imaging);
         assert_eq!(catalog.pointing_origin_shift(key, true), !imaging);
     }
@@ -385,11 +385,11 @@ fn rotation_epochs_key_the_current_group_and_bound_memory() {
         field: 0,
         spectral_window: 0,
     };
-    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey { group: 0, cube: 0 });
+    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey::new(0, 0));
     row.time_s = 2.0;
-    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey { group: 1, cube: 1 });
+    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey::new(1, 1));
     row.time_s = 3.0;
-    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey { group: 2, cube: 2 });
+    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey::new(2, 2));
 }
 
 #[test]

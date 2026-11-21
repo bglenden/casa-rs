@@ -7,7 +7,7 @@ use casa_types::{ArrayValue, RecordValue, Value};
 use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
 
 use super::record_axes::{check_numbering, read_models};
-use super::{CoordinateSystem, record_basename};
+use super::{CoordinateSystem, RecordCoordinate, coordinate_record_entries, record_basename};
 use crate::coordinate::CoordinateModel;
 use crate::direction::convert_value_to_unit;
 use crate::error::CoordinateError;
@@ -482,6 +482,59 @@ fn check_removal(axis: usize, naxes: usize, replacement: f64) -> Result<(), Coor
 impl CoordinateSystem {
     pub(super) fn nonconsecutive_maps(&self) -> Option<&AxisMaps> {
         self.maps.as_deref().filter(|maps| !maps.concatenated)
+    }
+
+    /// The fields and maps of this system's record, in this system's
+    /// coordinate order. Pass the record used to build the system.
+    ///
+    /// # Errors
+    /// The record is malformed or has a different number of coordinates.
+    pub fn coordinates_in_record(
+        &self,
+        record: &RecordValue,
+    ) -> Result<Vec<RecordCoordinate>, CoordinateError> {
+        let Some(maps) = &self.maps else {
+            return Self::record_coordinates(record);
+        };
+        let fields = coordinate_record_entries(record);
+        if fields.len() != maps.placements.len() {
+            return Err(CoordinateError::InvalidRecord(
+                "coordinate record does not match the system's coordinate count".into(),
+            ));
+        }
+        Ok(fields
+            .into_iter()
+            .zip(&maps.placements)
+            .map(|((_, field), placed)| RecordCoordinate {
+                field,
+                pixel_axes: placed.pixel.public_axes(),
+                world_axes: placed.world.public_axes(),
+            })
+            .collect())
+    }
+
+    /// Restore an edited record using the same axis layout as this system.
+    ///
+    /// # Errors
+    /// The edited record or its coordinates are invalid.
+    pub fn restore_record_with_layout(
+        &self,
+        record: &RecordValue,
+    ) -> Result<Self, CoordinateError> {
+        if self.maps.is_some() {
+            Self::from_mapped_record(record)
+        } else {
+            Self::from_record(record)
+        }
+    }
+
+    /// The public world axis corresponding to a public pixel axis.
+    pub fn pixel_axis_to_world_axis(&self, axis: usize) -> Option<usize> {
+        let (index, local) = self.pixel_axis_owner(axis)?;
+        self.coordinate_world_axes(index)?
+            .get(local)
+            .copied()
+            .flatten()
     }
 
     fn ensure_axis_maps(&mut self) -> &mut AxisMaps {

@@ -238,7 +238,46 @@ fn bounded_cursor_shape(tile: Vec<usize>, shape: &[usize], limit: usize) -> Vec<
 
 #[cfg(test)]
 mod tests {
-    use super::bounded_cursor_shape;
+    use std::path::Path;
+
+    use casa_coordinates::CoordinateSystem;
+    use casa_tables::{Table, TableOptions};
+    use casa_types::{ArrayValue, Value};
+
+    use super::{PagedImage, bounded_cursor_shape, extrema};
+
+    #[test]
+    fn mapped_image_extrema_keep_the_first_spectral_axis_and_casa_order() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/casa-6.7.6/axis_maps");
+        let scratch = tempfile::tempdir().unwrap();
+        for (name, expected) in [
+            ("swapped.image", "-22.55.03.860 04:35:00.961 Q 1.419e+09Hz"),
+            (
+                "interleaved.image",
+                "04:35:00.961 Q -22.55.03.860 1.419e+09Hz",
+            ),
+        ] {
+            let table = Table::open(TableOptions::new(source.join(name))).unwrap();
+            let Some(Value::Record(record)) = table.keywords().get("coords") else {
+                panic!("{name}: no coordinate record");
+            };
+            let ArrayValue::Float32(data) = table.row_accessor().array_cell(0, "map").unwrap()
+            else {
+                panic!("{name}: expected float pixels");
+            };
+            let coordinates = CoordinateSystem::from_mapped_record(record).unwrap();
+            let path = scratch.path().join(name);
+            let mut image =
+                PagedImage::<f32>::create(data.shape().to_vec(), coordinates, path).unwrap();
+            image.put_slice(data, &vec![0; data.ndim()]).unwrap();
+            assert_eq!(image.first_spectral_pixel_axis().unwrap(), Some(3));
+            assert_eq!(
+                extrema(&image).unwrap().unwrap().max_world,
+                expected,
+                "{name}"
+            );
+        }
+    }
 
     #[test]
     fn extrema_pixel_and_mask_buffers_are_bounded_even_for_large_tiles() {

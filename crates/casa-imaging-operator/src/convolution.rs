@@ -832,7 +832,7 @@ mod tests {
     #[test]
     fn a_hold_releases_its_cell_before_it_fetches_another() {
         let mut hold = CellHold::new();
-        let key = |group| CfKey { group, cube: 0 };
+        let key = |group| CfKey::new(group, 0);
         let first = cell(1.0);
         let mut parked = Arc::downgrade(&first);
         let _ = hold.lend_keyed(key(0), 0, move || first);

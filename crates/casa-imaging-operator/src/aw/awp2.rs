@@ -787,10 +787,10 @@ impl ConvolutionFunctionSet for Awp2 {
         };
         // A residual sample uses both keys. Keep the prediction PA in the
         // high part of cube so the placement still needs only one key.
-        CfKey {
-            group: (pa * self.w_planes.len() + w_index) as u16,
-            cube: (prediction_pa * self.frequencies_hz.len() + frequency) as u16,
-        }
+        CfKey::new(
+            (pa * self.w_planes.len() + w_index) as u16,
+            (prediction_pa * self.frequencies_hz.len() + frequency) as u16,
+        )
     }
 
     fn taps<'s>(&'s self, key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {

@@ -424,7 +424,7 @@ impl CoordinateSystem {
     /// `record_coordinates(rec)?[i]` is coordinate `i`.
     ///
     /// Each names the record field that holds the coordinate and the system
-    /// pixel axis of each of the record coordinate's own axes. These can
+    /// pixel and world axis of each of the record coordinate's own axes. These can
     /// differ from the system's: a transposed casacore system numbers its
     /// coordinates in creation order, and a linear coordinate's removed axes
     /// are in the record but not in the system. For a record whose
@@ -500,6 +500,8 @@ pub struct RecordCoordinate {
     /// For each of the record coordinate's own axes, in its order, the
     /// system pixel axis it lies on; `None` for an axis the record removed.
     pub pixel_axes: Vec<Option<usize>>,
+    /// The public world axis of each local world axis, or `None` if removed.
+    pub world_axes: Vec<Option<usize>>,
 }
 
 impl RecordCoordinate {
