@@ -630,8 +630,10 @@ mod tests {
         coordinates.remove_world_axis(0, 1.0).unwrap();
         write_image(&path, &pixels, coordinates, "Jy/pixel").unwrap();
         let flat = super::super::flat::flat_image(&path, None).unwrap_err();
+        // flatimage already checks this prerequisite and names its axes.
         assert!(
-            flat.to_string().contains("both direction pixel axes"),
+            flat.to_string()
+                .contains("flatimage needs both direction axes"),
             "{flat}"
         );
         let modified = modify_model(
