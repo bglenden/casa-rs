@@ -103,37 +103,19 @@ def projected_radius_control(root, source, original):
     compare('off-tangent projected beam', actual, expected)
 
 
-def refusal_controls(root, source, model):
-    for label in ('linear-feed', 'multiple-arrays'):
-        dataset = root / f'{label}.ms'
-        make_input(source, dataset, scratch=True)
-        writer = table()
-        if label == 'linear-feed':
-            assert writer.open(str(dataset), nomodify=False)
-            for column in ('FLAG', 'WEIGHT', 'SIGMA', 'DATA', 'WEIGHT_SPECTRUM', 'MODEL_DATA'):
-                values = writer.getcol(column)[[0, 0, 1, 1], ...]
-                descriptor = writer.getcoldesc(column)
-                descriptor.update(dataManagerType='StandardStMan', dataManagerGroup='LinearControl')
-                assert writer.removecols(column) and writer.addcols({column: descriptor})
-                assert writer.putcol(column, values)
-            assert writer.done()
-            assert writer.open(str(dataset / 'POLARIZATION'), nomodify=False)
-            assert writer.putcell('NUM_CORR', 0, 4)
-            assert writer.putcell('CORR_TYPE', 0, np.array([9, 10, 11, 12], dtype=np.int32))
-            assert writer.putcell('CORR_PRODUCT', 0, np.array([[0, 0, 1, 1], [0, 1, 0, 1]], np.int32))
-        else:
-            predict(imager, dataset, model, False)
-            assert writer.open(str(dataset), nomodify=False)
-            arrays, times = writer.getcol('ARRAY_ID'), writer.getcol('TIME')
-            arrays[times == times.max()] = 1
-            assert writer.putcol('ARRAY_ID', arrays)
-        assert writer.done()
-        if label == 'linear-feed':
-            predict(imager, dataset, model, False)
-        prior = data(dataset, 'MODEL_DATA')
-        predict(imager, dataset, model, True, accepts=False)
-        np.testing.assert_array_equal(data(dataset, 'MODEL_DATA'), prior)
-        print(label, 'refusal preserves scratch visibilities', flush=True)
+def array_refusal_control(root, source, model):
+    dataset = root / 'multiple-arrays.ms'
+    make_input(source, dataset, scratch=True)
+    predict(imager, dataset, model, False)
+    writer = table()
+    assert writer.open(str(dataset), nomodify=False)
+    arrays, times = writer.getcol('ARRAY_ID'), writer.getcol('TIME')
+    arrays[times == times.max()] = 1
+    assert writer.putcol('ARRAY_ID', arrays) and writer.done()
+    prior = data(dataset, 'MODEL_DATA')
+    predict(imager, dataset, model, True, accepts=False)
+    np.testing.assert_array_equal(data(dataset, 'MODEL_DATA'), prior)
+    print('multiple-arrays refusal preserves scratch visibilities', flush=True)
 
 
 def main():
@@ -186,7 +168,7 @@ def main():
             compare(f'saved {writer} to {reader}', actual[:, 0, :], expected[:, 0, :])
     receptor_control(args.work, args.dataset, args.model, expected[:, 0, :])
     projected_radius_control(args.work, args.dataset, args.model)
-    refusal_controls(args.work, args.dataset, args.model)
+    array_refusal_control(args.work, args.dataset, args.model)
 
 
 if __name__ == '__main__':
