@@ -43,8 +43,9 @@ pub(super) fn write(ms: &MeasurementSet, solver: &LegacyEpSolver, slots: &[Slot]
     for (description, slots) in by_window.values().enumerate() {
         for slot in slots {
             for (antenna, offsets) in slot.offsets.iter().enumerate() {
-                let row = RecordValue::new(vec![
+                let mut fields = vec![
                     number("TIME", ScalarValue::Float64(slot.time)),
+                    number("TIME_EXTRA_PREC", ScalarValue::Float64(0.)),
                     number("INTERVAL", ScalarValue::Float64(solver.interval_seconds)),
                     int("ANTENNA1", antenna as i32),
                     int("FIELD_ID", slot.field),
@@ -64,8 +65,37 @@ pub(super) fn write(ms: &MeasurementSet, solver: &LegacyEpSolver, slots: &[Slot]
                     array("FIT_WEIGHT", ArrayValue::Float32(shaped(&[1, 1], vec![1.]))),
                     array("FLAG", ArrayValue::Bool(shaped(&[4, 1], vec![false; 4]))),
                     array("SNR", ArrayValue::Float32(shaped(&[4, 1], vec![0.; 4]))),
-                ]);
-                writer.append(row).map_err(invalid)?;
+                ];
+                fields.extend(
+                    [
+                        "FEED1",
+                        "ARRAY_ID",
+                        "OBSERVATION_ID",
+                        "SCAN_NUMBER",
+                        "PROCESSOR_ID",
+                        "STATE_ID",
+                        "PHASE_ID",
+                        "PULSAR_BIN",
+                        "PULSAR_GATE_ID",
+                        "FREQ_GROUP",
+                        "CALIBRATION_GROUP",
+                        "MEAS_FREQ_REF",
+                        "MEAS_DIR_REF",
+                        "CAL_HISTORY_ID",
+                    ]
+                    .map(|name| int(name, 0)),
+                );
+                fields.extend(
+                    [
+                        "FREQ_GROUP_NAME",
+                        "FIELD_NAME",
+                        "FIELD_CODE",
+                        "SOURCE_NAME",
+                        "SOURCE_CODE",
+                    ]
+                    .map(|name| number(name, ScalarValue::String(String::new()))),
+                );
+                writer.append(RecordValue::new(fields)).map_err(invalid)?;
             }
         }
     }
@@ -162,6 +192,7 @@ fn description(windows: impl Iterator<Item = i32>) -> MsResult<Table> {
             int("NUM_RECEPTORS", 2),
             int("N_JONES", 2),
             array("SPECTRAL_WINDOW_ID", ArrayValue::from_i32_vec(vec![spw])),
+            int("MEAS_FREQ_REF", 0),
             array("CHAN_FREQ", ArrayValue::Float64(shaped(&[1, 1], vec![0.]))),
             array("CHAN_WIDTH", ArrayValue::Float64(shaped(&[1, 1], vec![0.]))),
             array(

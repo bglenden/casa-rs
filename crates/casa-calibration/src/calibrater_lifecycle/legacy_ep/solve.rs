@@ -114,6 +114,7 @@ impl LegacyEpSolver {
         let mut results = Vec::new();
         while let Some(chunk) = rows.next() {
             let first = chunk[0].0;
+            let input = crate::timing::Phase::start("ep_gather");
             let baselines =
                 load_chunk(ms, selected, model, &engine, chunk, self.preaverage_seconds)?;
             if baselines
@@ -122,6 +123,8 @@ impl LegacyEpSolver {
             {
                 return Err(invalid("EP visibility references an unknown antenna"));
             }
+            drop(input);
+            let _fit = crate::timing::Phase::start("ep_fit");
             let offsets = offsets_by_spw
                 .entry(first.spectral_window_id)
                 .or_insert_with(|| vec![[0.; 4]; antenna_count]);
@@ -134,7 +137,8 @@ impl LegacyEpSolver {
                 });
             }
         }
-        table::write(ms, self, &results).map_err(invalid)?;
+        let _write = crate::timing::Phase::start("ep_write");
+        table::write(ms, self, &results)?;
         Ok(results.len() * antenna_count)
     }
 }
