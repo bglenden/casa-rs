@@ -375,7 +375,7 @@ pub(super) fn centroid_weight(
 }
 
 /// CASA's correlation-independent flags are shared by every receptor.
-/// Direct G's gather counts include correlations that are later excluded
+/// Direct antenna solve counts include correlations that are later excluded
 /// from the fit. The first and last input positions define the two counters.
 #[derive(Debug, Clone, Default)]
 pub(super) struct DirectGainGather {

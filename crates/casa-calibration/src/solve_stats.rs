@@ -170,11 +170,17 @@ impl<'a> IntervalStages<'a> {
     /// `min_baselines_per_antenna`. A channelized group passes a stage
     /// where any of its channels does.
     pub(crate) fn of(group: &'a SolveAccumulator, min_baselines_per_antenna: usize) -> Self {
+        let polarizations = group.channel_graphs.first().map_or(0, Vec::len);
         let (with_data, attempted_interval) =
-            if let Some((hands, attempted)) = group.direct_gain_data() {
-                (Vec::from(hands), Some(attempted))
+            if let Some(([mut first, second], attempted)) = group.direct_gain_data() {
+                let with_data = if polarizations == 1 {
+                    first.extend(second);
+                    vec![first]
+                } else {
+                    vec![first, second]
+                };
+                (with_data, Some(attempted))
             } else {
-                let polarizations = group.channel_graphs.first().map_or(0, Vec::len);
                 let with_data = (0..polarizations)
                     .map(|polarization| {
                         group

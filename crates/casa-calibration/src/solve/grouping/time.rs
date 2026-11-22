@@ -33,7 +33,7 @@ pub(crate) enum SolveInputRows {
     /// Use cross-correlations after reading solver metadata.
     #[default]
     Interferometry,
-    /// Retain autocorrelations as fixed residual terms in direct G solves.
+    /// Retain autocorrelations as fixed residuals in direct antenna solves.
     GainTool,
     /// Also retain the input buffer axes for a fringe FFT.
     Fringe,
@@ -44,6 +44,14 @@ pub(crate) enum SolveInputRows {
 }
 
 impl SolveInputRows {
+    pub(crate) fn gain(direct: bool) -> Self {
+        if direct {
+            Self::GainTool
+        } else {
+            Self::Interferometry
+        }
+    }
+
     pub(super) fn receptors(
         self,
         correlations: &[i32],
