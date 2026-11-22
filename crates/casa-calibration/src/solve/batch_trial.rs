@@ -267,10 +267,12 @@ impl Stores {
 /// what the batch-fed solves are compared with.
 fn production(ms: &MeasurementSet, root: &Path) -> Vec<SolutionRow> {
     let request = gain_request(root.join("production.G"));
-    let report =
-        solve_gain(ms, &request, crate::CalibrationOutputMode::Create).expect("production gaincal");
+    let report = solve_gain(ms, &request, crate::CalibrationOutputMode::Create, None)
+        .expect("production gaincal");
     assert_eq!(report.solution_row_count, 10, "5 antennas x 2 intervals");
-    solve_gain_rows(ms, &request).expect("production rows").rows
+    solve_gain_rows(ms, &request, None)
+        .expect("production rows")
+        .rows
 }
 
 /// The production refant (antenna 0 of the MeasurementSet) in `binding`'s
@@ -299,7 +301,7 @@ fn batch_fed_solves_equal_the_production_gaincal() {
         let expected = production(&stores.ms, root.path());
         // The solver iterates hash maps in a per-run order, so production
         // agrees with itself only to rounding in its SNR and weights.
-        let again = solve_gain_rows(&stores.ms, &request)
+        let again = solve_gain_rows(&stores.ms, &request, None)
             .expect("production rows")
             .rows;
         println!(
@@ -426,7 +428,9 @@ fn row_flagged_outlier_is_excluded_from_production_and_batch_gaincal() {
     let path = fixture(root.path(), "ms_trial.ms");
     let request = gain_request(root.path().join("unused.G"));
     let mut ms = MeasurementSet::open(&path).expect("ms");
-    let clean = solve_gain_rows(&ms, &request).expect("clean solve").rows;
+    let clean = solve_gain_rows(&ms, &request, None)
+        .expect("clean solve")
+        .rows;
     let row = (0..ms.main_table().row_count())
         .find(|&row| {
             let antenna = |column| {
@@ -464,7 +468,7 @@ fn row_flagged_outlier_is_excluded_from_production_and_batch_gaincal() {
         .unwrap()
         .set(outlier)
         .unwrap();
-    let contaminated = solve_gain_rows(&ms, &request)
+    let contaminated = solve_gain_rows(&ms, &request, None)
         .expect("contaminated solve")
         .rows;
     assert!(agreement(&clean, &contaminated).gain > 0.05);

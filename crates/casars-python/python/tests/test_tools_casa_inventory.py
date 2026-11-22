@@ -49,11 +49,11 @@ IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit", "initweights",
     "accumulate", "createcaltable", "updatecaltable", "smooth", "rerefant", "listcal", "plotcal",
-    "linpolcor", "parsecallibfile", "validatecallib",
+    "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags",
 }
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
-                   "correct", "corrupt", "activityrec"},
+                   "correct", "corrupt", "activityrec", "solve"},
     "image": {
         "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },
@@ -174,6 +174,8 @@ def test_calibrater_method_returns_before_open() -> None:
     assert instance.setvi(old=True, quiet=True) is True
     assert instance.selectvis() is False
     assert instance.reset() is False
+    assert instance.setcorrdepflags(True) is True
+    assert instance.solve() is False
     assert instance.initcalset() is False
     assert instance.delmod() is False
     assert instance.linpolcor() is False

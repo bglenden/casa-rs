@@ -269,9 +269,9 @@ const METHODS: &[Method] = &[
     ),
     method(
         "setcorrdepflags",
-        &[param("corrdepflags", K::Any, D::Required)],
-        R::Any,
-        S::NotYetImplemented,
+        &[param("corrdepflags", K::Bool, D::Required)],
+        R::Bool,
+        S::Implemented,
     ),
     method(
         "setmodel",
@@ -382,7 +382,10 @@ const METHODS: &[Method] = &[
             S::Implemented,
         )
     },
-    method("solve", &[], R::Any, S::NotYetImplemented),
+    Method {
+        mutating: true,
+        ..method("solve", &[], R::Bool, S::Partial)
+    },
     method(
         "specifycal",
         &[

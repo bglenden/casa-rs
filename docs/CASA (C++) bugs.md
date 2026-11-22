@@ -10020,3 +10020,14 @@ application even in this sequence. Casa-rs evaluates the forward Jones
 terms on every model corruption. The [paired tool oracle](../tools/casa-compat/calibrater_apply_tool_oracle.py)
 checks both sequences against the constant-gain product law. Both engines
 retain the previous single-term activity counts across the corruption.
+
+## Calibrater's legacy iterator can crash during a gain solve
+
+With CASA 6.7.6.14, `setvi(True, True)` followed by a selected G Jones
+solution can terminate Python with a segmentation fault in `solve()`.
+The [direct solve oracle](../tools/casa-compat/calibrater_solve_tool_oracle.py)
+reproduces the crash with the legacy gain case. The same legacy fixture
+returns normally when `minblperant=99` blocks the fit. Casa-rs completes the
+fit using its shared solver and checks the resulting table and activity
+against the successful CASA modern-iterator solve. Legacy return records
+retain their original layout without `solvestats`.

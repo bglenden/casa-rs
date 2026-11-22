@@ -42,7 +42,9 @@ use crate::solve::{
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType,
     RefAntSelector,
 };
-use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
+use crate::solve_stats::{
+    AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity,
+};
 use crate::writer::{CalibrationTableDescriptor, CalibrationTableWriter};
 use bpoly::write_bpoly_caltable;
 use postprocess::{fill_bandpass_gaps, normalize_bandpass_rows, reference_bandpass_rows};
@@ -63,6 +65,36 @@ pub enum BandpassFrequencyInterval {
     Channels(f64),
     /// Bandwidth divided by the first input channel's absolute width in each SPW.
     Hertz(f64),
+}
+
+impl BandpassFrequencyInterval {
+    /// Read the frequency component of CASA's `solint`. The outer option
+    /// denotes valid input, and the inner one denotes frequency binning.
+    #[must_use]
+    pub fn from_casa(text: &str) -> Option<Option<Self>> {
+        use casa_types::quanta::{Quantity, Unit};
+        let text = text.trim();
+        let upper = text.to_ascii_uppercase();
+        if upper.is_empty() || upper.contains("NONE") {
+            return Some(None);
+        }
+        let channels = |count: f64| {
+            count
+                .is_finite()
+                .then(|| (count > 1.0).then_some(Self::Channels(count)))
+        };
+        if let Some((count, _)) = upper.split_once("CH") {
+            return channels(count.trim().parse().ok()?);
+        }
+        let quantity = text.parse::<Quantity>().ok()?;
+        if quantity.unit().name().is_empty() {
+            return channels(quantity.value());
+        }
+        let hertz = quantity.get_value_in(&Unit::new("Hz").ok()?).ok()?;
+        hertz
+            .is_finite()
+            .then(|| (hertz > 0.).then_some(Self::Hertz(hertz)))
+    }
 }
 
 /// Supported `bandpass(..., combine=...)` axes.
@@ -331,6 +363,7 @@ pub(crate) fn solve_bandpass(
     ms: &MeasurementSet,
     request: &BandpassSolveRequest,
     mode: crate::CalibrationOutputMode,
+    activity: Option<&mut ToolSolveActivity>,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
     let use_casa_solve = request.band_type == BandpassType::B || request.cuts.is_some();
@@ -470,9 +503,13 @@ pub(crate) fn solve_bandpass(
                 }
             }
         }
+        if !rows.is_empty() {
+            solve_stats.succeeded(group.spw_id);
+        }
         solve_stats.solutions(group.spw_id, solutions);
         solution_rows.extend(rows);
     }
+    solve_stats.track_activity(activity);
     drop(kernel_phase);
     let _write_phase = crate::timing::Phase::start("bandpass_write");
     if solution_rows.is_empty() {
