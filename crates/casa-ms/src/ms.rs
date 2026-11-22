@@ -1136,11 +1136,23 @@ pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<Strin
         );
     }
     bind("FLAG", DataManagerKind::TiledShapeStMan, flag_tile_shape);
-    bind(
-        "FLAG_CATEGORY",
-        DataManagerKind::TiledShapeStMan,
-        flag_category_tile_shape,
-    );
+    // Single-dish imports define an empty category array in each row.
+    // Casacore can read zero-sized cells from StandardStMan, while a tiled
+    // hypercube whose cell shape contains zero cannot return that array.
+    let defined_empty_categories = main.rows().is_ok_and(|rows| {
+        rows.iter().any(|row| {
+            matches!(row.get("FLAG_CATEGORY"), Some(Value::Array(array)) if array.shape().contains(&0))
+        })
+    });
+    if defined_empty_categories {
+        bind("FLAG_CATEGORY", DataManagerKind::StandardStMan, None);
+    } else {
+        bind(
+            "FLAG_CATEGORY",
+            DataManagerKind::TiledShapeStMan,
+            flag_category_tile_shape,
+        );
+    }
     for name in ["SIGMA", "WEIGHT"] {
         bind(
             name,

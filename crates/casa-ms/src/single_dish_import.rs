@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Conversion of single-dish instrument formats into MeasurementSet v2.
+
+mod asap;
+mod metadata;
+mod polarization;
+mod writer;
+
+use std::collections::{BTreeMap, HashMap};
+
+pub use asap::read_asap;
+use polarization::Basis;
+
+struct Antenna {
+    name: String,
+    station: String,
+    position: [f64; 3],
+    diameter: f64,
+}
+
+struct Window {
+    channels: usize,
+    frame: i32,
+    reference_channel: f64,
+    reference_frequency: f64,
+    increment: f64,
+}
+
+struct ImportHeader {
+    antenna: Antenna,
+    telescope: String,
+    observer: String,
+    project: String,
+    range: [f64; 2],
+    data_unit: String,
+    windows: BTreeMap<i32, Window>,
+}
+
+struct Field {
+    id: i32,
+    name: String,
+    source_id: i32,
+    time: f64,
+    direction: Direction,
+}
+
+struct Source {
+    id: i32,
+    name: String,
+    window: i32,
+    time: f64,
+    interval: f64,
+    direction: [f64; 2],
+    proper_motion: [f64; 2],
+    rest_frequencies: Vec<f64>,
+    transitions: Vec<String>,
+    velocity: f64,
+}
+
+#[derive(Clone, Copy)]
+struct Direction {
+    position: [f64; 2],
+    rate: [f64; 2],
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Weather([f32; 5]);
+
+struct Integration {
+    time: f64,
+    interval: f64,
+    scan: i32,
+    field: i32,
+    feed: i32,
+    window: i32,
+    basis: Basis,
+    state: (&'static str, i32),
+    direction: Direction,
+    weather: Weather,
+}
+
+struct Plane {
+    index: usize,
+    data: Vec<f32>,
+    flag: Vec<bool>,
+    flag_row: bool,
+    system_temperature: Vec<f32>,
+    calibration_temperature: Vec<f32>,
+}
+
+struct RawIntegration {
+    row: Integration,
+    plane: Plane,
+}
+
+type IntegrationKey = (i32, i32, i32, Basis, &'static str);
+
+#[derive(Default)]
+struct TimeGroups {
+    order: HashMap<IntegrationKey, usize>,
+    current: BTreeMap<usize, (Integration, BTreeMap<usize, Plane>)>,
+}
+
+impl TimeGroups {
+    fn push(&mut self, input: RawIntegration) {
+        let RawIntegration { row, plane } = input;
+        let key = (row.field, row.feed, row.window, row.basis, row.state.0);
+        let next = self.order.len();
+        let rank = *self.order.entry(key).or_insert(next);
+        match self.current.entry(rank) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert((row, BTreeMap::from([(plane.index, plane)])));
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let (coordinates, planes) = entry.get_mut();
+                if let std::collections::btree_map::Entry::Vacant(hand) = planes.entry(plane.index)
+                {
+                    hand.insert(plane);
+                    *coordinates = row;
+                }
+            }
+        }
+    }
+}

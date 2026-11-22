@@ -3,6 +3,7 @@
 
 pub(crate) mod atmosphere;
 pub(crate) mod baseline;
+pub(crate) mod import;
 pub(crate) mod line_fit;
 mod smoothing;
 

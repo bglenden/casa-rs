@@ -65,6 +65,7 @@ pub use single_dish::preparation::baseline::{
     SingleDishBaseline, SingleDishBaselineBasis, SingleDishBaselineDiagnostics,
     SingleDishBaselineMode, SingleDishLineFinder, SingleDishSinusoid,
 };
+pub use single_dish::preparation::import::import_asap;
 pub use single_dish::preparation::line_fit::SingleDishLineFit;
 pub use single_dish::preparation::{SingleDishSession, SingleDishSmoothing};
 mod smooth;
