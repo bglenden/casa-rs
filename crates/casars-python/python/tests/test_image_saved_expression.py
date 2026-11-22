@@ -102,6 +102,108 @@ def test_saved_expression_miscinfo_overrides_the_operand(tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("method", ["open", "newimage", "newimagefromfile"])
+def test_nested_saved_expressions_capture_a_shared_operand(tmp_path, monkeypatch, backend, method):
+    api = _backend(backend)
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    expected_world = _operand(api, tmp_path / "input.im", pixels)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _operand(api, elsewhere / "input.im", pixels + 100)
+    _manifest(tmp_path / "operands" / "inner.im", MiscInfo={"origin": "inner"})
+    (tmp_path / "alias.im").symlink_to("operands/inner.im", target_is_directory=True)
+    _manifest(tmp_path / "left.im", ImageExpr='"operands/inner.im" + 2')
+    _manifest(tmp_path / "right.im", ImageExpr='"alias.im" + 3')
+    _manifest(tmp_path / "outer.im", ImageExpr='"left.im" + "right.im"')
+    receiver = api.image()
+    opened = receiver
+    monkeypatch.chdir(tmp_path)
+    try:
+        assert receiver.fromarray(pixels=[41., 42.])
+        result = getattr(receiver, method)("outer.im")
+        if method == "open":
+            assert result is True
+        else:
+            opened = result
+            np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
+        monkeypatch.chdir(elsewhere)
+        assert opened.miscinfo() == {"origin": "inner"}
+        assert opened.brightnessunit() == "Jy/pixel"
+        assert opened.history() == []
+        assert opened.pixeltype() == "float"
+        validity = opened.getchunk(getmask=True)
+        np.testing.assert_array_equal(validity, pixels > 4)
+        np.testing.assert_array_equal(opened.getchunk()[validity], (6 * pixels + 5)[validity])
+        coordinates = opened.coordsys()
+        try:
+            np.testing.assert_allclose(coordinates.toworld([2, 3])["numeric"], expected_world)
+        finally:
+            coordinates.done()
+    finally:
+        opened.done()
+        if opened is not receiver:
+            receiver.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("selector", ["nomask", "mask0"])
+def test_saved_expression_operand_rejects_a_selector_outside_its_quotes(tmp_path, monkeypatch, backend, selector):
+    api = _backend(backend)
+    _operand(api, tmp_path / "input.im", np.arange(12, dtype=np.float32).reshape(3, 4))
+    _manifest(tmp_path / "inner.im")
+    _manifest(tmp_path / "outer.im", ImageExpr=f'"inner.im":{selector} + 2')
+    monkeypatch.chdir(tmp_path)
+    receiver = api.image()
+    try:
+        assert receiver.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match=f"Parse error at or near ':{selector}'"):
+            receiver.newimagefromfile("outer.im")
+        np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
+    finally:
+        receiver.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("operand", ['"inner.im:nomask"', "inner.im:no_such_mask"])
+def test_saved_expression_operand_keeps_intrinsic_validity(tmp_path, monkeypatch, backend, operand):
+    api = _backend(backend)
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    _operand(api, tmp_path / "input.im", pixels)
+    _manifest(tmp_path / "inner.im")
+    _manifest(tmp_path / "outer.im", ImageExpr=f"{operand} + 2")
+    monkeypatch.chdir(tmp_path)
+    receiver = api.image()
+    try:
+        assert receiver.open("outer.im")
+        valid = receiver.getchunk(getmask=True)
+        np.testing.assert_array_equal(valid, pixels > 4)
+        np.testing.assert_array_equal(receiver.getchunk()[valid], (pixels * 3 + 2)[valid])
+    finally:
+        receiver.done()
+
+
+@pytest.mark.parametrize("second_operand", ["original.im", "alias.im"])
+def test_saved_expression_cycle_preserves_the_factory_receiver(tmp_path, monkeypatch, second_operand):
+    # Pinned CASA overflows its stack opening this graph. The factory must fail safely.
+    _manifest(tmp_path / "original.im", ImageExpr='"other.im" + 1')
+    _manifest(tmp_path / "other.im", ImageExpr=f'"{second_operand}" + 2')
+    (tmp_path / "alias.im").symlink_to("original.im", target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    receiver = _backend("casars").image()
+    try:
+        assert receiver.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match="Cycle in saved image expression"):
+            receiver.newimagefromfile("original.im")
+        np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
+        with pytest.raises(RuntimeError, match="Cycle in saved image expression"):
+            receiver.fromimage(outfile="must-not-exist.im", infile="original.im")
+        np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
+        assert not (tmp_path / "must-not-exist.im").exists()
+    finally:
+        receiver.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
 def test_saved_expression_nonrecord_miscinfo_preserves_the_factory_receiver(tmp_path, monkeypatch, backend):
     api = _backend(backend)
     _operand(api, tmp_path / "input.im", np.arange(12, dtype=np.float32).reshape(3, 4))
@@ -297,12 +399,18 @@ def test_saved_expression_direct_factories_infer_all_pixel_types(tmp_path, backe
 @pytest.mark.parametrize("reader_backend", ["casa", "casars"])
 @pytest.mark.parametrize("pixeltype", ["float", "double", "complex", "dcomplex"])
 @pytest.mark.parametrize("factory", ["fromimage", "newimagefromimage"])
-def test_saved_expression_creates_interoperable_native_copies(tmp_path, writer_backend, reader_backend, pixeltype, factory):
+@pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+def test_saved_expression_creates_interoperable_native_copies(tmp_path, writer_backend, reader_backend, pixeltype, factory, nested):
     writer_api, reader_api = _backend(writer_backend), _backend(reader_backend)
     source = tmp_path / "operand.im"
     expected = _typed_operand(writer_api, source, pixeltype) * 3.
     expression = tmp_path / "manifest.im"
     _manifest(expression, ImageExpr=f'"{source}" * 3', DataType="unknown")
+    if nested:
+        outer = tmp_path / "outer.im"
+        _manifest(outer, ImageExpr=f'"{expression}" + 1')
+        expression = outer
+        expected += 1.
     output = tmp_path / "copied.im"
     writer, reader = writer_api.image(), reader_api.image()
     result = writer
@@ -321,3 +429,35 @@ def test_saved_expression_creates_interoperable_native_copies(tmp_path, writer_b
         result.done()
         if result is not writer:
             writer.done()
+
+
+@pytest.mark.parametrize("factory", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("location", ["same", "enclosing"])
+def test_nested_saved_copy_does_not_overwrite_an_operand(tmp_path, factory, location):
+    api = _backend("casars")
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    source = tmp_path / "operand.im"
+    destination = tmp_path / "existing.im"
+    _operand(api, source, pixels)
+    _operand(api, destination, pixels + 100)
+    inner = destination if location == "same" else destination / "inner.im"
+    _manifest(inner, ImageExpr=f'"{source}" * 3')
+    outer = tmp_path / "outer.im"
+    _manifest(outer, ImageExpr=f'"{inner}" + 1')
+    table = destination / "table.dat"
+    manifest = inner / "imageexpr.json"
+    original_table, original_manifest = table.read_bytes(), manifest.read_bytes()
+    image = api.image()
+    try:
+        assert image.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression operand"):
+            getattr(image, factory)(infile=str(outer), outfile=str(destination), overwrite=True)
+        assert table.read_bytes() == original_table
+        assert manifest.read_bytes() == original_manifest
+        np.testing.assert_array_equal(image.getchunk(), [41., 42.])
+        assert image.open(str(outer))
+        valid = image.getchunk(getmask=True)
+        np.testing.assert_array_equal(valid, pixels > 4)
+        np.testing.assert_array_equal(image.getchunk()[valid], (pixels * 3 + 1)[valid])
+    finally:
+        image.done()

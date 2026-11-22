@@ -404,6 +404,15 @@ impl CopyImage<'_> {
                     "Cannot overwrite an output that contains the source image or is part of it",
                 ));
             }
+            if original
+                .operand_paths()
+                .iter()
+                .any(|path| target.starts_with(path) || path.starts_with(&target))
+            {
+                return Err(raised(
+                    "Cannot overwrite an output that overlaps a saved image expression operand",
+                ));
+            }
         }
         let mut live_coordinates = None;
         let mut output = publish_image(self.outfile, self.overwrite, |path| {
