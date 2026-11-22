@@ -190,22 +190,35 @@ impl PyImageTool {
                 _ => return Err(raised("Exception: Unsupported value for type, it must be 'float' or 'double'.")),
             };
             let inputs = ImageToolExpressionInputs::resolve(pixels).map_err(raised)?;
-            let retained = AttachedImage::open_expression_inputs(inputs.paths())?;
-            let expression = if outfile.is_empty() {
-                inputs.compile_lazy()
+            let has_sources = inputs.paths().next().is_some();
+            let uses_bound_sources = inputs.paths().any(|path|
+                casa_images::expr_file::is_image_expr(path)
+                    || casa_images::concat_file::is_image_concat(path)
+            );
+            let (expression, retained, paths) = if uses_bound_sources {
+                super::saved_expression::compile_inline(inputs, outfile.is_empty())?
             } else {
-                inputs.compile()
-            }
-            .map_err(raised)?;
+                let retained = AttachedImage::open_expression_inputs(inputs.paths())?;
+                let expression = if outfile.is_empty() { inputs.compile_lazy() } else { inputs.compile() }
+                    .map_err(raised)?;
+                (expression, retained, inputs.paths().map(Path::to_path_buf).collect())
+            };
             if !outfile.is_empty() && !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
                 return Err(raised(format!("Exception: File {outfile} exists, and the user does not want to remove it..")));
             }
-            check_geometry(&expression, inputs.paths().next().is_some())?;
+            check_geometry(&expression, has_sources)?;
             if !outfile.is_empty() {
-                for input in inputs.paths() {
-                    ensure_outfile_does_not_alias_input(Path::new(outfile), input).map_err(|_| raised(
-                        "Exception: Caught TableError. This often means the table you are trying to overwrite has been opened by another method and so cannot be overwritten at this time. Try closing it and rerunning."
-                    ))?;
+                let output = Path::new(outfile);
+                let overlap_error = || raised(
+                    "Exception: Caught TableError. This often means the table you are trying to overwrite has been opened by another method and so cannot be overwritten at this time. Try closing it and rerunning."
+                );
+                if uses_bound_sources {
+                    super::saved_expression::check_output_dependencies(output, &paths)
+                        .map_err(|_| overlap_error())?;
+                } else {
+                    for input in &paths {
+                        ensure_outfile_does_not_alias_input(output, input).map_err(|_| overlap_error())?;
+                    }
                 }
             }
             let metadata = if imagemd.is_empty() {
@@ -245,10 +258,7 @@ impl PyImageTool {
                 Ok(output)
             })?;
             if outfile.is_empty() {
-                result.retain_expression_inputs(
-                    retained,
-                    inputs.paths().map(Path::to_path_buf).collect(),
-                );
+                result.retain_expression_inputs(retained, paths);
             }
             Ok(result)
         })?;

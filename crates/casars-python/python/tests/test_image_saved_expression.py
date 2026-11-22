@@ -1043,3 +1043,65 @@ def test_nested_saved_copy_does_not_overwrite_an_operand(tmp_path, factory, loca
         np.testing.assert_array_equal(image.getchunk()[valid], (pixels * 3 + 1)[valid])
     finally:
         image.done()
+
+
+@pytest.mark.parametrize("source_kind", ["saved", "virtual"])
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("named", [False, True])
+def test_inline_imagecalc_uses_bound_expression_operands(tmp_path, source_kind, backend, named):
+    api = _backend(backend)
+    other_api = _backend("casars" if backend == "casa" else "casa") if named else api
+    leaf, extra, source, output = (tmp_path / name for name in
+                                  ("leaf.im", "extra.im", "source.im", "output.im"))
+    values = np.arange(12, dtype=np.float32).reshape(3, 4)
+    _operand(api, leaf, values)
+    extra_values = _typed_operand(api, extra, "float")
+    tool = api.image()
+    if source_kind == "saved":
+        _manifest(source, ImageExpr=f'"{leaf}" * 3')
+        expected = values * 3 + 2
+        validity = values > 4
+    else:
+        tool.imageconcat(str(source), [str(leaf), str(extra)], axis=0, relax=True,
+                         mode="nomove", tempclose=False).done()
+        expected = np.concatenate([values, extra_values]) + 2
+        validity = np.concatenate([values > 4, np.ones_like(extra_values, dtype=bool)])
+    expression = tool.imagecalc(outfile=str(output) if named else "", pixels=f'"{source}" + 2')
+    reader = expression
+    try:
+        if named:
+            assert expression.done()
+            reader = other_api.image()
+            assert reader.open(str(output))
+        np.testing.assert_array_equal(reader.getchunk(getmask=True), validity)
+        np.testing.assert_array_equal(reader.getchunk()[validity], expected[validity])
+        assert reader.pixeltype() == "float"
+    finally:
+        reader.done()
+        if reader is not expression:
+            expression.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("source_kind", ["saved", "virtual"])
+def test_inline_imagecalc_keeps_transitive_source_before_overwrite(tmp_path, source_kind):
+    api = _backend("casars")
+    leaf, source, extra = (tmp_path / name for name in ("leaf.im", "source.im", "extra.im"))
+    values = _typed_operand(api, leaf, "float")
+    other = _typed_operand(api, extra, "float")
+    tool = api.image()
+    if source_kind == "saved":
+        _manifest(source, ImageExpr=f'"{leaf}" * 3')
+    else:
+        tool.imageconcat(str(source), [str(leaf), str(extra)], axis=0,
+                         relax=True, mode="nomove").done()
+    try:
+        with pytest.raises(RuntimeError, match="Caught TableError"):
+            tool.imagecalc(outfile=str(leaf), pixels=f'"{source}" + 1', overwrite=True)
+        assert tool.open(str(leaf))
+        np.testing.assert_array_equal(tool.getchunk(), values)
+        assert tool.open(str(source))
+        expected = values * 3 if source_kind == "saved" else np.concatenate([values, other])
+        np.testing.assert_array_equal(tool.getchunk(), expected)
+    finally:
+        tool.done()

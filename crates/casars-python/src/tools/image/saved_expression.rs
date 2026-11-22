@@ -58,6 +58,58 @@ pub(super) fn open_for_concatenation(
     )
 }
 
+pub(super) fn check_output_dependencies<'a>(
+    output: &Path,
+    paths: impl IntoIterator<Item = &'a PathBuf>,
+) -> PyResult<()> {
+    let route = casa_tables::lexical_absolute(output);
+    let entry = route
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .zip(route.file_name())
+        .map(|(parent, name)| parent.join(name));
+    let referent = output.canonicalize().ok();
+    for path in paths {
+        if std::iter::once(&route)
+            .chain(entry.iter())
+            .chain(referent.iter())
+            .any(|output| path.starts_with(output) || output.starts_with(path))
+        {
+            return Err(raised(format!(
+                "Cannot overwrite output {} because it overlaps a saved image expression input {}",
+                output.display(),
+                path.display(),
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn compile_inline(
+    inputs: ImageToolExpressionInputs<'_>,
+    temporary_source_locks: bool,
+) -> PyResult<(ImageToolPixelExpression, Vec<AttachedImage>, Vec<PathBuf>)> {
+    let mut graph = CapturedGraph {
+        include_manifest_paths: true,
+        ..CapturedGraph::default()
+    };
+    let directory = std::env::current_dir().map_err(raised)?;
+    let root = PendingExpression {
+        path: PathBuf::new(),
+        manifest: None,
+        inputs,
+        next: 0,
+    };
+    let (pixels, _, _) = graph.compile(
+        root,
+        &directory,
+        AttachedImage::open,
+        &mut HashSet::new(),
+        temporary_source_locks,
+    )?;
+    Ok((pixels, graph.retained, graph.paths))
+}
+
 fn compile_at(
     path: &Path,
     open_source: fn(&Path) -> PyResult<AttachedImage>,
@@ -74,7 +126,7 @@ fn compile_at(
     };
     graph.retain_manifest(&captured)?;
     let (pixels, single_precision, misc) =
-        graph.compile(initial, &directory, open_source, active)?;
+        graph.compile(initial, &directory, open_source, active, true)?;
     captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
@@ -125,10 +177,11 @@ struct CapturedGraph {
 impl CapturedGraph {
     fn compile(
         &mut self,
-        root: PendingExpression,
+        root: PendingExpression<'_>,
         directory: &Path,
         open_source: fn(&Path) -> PyResult<AttachedImage>,
         active: &mut HashSet<PathBuf>,
+        temporary_source_locks: bool,
     ) -> PyResult<(ImageToolPixelExpression, bool, Option<RecordValue>)> {
         if !active.insert(root.path.clone()) {
             return Err(expression_cycle(&root.path));
@@ -170,8 +223,14 @@ impl CapturedGraph {
                 }
             } else {
                 let frame = pending.pop().expect("checked for an expression frame");
-                let (pixels, single) = frame.compile(&compiled)?;
-                let misc = frame.manifest.misc_info().map_err(raised)?;
+                let (pixels, single) = frame.compile(&compiled, temporary_source_locks)?;
+                let misc = frame
+                    .manifest
+                    .as_ref()
+                    .map(ToolExpressionManifest::misc_info)
+                    .transpose()
+                    .map_err(raised)?
+                    .flatten();
                 active.remove(&frame.path);
                 if pending.is_empty() {
                     return Ok((pixels, single, misc));
@@ -311,14 +370,14 @@ fn bound_image<T: ImageExprValue>(
     .compile()
 }
 
-struct PendingExpression {
+struct PendingExpression<'a> {
     path: PathBuf,
-    manifest: ToolExpressionManifest,
-    inputs: ImageToolExpressionInputs<'static>,
+    manifest: Option<ToolExpressionManifest>,
+    inputs: ImageToolExpressionInputs<'a>,
     next: usize,
 }
 
-impl PendingExpression {
+impl PendingExpression<'_> {
     fn from_manifest(
         path: PathBuf,
         manifest: ToolExpressionManifest,
@@ -329,7 +388,7 @@ impl PendingExpression {
                 .map_err(raised)?;
         Ok(Self {
             path,
-            manifest,
+            manifest: Some(manifest),
             inputs,
             next: 0,
         })
@@ -344,12 +403,18 @@ impl PendingExpression {
     fn compile(
         &self,
         compiled: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
+        temporary_source_locks: bool,
     ) -> PyResult<(ImageToolPixelExpression, bool)> {
         let (pixels, single) = self
             .inputs
-            .compile_with_saved_operands(compiled)
+            .compile_with_bound_operands(
+                compiled,
+                temporary_source_locks || self.manifest.is_some(),
+            )
             .map_err(raised)?;
-        super::imagecalc::check_geometry(&pixels, self.inputs.paths().len() != 0)?;
+        if self.manifest.is_some() {
+            super::imagecalc::check_geometry(&pixels, self.inputs.paths().len() != 0)?;
+        }
         Ok((pixels, single))
     }
 }

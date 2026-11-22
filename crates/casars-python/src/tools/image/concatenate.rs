@@ -273,29 +273,10 @@ impl<'a> Input<'a> {
 }
 
 fn protect_expression_sources(output: &Path, inputs: &[Input<'_>]) -> PyResult<()> {
-    let route = casa_tables::lexical_absolute(output);
-    let entry = route
-        .parent()
-        .and_then(|parent| parent.canonicalize().ok())
-        .zip(route.file_name())
-        .map(|(parent, name)| parent.join(name));
-    let referent = output.canonicalize().ok();
-    for input in inputs {
-        for path in &input.expression_operands {
-            if std::iter::once(&route)
-                .chain(entry.iter())
-                .chain(referent.iter())
-                .any(|output| path.starts_with(output) || output.starts_with(path))
-            {
-                return Err(raised(format!(
-                    "Cannot overwrite output {} because it overlaps a saved image expression input {}",
-                    output.display(),
-                    path.display(),
-                )));
-            }
-        }
-    }
-    Ok(())
+    saved_expression::check_output_dependencies(
+        output,
+        inputs.iter().flat_map(|input| &input.expression_operands),
+    )
 }
 
 fn coordinate_record(first: &Input<'_>, plan: &ConcatenationPlan) -> PyResult<RecordValue> {

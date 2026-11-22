@@ -178,13 +178,29 @@ impl<'a> ImageToolExpressionInputs<'a> {
         &self,
         saved: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
     ) -> Result<(ImageToolPixelExpression, bool), ImageError> {
+        self.compile_with_bound_operands(saved, true)
+    }
+
+    /// Compile with supplied expression bindings and the caller's lock policy.
+    ///
+    /// # Errors
+    /// Returns an error for an unreadable operand or invalid expression.
+    pub fn compile_with_bound_operands(
+        &self,
+        bound: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
+        temporary_source_locks: bool,
+    ) -> Result<(ImageToolPixelExpression, bool), ImageError> {
         let opened = self
             .operands
             .iter()
             .map(|operand| {
-                let source = match saved.get(&operand.path) {
+                let source = match bound.get(&operand.path) {
                     Some((pixels, single_precision)) => saved_operand(pixels, *single_precision)?,
-                    None => open_path_with_mask_name(&operand.path, operand.mask.clone(), true)?,
+                    None => open_path_with_mask_name(
+                        &operand.path,
+                        operand.mask.clone(),
+                        temporary_source_locks,
+                    )?,
                 };
                 Ok((operand.name.clone(), source))
             })
