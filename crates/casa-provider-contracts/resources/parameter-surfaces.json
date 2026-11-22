@@ -12986,8 +12986,7 @@
             "provider": {"field": "createmms"},
             "python": {"name": "createmms"},
             "presentation": {"label": "Create MMS", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "separationaxis",
@@ -13001,8 +13000,7 @@
             "provider": {"field": "separationaxis"},
             "python": {"name": "separationaxis"},
             "presentation": {"label": "Separation Axis", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "numsubms",
@@ -13014,10 +13012,9 @@
           "projections": {
             "cli": {"flags": ["--numsubms"], "metavar": "N"},
             "provider": {"field": "numsubms"},
-            "python": {"name": "numsubms"},
+            "python": {"name": "numsubms", "type_hint": "str | int"},
             "presentation": {"label": "Sub-MS Count", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "tileshape",
@@ -13688,13 +13685,13 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "surface_note": "The standalone provider executes members sequentially.",
           "projections": {
             "cli": {"flags": ["--disableparallel"], "false_flags": ["--no-disableparallel"]},
             "provider": {"field": "disableparallel"},
             "python": {"name": "disableparallel"},
             "presentation": {"label": "Disable Parallel", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "ddistart",
@@ -13736,8 +13733,7 @@
             "provider": {"field": "monolithic_processing"},
             "python": {"name": "monolithic_processing"},
             "presentation": {"label": "Monolithic Processing", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "reindex",

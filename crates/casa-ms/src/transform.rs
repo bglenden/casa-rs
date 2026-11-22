@@ -30,7 +30,7 @@ use crate::schema::SubtableId;
 use crate::schema::main_table::OptionalMainColumn;
 use crate::selection::{
     ChannelRange, MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget,
-    ResolvedMsSelectionRow, RowGrammar, SpwSelection,
+    ResolvedMsSelectionRow, RowGrammar, SpwSelection, TimeSelection,
 };
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
@@ -149,6 +149,38 @@ pub struct MsTransformTaskOptions {
     pub keep_mms: Option<bool>,
     /// The raw numeric timebin for retained split's exact combine="scan" check.
     pub retained_scan_span: Option<f64>,
+    /// Multi-MS dispatch for the public mstransform task.
+    pub multi_ms: Option<MsTransformMultiMsOptions>,
+}
+
+/// Partition allocation for a new Multi-MS product.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MsPartitionAxis {
+    /// Keep scans together.
+    Scan,
+    /// Keep spectral windows together.
+    SpectralWindow,
+    /// Keep baselines together.
+    Baseline,
+    /// Distribute scan and data-description pairs by visibility count.
+    Automatic,
+}
+
+/// Multi-MS creation and dispatch arguments for mstransform.
+#[derive(Debug, Clone, Copy)]
+pub struct MsTransformMultiMsOptions {
+    /// Create a Multi-MS when transforming a monolithic input.
+    pub create: bool,
+    /// How to allocate input rows among newly created members.
+    pub axis: MsPartitionAxis,
+    /// Requested member count. None selects CASA's standalone default.
+    pub count: Option<std::num::NonZeroUsize>,
+    /// Treat an input Multi-MS as a single table.
+    pub monolithic: bool,
+    /// The original task requests cross-scan averaging with only the scan boundary removed.
+    pub scan_span: bool,
+    /// The original Multi-MS request asks for more than one output SPW.
+    pub multiple_spws: bool,
 }
 
 /// Tile layout options accepted by the CASA mstransform task.
@@ -227,6 +259,9 @@ pub struct MsTransformReport {
     pub width: usize,
     /// End-to-end runtime in nanoseconds.
     pub elapsed_ns: u64,
+    /// Public return value for retained Multi-MS execution, if dispatched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_mms: Option<bool>,
     /// Canonical bounded-writer telemetry for the output MAIN table.
     pub write_telemetry: MeasurementSetWriteTelemetry,
 }
@@ -243,6 +278,14 @@ pub enum MsTransformError {
         /// Name of the argument.
         parameter: &'static str,
         /// Reason for rejection.
+        reason: String,
+    },
+    /// A Multi-MS argument was rejected.
+    #[error("{reason}")]
+    MultiMsParameter {
+        /// Name of the argument.
+        parameter: &'static str,
+        /// Message for the task caller.
         reason: String,
     },
     /// The retained Multi-MS cannot average across the selected scans.
@@ -427,6 +470,26 @@ fn materialize_transform(
         })?;
     let mut physical_request = request.clone();
     physical_request.output_ms = target.staging_path().to_path_buf();
+    if let Some(configuration) = options.multi_ms
+        && let Some(mut report) = multi_ms::transform(
+            &physical_request,
+            &request.output_ms,
+            grammar,
+            options,
+            configuration,
+        )?
+    {
+        if report.row_count > 0 {
+            target
+                .commit()
+                .map_err(|error| MsTransformError::PrepareOutput {
+                    path: request.output_ms.display().to_string(),
+                    reason: error.to_string(),
+                })?;
+        }
+        report.output_ms.clone_from(&request.output_ms);
+        return Ok(report);
+    }
     let members = if options.keep_mms.is_some() {
         multi_ms::members(&request.input_ms)?
     } else {
@@ -442,19 +505,7 @@ fn materialize_transform(
                 &members,
             )?
             else {
-                return Ok(MsTransformReport {
-                    input_ms: request.input_ms.clone(),
-                    output_ms: request.output_ms.clone(),
-                    row_count: 0,
-                    source_column: String::new(),
-                    output_column: String::new(),
-                    spw: request.spw.clone(),
-                    spectral_window_ids: Vec::new(),
-                    output_channels_by_spw: BTreeMap::new(),
-                    width: normalized_width(request.width),
-                    elapsed_ns: 0,
-                    write_telemetry: MeasurementSetWriteTelemetry::default(),
-                });
+                return Ok(empty_transform_report(request));
             };
             report
         }
@@ -477,6 +528,23 @@ fn materialize_transform(
     Ok(report)
 }
 
+fn empty_transform_report(request: &MsTransformRequest) -> MsTransformReport {
+    MsTransformReport {
+        input_ms: request.input_ms.clone(),
+        output_ms: request.output_ms.clone(),
+        row_count: 0,
+        source_column: String::new(),
+        output_column: String::new(),
+        spw: request.spw.clone(),
+        spectral_window_ids: Vec::new(),
+        output_channels_by_spw: BTreeMap::new(),
+        width: normalized_width(request.width),
+        elapsed_ns: 0,
+        retained_mms: None,
+        write_telemetry: MeasurementSetWriteTelemetry::default(),
+    }
+}
+
 fn transform_product(
     request: &MsTransformRequest,
     grammar: RowGrammar,
@@ -484,7 +552,32 @@ fn transform_product(
     metadata_template: Option<&Path>,
     operation: Option<SpectralOperation<'_>>,
 ) -> Result<MsTransformReport, MsTransformError> {
-    let report = mstransform_staged(request, grammar, options, metadata_template, operation)?;
+    transform_selected_product(
+        request,
+        grammar,
+        options,
+        metadata_template,
+        operation,
+        None,
+    )
+}
+
+fn transform_selected_product(
+    request: &MsTransformRequest,
+    grammar: RowGrammar,
+    options: &MsTransformTaskOptions,
+    metadata_template: Option<&Path>,
+    operation: Option<SpectralOperation<'_>>,
+    partition: Option<TransformSelection>,
+) -> Result<MsTransformReport, MsTransformError> {
+    let report = mstransform_staged(
+        request,
+        grammar,
+        options,
+        metadata_template,
+        operation,
+        partition,
+    )?;
     if let Some(history) = &options.history {
         task_history::append_task_history(&request.output_ms, history)?;
     }
@@ -501,6 +594,7 @@ fn mstransform_staged(
     options: &MsTransformTaskOptions,
     metadata_template: Option<&Path>,
     mut operation: Option<SpectralOperation<'_>>,
+    partition: Option<TransformSelection>,
 ) -> Result<MsTransformReport, MsTransformError> {
     let order = match operation.as_ref().map(|op| &op.kernel) {
         Some(SpectrumOperator::Convolution(_)) => selection_metadata::MainRowOrder::SingleDish,
@@ -559,39 +653,17 @@ fn mstransform_staged(
             })?;
     let visibility =
         VisibilityColumns::resolve(input.main_table(), request.data_column, &request.input_ms)?;
-    let mut selection = request.selection.clone();
-    if operation.is_some() {
-        selection.antenna = Some(convolution::auto_correlations(
-            &input,
-            selection.antenna.as_deref(),
-        )?);
-    }
-    if selection.spw.is_none() {
-        selection.spw = Some(spw.to_string());
-    }
-    let correlations = if grammar == RowGrammar::Transform {
-        selection
-            .correlation
-            .take()
-            .filter(|text| !text.is_empty())
-            .map(|text| CorrelationSelection::resolve(&input, &text))
-            .transpose()
-            .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
-    } else {
-        None
+    let TransformSelection {
+        selection,
+        correlations,
+        time: time_selection,
+        rows,
+        antenna_ids,
+        tile_window,
+    } = match partition {
+        Some(partition) => partition,
+        None => resolve_transform_selection(&input, request, grammar, budget, operation.is_some())?,
     };
-    if let Some(correlations) = correlations.as_ref()
-        && !correlations
-            .constrain(&mut selection)
-            .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
-    {
-        return Err(MsTransformError::EmptySelection {
-            path: request.input_ms.display().to_string(),
-        });
-    }
-    let (resolved_rows, time_selection) = input
-        .resolve_selection_with_time(&selection, budget, grammar)
-        .map_err(selection_error)?;
     maybe_log_transform_progress(
         "select_rows",
         stage_started_at.elapsed(),
@@ -662,13 +734,7 @@ fn mstransform_staged(
         };
     let ddid_to_spw = data_description_spw_map(&input)?;
     let mut time_rows = Vec::new();
-    let antenna_ids = selection_metadata::selected_antenna_ids(
-        &input,
-        selection.antenna.as_deref(),
-        &resolved_rows.selected_rows,
-    )?;
-    let (mut selected_rows, mut selected_ddids): (Vec<_>, Vec<_>) = resolved_rows
-        .selected_rows
+    let (mut selected_rows, mut selected_ddids): (Vec<_>, Vec<_>) = rows
         .into_iter()
         .filter(|row| {
             spw_selection.selects_row(row.data_desc_id)
@@ -1070,7 +1136,7 @@ fn mstransform_staged(
             output_layout::resolve_tiling(
                 &input,
                 mode,
-                &spw_selection,
+                (&spw_selection, tile_window),
                 (
                     &channel_selection,
                     (combined_grid.is_none() && regrid_options.is_none()).then_some(&widths),
@@ -2021,7 +2087,78 @@ fn mstransform_staged(
         },
         width: normalized_width(request.width),
         elapsed_ns: started_at.elapsed().as_nanos() as u64,
+        retained_mms: None,
         write_telemetry,
+    })
+}
+
+struct TransformSelection {
+    selection: MsSelection,
+    correlations: Option<CorrelationSelection>,
+    time: Option<TimeSelection>,
+    rows: Vec<ResolvedMsSelectionRow>,
+    antenna_ids: Option<Vec<i32>>,
+    tile_window: Option<i32>,
+}
+
+fn resolve_transform_selection(
+    input: &MeasurementSet,
+    request: &MsTransformRequest,
+    grammar: RowGrammar,
+    budget: MsSelectionIoBudget,
+    auto_correlations: bool,
+) -> Result<TransformSelection, MsTransformError> {
+    let error = |reason: MsSelectionError| MsTransformError::SelectRows {
+        path: request.input_ms.display().to_string(),
+        source: match reason {
+            MsSelectionError::Domain(source) => source,
+            other => MsError::InvalidInput(other.to_string()),
+        },
+    };
+    let mut selection = request.selection.clone();
+    if auto_correlations {
+        selection.antenna = Some(convolution::auto_correlations(
+            input,
+            selection.antenna.as_deref(),
+        )?);
+    }
+    if selection.spw.is_none() {
+        let spw = request.spw.trim();
+        selection.spw = Some(if spw.is_empty() { "*" } else { spw }.into());
+    }
+    let correlations = if grammar == RowGrammar::Transform {
+        selection
+            .correlation
+            .take()
+            .filter(|text| !text.is_empty())
+            .map(|text| CorrelationSelection::resolve(input, &text))
+            .transpose()
+            .map_err(|source| error(MsSelectionError::Domain(source)))?
+    } else {
+        None
+    };
+    if let Some(correlations) = correlations.as_ref()
+        && !correlations
+            .constrain(&mut selection)
+            .map_err(|source| error(MsSelectionError::Domain(source)))?
+    {
+        return Err(MsTransformError::EmptySelection {
+            path: request.input_ms.display().to_string(),
+        });
+    }
+    let (resolved, time) = input
+        .resolve_selection_with_time(&selection, budget, grammar)
+        .map_err(error)?;
+    let rows = resolved.selected_rows;
+    let antenna_ids =
+        selection_metadata::selected_antenna_ids(input, selection.antenna.as_deref(), &rows)?;
+    Ok(TransformSelection {
+        selection,
+        correlations,
+        time,
+        rows,
+        antenna_ids,
+        tile_window: None,
     })
 }
 

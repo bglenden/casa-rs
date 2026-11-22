@@ -396,7 +396,7 @@ def mstransform(
     outputvis: StrPath = ...,
     createmms: bool = ...,
     separationaxis: str = ...,
-    numsubms: str = ...,
+    numsubms: str | int = ...,
     tileshape: list[int] | tuple[int, ...] = ...,
     field: str = ...,
     spw: str = ...,

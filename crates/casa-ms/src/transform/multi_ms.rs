@@ -14,6 +14,12 @@ use super::{
 use crate::SubtableId;
 use crate::selection::syntax::parse_numeric_row_id_ranges;
 
+mod partition;
+mod partition_metadata;
+mod processing;
+
+pub(super) use processing::transform;
+
 pub(super) fn members(path: &Path) -> Result<Option<Vec<PathBuf>>, MsTransformError> {
     let Ok(info) = fs::read_to_string(path.join("table.info")) else {
         return Ok(None);
@@ -57,6 +63,7 @@ pub(super) fn retain(
                 match parameter.as_str() {
                     "vis" => *value = format!("\"{}\"", part.input_ms.display()),
                     "outputvis" => *value = format!("\"{}\"", final_path.join(&local).display()),
+                    "createmms" => *value = "False".into(),
                     _ => {}
                 }
             }
@@ -75,7 +82,7 @@ pub(super) fn retain(
                 | MsTransformError::SelectRows { .. }
                 | MsTransformError::MissingDataColumn { .. }),
             ) => {
-                tracing::warn!(partition = %member.display(), error = %error, "split skipped a Multi-MS partition")
+                tracing::warn!(partition = %member.display(), error = %error, "transform skipped a Multi-MS partition")
             }
             Err(error) => return Err(error),
         }
@@ -85,7 +92,7 @@ pub(super) fn retain(
         return Ok(None);
     };
     install_shared_subtables(destination, &outputs)?;
-    let info = container_info(&request.input_ms, &outputs);
+    let info = container_info(partition_axis(&request.input_ms).as_deref(), &outputs);
     let concat = Table::concat(tables).map_err(|source| table_error(destination, source))?;
     concat
         .save_with_info(TableOptions::new(destination), &info)
@@ -163,8 +170,8 @@ fn check_scan_span(
     Ok(())
 }
 
-fn container_info(input: &Path, members: &[PathBuf]) -> TableInfo {
-    let mut readme = partition_axis(input)
+fn container_info(axis: Option<&str>, members: &[PathBuf]) -> TableInfo {
+    let mut readme = axis
         .map(|axis| format!("AxisType = {axis}"))
         .into_iter()
         .collect::<Vec<_>>();

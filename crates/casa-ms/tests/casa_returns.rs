@@ -248,11 +248,13 @@ fn transform_values_not_implemented_yet_are_refused_naming_978() {
     let workspace = tempfile::tempdir().unwrap();
     let vis = create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
     let outputvis = workspace.path().join("out.ms");
+    // Regridding now runs through the native provider. Exercise the refusal
+    // with the task's still-unimplemented continuum subtraction operation.
     for (binary, surface, values, parameter) in [(
         MSTRANSFORM,
         "mstransform",
-        json!({"outputvis": outputvis, "regridms": true}),
-        "regridms",
+        json!({"outputvis": outputvis, "datacolumn": "data", "douvcontsub": true}),
+        "douvcontsub",
     )] {
         let mut values = values;
         values["vis"] = json!(vis);
