@@ -127,10 +127,13 @@ impl MiriadImage {
             // Casacore exposes only the axes it decoded from MIRIAD. The
             // stored pixel shape is still available when a coordinate is absent.
             let mut decoded = CoordinateSystem::new();
-            for index in 0..coordinates.n_coordinates() {
-                let coordinate = coordinates.coordinate(index);
-                if coordinate.coordinate_type() != CoordinateType::Linear {
-                    decoded.add_coordinate(coordinate.clone());
+            for kind in [
+                CoordinateType::Direction,
+                CoordinateType::Spectral,
+                CoordinateType::Stokes,
+            ] {
+                if let Some(index) = coordinates.find_coordinate(kind) {
+                    decoded.add_coordinate(coordinates.coordinate(index).clone());
                 }
             }
             coordinates = decoded;
@@ -452,6 +455,11 @@ impl<'a> Items<'a> {
             .map(|axis| self.text(&format!("ctype{axis}")))
             .collect::<Result<Vec<_>, _>>()?;
         let last_stokes = axes.iter().rposition(|kind| kind.contains("STOKES"));
+        let galactic = axes
+            .iter()
+            .rev()
+            .find(|kind| sky_axis(kind) == Some(SkyAxis::Longitude))
+            .is_some_and(|kind| kind.contains("GLON"));
         for (index, mut kind) in axes.into_iter().enumerate() {
             let axis = index + 1;
             header.set(
@@ -460,12 +468,6 @@ impl<'a> Items<'a> {
             );
             if !kind.is_ascii() {
                 return Err(malformed(format!("CTYPE{axis} must be ASCII")));
-            }
-            let direction_axis = ["RA---", "DEC--", "GLON-", "GLAT-"]
-                .iter()
-                .any(|prefix| kind.starts_with(prefix));
-            if direction_axis && kind[5..].trim_matches(['-', ' ']).is_empty() {
-                kind.clear();
             }
             let mut pix = self.number(&format!("crpix{axis}"), 0.)?;
             let mut step = self.number(&format!("cdelt{axis}"), 0.)?;
@@ -482,16 +484,38 @@ impl<'a> Items<'a> {
                     }
                 }
                 ""
-            } else if direction_axis && !kind.is_empty() {
-                if step == 0. && (pix - 1.).abs() <= 1e-13 {
-                    step = 1.;
+            } else if let Some(axis) = sky_axis(&kind) {
+                let projection = kind
+                    .get(4..)
+                    .unwrap_or_default()
+                    .trim_start_matches('-')
+                    .replace(' ', "");
+                kind.clear();
+                if projection.is_empty() {
+                    ""
+                } else {
+                    let prefix = match (galactic, axis) {
+                        (true, SkyAxis::Longitude) => "GLON-",
+                        (true, SkyAxis::Latitude) => "GLAT-",
+                        (false, SkyAxis::Longitude) => "RA---",
+                        (false, SkyAxis::Latitude) => "DEC--",
+                    };
+                    kind.push_str(prefix);
+                    kind.push_str(if projection == "GLS" {
+                        "SFL"
+                    } else {
+                        &projection
+                    });
+                    if step == 0. && (pix - 1.).abs() <= 1e-13 {
+                        step = 1.;
+                    }
+                    if step == 0. {
+                        return Err(singular_wcs());
+                    }
+                    step = step.to_degrees();
+                    value = value.to_degrees();
+                    "deg"
                 }
-                if step == 0. {
-                    return Err(singular_wcs());
-                }
-                step = step.to_degrees();
-                value = value.to_degrees();
-                "deg"
             } else if kind.starts_with("FREQ") {
                 if step == 0. {
                     return Err(singular_wcs());
@@ -530,6 +554,9 @@ impl<'a> Items<'a> {
                 kind.replace_range(..4, "FREQ");
                 "Hz"
             } else {
+                // MIRIAD leaves other axes undecoded. The FITS bridge must
+                // not interpret their names as FITS-specific coordinate types.
+                kind.clear();
                 ""
             };
             header.set(format!("CTYPE{axis}"), FitsValue::String(kind));
@@ -539,6 +566,25 @@ impl<'a> Items<'a> {
             header.set(format!("CUNIT{axis}"), FitsValue::String(unit.into()));
         }
         Ok((header, stokes))
+    }
+}
+
+#[derive(PartialEq, Eq)]
+enum SkyAxis {
+    Longitude,
+    Latitude,
+}
+
+fn sky_axis(kind: &str) -> Option<SkyAxis> {
+    if kind.starts_with("RA") || kind.starts_with("LL") || kind.contains("LON") {
+        Some(SkyAxis::Longitude)
+    } else if kind.starts_with("DEC")
+        || kind.contains("LAT")
+        || kind.get(..3).is_some_and(|head| head.contains("MM"))
+    {
+        Some(SkyAxis::Latitude)
+    } else {
+        None
     }
 }
 
