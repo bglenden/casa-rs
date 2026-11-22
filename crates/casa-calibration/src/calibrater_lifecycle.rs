@@ -899,7 +899,8 @@ impl CalibraterLifecycle {
     /// Returns an error if the current equation cannot be solved.
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
-        if !equation.apply.tableless_opacity.is_empty() {
+        if !equation.apply.tableless_opacity.is_empty() && equation.solve.is_some() {
+            self.last_solve_stats = None;
             self.reset(true, true)?;
             return Err(CalibraterLifecycleError::ApplyConfiguration(
                 "Error in TOpac::calcPar()".into(),

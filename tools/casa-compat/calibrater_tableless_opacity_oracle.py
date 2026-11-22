@@ -51,6 +51,26 @@ def exercise(factory, capture, vis, output, kind, legacy, operation):
         assert tool.close()
 
 
+def solve_after_success(factory, vis, product, output, kind):
+    tool = factory()
+    assert tool.open(str(vis)) and tool.selectvis(field='0')
+    try:
+        assert tool.setptmodel([1.6, 0., 0., 0.])
+        assert tool.setsolve('G', 'inf', str(product), refant='A0') and tool.solve()
+        assert 'solvestats' in tool.returndict()
+        activity = tool.activityrec()
+        assert 'nSucceed' in activity
+        assert tool.setsolve('G', 'inf', str(output), refant='A0')
+        assert tool.setapply(type=kind, opacity=.1)
+        assert result(tool.solve) == (False, ('RuntimeError', 'Error in Calibrater::solve.'))
+        record = tool.returndict()
+        assert 'solvestats' not in record and len(record['solve_tables']) == 0
+        assert not output.exists()
+        same_record(tool.activityrec(), activity)
+    finally:
+        assert tool.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -82,6 +102,11 @@ def main():
                                           kind, legacy, operation)
                     assert actual == expected, (label, actual, expected)
                     print(label, 'matched', flush=True)
+        for kind in ('TOpac', 'TfOpac'):
+            for name, factory in (('casa', casa_calibrater), ('native', native_calibrater)):
+                solve_after_success(factory, products[name], work/f'prior-{kind}-{name}.cal',
+                                    output, kind)
+            print(kind, 'prior statistics and activity matched', flush=True)
 
 
 if __name__ == '__main__':
