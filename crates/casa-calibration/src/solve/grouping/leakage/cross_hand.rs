@@ -1,9 +1,48 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Weighted cross-hand phase and position angle for a known source.
 
+use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
 
 use crate::solve::kernel::complex32_to_64;
+
+use super::SolveSamples;
+
+/// VI1 normalizes each correlation's scalar weight by the square of its
+/// mean nonzero model amplitude over unflagged channels.
+pub(super) fn legacy_row_weights(
+    samples: &SolveSamples<'_>,
+    flags: &ArrayD<bool>,
+    model: &ArrayD<Complex32>,
+    order: [usize; 4],
+    channels: &[usize],
+) -> [f32; 4] {
+    let mut amplitudes = [0.0; 4];
+    let mut counts = [0; 4];
+    let mut weights = [0.0; 4];
+    for &channel in channels {
+        if channel >= samples.data.ncols() || order.iter().any(|&corr| flags[[corr, channel]]) {
+            continue;
+        }
+        for (index, corr) in order.into_iter().enumerate() {
+            let amplitude = model[[corr, channel]].norm();
+            if amplitude > 0.0 {
+                if counts[index] == 0 {
+                    weights[index] = samples.weights[[corr, channel]];
+                }
+                amplitudes[index] += amplitude;
+                counts[index] += 1;
+            }
+        }
+    }
+    for (index, weight) in weights.iter_mut().enumerate() {
+        if counts[index] != 0 {
+            let amplitude = amplitudes[index] / counts[index] as f32;
+            *weight *= amplitude * amplitude;
+        }
+    }
+    weights
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum Measurement {

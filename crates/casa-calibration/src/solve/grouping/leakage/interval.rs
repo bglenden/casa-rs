@@ -21,7 +21,7 @@ use super::{
 
 pub(super) enum IntervalFits {
     LeastSquares(Vec<LeakageFit>, GainSolveMode),
-    CrossHand(Vec<CrossHandFit>, Measurement),
+    CrossHand(Vec<CrossHandFit>, Measurement, GainSolveMode),
     Parallactic(ParallacticAverages),
     Iterative {
         algebra: LeakageAlgebra,
@@ -133,6 +133,7 @@ impl IntervalFits {
             Self::CrossHand(
                 (0..channels).map(|_| CrossHandFit::default()).collect(),
                 measurement,
+                mode,
             )
         } else if kind.iterative() {
             Self::Iterative {
@@ -166,7 +167,9 @@ impl IntervalFits {
         let require_all = matches!(self, Self::LeastSquares(..));
         for (channel, mean) in bins.iter_mut().enumerate() {
             if let Some((mut data, model, mut weights)) = std::mem::take(mean).finish(require_all) {
-                if let Self::LeastSquares(_, mode) | Self::Iterative { mode, .. } = self
+                if let Self::LeastSquares(_, mode)
+                | Self::CrossHand(_, _, mode)
+                | Self::Iterative { mode, .. } = self
                     && *mode != GainSolveMode::AmplitudePhase
                 {
                     for (value, weight) in data.iter_mut().zip(&mut weights) {
@@ -177,7 +180,7 @@ impl IntervalFits {
                     Self::LeastSquares(fits, _) => {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
-                    Self::CrossHand(fits, measurement) => {
+                    Self::CrossHand(fits, measurement, _) => {
                         fits[channel].add(*measurement, data, model, weights)
                     }
                     Self::Parallactic(_) => unreachable!("time-segment accumulation"),
@@ -230,7 +233,7 @@ impl IntervalFits {
                 previous,
                 stages.is_some(),
             )),
-            Self::CrossHand(fits, measurement) => {
+            Self::CrossHand(fits, measurement, _) => {
                 Ok(cross_hand(fits, measurement, antennas, location))
             }
             Self::Parallactic(average) => {

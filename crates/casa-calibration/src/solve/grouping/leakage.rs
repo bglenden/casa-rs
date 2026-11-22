@@ -249,7 +249,12 @@ pub(crate) fn solve_polarization_with_activity(
         .map_err(error)?;
     models.phase_times =
         weights::chunk_phase_times(&ordered, request.combine, models.dynamic_fields());
-    let spectral_weights = SpectralWeights::new(ms, &ordered, request.combine).map_err(error)?;
+    let legacy_cross_hand = legacy && request.kind.cross_hand();
+    let spectral_weights = if legacy_cross_hand {
+        SpectralWeights::default()
+    } else {
+        SpectralWeights::new(ms, &ordered, request.combine).map_err(error)?
+    };
     let parallactic_angles = request
         .kind
         .parallactic()
@@ -304,7 +309,7 @@ pub(crate) fn solve_polarization_with_activity(
         windows: &windows,
         parallactic_angles: parallactic_angles.as_ref(),
         tool: activity.is_some(),
-        legacy_cross_hand: legacy && request.kind.cross_hand(),
+        legacy_cross_hand,
     };
     let mut intervals = ordered
         .chunk_by(|a, b| a.1 == b.1 && a.2 == b.2)
@@ -790,7 +795,12 @@ impl LeakageInputs<'_> {
         let stokes_i = |channel| (model[[order[0], channel]] + model[[order[3], channel]]) * 0.5;
         // The X solve time combines baseline centroids using spectral
         // weights, while time averaging each baseline uses scalar weights.
-        let scalar_weight = self.request.kind.cross_hand().then(|| {
+        let legacy_weights = self.legacy_cross_hand.then(|| {
+            cross_hand::legacy_row_weights(&samples, flags, &model, order, &window.channels)
+        });
+        let scalar_weight = if let Some(weights) = legacy_weights {
+            Some(f64::from((weights[0] + weights[3]) * 0.5))
+        } else if self.request.kind.cross_hand() {
             let normalized = SolveSamples {
                 flags: samples::two_dimensional(flags),
                 ..samples
@@ -804,14 +814,8 @@ impl LeakageInputs<'_> {
                 excluded: &[],
                 bin_weights: None,
             };
-            let correlations: &[usize] = if self.legacy_cross_hand {
-                &[order[0], order[3]]
-            } else {
-                &order
-            };
-            correlations
-                .iter()
-                .copied()
+            let sum = order
+                .into_iter()
                 .map(|corr| {
                     samples::centroid_weight(
                         &normalized,
@@ -829,15 +833,18 @@ impl LeakageInputs<'_> {
                     )
                 })
                 .filter(|weight| weight.is_finite() && *weight > 0.0)
-                .sum()
-        });
+                .sum();
+            Some(sum)
+        } else {
+            None
+        };
         let mut total = 0.0;
         let retain_unweighted_model = self.request.kind.iterative()
             && matches!(self.request.interval, GainSolveInterval::Integration)
             && window.bin_width == 1;
         for (position, &channel) in window.channels.iter().enumerate() {
             if channel >= samples.data.shape()[1]
-                || (!self.request.correlation_dependent_flags
+                || ((!self.request.correlation_dependent_flags || self.legacy_cross_hand)
                     && order.iter().any(|&corr| flags[[corr, channel]]))
                 || order.iter().all(|&corr| flags[[corr, channel]])
             {
@@ -845,12 +852,14 @@ impl LeakageInputs<'_> {
             }
             let slot = position / window.bin_width;
             let mut data = order.map(|corr| samples.data[[corr, channel]]);
-            let mut weights = order.map(|corr| {
-                if flags[[corr, channel]] {
-                    0.0
-                } else {
-                    samples.weights[[corr, channel]]
-                }
+            let mut weights = legacy_weights.unwrap_or_else(|| {
+                order.map(|corr| {
+                    if flags[[corr, channel]] {
+                        0.0
+                    } else {
+                        samples.weights[[corr, channel]]
+                    }
+                })
             });
             let mut model = order.map(|corr| model[[corr, channel]]);
             if let Some(intensity) = &intensity {
@@ -880,7 +889,11 @@ impl LeakageInputs<'_> {
                         let normalized = super::super::kernel::complex32_to_64(data[corr])
                             / super::super::kernel::complex32_to_64(model);
                         data[corr] = Complex32::new(normalized.re as f32, normalized.im as f32);
-                        weights[corr] *= amplitude * amplitude;
+                        if !self.legacy_cross_hand {
+                            weights[corr] *= amplitude * amplitude;
+                        }
+                    } else if self.legacy_cross_hand {
+                        data[corr] = Complex32::ZERO;
                     }
                 }
             }

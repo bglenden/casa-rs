@@ -103,6 +103,40 @@ def reject_legacy(work, engines, vis):
             assert tool.close()
 
 
+def legacy_weights(work, engines, vis, sky, phase):
+    with opened(vis) as table:
+        time = table.getcol('TIME')
+        selected = table.getcol('FIELD_ID') == 0
+    later = selected & (time > np.median(time[selected]))
+    model = sky.copy()
+    model[:, 0, ::2] *= 3.5
+    model[:, 1::2, later] *= 6.
+    data = put_observations(vis, model, [phase])
+    data[1, :, later] *= np.exp(.75j)
+    data[2, :, later] *= np.exp(-.75j)
+    data[:, ::2, ::3] *= .2
+    with opened(vis, True) as table:
+        assert table.putcol('DATA', data)
+    case(work, engines, vis, 'Xf-legacy-variable-model', 'Xf', None, old=True)
+    case(work, engines, vis, 'Xf-legacy-variable-phase', 'Xf', None, old=True,
+         options={'apmode': 'P'})
+    with opened(vis, True) as table:
+        for column in ('WEIGHT_SPECTRUM', 'SIGMA_SPECTRUM'):
+            if column in table.colnames():
+                table.removecols(column)
+            desc = table.getcoldesc('DATA')
+            desc.update(valueType='float', dataManagerType='StandardStMan',
+                        dataManagerGroup='StandardStMan', option=0)
+            desc.pop('shape', None)
+            table.addcols({column: desc})
+        channels = np.arange(data.shape[1])[None, :, None]
+        rows = np.arange(data.shape[2])[None, None, :]
+        sigmas = np.broadcast_to(.5 + channels / 10 + (rows % 7) / 15, data.shape)
+        assert table.putcol('SIGMA_SPECTRUM', sigmas.astype(np.float32))
+        assert table.putcol('WEIGHT_SPECTRUM', np.ones(data.shape, np.float32))
+    case(work, engines, vis, 'Xf-legacy-ignores-spectral-sigma', 'Xf', None, old=True)
+
+
 def compare_basis(work, basis, engines):
     work.mkdir()
     vis, leakage, gain, stokes, sky = plant(work, basis)
@@ -154,6 +188,8 @@ def compare_basis(work, basis, engines):
     products = case(work, engines, vis, 'PosAng', 'PosAng', stokes)
     with opened(products['native']) as table:
         np.testing.assert_allclose(table.getcol('FPARAM'), angles, atol=3e-5, rtol=0.)
+    if basis.startswith('XX'):
+        legacy_weights(work, engines, vis, sky, phase)
 
 
 def main():
