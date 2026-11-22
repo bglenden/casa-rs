@@ -188,48 +188,72 @@ def solve_with_autocorrelations(work, engines):
     with opened(vis) as table:
         auto = table.getcol('ANTENNA1') == table.getcol('ANTENNA2')
         assert auto.any() and not auto.all()
-    thresholds = [('', 0.), ('R', 0.), ('L1', 0.), ('L1R', 0.)]
-    for mode, minimum in thresholds:
+    zero_vis = fixture/'zero-autocorrelations.ms'
+    copy_ms(vis, zero_vis)
+    with opened(zero_vis, True) as table:
+        data = table.getcol('DATA')
+        data[..., auto] = 0.
+        assert table.putcol('DATA', data)
+
+    cases = [(mode or 'ordinary', vis, {'solmode': mode}) for mode in ('', 'R', 'L1', 'L1R')]
+    cases.append(('zero-phase', zero_vis, {'apmode': 'P'}))
+    for label, source, options in cases:
         products, counts, stats = {}, {}, {}
         for engine, tool in engines.items():
-            product = work/f'autocorr-{mode}-{minimum:g}-{engine}.cal'
+            product = work/f'autocorr-{label}-{engine}.cal'
             products[engine] = product
-            assert tool.open(str(vis), addcorr=False, addmodel=False)
+            assert tool.open(str(source), addcorr=False, addmodel=False)
             assert tool.selectvis(field='FLUX', spw='0:1~6')
             assert tool.setptmodel([1, 0, 0, 0])
             assert tool.setsolve(type='G', table=str(product), refant='A0',
-                                 minblperant=3, minsnr=minimum, solmode=mode)
+                                 minblperant=3, **options)
             assert tool.solve()
             counts[engine] = tool.activityrec()
             stats[engine] = tool.returndict()['solvestats']
             assert tool.close()
-        if not mode and minimum == 0.:
+        if label == 'ordinary':
             with opened(products['casa']) as table:
                 assert not table.getcol('FLAG').any()
-                cutoff = float(table.getcol('SNR').max()) * 1.25
-            thresholds.append(('', cutoff))
+                snr = table.getcol('SNR')
+                cutoff = float(snr.max()) * 1.25
+                mixed = float(snr.max() + snr.min()) / 2.
+            cases.extend([('all-flagged', vis, {'minsnr': cutoff}),
+                          ('mixed-flags', vis, {'minsnr': mixed})])
         if 'native' in engines:
             same_record(counts['native'], counts['casa'])
             same_record(stats['native'], stats['casa'])
-            tolerance = 5e-3 if mode else 1e-3
+            tolerance = 5e-3 if options.get('solmode') else 1e-3
             compare_solutions(products, formal_tolerance=tolerance)
             with opened(products['casa']) as reference, opened(products['native']) as actual:
-                if minimum > 0.:
-                    assert reference.getcol('FLAG').all()
+                flags = reference.getcol('FLAG')
+                if label == 'all-flagged':
+                    assert flags.all()
+                if label == 'mixed-flags':
+                    assert flags.any() and not flags.all()
                 for column in ('PARAMERR', 'SNR'):
                     error = nrms(actual.getcol(column), reference.getcol(column))
-                    assert error < tolerance, (mode, minimum, column, error)
+                    assert error < tolerance, (label, column, error)
             compare_readers(products)
-        print('direct G matched selected autocorrelation residuals', mode, minimum, flush=True)
+        print('direct G matched selected autocorrelation residuals', label, flush=True)
 
-    products, counts, stats = {}, {}, {}
+    for label, source in (('autocorr-only', vis), ('zero-phase-only', zero_vis)):
+        auto_only = {'msselect': 'ANTENNA1==ANTENNA2'}
+        mode = 'P' if label == 'zero-phase-only' else 'AP'
+        result_records = gather_counts_without_product(work, source, label, engines,
+                                                       auto_only, apmode=mode, minblperant=3)
+        np.testing.assert_array_equal(result_records[0]['nAttempt'], [1])
+        np.testing.assert_array_equal(result_records[0]['nSucceed'], [0])
+        print('direct G reports an attempt without a caltable for', label, flush=True)
+
+
+def gather_counts_without_product(work, vis, label, engines, selection, **solve):
+    counts, stats = {}, {}
     for engine, tool in engines.items():
-        product = work/f'autocorr-only-{engine}.cal'
-        products[engine] = product
+        product = work/f'{label}-{engine}.cal'
         assert tool.open(str(vis), addcorr=False, addmodel=False)
-        assert tool.selectvis(field='FLUX', msselect='ANTENNA1==ANTENNA2')
-        assert tool.setptmodel([1, 0, 0, 0])
-        assert tool.setsolve(type='G', table=str(product), refant='A0', minblperant=3)
+        assert tool.selectvis(field='FLUX', **selection) and tool.setcorrdepflags(True)
+        assert tool.setptmodel([1., .1, .2, 0.])
+        assert tool.setsolve(type='G', table=str(product), refant='A0', **solve)
         assert tool.solve()
         counts[engine] = tool.activityrec()
         stats[engine] = tool.returndict()['solvestats']
@@ -237,7 +261,37 @@ def solve_with_autocorrelations(work, engines):
     if 'native' in engines:
         same_record(counts['native'], counts['casa'])
         same_record(stats['native'], stats['casa'])
-    print('direct G reports an attempt without a caltable for autos alone', flush=True)
+    return counts['casa'], stats['casa']
+
+
+def direct_gain_gather_counts(work, engines):
+    cross_hands = work/'cross-hands-only.ms'
+    make_cal_ms(str(cross_hands), stokes='XX XY YX YY', autocorrelation_weight=1.)
+    with opened(cross_hands, True) as table:
+        flags = table.getcol('FLAG')
+        flags[0] = True
+        flags[3] = True
+        assert table.putcol('FLAG', flags)
+        assert table.putcol('FLAG_ROW', np.zeros(table.nrows(), bool))
+    counts, stats = gather_counts_without_product(
+        work, cross_hands, 'cross-hands-only', engines, {'msselect': 'ANTENNA1==ANTENNA2'},
+        minblperant=3,
+    )
+    np.testing.assert_array_equal(counts['nAttempt'], [1])
+    np.testing.assert_array_equal(counts['nSucceed'], [0])
+    np.testing.assert_array_equal(stats['data_unflagged'], [0, 0])
+
+    scalar = work/'one-correlation.ms'
+    make_cal_ms(str(scalar), stokes='XX', autocorrelation_weight=1.)
+    counts, stats = gather_counts_without_product(
+        work, scalar, 'one-correlation', engines, {}, minblperant=99,
+    )
+    np.testing.assert_array_equal(counts['nAttempt'], [1])
+    np.testing.assert_array_equal(stats['data_unflagged'], [1, 1])
+    for value in stats['spw0'].values():
+        if isinstance(value, dict):
+            np.testing.assert_array_equal(value['data_unflagged'], [1, 1])
+    print('direct G matched cross-hand attempt and single-correlation data counts', flush=True)
 
 
 def main():
@@ -283,6 +337,7 @@ def main():
         solve_case(work, cross_vis, 'cross-delay', False, engines, {'type': 'KCROSS'}, spw='0')
         engines = {name: factory() for name, factory in factories.items()}
         solve_with_autocorrelations(work, engines)
+        direct_gain_gather_counts(work, engines)
 
 
 if __name__ == '__main__':

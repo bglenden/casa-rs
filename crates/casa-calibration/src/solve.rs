@@ -591,16 +591,14 @@ pub(crate) fn solve_gain_rows(
             share_input_flags: !request.correlation_dependent_flags,
         },
     )?;
-    let direct_autocorrelations = activity.is_some()
-        && request.gain_type == GainType::G
-        && context.rows.iter().any(|row| row.antenna1 == row.antenna2);
+    let direct_gain = activity.is_some() && request.gain_type == GainType::G;
     let groups = build_solve_groups(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            input_rows: if direct_autocorrelations {
+            input_rows: if direct_gain {
                 grouping::SolveInputRows::GainTool
             } else {
                 Default::default()

@@ -550,6 +550,7 @@ impl LeakageInputs<'_> {
                 spw_id: spectral_window,
                 antennas: &expected,
                 expected_window: true,
+                attempted_interval: None,
                 with_data: vec![data.antennas.clone(), data.antennas],
                 constrained: BTreeSet::new(),
             });

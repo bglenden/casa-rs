@@ -76,10 +76,6 @@ impl SolveGraph {
         *count += 1;
     }
 
-    pub(crate) fn fixed_residual_antennas(&self) -> impl Iterator<Item = i32> + '_ {
-        self.fixed_residuals.keys().copied()
-    }
-
     fn fixed_chi_square(&self) -> f64 {
         self.fixed_residuals.values().map(|&(sum, _)| sum).sum()
     }
