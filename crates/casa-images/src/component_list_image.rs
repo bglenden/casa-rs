@@ -2,19 +2,23 @@
 
 //! A virtual Float image that samples its components over the requested section.
 
+use std::borrow::Cow;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use casa_components::{ComponentList, PixelGrid};
+use casa_components::{
+    ComponentList, ComponentShape, PixelGrid, ShapeKind, SpectralKind, SpectralModel,
+};
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
-    SpectralCoordinate, StokesType,
+    Coordinate, CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType,
+    DirectionCoordinate, SpectralCoordinate, StokesType,
 };
 use casa_lattices::{Lattice, LatticeError};
 use casa_types::RecordValue;
 use casa_types::measures::direction::MDirection;
+use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::FrequencyRef;
-use ndarray::{Array3, ArrayD, IxDyn, ShapeBuilder};
+use ndarray::{Array3, ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use crate::{ImageError, ImageInfo, ImageInterface};
 
@@ -28,7 +32,17 @@ pub struct ComponentListImage {
     spectral: Option<(usize, Box<SpectralCoordinate>)>,
     stokes: Option<(usize, Vec<usize>)>,
     components: Arc<ComponentList>,
+    placements: OnceLock<Result<Vec<Placement>, ImageError>>,
     cache: Option<Mutex<Option<CachedSection>>>,
+}
+
+enum Placement {
+    Section,
+    Pixel {
+        position: [usize; 2],
+        direction: [f64; 3],
+    },
+    Outside,
 }
 
 struct CachedSection {
@@ -40,7 +54,8 @@ struct CachedSection {
 impl ComponentListImage {
     /// Construct a component image without allocating a pixel lattice.
     /// # Errors
-    /// Returns an error for an empty component list or invalid image geometry.
+    /// Returns an error for invalid image geometry or for an empty list used
+    /// without a spectral coordinate to supply the sampling frequency.
     pub fn new(
         shape: Vec<usize>,
         components: ComponentList,
@@ -76,9 +91,6 @@ impl ComponentListImage {
         if shape.contains(&0) {
             return Err(invalid("TiledShape: shape has to be > 0"));
         }
-        if components.components().is_empty() {
-            return Err(invalid("A ComponentListImage needs at least one component"));
-        }
         if coordinates.n_pixel_axes() != shape.len() {
             return Err(invalid(
                 "Coordinate system must have the same dimensionality as the shape",
@@ -108,6 +120,11 @@ impl ComponentListImage {
             }
             _ => None,
         };
+        if components.is_empty() && spectral.is_none() {
+            return Err(invalid(
+                "A ComponentListImage without a spectral coordinate needs at least one component",
+            ));
+        }
         let stokes = match coordinate_axes(&coordinates, CoordinateType::Stokes) {
             Some((CoordinateModel::Stokes(stokes), axes)) => axes[0]
                 .map(|axis| {
@@ -130,8 +147,106 @@ impl ComponentListImage {
             spectral,
             stokes,
             components,
+            placements: OnceLock::new(),
             cache: cache.then(|| Mutex::new(None)),
         })
+    }
+
+    fn pixel_direction(&self, pixel: [f64; 2]) -> Result<[f64; 3], CoordinateError> {
+        let [longitude, latitude] = self.direction.pixel_to_world(pixel)?;
+        Ok(MDirection::from_angles(longitude, latitude, self.grid.frame).cosines())
+    }
+
+    fn point_placement(&self, shape: &ComponentShape) -> Result<Placement, ImageError> {
+        if !matches!(shape.kind(), ShapeKind::Point) {
+            return Ok(Placement::Section);
+        }
+        let direction = shape
+            .reference_direction()
+            .convert_to(self.grid.frame, &MeasFrame::default())
+            .map_err(|error| ImageError::CasaSelection(error.to_string()))?;
+        let (longitude, latitude) = direction.as_angles();
+        let pixel = match self.direction.world_to_pixel([longitude, latitude]) {
+            Ok(pixel) => pixel,
+            Err(CoordinateError::OutsideProjectionDomain(_)) => return Ok(Placement::Outside),
+            Err(error) => return Err(error.into()),
+        };
+        let target = pixel.map(|position| (position + 0.5).floor());
+        let sizes = self.direction_axes.map(|axis| self.shape[axis] as f64);
+        if target
+            .into_iter()
+            .zip(sizes)
+            .any(|(position, size)| position < -1. || position > size)
+        {
+            return Ok(Placement::Outside);
+        }
+        // Try the nearest pixel first, then the adjacent candidates in
+        // longitude and latitude order as ComponentListImage does.
+        let adjacent = (-1..=1).flat_map(|x| {
+            (-1..=1).filter_map(move |y| {
+                (x != 0 || y != 0).then_some([target[0] + f64::from(x), target[1] + f64::from(y)])
+            })
+        });
+        for candidate in std::iter::once(target).chain(adjacent) {
+            let direction = match self.pixel_direction(candidate) {
+                Ok(direction) => direction,
+                Err(CoordinateError::OutsideProjectionDomain(_)) => continue,
+                Err(error) => return Err(error.into()),
+            };
+            let scale = shape
+                .pixel_scales(&[direction], &self.grid)
+                .map_err(|error| ImageError::CasaSelection(error.to_string()))?;
+            if scale[0] != 0. {
+                return Ok(
+                    if candidate
+                        .into_iter()
+                        .zip(sizes)
+                        .all(|(pixel, size)| pixel >= 0. && pixel < size)
+                    {
+                        Placement::Pixel {
+                            position: candidate.map(|pixel| pixel as usize),
+                            direction,
+                        }
+                    } else {
+                        Placement::Outside
+                    },
+                );
+            }
+        }
+        Ok(Placement::Section)
+    }
+
+    fn component_frequencies<'a>(
+        &self,
+        spectrum: &SpectralModel,
+        frequencies: &'a [f64],
+        frame: FrequencyRef,
+    ) -> Result<Cow<'a, [f64]>, ImageError> {
+        let reference = spectrum.reference_frequency();
+        if matches!(spectrum.kind(), SpectralKind::Constant)
+            || reference.refer() == frame
+            || reference.refer() == FrequencyRef::REST
+            || frame == FrequencyRef::REST
+        {
+            return Ok(Cow::Borrowed(frequencies));
+        }
+        let no_context = MeasFrame::default();
+        let measures = self
+            .spectral
+            .as_ref()
+            .and_then(|(_, coordinate)| coordinate.conversion_frame())
+            .unwrap_or(&no_context);
+        let converted = reference.convert_to(frame, measures).map_err(|_| {
+            ImageError::CasaSelection(format!(
+                "Cannot transform frequency from {} to {}",
+                frame.as_str(),
+                reference.refer().as_str(),
+            ))
+        })?;
+        let scale = reference.hz() / converted.hz();
+        Ok(Cow::Owned(
+            frequencies.iter().map(|value| value * scale).collect(),
+        ))
     }
 
     fn sample(
@@ -142,13 +257,27 @@ impl ComponentListImage {
     ) -> Result<ArrayD<f32>, ImageError> {
         let [x, y] = self.direction_axes;
         let position = |axis: usize, index: usize| (start[axis] + stride[axis] * index) as f64;
-        let mut directions = Vec::with_capacity(count[x] * count[y]);
-        for iy in 0..count[y] {
-            for ix in 0..count[x] {
-                let [lon, lat] = self
-                    .direction
-                    .pixel_to_world([position(x, ix), position(y, iy)])?;
-                directions.push(MDirection::from_angles(lon, lat, self.grid.frame).cosines());
+        let placements = self
+            .placements
+            .get_or_init(|| {
+                self.components
+                    .iter()
+                    .map(|component| self.point_placement(component.shape()))
+                    .collect()
+            })
+            .as_ref()
+            .map_err(|error| ImageError::CasaSelection(error.to_string()))?;
+        let direction_count = count[x] * count[y];
+        let mut directions = Vec::new();
+        if placements
+            .iter()
+            .any(|placement| matches!(placement, Placement::Section))
+        {
+            directions.reserve_exact(direction_count);
+            for iy in 0..count[y] {
+                for ix in 0..count[x] {
+                    directions.push(self.pixel_direction([position(x, ix), position(y, iy)])?);
+                }
             }
         }
         let (frequencies, frame) = match &self.spectral {
@@ -165,27 +294,51 @@ impl ComponentListImage {
                 (vec![first.hz()], first.refer())
             }
         };
-        let mut samples = Array3::zeros((4, directions.len(), frequencies.len()));
-        for component in self.components.iter() {
-            let reference = component.spectrum().reference_frequency();
-            let image_frequencies = if reference.refer() != frame
-                && reference.refer() != FrequencyRef::REST
-                && frame != FrequencyRef::REST
-                && let Some((_, coordinate)) = &self.spectral
-                && let Some(measures) = coordinate.conversion_frame()
-                && measures.direction().is_some()
-            {
-                let converted = reference
-                    .convert_to(frame, measures)
-                    .map_err(|error| ImageError::CasaSelection(error.to_string()))?;
-                let scale = reference.hz() / converted.hz();
-                std::borrow::Cow::Owned(frequencies.iter().map(|value| value * scale).collect())
+        let mut samples = Array3::zeros((4, direction_count, frequencies.len()));
+        let component_error =
+            |error: casa_components::ComponentError| ImageError::CasaSelection(error.to_string());
+        let section_pixel = |axis: usize, pixel: usize| {
+            let offset = pixel.checked_sub(start[axis])?;
+            if offset.is_multiple_of(stride[axis]) && offset / stride[axis] < count[axis] {
+                Some(offset / stride[axis])
             } else {
-                std::borrow::Cow::Borrowed(frequencies.as_slice())
-            };
-            component
-                .sample_pixels(&mut samples, &directions, &self.grid, &image_frequencies)
-                .map_err(|error| ImageError::CasaSelection(error.to_string()))?;
+                None
+            }
+        };
+        let mut point = Array3::zeros((4, 1, frequencies.len()));
+        for (component, placement) in self.components.iter().zip(placements) {
+            if matches!(placement, Placement::Outside) {
+                continue;
+            }
+            let image_frequencies =
+                self.component_frequencies(component.spectrum(), &frequencies, frame)?;
+            match placement {
+                Placement::Section => component
+                    .sample_pixels(&mut samples, &directions, &self.grid, &image_frequencies)
+                    .map_err(component_error)?,
+                Placement::Pixel {
+                    position,
+                    direction,
+                } => {
+                    if let Some((ix, iy)) =
+                        section_pixel(x, position[0]).zip(section_pixel(y, position[1]))
+                    {
+                        point.fill(0.);
+                        component
+                            .sample_pixels(
+                                &mut point,
+                                std::slice::from_ref(direction),
+                                &self.grid,
+                                &image_frequencies,
+                            )
+                            .map_err(component_error)?;
+                        samples
+                            .index_axis_mut(Axis(1), ix + count[x] * iy)
+                            .scaled_add(1., &point.index_axis(Axis(1), 0));
+                    }
+                }
+                Placement::Outside => unreachable!("outside pixels are skipped"),
+            }
         }
 
         Ok(ArrayD::from_shape_fn(IxDyn(count).f(), |index| {
@@ -215,17 +368,24 @@ fn stokes_planes(stokes: &[StokesType], count: usize) -> Result<Vec<usize>, Imag
             "Polarization axis can have no more than four pixels",
         ));
     }
-    (0..count)
-        .map(|i| match stokes.get(i) {
-            Some(StokesType::I) => Ok(0),
-            Some(StokesType::Q) => Ok(1),
-            Some(StokesType::U) => Ok(2),
-            Some(StokesType::V) => Ok(3),
+    let mut planes = stokes
+        .iter()
+        .map(|value| match value {
+            StokesType::I => Ok(0),
+            StokesType::Q => Ok(1),
+            StokesType::U => Ok(2),
+            StokesType::V => Ok(3),
             _ => Err(ImageError::CasaSelection(format!(
-                "Unsupported Stokes value at pixel {i}"
+                "Unsupported stokes type {}",
+                value.name()
             ))),
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    if planes.len() < count {
+        return Err(invalid("Stokes coordinate has fewer planes than the image"));
+    }
+    planes.truncate(count);
+    Ok(planes)
 }
 
 fn invalid(message: &str) -> ImageError {

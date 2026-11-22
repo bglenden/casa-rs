@@ -166,3 +166,98 @@ def test_temporary_component_list_samples_spectral_index_in_stokes_planes(backen
     finally:
         tool.done()
         components.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("geometry", ["rotated", "outside_horizon"])
+def test_point_component_is_assigned_to_one_pixel(backend, geometry):
+    api = _backend(backend)
+    coords = api.coordsys().newcoordsys(direction=True)
+    tool = api.image()
+    try:
+        if geometry == "rotated":
+            assert coords.setreferencepixel([3.48, 4.])
+            assert coords.setlineartransform("direction", [[0.8, -0.6], [0.6, 0.8]])
+        else:
+            assert coords.setreferencepixel([3., 4.])
+            assert coords.setunits(["deg", "deg"])
+            assert coords.setincrement([-20., 20.])
+        assert tool.fromcomplist(shape=[7, 9], csys=coords.torecord(), cl=_component_record(api))
+        expected = np.zeros((7, 9))
+        expected[3, 4] = 2.
+        np.testing.assert_array_equal(tool.getchunk(), expected)
+    finally:
+        coords.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("spectrum", ["constant", "spectral index"])
+def test_component_list_mixed_frequency_frames(backend, spectrum):
+    api = _backend(backend)
+    source = api.componentlist()
+    tool = api.image()
+    try:
+        for _ in range(2):
+            source.addcomponent(
+                flux=[2., 0., 0., 0.], fluxunit="Jy", dir="J2000 0deg 0deg",
+                shape="point", freq="1.415GHz", spectrumtype=spectrum, index=-2.,
+            )
+        record = source.torecord()
+        record["component1"]["spectrum"]["frequency"]["refer"] = "TOPO"
+        assert tool.fromcomplist(shape=[4, 5], cl=record)
+        if spectrum == "constant":
+            expected = np.zeros((4, 5))
+            expected[2, 2] = 4.
+            np.testing.assert_array_equal(tool.getchunk(), expected)
+        else:
+            with pytest.raises(RuntimeError, match="Cannot transform frequency from LSRK to TOPO"):
+                tool.getchunk()
+        assert tool.isopen()
+    finally:
+        tool.done()
+        source.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_empty_component_list_with_spectral_coordinate(backend):
+    api = _backend(backend)
+    tool = api.image()
+    try:
+        assert tool.fromcomplist(shape=[4, 5, 6], cl={"nelements": 0})
+        np.testing.assert_array_equal(tool.getchunk(), np.zeros((4, 5, 6)))
+        assert tool.isopen()
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_component_list_checks_stokes_labels_beyond_image_shape(backend):
+    api = _backend(backend)
+    coords = api.coordsys().newcoordsys(direction=True, stokes=["I", "RR"])
+    tool = api.image()
+    try:
+        with pytest.raises(RuntimeError, match="Unsupported stokes type RR"):
+            tool.fromcomplist(shape=[7, 9, 1], csys=coords.torecord(), cl=_component_record(api))
+        assert not tool.isopen()
+    finally:
+        tool.done()
+        coords.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_temporary_component_list_rejects_creation_of_named_mask(tmp_path, backend):
+    api = _backend(backend)
+    tool, operand = api.image(), api.image()
+    path = tmp_path / "mask-input.im"
+    try:
+        assert operand.fromarray(str(path), np.ones((6, 8)))
+        assert operand.done()
+        assert tool.fromcomplist(shape=[6, 8], cl=_component_record(api))
+        with pytest.raises(RuntimeError, match="Cannot make requested mask.*Temporary ComponentListImage"):
+            tool.calcmask(f'"{path}" > 0', "valid")
+        assert tool.isopen()
+        assert tool.getchunk(getmask=True).all()
+    finally:
+        operand.done()
+        tool.done()
