@@ -163,6 +163,30 @@ pub(crate) fn parse_apply_specs(
     source_name: &str,
     contents: &str,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
+    let specs = collect_apply_specs(source_name, contents)?;
+    if specs.is_empty() {
+        return Err(CallibError::ParseLine {
+            path: source_name.to_owned(),
+            line_number: 0,
+            line: String::new(),
+            reason: "callibrary file did not contain any supported entries".to_string(),
+        });
+    }
+    Ok(specs)
+}
+
+pub(crate) fn load_transform_apply_specs(
+    path: &Path,
+) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
+    let contents = read_contents(path)?;
+    // mstransform leaves calibration inactive for an empty callibrary.
+    collect_apply_specs(&path.display().to_string(), &contents)
+}
+
+fn collect_apply_specs(
+    source_name: &str,
+    contents: &str,
+) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
     // CASA resolves relative table names against the process working
     // directory for both text and file callibraries.
     let base_dir = std::env::current_dir().map_err(|source| CallibError::ReadFile {
@@ -190,15 +214,6 @@ pub(crate) fn parse_apply_specs(
             calwt_by_table.insert(literal, spec.calwt);
         }
         specs.push(spec);
-    }
-
-    if specs.is_empty() {
-        return Err(CallibError::ParseLine {
-            path: source_name.to_owned(),
-            line_number: 0,
-            line: String::new(),
-            reason: "callibrary file did not contain any supported entries".to_string(),
-        });
     }
 
     Ok(specs)
@@ -549,6 +564,9 @@ fn parse_gainfield_selector(value: &str) -> Result<Option<GainFieldSelector>, St
 
 fn parse_int_array(value: &str, label: &str) -> Result<Vec<i32>, String> {
     let value = strip_quotes(value);
+    if value == "[]" {
+        return Ok(Vec::new());
+    }
     let inner = value
         .strip_prefix('[')
         .and_then(|value| value.strip_suffix(']'))

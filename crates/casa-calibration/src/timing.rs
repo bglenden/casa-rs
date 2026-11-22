@@ -31,11 +31,9 @@ impl Drop for Phase {
 /// Linux's current address-space peak, excluding a parent's pre-exec peak
 /// that can remain in `getrusage`. Report only for opt-in measurements.
 pub(crate) fn report_process_memory() {
-    if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_none() {
-        return;
-    }
     #[cfg(target_os = "linux")]
-    if let Ok(status) = std::fs::read_to_string("/proc/self/status")
+    if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some()
+        && let Ok(status) = std::fs::read_to_string("/proc/self/status")
         && let Some(peak) = status.lines().find_map(|line| {
             line.strip_prefix("VmHWM:")?
                 .split_whitespace()

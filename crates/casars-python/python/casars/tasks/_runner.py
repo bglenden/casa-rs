@@ -413,6 +413,12 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             raise
         except TaskParameterError as error:
             message = error.completion.message or ""
+            if (name == "mstransform" and error.completion.parameter == "callib"
+                    and message == "No such file or directory"):
+                raise FileNotFoundError(2, message, arguments["callib"]) from error
+            if (name == "mstransform" and error.completion.parameter == "callib"
+                    and message.startswith("Problem parsing cal library line ")):
+                raise Exception(message) from error
             if name == "mstransform" and error.completion.parameter == "separationaxis":
                 if message.startswith("unallowed value "):
                     raise AssertionError(str({"separationaxis": [message]})) from error

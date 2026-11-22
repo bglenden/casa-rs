@@ -491,8 +491,8 @@ def mstransform(
 
     CASA's ``mstransform``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``realmodelcol``, ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``,
-    ``fitorder``, ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``.
+    ``realmodelcol``, ``douvcontsub``, ``fitspw``, ``fitorder``,
+    ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``.
     """
     return _call_casa(mstransform, locals())
 

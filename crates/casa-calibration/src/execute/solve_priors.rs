@@ -195,6 +195,7 @@ impl SolvePriorApply {
                 preserved_weight_spectrum: None,
                 channel_grid: None,
                 forward_model: self.forward,
+                skip_unavailable_terms: false,
                 trial: false,
                 parang_calwt: false,
             },

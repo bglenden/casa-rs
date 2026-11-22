@@ -69,10 +69,6 @@ name = "concat"
 path = "src/bin/concat.rs"
 
 [[bin]]
-name = "mstransform"
-path = "src/bin/mstransform.rs"
-
-[[bin]]
 name = "flagmanager"
 path = "src/bin/flagmanager.rs"
 
@@ -163,10 +159,6 @@ path = "tests/msexplore_cli.rs"
 [[test]]
 name = "msexplore_task_completion"
 path = "tests/msexplore_task_completion.rs"
-
-[[test]]
-name = "logging_cli"
-path = "tests/logging_cli.rs"
 
 [[test]]
 name = "pointing_subtable_regression"

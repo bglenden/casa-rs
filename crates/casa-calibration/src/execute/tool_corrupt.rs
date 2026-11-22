@@ -290,6 +290,7 @@ fn corrupt_row_model(
             preserved_weight_spectrum: None,
             channel_grid: None,
             forward_model: true,
+            skip_unavailable_terms: false,
             trial: false,
             parang_calwt: false,
         },

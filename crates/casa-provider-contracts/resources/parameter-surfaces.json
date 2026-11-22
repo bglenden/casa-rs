@@ -13554,8 +13554,7 @@
             "provider": {"field": "docallib"},
             "python": {"name": "docallib"},
             "presentation": {"label": "Apply Cal Library", "group": "Calibration", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "callib",
@@ -13569,8 +13568,7 @@
             "provider": {"field": "callib"},
             "python": {"name": "callib"},
             "presentation": {"label": "Cal Library", "group": "Calibration", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "docallib", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "douvcontsub",
