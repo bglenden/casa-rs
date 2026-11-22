@@ -7,6 +7,9 @@ import inspect
 import os
 import re
 import shutil
+import signal
+import subprocess
+import sys
 from pathlib import Path
 import time
 
@@ -280,13 +283,198 @@ def metadata_controls(root, vis, native, native_wvr):
     print('WVR metadata, all-flagged inputs and sparse reversal controls passed.', flush=True)
 
 
+def missing_pointing_direction(root, source, native):
+    """An unreadable POINTING row invokes the FIELD fallback."""
+    from casacore.tables import makearrcoldesc, maketabdesc, table
+
+    fixture_path = root / 'missing-pointing-direction.ms'
+    copy_ms(source, fixture_path)
+    with table(str(fixture_path / 'POINTING'), readonly=False, ack=False) as pointing:
+        row = pointing.nrows()
+        last = max(pointing.getcol('TIME'))
+        directions = pointing.getcol('DIRECTION')
+        directions[:, 0, 1] = 0.0
+        keywords = pointing.getcolkeywords('DIRECTION')
+        # IncrementalStMan extends the previous array when a row is appended.
+        pointing.renamecol('DIRECTION', 'SAVED_DIRECTION')
+        pointing.addcols(maketabdesc(makearrcoldesc(
+            'DIRECTION', 0., ndim=2, datamanagertype='StandardStMan', keywords=keywords,
+        )))
+        for index, direction in enumerate(directions):
+            pointing.putcell('DIRECTION', index, direction)
+        pointing.addrows(1)
+        pointing.putcell('TIME', row, last + 1000.0)
+        assert not pointing.iscelldefined('DIRECTION', row)
+
+    explicit = root / 'missing-pointing-forced-field.cal'
+    settings = {'wvrspw': [1]}
+    # CASA can terminate while opening the undefined array. Its explicit
+    # FIELD path supplies the geometry reference for the native fallback.
+    field = casatasks.wvrgcal(str(fixture_path), str(explicit), usefieldtab=True, **settings)
+    assert field['success']
+    product = root / 'missing-pointing-native.cal'
+    report = native.wvrgcal(str(fixture_path), str(product), usefieldtab=False, **settings)
+    compare_reports(field, report)
+    assert compare_tables(explicit, product) <= 1e-3
+    print('unreadable unused pointing direction falls back to FIELD', flush=True)
+
+
+def check_recorded_statistics(vis, report, casa_report, windows, radiometer_window,
+                              antennas, stamps, temperatures, path, terms):
+    assert report.keys() == casa_report.keys()
+    for name, expected in casa_report.items():
+        if name not in ('RMS_um', 'Disc_um'):
+            np.testing.assert_array_equal(report[name], expected, err_msg=name)
+
+    rows = np.flatnonzero(windows == radiometer_window)
+    times, time_index = np.unique(stamps[rows], return_inverse=True)
+    with opened(vis / 'POINTING') as pointing:
+        first_at_or_after = np.maximum.accumulate(pointing.getcol('TIME'))
+        indices = np.searchsorted(first_at_or_after, times).clip(0, pointing.nrows() - 1)
+        elevation = np.array([pointing.getcell('DIRECTION', int(index))[1, 0]
+                              for index in indices])
+    zenith = path[rows] * np.sin(elevation[time_index])
+    discrepancy = temperatures[rows, 1] / terms[rows, 1] - temperatures[rows, 3] / terms[rows, 3]
+    for name, values in (('RMS_um', zenith), ('Disc_um', discrepancy)):
+        expected = [
+            float(f'{np.std(values[antennas[rows] == antenna]) * 1e6:.3g}')
+            for antenna in range(len(casa_report[name]))
+        ]
+        np.testing.assert_allclose(report[name], expected, rtol=1e-3, atol=.001, err_msg=name)
+    print('recorded default report agrees with corrected pointing and antenna statistics', flush=True)
+
+
+def recorded_failed_retrievals(root, vis, native):
+    """Keep each successful fit attached to the time segment it measured."""
+    raw = root / 'upstream-segmented.cal'
+    messages = root / 'upstream-segmented.log'
+    start = time.monotonic()
+    assert wvr().gcal(str(vis), str(raw), segsource=True, logfile=str(messages)) == 0
+    casa_seconds = time.monotonic() - start
+    actual = root / 'default-native.cal'
+    start = time.monotonic()
+    report = native.wvrgcal(str(vis), str(actual))
+    native_seconds = time.monotonic() - start
+    assert report['success'], report
+    upstream_task = root / 'upstream-default-task.cal'
+    casa_report = casatasks.wvrgcal(str(vis), str(upstream_task))
+    assert casa_report['success'], casa_report
+
+    retrievals, results = messages.read_text().split('Retrieved parameters', 1)
+    attempts = retrievals.split('Using random seed')[1:]
+    successful = [i for i, result in enumerate(attempts) if 'Bayesian evidence was zero' not in result]
+    assert successful == [1, 3], successful
+    numerical = results.split('dT4dL', 1)[1].strip().splitlines()[:len(successful)]
+    coefficients = np.array([list(map(float, row.split()))[-4:] for row in numerical]) * 1000
+
+    with opened(vis / 'FIELD') as fields:
+        source_for_field = fields.getcol('SOURCE_ID')
+    with opened(vis / 'DATA_DESCRIPTION') as descriptions:
+        window_for_description = descriptions.getcol('SPECTRAL_WINDOW_ID')
+    with opened(vis / 'SPECTRAL_WINDOW') as windows:
+        channel_count = windows.getcol('NUM_CHAN')
+    radiometer = np.flatnonzero(channel_count[window_for_description] == 4)
+    assert radiometer.size == 1
+    with opened(vis) as main:
+        times = main.getcol('TIME')
+        order = np.argsort(times, kind='stable')
+        sources = source_for_field[main.getcol('FIELD_ID')[order]]
+        ordered_time = times[order]
+        changes = np.flatnonzero(sources[1:] != sources[:-1]) + 1
+        boundaries = np.column_stack((ordered_time[np.r_[0, changes]],
+                                      ordered_time[np.r_[changes - 1, len(times) - 1]]))
+        assert len(boundaries) == len(attempts)
+        selected = main.query(f'DATA_DESC_ID == {radiometer[0]} AND ANTENNA1 == ANTENNA2')
+        try:
+            temperatures = selected.getcol('DATA').reshape(4, -1).T.real.astype('float64')
+            input_flags = selected.getcol('FLAG').reshape(4, -1).T.any(axis=1)
+            temperature_row = {
+                (stamp, antenna): row
+                for row, (stamp, antenna) in enumerate(
+                    zip(selected.getcol('TIME'), selected.getcol('ANTENNA1')))
+            }
+        finally:
+            selected.close()
+
+    with opened(raw / 'SPECTRAL_WINDOW') as windows:
+        frequencies = windows.getcol('CHAN_FREQ').ravel()
+    with opened(raw) as table:
+        gain = table.getcol('CPARAM')
+        flags = table.getcol('FLAG').ravel()
+        stamps = table.getcol('TIME')
+        antennas = table.getcol('ANTENNA1')
+        windows = table.getcol('SPECTRAL_WINDOW_ID')
+    use = np.flatnonzero(~flags)
+    rows = np.array([temperature_row[stamps[i], antennas[i]] for i in use])
+    assert not input_flags[rows].any()
+    noise = np.array([.10, .08, .08, .09])
+
+    def expected(segments):
+        knot_times = boundaries[segments].ravel()
+        knot_values = np.repeat(coefficients, 2, axis=0)
+        terms = np.array([np.interp(stamps[use], knot_times, values)
+                          for values in knot_values.T]).T
+        weights = (terms / noise**2) / np.sum((terms / noise)**2, axis=1)[:, None]
+        path = np.sum(temperatures[rows] * weights, axis=1)
+        gains = np.ones(flags.size, dtype=gain.dtype)
+        gains[use] = np.exp(-2j * np.pi * frequencies[windows[use]] * path / 3e8)
+        return gains.reshape(gain.shape), path, terms
+
+    # libair keeps the first N interval bounds when N fits survive, even
+    # when those fits measured later segments. Reproduce that mistake in the
+    # reference law, then use the successful segments for science validation.
+    legacy, _, _ = expected(list(range(len(successful))))
+    corrected, path, terms = expected(successful)
+    check_recorded_statistics(
+        vis, report, casa_report, windows[use], window_for_description[radiometer[0]],
+        antennas[use], stamps[use], temperatures[rows], path, terms,
+    )
+    legacy_error = np.linalg.norm(gain - legacy) / np.linalg.norm(legacy)
+    assignment_error = np.linalg.norm(gain - corrected) / np.linalg.norm(corrected)
+    assert legacy_error < 1e-3 and assignment_error > .05, (legacy_error, assignment_error)
+    reference = root / 'default-casa.cal'
+    copy_ms(raw, reference)
+    with opened(reference, True) as table:
+        table.putcol('CPARAM', corrected)
+    error = compare_tables(reference, actual)
+    print(f'default recorded corrected gain normalized RMS {error:.6g}; upstream segment '
+          f'assignment error {assignment_error:.6g}. CASA {casa_seconds:.3f}s, '
+          f'casa-rs {native_seconds:.3f}s', flush=True)
+
+
+def recorded_empty_single_retrieval(root, vis, native):
+    """CASA dereferences an absent retrieval when the remaining sample is flagged."""
+    arguments = [str(vis), str(root / 'empty-casa.cal')]
+    program = (
+        "import resource,sys;resource.setrlimit(resource.RLIMIT_CORE,(0,0));"
+        "from casatasks import wvrgcal;"
+        "wvrgcal(sys.argv[1],sys.argv[2],segsource=False,toffset=-1.)"
+    )
+    child = subprocess.run([sys.executable, '-c', program, *arguments], cwd=root,
+                           capture_output=True, text=True, timeout=90)
+    assert child.returncode == -signal.SIGSEGV, (child.returncode, child.stderr)
+    product = root / 'empty-native.cal'
+    report = native.wvrgcal(str(vis), str(product), segsource=False, toffset=-1.)
+    assert report['rval'] == 1 and not report['success'] and not product.exists(), report
+    print('recorded empty single retrieval returns failure without publishing a table', flush=True)
+
+
 def recorded_cases(root, vis, native):
-    """Compare recorded retrievals and apply the default tables to science data."""
-    for name, args in (
-        ('default', {}),
-        ('time-offset', dict(segsource=False, toffset=-1.)),
-        ('fixed-fits', dict(segsource=False, nsol=5, rseed=27)),
-    ):
+    """Compare retrieval and application on a recorded ALMA observation."""
+    pinned = vis.name == 'uid___A002_X8ca70c_X5_shortened.ms'
+    if pinned:
+        recorded_failed_retrievals(root, vis, native)
+        cases = (
+            ('time-offset', dict(segsource=False, toffset=-1., nsol=2, refant='DA41')),
+            ('fixed-fits', dict(segsource=False, nsol=5, rseed=27, refant='DA41')),
+        )
+    else:
+        cases = (
+            ('default', {}),
+            ('time-offset', dict(segsource=False, toffset=-1.)),
+            ('fixed-fits', dict(segsource=False, nsol=5, rseed=27)),
+        )
+    for name, args in cases:
         results = []
         for name_api, api in (('casa', casatasks), ('native', native)):
             path = root / f'{name}-{name_api}.cal'
@@ -300,6 +488,8 @@ def recorded_cases(root, vis, native):
         error = compare_tables(path_casa, path_native)
         print(f'{name} recorded gain normalized RMS {error:.6g}, CASA {casa_seconds:.3f}s, '
               f'casa-rs {native_seconds:.3f}s', flush=True)
+    if pinned:
+        recorded_empty_single_retrieval(root, vis, native)
 
 
 def corrected_recorded_sample(root, vis, native):
@@ -369,6 +559,7 @@ def main():
     publication_controls(root, vis, tasks, native_wvr)
     reference_retry(root, vis, native_wvr)
     metadata_controls(root, vis, tasks, native_wvr)
+    missing_pointing_direction(root, vis, tasks)
     print(f'{count} nondefault WVR scenarios and publication controls passed.')
 
 

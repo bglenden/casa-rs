@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use casa_ms::{MeasurementSet, MsError, derived::engine::MsCalEngine, schema::SubtableId};
-use casa_tables::{Table, TableOptions};
+use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 use casa_types::{ArrayValue, ScalarValue};
 use serde::{Deserialize, Serialize};
 
@@ -461,38 +461,41 @@ fn elevations(
 }
 
 fn pointing_elevations(ms: &MeasurementSet, points: &[RadiometerIntegration]) -> Option<Vec<f64>> {
+    const BATCH_ROWS: usize = 32_768;
     let pointing = ms.subtable(SubtableId::Pointing)?;
-    let records = (0..pointing.row_count())
-        .map(|row| {
-            let ScalarValue::Float64(time) =
-                pointing.cell_accessor(row, "TIME").ok()?.scalar().ok()?
-            else {
-                return None;
-            };
-            let ArrayValue::Float64(direction) = pointing
-                .cell_accessor(row, "DIRECTION")
-                .ok()?
-                .array()
-                .ok()?
-            else {
-                return None;
-            };
-            Some((*time, *direction.get([1, 0])?))
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let last = records.len().checked_sub(1)?;
+    let columns = pointing.required_scalar_columns_owned(&["TIME"]).ok()?;
+    let RequiredScalarColumnValues::Float64(times) = columns.get("TIME")? else {
+        return None;
+    };
+    let last = times.len().checked_sub(1)?;
+    let directions = pointing.column_accessor("DIRECTION").ok()?;
     let mut index = 0;
-    Some(
-        points
-            .iter()
-            .map(|point| {
-                while index < last && records[index].0 < point.time_seconds {
-                    index += 1;
-                }
-                records[index].1
-            })
-            .collect(),
-    )
+    let mut selected = Vec::with_capacity(points.len());
+    for point in points {
+        while index < last && times[index] < point.time_seconds {
+            index += 1;
+        }
+        selected.push(index);
+    }
+    let mut selected = selected.into_iter().peekable();
+    let mut elevations = Vec::with_capacity(points.len());
+    // CASA falls back to FIELD when any POINTING direction cannot be read.
+    // Validate in physical order without caching every direction in the table.
+    for start in (0..times.len()).step_by(BATCH_ROWS) {
+        let end = start.saturating_add(BATCH_ROWS).min(times.len());
+        let rows = (start..end).collect::<Vec<_>>();
+        let values = directions.array_cells_owned_uncached(&rows).ok()?;
+        for (row, direction) in rows.into_iter().zip(values) {
+            let Some(ArrayValue::Float64(direction)) = direction else {
+                return None;
+            };
+            let elevation = *direction.get([1, 0])?;
+            while selected.next_if_eq(&row).is_some() {
+                elevations.push(elevation);
+            }
+        }
+    }
+    Some(elevations)
 }
 
 struct FittedObservations {

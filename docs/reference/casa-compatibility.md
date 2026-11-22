@@ -4898,7 +4898,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `21eea39f94e248c733060694b7e746d6db08e1cb`. Status counts: Default only: 0, Implemented: 24, Not implemented: 0, Partial: 0, Unassessed: 0.
+Audit baseline: `e7aad96dc5f350765fa5130e1faf10a1f10da121`. Status counts: Default only: 0, Implemented: 24, Not implemented: 0, Partial: 0, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -4936,7 +4936,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 
 **Implemented** — Native CASA-readable T Jones gains from seeded water-vapour retrievals, atmospheric paths and spectral-window phase conversion. Includes task reports, direct logging, smoothing and antenna replacement.
 
-The compact fixtures have been compared with CASA 6.7.6.14. The recorded ALMA case is pending under #1531.
+Dataset-scale release profiling follows functionality under #979.
 
 Evidence: [two-seeds-and-application](#wvrgcal-evidence-two-seeds-and-application), [parameter-options](#wvrgcal-evidence-parameter-options), [recorded-alma](#wvrgcal-evidence-recorded-alma).
 
@@ -4944,7 +4944,7 @@ Evidence: [two-seeds-and-application](#wvrgcal-evidence-two-seeds-and-applicatio
 
 ##### sparse-window-phase-reversal: Previously agreed
 
-- Record: [WVR global phase reversal can miss sparse spectral-window selections](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-global-phase-reversal-can-miss-sparse-spectral-window-selections)
+- Record: [WVR global phase reversal can miss sparse spectral-window selections](https://github.com/bglenden/casa-rs/blob/e7aad96dc5f350765fa5130e1faf10a1f10da121/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-global-phase-reversal-can-miss-sparse-spectral-window-selections)
 - Inputs: A direct wvr.gcal invocation with global phase reversal and a sparse spectral-window selection.
 - CASA: CASA 6.7.6.14 can leave selected windows unchanged when the selected position differs from the actual ID.
 - casa-rs: Reverse the phase of every selected spectral-window ID.
@@ -4952,6 +4952,28 @@ Evidence: [two-seeds-and-application](#wvrgcal-evidence-two-seeds-and-applicatio
 - User impact: A sparse output selection produces the same reversed phases as the corresponding subset of an all-window reversal.
 - Owner decision: Standing CASA bug policy in AGENTS.md.
 - Evidence: [parameter-options](#wvrgcal-evidence-parameter-options).
+
+##### wvr-failed-segment-assignment: Proposed
+
+- Record: [WVR can move successful atmospheric fits into earlier segments](https://github.com/bglenden/casa-rs/blob/e7aad96dc5f350765fa5130e1faf10a1f10da121/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-can-move-successful-atmospheric-fits-into-earlier-segments)
+- Inputs: Run the default segmented WVR retrieval on the pinned recorded ALMA observation.
+- CASA: Two successful fits take the first two time bounds after two other fits fail.
+- casa-rs: Keep each successful fit attached to its original observation segment.
+- Rationale: The retrieved atmospheric coefficients describe conditions in those segments.
+- User impact: Each calibration gain is evaluated against the corresponding atmospheric fit.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [recorded-alma](#wvrgcal-evidence-recorded-alma).
+
+##### wvr-empty-retrieval: Proposed
+
+- Record: [WVR can dereference a missing single retrieval](https://github.com/bglenden/casa-rs/blob/e7aad96dc5f350765fa5130e1faf10a1f10da121/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-can-dereference-a-missing-single-retrieval)
+- Inputs: Request one fixed-interval retrieval and a negative one-second offset on the pinned observation.
+- CASA: The pinned CASA process exits with SIGSEGV after a failed-reference retry.
+- casa-rs: Return a failed retrieval without publishing a calibration table.
+- Rationale: A flagged or rejected fit leaves no coefficients to apply.
+- User impact: The caller can choose other intervals or a suitable reference antenna and retry.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [recorded-alma](#wvrgcal-evidence-recorded-alma).
 
 #### wvrgcal evidence
 
@@ -4980,9 +5002,12 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="wvrgcal-evidence-recorded-alma"></a>
 ##### recorded-alma
 
-**Recorded ALMA data — planned.** Compare CASA and native WVR on uid___A002_X8ca70c_X5_shortened.ms on the Mac mini. This requires tailnet access.
+**Recorded ALMA data, phase law and calibrated science products — passed.** Corrected default gains agreed to 2.4133e-05 normalized RMS, fixed-interval gains to 1.80145e-09, and calibrated science visibilities to 3.51205e-07. Three retrieval configurations on the 250,560-row recorded ALMA observation. Compare the successful-segment law, two unchanged CASA cases, the empty-retrieval result and 64 calibrated science spectra.
 
-- [tools/casa-compat/wvrgcal_options_oracle.py](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/tools/casa-compat/wvrgcal_options_oracle.py)
+- [tools/casa-compat/wvrgcal_options_oracle.py](https://github.com/bglenden/casa-rs/blob/b2ec90630ba2db384666dea9f944c97e394a9b06/tools/casa-compat/wvrgcal_options_oracle.py)
+- Revision: `b2ec90630ba2db384666dea9f944c97e394a9b06`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --recorded-ms <uid___A002_X8ca70c_X5_shortened.ms> --work <new-directory>`.
+- Receipt: `resources/casa-compat/evidence/wvr-calibration-20261121.json`.
 
 ## Tools
 
@@ -7985,7 +8010,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `21eea39f94e248c733060694b7e746d6db08e1cb`. Status counts: Implemented: 1, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `e7aad96dc5f350765fa5130e1faf10a1f10da121`. Status counts: Implemented: 1, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -7998,7 +8023,7 @@ Audit baseline: `21eea39f94e248c733060694b7e746d6db08e1cb`. Status counts: Imple
 
 **Implemented** — Native CASA-readable T Jones gains from seeded water-vapour retrievals, atmospheric paths and spectral-window phase conversion. Includes task reports, direct logging, smoothing and antenna replacement.
 
-The compact fixtures have been compared with CASA 6.7.6.14. The recorded ALMA case is pending under #1531.
+Dataset-scale release profiling follows functionality under #979.
 
 Evidence: [two-seeds-and-application](#wvr-evidence-two-seeds-and-application), [parameter-options](#wvr-evidence-parameter-options), [recorded-alma](#wvr-evidence-recorded-alma).
 
@@ -8006,7 +8031,7 @@ Evidence: [two-seeds-and-application](#wvr-evidence-two-seeds-and-application), 
 
 ##### sparse-window-phase-reversal: Previously agreed
 
-- Record: [WVR global phase reversal can miss sparse spectral-window selections](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-global-phase-reversal-can-miss-sparse-spectral-window-selections)
+- Record: [WVR global phase reversal can miss sparse spectral-window selections](https://github.com/bglenden/casa-rs/blob/e7aad96dc5f350765fa5130e1faf10a1f10da121/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-global-phase-reversal-can-miss-sparse-spectral-window-selections)
 - Inputs: A direct wvr.gcal invocation with global phase reversal and a sparse spectral-window selection.
 - CASA: CASA 6.7.6.14 can leave selected windows unchanged when the selected position differs from the actual ID.
 - casa-rs: Reverse the phase of every selected spectral-window ID.
@@ -8014,6 +8039,28 @@ Evidence: [two-seeds-and-application](#wvr-evidence-two-seeds-and-application), 
 - User impact: A sparse output selection produces the same reversed phases as the corresponding subset of an all-window reversal.
 - Owner decision: Standing CASA bug policy in AGENTS.md.
 - Evidence: [parameter-options](#wvr-evidence-parameter-options).
+
+##### wvr-failed-segment-assignment: Proposed
+
+- Record: [WVR can move successful atmospheric fits into earlier segments](https://github.com/bglenden/casa-rs/blob/e7aad96dc5f350765fa5130e1faf10a1f10da121/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-can-move-successful-atmospheric-fits-into-earlier-segments)
+- Inputs: Run the default segmented WVR retrieval on the pinned recorded ALMA observation.
+- CASA: Two successful fits take the first two time bounds after two other fits fail.
+- casa-rs: Keep each successful fit attached to its original observation segment.
+- Rationale: The retrieved atmospheric coefficients describe conditions in those segments.
+- User impact: Each calibration gain is evaluated against the corresponding atmospheric fit.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [recorded-alma](#wvr-evidence-recorded-alma).
+
+##### wvr-empty-retrieval: Proposed
+
+- Record: [WVR can dereference a missing single retrieval](https://github.com/bglenden/casa-rs/blob/e7aad96dc5f350765fa5130e1faf10a1f10da121/docs/CASA%20%28C%2B%2B%29%20bugs.md#wvr-can-dereference-a-missing-single-retrieval)
+- Inputs: Request one fixed-interval retrieval and a negative one-second offset on the pinned observation.
+- CASA: The pinned CASA process exits with SIGSEGV after a failed-reference retry.
+- casa-rs: Return a failed retrieval without publishing a calibration table.
+- Rationale: A flagged or rejected fit leaves no coefficients to apply.
+- User impact: The caller can choose other intervals or a suitable reference antenna and retry.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [recorded-alma](#wvr-evidence-recorded-alma).
 
 #### wvr evidence
 
@@ -8042,6 +8089,9 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="wvr-evidence-recorded-alma"></a>
 ##### recorded-alma
 
-**Recorded ALMA data — planned.** Compare CASA and native WVR on uid___A002_X8ca70c_X5_shortened.ms on the Mac mini. This requires tailnet access.
+**Recorded ALMA data, phase law and calibrated science products — passed.** Corrected default gains agreed to 2.4133e-05 normalized RMS, fixed-interval gains to 1.80145e-09, and calibrated science visibilities to 3.51205e-07. Three retrieval configurations on the 250,560-row recorded ALMA observation. Compare the successful-segment law, two unchanged CASA cases, the empty-retrieval result and 64 calibrated science spectra.
 
-- [tools/casa-compat/wvrgcal_options_oracle.py](https://github.com/bglenden/casa-rs/blob/21eea39f94e248c733060694b7e746d6db08e1cb/tools/casa-compat/wvrgcal_options_oracle.py)
+- [tools/casa-compat/wvrgcal_options_oracle.py](https://github.com/bglenden/casa-rs/blob/b2ec90630ba2db384666dea9f944c97e394a9b06/tools/casa-compat/wvrgcal_options_oracle.py)
+- Revision: `b2ec90630ba2db384666dea9f944c97e394a9b06`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --recorded-ms <uid___A002_X8ca70c_X5_shortened.ms> --work <new-directory>`.
+- Receipt: `resources/casa-compat/evidence/wvr-calibration-20261121.json`.

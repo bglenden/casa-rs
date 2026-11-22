@@ -248,14 +248,14 @@
   },
   "schema_version": 1,
   "casa_version": "6.7.6.14",
-  "audit_revision": "21eea39f94e248c733060694b7e746d6db08e1cb",
+  "audit_revision": "e7aad96dc5f350765fa5130e1faf10a1f10da121",
   "behaviors": [
     {
       "id": "phase",
       "title": "Radiometer phase correction",
       "status": "Implemented",
       "scope": "Native CASA-readable T Jones gains from seeded water-vapour retrievals, atmospheric paths and spectral-window phase conversion. Includes task reports, direct logging, smoothing and antenna replacement.",
-      "gap": "The compact fixtures have been compared with CASA 6.7.6.14. The recorded ALMA case is pending under #1531.",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
       "evidence": [
         "two-seeds-and-application",
         "parameter-options",
@@ -277,6 +277,32 @@
       "evidence": [
         "parameter-options"
       ]
+    },
+    {
+      "id": "wvr-failed-segment-assignment",
+      "state": "Proposed",
+      "record": "WVR can move successful atmospheric fits into earlier segments",
+      "inputs": "Run the default segmented WVR retrieval on the pinned recorded ALMA observation.",
+      "casa": "Two successful fits take the first two time bounds after two other fits fail.",
+      "ours": "Keep each successful fit attached to its original observation segment.",
+      "rationale": "The retrieved atmospheric coefficients describe conditions in those segments.",
+      "impact": "Each calibration gain is evaluated against the corresponding atmospheric fit.",
+      "evidence": [
+        "recorded-alma"
+      ]
+    },
+    {
+      "id": "wvr-empty-retrieval",
+      "state": "Proposed",
+      "record": "WVR can dereference a missing single retrieval",
+      "inputs": "Request one fixed-interval retrieval and a negative one-second offset on the pinned observation.",
+      "casa": "The pinned CASA process exits with SIGSEGV after a failed-reference retry.",
+      "ours": "Return a failed retrieval without publishing a calibration table.",
+      "rationale": "A flagged or rejected fit leaves no coefficients to apply.",
+      "impact": "The caller can choose other intervals or a suitable reference antenna and retry.",
+      "evidence": [
+        "recorded-alma"
+      ]
     }
   ],
   "evidence": {
@@ -291,7 +317,8 @@
       "receipt": "resources/casa-compat/evidence/wvr-calibration-20261121.json",
       "links": [
         "tools/casa-compat/wvrgcal_oracle.py"
-      ]
+      ],
+      "source_revision": "21eea39f94e248c733060694b7e746d6db08e1cb"
     },
     "parameter-options": {
       "kind": "Multi-source WVR and publication options",
@@ -304,15 +331,22 @@
       "receipt": "resources/casa-compat/evidence/wvr-calibration-20261121.json",
       "links": [
         "tools/casa-compat/wvrgcal_options_oracle.py"
-      ]
+      ],
+      "source_revision": "21eea39f94e248c733060694b7e746d6db08e1cb"
     },
     "recorded-alma": {
-      "kind": "Recorded ALMA data",
-      "state": "planned",
-      "scope": "Compare CASA and native WVR on uid___A002_X8ca70c_X5_shortened.ms on the Mac mini. This requires tailnet access.",
+      "kind": "Recorded ALMA data, phase law and calibrated science products",
+      "state": "passed",
+      "scope": "Three retrieval configurations on the 250,560-row recorded ALMA observation. Compare the successful-segment law, two unchanged CASA cases, the empty-retrieval result and 64 calibrated science spectra.",
+      "result": "Corrected default gains agreed to 2.4133e-05 normalized RMS, fixed-interval gains to 1.80145e-09, and calibrated science visibilities to 3.51205e-07.",
+      "casa_version": "6.7.6.14",
+      "revision": "b2ec90630ba2db384666dea9f944c97e394a9b06",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --recorded-ms <uid___A002_X8ca70c_X5_shortened.ms> --work <new-directory>",
+      "receipt": "resources/casa-compat/evidence/wvr-calibration-20261121.json",
       "links": [
         "tools/casa-compat/wvrgcal_options_oracle.py"
-      ]
+      ],
+      "source_revision": "b2ec90630ba2db384666dea9f944c97e394a9b06"
     }
   }
 }

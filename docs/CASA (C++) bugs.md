@@ -9570,6 +9570,36 @@ CASA 6.7.6.14's `wvr.gcal(reverse=True, spw=[1])` uses the position of each sele
 
 casa-rs applies the global reversal to each selected spectral-window ID. The compact ALMA comparison confirms that the corrected gain for window 1 is the complex conjugate of the ordinary gain, while the installed CASA result retains the ordinary sign. [Pinned CASA WVR tool source](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/tools/wvr/wvr_cmpt.cc?at=refs%2Ftags%2F6.7.6.14)
 
+## WVR can move successful atmospheric fits into earlier segments
+
+On the recorded ALMA test MeasurementSet `uid___A002_X8ca70c_X5_shortened.ms`,
+CASA 6.7.6.14 and casa-rs recover the same two successful atmospheric fits.
+The other two fits have zero Bayesian evidence. LibAIR's
+`doALMAAbsRet` advances its segment-boundary index only when a fit succeeds.
+`SimpleMultiple` consequently attaches those two successful fits to the
+first and second segments even though they measured the second and fourth.
+
+casa-rs keeps both successful fits at their original times. The oracle
+reconstructs the CASA and corrected gain tables independently from the
+coefficients logged by CASA and the recorded radiometer temperatures.
+The native output agrees with the correctly assigned gains within
+`2.5e-5` normalized RMS. The incorrect CASA assignment produces a gain
+difference of approximately `0.123` normalized RMS.
+
+## WVR can dereference a missing single retrieval
+
+For the same recorded ALMA observation, CASA 6.7.6.14 with
+`segsource=False, toffset=-1.0` retries after a zero-evidence fit. In that
+retry the only selected measurement is flagged. LibAIR's
+`ALMAAbsProcessor` returns a null pointer when no fits remain and the
+tool dereferences it while calculating gains. The paired oracle
+reproduces the segmentation fault in a subprocess.
+
+casa-rs returns a failed retrieval with `rval=1` and publishes no table.
+The nearby two-retrieval case with the same time offset has a valid fit
+and produces the same gains in both engines.
+
+
 ## Replacing a native image alias can mix a peer's pixels and history
 
 Open a Float native image through a symbolic link using one image tool.
