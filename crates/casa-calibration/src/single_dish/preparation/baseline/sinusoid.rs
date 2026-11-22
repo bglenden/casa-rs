@@ -236,6 +236,13 @@ impl SingleDishSinusoid {
         }
     }
 
+    pub(super) fn variable_waves(&self) -> &[usize] {
+        match &self.include {
+            WaveSelection::Exact(waves) => waves,
+            _ => &[],
+        }
+    }
+
     pub(super) fn new(
         include: WaveSelection,
         exclude: WaveSelection,

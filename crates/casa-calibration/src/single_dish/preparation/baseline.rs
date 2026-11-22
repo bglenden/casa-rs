@@ -492,6 +492,7 @@ impl<'a> FitOperation<'a> {
                         clip_iterations = entry.settings.max_fits,
                         clip_threshold = entry.settings.clip_sigma,
                         line_finder = ?entry.line_finder,
+                        baseline = %entry.describe_basis(),
                         "Fitting Parameter");
                 }
                 parameters.validate_contexts(values.len())?;
@@ -671,7 +672,13 @@ impl SpectrumBaseline for BaselineWorker<'_> {
                                 line_finder,
                             }));
                         }
-                        noise_mask = Some(included);
+                        // Variable baselines derive weights from their original fit mask,
+                        // including residuals excluded by the clipping iterations.
+                        noise_mask = Some(if fitting.request.fixed_family().is_none() {
+                            mask
+                        } else {
+                            included
+                        });
                     } else {
                         if fitting.record_models || fitting.diagnostics.enabled() {
                             models.push(None);

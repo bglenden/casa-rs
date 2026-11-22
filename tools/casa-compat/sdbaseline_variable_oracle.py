@@ -3,7 +3,9 @@
 """Compare per-spectrum sdbaseline files, reports and tables with CASA 6.7.6.14."""
 
 import argparse
+import os
 from pathlib import Path
+import subprocess
 import time
 
 import casatasks as casa
@@ -48,8 +50,18 @@ def fit_task(task, source, params, prefix, *, reports=False, **options):
     formats = ['csv', 'text', 'table'] if reports else ['table']
     extensions = ['.csv', '.txt', '.bltable'] if reports else ['.bltable']
     files = [str(prefix.with_suffix(suffix)) for suffix in extensions]
-    assert task(str(source), outfile=str(output), blfunc='variable', blparam=str(params),
-                blformat=formats, bloutput=files, **options) is None
+    try:
+        assert task(str(source), outfile=str(output), blfunc='variable', blparam=str(params),
+                    blformat=formats, bloutput=files, **options) is None
+    except RuntimeError as error:
+        if (task is not casa.sdbaseline or not options.get('updateweight')
+                or 'column WEIGHT_SPECTRUM SIGMA_SPECTRUM does not exist' not in str(error)):
+            raise
+        # CASA passes both column names as one after writing the science result.
+        with opened(output, True) as main:
+            assert not main.iscelldefined('WEIGHT_SPECTRUM', 0)
+            assert not main.iscelldefined('SIGMA_SPECTRUM', 0)
+            main.removecols(['WEIGHT_SPECTRUM', 'SIGMA_SPECTRUM'])
     return output, table
 
 
@@ -93,6 +105,24 @@ def check_mixed(product, table, spectra, flags):
                              in zip(spectra, bases, terms)])
         np.testing.assert_allclose(main.getcell('DATA', 0), expected, atol=2e-5)
         np.testing.assert_array_equal(main.getcell('FLAG', 0), flags)
+        weight_masks = [np.r_[5:40, 45:91], p1]
+        weight = [1 / np.mean(residual[mask] ** 2)
+                  for residual, mask in zip(expected, weight_masks)]
+        np.testing.assert_allclose(main.getcell('WEIGHT', 0), weight, rtol=5e-6)
+
+
+def check_native_verbose(root, source, params):
+    binary = os.environ.get('CASARS_CALIBRATE_BIN', 'calibrate')
+    arguments = [binary, 'sdbaseline', '--infile', str(source), '--blfunc', 'variable',
+                 '--blparam', str(params), '--blformat=', '--no-save-last']
+    env = os.environ | {'CASA_RS_LOG_STDERR_PRIORITY': 'INFO'}
+    quiet = subprocess.run([*arguments, '--outfile', str(root / 'quiet.ms')],
+                           env=env, capture_output=True, text=True, check=True)
+    verbose = subprocess.run([*arguments, '--outfile', str(root / 'verbose.ms'), '--verbose'],
+                             env=env, capture_output=True, text=True, check=True)
+    assert 'Fitting Parameter' not in quiet.stderr
+    assert 'poly order=2' in verbose.stderr
+    assert 'sinusoid nwave=[0, 3, 7]' in verbose.stderr
 
 
 def main():
@@ -120,13 +150,15 @@ def main():
     products = {}
     for name, task in tasks.items():
         prefix = root / f'mixed-{name}'
-        fit, table = fit_task(task, source, mixed, prefix, reports=True, verbose=True)
+        fit, table = fit_task(task, source, mixed, prefix, reports=True, verbose=True,
+                              updateweight=True, sigmavalue='rms')
         check_mixed(fit, table, spectra, flags)
         products[name] = fit, table
     if 'native' in products:
         compare_outputs(products['casa'][0], products['native'][0])
         compare_baselines(products['casa'][1], products['native'][1])
         compare_reports(root / 'mixed-casa', root / 'mixed-native')
+        check_native_verbose(root, source, mixed)
 
     for producer, (fit, table) in products.items():
         for reader, factory in tools.items():

@@ -22,6 +22,21 @@ pub(super) struct SpectrumParameters {
     pub(super) line_finder: StoredLineFinder,
 }
 
+impl SpectrumParameters {
+    pub(super) fn describe_basis(&self) -> String {
+        match &self.settings.basis {
+            SingleDishBaselineBasis::Polynomial { order, chebyshev } => {
+                let family = if *chebyshev { "chebyshev" } else { "poly" };
+                format!("{family} order={order}")
+            }
+            SingleDishBaselineBasis::CubicSpline { pieces } => format!("cspline npiece={pieces}"),
+            SingleDishBaselineBasis::Sinusoid(sinusoid) => {
+                format!("sinusoid nwave={:?}", sinusoid.variable_waves())
+            }
+        }
+    }
+}
+
 type SpectrumKey = (usize, usize);
 type ContextLimit = (usize, usize);
 
