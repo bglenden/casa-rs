@@ -35,6 +35,11 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::ImageRegionSection;
+pub use imsubimage::{
+    ChannelLineFit, ChannelLineShape, ImageProfileFit, ImageProfileFitResult, ProfileDivisor,
+    ProfileEstimates, ProfileFitOptions, ProfileOutputNames, ProfilePeaks, ProfileRegion,
+    ProfileSigma, fit_channel_lines,
+};
 pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use imsubimage::{
     ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
@@ -59,10 +64,6 @@ pub use imsubimage::{FourierOptions, FourierPixel, ImageFourier};
 pub use imsubimage::{GaussianConvolutionOptions, ImageGaussianConvolution};
 pub use imsubimage::{HistogramOptions, HistogramPixel, image_histogram};
 pub use imsubimage::{ImageMaxFit, MaxFitOptions, fit_image_maximum};
-pub use imsubimage::{
-    ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
-    ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
-};
 pub use imsubimage::{
     ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions, read_image_profile,
 };

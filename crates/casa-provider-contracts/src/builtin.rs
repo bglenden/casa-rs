@@ -359,6 +359,7 @@ mod tests {
             ("sdgaincal", false),
             ("sdsmooth", false),
             ("sdbaseline", false),
+            ("sdfit", false),
             ("tsdimaging", false),
             ("simanalyze", true),
         ]);

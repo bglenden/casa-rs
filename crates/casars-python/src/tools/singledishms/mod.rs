@@ -2,6 +2,7 @@
 //! The CASA single-dish spectral preparation tool.
 
 mod baseline;
+mod line_fit;
 mod pending;
 pub(crate) mod surface;
 

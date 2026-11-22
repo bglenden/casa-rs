@@ -2,6 +2,7 @@
 //! Native single-dish spectral preparation shared by the task and tool.
 
 pub(crate) mod baseline;
+pub(crate) mod line_fit;
 mod smoothing;
 
 use std::path::{Path, PathBuf};
@@ -23,6 +24,7 @@ pub struct SingleDishSession {
     name: Option<PathBuf>,
     selection: MsSelection,
     reindex: Option<bool>,
+    line_averaging: line_fit::LineAveraging,
 }
 
 /// Parameters of a selected single-dish convolution.

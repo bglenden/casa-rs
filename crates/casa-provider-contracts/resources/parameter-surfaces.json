@@ -47155,6 +47155,893 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "sdfit",
+      "contract_version": 1,
+      "display_name": "Single-Dish Line Fitting",
+      "category": "Calibration",
+      "summary": "Fit Gaussian or Lorentzian lines to selected single-dish spectra.",
+      "provider_family": "calibration",
+      "casa_task": "sdfit",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "sdfit"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "infile",
+          "concept": {
+            "id": "single_dish.sky.infile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infile"
+              ]
+            },
+            "provider": {
+              "field": "infile"
+            },
+            "python": {
+              "name": "infile"
+            },
+            "presentation": {
+              "label": "Input MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "datacolumn",
+          "concept": {
+            "id": "parameter.datacolumn",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "data"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--datacolumn"
+              ],
+              "metavar": "COLUMN"
+            },
+            "provider": {
+              "field": "datacolumn",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "datacolumn",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Data Column",
+              "group": "Data"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Spectral window",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 5
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "START~END"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "timerange",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "pol",
+          "concept": {
+            "id": "specifycal.pol",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pol"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "pol"
+            },
+            "python": {
+              "name": "pol",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Correlation",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "timebin",
+          "concept": {
+            "id": "parameter.timebin",
+            "semantic_revision": 2
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timebin"
+              ],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "timebin"
+            },
+            "python": {
+              "name": "timebin"
+            },
+            "presentation": {
+              "label": "Time Bin",
+              "group": "Time",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "timespan",
+          "concept": {
+            "id": "single_dish.line_fit.timespan",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timespan"
+              ]
+            },
+            "provider": {
+              "field": "timespan"
+            },
+            "python": {
+              "name": "timespan"
+            },
+            "presentation": {
+              "label": "Time Span",
+              "group": "Line Fitting"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1532",
+            "reason": "Scan, state and field boundaries allowed within an averaging interval."
+          }
+        },
+        {
+          "name": "polaverage",
+          "concept": {
+            "id": "single_dish.line_fit.polaverage",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--polaverage"
+              ]
+            },
+            "provider": {
+              "field": "polaverage"
+            },
+            "python": {
+              "name": "polaverage"
+            },
+            "presentation": {
+              "label": "Polarization Average",
+              "group": "Line Fitting"
+            }
+          }
+        },
+        {
+          "name": "fitfunc",
+          "concept": {
+            "id": "single_dish.line_fit.fitfunc",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "gaussian"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fitfunc"
+              ]
+            },
+            "provider": {
+              "field": "fitfunc"
+            },
+            "python": {
+              "name": "fitfunc"
+            },
+            "presentation": {
+              "label": "Line Profile",
+              "group": "Line Fitting"
+            }
+          }
+        },
+        {
+          "name": "fitmode",
+          "concept": {
+            "id": "single_dish.line_fit.fitmode",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "list"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fitmode"
+              ]
+            },
+            "provider": {
+              "field": "fitmode"
+            },
+            "python": {
+              "name": "fitmode"
+            },
+            "presentation": {
+              "label": "Fit Mode",
+              "group": "Line Fitting"
+            }
+          }
+        },
+        {
+          "name": "nfit",
+          "concept": {
+            "id": "single_dish.line_fit.nfit",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": 0
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--nfit"
+              ]
+            },
+            "provider": {
+              "field": "nfit"
+            },
+            "python": {
+              "name": "nfit",
+              "type_hint": "int | list[int]"
+            },
+            "presentation": {
+              "label": "Line Components",
+              "group": "Line Fitting"
+            }
+          }
+        },
+        {
+          "name": "thresh",
+          "concept": {
+            "id": "single_dish.baseline.thresh",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 5.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--thresh"
+              ]
+            },
+            "provider": {
+              "field": "thresh",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "thresh",
+              "type_hint": "float"
+            },
+            "presentation": {
+              "label": "thresh",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "avg_limit",
+          "concept": {
+            "id": "single_dish.baseline.avg_limit",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--avg_limit"
+              ]
+            },
+            "provider": {
+              "field": "avg_limit",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "avg_limit",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "avg_limit",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "minwidth",
+          "concept": {
+            "id": "single_dish.baseline.minwidth",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minwidth"
+              ]
+            },
+            "provider": {
+              "field": "minwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minwidth",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "minwidth",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "edge",
+          "concept": {
+            "id": "single_dish.baseline.edge",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": 0
+                },
+                {
+                  "kind": "integer",
+                  "value": 0
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--edge"
+              ]
+            },
+            "provider": {
+              "field": "edge",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "edge",
+              "type_hint": "list[int]"
+            },
+            "presentation": {
+              "label": "edge",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "single_dish.line_fit.outfile",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "Line Fit Report",
+              "group": "Line Fitting"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1532",
+            "reason": "Optional tab-separated report of fitted line components."
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "Overwrite output",
+              "group": "Output"
+            }
+          }
+        }
+      ]
     }
   ]
 }

@@ -55,6 +55,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdfit | sdfit | yes | 21 | 21 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
@@ -2796,6 +2797,157 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1974`.
+
+### sdfit
+
+- CASA source: `casatasks/sdfit.py`, 21 parameters
+- Implementation: `casatasks/private/task_sdfit.py`, `sdfit` (line 17): 1 return statements, 5 raise statements
+  - returns at line 73: `_get_results(tempfile, fitfunc, nfit, outfile)`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 21, in CASA's order: yes
+- Defaults that differ: none
+
+#### sdfit parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `f8253b17601ac8d8bf538c516ea05b19a6129891`. Status counts: Default only: 0, Implemented: 21, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `infile` | `''` | `''`; `infile` → `infile` | Implemented | name of input SD dataset [selection](#sdfit-behavior-selection)<br>Catalog domain: `path` (measurement_set) | [paired](#sdfit-evidence-paired) |
+| `datacolumn` | `'data'` | `'data'`; `datacolumn` → `datacolumn` | Implemented | Read FLOAT_DATA or the real part of DATA or CORRECTED_DATA through the data, float_data and corrected selectors. [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | select data by antenna name or ID, e.g. "PM03" [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | select data by field IDs and names, e.g. "3C2*" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | select data by IF IDs (spectral windows), e.g. "3,5,7" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | select data by time range, e.g. "09:14:0~09:54:0" (""=all) (see examples in help) [selection](#sdfit-behavior-selection)<br>Catalog domain: `variant` | [paired](#sdfit-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | select data by scan numbers, e.g. "21~23" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `pol` | `''` | `''`; `pol` → `pol` | Implemented | select data by polarization IDs, e.g. "XX,YY" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | select data by observational intent, e.g. "*ON_SOURCE*" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `timebin` | `''` | `''`; `timebin` → `timebin` | Implemented | bin width for time averaging [averaging](#sdfit-behavior-averaging)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `timespan` | `''` | `''`; `timespan` → `timespan` | Implemented | span the timebin across "scan", "state", "field", or a combination of them (e.g., "scan,state") [averaging](#sdfit-behavior-averaging)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `polaverage` | `''` | `''`; `polaverage` → `polaverage` | Implemented | polarization averaging mode ("", "stokes" or "geometric"). [averaging](#sdfit-behavior-averaging)<br>Catalog domain: ``, `stokes`, `geometric` | [paired](#sdfit-evidence-paired) |
+| `fitfunc` | `'gaussian'` | `'gaussian'`; `fitfunc` → `fitfunc` | Implemented | function for fitting [fitting](#sdfit-behavior-fitting)<br>Catalog domain: `gaussian`, `lorentzian` | [paired](#sdfit-evidence-paired) |
+| `fitmode` | `'list'` | `'list'`; `fitmode` → `fitmode` | Implemented | Use explicit component counts and channel ranges or detect lines automatically. [fitting](#sdfit-behavior-fitting)<br>Catalog domain: `list`, `auto` | [paired](#sdfit-evidence-paired) |
+| `nfit` | `[0]` | `[0]`; `nfit` → `nfit` | Implemented | list of number of lines to fit in maskline region. [fitting](#sdfit-behavior-fitting)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [paired](#sdfit-evidence-paired) |
+| `thresh` | `5.0` | `5.0`; `thresh` → `thresh` | Implemented | S/N threshold for linefinder [detection](#sdfit-behavior-detection)<br>Catalog domain: `float` | [paired](#sdfit-evidence-paired) |
+| `avg_limit` | `4` | `4`; `avg_limit` → `avg_limit` | Implemented | channel averaging for broad lines [detection](#sdfit-behavior-detection)<br>Catalog domain: `integer` | [paired](#sdfit-evidence-paired) |
+| `minwidth` | `4` | `4`; `minwidth` → `minwidth` | Implemented | the minimum channel width to detect as a line [detection](#sdfit-behavior-detection)<br>Catalog domain: `integer` | [paired](#sdfit-evidence-paired) |
+| `edge` | `[0, 0]` | `[0, 0]`; `edge` → `edge` | Implemented | channels to drop at beginning and end of spectrum [detection](#sdfit-behavior-detection)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [paired](#sdfit-evidence-paired) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | name of output file [products](#sdfit-behavior-products)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | overwrite the output file if already exists [products](#sdfit-behavior-products)<br>Catalog domain: `bool` | [paired](#sdfit-evidence-paired) |
+
+#### sdfit interacting modes and task behavior
+
+<a id="sdfit-behavior-selection"></a>
+##### Select single-dish spectra
+
+**Implemented** — Apply CASA autocorrelation, field, time, scan, correlation, intent and spectral-window selection. Use channel ranges as masks on the original spectra.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+<a id="sdfit-behavior-fitting"></a>
+##### Fit and report spectral lines
+
+**Implemented** — Fit Gaussian and Lorentzian emission and absorption components. Return channel centers, peaks, widths and residual covariance errors as nested Python lists.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+<a id="sdfit-behavior-averaging"></a>
+##### Average selected integrations and hands
+
+**Implemented** — Combine selected integrations and time-span axes or average parallel hands, using channel weights when present. An attached fit_line retains its averaging settings until reopened or closed.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+<a id="sdfit-behavior-detection"></a>
+##### Detect line ranges
+
+**Implemented** — Use the CASA clipped-MAD line finder to choose fit ranges. Omit spectra with no detected line in automatic mode.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+<a id="sdfit-behavior-products"></a>
+##### Publish interoperable fit products
+
+**Implemented** — Write the optional tab-separated fit report and the direct tool text and empty selected MeasurementSet. Switch to Stokes I metadata when requested by the attached tool.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+#### sdfit deviations and unfinished work
+
+##### chronological-time-bins: Previously agreed
+
+- Record: [Single-dish line fitting can exceed its time bin on descending rows](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-line-fitting-can-exceed-its-time-bin-on-descending-rows)
+- Inputs: A one-second fit bin on four integrations provided in descending physical order.
+- CASA: The iterator fits one combined spectrum per hand.
+- casa-rs: Chronological ordering yields four fitted spectra per hand in either physical row order.
+- Rationale: The bin duration applies to integration times. Fit products agree with CASA on the chronological input.
+- User impact: A reordered MeasurementSet gives the same fitted time bins.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdfit-evidence-paired).
+
+##### single-hand-average: Previously agreed
+
+- Record: [Single-dish polarization averaging can abort for one selected hand](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-polarization-averaging-can-abort-for-one-selected-hand)
+- Inputs: Select YY on an XX/YY setup and request geometric averaging.
+- CASA: The iterator can abort while indexing the original pair.
+- casa-rs: With no selected pair, fit the selected hand unchanged.
+- Rationale: The selected correlation is the only available eligible spectrum.
+- User impact: The call returns the equivalent fit of the selected hand.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdfit-evidence-paired).
+
+##### negative-fit-count: Previously agreed
+
+- Record: [Single-dish line fitting aborts for negative component counts](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-line-fitting-aborts-for-negative-component-counts)
+- Inputs: Use nfit=[-1] in list mode.
+- CASA: An unsigned component allocation can abort the process.
+- casa-rs: Raise a runtime error before allocating a fit.
+- Rationale: A component count cannot be negative.
+- User impact: The caller can correct the list without losing the session.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdfit-evidence-paired).
+
+##### fit-report-overwrite: Previously agreed
+
+- Record: [A failed line fit can delete the previous report](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-failed-line-fit-can-delete-the-previous-report)
+- Inputs: Enable overwrite for an existing fit report and supply a mismatched component count.
+- CASA: The earlier report is removed before the error.
+- casa-rs: Keep the report until the replacement has been fitted and written.
+- Rationale: An incomplete fit cannot replace an existing product.
+- User impact: The caller keeps the earlier report after a failed fit.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdfit-evidence-paired).
+
+#### sdfit evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="sdfit-evidence-paired"></a>
+##### paired
+
+**Public task and tool spectral fits, uncertainties and MeasurementSet interchange — passed.** The paired and analytic comparisons pass for selected noisy single and joint components, including the reviewed direct-channel weights, count separators, symlink report and contended publication retry. All 21 task arguments, all 15 fit_line arguments, independent profile and covariance fits, averaging, CSV and tabular results, and the empty direct-tool MS opened in both readers.
+
+- [tools/casa-compat/sdfit_oracle.py](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/tools/casa-compat/sdfit_oracle.py)
+- Revision: `f8253b17601ac8d8bf538c516ea05b19a6129891`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdfit_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1987`.
 
 ### sdgaincal
 
