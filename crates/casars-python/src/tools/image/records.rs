@@ -92,10 +92,12 @@ impl PyImageTool {
                 return Ok(false);
             };
             let mut image = attachment.lock();
-            if image.is_saved_expression() {
-                return Err(raised("Saving image expression metadata is not implemented yet (#1959)"));
+            if let Some(directory) = attachment.saved_expression_directory() {
+                let path = image.path().ok_or_else(|| raised("Saved image expression has no name"))?;
+                directory.write_metadata(path, image.kind(), &record)?;
+            } else {
+                attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             }
-            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             // CASA accepts this call on a MIRIAD attachment and records it
             // in history. Subsequent reads and exports see the empty record.
             if image.image_type_name() != "MIRIADImage" {

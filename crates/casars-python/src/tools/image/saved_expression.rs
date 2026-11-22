@@ -12,11 +12,17 @@ use pyo3::prelude::*;
 use super::attachment::AttachedImage;
 use super::handle::{ImageHandle, Storage, raised};
 
+mod manifest;
+pub(super) use manifest::SavedExpressionDirectory;
+
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
+    let (captured, manifest) = SavedExpressionDirectory::open(path, root.clone())?;
+    let initial = PendingExpression::from_manifest(root, manifest, &directory)?;
     let mut graph = CapturedGraph::default();
-    let (pixels, single_precision) = graph.compile(root, &directory)?;
+    let (pixels, single_precision) = graph.compile(initial, &directory)?;
+    captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
             ImageHandle::Float(expression_storage(
@@ -42,7 +48,7 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
         }
         ImageToolPixelExpression::Boolean(_) => unreachable!("saved image geometry is numeric"),
     };
-    let mut attachment = AttachedImage::temporary(image);
+    let mut attachment = AttachedImage::with_saved_expression(image, captured);
     attachment.retain_expression_inputs(graph.retained, graph.paths);
     Ok(attachment)
 }
@@ -57,11 +63,11 @@ struct CapturedGraph {
 impl CapturedGraph {
     fn compile(
         &mut self,
-        root: PathBuf,
+        root: PendingExpression,
         directory: &Path,
     ) -> PyResult<(ImageToolPixelExpression, bool)> {
-        let mut pending = vec![PendingExpression::read(root.clone(), directory)?];
-        let mut active = HashSet::from([root]);
+        let mut active = HashSet::from([root.path.clone()]);
+        let mut pending = vec![root];
         let mut compiled = HashMap::new();
         while let Some(frame) = pending.last_mut() {
             if let Some(path) = frame.next_path() {
@@ -114,6 +120,14 @@ impl PendingExpression {
             ));
         }
         let manifest = read_tool_manifest(&path).map_err(raised)?;
+        Self::from_manifest(path, manifest, directory)
+    }
+
+    fn from_manifest(
+        path: PathBuf,
+        manifest: ToolExpressionManifest,
+        directory: &Path,
+    ) -> PyResult<Self> {
         let inputs =
             ImageToolExpressionInputs::resolve_in_directory(manifest.expression.clone(), directory)
                 .map_err(raised)?;
