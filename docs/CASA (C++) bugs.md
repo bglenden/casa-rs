@@ -287,6 +287,25 @@ In `VLACDA::attach()`, if the new CDA is invalid (`itsOffset == 0`, or equivalen
 baseline data are present), clear the cached baseline objects and return before any
 reattach path runs.
 
+## `importvla` leaves a failed MeasurementSet at the output path
+
+CASA 6.7.6.14 leaves an empty MeasurementSet when `importvla` finds no matching
+data, for example when selecting L band on `AT166_1`. It also leaves a partially
+filled MeasurementSet if the first archive is readable and a later path is a
+directory. `importvla` then rejects a retry at the same path because the output
+already exists. casa-rs stages the MeasurementSet, task history and `Original`
+flags together and publishes them on success, so a corrected request can be
+retried at the same path. Pre-existing products are preserved.
+
+## `importvla` can ignore a frequency tolerance given as a quantity string
+
+On CASA 6.7.6.14, `AT166_1` produces eight spectral windows with
+`frequencytol='3000000000.0Hz'` and five with `frequencytol=3000000000.0`.
+The filler reads the magnitude of a parsed quantity and can use the channel
+width when string extraction yields zero. casa-rs interprets quantity
+strings in Hz and checks both forms against CASA's numeric tolerance. The
+original argument remains in `HISTORY`.
+
 ## `mstransform` channel-mode transformed-grid inconsistency
 
 - Date noted: 2026-04-10

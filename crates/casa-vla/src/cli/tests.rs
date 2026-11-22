@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -296,7 +297,7 @@ fn run_import_covers_the_import_execution_branch() {
         vis: Some(temp.path().join("import.ms")),
         ..ImportVlaOptions::default()
     };
-    assert!(run(&options).is_err());
+    assert!(run(&options, None).is_err());
 }
 
 #[test]
@@ -310,10 +311,13 @@ fn run_without_vis_cleans_up_failed_default_output_path() {
                 .to_string()
                 + ".ms",
         );
-        let result = run(&ImportVlaOptions {
-            archivefiles: vec![path.clone()],
-            ..ImportVlaOptions::default()
-        });
+        let result = run(
+            &ImportVlaOptions {
+                archivefiles: vec![path.clone()],
+                ..ImportVlaOptions::default()
+            },
+            None,
+        );
         assert!(
             !expected_vis.exists(),
             "failed implicit imports should clean up the derived temp cwd output"
@@ -339,10 +343,13 @@ fn run_without_vis_keeps_an_existing_default_output() {
         );
         fs::create_dir(&existing).expect("existing default output");
         fs::write(existing.join("table.dat"), b"first product").expect("product file");
-        let result = run(&ImportVlaOptions {
-            archivefiles: vec![path.clone()],
-            ..ImportVlaOptions::default()
-        });
+        let result = run(
+            &ImportVlaOptions {
+                archivefiles: vec![path.clone()],
+                ..ImportVlaOptions::default()
+            },
+            None,
+        );
         assert_eq!(
             fs::read(existing.join("table.dat")).expect("product kept"),
             b"first product"

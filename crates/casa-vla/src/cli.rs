@@ -5,15 +5,13 @@
 //! callback here reads the resolved run into [`ImportVlaOptions`] and
 //! imports.
 
-use std::fs;
-use std::path::Path;
-
+use casa_ms::TransformTaskHistory;
+use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
+use crate::importer::import_archive_with_history;
 use crate::task_contract::{ImportVlaTaskResult, importvla_task_schema_bundle};
-use crate::{
-    ImportReport, ImportVlaOptions, VlaError, import_archive_files_to_measurement_set_from_options,
-};
+use crate::{ImportReport, ImportVlaOptions, VlaError};
 
 /// The front end of the `importvla` binary.
 pub fn task_front_end()
@@ -30,13 +28,60 @@ pub fn task_front_end()
 /// Import one resolved request; CASA's `importvla` returns None.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let options = options_from(task)?;
-    let report = run(&options).map_err(failure)?;
+    let history = task_history(task, &options)?;
+    let report = run(&options, Some(&history)).map_err(failure)?;
     let text = import_text(&report);
     Ok(TaskSuccess::new(
         casa_task_runtime::CasaValue::None,
         &ImportVlaTaskResult::Import(report),
     )?
     .with_text(text))
+}
+
+fn task_history(
+    task: &TaskInvocation<'_>,
+    options: &ImportVlaOptions,
+) -> Result<TransformTaskHistory, TaskFailure> {
+    let vis = options.effective_vis_for_import().map_err(failure)?;
+    let paths = ParameterValue::Array(
+        options
+            .archivefiles
+            .iter()
+            .map(|path| ParameterValue::String(path.display().to_string()))
+            .collect(),
+    );
+    let text = |name| {
+        task.text(name)
+            .map(|value| format!("{:?}", value.unwrap_or_default()))
+    };
+    let flag = |value| if value { "True".into() } else { "False".into() };
+    Ok(TransformTaskHistory {
+        task: "importvla".into(),
+        parameters: [
+            ("archivefiles", python_repr(&paths)),
+            ("vis", format!("{:?}", vis.display().to_string())),
+            ("bandname", text("bandname")?),
+            ("frequencytol", python_repr(frequency_tolerance(task)?)),
+            ("project", text("project")?),
+            ("starttime", text("starttime")?),
+            ("stoptime", text("stoptime")?),
+            ("applytsys", flag(options.applytsys)),
+            ("autocorr", flag(options.autocorr)),
+            ("antnamescheme", text("antnamescheme")?),
+            ("keepblanks", flag(options.keepblanks)),
+            ("evlabands", flag(options.evlabands)),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.into(), value))
+        .collect(),
+    })
+}
+
+fn frequency_tolerance<'a>(
+    task: &'a TaskInvocation<'_>,
+) -> Result<&'a ParameterValue, TaskFailure> {
+    task.value("frequencytol")
+        .ok_or_else(|| TaskFailure::validation("missing frequency tolerance").at("frequencytol"))
 }
 
 /// The resolved run as [`ImportVlaOptions`]. `archivefiles` arrives as the
@@ -56,8 +101,18 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<ImportVlaOptions, TaskFailu
             .map(|text| text.parse())
             .transpose()
             .map_err(failure)?,
-        frequencytol_hz: ImportVlaOptions::parse_frequencytol(&task.required_text("frequencytol")?)
-            .map_err(failure)?,
+        frequencytol_hz: match frequency_tolerance(task)? {
+            ParameterValue::String(text) => {
+                ImportVlaOptions::parse_frequencytol(text).map_err(failure)?
+            }
+            ParameterValue::Integer(value) => *value as f64,
+            ParameterValue::Float(value) => *value,
+            _ => {
+                return Err(
+                    TaskFailure::validation("expected a frequency or quantity").at("frequencytol")
+                );
+            }
+        },
         project: task.text("project")?,
         starttime: task.text("starttime")?,
         stoptime: task.text("stoptime")?,
@@ -87,36 +142,23 @@ fn failure(error: VlaError) -> TaskFailure {
     }
 }
 
-fn run(options: &ImportVlaOptions) -> Result<ImportReport, VlaError> {
+fn run(
+    options: &ImportVlaOptions,
+    history: Option<&TransformTaskHistory>,
+) -> Result<ImportReport, VlaError> {
     tracing::info!(
         archive_count = options.archivefiles.len(),
         vis = ?options.vis,
         "importvla run started"
     );
-    // A failed import removes the default output it started, never one that
-    // existed before the run: that one is a product it refused to replace.
-    let cleanup_vis = if options.vis.is_none() {
-        Some(options.effective_vis_for_import()?).filter(|path| !path.exists())
-    } else {
-        None
-    };
-    let report = match import_archive_files_to_measurement_set_from_options(options) {
+    let report = match import_archive_with_history(options, history) {
         Ok(report) => report,
         Err(error) => {
             tracing::error!(
                 casa.priority = "SEVERE",
                 error = %error,
-                cleanup_vis = ?cleanup_vis,
                 "importvla import failed"
             );
-            if let Some(path) = cleanup_vis.as_deref().filter(|path| path.exists()) {
-                cleanup_failed_import_output(path).map_err(|cleanup_error| {
-                    VlaError::import(format!(
-                        "{error}; cleanup failed for {}: {cleanup_error}",
-                        path.display()
-                    ))
-                })?;
-            }
             return Err(error);
         }
     };
@@ -127,14 +169,6 @@ fn run(options: &ImportVlaOptions) -> Result<ImportReport, VlaError> {
         "importvla run completed"
     );
     Ok(report)
-}
-
-fn cleanup_failed_import_output(path: &Path) -> Result<(), std::io::Error> {
-    if path.is_dir() {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
-    }
 }
 
 fn import_text(report: &ImportReport) -> String {

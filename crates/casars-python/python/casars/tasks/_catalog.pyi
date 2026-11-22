@@ -151,7 +151,7 @@ def importvla(
     archivefiles: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     bandname: Literal['', '4', 'C', 'K', 'Ka', 'L', 'P', 'Q', 'S', 'U', 'X'] = ...,
-    frequencytol: str = ...,
+    frequencytol: str | int | float = ...,
     project: str = ...,
     starttime: str = ...,
     stoptime: str = ...,

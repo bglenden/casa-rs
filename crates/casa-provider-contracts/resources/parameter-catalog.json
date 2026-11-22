@@ -3692,7 +3692,7 @@
       "semantic_revision": 1,
       "casa_name": "frequencytol",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "trim"
@@ -3701,7 +3701,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Spectral-window matching tolerance in CASA quantity syntax",
+        "summary": "Spectral-window matching tolerance in Hz, as a number or CASA quantity",
         "details": null,
         "examples": [
           "150000.0Hz"
