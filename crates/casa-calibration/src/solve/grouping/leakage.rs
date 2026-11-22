@@ -650,7 +650,13 @@ impl LeakageInputs<'_> {
                         ..active.segment
                     };
                     if legacy.as_ref().is_none_or(|legacy| legacy.fits(segment)) {
-                        fits.accumulate(pair, &mut active.bins, antennas, segment)?;
+                        fits.accumulate(
+                            pair,
+                            &mut active.bins,
+                            antennas,
+                            segment,
+                            self.legacy_cross_hand,
+                        )?;
                     } else {
                         active.bins.fill(CoherencyMean::default());
                     }
@@ -694,7 +700,13 @@ impl LeakageInputs<'_> {
                 .as_ref()
                 .is_none_or(|legacy| legacy.fits(active.segment))
             {
-                fits.accumulate(pair, &mut active.bins, antennas, active.segment)?;
+                fits.accumulate(
+                    pair,
+                    &mut active.bins,
+                    antennas,
+                    active.segment,
+                    self.legacy_cross_hand,
+                )?;
             }
         }
         let mut stages = self.tool.then(LeakageFitStages::default);

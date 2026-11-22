@@ -156,6 +156,7 @@ impl IntervalFits {
         bins: &mut [CoherencyMean],
         antennas: usize,
         segment: BaselineSegment,
+        legacy_cross_hand: bool,
     ) -> Result<(), GainSolveError> {
         let pair = pair.map(|antenna| antenna as usize);
         if pair.iter().any(|&antenna| antenna >= antennas) {
@@ -165,6 +166,9 @@ impl IntervalFits {
             return average.add(pair.map(|antenna| antenna as i32), segment, bins);
         }
         let require_all = matches!(self, Self::LeastSquares(..));
+        let legacy_phase_normalization = (legacy_cross_hand
+            && matches!(self, Self::CrossHand(_, _, GainSolveMode::Phase)))
+        .then(|| super::cross_hand::legacy_phase_normalization(bins));
         for (channel, mean) in bins.iter_mut().enumerate() {
             let unflagged = if pair[0] == pair[1] {
                 0
@@ -177,8 +181,11 @@ impl IntervalFits {
                 | Self::Iterative { mode, .. } = self
                     && *mode != GainSolveMode::AmplitudePhase
                 {
-                    for (value, weight) in data.iter_mut().zip(&mut weights) {
-                        (*value, *weight) = solve_sample(*mode, *value, *weight);
+                    for (corr, (value, weight)) in data.iter_mut().zip(&mut weights).enumerate() {
+                        let (normalized, scaled) = solve_sample(*mode, *value, *weight);
+                        *value = normalized;
+                        *weight = legacy_phase_normalization
+                            .map_or(scaled, |normalization| *weight * normalization[corr]);
                     }
                 }
                 match self {

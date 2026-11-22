@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::solve::kernel::complex32_to_64;
 
-use super::{BaselineSegment, SelectedSolveRow, SolveSamples};
+use super::{BaselineSegment, CoherencyMean, SelectedSolveRow, SolveSamples};
 
 /// VisBuffGroupAcc uses one time origin per field/window and gives X Jones
 /// the first nonempty accumulated buffer for its phase fit.
@@ -80,6 +80,27 @@ pub(super) fn legacy_row_weights(
         }
     }
     (weights, usable)
+}
+
+/// CalVisBuffer adjusts its scalar weights once, after time averaging.
+pub(super) fn legacy_phase_normalization(bins: &[CoherencyMean]) -> [f32; 4] {
+    let mut amplitudes = [0.0; 4];
+    let mut counts = [0; 4];
+    for bin in bins {
+        for (corr, weight) in bin.weights.into_iter().enumerate() {
+            if weight > 0.0 {
+                let amplitude = (bin.data[corr] / weight).norm();
+                if amplitude > 0.0 {
+                    amplitudes[corr] += amplitude;
+                    counts[corr] += 1;
+                }
+            }
+        }
+    }
+    std::array::from_fn(|corr| {
+        let average = amplitudes[corr] / counts[corr].max(1) as f32;
+        average * average
+    })
 }
 
 #[derive(Clone, Copy)]
