@@ -25,15 +25,8 @@ pub(super) fn apply_x_mueller(
             reason: "X Mueller requires CPARAM".into(),
         });
     };
-    let sample = grid.sample(
-        0,
-        0,
-        output.data_channels,
-        &[],
-        ApplyInterpolationMode::Nearest,
-        path,
-    )?;
-    let (value, _) = correcting_gain(sample.value, sample.flagged);
+    // The legacy factory marks every computed matrix element usable.
+    let (value, _) = correcting_gain(grid.value_at(0, 0), false);
     for (index, &code) in output.correlation_types.iter().enumerate() {
         let gain = match code {
             6 | 10 => value,

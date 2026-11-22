@@ -13,6 +13,7 @@ import numpy as np
 from applycal_oracle import copy_ms
 from calibrater_apply_tool_oracle import result
 from calibrater_solve_tool_oracle import compare_readers, compare_solutions
+from calibrater_state_oracle import casa_log, native_log
 from calibration_smoothcal_oracle import opened
 from polcal_cross_hand_oracle import plant_cross_hand
 from polcal_leakage_solve_oracle import plant, put_observations
@@ -52,7 +53,7 @@ def solve(work, engines, vis, label, stokes, *, old=True, options=None):
 def correct(work, engines, vis, products, label):
     for source, product in products.items():
         for old in (False, True):
-            outputs = {}
+            outputs, states = {}, {}
             for engine, factory in engines.items():
                 output = work/f'{label}-{source}-{old}-{engine}.ms'
                 copy_ms(vis, output)
@@ -60,7 +61,12 @@ def correct(work, engines, vis, products, label):
                 assert tool.setvi(old, True) and tool.open(str(output), addcorr=True, addmodel=False)
                 try:
                     assert tool.selectvis(field='0')
-                    assert tool.setapply(table=str(product), calwt=True) and tool.correct()
+                    assert tool.setapply(table=str(product), calwt=True)
+                    log = (casa_log(work/f'{label}-{source}-{old}-state.log')
+                           if engine == 'casa' else native_log())
+                    with log as capture:
+                        states[engine] = capture(tool.state)
+                    assert tool.correct()
                 finally:
                     assert tool.close()
                 with opened(output) as table:
@@ -71,9 +77,26 @@ def correct(work, engines, vis, products, label):
                     outputs[engine] = [corrected] + [table.getcol(name)
                                                      for name in ('FLAG', 'WEIGHT', 'SIGMA')]
             np.testing.assert_allclose(outputs['native'][0], outputs['casa'][0], atol=2e-5, rtol=0.)
+            assert states['native'] == states['casa']
+            assert 'calWt=false' in states['casa'][1][1]
             for actual, expected in zip(outputs['native'][1:], outputs['casa'][1:]):
                 np.testing.assert_array_equal(actual, expected)
             print(work.name, label, source, old, 'matched correction', flush=True)
+
+
+def changed_first_baseline(work, original):
+    product = work/'first-baseline.cal'
+    with opened(original) as table:
+        copied = table.copy(str(product), deep=True, valuecopy=True)
+        assert copied.close()
+    with opened(product, True) as table:
+        gains = table.getcol('CPARAM')
+        flags = table.getcol('FLAG')
+        gains[...] = 1.5 - .7j
+        gains[..., 0] = .7 + .3j
+        flags[..., 0] = True
+        assert table.putcol('CPARAM', gains) and table.putcol('FLAG', flags)
+    return product
 
 
 def compare_basis(work, basis, engines, solutions_only):
@@ -97,6 +120,8 @@ def compare_basis(work, basis, engines, solutions_only):
     if not solutions_only:
         correct(work, engines, vis, positive, 'correct-positive')
         correct(work, engines, vis, flagged, 'correct-flagged')
+        correct(work, engines, vis, {'changed': changed_first_baseline(work, positive['casa'])},
+                'correct-first-baseline')
 
 
 def main():
