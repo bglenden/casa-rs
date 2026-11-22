@@ -4196,6 +4196,28 @@ impl CalibrationGrid {
                 grid.sample(receptor, field_id, antenna_id, time_seconds, context)
             }
             Self::Opacity(grid) => grid.sample(field_id, antenna_id, time_seconds, context),
+            Self::SpectralOpacity(grid) => {
+                let sample = grid.sample(
+                    0,
+                    data_chan_index,
+                    context.data_channels,
+                    context.cal_frequencies_hz,
+                    context.interp,
+                    context.path,
+                )?;
+                let elevation = opacity_elevation(
+                    context.engine,
+                    field_id,
+                    antenna_id,
+                    time_seconds,
+                    context.path,
+                    None,
+                )?;
+                Ok(GainSample {
+                    value: Complex32::new(opacity_gain(sample.value.re, elevation), 0.),
+                    flagged: sample.flagged,
+                })
+            }
             Self::SwitchedPower(grid) => Ok(grid.sample(receptor)),
         }
     }
