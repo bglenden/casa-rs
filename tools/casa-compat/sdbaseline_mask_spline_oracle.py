@@ -125,6 +125,38 @@ def paired_masks(root, source, spectra, flags, tasks, tools):
                 raise AssertionError(f'accepted invalid automatic mask parameters {parameters}')
     if 'native' in narrow:
         compare_outputs(narrow['casa'], narrow['native'])
+    check_mask_boundaries(root, source, tools)
+
+
+def one_spectrum(source, output):
+    with opened(source) as main:
+        eligible = np.flatnonzero(main.getcol('ANTENNA1') == main.getcol('ANTENNA2'))
+        selected = main.selectrows(eligible[:1].tolist())
+        try:
+            copied = selected.copy(str(output), deep=True, valuecopy=True)
+            copied.close()
+        finally:
+            selected.close()
+    return output
+
+
+def check_mask_boundaries(root, source, tools):
+    fully_flagged = one_spectrum(source, root / 'fully-flagged.ms')
+    with opened(fully_flagged, True) as main:
+        main.putcell('FLAG', 0, np.ones((2, 96), dtype=bool))
+    for name, factory in tools.items():
+        prefix = root / f'infinite-threshold-{name}'
+        table = prefix.with_suffix('.bltable')
+        tool_fit(factory, source, prefix.with_suffix('.ms'), table, 'poly',
+                 linefinding=True, threshold=float('inf'))
+        with opened(table) as models:
+            np.testing.assert_array_equal(models.getcell('MASKLIST', 0), [[0, 19, 21, 95]] * 2)
+        prefix = root / f'all-flagged-{name}'
+        table = prefix.with_suffix('.bltable')
+        tool_fit(factory, fully_flagged, prefix.with_suffix('.ms'), table, 'poly',
+                 linefinding=True, minwidth=0)
+        with opened(table) as models:
+            assert models.nrows() == 0
 
 
 def spline_input(root, source, pieces):
@@ -227,6 +259,43 @@ def paired_splines(root, source, tasks, tools):
         expected, actual = automatically_masked['casa'], automatically_masked['native']
         compare_outputs(expected.with_suffix('.ms'), actual.with_suffix('.ms'))
         compare_baselines(expected.with_suffix('.bltable'), actual.with_suffix('.bltable'))
+    check_skipped_receptor(root, source, tools)
+    check_dense_spline(root, source, tools)
+
+
+def check_skipped_receptor(root, source, tools):
+    infile = one_spectrum(source, root / 'skipped-receptor.ms')
+    with opened(infile, True) as main:
+        main.putcell('FLAG', 0, np.array([[False] * 96, [True] * 96]))
+    for name, factory in tools.items():
+        prefix = root / f'skipped-receptor-{name}'
+        direct_spline(factory, infile, prefix, '*', 3)
+        with opened(prefix.with_suffix('.bltable')) as table:
+            np.testing.assert_array_equal(table.getcell('APPLY', 0), [[True], [False]])
+            np.testing.assert_array_equal(table.getcell('FUNC_TYPE', 0), [[2], [2]])
+
+
+def check_dense_spline(root, source, tools):
+    from scipy.interpolate import BSpline
+
+    infile = one_spectrum(source, root / 'dense-spline.ms')
+    values = np.random.default_rng(512).normal(size=(2, 96)).astype(np.complex64)
+    with opened(infile, True) as main:
+        main.putcell('DATA', 0, values)
+        main.putcell('FLAG', 0, np.zeros(values.shape, dtype=bool))
+    for pieces in (47, 93):
+        knots = [0] * 4 + [(96 * i + pieces - 1) // pieces for i in range(1, pieces)] + [96] * 4
+        design = BSpline.design_matrix(np.arange(96), knots, 3).toarray()
+        solution = np.linalg.lstsq(design, values.real.T.astype(np.float64), rcond=None)[0]
+        expected = (values.real.T - design @ solution).T
+        for name, factory in tools.items():
+            prefix = root / f'dense-{pieces}-{name}'
+            direct_spline(factory, infile, prefix, '*', pieces)
+            with opened(prefix.with_suffix('.ms')) as output:
+                samples = output.getcell('DATA', 0)
+            error = np.sqrt(np.mean(np.abs(samples - expected) ** 2))
+            assert error < 1e-6 if name == 'native' else error > .01, (name, pieces, error)
+            print(f'{name} {pieces} spline pieces vs independent B-spline residual RMS {error:.6g}')
 
 
 def check_clipped_spline(root, source, mask, knots, line, flags, tools):

@@ -99,7 +99,7 @@ impl PySingleDishMs {
                     avg_limit,
                     minwidth,
                     edge.as_ref(),
-                )?,
+                ),
             },
         )
     }
@@ -151,7 +151,7 @@ impl PySingleDishMs {
                     avg_limit,
                     minwidth,
                     edge.as_ref(),
-                )?,
+                ),
             },
         )
     }
@@ -181,18 +181,15 @@ fn line_finder(
     avg_limit: i32,
     minwidth: i32,
     edge: Option<&IntList>,
-) -> PyResult<Option<SingleDishLineFinder>> {
-    enabled
-        .then(|| {
-            SingleDishLineFinder::new(
-                threshold,
-                i64::from(avg_limit),
-                i64::from(minwidth),
-                edge.map_or(&[], |edge| edge.0.as_slice()),
-            )
-        })
-        .transpose()
-        .map_err(PyRuntimeError::new_err)
+) -> Option<SingleDishLineFinder> {
+    enabled.then(|| {
+        SingleDishLineFinder::new(
+            threshold,
+            i64::from(avg_limit),
+            i64::from(minwidth),
+            edge.map_or(&[], |edge| edge.0.as_slice()),
+        )
+    })
 }
 
 impl PySingleDishMs {

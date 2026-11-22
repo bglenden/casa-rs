@@ -305,7 +305,7 @@ fn scalar_uint(table: &Table, row: usize, column: &str) -> Result<u32, String> {
 }
 
 impl BaselineRow {
-    pub(super) fn record(&self) -> RecordValue {
+    pub(super) fn record(&self, default_family: BaselineFamily) -> RecordValue {
         let receptors = self.models.len();
         let widest = |size: fn(&SpectrumModel) -> usize| {
             self.models
@@ -319,7 +319,12 @@ impl BaselineRow {
         let boundaries = widest(|model| model.boundaries.len());
         let ranges = widest(|model| model.mask.len());
         let mut apply = Array2::from_elem((receptors, 1), false);
-        let mut family = Array2::<u32>::zeros((receptors, 1));
+        let storage_family = |family| match family {
+            BaselineFamily::Polynomial(Polynomial::Monomial) => 0,
+            BaselineFamily::Polynomial(Polynomial::Chebyshev) => 1,
+            BaselineFamily::CubicSpline => 2,
+        };
+        let mut family = Array2::from_elem((receptors, 1), storage_family(default_family));
         let mut degree = Array2::<i32>::zeros((receptors, 1));
         let mut boundaries = Array2::<f32>::zeros((receptors, boundaries));
         let mut result = Array2::<f32>::zeros((receptors, coefficients));
@@ -330,11 +335,7 @@ impl BaselineRow {
         for (receptor, model) in self.models.iter().enumerate() {
             let Some(model) = model else { continue };
             apply[[receptor, 0]] = true;
-            family[[receptor, 0]] = match model.family {
-                BaselineFamily::Polynomial(Polynomial::Monomial) => 0,
-                BaselineFamily::Polynomial(Polynomial::Chebyshev) => 1,
-                BaselineFamily::CubicSpline => 2,
-            };
+            family[[receptor, 0]] = storage_family(model.family);
             degree[[receptor, 0]] = model.parameter as i32;
             for (index, &value) in model.boundaries.iter().enumerate() {
                 boundaries[[receptor, index]] = value as f32;

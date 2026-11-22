@@ -10,9 +10,10 @@ use std::ops::RangeInclusive;
 #[derive(Clone, Copy)]
 pub struct SingleDishLineFinder {
     threshold: f32,
-    average_limit: usize,
-    min_width: usize,
-    edges: [usize; 2],
+    average_limit: i64,
+    min_width: i64,
+    edges: [i64; 2],
+    symmetric_edges: bool,
 }
 
 type Channels = RangeInclusive<usize>;
@@ -21,36 +22,18 @@ const BIN_STATISTICS_FAILED: &str = "Failed AlwaysAssert status == LIBSAKURA_SYM
 impl SingleDishLineFinder {
     /// Build a line finder from CASA's threshold, averaging width, minimum
     /// line width and edge-channel controls. One edge value applies at both
-    /// ends. An empty list leaves both edges eligible.
-    pub fn new(
-        threshold: f64,
-        average_limit: i64,
-        min_width: i64,
-        edges: &[i64],
-    ) -> Result<Self, String> {
-        let min_width = usize::try_from(min_width)
-            .ok()
-            .filter(|&width| width != 0)
-            .ok_or("Failed AlwaysAssert minwidth > 0")?;
-        let average_limit =
-            usize::try_from(average_limit).map_err(|_| "Failed AlwaysAssert avg_limit >= 0")?;
+    /// ends. An empty list leaves both edges eligible. Controls are checked
+    /// when the finder processes an eligible spectrum.
+    pub fn new(threshold: f64, average_limit: i64, min_width: i64, edges: &[i64]) -> Self {
         let left = edges.first().copied().unwrap_or(0);
         let right = edges.get(1).copied().unwrap_or(left);
-        let edge = |value| {
-            usize::try_from(value).map_err(|_| {
-                if edges.len() == 1 {
-                    "Failed AlwaysAssert edge[0] >= 0"
-                } else {
-                    "Failed AlwaysAssert edge[0] >= 0 && edge[1] >= 0"
-                }
-            })
-        };
-        Ok(Self {
+        Self {
             threshold: threshold as f32,
             average_limit,
             min_width,
-            edges: [edge(left)?, edge(right)?],
-        })
+            edges: [left, right],
+            symmetric_edges: edges.len() == 1,
+        }
     }
 
     pub(super) fn exclude_lines(
@@ -59,13 +42,28 @@ impl SingleDishLineFinder {
         included: &mut [bool],
     ) -> Result<(), String> {
         let channels = spectrum.len();
-        let [left, right] = self.edges;
+        let min_width = usize::try_from(self.min_width)
+            .ok()
+            .filter(|&width| width != 0)
+            .ok_or("Failed AlwaysAssert minwidth > 0")?;
+        let average_limit = usize::try_from(self.average_limit)
+            .map_err(|_| "Failed AlwaysAssert avg_limit >= 0")?;
+        if min_width >= channels {
+            return Err("Failed AlwaysAssert maxwidth > static_cast<size_t>(minwidth)".into());
+        }
+        let edge = |value| {
+            usize::try_from(value).map_err(|_| {
+                if self.symmetric_edges {
+                    "Failed AlwaysAssert edge[0] >= 0"
+                } else {
+                    "Failed AlwaysAssert edge[0] >= 0 && edge[1] >= 0"
+                }
+            })
+        };
+        let [left, right] = [edge(self.edges[0])?, edge(self.edges[1])?];
         let edges = left
             .checked_add(right)
             .ok_or("Invalid line finder edge channels.")?;
-        if self.min_width >= channels {
-            return Err("Failed AlwaysAssert maxwidth > static_cast<size_t>(minwidth)".into());
-        }
         if edges >= channels.saturating_sub(2) {
             return Err(
                 "Failed AlwaysAssert edge.first+edge.second<num_data-min_valid_elem".into(),
@@ -85,11 +83,11 @@ impl SingleDishLineFinder {
         loop {
             let offset = factor / 2;
             let (binned, valid) = bin_spectrum(spectrum, included, factor, offset)?;
-            lines.extend(self.detect_level(&binned, &valid, channels, factor, offset)?);
+            lines.extend(self.detect_level(&binned, &valid, channels, factor, offset, min_width)?);
             let Some(next) = factor.checked_mul(4) else {
                 break;
             };
-            if next > self.average_limit {
+            if next > average_limit {
                 break;
             }
             factor = next;
@@ -107,6 +105,7 @@ impl SingleDishLineFinder {
         channels: usize,
         factor: usize,
         offset: usize,
+        min_width: usize,
     ) -> Result<Vec<Channels>, String> {
         let mut search = valid.to_vec();
         let mut best = Vec::new();
@@ -126,13 +125,13 @@ impl SingleDishLineFinder {
             let mad = masked_median(&deviation, &search, 0.8);
             let threshold =
                 (f64::from(self.threshold) * (factor as f64).sqrt() * f64::from(mad)) as f32;
-            if !threshold.is_finite() {
-                return Err(BIN_STATISTICS_FAILED.into());
-            }
             if threshold >= best_threshold {
                 break;
             }
-            let narrowest = (self.min_width / factor).max(1);
+            if !threshold.is_finite() {
+                return Err(BIN_STATISTICS_FAILED.into());
+            }
+            let narrowest = (min_width / factor).max(1);
             let mut detected = detect_ranges(&deviation, valid, threshold, narrowest);
             extend_wings(&mut detected, &deviation, valid, mad);
             let widest = (channels / factor).max(1);
@@ -142,7 +141,7 @@ impl SingleDishLineFinder {
                 .map(|range| {
                     range.start() * factor + offset..=range.end() * factor + (factor - 1) + offset
                 })
-                .filter(|range| (self.min_width..=channels).contains(&range.clone().count()))
+                .filter(|range| (min_width..=channels).contains(&range.clone().count()))
                 .collect::<Vec<_>>();
 
             // CASA updates its current search with the de-binned indices, clipped

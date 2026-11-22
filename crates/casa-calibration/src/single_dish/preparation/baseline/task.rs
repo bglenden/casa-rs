@@ -69,15 +69,12 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                 nonnegative(task, "order")?
             };
             let line_finder = if maskmode == "auto" {
-                Some(
-                    SingleDishLineFinder::new(
-                        task.number("thresh")?,
-                        task.integer("avg_limit")?,
-                        task.integer("minwidth")?,
-                        &task.integers("edge")?,
-                    )
-                    .map_err(TaskFailure::execution)?,
-                )
+                Some(SingleDishLineFinder::new(
+                    task.number("thresh")?,
+                    task.integer("avg_limit")?,
+                    task.integer("minwidth")?,
+                    &task.integers("edge")?,
+                ))
             } else {
                 None
             };

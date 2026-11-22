@@ -506,7 +506,7 @@ impl SpectrumBaseline for BaselineWorker {
                     models,
                     ..ids
                 }
-                .record(),
+                .record(fitting.request.family),
             );
         }
         Ok(weights.map(|weights| ArrayValue::Float32(Array1::from_vec(weights).into_dyn())))
