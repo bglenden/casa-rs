@@ -397,7 +397,7 @@ impl super::PyCalibrater {
                         &family,
                         standard.gain(GainType::G),
                         frequency,
-                        mode,
+                        append,
                         invalid_mode,
                     )
                     .map_err(|_| setup_error())?;

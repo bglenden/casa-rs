@@ -8,10 +8,7 @@ use crate::solve::grouping::leakage::{
     LeakageSolveKind, LeakageSolveRequest, solve_polarization_with_activity,
 };
 use crate::solve_stats::ToolSolveActivity;
-use crate::{
-    AttachmentError, BandpassFrequencyInterval, CalibrationOutputMode, GainSolveModelSource,
-    GainSolveRequest,
-};
+use crate::{AttachmentError, BandpassFrequencyInterval, GainSolveModelSource, GainSolveRequest};
 
 impl CalibraterLifecycle {
     /// Return whether the name configures a leakage solver.
@@ -31,7 +28,7 @@ impl CalibraterLifecycle {
         name: &str,
         standard: GainSolveRequest,
         frequency: Option<&str>,
-        output_mode: CalibrationOutputMode,
+        append: bool,
         invalid_mode: bool,
     ) -> Result<(), CalibraterLifecycleError> {
         let kind = leakage_kind(name).ok_or_else(|| {
@@ -68,7 +65,7 @@ impl CalibraterLifecycle {
             min_baselines: standard.min_baselines_per_antenna,
             min_snr: standard.min_snr,
             refant: standard.refant,
-            append: output_mode == CalibrationOutputMode::Append,
+            append,
         };
         self.equation_mut()?.solve = Some(ConfiguredSolve::Leakage {
             request: Box::new(request),

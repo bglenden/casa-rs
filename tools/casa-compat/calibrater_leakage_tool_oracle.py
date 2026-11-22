@@ -183,6 +183,17 @@ def main():
             case(work, engines, refant_dropout, f'D-refant-{refantmode}', 'D',
                  options={'refant': 'A0,A1', 'refantmode': refantmode, 'minblperant': 3})
         case(work, engines, vis, 'D-append', 'D', append=True)
+        partial = work/'partial-correlation.ms'
+        copy_ms(vis, partial)
+        with opened(partial, True) as table:
+            flags = table.getcol('FLAG')
+            flags[0] = True
+            assert table.putcol('FLAG', flags)
+        for kind in ('DLLS', 'DfLLS'):
+            products = case(work, engines, partial, f'{kind}-partial-correlation', kind, corrdep=True)
+            with opened(products['native']) as table:
+                assert table.getcol('FLAG').all()
+                assert not table.getcol('CPARAM').any()
         flagged = work/'flagged.ms'
         copy_ms(vis, flagged)
         with opened(flagged, True) as table:

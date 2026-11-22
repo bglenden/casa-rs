@@ -223,7 +223,13 @@ impl IntervalFits {
         stages: Option<&mut LeakageFitStages>,
     ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
-            Self::LeastSquares(fits, _) => Ok(least_squares(fits, antennas, references, previous)),
+            Self::LeastSquares(fits, _) => Ok(least_squares(
+                fits,
+                antennas,
+                references,
+                previous,
+                stages.is_some(),
+            )),
             Self::CrossHand(fits, measurement) => {
                 Ok(cross_hand(fits, measurement, antennas, location))
             }
@@ -335,6 +341,7 @@ fn least_squares(
     antennas: usize,
     references: &[i32],
     previous: Option<&LeakageSolution>,
+    keep_flagged: bool,
 ) -> Option<IntervalEstimates> {
     let reference = choose_reference(references, previous, |antenna| {
         fits.iter().any(|fit| fit.has_antenna(antenna))
@@ -362,7 +369,9 @@ fn least_squares(
                 .collect()
         })
         .collect();
-    nonempty.then_some((reference, values, None))
+    // Direct generic gather retains an attempted self-directed solve even
+    // when its individual fits could only write flagged parameters.
+    (nonempty || keep_flagged).then_some((reference, values, None))
 }
 
 fn iterative(
