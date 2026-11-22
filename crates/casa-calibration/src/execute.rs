@@ -2483,6 +2483,21 @@ fn apply_row_all_channels(
                 calculate()
             }
         };
+        if subtype == "X Mueller" {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            let solution = lookup(0, geometry_cache.as_deref_mut())?;
+            polarization::apply_x_mueller(
+                solution.as_ref().map(|solution| solution.grid.as_ref()),
+                &loaded_table.path,
+                forward_model,
+                &mut output,
+            )?;
+            continue;
+        }
         if loaded_table.baseline {
             flush_fast_gain_pairs(
                 &mut fast_gain_pairs,
@@ -4859,17 +4874,20 @@ fn load_parameters(
     };
 
     let baseline = ms.is_some() && baseline::is_subtype(&table_plan.summary.table_subtype);
+    let x_mueller = table_plan.summary.table_subtype == "X Mueller";
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
     for row_index in 0..table.row_count() {
         let field_id = get_i32(&table, row_index, COL_FIELD_ID)?;
         let spw_id = get_i32(&table, row_index, COL_SPECTRAL_WINDOW_ID)?;
-        let antenna1 = get_i32(&table, row_index, COL_ANTENNA1)?;
-        let (antenna_id, reversed) = if baseline {
-            let antenna2 = get_i32(&table, row_index, COL_ANTENNA2)?;
-            let index = baseline::require_index(antenna1, antenna2, &table_plan.spec.path)?;
-            (index, antenna1 > antenna2)
-        } else {
-            (antenna1, false)
+        let Some((antenna_id, reversed)) = load_parameter_antenna(
+            &table,
+            row_index,
+            &table_plan.spec.path,
+            baseline,
+            x_mueller,
+        )?
+        else {
+            continue;
         };
         let time_seconds = get_f64(&table, row_index, COL_TIME)?;
         let flags = table
@@ -5025,6 +5043,27 @@ fn load_parameters(
         time_parameter_family: None,
         phase_delay: false,
     })
+}
+
+fn load_parameter_antenna(
+    table: &Table,
+    row_index: usize,
+    path: &Path,
+    baseline: bool,
+    x_mueller: bool,
+) -> Result<Option<(i32, bool)>, ApplyExecutionError> {
+    let first = get_i32(table, row_index, COL_ANTENNA1)?;
+    if x_mueller {
+        // XMueller uses the first baseline parameter for every baseline.
+        let is_first = first == 0 && get_i32(table, row_index, COL_ANTENNA2)? == 0;
+        Ok(is_first.then_some((0, false)))
+    } else if baseline {
+        let second = get_i32(table, row_index, COL_ANTENNA2)?;
+        let index = baseline::require_index(first, second, path)?;
+        Ok(Some((index, first > second)))
+    } else {
+        Ok(Some((first, false)))
+    }
 }
 
 fn load_complex_parameters(

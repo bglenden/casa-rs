@@ -47,11 +47,22 @@ pub(super) fn write(
     let receptors = request.kind.parameter_count();
     for interval in solutions {
         let antennas = interval.values.first().map_or(0, Vec::len);
+        let baseline = request.kind == LeakageSolveKind::XMueller;
         for antenna in 0..antennas {
-            writer
-                .append(solution_row(interval, antenna, receptors, complex))
-                .map_err(|error| error.to_string())?;
-            written += 1;
+            let seconds = if baseline { antenna..antennas } else { 0..1 };
+            for second in seconds {
+                let reference = if baseline {
+                    second as i32
+                } else {
+                    interval.reference
+                };
+                writer
+                    .append(solution_row(
+                        interval, antenna, reference, receptors, complex,
+                    ))
+                    .map_err(|error| error.to_string())?;
+                written += 1;
+            }
         }
     }
     if request.kind.parallactic() {
@@ -104,6 +115,7 @@ pub(super) fn write(
 fn solution_row(
     interval: &LeakageSolution,
     antenna: usize,
+    reference: i32,
     receptors: usize,
     complex: bool,
 ) -> RecordValue {
@@ -142,7 +154,7 @@ fn solution_row(
         integer("SPECTRAL_WINDOW_ID", interval.spectral_window),
         integer("SCAN_NUMBER", interval.scan),
         integer("ANTENNA1", antenna as i32),
-        integer("ANTENNA2", interval.reference),
+        integer("ANTENNA2", reference),
         array(column, values),
         array("FLAG", ArrayValue::Bool(flags)),
         array("PARAMERR", ArrayValue::Float32(errors)),

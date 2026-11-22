@@ -19,8 +19,12 @@ pub(super) struct LegacyCrossHandAveraging {
 }
 
 impl LegacyCrossHandAveraging {
-    pub(super) fn start(&mut self, row: &SelectedSolveRow, span: f64) -> f64 {
-        let group = (row.field_id, row.data_spw_id);
+    pub(super) fn start(&mut self, row: &SelectedSolveRow, span: f64, shared: bool) -> f64 {
+        let group = if shared {
+            (0, 0)
+        } else {
+            (row.field_id, row.data_spw_id)
+        };
         if row.flag_row {
             return self.starts.get(&group).copied().unwrap_or(row.time_seconds);
         }
@@ -93,6 +97,7 @@ pub(super) fn legacy_row_weights(
     model: &ArrayD<Complex32>,
     order: [usize; 4],
     channels: &[usize],
+    normalize: bool,
 ) -> ([f32; 4], usize) {
     let mut amplitudes = [0.0; 4];
     let mut counts = [0; 4];
@@ -104,7 +109,11 @@ pub(super) fn legacy_row_weights(
         }
         usable += 1;
         for (index, corr) in order.into_iter().enumerate() {
-            let amplitude = model[[corr, channel]].norm();
+            let amplitude = if normalize {
+                model[[corr, channel]].norm()
+            } else {
+                1.0
+            };
             if amplitude > 0.0 {
                 if counts[index] == 0 {
                     weights[index] = samples.weights[[corr, channel]];
@@ -147,6 +156,7 @@ pub(super) fn legacy_phase_normalization(bins: &[CoherencyMean]) -> [f32; 4] {
 #[derive(Clone, Copy)]
 pub(super) enum Measurement {
     Phase,
+    MuellerPhase,
     CircularAngle,
     LinearAngle,
 }
@@ -166,10 +176,13 @@ impl CrossHandFit {
         model: [Complex32; 4],
         weights: [f32; 4],
     ) {
+        if matches!(measurement, Measurement::MuellerPhase) && weights[0] + weights[3] <= 0.0 {
+            return;
+        }
         self.saw_samples = true;
         let required = match measurement {
             Measurement::LinearAngle => 0b1111,
-            Measurement::Phase | Measurement::CircularAngle => 0b0110,
+            Measurement::Phase | Measurement::MuellerPhase | Measurement::CircularAngle => 0b0110,
         };
         if unflagged & required != required {
             return;
@@ -179,6 +192,12 @@ impl CrossHandFit {
             Measurement::Phase => {
                 complex32_to_64(cross_weight * data[1])
                     + complex32_to_64(cross_weight * data[2]).conj()
+            }
+            Measurement::MuellerPhase => {
+                // XMueller normalizes after the raw frequency and time averages.
+                let amplitude = model[1].norm();
+                let weight = cross_weight * (amplitude * amplitude);
+                ratio(data[1], model[1], weight) + ratio(data[2], model[2], weight).conj()
             }
             Measurement::CircularAngle => {
                 ratio(data[1], model[1], cross_weight)
