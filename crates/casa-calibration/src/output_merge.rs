@@ -80,8 +80,15 @@ pub(crate) fn validate_identity(
     new: &Table,
     path: &Path,
 ) -> Result<(), CalibrationTableWriteError> {
-    if old.info().sub_type == "BPOLY" && new.info().sub_type == "BPOLY" {
-        return Ok(());
+    if matches!(new.info().sub_type.as_str(), "BPOLY" | "GSPLINE") {
+        return if old.info().sub_type == new.info().sub_type {
+            Ok(())
+        } else {
+            Err(invalid(
+                path,
+                "incompatible legacy calibration subtype; prior product is unchanged",
+            ))
+        };
     }
     for key in ["VisCal", "ParType", "MSName"] {
         if old.keywords().get(key) != new.keywords().get(key) {
@@ -94,8 +101,8 @@ pub(crate) fn validate_identity(
     Ok(())
 }
 
-/// BJonesPoly::updateCalTable reuses a CAL_DESC row for the same window,
-/// or adds one, and appends MAIN in solution order (no modern NCT sorting).
+/// Legacy polynomial tables reuse a CAL_DESC row for the same window
+/// and append MAIN in solution order.
 pub(crate) fn append_legacy(
     old: &mut Table,
     new: &mut Table,
@@ -136,6 +143,33 @@ pub(crate) fn append_legacy(
         new.cell_accessor_mut(row, "CAL_DESC_ID")
             .and_then(|mut c| c.set(Value::Scalar(ScalarValue::Int32(mapped))))
             .map_err(|e| invalid(stage, e.to_string()))?;
+    }
+    if new.info().sub_type == "GSPLINE" {
+        // There is one fit per antenna and field. Keep unrelated fields and
+        // replace existing fits for the fields solved by this call.
+        let fields = |table: &Table| {
+            (0..table.row_count())
+                .map(|row| {
+                    match table
+                        .cell_accessor(row, "FIELD_ID")
+                        .and_then(|cell| cell.scalar())
+                    {
+                        Ok(ScalarValue::Int32(id)) => Ok(*id),
+                        _ => Err(invalid(source, "invalid GSPLINE FIELD_ID")),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()
+        };
+        let incoming_fields = fields(new)?
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let replaced = fields(old)?
+            .iter()
+            .enumerate()
+            .filter_map(|(row, field)| incoming_fields.contains(field).then_some(row))
+            .collect::<Vec<_>>();
+        old.remove_rows(&replaced)
+            .map_err(|error| invalid(source, error.to_string()))?;
     }
     append(old, new, source)?;
     preserve_subtables(source, stage)?;

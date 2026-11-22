@@ -613,8 +613,6 @@ def gaincal(
     """Solve antenna gain calibration for a MeasurementSet.
 
     CASA's ``gaincal``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #979:
-    ``splinetime``, ``npointaver``, ``phasewrap``.
     """
     return _call_casa(gaincal, locals())
 

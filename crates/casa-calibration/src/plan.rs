@@ -829,23 +829,25 @@ fn build_table_plan(
     spec: &ApplyCalibrationTableSpec,
     selected_rows: &[ApplyRowPlan],
 ) -> Result<library::PlannedTable, ApplyPlanError> {
-    if spec.interp == ApplyInterpolationMode::Invalid && spec.callibrary.is_none() {
-        return Err(ApplyPlanError::UnsupportedCalibrationTable {
-            path: spec.path.display().to_string(),
-            reason: "unknown or deprecated CASA interpolation type".to_string(),
-        });
-    }
     let summary = summarize_table(&spec.path).map_err(|source| {
         ApplyPlanError::SummarizeCalibrationTable {
             path: spec.path.display().to_string(),
             source: Box::new(source),
         }
     })?;
+    let is_bpoly = summary.table_subtype == "BPOLY";
+    let is_gspline = summary.table_subtype == "GSPLINE";
+    if !is_gspline && spec.interp == ApplyInterpolationMode::Invalid && spec.callibrary.is_none() {
+        return Err(ApplyPlanError::UnsupportedCalibrationTable {
+            path: spec.path.display().to_string(),
+            reason: "unknown or deprecated CASA interpolation type".to_string(),
+        });
+    }
     let windows = ms
         .spectral_window()
         .map_err(|source| ApplyPlanError::Selection { source })?
         .row_count();
-    if spec.spwmap.len() > windows && spec.callibrary.is_none() {
+    if !is_gspline && spec.spwmap.len() > windows && spec.callibrary.is_none() {
         return Err(ApplyPlanError::UnsupportedCalibrationTable {
             path: spec.path.display().to_string(),
             reason: format!(
@@ -886,7 +888,8 @@ fn build_table_plan(
                     .is_none_or(|indices| indices.binary_search(&row.row_index).is_ok())
         })
         .collect::<Vec<_>>();
-    if !applicable_rows.is_empty() && spec.interp == ApplyInterpolationMode::Invalid {
+    if !is_gspline && !applicable_rows.is_empty() && spec.interp == ApplyInterpolationMode::Invalid
+    {
         return Err(ApplyPlanError::Callibrary {
             message: "unknown library time interpolation".into(),
         });
@@ -894,13 +897,16 @@ fn build_table_plan(
     let applicable_field_ids = unique_i32(applicable_rows.iter().map(|row| row.field_id));
     let applicable_data_spw_ids = unique_i32(applicable_rows.iter().map(|row| row.data_spw_id));
 
-    let is_bpoly = summary.table_subtype == "BPOLY";
-    let (resolved_gainfields, resolved_nearest_gainfields) = if is_bpoly {
-        // BJonesPoly::loadMemCalTable ignores field selections and emits a
-        // modern B table with wildcard FIELD_ID=-1 for every sampled row.
+    let legacy_polynomial = is_bpoly || is_gspline;
+    let (resolved_gainfields, resolved_nearest_gainfields) = if legacy_polynomial {
+        // BPOLY is sampled with wildcard FIELD_ID=-1. GSPLINE matches the
+        // data field directly. Neither uses the caller's field mapping.
         if spec.callibrary.is_some() {
             return Err(ApplyPlanError::Callibrary {
-                message: "BPOLY is not supported for application by cal library in CASA".into(),
+                message: format!(
+                    "{} is not supported for application by cal library in CASA",
+                    summary.table_subtype
+                ),
             });
         }
         (Vec::new(), Vec::new())
@@ -920,29 +926,42 @@ fn build_table_plan(
         };
         resolve_gainfield(ms, spec, &summary, fields)?
     };
-    let available_calibration_spw_ids = if is_bpoly {
+    let available_calibration_spw_ids = if is_gspline {
+        applicable_data_spw_ids.clone()
+    } else if is_bpoly {
         load_bpoly_spectral_window_ids(&summary.path)?
     } else {
         fields::selected_spectral_windows(&summary, &resolved_gainfields)?
     };
-    let calibration_window_count = if is_bpoly {
+    let calibration_window_count = if legacy_polynomial {
         windows
     } else {
         open_summary_subtable(&summary, "SPECTRAL_WINDOW")?.row_count()
     };
-    let spw_mapping = windows::resolve_calibration_spw_mapping(
-        spec,
-        &summary.table_subtype,
-        &available_calibration_spw_ids,
-        calibration_window_count,
-        &applicable_data_spw_ids,
-    )?;
+    let spw_mapping = if is_gspline {
+        // The legacy solver evaluates at the current data window frequency.
+        applicable_data_spw_ids
+            .iter()
+            .map(|&id| ApplySpwMapping {
+                data_spw_id: id,
+                calibration_spw_id: id,
+            })
+            .collect()
+    } else {
+        windows::resolve_calibration_spw_mapping(
+            spec,
+            &summary.table_subtype,
+            &available_calibration_spw_ids,
+            calibration_window_count,
+            &applicable_data_spw_ids,
+        )?
+    };
     let available_mappings = spw_mapping
         .iter()
         .filter(|mapping| available_calibration_spw_ids.contains(&mapping.calibration_spw_id))
         .cloned()
         .collect::<Vec<_>>();
-    let calibration_spectral_windows = if is_bpoly {
+    let calibration_spectral_windows = if legacy_polynomial {
         let mapped_cal_spw_ids = unique_i32(
             available_mappings
                 .iter()

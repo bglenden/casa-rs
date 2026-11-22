@@ -20,8 +20,8 @@ use crate::{
     BandpassType, CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult,
     CalibrationStatsAxis, CalibrationStatsRequest, FluxScaleRequest, GainNormalization,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainType, GencalRequest, RefAntSelector, calibration_stats, plan_apply_from_path,
-    summarize_tables,
+    GainSplineControls, GainType, GencalRequest, RefAntSelector, calibration_stats,
+    plan_apply_from_path, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -351,6 +351,9 @@ pub struct SolveGainTaskRequest {
     pub append: bool,
     /// Gain family to solve.
     pub gain_type: GainType,
+    /// Explicit controls for gaincal's legacy spline solve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spline_controls: Option<GainSplineControls>,
     /// Solve mode.
     pub solve_mode: GainSolveMode,
     /// Solution interval.
@@ -536,9 +539,8 @@ impl CalibrationTaskRequest {
                 .map(CalibrationTaskResult::ExportCorrectedData)
                 .map_err(|error| error.to_string())
             }
-            Self::SolveGain(request) => crate::solve_calibration_with_output_mode(
-                CalibrationDataset::path(&request.measurement_set),
-                CalibrationSolveRequest::Gain(GainSolveRequest {
+            Self::SolveGain(request) => {
+                let gain = GainSolveRequest {
                     selection: request.selection.clone(),
                     output_table: request.output_table.clone(),
                     gain_type: request.gain_type,
@@ -557,15 +559,23 @@ impl CalibrationTaskRequest {
                     min_snr: request.min_snr,
                     min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,
-                }),
-                mode.unwrap_or(if request.append { Append } else { Replace }),
-            )
-            .map(|result| match result {
-                CalibrationSolveResult::Gain(report) => report,
-                CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
-            })
-            .map(CalibrationTaskResult::SolveGain)
-            .map_err(|error| error.to_string()),
+                };
+                let solve = match request.spline_controls {
+                    Some(controls) => CalibrationSolveRequest::GainSpline { gain, controls },
+                    None => CalibrationSolveRequest::Gain(gain),
+                };
+                crate::solve_calibration_with_output_mode(
+                    CalibrationDataset::path(&request.measurement_set),
+                    solve,
+                    mode.unwrap_or(if request.append { Append } else { Replace }),
+                )
+                .map(|result| match result {
+                    CalibrationSolveResult::Gain(report) => report,
+                    CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
+                })
+                .map(CalibrationTaskResult::SolveGain)
+                .map_err(|error| error.to_string())
+            }
             Self::SolveBandpass(request) => crate::solve_calibration_with_output_mode(
                 CalibrationDataset::path(&request.measurement_set),
                 CalibrationSolveRequest::Bandpass(BandpassSolveRequest {

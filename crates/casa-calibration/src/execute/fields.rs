@@ -17,6 +17,9 @@ pub(crate) fn load(
     // matrix. Antenna positions, opacity and gain-curve coefficients share
     // the same real time operator as delays.
     let mut table = load_parameters(plan, engine, family.is_some(), Some(ms))?;
+    if table.spline.is_some() {
+        return Ok(table);
+    }
     table.time_parameter_family = family;
     table.callibrary = plan.spec.callibrary.clone();
     if !plan.resolved_gainfields.is_empty() {
@@ -115,6 +118,7 @@ pub(crate) fn load(
                 antpos_tropo: None,
                 ionosphere: None,
                 sky_exposures: None,
+                spline: None,
                 solutions,
                 callibrary: None,
                 time_plans: HashMap::new(),
@@ -149,12 +153,24 @@ pub(super) fn lookup(
     antenna: i32,
     row: &ApplyRowPlan,
     data_window: &crate::plan::SpectralWindowPlan,
-    calibration_frequency_hz: f64,
+    evaluation_frequency_hz: f64,
 ) -> Result<Option<GridAtTime>, ApplyExecutionError> {
     let pinned = |grid| GridAtTime {
         grid,
         interpolated: false,
     };
+    if let Some(spline) = &table.spline {
+        return Ok(gspline::grid(
+            spline,
+            row.field_id,
+            antenna,
+            row.time_seconds,
+            evaluation_frequency_hz
+                .is_finite()
+                .then_some(evaluation_frequency_hz),
+        )
+        .map(pinned));
+    }
     let antenna = table
         .callibrary
         .as_ref()
@@ -211,7 +227,7 @@ pub(super) fn lookup(
         table.time_parameter_family,
         Some(TimeParameterFamily::Fringe)
     ) {
-        plan.fringe_solution(&table.path, query, calibration_frequency_hz)?
+        plan.fringe_solution(&table.path, query, evaluation_frequency_hz)?
     } else {
         plan.solution(&table.path, query)?
     };

@@ -128,6 +128,7 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("out_table")?),
         gain_type: parsed(task, "gain_type", parse_gain_type)?,
+        spline_controls: None,
         solve_mode: parsed(task, "solve_mode", parse_gain_solve_mode)?,
         solve_interval: parsed(task, "solint", parse_gain_solve_interval)?,
         preaverage_seconds: 0.0,

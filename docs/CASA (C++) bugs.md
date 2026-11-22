@@ -163,7 +163,8 @@ ATM behaviours casa-rs does not follow:
 Calibration behaviours casa-rs follows:
 [a gain table's resolution and total bandwidth](#a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth).
 Calibration behaviours casa-rs does not follow:
-[a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero).
+[a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero),
+[GSPLINE append overwriting an earlier field](#gspline-append-overwrites-the-previous-fields-fit).
 `simutil` behaviours casa-rs does not follow:
 [the ALMA tiling's default beam](#calc_pointings2s-alma-tiling-reads-an-undefined-pbcoeff),
 [`noisetemp`'s receiver lookup](#noisetemp-reads-the-wrong-receiver-temperature-at-the-edges-of-its-tables),
@@ -9882,3 +9883,32 @@ cells, `fit_line(polaverage='geometric')` followed by `atmcor` in CASA
 6.7.6.14 produces a row with clear flags. casa-rs retains the rejection
 in the output row and channels. The baseline fitter also excludes that
 integration from its fit.
+
+## GSPLINE append overwrites the previous field's fit
+
+In CASA 6.7.6.14, `gaincal(gaintype='GSPLINE', field='FLUX')` stores the
+FLUX fit under every FIELD_ID, including unselected fields. Solving
+`field='PHASE', append=True` into that table then replaces the fit under
+each existing FIELD_ID. With disjoint field time ranges, applying the
+updated table to the original field loses its corrections.
+
+casa-rs publishes rows for selected fields and updates only those fields on
+append. The
+[paired oracle](../tools/casa-compat/gspline_oracle.py) compares the original
+rows to a saved copy of the initial solve and the new rows to CASA.
+
+## GSPLINE fit logs give the RMS for the wrong baseline
+
+The `gaincal(gaintype='GSPLINE')` diagnostic log indexes residuals as if
+only cross-correlations occupied the array. The solver's storage includes
+autocorrelation slots. A noisy fit therefore displays a zero RMS for the
+first baseline, then assigns its residual to a different baseline.
+casa-rs reports the weighted fit RMS for the stated baseline. The paired
+oracle recomputes it from the visibility data and saved coefficients.
+
+## GSPLINE can abort when every channel has a rejected correlation
+
+CASA 6.7.6.14 uses common channel flags for the time-spline solve. An
+XX/YY input with all YY channels flagged therefore has no usable shared
+samples. CASA can terminate while attempting this fit. Casa-rs returns
+the insufficient-sampling result without publishing a calibration table.

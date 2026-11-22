@@ -406,6 +406,7 @@ fn gain_solve() -> SolveGainTaskRequest {
         },
         output_table: PathBuf::from("phase.gcal"),
         gain_type: GainType::T,
+        spline_controls: None,
         solve_mode: GainSolveMode::AmplitudePhase,
         solve_interval: GainSolveInterval::Seconds(30.0),
         combine: GainSolveCombine {

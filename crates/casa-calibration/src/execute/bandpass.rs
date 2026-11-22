@@ -227,6 +227,7 @@ mod tests {
             antpos_tropo: None,
             ionosphere: None,
             sky_exposures: None,
+            spline: None,
             time_parameter_family: family,
             phase_delay: false,
             callibrary: None,

@@ -16,6 +16,16 @@ pub(super) struct AveragedBaseline {
     pub(super) start_bits: u64,
 }
 
+impl AveragedBaseline {
+    /// A common interval and centroid for all baselines in the old iterator.
+    pub(super) fn spline_interval(self) -> Self {
+        Self {
+            antennas: (-1, -1),
+            ..self
+        }
+    }
+}
+
 /// A weighted mean of times.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct WeightedTime {

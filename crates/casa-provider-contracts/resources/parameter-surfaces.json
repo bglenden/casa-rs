@@ -14960,8 +14960,7 @@
             "provider": {"field": "splinetime"},
             "python": {"name": "splinetime"},
             "presentation": {"label": "Spline Time", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
+          }
         },
         {
           "name": "npointaver",
@@ -14975,8 +14974,7 @@
             "provider": {"field": "npointaver"},
             "python": {"name": "npointaver"},
             "presentation": {"label": "Phase Points Averaged", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
+          }
         },
         {
           "name": "phasewrap",
@@ -14990,8 +14988,7 @@
             "provider": {"field": "phasewrap"},
             "python": {"name": "phasewrap"},
             "presentation": {"label": "Phase Wrap", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
+          }
         },
         {
           "name": "docallib",

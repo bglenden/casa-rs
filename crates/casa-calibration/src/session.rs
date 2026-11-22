@@ -22,7 +22,10 @@ use crate::solve::grouping::{
     PriorCalibrationMode, SelectedSolveRow, all_antenna_ids, collect_selected_rows,
     load_preapplied_rows, resolve_refants,
 };
-use crate::solve::{GainSolveError, GainSolveReport, GainSolveRequest, RefAntSelector, solve_gain};
+use crate::solve::{
+    GainSolveError, GainSolveReport, GainSolveRequest, GainSplineControls, RefAntSelector, gspline,
+    solve_gain,
+};
 
 /// Input ownership for one calibration solve.
 pub enum CalibrationDataset<'a> {
@@ -49,6 +52,13 @@ impl CalibrationDataset<'_> {
 pub enum CalibrationSolveRequest {
     /// Solve gain calibration.
     Gain(GainSolveRequest),
+    /// Solve legacy time-domain spline gains with explicit controls.
+    GainSpline {
+        /// Shared gain-selection, model and output parameters.
+        gain: GainSolveRequest,
+        /// Spline knot spacing and phase-wrap controls.
+        controls: GainSplineControls,
+    },
     /// Solve channelized or polynomial bandpass calibration.
     Bandpass(BandpassSolveRequest),
 }
@@ -137,6 +147,11 @@ fn solve_open_dataset(
         CalibrationSolveRequest::Gain(request) => solve_gain(measurement_set, &request, mode)
             .map(CalibrationSolveResult::Gain)
             .map_err(CalibrationError::from),
+        CalibrationSolveRequest::GainSpline { gain, controls } => {
+            gspline::solve(measurement_set, &gain, controls, mode)
+                .map(CalibrationSolveResult::Gain)
+                .map_err(CalibrationError::from)
+        }
         CalibrationSolveRequest::Bandpass(request) => {
             solve_bandpass(measurement_set, &request, mode)
                 .map(CalibrationSolveResult::Bandpass)

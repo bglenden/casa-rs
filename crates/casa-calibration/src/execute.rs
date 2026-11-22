@@ -63,6 +63,7 @@ mod availability;
 use availability::execute as execute_apply_plan;
 mod fields;
 mod fringe;
+mod gspline;
 mod ionosphere;
 mod sky;
 pub(crate) use fields::load as load_interpolated_calibration_table;
@@ -2237,6 +2238,12 @@ fn apply_row_all_channels(
             || matches!(subtype, "Xf Jones" | "Xfparang Jones" | "GlinXphf Jones")
             || position_angle;
         let bounded_frequency_cache = is_tsys || is_sky || channelized_polarization;
+        let evaluation_frequency_hz = if subtype == "GSPLINE" {
+            let frequencies = data_channels.frequencies_hz;
+            frequencies.iter().sum::<f64>() / frequencies.len() as f64
+        } else {
+            cal_spw_reference_frequency_hz(cal_spw)
+        };
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
                 table_index,
@@ -2257,7 +2264,7 @@ fn apply_row_all_channels(
                     antenna,
                     row,
                     data_spw,
-                    cal_spw_reference_frequency_hz(cal_spw),
+                    evaluation_frequency_hz,
                 )
             };
             if let Some(cache) = cache {
@@ -2306,7 +2313,7 @@ fn apply_row_all_channels(
         let first_receptor_only = (is_bandpass
             || is_switched_power
             || polarization::is_cross_hand_phase(subtype)
-            || matches!(subtype, "GlinXph Jones" | "GlinXphf Jones"))
+            || matches!(subtype, "GSPLINE" | "GlinXph Jones" | "GlinXphf Jones"))
             && correlation_types.len() == 1;
         let (ant1_transient, ant2_transient) = (
             bounded_frequency_cache && ant1.interpolated,
@@ -3731,6 +3738,7 @@ pub(crate) struct LoadedCalibrationTable {
     antpos_tropo: Option<TropoDelay>,
     ionosphere: Option<ionosphere::Ionosphere>,
     sky_exposures: Option<sky::SkyExposures>,
+    spline: Option<gspline::SplineTable>,
     pub(crate) solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
 }
 
@@ -4440,6 +4448,15 @@ impl LoadedCalibrationTable {
         time_seconds: f64,
         interp: ApplyInterpolationMode,
     ) -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError> {
+        if let Some(spline) = &self.spline {
+            return Ok(gspline::grid(
+                spline,
+                field_id,
+                antenna_id,
+                time_seconds,
+                None,
+            ));
+        }
         if self.interp != interp {
             return Err(ApplyExecutionError::UnsupportedInterpolation {
                 path: self.path.display().to_string(),
@@ -4553,8 +4570,10 @@ fn load_parameters(
     real_parameters: bool,
     ms: Option<&MeasurementSet>,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
-    if table_plan.summary.table_subtype == "BPOLY" {
-        return load_bpoly_calibration_table(table_plan);
+    match table_plan.summary.table_subtype.as_str() {
+        "BPOLY" => return load_bpoly_calibration_table(table_plan),
+        "GSPLINE" => return gspline::load(table_plan),
+        _ => {}
     }
     let table = Table::open(TableOptions::new(&table_plan.spec.path)).map_err(|source| {
         ApplyExecutionError::OpenMeasurementSet {
@@ -4745,6 +4764,7 @@ fn load_parameters(
         antpos_tropo,
         ionosphere,
         sky_exposures,
+        spline: None,
         solutions,
         callibrary: None,
         time_plans: HashMap::new(),
@@ -4870,6 +4890,7 @@ fn load_bpoly_calibration_table(
         antpos_tropo: None,
         ionosphere: None,
         sky_exposures: None,
+        spline: None,
         solutions,
         callibrary: None,
         time_plans: HashMap::new(),
