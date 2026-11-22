@@ -5,6 +5,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_images::concat_file::is_image_concat;
+use casa_images::expr_file::is_image_expr;
 use casa_images::miriad_read::MiriadImage;
 use casa_tables::publication::{
     copy_locked_external_tree, copy_locked_table_tree, rename_without_replacing,
@@ -244,6 +246,8 @@ fn copy_member(member: &OwnedMember, destination: &Path) -> PyResult<()> {
         copy_locked_external_tree(&member.source, destination, |name| {
             name.to_str().is_some_and(MiriadImage::is_image_file)
         })
+    } else if !is_image_concat(&member.source) && is_image_expr(&member.source) {
+        copy_locked_external_tree(&member.source, destination, |name| name == "imageexpr.json")
     } else {
         copy_locked_table_tree(&member.source, destination)
     }

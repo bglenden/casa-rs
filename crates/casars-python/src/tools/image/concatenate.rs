@@ -23,6 +23,7 @@ use super::beams::{image_info, image_info_record, plane_axes, stored_beam_record
 use super::create::{publish_image, publish_owned_virtual_concat, publish_virtual_concat};
 use super::handle::{ImageHandle, Storage, raised, same_file_snapshot, with_pixels, with_storage};
 use super::lifecycle::resolve_image_path;
+use super::saved_expression::{self, SavedExpressionInputs};
 
 pub(super) mod owned_members;
 mod relocation;
@@ -156,16 +157,33 @@ struct Input<'a> {
     writable_mask: bool,
     advisory_lock: bool,
     opened: Option<ImageHandle>,
+    expression: Option<SavedExpressionInputs>,
+    expression_operands: Vec<PathBuf>,
     revision: Option<InputRevision>,
 }
 
 impl<'a> Input<'a> {
     fn open(path: &'a Path, tempclose: bool) -> PyResult<Self> {
-        let image = ImageHandle::open_for_concatenation(path).map_err(raised)?;
-        Self::from_image(path, image, tempclose)
+        Self::open_resolved(path, path, tempclose)
     }
 
-    fn from_image(path: &'a Path, image: ImageHandle, tempclose: bool) -> PyResult<Self> {
+    fn open_resolved(path: &'a Path, resolved: &Path, tempclose: bool) -> PyResult<Self> {
+        if !casa_images::concat_file::is_image_concat(resolved)
+            && casa_images::expr_file::is_image_expr(resolved)
+        {
+            let (image, inputs) = saved_expression::open_for_concatenation(resolved)?;
+            return Self::from_image(path, image, tempclose, Some(inputs));
+        }
+        let image = ImageHandle::open_for_concatenation(resolved).map_err(raised)?;
+        Self::from_image(path, image, tempclose, None)
+    }
+
+    fn from_image(
+        path: &'a Path,
+        image: ImageHandle,
+        tempclose: bool,
+        mut expression: Option<SavedExpressionInputs>,
+    ) -> PyResult<Self> {
         let resolved_path = image.path().unwrap_or(path).to_path_buf();
         let coordinate_record = image.coordinate_record();
         let coordinates = CoordinateSystem::from_record(&coordinate_record).map_err(raised)?;
@@ -202,6 +220,10 @@ impl<'a> Input<'a> {
                     || image.concat_source().is_some_and(|source| source.has_advisory_lock())
             }
         });
+        let expression_operands = match &mut expression {
+            Some(expression) => std::mem::take(&mut expression.paths),
+            None => image.concat_expression_operands(),
+        };
         Ok(Self {
             path,
             resolved_path,
@@ -218,7 +240,9 @@ impl<'a> Input<'a> {
             writable,
             writable_mask,
             advisory_lock,
-            opened: (!tempclose).then_some(image),
+            opened: (!tempclose || expression.is_some()).then_some(image),
+            expression,
+            expression_operands,
             revision,
         })
     }
@@ -232,6 +256,15 @@ impl<'a> Input<'a> {
             brightness_unit: &self.units,
         }
     }
+}
+
+fn protect_expression_sources(output: &Path, inputs: &[Input<'_>]) -> PyResult<()> {
+    for input in inputs {
+        for path in &input.expression_operands {
+            ensure_outfile_does_not_alias_input(output, path).map_err(raised)?;
+        }
+    }
+    Ok(())
 }
 
 fn coordinate_record(first: &Input<'_>, plan: &ConcatenationPlan) -> PyResult<RecordValue> {
@@ -379,6 +412,9 @@ impl Request<'_> {
             .iter()
             .map(|path| Input::open(path, self.tempclose))
             .collect::<PyResult<Vec<_>>>()?;
+        if !self.outfile.is_empty() {
+            protect_expression_sources(Path::new(self.outfile), &inputs)?;
+        }
         let first = inputs[0].kind;
         if inputs.iter().any(|input| input.kind != first) {
             return Err(raised(

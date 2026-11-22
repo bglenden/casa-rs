@@ -353,6 +353,7 @@ impl StagedImage {
             Ok(_) => {
                 let key = attachment::key(path)?;
                 if attachment::conflicting_images(registry, &key, 0)
+                    || attachment::in_use_by_expression(registry, &key)
                     || crate::tools::table::path_is_in_use(&key)
                     || key
                         .ancestors()

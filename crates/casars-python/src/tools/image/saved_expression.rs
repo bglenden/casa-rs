@@ -19,12 +19,42 @@ mod rename;
 pub(super) use manifest::SavedExpressionDirectory;
 
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
+    let (image, inputs) = compile_at(path, AttachedImage::open)?;
+    let mut attachment = AttachedImage::with_saved_expression(image, inputs.directory);
+    attachment.retain_expression_inputs(inputs.retained, inputs.paths);
+    Ok(attachment)
+}
+
+pub(super) struct SavedExpressionInputs {
+    directory: SavedExpressionDirectory,
+    pub(super) retained: Vec<AttachedImage>,
+    pub(super) paths: Vec<PathBuf>,
+}
+
+impl SavedExpressionInputs {
+    pub(super) fn check_name(&self, path: &Path) -> PyResult<()> {
+        self.directory.check_name(path)
+    }
+}
+
+pub(super) fn open_for_concatenation(
+    path: &Path,
+) -> PyResult<(ImageHandle, SavedExpressionInputs)> {
+    // Final publication already holds the image registry. Source leases can
+    // still be opened directly without consulting or registering in it.
+    compile_at(path, AttachedImage::open_concat_expression_operand)
+}
+
+fn compile_at(
+    path: &Path,
+    open_source: fn(&Path) -> PyResult<AttachedImage>,
+) -> PyResult<(ImageHandle, SavedExpressionInputs)> {
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
     let (captured, manifest) = SavedExpressionDirectory::open(path, root.clone())?;
     let initial = PendingExpression::from_manifest(root, manifest, &directory)?;
     let mut graph = CapturedGraph::default();
-    let (pixels, single_precision, misc) = graph.compile(initial, &directory)?;
+    let (pixels, single_precision, misc) = graph.compile(initial, &directory, open_source)?;
     captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
@@ -53,9 +83,14 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
         }
         ImageToolPixelExpression::Boolean(_) => unreachable!("saved image geometry is numeric"),
     };
-    let mut attachment = AttachedImage::with_saved_expression(image, captured);
-    attachment.retain_expression_inputs(graph.retained, graph.paths);
-    Ok(attachment)
+    Ok((
+        image,
+        SavedExpressionInputs {
+            directory: captured,
+            retained: graph.retained,
+            paths: graph.paths,
+        },
+    ))
 }
 
 #[derive(Default)]
@@ -71,6 +106,7 @@ impl CapturedGraph {
         &mut self,
         root: PendingExpression,
         directory: &Path,
+        open_source: fn(&Path) -> PyResult<AttachedImage>,
     ) -> PyResult<(ImageToolPixelExpression, bool, Option<RecordValue>)> {
         let mut active = HashSet::from([root.path.clone()]);
         let mut pending = vec![root];
@@ -94,11 +130,8 @@ impl CapturedGraph {
                     active.insert(path.to_path_buf());
                     let nested = PendingExpression::read(path.to_path_buf(), directory)?;
                     pending.push(nested);
-                } else {
-                    self.retained
-                        .extend(AttachedImage::open_expression_inputs(std::iter::once(
-                            path,
-                        ))?);
+                } else if !path.is_file() {
+                    self.retained.push(open_source(path)?);
                 }
             } else {
                 let frame = pending.pop().expect("checked for an expression frame");
