@@ -8125,6 +8125,10 @@ The native task retains defined WEIGHT and SIGMA using the calibrated noise
 and the Hanning coefficients. It smooths FLOAT_DATA on the frequency axis
 and preserves LAG_DATA on its independent axis (#1618).
 
+Regridding FLOAT_DATA likewise leaves those cells undefined in CASA. The
+native regrid uses the selected calibrated noise spectrum and the output
+flags for the scalar reductions (#1618).
+
 ## A terminal channel stride can leave an incomplete SPECTRAL_WINDOW
 
 CASA 6.7.6.14 accepts `mstransform(spw="0:0~8^2", hanning=True)` on a
@@ -8160,6 +8164,39 @@ The native task preserves category flags through the channel mapping and
 removes associations between windows that no longer exist separately. It
 refuses to combine distinct LAG_DATA cells when requested, since a merged
 frequency window has no mapping for their independent lag grids (#1618).
+
+## Regridding can read beyond a final partial averaging bin
+
+In CASA 6.7.6.14, an odd channel count with `chanaverage=True`, a
+two-channel bin and `regridms=True` leaves a one-sample bin before
+interpolation. `MSTransformManager::average` iterates over all output bins
+using the full bin width, reaching past the input on the final bin.
+With Hanning enabled, this can change the neighbouring channel's
+visibility and noise. The native task averages only samples present in
+the final bin. The paired regridding oracle also checks that result
+against independent inverse-variance averaging, smoothing and linear
+interpolation (#1618).
+
+## Channel-bounds regridding can read past the upper band edge
+
+CASA 6.7.6.14 can publish a fictitious 0 Hz channel after
+`mstransform(regridms=True, mode='channel_b', start=7, nchan=3, width=1)`
+on a nine-channel ascending input. Its upper-bound check admits index
+nine even though the last channel is index eight. The native task clips
+the bounds to the available channels. The oracle checks the two real
+channels and confirms that CASA flags the spurious third one (#1618).
+
+## Splitting a regridded spectrum can write oversized noise spectra
+
+With nine channels and `mstransform(regridms=True, nspw=2)`, CASA
+6.7.6.14 writes SPWs of five and four channels. The noise spectra in the
+shorter window are padded to five with weight zero and sigma −1. When
+all samples in that window are flagged, the padding also enters the
+scalar statistic. The native task writes four values for every
+channel-indexed column and computes statistics from those four values.
+It rejects partitions that would leave an empty final window before
+creating output. CASA can abort when attempting that final slice
+(#1618).
 
 ## Selecting defined spectra or several channel ranges can crash channel averaging
 
@@ -10181,27 +10218,3 @@ In CASA 6.7.6.14, use the [direct FRINGE fixture](../tools/casa-compat/calibrate
 ## Direct specifycal aborts for literal wildcard selectors
 
 With CASA 6.7.6.14, call `calibrater.specifycal(caltable='gain.cal', caltype='amp', parameter=[1.5], antenna='*')` on the [direct fixture](../tools/casa-compat/calibrater_specifycal_tool_oracle.py). CASA passes antenna index `-1` into a parameter-array slice and aborts. A literal `spw='*'` likewise reaches an invalid spectral-window index. Casa-rs broadcasts over the requested wildcard axes and verifies the resulting table against CASA's empty-selector form, which expresses the same prescription. [#2015](https://github.com/bglenden/casa-rs/pull/2015)
-
-## Regridding can read beyond a final partial averaging bin
-
-In CASA 6.7.6.14, an odd channel count with `chanaverage=True`, a
-two-channel bin and `regridms=True` leaves a one-sample bin before
-interpolation. `MSTransformManager::average` iterates over all output bins
-using the full bin width, reaching past the input on the final bin.
-With Hanning enabled, this can change the neighbouring channel's
-visibility and noise. The native task averages only samples present in
-the final bin. The paired regridding oracle also checks that result
-against independent inverse-variance averaging, smoothing and linear
-interpolation (#1618).
-
-## Splitting a regridded spectrum can write oversized noise spectra
-
-With nine channels and `mstransform(regridms=True, nspw=2)`, CASA
-6.7.6.14 writes SPWs of five and four channels. The noise spectra in the
-shorter window are padded to five with weight zero and sigma −1. When
-all samples in that window are flagged, the padding also enters the
-scalar statistic. The native task writes four values for every
-channel-indexed column and computes statistics from those four values.
-It rejects partitions that would leave an empty final window before
-creating output. CASA can abort when attempting that final slice
-(#1618).

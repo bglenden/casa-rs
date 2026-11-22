@@ -138,6 +138,35 @@ def partial_hanning_bin(root, source):
            deviations={name: independently(name) for name in checks})
 
 
+def terminal_channel_bounds(root, source):
+    options = dict(regridms=True, datacolumn="data", usewtspectrum=True,
+                   mode="channel_b", start=7, nchan=3, width=1)
+    expected, native = (root / f"channel-bounds-terminal-{side}.ms" for side in ("casa", "native"))
+    for engine, output in ((casatasks, expected), (tasks, native)):
+        engine.mstransform(vis=str(source), outputvis=str(output), **options)
+    with table(str(expected / "SPECTRAL_WINDOW"), ack=False) as casa, table(
+        str(native / "SPECTRAL_WINDOW"), ack=False
+    ) as ours:
+        np.testing.assert_array_equal(casa.getcell("CHAN_FREQ", 0), [100007e6, 100008e6, 0])
+        np.testing.assert_array_equal(ours.getcell("CHAN_FREQ", 0), [100007e6, 100008e6])
+        np.testing.assert_array_equal(ours.getcell("CHAN_WIDTH", 0), [1e6, 1e6])
+
+    def real_channels(name):
+        def compare(row, got, ref):
+            values = ref.getcell(name, row)
+            assert values.shape[0] == 3 and got.shape[0] == 2
+            if name == "FLAG":
+                assert np.all(values[2])
+                np.testing.assert_array_equal(got, values[:2])
+            else:
+                np.testing.assert_allclose(got, values[:2], rtol=3e-6, atol=5e-7)
+        return compare
+
+    spectral = {"DATA", "FLAG", "WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"}
+    compare_table(expected, native, spectral, "terminal-channel-bounds",
+                  {name: real_channels(name) for name in spectral})
+    print("passed terminal-channel-bounds", flush=True)
+
 def float_visibilities(root, source):
     with table(str(source), ack=False) as ms:
         selectors = np.s_[:, 2:7, :]
@@ -260,6 +289,8 @@ def main(cases):
                    width="2MHz", nchan=3, hanning=True, chanaverage=True, chanbin=2)
         if not cases or "hanning-average-odd" in cases:
             partial_hanning_bin(root, source)
+        if not cases or "terminal-channel-bounds" in cases:
+            terminal_channel_bounds(root, source)
         if not cases or "split-odd" in cases:
             unpadded_split(root, source)
         if not cases or "float" in cases:

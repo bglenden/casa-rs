@@ -184,12 +184,18 @@ fn channel_bounds(
     }
     let step = requested_step.min(span);
     let lower = centre - span / 2;
-    let upper = lower + span;
+    let upper = (lower + span).min(channel_count);
+    if lower < 0 || lower >= upper {
+        return Err(MsTransformError::Spectrum(
+            "Requested channel bounds leave an empty SPW.".into(),
+        ));
+    }
     let central_bin = if (span / step) % 2 == 1 {
         centre - step / 2
     } else {
         centre
     };
+    let central_bin = central_bin.clamp(lower, upper);
     let mut bins = Vec::new();
     let mut right = central_bin;
     while right > lower {
