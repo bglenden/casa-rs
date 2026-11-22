@@ -164,10 +164,8 @@ pub(crate) fn build_solve_groups(
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
     let baseline_solve = options.input_rows.is_baseline();
-    let keep_autocorrelations = matches!(
-        options.input_rows,
-        SolveInputRows::GainTool | SolveInputRows::AccorTool
-    );
+    let keep_autocorrelations =
+        options.input_rows == SolveInputRows::GainTool || options.input_rows.is_accor();
     let seed_combined_g = !baseline_solve
         && !options.input_rows.is_accor()
         && options.gain_type == GainType::G
@@ -192,7 +190,7 @@ pub(crate) fn build_solve_groups(
         options.solve_interval,
         options.combine,
         include_autocorrelations,
-        options.legacy_chan_selection(),
+        options.legacy_intervals(),
         baseline_solve,
     );
     let seed_buffers = if !legacy_spline

@@ -25,6 +25,7 @@ pub(crate) fn solve(
     mode: CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
     legacy_iterator: bool,
+    invalid_mode: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
     super::validate_solve_interval(request.solve_interval)?;
     let direct = activity.is_some();
@@ -57,10 +58,10 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            input_rows: if direct {
-                SolveInputRows::AccorTool
-            } else {
-                SolveInputRows::Autocorrelations
+            input_rows: match (direct, legacy_iterator) {
+                (true, true) => SolveInputRows::LegacyAccor,
+                (true, false) => SolveInputRows::AccorTool,
+                (false, _) => SolveInputRows::Autocorrelations,
             },
             gain_type: GainType::G,
             model_source: request.model_source,
@@ -133,6 +134,9 @@ pub(crate) fn solve(
         }
     }
     if let Some(mut stats) = stats {
+        if invalid_mode && !solved.rows.is_empty() {
+            return Err(GainSolveError::AccorInvalidSolveMode);
+        }
         super::apply_requested_reference(ms, &mut solved.rows, &request.refant, &context)?;
         if solve_mode != GainSolveMode::AmplitudePhase {
             for row in &mut solved.rows {

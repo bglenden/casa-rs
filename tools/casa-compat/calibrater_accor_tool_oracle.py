@@ -82,6 +82,7 @@ def main():
     work.mkdir()
     vis = source(work)
     scalar = source(work, 'RR')
+    full = source(work, 'RR RL LR LL')
     engines = {'casa': casa_calibrater, 'native': native_calibrater}
     solve_case(work, engines, vis, 'mixed')
     solve_case(work, engines, vis, 'auto-only', selection={'msselect': 'ANTENNA1 == ANTENNA2'})
@@ -119,6 +120,14 @@ def main():
             with opened(path) as table:
                 np.testing.assert_array_equal(table.getcol('CPARAM'), expected_gain)
 
+    with opened(full, True) as table:
+        timestamps = table.getcol('TIME')
+        weight = np.ones_like(table.getcol('WEIGHT'))
+        weight[1:3, timestamps - timestamps.min() >= 40.] = 9.
+        assert table.putcol('WEIGHT', weight)
+    solve_case(work, engines, full, 'cross-hand-time-weights',
+               selection={'msselect': 'ANTENNA1 == 0 && ANTENNA2 == 0'})
+
     def flag_auto_reference(flags, first, second):
         flags[..., (first == second) & (first == 0)] = True
         flags[1, :5, (first == second) & (first == 2)] = True
@@ -138,7 +147,24 @@ def main():
     flagged = change_flags(work, vis, 'all-flagged', lambda flags, *_: flags.fill(True))
     for legacy in (False, True):
         solve_case(work, engines, flagged, f'fully-flagged-{legacy}', legacy=legacy, outcome='empty')
+        solve_case(work, engines, flagged, f'flagged-invalid-mode-{legacy}',
+                   options={'apmode': 'bogus'}, legacy=legacy, outcome='empty')
+    solve_case(work, engines, vis, 'fit-invalid-mode', options={'apmode': 'bogus'}, outcome='error')
     solve_case(work, engines, vis, 'legacy-fit', legacy=True, outcome='error')
+
+    with opened(flagged, True) as table:
+        times = table.getcol('TIME')
+        start, second, third = np.unique(times)[:3]
+        adjusted = times.copy()
+        adjusted[times == second] = start + 15.
+        adjusted[times == third] = start + 20.
+        adjusted[times > third] += 100.
+        for key in ('TIME', 'TIME_CENTROID'):
+            assert table.putcol(key, adjusted)
+    for legacy in (False, True):
+        solve_case(work, engines, flagged, f'flagged-irregular-times-{legacy}',
+                   options={'t': '10s'}, selection={'msselect': f'TIME <= {start + 20.:.9f}'},
+                   legacy=legacy, outcome='empty')
 
 
 if __name__ == '__main__':

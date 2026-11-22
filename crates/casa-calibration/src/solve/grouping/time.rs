@@ -41,6 +41,8 @@ pub(crate) enum SolveInputRows {
     Autocorrelations,
     /// Gather every selected row before fitting antenna autocorrelations.
     AccorTool,
+    /// Gather ACCOR rows using CASA's older interval boundaries.
+    LegacyAccor,
     /// Retain all antenna pairs for a baseline Mueller solve.
     Baselines,
     /// Retain all antenna pairs and the direct tool's baseline gather counts.
@@ -76,11 +78,17 @@ impl SolveInputRows {
     }
 
     pub(super) fn tracks_gather(self) -> bool {
-        matches!(self, Self::GainTool | Self::BaselineTool | Self::AccorTool)
+        matches!(
+            self,
+            Self::GainTool | Self::BaselineTool | Self::AccorTool | Self::LegacyAccor
+        )
     }
 
     pub(super) fn is_accor(self) -> bool {
-        matches!(self, Self::Autocorrelations | Self::AccorTool)
+        matches!(
+            self,
+            Self::Autocorrelations | Self::AccorTool | Self::LegacyAccor
+        )
     }
 
     pub(super) fn receptors(
@@ -177,7 +185,9 @@ impl SolveAccumulator {
         if input.is_accor() {
             // CASA tests buffer viability before dropping cross-hand weights.
             self.attempted |= weight > 0.;
-            return 0.;
+            if input == SolveInputRows::Autocorrelations {
+                return 0.;
+            }
         }
         weight
     }
@@ -242,6 +252,10 @@ impl SolveAccumulator {
 }
 
 impl super::SolveGroupOptions {
+    pub(super) fn legacy_intervals(&self) -> bool {
+        self.legacy_chan_selection() || self.input_rows == SolveInputRows::LegacyAccor
+    }
+
     pub(super) fn legacy_chan_selection(&self) -> bool {
         self.polynomial_bandpass || self.input_rows == SolveInputRows::LegacyBaseline
     }

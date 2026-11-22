@@ -427,6 +427,10 @@ pub enum GainSolveError {
     #[error("the legacy visibility iterator cannot fit ACCOR")]
     AccorNeedsModernIterator,
 
+    /// The configured amplitude/phase mode cannot be applied to ACCOR solutions.
+    #[error("enforceAPonSoln divide-by-zero error.")]
+    AccorInvalidSolveMode,
+
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]
     ResolveRefAnt {
