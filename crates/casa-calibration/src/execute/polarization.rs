@@ -52,7 +52,7 @@ impl Leakage {
             let left = [sample(0, 0)?, sample(0, 1)?];
             let right = [sample(1, 0)?, sample(1, 1)?];
             let values = indices.map(|index| output.corrected[[index, channel]]);
-            let propagate = output.apply_mode.writes_flags();
+            let propagate = output.propagate_flags;
             let flags = indices.map(|index| propagate && output.flags[[index, channel]]);
             let (values, flags) = match self {
                 Self::Linearized => linearized(values, flags, left, right, forward),
@@ -83,7 +83,7 @@ pub(super) fn apply_position_angle(
         .then(|| coherency_order(row.data_desc_id, correlations))
         .transpose()?;
     let direction = if forward { 1.0 } else { -1.0 };
-    let propagate = output.apply_mode.writes_flags();
+    let propagate = output.propagate_flags;
     for channel in 0..output.corrected.shape()[1] {
         let sample = |side: usize| {
             grids[side].sample(

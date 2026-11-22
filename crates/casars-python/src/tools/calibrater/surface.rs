@@ -24,7 +24,7 @@ const METHODS: &[Method] = &[
             S::Implemented,
         )
     },
-    method("activityrec", &[], R::Any, S::NotYetImplemented),
+    method("activityrec", &[], R::Any, S::Partial),
     method("close", &[], R::Bool, S::Implemented),
     Method {
         mutating: true,
@@ -35,7 +35,10 @@ const METHODS: &[Method] = &[
             S::Partial,
         )
     },
-    method("corrupt", &[], R::Any, S::NotYetImplemented),
+    Method {
+        mutating: true,
+        ..method("corrupt", &[], R::Bool, S::Partial)
+    },
     Method {
         mutating: true,
         ..method(

@@ -142,9 +142,10 @@ pub(super) fn apply_row(
     chain: &ApplyChain,
     geometry: Option<&mut RowGeometryCache>,
     profile: Option<&mut ApplyRowComputeProfile>,
+    activity: Option<&mut ToolApplyActivity>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
     let Some(selection) = plan.channel_selections.get(&row.data_spw_id) else {
-        return apply_row_all_channels(row, input, plan, chain, geometry, profile);
+        return apply_row_all_channels(row, input, plan, chain, geometry, profile, activity);
     };
     let selected = SelectedInputs::new(input, selection)?;
     let mut result = apply_row_all_channels(
@@ -154,6 +155,7 @@ pub(super) fn apply_row(
         chain,
         geometry,
         profile,
+        activity,
     )?;
     result.corrected_data = scatter(
         input.preserved_corrected_data.unwrap_or(input.data),

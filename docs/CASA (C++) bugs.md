@@ -10009,3 +10009,14 @@ selected scan and 2 and 3 in the second, the record lists both scans and
 only antennas 2 and 3. Casa-rs reports the four antennas in the selected
 rows. The [paired calibrater oracle](../tools/casa-compat/calibrater_apply_tool_oracle.py)
 checks both records on the disjoint baselines.
+
+## Calibrater can reuse inverse Jones terms when corrupting a model
+
+CASA 6.7.6.14 applies a constant antenna gain of 1.2 correctly in a
+fresh `calibrater.corrupt()`, multiplying the physical model by 1.44.
+After `correct('trial')` on the same tool and selection, it divides the
+model by 1.44 on each `corrupt()` call. `VisCal::corrupt2` requests forward
+application even in this sequence. Casa-rs evaluates the forward Jones
+terms on every model corruption. The [paired tool oracle](../tools/casa-compat/calibrater_apply_tool_oracle.py)
+checks both sequences against the constant-gain product law. Both engines
+retain the previous single-term activity counts across the corruption.

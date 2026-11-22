@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
 use casa_ms::{MeasurementSet, MsSelection, SubtableId};
+use casa_provider_contracts::CasaValue;
 use casa_tables::RequiredScalarColumnValues;
 use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
+use crate::execute::{ApplyTermCounts, LibraryApplyRegistration};
 use crate::listing::{CalibrationListingReport, list_calibration, publish_listing};
 
 use crate::{
@@ -34,6 +36,8 @@ use legacy_ep::LegacyEpSolver;
 pub struct CalibraterLifecycle {
     legacy_iterator: bool,
     equation: Option<VisibilityEquation>,
+    last_activity: Option<CasaValue>,
+    using_callibrary: bool,
 }
 
 struct VisibilityEquation {
@@ -51,8 +55,9 @@ enum ConfiguredSolve {
 #[derive(Default)]
 struct ApplyTerms {
     tables: Vec<ApplyCalibrationTableSpec>,
-    table_snapshots: BTreeMap<PathBuf, traditional_apply::TraditionalApplySnapshot>,
-    library_tables: Vec<String>,
+    table_snapshots: BTreeMap<PathBuf, traditional_apply::RegisteredApplySnapshot>,
+    library_tables: Vec<LibraryApplyRegistration>,
+    counts: ApplyTermCounts,
     parang_terms: usize,
     parang_calwt: bool,
 }
@@ -177,7 +182,7 @@ impl CalibraterLifecycle {
         add_corrected: bool,
         add_model: bool,
     ) -> Result<(), CalibraterLifecycleError> {
-        self.close();
+        self.equation = None;
         let attachment = CalibrationAttachment::attach(
             path,
             AttachmentMode::Open,
@@ -266,6 +271,8 @@ impl CalibraterLifecycle {
     /// retained for the next call to `open`.
     pub fn close(&mut self) {
         self.equation = None;
+        self.last_activity = None;
+        self.using_callibrary = false;
     }
 
     /// Replace the selected rows and channels and reset apply and solve.

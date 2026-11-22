@@ -193,6 +193,7 @@ impl SolvePriorApply {
             &self.chain,
             Some(&mut self.geometry.borrow_mut()),
             None,
+            None,
         )?;
         Ok(EvaluatedApplyRow {
             corrected_data: result.corrected_data,
@@ -298,6 +299,7 @@ pub(crate) fn evaluate_solve_priors(
         true,
         share_input_flags,
         PreviewWeightSource::UnitFactors,
+        None,
         |index, row| {
             let data = rows.get_mut(&index).expect("same selection for both sides");
             let ArrayValue::Bool(data_flags) = &mut data.flags else {

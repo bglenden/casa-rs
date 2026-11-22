@@ -20,16 +20,6 @@ use crate::tools::not_yet_implemented_in;
     clippy::unused_self
 )]
 impl PyCalibrater {
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn activityrec(&self) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "activityrec", 1528)
-    }
-
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn corrupt(&self) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "corrupt", 1528)
-    }
-
     #[pyo3(signature = (tablein, reference = None, tableout = None, transfer = None, listfile = None, append = None, refspwmap = None, gainthreshold = None, antenna = None, timerange = None, scan = None, incremental = None, fitorder = None, display = None), text_signature = "($self, tablein, reference=[], tableout='', transfer=[], listfile='', append=False, refspwmap=[-1], gainthreshold=-1.0, antenna='', timerange='', scan='', incremental=False, fitorder=1, display=False)")]
     fn fluxscale(
         &self,

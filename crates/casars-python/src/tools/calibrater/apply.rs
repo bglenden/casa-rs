@@ -30,6 +30,12 @@ use crate::tools::{LogLine, emit};
 
 #[pymethods]
 impl PyCalibrater {
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn activityrec(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let record = self.with_lifecycle(py, |state| Ok(state.activity_record()))?;
+        reply_value(py, &record)
+    }
+
     #[pyo3(signature = (r#type = None, t = None, table = None, field = None, interp = None, select = None, calwt = None, spwmap = None, opacity = None), text_signature = "($self, type='', t=0.0, table='', field=[], interp='linear', select='', calwt=False, spwmap=[-1], opacity=[0.0])")]
     #[allow(clippy::too_many_arguments)]
     fn setapply(
@@ -81,6 +87,11 @@ impl PyCalibrater {
     ) -> PyResult<bool> {
         let mode = text(applymode, "applymode", "")?;
         self.attached_result(py, move |state| state.correct_visibilities(&mode))
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn corrupt(&self, py: Python<'_>) -> PyResult<bool> {
+        self.attached_result(py, |state| state.corrupt_model())
     }
 
     #[pyo3(signature = (filein), text_signature = "($self, filein)")]

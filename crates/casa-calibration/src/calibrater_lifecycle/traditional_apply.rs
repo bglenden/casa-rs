@@ -12,7 +12,7 @@ use crate::constants::{STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE};
 use crate::plan::{ApplyCalibrationTableSpec, ApplyInterpolationMode, GainFieldSelector};
 use crate::summarize_table;
 
-pub(super) struct TraditionalApplySnapshot {
+pub(super) struct RegisteredApplySnapshot {
     pub(super) name: String,
     _directory: tempfile::TempDir,
 }
@@ -41,16 +41,7 @@ impl CalibraterLifecycle {
         }
         let path = spec.path.display();
         let inferred = kind.is_empty();
-        let options = TableOptions::new(&spec.path);
-        #[cfg(unix)]
-        let opened = Table::open_with_lock(
-            options,
-            casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait)
-                .read_only(true),
-        );
-        #[cfg(not(unix))]
-        let opened = Table::open(options);
-        let table = opened.map_err(|_| {
+        let table = open_apply_table(&spec.path).map_err(|_| {
             if inferred {
                 CalibraterLifecycleError::ApplyConfiguration(format!(
                     "Table {path} does not exist."
@@ -125,10 +116,21 @@ impl CalibraterLifecycle {
     }
 }
 
-fn snapshot_table(
+pub(super) fn open_apply_table(path: &Path) -> Result<Table, casa_tables::TableError> {
+    let options = TableOptions::new(path);
+    #[cfg(unix)]
+    return Table::open_with_lock(
+        options,
+        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait).read_only(true),
+    );
+    #[cfg(not(unix))]
+    Table::open(options)
+}
+
+pub(super) fn snapshot_table(
     source: &Path,
     table: &Table,
-) -> Result<(PathBuf, TraditionalApplySnapshot), Box<dyn std::error::Error>> {
+) -> Result<(PathBuf, RegisteredApplySnapshot), Box<dyn std::error::Error>> {
     let directory = tempfile::Builder::new().prefix("calibrater-").tempdir()?;
     let destination = directory.path().canonicalize()?.join("caltable");
     // Copy the on-disk managers by value. Materialize a selected reference
@@ -170,7 +172,7 @@ fn snapshot_table(
     }
     Ok((
         destination,
-        TraditionalApplySnapshot {
+        RegisteredApplySnapshot {
             name: source.display().to_string(),
             _directory: directory,
         },

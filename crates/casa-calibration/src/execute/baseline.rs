@@ -110,7 +110,7 @@ pub(super) fn apply(
             } else {
                 *data /= value;
             }
-            if flagged && output.apply_mode.writes_flags() && !output.flags[[corr, chan]] {
+            if flagged && output.propagate_flags && !output.flags[[corr, chan]] {
                 output.flags[[corr, chan]] = true;
                 *output.newly_flagged_samples += 1;
             }
