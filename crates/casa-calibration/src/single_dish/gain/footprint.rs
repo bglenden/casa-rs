@@ -9,7 +9,7 @@ use casa_types::measures::direction::DirectionRef;
 
 use super::{error_text, normalization};
 use crate::single_dish::edges::Integration;
-use crate::single_dish::map_geometry::{MapTargets, Target};
+use crate::single_dish::map_geometry::{MapTargets, SourceRow, Target};
 
 type FeedKey = (i32, i32, i32);
 
@@ -20,23 +20,30 @@ pub(super) fn select<'a>(
 ) -> Result<Vec<&'a Integration>, String> {
     let spectral = ms.spectral_window().map_err(error_text)?;
     let antennas = ms.antenna().map_err(error_text)?;
+    let channels = (0..spectral.row_count())
+        .map(|window| spectral.num_chan(window).map_err(error_text))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut feeds = BTreeMap::<_, Vec<_>>::new();
-    for row in samples {
+    // Four-channel WVR integrations can pass a science feed's time ranges,
+    // but never establish a central region on their own.
+    for row in samples.iter().filter(|row| channels[row.window] != 4) {
         feeds
             .entry((key(row), row.description))
             .or_default()
             .push(row);
+    }
+    if feeds.is_empty() {
+        return Ok(Vec::new());
     }
     let engine = MsCalEngine::new(ms)
         .and_then(|engine| engine.with_field_ephemerides(ms))
         .map_err(error_text)?;
     let mut targets = MapTargets::read(ms)?;
     let mut ranges = BTreeMap::<FeedKey, Vec<[f64; 2]>>::new();
-    for ((key, _), mut rows) in feeds {
+    for ((key, _), rows) in feeds {
         if ranges.contains_key(&key) {
             continue;
         }
-        rows.sort_by(|left, right| left.time.total_cmp(&right.time));
         let first = rows[0];
         let antenna = first.antenna as usize;
         let field = first.field as usize;
@@ -45,7 +52,7 @@ pub(super) fn select<'a>(
             &spectral.chan_freq(first.window).map_err(error_text)?,
             antennas.dish_diameter(antenna).map_err(error_text)?,
         )?;
-        let target = targets.field(field)?;
+        let target = targets.field(field, SourceRow::Optional)?;
         let fixed = if matches!(target, Target::Fixed) {
             let frame = engine
                 .antenna_frame(first.time, antenna)
@@ -58,21 +65,26 @@ pub(super) fn select<'a>(
         } else {
             None
         };
-        let requested = rows
+        let mut requested = rows
             .iter()
             .map(|row| (row.antenna, row.time))
             .collect::<Vec<_>>();
+        // The CASA pointing calculator sorts before interpolation. The
+        // filter uses those positions with the group's original times.
+        requested.sort_by(|left, right| left.1.total_cmp(&right.1));
         let directions = ms
             .pointing()
             .and_then(|p| p.scan_directions(&requested, &engine))
             .map_err(error_text)?;
         let mut accepted = Vec::<[f64; 2]>::new();
-        for (row, direction) in rows.into_iter().zip(directions) {
+        for ((row, &(_, pointing_time)), direction) in
+            rows.into_iter().zip(&requested).zip(directions)
+        {
             let position = direction.as_angles();
             let offset = if let Some(center) = fixed {
                 sin_offset(position, center)
             } else if let Some((longitude, latitude)) =
-                target.direction(&engine, row.time, antenna, field)?
+                target.direction(&engine, pointing_time, antenna, field)?
             {
                 [
                     (position.0 - longitude)
@@ -103,6 +115,9 @@ pub(super) fn select<'a>(
             }
             ranges.insert(key, combined);
         }
+    }
+    if ranges.is_empty() {
+        return Err("No integration matches the double-circle central region.".into());
     }
     Ok(samples
         .iter()

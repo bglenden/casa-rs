@@ -84,7 +84,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         )
         .at("outfile"));
     }
-    let _lock = if overwrite && output.join("table.dat").is_file() {
+    let _output_lock = if overwrite && output.join("table.dat").is_file() {
         Some(
             TableWriteLock::acquire_to_reread(output, 1)
                 .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"))?,
@@ -92,21 +92,23 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     } else {
         None
     };
-    let integrations = on_source(&ms, &selected).map_err(solve_failure)?;
-    let channels = spectral::channels(&ms, &selected, &integrations)
-        .map_err(|message| TaskFailure::execution(message).at("spw"))?;
+    let integrations = selected_integrations(&ms, &selected).map_err(solve_failure)?;
     let references = footprint::select(&ms, &integrations, radius).map_err(solve_failure)?;
+    let channels = spectral::channels(&ms, &selected, &references)
+        .map_err(|message| TaskFailure::execution(message).at("spw"))?;
     let samples = solve(&ms, references, priors.as_ref(), radius, smooth, &channels)
         .map_err(solve_failure)?;
-    let count =
-        write(&ms, output, overwrite, &integrations, samples, &channels).map_err(solve_failure)?;
+    let count = samples
+        .map(|samples| write(&ms, output, overwrite, samples, &channels))
+        .transpose()
+        .map_err(solve_failure)?;
     TaskSuccess::new(
         CasaValue::None,
         &serde_json::json!({"caltable": outfile, "row_count": count}),
     )
 }
 
-fn on_source(
+fn selected_integrations(
     ms: &MeasurementSet,
     selection: &ResolvedMsSelection,
 ) -> Result<Vec<Integration>, String> {
@@ -115,40 +117,18 @@ fn on_source(
         .map(|row| descriptions.spectral_window_id(row).map(|id| id as usize))
         .collect::<Result<Vec<_>, _>>()
         .map_err(error_text)?;
-    let spectral = ms.spectral_window().map_err(error_text)?;
-    let wvr = (0..spectral.row_count())
-        .map(|row| spectral.num_chan(row).map(|count| count == 4))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(error_text)?;
-    let states = ms.state().map_err(error_text)?;
-    let on = (0..states.row_count())
-        .map(|row| {
-            states.string(row, "OBS_MODE").map(|name| {
-                name.to_ascii_uppercase()
-                    .starts_with("OBSERVE_TARGET#ON_SOURCE")
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(error_text)?;
     let rows = selection.row_indices().collect::<Vec<_>>();
-    let mut samples = edges::read_integrations(ms, &rows, &windows)?;
-    samples.retain(|row| {
-        row.antenna == row.other_antenna
-            && row.feed == row.other_feed
-            && on.get(row.state as usize) == Some(&true)
-            && wvr.get(row.window) == Some(&false)
-    });
-    Ok(samples)
+    edges::read_integrations(ms, &rows, &windows)
 }
 
-fn solve(
+fn solve<'a>(
     ms: &MeasurementSet,
-    references: Vec<&Integration>,
+    references: Vec<&'a Integration>,
     priors: Option<&SolvePriorApply>,
     radius: Option<f64>,
     smooth: bool,
     channels: &BTreeMap<usize, usize>,
-) -> Result<Vec<GainSample>, String> {
+) -> Result<Option<Vec<GainSample<'a>>>, String> {
     let mut groups = BTreeMap::<_, Vec<_>>::new();
     for row in references {
         groups
@@ -169,10 +149,8 @@ fn solve(
         .collect::<Result<Vec<_>, _>>()
         .map_err(error_text)?;
     let mut results = Vec::new();
+    let mut has_solving_data = false;
     for ((window, _, antenna), mut group) in groups {
-        if group.len() < 100 {
-            continue;
-        }
         group.sort_by(|first, second| first.time.total_cmp(&second.time));
         let channel = channels[&window];
         let frequency = spectral.chan_freq(window).map_err(error_text)?[channel];
@@ -187,23 +165,32 @@ fn solve(
             .into_iter()
             .filter_map(|row| read_sample(ms, row, priors, &correlations, channel).transpose())
             .collect::<Result<Vec<_>, _>>()?;
+        has_solving_data |= !samples.is_empty();
         if samples.len() < 100 {
             continue;
         }
         normalization::normalize(&mut samples, radius, smooth)?;
         results.extend(samples);
     }
-    results.sort_by_key(|row| row.row);
-    Ok(results)
+    results.sort_by(|first, second| {
+        let left = first.integration;
+        let right = second.integration;
+        left.description
+            .cmp(&right.description)
+            .then_with(|| left.time.total_cmp(&right.time))
+            .then_with(|| left.antenna.cmp(&right.antenna))
+            .then_with(|| left.field.cmp(&right.field))
+    });
+    Ok(has_solving_data.then_some(results))
 }
 
-fn read_sample(
+fn read_sample<'a>(
     ms: &MeasurementSet,
-    row: &Integration,
+    row: &'a Integration,
     priors: Option<&SolvePriorApply>,
     correlations: &[Vec<i32>],
     channel: usize,
-) -> Result<Option<GainSample>, String> {
+) -> Result<Option<GainSample<'a>>, String> {
     let main = ms.main_table();
     let source = crate::model_columns::observed_column(ms);
     let data = main
@@ -257,7 +244,7 @@ fn read_sample(
         return Ok(None);
     }
     Ok(Some(GainSample {
-        row: row.row,
+        integration: row,
         data,
         flags,
     }))
@@ -267,8 +254,7 @@ fn write(
     ms: &MeasurementSet,
     output: &Path,
     overwrite: bool,
-    integrations: &[Integration],
-    samples: Vec<GainSample>,
+    samples: Vec<GainSample<'_>>,
     channels: &BTreeMap<usize, usize>,
 ) -> Result<usize, String> {
     let mode = if overwrite {
@@ -294,16 +280,9 @@ fn write(
     )
     .map_err(error_text)?;
     let mut windows = BTreeSet::new();
-    let mut integrations = integrations.iter();
     for sample in samples {
-        let row = integrations
-            .by_ref()
-            .find(|row| row.row == sample.row)
-            .ok_or("Missing calibration output integration.")?;
-        windows.insert(row.window);
-        writer
-            .append(gain_record(row, sample)?)
-            .map_err(error_text)?;
+        windows.insert(sample.integration.window);
+        writer.append(gain_record(sample)?).map_err(error_text)?;
     }
     write_standard_calibration_subtables(ms, writer.output_path(), None)?;
     spectral::write_axis(
@@ -315,7 +294,8 @@ fn write(
     Ok(count)
 }
 
-fn gain_record(row: &Integration, sample: GainSample) -> Result<RecordValue, String> {
+fn gain_record(sample: GainSample<'_>) -> Result<RecordValue, String> {
+    let row = sample.integration;
     let shape = sample.data.shape();
     if shape.len() != 2 || !(1..=2).contains(&shape[0]) {
         return Err("Double-circle gain needs one or two receptors.".into());

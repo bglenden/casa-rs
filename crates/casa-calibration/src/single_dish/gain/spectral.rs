@@ -16,7 +16,7 @@ use super::error_text;
 pub(super) fn channels(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
-    integrations: &[Integration],
+    integrations: &[&Integration],
 ) -> Result<BTreeMap<usize, usize>, String> {
     let spectral = ms.spectral_window().map_err(error_text)?;
     let windows = integrations

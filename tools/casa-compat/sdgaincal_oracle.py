@@ -179,6 +179,140 @@ def test_single_polarization(root, tasks, vis):
         np.testing.assert_array_equal(table.getcol('FLAG')[1], True)
 
 
+def test_missing_source(root, tasks, vis):
+    subset = root / 'missing-source.ms'
+    copy_ms(vis, subset)
+    with opened(subset / 'FIELD', True) as field:
+        field.putcol('SOURCE_ID', np.full(field.nrows(), -1, dtype=np.int32))
+    products = solve(root, subset, tasks, 'missing-source', radius='65arcsec', smooth=False)
+    normalized_power(subset, products['casa'], False)
+
+
+def test_off_source_and_feed(root, tasks, vis):
+    subset = root / 'off-source-feed.ms'
+    copy_ms(vis, subset)
+    with opened(subset / 'STATE', True) as states:
+        for row in range(states.nrows()):
+            states.putcell('OBS_MODE', row, 'OBSERVE_TARGET#OFF_SOURCE')
+    off_source = solve(root, subset, tasks, 'off-source', radius=65, smooth=False,
+                       intent='OBSERVE_TARGET#OFF_SOURCE')
+    normalized_power(subset, off_source['casa'], False)
+    with opened(subset, True) as ms:
+        ms.putcol('FEED2', ms.getcol('FEED1') + 1)
+    mixed_feeds = solve(root, subset, tasks, 'mixed-feeds', radius=65, smooth=False)
+    normalized_power(subset, mixed_feeds['casa'], False)
+
+
+def duplicate_table_row(table, source):
+    row = table.nrows()
+    table.addrows(1)
+    for column in table.colnames():
+        if table.iscelldefined(column, source):
+            table.putcell(column, row, table.getcell(column, source))
+    return row
+
+
+def test_cross_and_unsorted_rows(root, tasks, vis, central):
+    subset = root / 'cross-unsorted.ms'
+    copy_ms(vis, subset)
+    with opened(subset / 'ANTENNA', True) as antennas:
+        second = duplicate_table_row(antennas, 0)
+        antennas.putcell('NAME', second, 'SECOND')
+    with opened(subset, True) as ms:
+        ms.putcol('ANTENNA2', np.full(ms.nrows(), second, dtype=np.int32))
+        times = ms.getcol('TIME')
+        for column in ('TIME', 'TIME_CENTROID', 'DATA', 'FLAG'):
+            ms.putcol(column, ms.getcol(column)[..., ::-1])
+    products = solve(root, subset, tasks, 'cross-unsorted', radius=65, smooth=False)
+    with opened(central) as ordered, opened(products['casa']) as reversed_rows:
+        centers = np.searchsorted(times, ordered.getcol('TIME'))
+        np.testing.assert_array_equal(reversed_rows.getcol('TIME'), np.sort(times[::-1][centers]))
+        np.testing.assert_array_equal(reversed_rows.getcol('ANTENNA1'), 0)
+        np.testing.assert_array_equal(reversed_rows.getcol('ANTENNA2'), -1)
+
+
+def test_wvr_selection(root, tasks, vis):
+    subset = root / 'science-and-wvr.ms'
+    copy_ms(vis, subset)
+    with opened(subset / 'SPECTRAL_WINDOW', True) as axis:
+        assert axis.nrows() == 2
+        axis.putcell('NUM_CHAN', 1, 4)
+        for column in ('CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION'):
+            axis.putcell(column, 1, np.repeat(axis.getcell(column, 0), 4))
+    with opened(subset / 'DATA_DESCRIPTION', True) as descriptions:
+        description = duplicate_table_row(descriptions, 0)
+        descriptions.putcell('SPECTRAL_WINDOW_ID', description, 1)
+    with opened(subset, True) as ms:
+        rows = ms.nrows()
+        spectra = {}
+        for column in ('DATA', 'FLAG', 'WEIGHT_SPECTRUM', 'SIGMA_SPECTRUM'):
+            if column not in ms.colnames() or not ms.iscelldefined(column, 0):
+                continue
+            spectra[column] = ms.getcol(column)
+            descriptor = ms.getcoldesc(column)
+            descriptor.pop('shape', None)
+            descriptor.update(option=0, dataManagerType='StandardStMan',
+                              dataManagerGroup=f'Variable{column}')
+            ms.removecols(column)
+            ms.addcols({column: descriptor})
+            ms.putcol(column, spectra[column])
+        ms.copyrows(str(subset), startrowout=rows, nrow=rows)
+        ms.putcol('DATA_DESC_ID', np.full(rows, description, dtype=np.int32), startrow=rows)
+        for column, values in spectra.items():
+            ms.putcol(column, np.repeat(values, 4, axis=1), startrow=rows)
+    products = solve(root, subset, tasks, 'science-wvr', radius=65, smooth=False, spw='0:0,1:0')
+    with opened(products['casa']) as table:
+        windows = table.getcol('SPECTRAL_WINDOW_ID')
+        np.testing.assert_array_equal(windows, np.repeat([0, 1], 138))
+        np.testing.assert_array_equal(table.getcol('TIME')[:138], table.getcol('TIME')[138:])
+    for label, task in tasks.items():
+        output = root / f'wvr-only-{label}.cal'
+        assert task(str(subset), outfile=str(output), radius=65, spw='1:0') is None
+        assert not output.exists()
+
+
+def test_all_flagged(root, tasks, vis, solved):
+    subset = root / 'all-flagged.ms'
+    copy_ms(vis, subset)
+    with opened(subset, True) as ms:
+        ms.putcol('FLAG', np.ones_like(ms.getcol('FLAG')))
+    for label, task in tasks.items():
+        output = root / f'all-flagged-{label}.cal'
+        assert task(str(subset), outfile=str(output), radius=65) is None
+        assert not output.exists()
+        existing = solved[label]
+        with opened(existing) as before:
+            gains = before.getcol('CPARAM')
+        assert task(str(subset), outfile=str(existing), radius=65, overwrite=True) is None
+        with opened(existing) as after:
+            assert after.nrows() == 138
+            np.testing.assert_array_equal(after.getcol('CPARAM'), gains)
+
+
+def test_no_central_pointings(root, tasks, vis):
+    subset = root / 'off-center.ms'
+    copy_ms(vis, subset)
+    with opened(subset / 'FIELD', True) as field:
+        direction = field.getcell('REFERENCE_DIR', 0)
+        direction[0] += .2
+        field.putcell('REFERENCE_DIR', 0, direction)
+    output = root / 'off-center-casa.cal'
+    script = ('import sys; from casatasks import sdgaincal; '
+              'sdgaincal(sys.argv[1], outfile=sys.argv[2], radius=65, smooth=False)')
+    failed = subprocess.run([sys.executable, '-c', script, str(subset), str(output)],
+                            capture_output=True, timeout=30)
+    assert failed.returncode == -signal.SIGSEGV and not output.exists()
+    if 'native' in tasks:
+        output = root / 'off-center-native.cal'
+        try:
+            tasks['native'](str(subset), outfile=str(output), radius=65, smooth=False)
+        except RuntimeError as error:
+            assert str(error) == 'Error in Calibrater::solve.'
+        else:
+            raise AssertionError('A map without central integrations unexpectedly solved')
+        assert not output.exists()
+
+
 def test_channel_selection(root, tasks, central):
     source = root / 'tp/tp.aca.tp.sd.ms'
     products = solve(root, source, tasks, 'channel', radius=65, smooth=False, spw='0:1')
@@ -213,6 +347,12 @@ def test_channel_selection(root, tasks, central):
 
 def test_errors(root, tasks, vis, products, prior):
     for implementation, task in tasks.items():
+        try:
+            task()
+        except AssertionError as error:
+            assert str(error) == "the infile parameter must be a path that exists ('' does not exist)"
+        else:
+            raise AssertionError('A missing infile unexpectedly passed validation')
         output = root / f'gain-refuse-{implementation}.cal'
         scenarios = (
             ({'outfile': ''}, ValueError, 'outfile is empty.'),
@@ -279,8 +419,15 @@ def main():
     readers(root, vis, tuned, applycal)
     test_selection(root, tasks, vis)
     test_single_polarization(root, tasks, vis)
+    test_missing_source(root, tasks, vis)
+    test_off_source_and_feed(root, tasks, vis)
+    test_cross_and_unsorted_rows(root, tasks, vis, plain['casa'])
+    test_wvr_selection(root, tasks, vis)
     test_channel_selection(root, tasks, plain['casa'])
+    test_all_flagged(root, tasks, vis, plain)
+    test_no_central_pointings(root, tasks, vis)
     test_errors(root, tasks, vis, plain, prior)
+    print('All sdgaincal cases passed', flush=True)
 
 
 if __name__ == '__main__':

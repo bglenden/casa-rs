@@ -9629,7 +9629,17 @@ solutions against the selected integrations and the complete CASA runs.
 CASA 6.7.6.14 uses a scalar gain cell while copying the selected spectrum
 into the solve buffer. On the paired total-power map, `sdgaincal` with
 `spw='0:1~2'` terminates with `ArrayShapeError` because a one-channel
-cell receives two channels. The same map with `spw='0:1'` produces 138
-scalar solutions at the selected frequency. Casa-rs reports a catchable
+cell receives two channels. The same map with `spw='0:1'` produces scalar
+solutions at the selected frequency. Casa-rs reports a catchable
 single-channel requirement before publishing an output. The paired oracle
 runs the CASA crash case in its own process.
+
+With the field reference moved outside the mapped region, the same CASA
+release can segfault when no integration passes the central-region filter.
+Casa-rs returns a catchable solve error and preserves an existing
+destination.
+
+The filter interpolates pointings in time order and applies the resulting
+selection mask in input order. This can shift the reference samples for
+physically shuffled input rows. Casa-rs follows that selection and emits
+solutions in the same spectral-window and time order as CASA.

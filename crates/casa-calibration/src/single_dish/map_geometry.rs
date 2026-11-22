@@ -19,6 +19,11 @@ pub(super) enum Target<'a> {
     Planet(&'a PlanetaryEphemeris),
 }
 
+pub(super) enum SourceRow {
+    Required,
+    Optional,
+}
+
 impl MapTargets {
     pub(super) fn read(ms: &MeasurementSet) -> Result<Self, String> {
         let fields = ms.field().map_err(error_text)?;
@@ -42,12 +47,14 @@ impl MapTargets {
         })
     }
 
-    pub(super) fn field(&mut self, id: usize) -> Result<Target<'_>, String> {
+    pub(super) fn field(&mut self, id: usize, source_row: SourceRow) -> Result<Target<'_>, String> {
         let source = self.field_sources.get(id).ok_or("Invalid map FIELD_ID.")?;
-        let name = self
-            .source_names
-            .get(source)
-            .ok_or("No SOURCE row for selected map field.")?;
+        let Some(name) = self.source_names.get(source) else {
+            return match source_row {
+                SourceRow::Required => Err("No SOURCE row for selected map field.".into()),
+                SourceRow::Optional => Ok(Target::Fixed),
+            };
+        };
         if name == "COMET" {
             return Ok(Target::Comet);
         }

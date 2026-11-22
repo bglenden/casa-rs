@@ -309,9 +309,9 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         if mode != "doublecircle":
             message = "null value not allowed" if mode is None else f"unallowed value {mode}"
             raise AssertionError(str({"calmode": [message]}))
+        _validate_required_path(values, "infile", arguments["infile"], search_data=True)
         if not arguments["outfile"]:
             raise ValueError("outfile is empty.")
-        _validate_required_path(values, "infile", arguments["infile"], search_data=True)
         try:
             return run(name, **values).value
         except TaskExecutionError as error:

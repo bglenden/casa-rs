@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::single_dish::map_geometry::MapTargets;
+use crate::single_dish::map_geometry::{MapTargets, SourceRow};
 use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::MsCalEngine;
 
@@ -44,7 +44,7 @@ pub(super) fn reference_rows<'a>(
     let mut off = Vec::new();
     for group in groups {
         let field_id = group[0].field as usize;
-        let target = targets.field(field_id)?;
+        let target = targets.field(field_id, SourceRow::Required)?;
         let mut pointings = group
             .iter()
             .zip(directions.by_ref())

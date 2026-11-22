@@ -4,11 +4,13 @@
 use casa_types::Complex32;
 use ndarray::ArrayD;
 
+use crate::single_dish::edges::Integration;
+
 const ARCSEC_PER_RADIAN: f64 = 180. * 3600. / std::f64::consts::PI;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.;
 
-pub(super) struct GainSample {
-    pub(super) row: usize,
+pub(super) struct GainSample<'a> {
+    pub(super) integration: &'a Integration,
     pub(super) data: ArrayD<Complex32>,
     pub(super) flags: ArrayD<bool>,
 }
@@ -34,7 +36,7 @@ pub(super) fn radius(
 }
 
 pub(super) fn normalize(
-    samples: &mut [GainSample],
+    samples: &mut [GainSample<'_>],
     radius: f64,
     smooth: bool,
 ) -> Result<(), String> {
