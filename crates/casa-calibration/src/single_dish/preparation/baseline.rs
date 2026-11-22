@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Fit single-dish baselines and apply saved spectra models.
 
+mod auto_mask;
 mod diagnostics;
+mod linear_fit;
 mod polynomial;
+mod spline;
 mod table;
 pub(crate) mod task;
 
@@ -17,9 +20,11 @@ use casa_ms::transform::{
 use casa_types::{ArrayValue, Complex32, RecordValue};
 use ndarray::{Array1, ArrayD, Axis};
 
+pub use auto_mask::SingleDishLineFinder;
 use diagnostics::Diagnostics;
-use polynomial::{Fit, INVALID_FIT_ARGUMENT, Polynomial, PolynomialFit};
-use table::{AppliedPolynomial, BaselineRow, BaselineTable, SpectrumModel, mask_ranges};
+use linear_fit::Fit;
+use polynomial::{Polynomial, PolynomialFit};
+use table::{AppliedBaseline, BaselineRow, BaselineTable, SpectrumModel, mask_ranges};
 
 use super::{SingleDishSession, data_column};
 use crate::output::CalibrationOutput;
@@ -28,14 +33,16 @@ use crate::output::CalibrationOutput;
 pub enum SingleDishBaselineMode<'a> {
     /// Estimate coefficients and optionally publish a baseline table.
     Fit {
-        /// Polynomial or Chebyshev basis.
+        /// Polynomial, Chebyshev or cubic-spline basis.
         family: &'a str,
-        /// Polynomial order.
+        /// Polynomial order or number of spline pieces.
         order: usize,
         /// Sigma threshold for clipping residuals.
         clip_sigma: f64,
         /// Maximum number of fits, including the initial fit.
         max_fits: usize,
+        /// Detect and exclude line channels before fitting.
+        line_finder: Option<SingleDishLineFinder>,
         /// Optional CASA baseline-table destination.
         table: Option<&'a Path>,
         /// Optional coefficient and residual reports.
@@ -108,20 +115,22 @@ impl SingleDishSession {
                 order,
                 clip_sigma,
                 max_fits,
+                line_finder,
                 table,
                 diagnostics,
             } => {
                 if max_fits == 0 {
                     return Err("Number of fits must be positive.".into());
                 }
-                if clip_sigma.is_nan() || clip_sigma <= 0. {
-                    return Err(INVALID_FIT_ARGUMENT.into());
-                }
-                let family = if family.eq_ignore_ascii_case("chebyshev") {
-                    Polynomial::Chebyshev
-                } else {
-                    Polynomial::Monomial
+                let family = match family.to_ascii_lowercase().as_str() {
+                    "chebyshev" => BaselineFamily::Polynomial(Polynomial::Chebyshev),
+                    "cspline" if order == 0 => return Err("npiece must be positive.".into()),
+                    "cspline" => BaselineFamily::CubicSpline,
+                    _ => BaselineFamily::Polynomial(Polynomial::Monomial),
                 };
+                if clip_sigma.is_nan() || clip_sigma <= 0. {
+                    return Err(family.invalid_fit_argument().into());
+                }
                 (
                     Operation::Fit(Box::new(FitOperation {
                         request: FitRequest {
@@ -129,6 +138,7 @@ impl SingleDishSession {
                             order,
                             clip_sigma,
                             max_fits,
+                            line_finder,
                             record_models: table.is_some(),
                         },
                         bases: BTreeMap::new(),
@@ -249,11 +259,42 @@ enum Noise {
     StandardDeviation,
 }
 
+#[derive(Clone, Copy)]
+enum BaselineFamily {
+    Polynomial(Polynomial),
+    CubicSpline,
+}
+
+impl BaselineFamily {
+    fn invalid_fit_argument(self) -> &'static str {
+        match self {
+            Self::Polynomial(_) => polynomial::INVALID_FIT_ARGUMENT,
+            Self::CubicSpline => spline::INVALID_FIT_ARGUMENT,
+        }
+    }
+
+    fn subtract(
+        self,
+        spectrum: &mut [f32],
+        coefficients: &[f64],
+        boundaries: &[usize],
+    ) -> Result<(), String> {
+        match self {
+            Self::Polynomial(polynomial) => {
+                polynomial.subtract(spectrum, coefficients);
+                Ok(())
+            }
+            Self::CubicSpline => spline::subtract(spectrum, coefficients, boundaries),
+        }
+    }
+}
+
 struct FitRequest {
-    family: Polynomial,
+    family: BaselineFamily,
     order: usize,
     clip_sigma: f64,
     max_fits: usize,
+    line_finder: Option<SingleDishLineFinder>,
     record_models: bool,
 }
 
@@ -279,10 +320,19 @@ struct BaselineWorker {
 
 impl FitOperation {
     fn fit(&mut self, values: &[f32], mask: &[bool]) -> Result<Option<Fit>, String> {
+        let BaselineFamily::Polynomial(family) = self.request.family else {
+            return spline::fit(
+                values,
+                mask,
+                self.request.order,
+                self.request.clip_sigma,
+                self.request.max_fits,
+            );
+        };
         let basis = match self.bases.entry(values.len()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let fit = PolynomialFit::new(self.request.family, self.request.order, values.len())
+                let fit = PolynomialFit::new(family, self.request.order, values.len())
                     .ok_or("sakura_CreateLSQFitContextFloat() failed -- InvalidArgument")?;
                 entry.insert(fit)
             }
@@ -328,8 +378,8 @@ impl SpectrumBaseline for BaselineWorker {
         let ids = row_ids(row)?;
         let (fit_mask, fallback) = self.masks.for_window(row.window);
         if fallback && fit_mask.is_some_and(|mask| mask.len() != channels) {
-            if let Operation::Fit(_) = &self.operation {
-                return Err(INVALID_FIT_ARGUMENT.into());
+            if let Operation::Fit(fitting) = &self.operation {
+                return Err(fitting.request.family.invalid_fit_argument().into());
             }
             if self.noise.is_some() {
                 return Err("The input mask does not match the spectrum channel count.".into());
@@ -350,7 +400,7 @@ impl SpectrumBaseline for BaselineWorker {
         for receptor in 0..receptors {
             let mut values = real_spectrum(data, receptor)?;
             let mut flags = flags.index_axis_mut(Axis(0), receptor);
-            let mask = (0..channels)
+            let mut mask = (0..channels)
                 .map(|channel| {
                     !flags[channel]
                         && fit_mask.is_none_or(|mask| mask.get(channel).copied().unwrap_or(false))
@@ -359,19 +409,27 @@ impl SpectrumBaseline for BaselineWorker {
             let mut noise_mask = None;
             match &mut self.operation {
                 Operation::Fit(fitting) => {
+                    if let Some(finder) = fitting.request.line_finder
+                        && flags.iter().any(|&flag| !flag)
+                    {
+                        finder.exclude_lines(&values, &mut mask)?;
+                    }
                     let fit = fitting.fit(&values, &mask)?;
                     if let Some(Fit {
                         coefficients,
                         residuals,
                         included,
                         rms,
+                        boundaries,
                     }) = fit
                     {
                         values = residuals;
                         if fitting.request.record_models || fitting.diagnostics.enabled() {
                             let model = SpectrumModel {
                                 family: fitting.request.family,
+                                parameter: fitting.request.order,
                                 coefficients,
+                                boundaries,
                                 mask: mask_ranges(&included),
                                 rms,
                                 clip_threshold: fitting.request.clip_sigma as f32,
@@ -404,10 +462,11 @@ impl SpectrumBaseline for BaselineWorker {
                         .map(|index| table.model(index, receptor))
                         .transpose()?
                         .flatten();
-                    if let Some(AppliedPolynomial {
+                    if let Some(AppliedBaseline {
                         family,
                         coefficients,
                         included,
+                        boundaries,
                     }) = model
                     {
                         if included.len() != channels {
@@ -416,7 +475,7 @@ impl SpectrumBaseline for BaselineWorker {
                             );
                         }
                         if flags.iter().any(|&flag| !flag) {
-                            family.subtract(&mut values, &coefficients);
+                            family.subtract(&mut values, &coefficients, &boundaries)?;
                             noise_mask = Some(
                                 mask.into_iter()
                                     .zip(included)

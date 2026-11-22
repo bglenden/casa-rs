@@ -61,7 +61,7 @@ mod session;
 mod simulated;
 mod single_dish;
 pub use single_dish::preparation::baseline::{
-    SingleDishBaseline, SingleDishBaselineDiagnostics, SingleDishBaselineMode,
+    SingleDishBaseline, SingleDishBaselineDiagnostics, SingleDishBaselineMode, SingleDishLineFinder,
 };
 pub use single_dish::preparation::{SingleDishSession, SingleDishSmoothing};
 mod smooth;

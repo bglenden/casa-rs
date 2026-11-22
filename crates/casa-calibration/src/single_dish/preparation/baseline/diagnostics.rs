@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use casa_types::quanta::MvTime;
 use tempfile::NamedTempFile;
 
+use super::BaselineFamily;
 use super::SingleDishBaselineDiagnostics;
 use super::polynomial::Polynomial;
 use super::table::{BaselineRow, SpectrumModel};
@@ -48,11 +49,12 @@ impl Diagnostics {
         model: &SpectrumModel,
         clipped: usize,
     ) -> Result<(), String> {
-        let family = match model.family {
-            Polynomial::Monomial => "poly",
-            Polynomial::Chebyshev => "chebyshev",
+        let (family, parameter_name) = match model.family {
+            BaselineFamily::Polynomial(Polynomial::Monomial) => ("poly", "order"),
+            BaselineFamily::Polynomial(Polynomial::Chebyshev) => ("chebyshev", "order"),
+            BaselineFamily::CubicSpline => ("cspline", "npiece"),
         };
-        let order = model.coefficients.len() - 1;
+        let parameter = model.parameter;
         let rms = significant(f64::from(model.rms), 8);
         if let Some(csv) = &mut self.csv {
             let writer = &mut csv.writer;
@@ -66,7 +68,7 @@ impl Diagnostics {
                 significant(row.time, 12),
                 ranges(&model.mask, true),
                 family,
-                order,
+                parameter,
                 model
                     .coefficients
                     .iter()
@@ -88,7 +90,7 @@ impl Diagnostics {
                 time.month_day()
             );
             let time = time.format_time(2);
-            writeln!(writer, "Scan[{}] Beam[{}] Spw[{}] Pol[{pol}] Time[{date}/{time}]\n\nFitter range = {}\n\nBaseline parameters  Function = {family}  order = {order}\n\nResults of baseline fit\n",
+            writeln!(writer, "Scan[{}] Beam[{}] Spw[{}] Pol[{pol}] Time[{date}/{time}]\n\nFitter range = {}\n\nBaseline parameters  Function = {family}  {parameter_name} = {parameter}\n\nResults of baseline fit\n",
                      row.scan, row.beam, row.window, ranges(&model.mask, false)).map_err(error_text)?;
             for (index, &value) in model.coefficients.iter().enumerate() {
                 write!(

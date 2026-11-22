@@ -9,7 +9,9 @@ use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
-use super::{SingleDishBaseline, SingleDishBaselineDiagnostics, SingleDishBaselineMode};
+use super::{
+    SingleDishBaseline, SingleDishBaselineDiagnostics, SingleDishBaselineMode, SingleDishLineFinder,
+};
 use crate::single_dish::{preparation::SingleDishSession, selector};
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -53,17 +55,38 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let table = task.text("bltable")?.unwrap_or_default();
     let baseline_mode = match mode.as_str() {
         "fit" => {
-            if !matches!(family.as_str(), "poly" | "chebyshev") {
+            if !matches!(family.as_str(), "poly" | "chebyshev" | "cspline") {
                 return Err(unsupported(&family, "blfunc"));
             }
-            if maskmode == "auto" {
-                return Err(unsupported("auto", "maskmode"));
-            }
+            let order = if family == "cspline" {
+                usize::try_from(task.integer("npiece")?)
+                    .ok()
+                    .filter(|&pieces| pieces != 0)
+                    .ok_or_else(|| {
+                        TaskFailure::execution("npiece must be positive.").at("npiece")
+                    })?
+            } else {
+                nonnegative(task, "order")?
+            };
+            let line_finder = if maskmode == "auto" {
+                Some(
+                    SingleDishLineFinder::new(
+                        task.number("thresh")?,
+                        task.integer("avg_limit")?,
+                        task.integer("minwidth")?,
+                        &task.integers("edge")?,
+                    )
+                    .map_err(TaskFailure::execution)?,
+                )
+            } else {
+                None
+            };
             SingleDishBaselineMode::Fit {
                 family: &family,
-                order: nonnegative(task, "order")?,
+                order,
                 clip_sigma: task.number("clipthresh")?,
                 max_fits: nonnegative(task, "clipniter")? + 1,
+                line_finder,
                 table: products.table.as_deref(),
                 diagnostics: SingleDishBaselineDiagnostics {
                     csv: products.csv.as_deref(),

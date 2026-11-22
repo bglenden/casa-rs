@@ -61,28 +61,6 @@ impl PySingleDishMs {
         not_yet_implemented_in("singledishms", "importnro", 1532)
     }
 
-    #[pyo3(signature = (datacolumn = None, outfile = None, bloutput = None, dosubtract = None, spw = None, updateweight = None, sigmavalue = None, npiece = None, clip_threshold_sigma = None, num_fitting_max = None, linefinding = None, threshold = None, avg_limit = None, minwidth = None, edge = None), text_signature = "($self, datacolumn='data', outfile='', bloutput='', dosubtract=True, spw=[], updateweight=False, sigmavalue='stddev', npiece=5, clip_threshold_sigma=3.0, num_fitting_max=1, linefinding=False, threshold=5.0, avg_limit=4, minwidth=4, edge=[0, 0])")]
-    fn subtract_baseline_cspline(
-        &self,
-        datacolumn: Option<&Bound<'_, PyAny>>,
-        outfile: Option<&Bound<'_, PyAny>>,
-        bloutput: Option<&Bound<'_, PyAny>>,
-        dosubtract: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        updateweight: Option<&Bound<'_, PyAny>>,
-        sigmavalue: Option<&Bound<'_, PyAny>>,
-        npiece: Option<&Bound<'_, PyAny>>,
-        clip_threshold_sigma: Option<&Bound<'_, PyAny>>,
-        num_fitting_max: Option<&Bound<'_, PyAny>>,
-        linefinding: Option<&Bound<'_, PyAny>>,
-        threshold: Option<&Bound<'_, PyAny>>,
-        avg_limit: Option<&Bound<'_, PyAny>>,
-        minwidth: Option<&Bound<'_, PyAny>>,
-        edge: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        not_yet_implemented_in("singledishms", "subtract_baseline_cspline", 1532)
-    }
-
     #[pyo3(signature = (datacolumn = None, outfile = None, bloutput = None, dosubtract = None, spw = None, updateweight = None, sigmavalue = None, addwn = None, rejwn = None, applyfft = None, fftmethod = None, fftthresh = None, clip_threshold_sigma = None, num_fitting_max = None, linefinding = None, threshold = None, avg_limit = None, minwidth = None, edge = None), text_signature = "($self, datacolumn='data', outfile='', bloutput='', dosubtract=True, spw=[], updateweight=False, sigmavalue='stddev', addwn='0', rejwn='', applyfft=False, fftmethod='fft', fftthresh=[], clip_threshold_sigma=3.0, num_fitting_max=1, linefinding=False, threshold=5.0, avg_limit=4, minwidth=4, edge=[0, 0])")]
     fn subtract_baseline_sinusoid(
         &self,

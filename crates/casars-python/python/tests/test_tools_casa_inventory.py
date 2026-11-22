@@ -32,7 +32,10 @@ ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "m
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["wvr"] = {"gcal"}
-IMPLEMENTED["singledishms"] = {"open", "close", "done", "name", "set_selection", "smooth"}
+IMPLEMENTED["singledishms"] = {
+    "open", "close", "done", "name", "set_selection", "smooth",
+    "subtract_baseline", "subtract_baseline_cspline",
+}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",
@@ -47,7 +50,7 @@ IMPLEMENTED["calibrater"] = {
 }
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve"},
-    "singledishms": {"subtract_baseline", "apply_baseline_table"},
+    "singledishms": {"apply_baseline_table"},
     "image": {
         "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },
