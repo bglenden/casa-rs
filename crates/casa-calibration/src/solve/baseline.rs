@@ -79,6 +79,11 @@ pub(crate) fn solve(
         solve_stats: Default::default(),
     };
     for group in groups.into_values().filter(|group| group.attempted) {
+        if group.baseline_correlation_counts.len() > 1 {
+            return Err(GainSolveError::Baseline(
+                "Error in Calibrater::solve.".into(),
+            ));
+        }
         solved.attempted_spw_ids.insert(group.spw_id);
         solved.rows.extend(solve_group(
             &group,
@@ -131,17 +136,18 @@ fn solve_group(
     let origin = group.min_time;
     let mut offset_sum = 0.0_f64;
     let mut total_weight = 0.0_f64;
-    let mut spectra = group
-        .delay_spectra()
-        .filter(|spectrum| spectrum.parallel_hand)
-        .collect::<Vec<_>>();
+    // SDBList::aggregateTimeCentroid uses all hands, even though
+    // MMueller::solveOne fits only the parallel-hand responses.
+    let mut spectra = group.delay_spectra().collect::<Vec<_>>();
     spectra
         .sort_unstable_by_key(|spectrum| (spectrum.buffer, spectrum.antennas, spectrum.receptor));
     for spectrum in spectra {
         let (p, q) = spectrum.antennas;
-        let responses = baseline
-            .entry((p.min(q), p.max(q)))
-            .or_insert_with(|| vec![Response::default(); cells]);
+        let mut responses = spectrum.parallel_hand.then(|| {
+            baseline
+                .entry((p.min(q), p.max(q)))
+                .or_insert_with(|| vec![Response::default(); cells])
+        });
         let mut spectrum_weight = 0.0_f64;
         for (channel, (sum, weight)) in spectrum.channels().enumerate() {
             if weight <= 0.0 {
@@ -159,9 +165,11 @@ fn solve_group(
                 GainSolveMode::Amplitude => (Complex32::new(sum.norm(), 0.), weight),
                 GainSolveMode::AmplitudePhase => (sum, weight),
             };
-            let response = &mut responses[2 * channel + spectrum.receptor];
-            response.sum += if p > q { sum.conj() } else { sum };
-            response.weight += weight;
+            if let Some(responses) = &mut responses {
+                let response = &mut responses[2 * channel + spectrum.receptor];
+                response.sum += if p > q { sum.conj() } else { sum };
+                response.weight += weight;
+            }
             spectrum_weight += f64::from(weight);
         }
         offset_sum += (spectrum.time_seconds - origin) * spectrum_weight;

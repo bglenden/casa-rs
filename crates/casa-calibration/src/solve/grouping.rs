@@ -185,6 +185,7 @@ pub(crate) fn build_solve_groups(
         options.combine,
         include_autocorrelations,
         options.polynomial_bandpass,
+        baseline_solve,
     );
     let seed_buffers = if !legacy_spline
         && (needs_first_buffer
@@ -590,6 +591,8 @@ struct SelectedChannels<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SolveBaseKey {
     pub(crate) array_id: i32,
+    /// Consecutive visits of one field in a baseline solve across scans.
+    pub(crate) field_visit: usize,
     pub(crate) field_id: i32,
     pub(crate) spw_id: i32,
     pub(crate) data_desc_id: i32,
@@ -601,6 +604,7 @@ impl SolveBaseKey {
     fn for_row(row: &SelectedSolveRow, combine: GainSolveCombine) -> Self {
         Self {
             array_id: row.array_id,
+            field_visit: 0,
             field_id: if combine.fields { 0 } else { row.field_id },
             spw_id: if combine.spectral_windows {
                 0
@@ -650,6 +654,8 @@ pub(crate) struct SolveAccumulator {
     /// Data channels per solution: 1 when the selected channels solve
     /// together, else the row's channel count.
     pub(crate) solution_channels: usize,
+    /// Correlation counts of the buffers gathered for an M/Mf solution.
+    pub(super) baseline_correlation_counts: BTreeSet<usize>,
     /// A single parallel hand in channelized G solves occupies parameter zero.
     pub(crate) scalar_bandpass: bool,
     pub(crate) polynomial: Option<polynomial::PolynomialAccumulation>,
@@ -712,6 +718,7 @@ impl SolveAccumulator {
             antenna_ids: BTreeSet::new(),
             unique_time_bits: BTreeSet::new(),
             solution_channels: 1,
+            baseline_correlation_counts: BTreeSet::new(),
             scalar_bandpass: false,
             polynomial: None,
             channel_graphs: Vec::new(),
@@ -759,6 +766,10 @@ impl SolveAccumulator {
         };
         if layout.channel_count != channel_count || layout.selection != row.channel_selection {
             layout.select_channels(row, channel_count, options.polynomial_bandpass)?;
+        }
+        if options.input_rows == SolveInputRows::Baselines {
+            self.baseline_correlation_counts
+                .insert(layout.correlations.len());
         }
         let raw_flags = if preapplied_row.is_some() && layouts.models.uses_fourier(row.field_id) {
             match input_cell(ms, row.row_index, batch, "FLAG")? {
@@ -1029,6 +1040,7 @@ impl SolveAccumulator {
                 );
             }
             if !parallel_hand
+                && !baseline_solve
                 && matches!(
                     options.gain_type,
                     GainType::G | GainType::K | GainType::GSpline
@@ -1279,6 +1291,8 @@ impl SolveAccumulator {
         self.scan_numbers.extend(other.scan_numbers);
         self.antenna_ids.extend(other.antenna_ids);
         self.solution_channels = self.solution_channels.max(other.solution_channels);
+        self.baseline_correlation_counts
+            .extend(other.baseline_correlation_counts);
         self.attempted |= other.attempted;
         for (baseline, centroid) in other.baseline_centroids {
             self.baseline_centroids

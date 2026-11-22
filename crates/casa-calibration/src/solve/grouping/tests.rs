@@ -152,6 +152,7 @@ fn combined_intervals_start_at_the_earliest_row_whatever_the_field_order() {
             combine,
             false,
             false,
+            false,
         )
         .into_iter()
         .map(|(row, base, bucket)| (row.time_seconds, base.field_id, bucket))

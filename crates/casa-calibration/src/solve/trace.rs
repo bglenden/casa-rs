@@ -339,6 +339,7 @@ mod tests {
 
         let base_key = SolveBaseKey {
             array_id: 0,
+            field_visit: 0,
             field_id: 3,
             spw_id: 4,
             data_desc_id: 4,
@@ -474,6 +475,7 @@ mod tests {
         assert_eq!(
             base_key_json(&SolveBaseKey {
                 array_id: 0,
+                field_visit: 0,
                 field_id: 1,
                 spw_id: 2,
                 data_desc_id: 2,

@@ -9983,13 +9983,19 @@ using its stated spectral-window identifier. It also ignores an unknown
 station's GAIN record while preserving the following GAIN header. CASA
 can consume that header while skipping to the next slash.
 
-## Baseline Mueller application uses the forward orientation on reversed rows
+## Baseline Mueller calibration assumes ordered antennas
 
-CASA 6.7.6.14 writes one `M Mueller` or `Mf Mueller` response for each
-unordered pair of antennas. On a row with the two antennas exchanged, it
-looks up the same response and applies the same complex phase. Exchanging
-the antennas conjugates the parallel-hand visibilities, so the correction
-must be conjugated too. Casa-rs applies the response in the row's
-orientation. The [BLCAL oracle](../tools/casa-compat/blcal_oracle.py)
-compares both table formats and both consumers for ordinary rows, and
-compares the reversed-row correction to the known sky model.
+CASA 6.7.6.14 computes its `M Mueller` and `Mf Mueller` baseline index
+assuming the first antenna ID is at most the second. For five antennas,
+`(0,3)` uses slot 3, while `(3,0)` uses slot 9, the slot for `(2,2)`.
+This can select or update the wrong baseline response. Exchanging antennas
+also conjugates the parallel-hand visibilities. Casa-rs stores the response
+for the ordered pair and conjugates it when solving or applying a reversed
+row. The [paired BLCAL oracle](../tools/casa-compat/blcal_oracle.py) checks
+the reversed-input solve and apply against the known sky model.
+
+When cross-hands carry weight and both parallel hands have zero weight,
+CASA can attempt the interval and publish unflagged NaNs from a zero-weight
+division. Casa-rs retains the interval and flags the unavailable
+parallel-hand responses, with the same zero coefficients as other absent
+solutions. The oracle compares the attempt and checks the output flags.

@@ -172,6 +172,7 @@ def apply(root, label, vis, products, tasks, *, reversed=False, analytic=False, 
 
 
 def weighted_windows(root, original):
+    root.mkdir(exist_ok=True)
     output = root/'weighted-windows.ms'
     copy_ms(original, output)
     for path in (output/'SPECTRAL_WINDOW', output/'DATA_DESCRIPTION', output/'OBSERVATION', output):
@@ -224,6 +225,84 @@ def missing_terms(root, vis, source, appliers):
         table.putcell('FLAG', row, flag)
         table.removerows(remove.tolist())
     apply(root, 'missing-baseline', vis, {'casa': output}, appliers)
+
+
+def cross_hand_weights(root, original, tasks):
+    windows = weighted_windows(root/'cross-weighted', original)
+    with opened(windows, True) as table:
+        later = table.getcol('OBSERVATION_ID') == 1
+        sigma = np.ones_like(table.getcol('SIGMA'))
+        sigma[1:3, later] = .1
+        table.putcol('SIGMA', sigma)
+        table.putcol('WEIGHT', 1. / sigma**2)
+        times = table.getcol('TIME')[(table.getcol('FIELD_ID') == 0) & later]
+    outputs = solve(root, windows, tasks, 'cross-hand-centroid', field='FLUX',
+                    freqdep=True, combine='obs,spw,scan')
+    for path in outputs.values():
+        with opened(path) as table:
+            # Four unit-weight hands 200 s earlier; the later buffer has
+            # two unit-weight hands and two with weight 100.
+            expected = times.mean() - 200. * 4. / (4. + 2. + 200.)
+            np.testing.assert_allclose(table.getcol('TIME'), expected, atol=2e-5, rtol=0.)
+
+    cross_only = root/'cross-hands-only.ms'
+    copy_ms(original, cross_only)
+    with opened(cross_only, True) as table:
+        sigma = table.getcol('SIGMA')
+        sigma[[0, 3]] = 0.
+        table.putcol('SIGMA', sigma)
+        table.putcol('WEIGHT', np.divide(1., sigma**2, out=np.zeros_like(sigma), where=sigma > 0.))
+    for engine, task in tasks.items():
+        table_path = root/f'cross-only-{engine}.cal'
+        assert task(str(cross_only), str(table_path), field='FLUX', freqdep=True) is None
+        with opened(table_path) as table:
+            assert table.nrows() == 15
+            flag, gain = table.getcol('FLAG'), table.getcol('CPARAM')
+            if engine == 'casa':
+                assert (~flag).any() and np.isnan(gain[~flag]).all()
+            else:
+                assert flag.all() and np.all(gain == 0.)
+
+
+def repeated_field_visits(root, original, tasks):
+    output = root/'repeated-field-visits.ms'
+    copy_ms(original, output)
+    count = duplicate_rows(casa_table(), output)
+    with opened(output, True) as table:
+        for name in ('TIME', 'TIME_CENTROID'):
+            table.putcol(name, table.getcol(name, count, count) + 200., count, count)
+        table.putcol('SCAN_NUMBER', table.getcol('SCAN_NUMBER', count, count) + 2, count, count)
+        table.putcol('DATA', 1.31 * table.getcol('DATA', count, count), count, count)
+    for label, combination, interval, count in (
+        ('keep-field-breaks', 'scan', 'inf', 60),
+        ('finite-field-visits', 'scan', '95s', 60),
+        ('combine-field-visits', 'field,scan', 'inf', 15),
+        ('finite-combined-field-visits', 'field,scan', '95s', 60),
+    ):
+        paths = solve(root, output, tasks, label, combine=combination, solint=interval, freqdep=True)
+        for path in paths.values():
+            with opened(path) as table:
+                assert table.nrows() == count, label
+    solve(root, output, tasks, 'selected-field-visits', field='FLUX', freqdep=True)
+
+
+def mixed_correlations(root, two, four, tasks):
+    shifted = root/'shifted-four.ms'
+    copy_ms(four, shifted)
+    with opened(shifted/'SPECTRAL_WINDOW', True) as table:
+        for name in ('CHAN_FREQ', 'REF_FREQUENCY'):
+            table.putcell(name, 0, table.getcell(name, 0) + 48e6)
+    mixed = root/'mixed-correlations.ms'
+    assert casa.concat([str(two), str(shifted)], str(mixed)) is None
+    for engine, task in tasks.items():
+        output = root/f'mixed-correlations-{engine}.cal'
+        try:
+            task(str(mixed), str(output), field='FLUX', freqdep=True, combine='obs,spw,scan')
+        except RuntimeError as error:
+            assert str(error) == 'Error in Calibrater::solve.'
+        else:
+            raise AssertionError(f'{engine} accepted buffers with different correlation counts')
+        assert not output.exists()
 
 
 def zero_samples(root, original, tasks):
@@ -300,6 +379,14 @@ def main():
         if 'native' in appliers:
             apply(root, 'reversed', vis, frequency, {'native': appliers['native']}, reversed=True,
                   analytic=True)
+            reversed_vis = root/'reversed-solve.ms'
+            copy_ms(vis, reversed_vis)
+            reverse_baseline(reversed_vis)
+            output = root/'reversed-solve.cal'
+            assert solvers['native'](str(reversed_vis), str(output), field='FLUX',
+                                     freqdep=True) is None
+            print('reversed-solve solution NRMS', compare_tables(frequency['casa'], output),
+                  flush=True)
         for label, options in (
             ('phase', {'calmode': 'p'}), ('amplitude', {'calmode': 'a'}),
             ('normalized-M', {'solnorm': True}),
@@ -326,11 +413,14 @@ def main():
                 apply(root, f'products-{len(stokes.split())}', source_vis, products, appliers)
             if len(stokes.split()) == 4:
                 missing_terms(root, source_vis, products['casa'], appliers)
+                cross_hand_weights(root, source_vis, solvers)
+                mixed_correlations(root, vis, source_vis, solvers)
         for label, options in (
             ('separate-scans-fields', {'combine': ''}),
             ('combine-field', {'combine': 'field,scan'}),
         ):
             solve(root, vis, solvers, label, **options)
+        repeated_field_visits(root, vis, solvers)
         selected = selected_inputs(root, vis)
         solve(root, selected, solvers, 'intent', intent='*BANDPASS*')
         solve(root, selected, solvers, 'scan', scan='2')

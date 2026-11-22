@@ -202,6 +202,7 @@ pub(crate) fn solve_polarization(
         request.combine,
         false,
         false,
+        false,
     );
     let mut models = super::super::model::ModelInputs::new(ms, &context.rows, request.model_source)
         .map_err(error)?;
