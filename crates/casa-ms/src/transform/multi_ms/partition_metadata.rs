@@ -2,16 +2,23 @@
 //! Consolidate SPW-scoped metadata before sharing it among Multi-MS members.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_tables::{Table, TableOptions};
 use casa_types::{ScalarValue, Value};
 
 use super::table_error;
 use crate::subtables::get_i32;
+use crate::transform::selection_metadata::read_subtable_rows;
 use crate::transform::{MsTransformError, rewrite_selected_table_rows};
 
-pub(super) fn consolidate(master: &Path, groups: &[BTreeSet<i32>]) -> Result<(), MsTransformError> {
+pub(super) fn consolidate(
+    destination: &Path,
+    members: &[PathBuf],
+    groups: &[BTreeSet<i32>],
+) -> Result<(), MsTransformError> {
+    let master = destination.join(&members[0]);
+    merge_spectral_windows(&master, destination, members, groups)?;
     for name in [
         "FEED",
         "SOURCE",
@@ -67,4 +74,34 @@ pub(super) fn consolidate(master: &Path, groups: &[BTreeSet<i32>]) -> Result<(),
         std::fs::remove_dir_all(original).map_err(io_error)?;
     }
     Ok(())
+}
+
+fn merge_spectral_windows(
+    master: &Path,
+    destination: &Path,
+    members: &[PathBuf],
+    groups: &[BTreeSet<i32>],
+) -> Result<(), MsTransformError> {
+    let name = "SPECTRAL_WINDOW";
+    let path = master.join(name);
+    let error = |source| table_error(&path, source);
+    let mut output = Table::open(TableOptions::new(&path)).map_err(error)?;
+    for (member, ids) in members.iter().zip(groups).skip(1) {
+        let source_path = destination.join(member).join(name);
+        let input = Table::open(TableOptions::new(&source_path))
+            .map_err(|source| table_error(&source_path, source))?;
+        for &id in ids {
+            let index = id as usize;
+            // Each member applies Doppler and phase-centre conversions at
+            // its own reference epoch. Publish the actual grid it wrote.
+            let mut rows = read_subtable_rows(&input, &[index])
+                .map_err(|source| table_error(&source_path, source))?;
+            *output.row_accessor_mut().row_mut(index).map_err(error)? =
+                rows.pop().expect("one selected spectral-window row");
+        }
+    }
+    output
+        .prepare_write()
+        .save(TableOptions::new(&path))
+        .map_err(error)
 }

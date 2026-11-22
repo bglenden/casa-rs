@@ -63,6 +63,7 @@ pub(super) fn retain(
                 match parameter.as_str() {
                     "vis" => *value = format!("\"{}\"", part.input_ms.display()),
                     "outputvis" => *value = format!("\"{}\"", final_path.join(&local).display()),
+                    "createmms" => *value = "False".into(),
                     _ => {}
                 }
             }
@@ -81,7 +82,7 @@ pub(super) fn retain(
                 | MsTransformError::SelectRows { .. }
                 | MsTransformError::MissingDataColumn { .. }),
             ) => {
-                tracing::warn!(partition = %member.display(), error = %error, "split skipped a Multi-MS partition")
+                tracing::warn!(partition = %member.display(), error = %error, "transform skipped a Multi-MS partition")
             }
             Err(error) => return Err(error),
         }

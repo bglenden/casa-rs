@@ -8,13 +8,16 @@ use std::time::Instant;
 use casa_tables::{Table, TableOptions};
 
 use super::partition::{self, Partition};
-use super::{container_info, install_shared_subtables, members, partition_axis, table_error};
+use super::{
+    check_scan_span, container_info, install_shared_subtables, members, retain, table_error,
+};
 use crate::MeasurementSet;
 use crate::selection::{MsSelectionIoBudget, ResolvedMsSelectionRow, RowGrammar};
 use crate::transform::{
     MsPartitionAxis, MsTransformError, MsTransformMultiMsOptions, MsTransformReport,
-    MsTransformRequest, MsTransformTaskOptions, TransformSelection, empty_transform_report,
-    resolve_transform_selection, transform_product, transform_selected_product,
+    MsTransformRequest, MsTransformTaskOptions, TransformSelection, data_description_spw_map,
+    empty_transform_report, resolve_transform_selection, scalar_i32, transform_product,
+    transform_selected_product,
 };
 
 enum Dispatch {
@@ -37,8 +40,8 @@ pub(in crate::transform) fn transform(
     }
     let source_members = source_members.as_deref().unwrap_or_default();
     let template = source_members.first().map(PathBuf::as_path);
-    let retain = !source_members.is_empty() && !config.monolithic;
-    if !retain && !config.create {
+    let existing = !source_members.is_empty() && !config.monolithic;
+    if !existing && !config.create {
         return transform_product(request, grammar, options, template, None).map(Some);
     }
 
@@ -48,60 +51,26 @@ pub(in crate::transform) fn transform(
             source,
         }
     })?;
-    let budget =
-        MsSelectionIoBudget::from_system_memory(2, size_of::<ResolvedMsSelectionRow>(), None)
-            .map_err(|error| MsTransformError::Spectrum(error.to_string()))?;
-    let mut selection = match resolve_transform_selection(&input, request, grammar, budget, false) {
-        Ok(selection) => selection,
-        Err(error) if retain && selection_failure(&error) => {
-            return Ok(Some(empty_retained_report(request)));
-        }
-        Err(error) => return Err(error),
-    };
-
-    let crosses_spws = options.combine_spws
-        || options
-            .regrid
-            .as_ref()
-            .is_some_and(|regrid| regrid.nspw > 1);
-    let (dispatch, mut by_member) = if retain {
-        let rows = std::mem::take(&mut selection.rows);
-        let partitions = distribute_to_members(source_members, rows)?;
-        let dispatch = dispatch_retained(&input, &partitions, crosses_spws, options)?;
-        (dispatch, partitions)
+    let crosses_spws = options.combine_spws || config.multiple_spws;
+    let dispatch = if existing {
+        dispatch_retained(
+            &input,
+            request,
+            source_members,
+            crosses_spws,
+            config.scan_span,
+            options,
+        )?
     } else {
-        (Dispatch::Create(config.axis), Vec::new())
+        Dispatch::Create(config.axis)
     };
-
     let mut report = match dispatch {
-        Dispatch::Plain => {
-            selection.rows = flatten_rows(by_member);
-            transform_selected_product(request, grammar, options, template, None, Some(selection))?
-        }
+        Dispatch::Plain => transform_product(request, grammar, options, template, None)?,
         Dispatch::Retain => {
-            let axis = partition_axis(&request.input_ms);
-            let result = write_members(
-                request,
-                final_path,
-                options,
-                &selection,
-                by_member,
-                MemberExecution {
-                    source_members,
-                    axis: axis.as_deref(),
-                    template,
-                    fallback: false,
-                    spw_ids: None,
-                    original_spw: &request.spw,
-                },
-            )?;
-            result.map_or_else(
-                || empty_retained_report(request),
-                |mut report| {
-                    report.retained_mms = Some(true);
-                    report
-                },
-            )
+            let mut report = retain(request, final_path, grammar, options, source_members)?
+                .unwrap_or_else(|| empty_transform_report(request));
+            report.retained_mms = Some(true);
+            report
         }
         Dispatch::Create(axis) => {
             if crosses_spws && axis != MsPartitionAxis::Scan {
@@ -113,11 +82,15 @@ pub(in crate::transform) fn transform(
                     ),
                 });
             }
-            let rows = if retain {
-                flatten_rows(std::mem::take(&mut by_member))
-            } else {
-                std::mem::take(&mut selection.rows)
-            };
+            let budget = MsSelectionIoBudget::from_system_memory(
+                2,
+                size_of::<ResolvedMsSelectionRow>(),
+                None,
+            )
+            .map_err(|error| MsTransformError::Spectrum(error.to_string()))?;
+            let mut selection =
+                resolve_transform_selection(&input, request, grammar, budget, false)?;
+            let rows = std::mem::take(&mut selection.rows);
             if rows.is_empty() {
                 return Err(MsTransformError::MultiMsParameter {
                     parameter: "scan",
@@ -138,6 +111,9 @@ pub(in crate::transform) fn transform(
                     )
                 })
                 .transpose()?;
+            if spw_ids.is_some() {
+                member_options.ddi_start = 0;
+            }
             let axis = if axis == MsPartitionAxis::Automatic {
                 "scan,spw"
             } else {
@@ -150,10 +126,9 @@ pub(in crate::transform) fn transform(
                 &selection,
                 partitions,
                 MemberExecution {
-                    source_members: &[],
                     axis: Some(axis),
                     template,
-                    fallback: retain,
+                    fallback: existing,
                     spw_ids,
                     original_spw: &request.spw,
                 },
@@ -168,98 +143,30 @@ pub(in crate::transform) fn transform(
     Ok(Some(report))
 }
 
-fn flatten_rows(partitions: Vec<Partition>) -> Vec<ResolvedMsSelectionRow> {
-    partitions.into_iter().flat_map(|part| part.rows).collect()
-}
-
-fn selection_failure(error: &MsTransformError) -> bool {
-    matches!(
-        error,
-        MsTransformError::EmptySelection { .. }
-            | MsTransformError::InvalidSpw { .. }
-            | MsTransformError::SelectRows { .. }
-    )
-}
-
-fn empty_retained_report(request: &MsTransformRequest) -> MsTransformReport {
-    let mut report = empty_transform_report(request);
-    report.retained_mms = Some(true);
-    report
-}
-
-fn distribute_to_members(
-    members: &[PathBuf],
-    rows: Vec<ResolvedMsSelectionRow>,
-) -> Result<Vec<Partition>, MsTransformError> {
-    let mut end_rows = Vec::with_capacity(members.len());
-    let mut end = 0;
-    for member in members {
-        let table =
-            Table::open(TableOptions::new(member)).map_err(|source| table_error(member, source))?;
-        end += table.row_count();
-        end_rows.push(end);
-    }
-    let mut partitions = members
-        .iter()
-        .map(|_| Partition {
-            rows: Vec::new(),
-            history: None,
-        })
-        .collect::<Vec<_>>();
-    for row in rows {
-        let member = end_rows.partition_point(|&end| end <= row.row_index);
-        let part = partitions.get_mut(member).ok_or_else(|| {
-            MsTransformError::Spectrum("Multi-MS members changed during row selection.".into())
-        })?;
-        part.rows.push(row);
-    }
-    Ok(partitions)
-}
-
 fn dispatch_retained(
     input: &MeasurementSet,
-    partitions: &[Partition],
+    request: &MsTransformRequest,
+    members: &[PathBuf],
     crosses_spws: bool,
+    exact_scan_span: bool,
     options: &MsTransformTaskOptions,
 ) -> Result<Dispatch, MsTransformError> {
-    let span = options.time_averaging.filter(|average| average.span_scans);
+    let span = options.time_averaging.filter(|_| exact_scan_span);
     let needs_all_spws = crosses_spws && (options.time_averaging.is_none() || span.is_some());
-    let all_spws = partitions
-        .iter()
-        .flat_map(|part| &part.rows)
-        .map(|row| row.spectral_window_id)
-        .collect::<BTreeSet<_>>();
-    let combine_ok = !needs_all_spws
-        || partitions.iter().all(|part| {
-            part.rows
-                .iter()
-                .map(|row| row.spectral_window_id)
-                .collect::<BTreeSet<_>>()
-                == all_spws
-        });
-    let mut scan_ok = true;
-    if let Some(average) = span {
-        let mut scans_by_member = Vec::with_capacity(partitions.len());
-        let mut all_scans = BTreeSet::new();
-        for part in partitions {
-            let mut min = f64::INFINITY;
-            let mut max = f64::NEG_INFINITY;
-            for row in &part.rows {
-                min = min.min(row.time_mjd_seconds);
-                max = max.max(row.time_mjd_seconds);
-            }
-            scan_ok &= max - min >= average.interval_seconds;
-            let scans = partition::scans(input, &part.rows)?
-                .into_iter()
-                .collect::<BTreeSet<_>>();
-            all_scans.extend(&scans);
-            scans_by_member.push(scans);
+    let combine_ok = !needs_all_spws || first_member_contains_spws(input, request, &members[0])?;
+    let scan_ok = if let Some(average) = span {
+        match check_scan_span(
+            members,
+            request.selection.scan.as_deref(),
+            average.interval_seconds,
+        ) {
+            Ok(()) => true,
+            Err(MsTransformError::MultiMsScanSpan) => false,
+            Err(error) => return Err(error),
         }
-        // The CASA caller consumes the scan iterator on the first member.
-        scan_ok &= scans_by_member
-            .first()
-            .is_some_and(|scans| *scans == all_scans);
-    }
+    } else {
+        true
+    };
     Ok(match (combine_ok, scan_ok, crosses_spws, span.is_some()) {
         (true, true, _, _) => Dispatch::Retain,
         (_, _, true, true) => Dispatch::Plain,
@@ -268,8 +175,52 @@ fn dispatch_retained(
     })
 }
 
+fn first_member_contains_spws(
+    input: &MeasurementSet,
+    request: &MsTransformRequest,
+    member: &Path,
+) -> Result<bool, MsTransformError> {
+    let spw = if request.spw.trim().is_empty() {
+        "*"
+    } else {
+        request.spw.as_str()
+    };
+    let Ok(selected) = input.resolve_spw_selector(spw) else {
+        // CASA leaves selector diagnostics to the individual members.
+        return Ok(true);
+    };
+    let mut needed = selected
+        .spw_ids()
+        .iter()
+        .map(|&id| id as i32)
+        .collect::<BTreeSet<_>>();
+    let descriptions = data_description_spw_map(input)?;
+    let table =
+        Table::open(TableOptions::new(member)).map_err(|source| table_error(member, source))?;
+    let column = table
+        .column_accessor("DATA_DESC_ID")
+        .map_err(|source| table_error(member, source))?;
+    // CASA consumes the requested SPW iterator on the first member. Check
+    // that member's inventory before applying any field or row selection.
+    for start in (0..table.row_count()).step_by(4096) {
+        if needed.is_empty() {
+            break;
+        }
+        let rows = (start..(start + 4096).min(table.row_count())).collect::<Vec<_>>();
+        let values = column
+            .scalar_cells_owned_for_rows(&rows)
+            .map_err(|source| table_error(member, source))?;
+        for (value, row) in values.iter().zip(rows) {
+            let id = scalar_i32(value.as_ref(), "DATA_DESC_ID", row)?;
+            if let Some(spw_id) = descriptions.get(&id) {
+                needed.remove(spw_id);
+            }
+        }
+    }
+    Ok(needed.is_empty())
+}
+
 struct MemberExecution<'a> {
-    source_members: &'a [PathBuf],
     axis: Option<&'a str>,
     template: Option<&'a Path>,
     fallback: bool,
@@ -319,13 +270,9 @@ fn write_members(
         });
         let mut member_options = options.clone();
         if let Some(history) = &mut member_options.history {
-            let history_source = execution
-                .source_members
-                .get(index)
-                .map_or(request.input_ms.as_path(), PathBuf::as_path);
             for (parameter, value) in &mut history.parameters {
                 match parameter.as_str() {
-                    "vis" => *value = format!("\"{}\"", history_source.display()),
+                    "vis" => *value = format!("\"{}\"", request.input_ms.display()),
                     "outputvis" => *value = format!("\"{}\"", final_path.join(&relative).display()),
                     "createmms" => *value = "False".into(),
                     "ddistart" if input_spws.is_some() => *value = ddi_start.to_string(),
@@ -380,10 +327,7 @@ fn write_members(
                     ddi_start += descriptions;
                 }
             }
-            Err(error)
-                if matches!(error, MsTransformError::EmptySelection { .. })
-                    || (selection_failure(&error) && !execution.source_members.is_empty()) =>
-            {
+            Err(error) if matches!(error, MsTransformError::EmptySelection { .. }) => {
                 tracing::warn!(error = %error, partition = index, "mstransform skipped a Multi-MS partition");
             }
             Err(error) => return Err(error),
@@ -391,10 +335,7 @@ fn write_members(
     }
     if report.is_some() {
         if spectral_groups.len() > 1 {
-            super::partition_metadata::consolidate(
-                &destination.join(&outputs[0]),
-                &spectral_groups,
-            )?;
+            super::partition_metadata::consolidate(destination, &outputs, &spectral_groups)?;
         }
         install_shared_subtables(destination, &outputs)?;
         let info = container_info(execution.axis, &outputs);
@@ -411,15 +352,26 @@ fn spw_history(expression: &str, windows: &BTreeSet<i32>) -> String {
         .split(',')
         .filter_map(|term| {
             let (id, channels) = term.split_once(':')?;
-            Some((id.trim().parse::<i32>().ok()?, channels.trim()))
+            let ids = id.trim();
+            let (first, last) = if ids == "*" {
+                (0, i32::MAX)
+            } else if let Some((first, last)) = ids.split_once('~') {
+                (first.trim().parse().ok()?, last.trim().parse().ok()?)
+            } else {
+                let id = ids.parse().ok()?;
+                (id, id)
+            };
+            Some((first..=last, channels.trim()))
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Vec<_>>();
     let selection = windows
         .iter()
-        .map(|id| match ranges.get(id) {
-            Some(channels) => format!("{id}:{channels}"),
-            None => id.to_string(),
-        })
+        .map(
+            |id| match ranges.iter().find(|(range, _)| range.contains(id)) {
+                Some((_, channels)) => format!("{id}:{channels}"),
+                None => id.to_string(),
+            },
+        )
         .collect::<Vec<_>>();
     format!("\"{}\"", selection.join(","))
 }

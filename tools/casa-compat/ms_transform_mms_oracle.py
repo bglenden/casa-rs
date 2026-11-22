@@ -38,7 +38,7 @@ def referenced_members(path):
         tool.close()
 
 
-def compare_members(expected, got, name):
+def compare_members(expected, got, name, *, frequency_tolerance=None):
     reference, native = member_paths(expected), member_paths(got)
     assert len(reference) == len(native), (name, reference, native)
     assert axis(expected) == axis(got), name
@@ -54,7 +54,20 @@ def compare_members(expected, got, name):
             assert set(expected_ms.colnames()) == set(actual_ms.colnames())
         compare_table(left, right, columns, f"{name} {right.name}")
         for subtable in ("SPECTRAL_WINDOW", "DATA_DESCRIPTION", "POLARIZATION", "FIELD", "SOURCE", "FEED"):
-            compare_table(left / subtable, right / subtable, SUBTABLES[subtable], f"{name} {subtable}")
+            values = None
+            if subtable == "SPECTRAL_WINDOW" and frequency_tolerance is not None:
+                def frequency_check(column):
+                    def compare(row, actual, reference):
+                        np.testing.assert_allclose(
+                            actual, reference.getcell(column, row), rtol=0, atol=frequency_tolerance,
+                            err_msg=f"{name} {column} row {row}",
+                        )
+                    return compare
+                values = {column: frequency_check(column) for column in (
+                    "CHAN_FREQ", "REF_FREQUENCY", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION",
+                    "TOTAL_BANDWIDTH",
+                )}
+            compare_table(left / subtable, right / subtable, SUBTABLES[subtable], f"{name} {subtable}", values)
         with table(str(left / "HISTORY"), ack=False) as expected_history, table(
             str(right / "HISTORY"), ack=False
         ) as actual_history:
@@ -73,7 +86,7 @@ def compare_members(expected, got, name):
                 assert expected_history[key] == actual_history.get(key), (name, key, expected_history, actual_history)
 
 
-def run_pair(root, sources, label, *, returns=None, empty=False, **options):
+def run_pair(root, sources, label, *, returns=None, empty=False, frequency_tolerance=None, **options):
     outputs = [root / f"{label}-{side}.ms" for side in ("casa", "native")]
     for engine, source, output in zip((casatasks, tasks), sources, outputs):
         value = engine.mstransform(vis=str(source), outputvis=str(output), datacolumn="data",
@@ -81,7 +94,7 @@ def run_pair(root, sources, label, *, returns=None, empty=False, **options):
         assert value is returns, (label, engine.__name__, value)
         assert output.exists() != empty, (label, output)
     if not empty:
-        compare_members(*outputs, label)
+        compare_members(*outputs, label, frequency_tolerance=frequency_tolerance)
     print(f"passed {label}", flush=True)
     return outputs
 
@@ -106,7 +119,8 @@ def main(cases):
         root = Path(scratch)
         source = make_pair(root, "source", 7, counts=(7, 7), spectra=True)
         selected = lambda *names: not cases or any(name in cases for name in names)
-        if selected("scan", "retain", "empty", "flat", "span", "reopen"):
+        if selected("scan", "retain", "empty", "flat", "span", "reopen", "member-taql",
+                    "retain-mixed-span", "retain-field-combine"):
             scan = run_pair(root, (source, source), "scan", createmms=True,
                             separationaxis="scan", numsubms=2, disableparallel=True)
             if selected("retain"):
@@ -118,6 +132,15 @@ def main(cases):
             if selected("span"):
                 run_pair(root, scan, "span", timeaverage=True, timespan="scan",
                          timebin="120s", disableparallel=True)
+            if selected("member-taql"):
+                run_pair(root, scan, "member-taql", returns=True, taql="ROWNUMBER() < 10",
+                         disableparallel=True)
+            if selected("retain-mixed-span"):
+                run_pair(root, scan, "retain-mixed-span", returns=True, timeaverage=True,
+                         timespan="scan,state", timebin="120s", disableparallel=True)
+            if selected("retain-field-combine"):
+                run_pair(root, scan, "retain-field-combine", returns=True, field="0",
+                         combinespws=True, disableparallel=True)
             if selected("reopen"):
                 renamed = root / "moved.ms"
                 scan[1].rename(renamed)
@@ -126,7 +149,7 @@ def main(cases):
                     ["taql", f"select gcount() as n from [{renamed}]"], text=True
                 ).splitlines()[-1] == "240"
                 print("passed reopen", flush=True)
-        if selected("spw", "member", "combination", "flatten-cross"):
+        if selected("spw", "member", "combination", "flatten-cross", "retain-spw-combine"):
             spw = run_pair(root, (source, source), "spw", createmms=True,
                            separationaxis="spw", numsubms=2, disableparallel=True)
             if selected("member"):
@@ -134,6 +157,9 @@ def main(cases):
                          nchan=3, disableparallel=True)
             if selected("combination"):
                 run_pair(root, spw, "combination", combinespws=True, disableparallel=True)
+            if selected("retain-spw-combine"):
+                run_pair(root, spw, "retain-spw-combine", returns=True, spw="0",
+                         combinespws=True, disableparallel=True)
             if selected("flatten-cross"):
                 run_pair(root, spw, "flatten-cross", combinespws=True, timeaverage=True,
                          timespan="scan", timebin="60s", disableparallel=True)
@@ -149,6 +175,26 @@ def main(cases):
                                         chanaverage=True, chanbin=[2, 3], usewtspectrum=True)
                     for left, right in zip(*[member_paths(product) for product in products]):
                         compare_layout(left, right)
+        if selected("spw-offset"):
+            run_pair(root, (source, source), "spw-offset", createmms=True, separationaxis="spw",
+                     numsubms=2, ddistart=2, disableparallel=True)
+        if selected("spw-epoch", "spw-range"):
+            epochs = make_pair(root, "epochs", 7, counts=(7, 9), spectra=True,
+                               time_offset=45 * 86400)
+            if selected("spw-epoch"):
+                run_pair(root, (epochs, epochs), "spw-epoch", createmms=True, separationaxis="spw",
+                         numsubms=2, regridms=True, outframe="BARY", nchan=4, disableparallel=True,
+                         frequency_tolerance=0.001)
+            if selected("spw-range"):
+                for engine, widths in ((casatasks, [7, 9]), (tasks, [5, 5])):
+                    product = root / f"spw-range-{engine.__name__}.ms"
+                    assert engine.mstransform(
+                        vis=str(epochs), outputvis=str(product), datacolumn="data", createmms=True,
+                        separationaxis="spw", numsubms=2, spw="0~1:1~5", disableparallel=True,
+                    ) is None
+                    with table(str(product / "SPECTRAL_WINDOW"), ack=False) as spw_table:
+                        np.testing.assert_array_equal(spw_table.getcol("NUM_CHAN"), widths)
+                print("passed SPW range qualifier deviation", flush=True)
         for name, options in (
             ("baseline", dict(separationaxis="baseline", numsubms=2, disableparallel=True)),
             ("auto", dict(numsubms=2, disableparallel=True)),

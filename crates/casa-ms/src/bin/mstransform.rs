@@ -163,6 +163,11 @@ fn multi_ms_options(
         axis,
         count,
         monolithic: task.flag("monolithic_processing")?,
+        scan_span: matches!(task.value("timespan"), Some(ParameterValue::String(value)) if value == "scan"),
+        multiple_spws: task
+            .value("nspw")
+            .and_then(channel_integer)
+            .is_some_and(|count| count > 1),
     }))
 }
 

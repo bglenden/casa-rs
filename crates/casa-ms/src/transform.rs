@@ -177,6 +177,10 @@ pub struct MsTransformMultiMsOptions {
     pub count: Option<std::num::NonZeroUsize>,
     /// Treat an input Multi-MS as a single table.
     pub monolithic: bool,
+    /// The original task requests cross-scan averaging with only the scan boundary removed.
+    pub scan_span: bool,
+    /// The original Multi-MS request asks for more than one output SPW.
+    pub multiple_spws: bool,
 }
 
 /// Tile layout options accepted by the CASA mstransform task.
