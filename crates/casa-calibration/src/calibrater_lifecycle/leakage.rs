@@ -46,6 +46,9 @@ impl CalibraterLifecycle {
             parang: standard.parang,
             correlation_dependent_flags: standard.correlation_dependent_flags,
             solve_mode: standard.solve_mode,
+            normalization: standard
+                .normalize_average_amplitude
+                .then_some(standard.normalization_type),
             interval: standard.solve_interval,
             frequency_interval,
             combine: standard.combine,

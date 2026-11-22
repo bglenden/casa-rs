@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Solve the averaged coherencies and carry the leakage reference across intervals.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use num_complex::Complex32;
+
+use crate::GainNormalization;
 
 use super::channel_samples::ChannelSamples;
 use super::cross_hand::{CrossHandFit, Measurement};
@@ -36,6 +38,75 @@ type IntervalEstimates = (i32, Vec<ChannelEstimates>, Option<Complex32>);
 pub(super) struct LeakageFitStages {
     pub(super) constrained: BTreeSet<i32>,
     pub(super) passed: Vec<[bool; 2]>,
+}
+
+/// Convert and normalize the referenced parameters before publication, as
+/// the Calibrater's generic Jones post-solve pass does.
+pub(super) fn finish_tool_parameters(
+    solutions: &mut [LeakageSolution],
+    mode: GainSolveMode,
+    normalization: Option<GainNormalization>,
+) {
+    if mode != GainSolveMode::AmplitudePhase {
+        for estimate in solutions
+            .iter_mut()
+            .flat_map(|slot| slot.values.iter_mut().flatten())
+        {
+            for (gain, valid) in estimate.gain.iter_mut().zip(estimate.valid) {
+                let amplitude = gain.norm();
+                *gain = if !valid || amplitude == 0.0 {
+                    Complex32::ONE
+                } else if mode == GainSolveMode::Phase {
+                    *gain / amplitude
+                } else {
+                    amplitude.into()
+                };
+            }
+        }
+    }
+    let Some(normalization) = normalization else {
+        return;
+    };
+    let mut power = BTreeMap::<i32, (f64, usize, Vec<f32>)>::new();
+    for slot in solutions.iter() {
+        let (sum, count, samples) = power.entry(slot.spectral_window).or_default();
+        for estimate in slot.values.iter().flatten() {
+            for (gain, valid) in estimate.gain.iter().zip(estimate.valid) {
+                if valid {
+                    let value = gain.norm_sqr();
+                    match normalization {
+                        GainNormalization::Mean => *sum += f64::from(value),
+                        GainNormalization::Median => samples.push(value),
+                    }
+                    *count += 1;
+                }
+            }
+        }
+    }
+    let factors: BTreeMap<_, _> = power
+        .into_iter()
+        .filter_map(|(spw, (sum, count, mut samples))| {
+            if count <= 1 {
+                return None;
+            }
+            let factor = match normalization {
+                GainNormalization::Mean => (sum / count as f64).sqrt() as f32,
+                GainNormalization::Median => {
+                    super::super::median_with_even_mean(&mut samples).sqrt()
+                }
+            };
+            (factor > 0.0 && factor.is_finite()).then_some((spw, factor))
+        })
+        .collect();
+    for solution in solutions {
+        if let Some(&factor) = factors.get(&solution.spectral_window) {
+            for estimate in solution.values.iter_mut().flatten() {
+                for gain in &mut estimate.gain {
+                    *gain /= factor;
+                }
+            }
+        }
+    }
 }
 
 impl IntervalFits {

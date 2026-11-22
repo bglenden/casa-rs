@@ -420,6 +420,7 @@ pub(super) fn leakage_request(
         } else {
             GainSolveMode::AmplitudePhase
         },
+        normalization: None,
         interval: parse_time_solint(time)?,
         frequency_interval: parse_frequency_solint(frequency)?,
         combine: combine(task)?,

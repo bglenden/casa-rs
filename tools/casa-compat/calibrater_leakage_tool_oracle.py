@@ -130,6 +130,10 @@ def main():
              options={'t': 'inf,2chan', 'preavg': 0.})
         case(work, engines, vis, 'Df-baseline-cut', 'Df', options={'minblperant': 20}, no_product=True)
         case(work, engines, vis, 'D-snr-cut', 'D', options={'minsnr': 1e20})
+        case(work, engines, vis, 'D-norm-mean', 'D', options={'solnorm': True})
+        case(work, engines, vis, 'Df-norm-median', 'Df', options={'solnorm': True, 'normtype': 'median'})
+        case(work, engines, vis, 'D-amplitude-only', 'D', options={'apmode': 'A'})
+        case(work, engines, vis, 'Df-phase-only', 'Df', options={'phaseonly': True})
         case(work, engines, vis, 'D-append', 'D', append=True)
         flagged = work/'flagged.ms'
         copy_ms(vis, flagged)

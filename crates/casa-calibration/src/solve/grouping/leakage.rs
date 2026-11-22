@@ -139,6 +139,7 @@ pub(crate) struct LeakageSolveRequest {
     pub(crate) parang: bool,
     pub(crate) correlation_dependent_flags: bool,
     pub(crate) solve_mode: GainSolveMode,
+    pub(crate) normalization: Option<crate::GainNormalization>,
     pub(crate) interval: GainSolveInterval,
     pub(crate) frequency_interval: Option<crate::BandpassFrequencyInterval>,
     pub(crate) combine: GainSolveCombine,
@@ -330,6 +331,9 @@ pub(crate) fn solve_polarization_with_activity(
     }
     if request.kind.iterative() {
         interval::reference_iterative_solutions(&mut solutions, &mut references);
+    }
+    if setup.tool {
+        interval::finish_tool_parameters(&mut solutions, request.solve_mode, request.normalization);
     }
     if let Some(stats) = &mut gain_stats
         && setup.tool
