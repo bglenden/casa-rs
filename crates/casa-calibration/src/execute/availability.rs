@@ -7,25 +7,24 @@ pub(super) fn available(row: &ApplyRowPlan, plan: &ApplyPlan) -> bool {
     plan.calibration_tables
         .iter()
         .filter(|table| table.applies_to(row))
-        .all(|table| {
-            if table
-                .unavailable_row_indices
-                .binary_search(&row.row_index)
-                .is_ok()
-            {
-                return false;
-            }
-            table
-                .spw_mapping
-                .iter()
-                .find(|mapping| mapping.data_spw_id == row.data_spw_id)
-                .is_some_and(|mapping| {
-                    table
-                        .calibration_spectral_windows
-                        .iter()
-                        .any(|spw| spw.spw_id == mapping.calibration_spw_id)
-                })
-        })
+        .all(|table| table_available(row, table))
+}
+
+pub(super) fn table_available(row: &ApplyRowPlan, table: &ApplyCalibrationTablePlan) -> bool {
+    table
+        .unavailable_row_indices
+        .binary_search(&row.row_index)
+        .is_err()
+        && table
+            .spw_mapping
+            .iter()
+            .find(|mapping| mapping.data_spw_id == row.data_spw_id)
+            .is_some_and(|mapping| {
+                table
+                    .calibration_spectral_windows
+                    .iter()
+                    .any(|spw| spw.spw_id == mapping.calibration_spw_id)
+            })
 }
 
 pub(super) fn execute(
@@ -34,9 +33,11 @@ pub(super) fn execute(
     observed_column: &str,
     tracer: Option<&mut CalibrationPerfTracer>,
     mut lock: Option<&mut TableWriteLock>,
-    tool: Option<ToolCorrection>,
+    tool: Option<&mut ToolApplyExecution<'_>>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let start = Instant::now();
+    let strict =
+        tool.as_ref().is_some_and(|run| run.correction.strict) || plan.apply_mode.is_strict();
     let unavailable = plan
         .selected_rows
         .iter()
@@ -62,7 +63,6 @@ pub(super) fn execute(
         None,
     )?;
     let flag_start = Instant::now();
-    let strict = tool.is_some_and(|tool| tool.strict) || plan.apply_mode.is_strict();
     if strict {
         let (samples, rows) = flag_unavailable(ms, &plan, &unavailable, lock)?;
         report.flagged_sample_count += samples;
@@ -96,27 +96,18 @@ pub(super) fn execute_strict_tool(
     mut plan: ApplyPlan,
     observed_column: &str,
     lock: &mut TableWriteLock,
-    tool: ToolCorrection,
+    tool: &mut ToolApplyExecution<'_>,
 ) -> Result<(), ApplyExecutionError> {
     let mut chain = ApplyChain::load(ms, &plan, false)?;
-    chain.arrange_for_tool(&plan, tool.parang_terms);
-    let mut ordered = std::mem::take(&mut plan.selected_rows)
+    chain.arrange_for_tool(&plan, tool.correction.parang_terms);
+    let ordered = rows_in_buffer_order(ms, std::mem::take(&mut plan.selected_rows))?
         .into_iter()
-        .map(|row| {
-            let array = get_i32(ms.main_table(), row.row_index, "ARRAY_ID")?;
-            Ok((array, available(&row, &plan), row))
-        })
-        .collect::<Result<Vec<_>, ApplyExecutionError>>()?;
-    ordered.sort_by(|(array_a, _, a), (array_b, _, b)| {
-        (array_a, a.scan_number, a.field_id, a.data_desc_id)
-            .cmp(&(array_b, b.scan_number, b.field_id, b.data_desc_id))
-            .then_with(|| a.time_seconds.total_cmp(&b.time_seconds))
-            .then_with(|| a.row_index.cmp(&b.row_index))
-    });
-    for group in ordered.chunk_by(|first, next| first.1 == next.1) {
-        plan.selected_rows = group.iter().map(|(_, _, row)| row.clone()).collect();
+        .map(|row| (available(&row, &plan), row))
+        .collect::<Vec<_>>();
+    for group in ordered.chunk_by(|first, next| first.0 == next.0) {
+        plan.selected_rows = group.iter().map(|(_, row)| row.clone()).collect();
         plan.selected_row_count = group.len();
-        if !group[0].1 {
+        if !group[0].0 {
             flag_unavailable(ms, &plan, &plan.selected_rows, Some(lock))?;
         } else if plan.apply_mode == ApplyMode::Trial {
             for_each_apply_row(
@@ -126,6 +117,7 @@ pub(super) fn execute_strict_tool(
                 false,
                 false,
                 PreviewWeightSource::UnitFactors,
+                Some(&mut *tool),
                 |_, _| {},
             )?;
         } else {
@@ -135,12 +127,52 @@ pub(super) fn execute_strict_tool(
                 observed_column,
                 None,
                 Some(lock),
-                Some(tool),
+                Some(&mut *tool),
                 Some(&chain),
             )?;
         }
     }
     Ok(())
+}
+
+pub(super) fn rows_in_buffer_order(
+    ms: &MeasurementSet,
+    rows: Vec<ApplyRowPlan>,
+) -> Result<Vec<ApplyRowPlan>, ApplyExecutionError> {
+    Ok(buffer_ordered_rows(ms, rows)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect())
+}
+
+/// The explicit VI iterator sort columns identify a single visibility buffer.
+type VisibilityBufferKey = (i32, i32, i32, i32, u64);
+
+pub(super) fn buffer_ordered_rows(
+    ms: &MeasurementSet,
+    rows: Vec<ApplyRowPlan>,
+) -> Result<Vec<(VisibilityBufferKey, ApplyRowPlan)>, ApplyExecutionError> {
+    let mut ordered = rows
+        .into_iter()
+        .map(|row| {
+            let array = get_i32(ms.main_table(), row.row_index, "ARRAY_ID")?;
+            let key = (
+                array,
+                row.scan_number,
+                row.field_id,
+                row.data_desc_id,
+                row.time_seconds.to_bits(),
+            );
+            Ok((key, row))
+        })
+        .collect::<Result<Vec<_>, ApplyExecutionError>>()?;
+    ordered.sort_by(|(key_a, a), (key_b, b)| {
+        (key_a.0, key_a.1, key_a.2, key_a.3)
+            .cmp(&(key_b.0, key_b.1, key_b.2, key_b.3))
+            .then_with(|| a.time_seconds.total_cmp(&b.time_seconds))
+            .then_with(|| a.row_index.cmp(&b.row_index))
+    });
+    Ok(ordered)
 }
 
 fn flag_unavailable(

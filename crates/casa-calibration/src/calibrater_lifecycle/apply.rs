@@ -5,15 +5,19 @@ use std::path::Path;
 
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::CasaValue;
-use casa_tables::{Table, TableOptions};
 use casa_types::RecordValue;
 
-use super::traditional_apply::{calibration_factory_type, non_calibration_table};
+use super::traditional_apply::{
+    calibration_factory_type, non_calibration_table, open_apply_table, snapshot_table,
+};
 use super::{CalibraterLifecycle, CalibraterLifecycleError, ConfiguredSolve};
 use crate::callib::{tool_library_specs, tool_table_record};
 use crate::casa_return::selectvis_record;
 use crate::constants::TABLE_INFO_TYPE;
-use crate::execute::{ToolCorrection, execute_tool_apply};
+use crate::execute::{
+    LibraryApplyRegistration, ToolActivityInput, ToolCorrection, execute_tool_apply,
+    execute_tool_corrupt,
+};
 use crate::plan::{
     ApplyInterpolationMode, ApplyMode, ApplyPlanRequest, plan_with_visibility_metadata,
 };
@@ -23,6 +27,14 @@ use crate::{
 };
 
 impl CalibraterLifecycle {
+    /// Activity from the last completed equation operation.
+    #[must_use]
+    pub fn activity_record(&self) -> CasaValue {
+        self.last_activity
+            .clone()
+            .unwrap_or_else(|| CasaValue::dict([] as [(&str, CasaValue); 0]))
+    }
+
     /// Apply the configured chain to the attached, selected visibilities.
     /// Returns false if a selected spectral window has no calibration.
     ///
@@ -31,11 +43,28 @@ impl CalibraterLifecycle {
     /// Returns an error without an attachment, or if calibration cannot be
     /// applied. A failed apply clears the prior terms without replaying writes.
     pub fn correct_visibilities(&mut self, mode: &str) -> Result<bool, CalibraterLifecycleError> {
+        self.apply_equation(ApplyOperation::Correct(mode))
+    }
+
+    /// Apply the selected chain forward to the attached physical model.
+    /// # Errors
+    /// Returns an error without an attachment or when MODEL_DATA cannot be
+    /// read, corrupted or published. A failed run clears the apply terms.
+    pub fn corrupt_model(&mut self) -> Result<bool, CalibraterLifecycleError> {
+        self.apply_equation(ApplyOperation::Corrupt)
+    }
+
+    fn apply_equation(
+        &mut self,
+        operation: ApplyOperation<'_>,
+    ) -> Result<bool, CalibraterLifecycleError> {
+        let using_callibrary = self.using_callibrary;
+        let legacy = self.legacy_iterator;
         let equation = self.equation_mut()?;
-        let mode = if mode.is_empty() {
-            String::from("CALFLAG")
-        } else {
-            mode.to_ascii_uppercase()
+        let mode = match operation {
+            ApplyOperation::Correct("") => String::from("CALFLAG"),
+            ApplyOperation::Correct(mode) => mode.to_ascii_uppercase(),
+            ApplyOperation::Corrupt => String::new(),
         };
         let trial = mode.contains("TRIAL") || mode.contains("FLAGONLY");
         let apply_mode = match (mode.contains("CAL"), mode.contains("FLAG")) {
@@ -57,15 +86,52 @@ impl CalibraterLifecycle {
             parang_terms: equation.apply.parang_terms,
             parang_calwt: equation.apply.parang_calwt,
         };
+        let names = equation
+            .apply
+            .tables
+            .iter()
+            .map(|table| equation.apply.source_name(table))
+            .collect::<Vec<_>>();
+        let tracking = ToolActivityInput {
+            names: &names,
+            libraries: &equation.apply.library_tables,
+            previous: equation.apply.counts,
+        };
         let result = equation.attachment.with_write(|ms, selected, lock| {
-            execute_tool_apply(ms, selected, lock, &request, correction)
-                .map_err(|error| casa_ms::MsError::InvalidInput(error.to_string()).into())
+            let applied = match operation {
+                ApplyOperation::Correct(_) => {
+                    execute_tool_apply(ms, selected, lock, &request, correction, tracking)
+                }
+                ApplyOperation::Corrupt => execute_tool_corrupt(
+                    ms,
+                    selected,
+                    lock,
+                    &request,
+                    correction,
+                    tracking,
+                    crate::execute::ModelCorruption {
+                        legacy,
+                        using_callibrary,
+                    },
+                ),
+            };
+            applied.map_err(|error| casa_ms::MsError::InvalidInput(error.to_string()).into())
         });
-        result.map_err(|error| {
+        let origin = match operation {
+            ApplyOperation::Correct(_) => "Calibrater::correct",
+            ApplyOperation::Corrupt if legacy => "Calibrater::corrupt",
+            ApplyOperation::Corrupt => "Calibrater::corrupt2",
+        };
+        let (all_calibrated, activity) = result.map_err(|error| {
             equation.apply = super::ApplyTerms::default();
-            tracing::error!(%error, "could not correct selected visibilities");
-            CalibraterLifecycleError::ApplyConfiguration("Error in Calibrater::correct.".into())
-        })
+            tracing::error!(%error, origin, "could not apply calibration to selected visibilities");
+            CalibraterLifecycleError::ApplyConfiguration(format!("Error in {origin}."))
+        })?;
+        equation.apply.counts = activity.single_term_counts();
+        if !legacy || matches!(operation, ApplyOperation::Correct(_)) {
+            self.last_activity = Some(activity.into_record(origin));
+        }
+        Ok(all_calibrated)
     }
 
     /// Append the tables in a calibration-library record to the attached
@@ -89,7 +155,7 @@ impl CalibraterLifecycle {
             .fields()
             .iter()
             .map(|field| {
-                Table::open(TableOptions::new(Path::new(&field.name)))
+                open_apply_table(Path::new(&field.name))
                     .map_err(|_| failure(format!("Caltable {} does not exist.", field.name)))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -116,7 +182,8 @@ impl CalibraterLifecycle {
                     info.sub_type
                 )));
             }
-            let specs = tool_library_specs(&field.name, slices, &cwd).map_err(invalid_library)?;
+            let mut specs =
+                tool_library_specs(&field.name, slices, &cwd).map_err(invalid_library)?;
             if specs.len() > 1
                 || specs.iter().any(|spec| {
                     spec.interp == ApplyInterpolationMode::Invalid
@@ -144,9 +211,26 @@ impl CalibraterLifecycle {
                 plan_with_visibility_metadata(ms, &request, None)
                     .map_err(|error| invalid_library(error.to_string()))?;
             }
+            if let Some(first) = specs.first() {
+                let (path, snapshot) = snapshot_table(&first.path, &table)
+                    .map_err(|error| invalid_library(error.to_string()))?;
+                for spec in &mut specs {
+                    spec.path.clone_from(&path);
+                }
+                equation.apply.table_snapshots.insert(path, snapshot);
+            }
+            let start = equation.apply.tables.len();
             equation.apply.tables.extend(specs);
-            equation.apply.library_tables.push(field.name.clone());
+            equation
+                .apply
+                .library_tables
+                .push(LibraryApplyRegistration {
+                    name: field.name.clone(),
+                    subtype: info.sub_type.clone(),
+                    tables: start..equation.apply.tables.len(),
+                });
         }
+        self.using_callibrary = true;
         Ok(())
     }
 
@@ -161,18 +245,14 @@ impl CalibraterLifecycle {
             .apply
             .tables
             .iter()
-            .map(|table| {
-                table.callibrary.as_ref().map_or_else(
-                    || {
-                        equation.apply.table_snapshots.get(&table.path).map_or_else(
-                            || table.path.display().to_string(),
-                            |snapshot| snapshot.name.clone(),
-                        )
-                    },
-                    |library| library.table_name.clone(),
-                )
-            })
-            .chain(equation.apply.library_tables.iter().cloned())
+            .map(|table| equation.apply.source_name(table))
+            .chain(
+                equation
+                    .apply
+                    .library_tables
+                    .iter()
+                    .map(|library| library.name.clone()),
+            )
             .collect::<Vec<_>>();
         names.sort_unstable();
         names.dedup();
@@ -217,5 +297,24 @@ impl CalibraterLifecycle {
             ("selectvis", selectvis_record(Some(&selected))),
             ("solve_tables", CasaValue::str_vector(output)),
         ]))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ApplyOperation<'a> {
+    Correct(&'a str),
+    Corrupt,
+}
+
+impl super::ApplyTerms {
+    fn source_name(&self, table: &crate::ApplyCalibrationTableSpec) -> String {
+        if let Some(library) = &table.callibrary {
+            library.table_name.clone()
+        } else {
+            self.table_snapshots.get(&table.path).map_or_else(
+                || table.path.display().to_string(),
+                |snapshot| snapshot.name.clone(),
+            )
+        }
     }
 }

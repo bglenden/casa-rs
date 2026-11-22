@@ -12,6 +12,7 @@ pub(super) fn selected_rows(
     ms: &MeasurementSet,
     spec: &ApplyCalibrationTableSpec,
     selected: &[ApplyRowPlan],
+    legacy_corruption: bool,
 ) -> Result<Option<Vec<usize>>, ApplyPlanError> {
     let Some(library) = spec
         .callibrary
@@ -32,6 +33,13 @@ pub(super) fn selected_rows(
     let mut rows = resolved.row_indices().collect::<Vec<_>>();
     rows.sort_unstable();
     rows.dedup();
+    if legacy_corruption && (library.selection.scan.is_some() || library.selection.intent.is_some())
+    {
+        // VI1 syncs observation, field, and SPW, while CLPatchPanel looks
+        // up scan and intent with wildcard keys. Retain the contexts that
+        // the slice registered and admit data from other scans and intents.
+        return Ok(Some(legacy_slice_rows(library, selected, &rows)));
+    }
     if library.selection.intent.is_some() || library.selection.observation.is_some() {
         // Calibrater::correct2 sorts ARRAY/SCAN/FIELD/DDID/TIME. VisCal::syncMeta2
         // uses the first row's STATE_ID and observation for the entire buffer.
@@ -58,6 +66,36 @@ pub(super) fn selected_rows(
         rows.sort_unstable();
     }
     Ok(Some(rows))
+}
+
+fn legacy_slice_rows(
+    library: &crate::CallibraryOptions,
+    selected: &[ApplyRowPlan],
+    matched_rows: &[usize],
+) -> Vec<usize> {
+    let context = |row: &ApplyRowPlan| {
+        (
+            library
+                .selection
+                .observation
+                .as_ref()
+                .map(|_| row.calibration_observation_id),
+            library.selection.field.as_ref().map(|_| row.field_id),
+            row.data_spw_id,
+        )
+    };
+    let registered = selected
+        .iter()
+        .filter(|row| matched_rows.binary_search(&row.row_index).is_ok())
+        .map(context)
+        .collect::<BTreeSet<_>>();
+    let mut rows = selected
+        .iter()
+        .filter(|row| registered.contains(&context(row)))
+        .map(|row| row.row_index)
+        .collect::<Vec<_>>();
+    rows.sort_unstable();
+    rows
 }
 
 /// CLPatchPanel distinguishes absent context axes from absent antennas: the

@@ -81,6 +81,11 @@ mod polarization;
 pub(crate) use polarization::coherency_order;
 mod solve_priors;
 mod switched_power;
+mod tool_activity;
+mod tool_corrupt;
+use tool_activity::ToolApplyActivity;
+pub(crate) use tool_activity::{ApplyTermCounts, LibraryApplyRegistration};
+pub(crate) use tool_corrupt::{ModelCorruption, execute_tool_corrupt};
 pub(crate) mod tsys_weights;
 mod weights;
 pub(crate) use chain::has_polarization_matrix;
@@ -602,6 +607,7 @@ fn evaluate_rows(
         false,
         share_input_flags,
         weight_source,
+        None,
         |index, row| {
             rows.insert(index, row);
         },
@@ -611,6 +617,10 @@ fn evaluate_rows(
 
 /// Evaluate one row at a time, allowing TRIAL validation without accumulating
 /// corrected data or publishing any MS changes.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "preview and tool callers use the same row executor"
+)]
 fn for_each_apply_row(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
@@ -618,6 +628,7 @@ fn for_each_apply_row(
     forward_model: bool,
     share_input_flags: bool,
     weight_source: PreviewWeightSource,
+    mut tool: Option<&mut ToolApplyExecution<'_>>,
     mut consume: impl FnMut(usize, EvaluatedApplyRow),
 ) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
@@ -627,7 +638,10 @@ fn for_each_apply_row(
             source,
         }
     })?;
-    let chain = ApplyChain::load(ms, plan, forward_model)?;
+    let mut chain = ApplyChain::load(ms, plan, forward_model)?;
+    if let Some(run) = &tool {
+        chain.arrange_for_tool(plan, run.correction.parang_terms);
+    }
 
     let any_calwt = applies_preview_weights(plan, &chain);
     let mut columns = vec!["FLAG"];
@@ -765,6 +779,7 @@ fn for_each_apply_row(
             &chain,
             Some(&mut geometry_cache),
             None,
+            tool.as_deref_mut().map(|run| &mut *run.activity),
         )?;
         let (plot_weights, weight_factors) = match plot_weights {
             Some(weights) => (
@@ -929,6 +944,7 @@ fn execute_apply_from_path_inner(
                 false,
                 false,
                 PreviewWeightSource::UnitFactors,
+                None,
                 |_, _| {},
             )?;
             return Ok(ApplyExecutionReport {
@@ -1040,6 +1056,7 @@ pub fn execute_apply(
             false,
             false,
             PreviewWeightSource::UnitFactors,
+            None,
             |_, _| {},
         )?;
         return Ok(ApplyExecutionReport {
@@ -1092,6 +1109,17 @@ pub(crate) struct ToolCorrection {
     pub(crate) parang_calwt: bool,
 }
 
+pub(crate) struct ToolActivityInput<'a> {
+    pub(crate) names: &'a [String],
+    pub(crate) libraries: &'a [LibraryApplyRegistration],
+    pub(crate) previous: ApplyTermCounts,
+}
+
+struct ToolApplyExecution<'a> {
+    correction: ToolCorrection,
+    activity: &'a mut ToolApplyActivity,
+}
+
 /// Correct the selection resolved under the same lock used for row writes.
 pub(crate) fn execute_tool_apply(
     ms: &mut MeasurementSet,
@@ -1099,20 +1127,33 @@ pub(crate) fn execute_tool_apply(
     lock: &mut TableWriteLock,
     request: &ApplyPlanRequest,
     correction: ToolCorrection,
-) -> Result<bool, ApplyExecutionError> {
+    tracking: ToolActivityInput<'_>,
+) -> Result<(bool, ToolApplyActivity), ApplyExecutionError> {
     let registration = RegisteredApplySelection {
         selected,
         has_library_registration: correction.has_library_registration,
+        legacy_corruption: false,
     };
     let (plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
+    let mut activity = ToolApplyActivity::from_plan(
+        &plan,
+        tracking.names,
+        tracking.libraries,
+        correction.parang_terms,
+        tracking.previous,
+    );
+    let mut run = ToolApplyExecution {
+        correction,
+        activity: &mut activity,
+    };
     let all_calibrated = plan
         .selected_rows
         .iter()
         .all(|row| availability::available(row, &plan));
     let observed_column = apply_observed_column(ms, false);
     if correction.strict && !all_calibrated {
-        availability::execute_strict_tool(ms, plan, observed_column, lock, correction)?;
-        return Ok(false);
+        availability::execute_strict_tool(ms, plan, observed_column, lock, &mut run)?;
+        return Ok((false, activity));
     }
     if plan.apply_mode == ApplyMode::Trial {
         for_each_apply_row(
@@ -1122,19 +1163,13 @@ pub(crate) fn execute_tool_apply(
             false,
             false,
             PreviewWeightSource::UnitFactors,
+            Some(&mut run),
             |_, _| {},
         )?;
     } else {
-        execute_apply_plan(
-            ms,
-            plan,
-            observed_column,
-            None,
-            Some(lock),
-            Some(correction),
-        )?;
+        execute_apply_plan(ms, plan, observed_column, None, Some(lock), Some(&mut run))?;
     }
-    Ok(all_calibrated)
+    Ok((all_calibrated, activity))
 }
 
 #[expect(
@@ -1147,24 +1182,25 @@ fn execute_apply_available(
     observed_column: &str,
     perf_tracer: Option<&mut CalibrationPerfTracer>,
     lock: Option<&mut TableWriteLock>,
-    tool: Option<ToolCorrection>,
+    mut tool: Option<&mut ToolApplyExecution<'_>>,
     retained_chain: Option<&ApplyChain>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
     let execute_apply_plan_started_at = Instant::now();
     let calibration_load_started_at = Instant::now();
+    let correction = tool.as_ref().map(|run| run.correction);
     let loaded;
     let chain = if let Some(chain) = retained_chain {
         chain
     } else {
         let mut chain = ApplyChain::load(ms, &plan, false)?;
-        if let Some(tool) = tool {
+        if let Some(tool) = correction {
             chain.arrange_for_tool(&plan, tool.parang_terms);
         }
         loaded = chain;
         &loaded
     };
-    let trial = tool.is_some_and(|tool| tool.trial);
+    let trial = correction.is_some_and(|tool| tool.trial);
     let calibration_load_ns = calibration_load_started_at.elapsed().as_nanos() as u64;
     let ensure_corrected_data_started_at = Instant::now();
     if lock.is_some() && plan.requires_corrected_data_column && !plan.selected_rows.is_empty() {
@@ -1194,7 +1230,7 @@ fn execute_apply_available(
         }
     })?;
     let correlation_lookup_ns = correlation_lookup_started_at.elapsed().as_nanos() as u64;
-    let parang_calwt = tool.is_some_and(|tool| tool.parang_calwt)
+    let parang_calwt = correction.is_some_and(|tool| tool.parang_calwt)
         && plan.selected_rows.iter().all(|row| {
             correlation_types_by_ddid
                 .get(&row.data_desc_id)
@@ -1238,34 +1274,7 @@ fn execute_apply_available(
             changed_columns.push("WEIGHT_SPECTRUM");
         }
     }
-    let maximum_data_elements =
-        plan.selected_rows
-            .iter()
-            .try_fold(0_usize, |maximum_elements, row| {
-                let correlations = correlation_types_by_ddid
-                    .get(&row.data_desc_id)
-                    .map(Vec::len)
-                    .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
-                        data_desc_id: row.data_desc_id,
-                        correlation_types: Vec::new(),
-                    })?;
-                let channels = plan
-                    .measurement_set_spectral_windows
-                    .iter()
-                    .find(|spw| spw.spw_id == row.data_spw_id)
-                    .and_then(|spw| usize::try_from(spw.num_chan).ok())
-                    .ok_or_else(|| ApplyExecutionError::UnsupportedParameterShape {
-                        path: format!("<measurement-set SPW {}>", row.data_spw_id),
-                        shape: Vec::new(),
-                    })?;
-                let elements = correlations.checked_mul(channels).ok_or_else(|| {
-                    ApplyExecutionError::UnsupportedParameterShape {
-                        path: "<measurement-set row byte overflow>".to_string(),
-                        shape: vec![correlations, channels],
-                    }
-                })?;
-                Ok::<_, ApplyExecutionError>(maximum_elements.max(elements))
-            })?;
+    let maximum_data_elements = maximum_visibility_cells(&plan, &correlation_types_by_ddid)?;
     let maximum_weight_elements = plan
         .selected_rows
         .iter()
@@ -1353,7 +1362,7 @@ fn execute_apply_available(
                         path: ms_path.clone(),
                         source: MsError::from(source),
                     })?;
-                let flag_values = if plan.apply_mode.writes_flags() {
+                let flag_values = if plan.apply_mode.writes_flags() || tool.is_some() {
                     Some(
                         ms.main_table()
                             .column_accessor("FLAG")
@@ -1514,6 +1523,7 @@ fn execute_apply_available(
                         chain,
                         Some(&mut geometry_cache),
                         row_compute_profile.as_mut(),
+                        tool.as_deref_mut().map(|run| &mut *run.activity),
                     )?;
                     row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
                     if plan.apply_mode.writes_corrected_data() {
@@ -1731,6 +1741,39 @@ struct PrefetchedExecutionRowInputs {
     original_weight_spectrum: Option<ArrayValue>,
     preserved_corrected_data: Option<ArrayValue>,
     preserved_weight_spectrum: Option<ArrayValue>,
+}
+
+fn maximum_visibility_cells(
+    plan: &ApplyPlan,
+    correlation_types_by_ddid: &HashMap<i32, Vec<i32>>,
+) -> Result<usize, ApplyExecutionError> {
+    plan.selected_rows
+        .iter()
+        .try_fold(0_usize, |maximum_elements, row| {
+            let correlations = correlation_types_by_ddid
+                .get(&row.data_desc_id)
+                .map(Vec::len)
+                .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                    data_desc_id: row.data_desc_id,
+                    correlation_types: Vec::new(),
+                })?;
+            let channels = plan
+                .measurement_set_spectral_windows
+                .iter()
+                .find(|spw| spw.spw_id == row.data_spw_id)
+                .and_then(|spw| usize::try_from(spw.num_chan).ok())
+                .ok_or_else(|| ApplyExecutionError::UnsupportedParameterShape {
+                    path: format!("<measurement-set SPW {}>", row.data_spw_id),
+                    shape: Vec::new(),
+                })?;
+            let elements = correlations.checked_mul(channels).ok_or_else(|| {
+                ApplyExecutionError::UnsupportedParameterShape {
+                    path: "<measurement-set row byte overflow>".to_string(),
+                    shape: vec![correlations, channels],
+                }
+            })?;
+            Ok::<_, ApplyExecutionError>(maximum_elements.max(elements))
+        })
 }
 
 fn required_prefetched_array(
@@ -2144,6 +2187,7 @@ fn apply_row_all_channels(
     chain: &ApplyChain,
     geometry_cache: Option<&mut RowGeometryCache>,
     compute_profile: Option<&mut ApplyRowComputeProfile>,
+    mut activity: Option<&mut ToolApplyActivity>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
     let mut compute_profile = compute_profile;
     let setup_started_at = compute_profile.as_ref().map(|_| Instant::now());
@@ -2196,7 +2240,8 @@ fn apply_row_all_channels(
     }
 
     let mut corrected = data.clone();
-    let mut flags = if plan.apply_mode.writes_flags() {
+    let propagate_flags = plan.apply_mode.writes_flags() || activity.is_some();
+    let mut flags = if propagate_flags {
         flag_array
             .ok_or_else(|| ApplyExecutionError::MutateMeasurementSet {
                 path: "<measurement-set FLAG>".to_string(),
@@ -2210,6 +2255,12 @@ fn apply_row_all_channels(
         ArrayD::from_elem(IxDyn(&[0]).f(), false)
     };
     let mut newly_flagged_samples = 0;
+    let initial_flags = activity
+        .as_ref()
+        .map_or(0, |_| flags.iter().filter(|flag| **flag).count());
+    if let Some(activity) = activity.as_deref_mut() {
+        activity.begin_row(data.len());
+    }
     let any_calwt = plan.apply_mode.writes_corrected_data()
         && (parang_calwt
             || plan
@@ -2279,11 +2330,35 @@ fn apply_row_all_channels(
         data_channels,
         corrected: &mut corrected,
         flags: &mut flags,
-        apply_mode: plan.apply_mode,
+        propagate_flags,
         newly_flagged_samples: &mut newly_flagged_samples,
     };
+    let mut pending_count = None;
+    let mut parang_registration = 0;
     for &step in &chain.steps {
+        if let Some((term, flags_in)) = pending_count.take() {
+            // The fast gain kernel may defer this term's effect. Finish it
+            // before measuring the flags that the next term receives.
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            activity.as_deref_mut().expect("tracked term").count_term(
+                term,
+                data.len(),
+                flags_in,
+                initial_flags + *output.newly_flagged_samples,
+            );
+        }
         let ApplyStep::Table(table_index) = step else {
+            if let Some(activity) = activity.as_deref_mut() {
+                pending_count = Some((
+                    activity.parallactic_term(parang_registration),
+                    initial_flags + *output.newly_flagged_samples,
+                ));
+                parang_registration += 1;
+            }
             flush_fast_gain_pairs(
                 &mut fast_gain_pairs,
                 &mut output,
@@ -2300,8 +2375,16 @@ fn apply_row_all_channels(
         };
         let table_plan = &plan.calibration_tables[table_index];
         let loaded_table = &chain.tables[table_index];
-        if !table_plan.applies_to(row) {
+        if !table_plan.applies_to(row)
+            || (forward_model && !availability::table_available(row, table_plan))
+        {
             continue;
+        }
+        if let Some(activity) = activity.as_deref_mut() {
+            pending_count = Some((
+                activity.table_term(table_index),
+                initial_flags + *output.newly_flagged_samples,
+            ));
         }
         let calibrate_weights = !trial
             && plan.apply_mode.writes_corrected_data()
@@ -2439,7 +2522,7 @@ fn apply_row_all_channels(
         }
 
         let (Some(ant1), Some(ant2)) = (ant1, ant2) else {
-            if plan.apply_mode.writes_flags() {
+            if propagate_flags {
                 flush_fast_gain_pairs(
                     &mut fast_gain_pairs,
                     &mut output,
@@ -2712,10 +2795,7 @@ fn apply_row_all_channels(
                 };
                 let (value1, flag1) = gain(gain1.value, gain1.flagged);
                 let (value2, flag2) = gain(gain2.value, gain2.flagged);
-                if (flag1 || flag2)
-                    && plan.apply_mode.writes_flags()
-                    && !output.flags[[corr_index, chan_index]]
-                {
+                if (flag1 || flag2) && propagate_flags && !output.flags[[corr_index, chan_index]] {
                     output.flags[[corr_index, chan_index]] = true;
                     *output.newly_flagged_samples += 1;
                 }
@@ -2758,6 +2838,14 @@ fn apply_row_all_channels(
         &mut output,
         compute_profile.as_deref_mut(),
     )?;
+    if let Some((term, flags_in)) = pending_count {
+        activity.expect("tracked term").count_term(
+            term,
+            data.len(),
+            flags_in,
+            initial_flags + *output.newly_flagged_samples,
+        );
+    }
 
     if any_calwt {
         let weight_finalize_started_at = compute_profile.as_ref().map(|_| Instant::now());
@@ -2846,7 +2934,7 @@ fn apply_parallactic_step(
         angle(row.antenna2, row.feed2)?,
         output.corrected,
     )?;
-    if output.apply_mode.writes_flags() {
+    if output.propagate_flags {
         *output.newly_flagged_samples +=
             parang::propagate_flags(output.correlation_types, output.flags);
     }
@@ -2864,7 +2952,7 @@ struct ApplyBuffer<'a> {
     data_channels: DataChannelGrid<'a>,
     corrected: &'a mut ArrayD<Complex32>,
     flags: &'a mut ArrayD<bool>,
-    apply_mode: ApplyMode,
+    propagate_flags: bool,
     newly_flagged_samples: &'a mut usize,
 }
 
@@ -3026,12 +3114,12 @@ fn apply_complex_gain_pairs_fast(
     ensure_fast_pair_frequency_coverage(pairs, ctx.data_channels.frequencies_hz, channel_count)?;
     let corrected_is_fortran = ctx.corrected.ndim() == 2 && ctx.corrected.strides()[0] == 1;
     let flags_are_fortran =
-        !ctx.apply_mode.writes_flags() || (ctx.flags.ndim() == 2 && ctx.flags.strides()[0] == 1);
+        !ctx.propagate_flags || (ctx.flags.ndim() == 2 && ctx.flags.strides()[0] == 1);
     if corrected_is_fortran
         && flags_are_fortran
         && let Some(corrected) = ctx.corrected.as_slice_memory_order_mut()
     {
-        let flags = (ctx.apply_mode.writes_flags())
+        let flags = (ctx.propagate_flags)
             .then(|| ctx.flags.as_slice_memory_order_mut())
             .flatten();
         return apply_complex_gain_pairs_fast_fortran(
@@ -3056,7 +3144,7 @@ fn apply_complex_gain_pairs_fast(
             let Some(sample) = pair.scalar_sample(receptors) else {
                 continue;
             };
-            if fast_gain_sample_invalid(sample) && ctx.apply_mode.writes_flags() {
+            if fast_gain_sample_invalid(sample) && ctx.propagate_flags {
                 flag_all_channels_generic(
                     ctx.flags,
                     corr_index,
@@ -3077,7 +3165,7 @@ fn apply_complex_gain_pairs_fast(
                     continue;
                 };
                 if fast_gain_sample_invalid(sample)
-                    && ctx.apply_mode.writes_flags()
+                    && ctx.propagate_flags
                     && !ctx.flags[[corr_index, chan_index]]
                 {
                     ctx.flags[[corr_index, chan_index]] = true;
@@ -3524,6 +3612,7 @@ fn apply_row_prefetched(
     chain: &ApplyChain,
     geometry_cache: Option<&mut RowGeometryCache>,
     compute_profile: Option<&mut ApplyRowComputeProfile>,
+    activity: Option<&mut ToolApplyActivity>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
     apply_row(
         row,
@@ -3545,6 +3634,7 @@ fn apply_row_prefetched(
         chain,
         geometry_cache,
         compute_profile,
+        activity,
     )
 }
 
@@ -6412,7 +6502,7 @@ mod tests {
                 data_channels: DataChannelGrid::all(&[1.0e9, 1.1e9]),
                 corrected: &mut corrected,
                 flags: &mut flags,
-                apply_mode: ApplyMode::CalFlag,
+                propagate_flags: true,
                 newly_flagged_samples: &mut newly_flagged_samples,
             },
         )
@@ -6453,7 +6543,7 @@ mod tests {
                 data_channels: DataChannelGrid::all(&[1.0e9, 1.1e9]),
                 corrected: &mut fortran_corrected,
                 flags: &mut fortran_flags,
-                apply_mode: ApplyMode::CalFlag,
+                propagate_flags: true,
                 newly_flagged_samples: &mut fortran_new_flags,
             },
         )
@@ -6482,7 +6572,7 @@ mod tests {
                     data_channels: DataChannelGrid::all(&[1.0e9]),
                     corrected: &mut antpos_corrected,
                     flags: &mut antpos_flags,
-                    apply_mode: ApplyMode::Trial,
+                    propagate_flags: false,
                     newly_flagged_samples: &mut antpos_new_flags,
                 },
             )

@@ -29,7 +29,7 @@ pub(super) fn apply_grid(
             let off = grid.value_at(correlation, source).re;
             let invalid_off = !off.is_finite() || off == 0.;
             if (grid.flag_at(correlation, source) || invalid_off)
-                && output.apply_mode.writes_flags()
+                && output.propagate_flags
                 && !output.flags[[correlation, channel]]
             {
                 output.flags[[correlation, channel]] = true;

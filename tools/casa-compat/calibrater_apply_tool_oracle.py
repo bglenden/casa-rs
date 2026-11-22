@@ -236,6 +236,7 @@ def correct_selected_data(work, tools):
             for _ in range(registrations):
                 assert compare_calls(tools, 'setcallib', record) == (True, True)
             assert compare_calls(tools, 'correct', mode) == (True, True)
+            assert compare_calls(tools, 'activityrec')[0]
             assert compare_calls(tools, 'close') == (True, True)
             compare_correction_products(paths, label)
             if not legacy and label == 'calflag' and 'native' in paths:
@@ -438,10 +439,11 @@ def traditional_apply(work, tools):
         print('traditional setapply', 'VI1' if legacy else 'VI2', 'matched', flush=True)
 
 
-def traditional_registration_retains_values(work, tools):
+def registration_retains_values(work, tools, *, library=False):
     from blcal_oracle import copy_ms, opened
 
-    first, second = work/'register-first', work/'register-second'
+    label = 'library' if library else 'traditional'
+    first, second = work/f'{label}-register-first', work/f'{label}-register-second'
     first.mkdir()
     second.mkdir()
     relative = 'gain.cal'
@@ -453,12 +455,17 @@ def traditional_registration_retains_values(work, tools):
 
     paths = {}
     for engine, tool in tools.items():
-        paths[engine] = work/f'snapshot-{engine}.ms'
+        paths[engine] = work/f'snapshot-{label}-{engine}.ms'
         copy_ms(work/'baseline-2.ms', paths[engine])
         assert tool.setvi(False, True)
         assert tool.open(str(paths[engine]))
     with chdir(first):
-        assert compare_calls(tools, 'setapply', table=relative) == (True, True)
+        if library:
+            assert compare_calls(tools, 'setcallib', {relative: {'0': {'tinterp': 'linear'}}}) == (
+                True, True
+            )
+        else:
+            assert compare_calls(tools, 'setapply', table=relative) == (True, True)
     with opened(first_table, True) as table:
         table.putcol('CPARAM', 3*table.getcol('CPARAM'))
     with chdir(second):
@@ -527,6 +534,234 @@ def noncommuting_tool_terms(work, tools):
     np.testing.assert_array_equal(*outputs)
 
 
+def activity_cycle(work, tools):
+    from blcal_oracle import copy_ms
+
+    prior = str(work/'prior-current.cal')
+    for legacy in (False, True):
+        paths = {}
+        assert compare_calls(tools, 'activityrec') == (True, {})
+        for engine, tool in tools.items():
+            paths[engine] = work/f'activity-{engine}-{legacy}.ms'
+            copy_ms(work/'baseline-2.ms', paths[engine])
+            assert tool.setvi(legacy, True)
+            assert tool.open(str(paths[engine]))
+        assert compare_calls(tools, 'selectvis', field='FLUX', spw='0:2~8') == (True, True)
+        assert compare_calls(tools, 'setapply', table=prior) == (True, True)
+        assert compare_calls(tools, 'activityrec') == (True, {})
+        assert compare_calls(tools, 'correct') == (True, True)
+        first = compare_calls(tools, 'activityrec')[1]
+        assert first['VisEquation']['nVisTotal'] == 4200
+        assert first['VisEquation']['*1']['nflagIn'] == 320
+        assert compare_calls(tools, 'correct', 'trial') == (True, True)
+        second = compare_calls(tools, 'activityrec')[1]
+        assert second['VisEquation']['*1']['ndata'] == 8400
+        assert compare_calls(tools, 'setapply', table=prior) == (True, True)
+        assert compare_calls(tools, 'correct', 'flagonly') == (True, True)
+        multiple = compare_calls(tools, 'activityrec')[1]
+        assert tuple(multiple['VisEquation']) == ('*1', '*2', 'nVisTotal')
+        assert multiple['VisEquation']['*2']['ndata'] == 4200
+        assert compare_calls(tools, 'reset', True, False) == (True, True)
+        assert compare_calls(tools, 'activityrec') == (True, multiple)
+        assert not compare_calls(tools, 'correct')[0]
+        assert compare_calls(tools, 'activityrec') == (True, multiple)
+        for name, tool in tools.items():
+            assert tool.open(str(paths[name]))
+        assert compare_calls(tools, 'activityrec') == (True, multiple)
+        assert compare_calls(tools, 'close') == (True, True)
+        assert compare_calls(tools, 'activityrec') == (True, {})
+        for name, tool in tools.items():
+            assert tool.open(str(paths[name]))
+        assert compare_calls(tools, 'activityrec') == (True, {})
+        assert compare_calls(tools, 'selectvis', spw='0:2~8') == (True, True)
+        library = {prior: {'0': {'field': 'FLUX', 'tinterp': 'linear'},
+                           '1': {'field': 'PHASE', 'tinterp': 'nearest'}}}
+        assert compare_calls(tools, 'setcallib', library) == (True, True)
+        assert compare_calls(tools, 'correct', 'trial') == (True, True)
+        grouped = compare_calls(tools, 'activityrec')[1]['VisEquation']
+        assert tuple(grouped) == ('*1', 'nVisTotal')
+        assert grouped['*1']['ndata'] == grouped['nVisTotal'] == 8400
+        assert compare_calls(tools, 'done') == (True, True)
+        compare_correction_products(paths, 'activity and reset cycle')
+        print('activity and reset', 'VI1' if legacy else 'VI2', 'matched', flush=True)
+
+
+def corrupt_models(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    assert compare_calls(tools, 'corrupt') == (True, False)
+    prior = str(work/'prior-current.cal')
+    scenarios = (
+        ('traditional', work/'baseline-2.ms', [('setapply', {'table': prior})], False),
+        ('corrected-then-corrupt', work/'baseline-2.ms', [('setapply', {'table': prior})], True),
+        ('noncommuting', work/'linear-vla.ms', [('setapply', {'table': str(work/'linear-curve.cal')}),
+                                             ('setapply', {'type': 'P'})], False),
+        ('library-partial', work/'two-windows.ms', [('setcallib', {'callib': {
+            prior: {'0': {'tinterp': 'linear', 'spw': '0'}}
+        }})], False),
+    )
+    for legacy in (False, True):
+        for label, source, terms, correct_first in scenarios:
+            paths = {}
+            for name, tool in tools.items():
+                paths[name] = work/f'corrupt-{name}-{label}-{legacy}.ms'
+                copy_ms(source, paths[name])
+                assert tool.setvi(legacy, True)
+                assert tool.open(str(paths[name]))
+            selection = '0:2~5,1:2~5' if label == 'library-partial' else '0:2~5'
+            scalar_gain = label in ('traditional', 'corrected-then-corrupt')
+            assert compare_calls(tools, 'selectvis', field='FLUX' if scalar_gain else '',
+                                 spw=selection) == (True, True)
+            assert not compare_calls(tools, 'corrupt')[0]
+            for method, arguments in terms:
+                assert compare_calls(tools, method, **arguments) == (True, True)
+            assert compare_calls(tools, 'setptmodel', [9.0, 0.0, 0.0, 0.0]) == (True, True)
+            if correct_first:
+                assert compare_calls(tools, 'correct', 'trial') == (True, True)
+            before = compare_calls(tools, 'activityrec')[1]
+            incomplete_legacy_library = legacy and label == 'library-partial'
+            for _ in range(1 if incomplete_legacy_library else 2):
+                if incomplete_legacy_library:
+                    assert compare_calls(tools, 'corrupt') == (
+                        False, ('RuntimeError', 'Error in Calibrater::corrupt.')
+                    )
+                    assert compare_calls(tools, 'returndict')[1]['apply_tables'].size == 0
+                    break
+                assert compare_calls(tools, 'corrupt') == (True, True)
+                activity = compare_calls(tools, 'activityrec')[1]
+                if legacy:
+                    same_record(activity, before)
+                    continue
+                assert activity['origin'] == 'Calibrater::corrupt2'
+                assert activity['VisEquation']['nVisTotal'] == 0
+                if correct_first:
+                    same_record(activity['VisEquation']['*1'], before['VisEquation']['*1'])
+                else:
+                    assert activity['VisEquation']['*1']['ndata'] == 0
+            assert compare_calls(tools, 'close') == (True, True)
+            with opened(source) as original, opened(paths['casa']) as reference:
+                model = reference.getcol('MODEL_DATA')
+                if scalar_gain:
+                    original_model = original.getcol('MODEL_DATA')
+                    mask = original.getcol('FIELD_ID') == 0
+                    expected = original_model.copy()
+                    expected[:, 2:6, mask] *= np.float32(1.2)**(-4 if correct_first else 4)
+                    np.testing.assert_allclose(model, expected, rtol=2e-6, atol=2e-7)
+                    expected[:, 2:6, mask] = original_model[:, 2:6, mask] * np.float32(1.2)**4
+                else:
+                    expected = model
+                if 'native' in paths:
+                    with opened(paths['native']) as actual:
+                        np.testing.assert_allclose(actual.getcol('MODEL_DATA'), expected,
+                                                   rtol=2e-6, atol=2e-7, err_msg=label)
+                        for column in ('DATA', 'CORRECTED_DATA', 'FLAG', 'FLAG_ROW', 'WEIGHT', 'SIGMA'):
+                            np.testing.assert_array_equal(actual.getcol(column), reference.getcol(column),
+                                                          err_msg=f'{label} {column}')
+            if not legacy and label == 'traditional' and 'native' in paths:
+                compare_correction_readers(paths)
+            print('corrupt', 'VI1' if legacy else 'VI2', label, 'matched', flush=True)
+
+
+def corrupt_requires_physical_model(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    prior = str(work/'prior-current.cal')
+    for legacy in (False, True):
+        paths = {}
+        for name, tool in tools.items():
+            paths[name] = work/f'corrupt-missing-model-{name}-{legacy}.ms'
+            copy_ms(work/'baseline-2.ms', paths[name])
+            with opened(paths[name], True) as table:
+                table.removecols(['MODEL_DATA'])
+            assert tool.setvi(legacy, True)
+            assert tool.open(str(paths[name]), addcorr=True, addmodel=False)
+        assert compare_calls(tools, 'setapply', table=prior) == (True, True)
+        suffix = '' if legacy else '2'
+        assert compare_calls(tools, 'corrupt') == (
+            False, ('RuntimeError', f'Error in Calibrater::corrupt{suffix}.')
+        )
+        assert compare_calls(tools, 'returndict')[1]['apply_tables'].size == 0
+        assert compare_calls(tools, 'close') == (True, True)
+        for path in paths.values():
+            with opened(path) as table:
+                assert 'MODEL_DATA' not in table.colnames()
+
+
+def corrupt_prefix_before_error(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    prior = str(work/'prior-current.cal')
+    for legacy in (False, True):
+        paths = {}
+        for name, tool in tools.items():
+            path = paths[name] = work/f'corrupt-failed-buffer-{name}-{legacy}.ms'
+            copy_ms(work/'baseline-2.ms', path)
+            with opened(path, True) as table:
+                original = table.getcol('MODEL_DATA')
+                scan = np.arange(table.nrows(), dtype=np.int32) % 2 + 1
+                table.putcol('SCAN_NUMBER', scan)
+                descriptor = table.getcoldesc('MODEL_DATA')
+                descriptor.update(option=0, dataManagerType='StandardStMan',
+                                  dataManagerGroup='VariableModel')
+                descriptor.pop('shape', None)
+                assert table.removecols(['MODEL_DATA'])
+                assert table.addcols({'MODEL_DATA': descriptor})
+                for row in np.flatnonzero(scan == 1):
+                    assert table.putcell('MODEL_DATA', int(row), original[:, :, row])
+            assert tool.setvi(legacy, True)
+            assert tool.open(str(path), addcorr=False, addmodel=False)
+        assert compare_calls(tools, 'setapply', table=prior) == (True, True)
+        suffix = '' if legacy else '2'
+        assert compare_calls(tools, 'corrupt') == (
+            False, ('RuntimeError', f'Error in Calibrater::corrupt{suffix}.')
+        )
+        assert compare_calls(tools, 'returndict')[1]['apply_tables'].size == 0
+        assert compare_calls(tools, 'close') == (True, True)
+        for path in paths.values():
+            with opened(path) as table:
+                for row in np.flatnonzero(scan == 1):
+                    np.testing.assert_allclose(table.getcell('MODEL_DATA', int(row)),
+                                               original[:, :, row] * np.float32(1.2)**2,
+                                               rtol=2e-6, atol=2e-7)
+                assert not table.iscelldefined('MODEL_DATA', int(np.flatnonzero(scan == 2)[0]))
+        print('corrupt preserved the completed scan before the undefined model', legacy, flush=True)
+
+
+def corrupt_library_scan_and_intent(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    prior = str(work/'prior-current.cal')
+    for legacy in (False, True):
+        for selector in ({'scan': '1'}, {'intent': 'CALIBRATE_FLUX*'}):
+            paths = {}
+            for name, tool in tools.items():
+                path = paths[name] = work/f'corrupt-context-{name}-{legacy}-{next(iter(selector))}.ms'
+                copy_ms(work/'baseline-2.ms', path)
+                with opened(path, True) as table:
+                    scan = np.arange(table.nrows(), dtype=np.int32) % 2 + 1
+                    table.putcol('SCAN_NUMBER', scan)
+                    table.putcol('STATE_ID', scan - 1)
+                    original = table.getcol('MODEL_DATA')
+                with opened(path/'STATE', True) as table:
+                    table.addrows(max(0, 2 - table.nrows()))
+                    table.putcell('OBS_MODE', 0, 'CALIBRATE_FLUX#ON_SOURCE')
+                    table.putcell('OBS_MODE', 1, 'CALIBRATE_PHASE#ON_SOURCE')
+                assert tool.setvi(legacy, True)
+                assert tool.open(str(path))
+            assert compare_calls(tools, 'setcallib', {
+                prior: {'0': {'tinterp': 'linear', **selector}}
+            }) == (True, True)
+            assert compare_calls(tools, 'corrupt') == (True, True)
+            assert compare_calls(tools, 'close') == (True, True)
+            expected = original.copy()
+            expected[:, :, (scan == 1) | legacy] *= np.float32(1.2)**2
+            for path in paths.values():
+                with opened(path) as table:
+                    np.testing.assert_allclose(table.getcol('MODEL_DATA'), expected,
+                                               rtol=2e-6, atol=2e-7)
+            print('corrupt library slice context matched', legacy, selector, flush=True)
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('work', type=Path)
@@ -547,10 +782,16 @@ def main():
         selected_antenna_record(work, tools)
         correct_selected_data(work, tools)
         traditional_apply(work, tools)
-        traditional_registration_retains_values(work, tools)
+        registration_retains_values(work, tools)
+        registration_retains_values(work, tools, library=True)
         repeated_parallactic_angle(work, tools)
         noncommuting_tool_terms(work, tools)
         uncovered_spectral_window(work, tools)
+        activity_cycle(work, tools)
+        corrupt_models(work, tools)
+        corrupt_requires_physical_model(work, tools)
+        corrupt_prefix_before_error(work, tools)
+        corrupt_library_scan_and_intent(work, tools)
         if 'native' in tools:
             retained_main_lock(work)
 
