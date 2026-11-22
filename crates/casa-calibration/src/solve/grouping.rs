@@ -921,16 +921,13 @@ impl SolveAccumulator {
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
         if options.polynomial_bandpass {
-            self.observe_metadata(row, false);
-            self.polynomial
-                .get_or_insert_with(Default::default)
-                .observe(
-                    row,
-                    samples,
-                    correlation_types,
-                    channels,
-                    options.point_stokes,
-                );
+            self.observe_polynomial(
+                row,
+                samples,
+                correlation_types,
+                channels,
+                options.point_stokes,
+            );
             return Ok(());
         }
         if options.channelized {

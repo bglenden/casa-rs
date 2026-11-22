@@ -8,7 +8,8 @@ use casa_types::Complex32;
 use num_complex::Complex64;
 
 use super::{
-    GainSolveError, SelectedChannels, SolveSampleRow, SolveSamples, WeightedTime, samples,
+    GainSolveError, SelectedChannels, SolveAccumulator, SolveSampleRow, SolveSamples, WeightedTime,
+    samples,
 };
 
 /// The old CASA iterator selects a continuous channel range. It replaces
@@ -48,6 +49,22 @@ pub(crate) struct PolynomialAccumulation {
 pub(crate) struct BaselineSpectrum {
     pub(crate) weighted_visibilities: Vec<Complex32>,
     pub(crate) weight: f32,
+}
+
+impl SolveAccumulator {
+    pub(super) fn observe_polynomial(
+        &mut self,
+        row: &SolveSampleRow,
+        samples: &SolveSamples<'_>,
+        correlations: &[i32],
+        channels: SelectedChannels<'_>,
+        point_stokes: [f32; 4],
+    ) {
+        self.observe_metadata(row, false);
+        self.polynomial
+            .get_or_insert_with(Default::default)
+            .observe(row, samples, correlations, channels, point_stokes);
+    }
 }
 
 impl PolynomialAccumulation {
