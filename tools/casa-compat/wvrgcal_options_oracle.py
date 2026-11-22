@@ -283,6 +283,67 @@ def metadata_controls(root, vis, native, native_wvr):
     print('WVR metadata, all-flagged inputs and sparse reversal controls passed.', flush=True)
 
 
+def missing_pointing_direction(root, source, native):
+    """An unreadable POINTING row invokes the FIELD fallback."""
+    from casacore.tables import makearrcoldesc, maketabdesc, table
+
+    fixture_path = root / 'missing-pointing-direction.ms'
+    copy_ms(source, fixture_path)
+    with table(str(fixture_path / 'POINTING'), readonly=False, ack=False) as pointing:
+        row = pointing.nrows()
+        last = max(pointing.getcol('TIME'))
+        directions = pointing.getcol('DIRECTION')
+        directions[:, 0, 1] = 0.0
+        keywords = pointing.getcolkeywords('DIRECTION')
+        # IncrementalStMan extends the previous array when a row is appended.
+        pointing.renamecol('DIRECTION', 'SAVED_DIRECTION')
+        pointing.addcols(maketabdesc(makearrcoldesc(
+            'DIRECTION', 0., ndim=2, datamanagertype='StandardStMan', keywords=keywords,
+        )))
+        for index, direction in enumerate(directions):
+            pointing.putcell('DIRECTION', index, direction)
+        pointing.addrows(1)
+        pointing.putcell('TIME', row, last + 1000.0)
+        assert not pointing.iscelldefined('DIRECTION', row)
+
+    explicit = root / 'missing-pointing-forced-field.cal'
+    settings = {'wvrspw': [1]}
+    # CASA can terminate while opening the undefined array. Its explicit
+    # FIELD path supplies the geometry reference for the native fallback.
+    field = casatasks.wvrgcal(str(fixture_path), str(explicit), usefieldtab=True, **settings)
+    assert field['success']
+    product = root / 'missing-pointing-native.cal'
+    report = native.wvrgcal(str(fixture_path), str(product), usefieldtab=False, **settings)
+    compare_reports(field, report)
+    assert compare_tables(explicit, product) <= 1e-3
+    print('unreadable unused pointing direction falls back to FIELD', flush=True)
+
+
+def check_recorded_statistics(vis, report, casa_report, windows, radiometer_window,
+                              antennas, stamps, temperatures, path, terms):
+    assert report.keys() == casa_report.keys()
+    for name, expected in casa_report.items():
+        if name not in ('RMS_um', 'Disc_um'):
+            np.testing.assert_array_equal(report[name], expected, err_msg=name)
+
+    rows = np.flatnonzero(windows == radiometer_window)
+    times, time_index = np.unique(stamps[rows], return_inverse=True)
+    with opened(vis / 'POINTING') as pointing:
+        first_at_or_after = np.maximum.accumulate(pointing.getcol('TIME'))
+        indices = np.searchsorted(first_at_or_after, times).clip(0, pointing.nrows() - 1)
+        elevation = np.array([pointing.getcell('DIRECTION', int(index))[1, 0]
+                              for index in indices])
+    zenith = path[rows] * np.sin(elevation[time_index])
+    discrepancy = temperatures[rows, 1] / terms[rows, 1] - temperatures[rows, 3] / terms[rows, 3]
+    for name, values in (('RMS_um', zenith), ('Disc_um', discrepancy)):
+        expected = [
+            float(f'{np.std(values[antennas[rows] == antenna]) * 1e6:.3g}')
+            for antenna in range(len(casa_report[name]))
+        ]
+        np.testing.assert_allclose(report[name], expected, rtol=1e-3, atol=.001, err_msg=name)
+    print('recorded default report agrees with corrected pointing and antenna statistics', flush=True)
+
+
 def recorded_failed_retrievals(root, vis, native):
     """Keep each successful fit attached to the time segment it measured."""
     raw = root / 'upstream-segmented.cal'
@@ -295,6 +356,9 @@ def recorded_failed_retrievals(root, vis, native):
     report = native.wvrgcal(str(vis), str(actual))
     native_seconds = time.monotonic() - start
     assert report['success'], report
+    upstream_task = root / 'upstream-default-task.cal'
+    casa_report = casatasks.wvrgcal(str(vis), str(upstream_task))
+    assert casa_report['success'], casa_report
 
     retrievals, results = messages.read_text().split('Retrieved parameters', 1)
     attempts = retrievals.split('Using random seed')[1:]
@@ -354,13 +418,17 @@ def recorded_failed_retrievals(root, vis, native):
         path = np.sum(temperatures[rows] * weights, axis=1)
         gains = np.ones(flags.size, dtype=gain.dtype)
         gains[use] = np.exp(-2j * np.pi * frequencies[windows[use]] * path / 3e8)
-        return gains.reshape(gain.shape)
+        return gains.reshape(gain.shape), path, terms
 
     # libair keeps the first N interval bounds when N fits survive, even
     # when those fits measured later segments. Reproduce that mistake in the
     # reference law, then use the successful segments for science validation.
-    legacy = expected(list(range(len(successful))))
-    corrected = expected(successful)
+    legacy, _, _ = expected(list(range(len(successful))))
+    corrected, path, terms = expected(successful)
+    check_recorded_statistics(
+        vis, report, casa_report, windows[use], window_for_description[radiometer[0]],
+        antennas[use], stamps[use], temperatures[rows], path, terms,
+    )
     legacy_error = np.linalg.norm(gain - legacy) / np.linalg.norm(legacy)
     assignment_error = np.linalg.norm(gain - corrected) / np.linalg.norm(corrected)
     assert legacy_error < 1e-3 and assignment_error > .05, (legacy_error, assignment_error)
@@ -491,6 +559,7 @@ def main():
     publication_controls(root, vis, tasks, native_wvr)
     reference_retry(root, vis, native_wvr)
     metadata_controls(root, vis, tasks, native_wvr)
+    missing_pointing_direction(root, vis, tasks)
     print(f'{count} nondefault WVR scenarios and publication controls passed.')
 
 

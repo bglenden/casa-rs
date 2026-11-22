@@ -461,6 +461,7 @@ fn elevations(
 }
 
 fn pointing_elevations(ms: &MeasurementSet, points: &[RadiometerIntegration]) -> Option<Vec<f64>> {
+    const BATCH_ROWS: usize = 32_768;
     let pointing = ms.subtable(SubtableId::Pointing)?;
     let columns = pointing.required_scalar_columns_owned(&["TIME"]).ok()?;
     let RequiredScalarColumnValues::Float64(times) = columns.get("TIME")? else {
@@ -469,27 +470,32 @@ fn pointing_elevations(ms: &MeasurementSet, points: &[RadiometerIntegration]) ->
     let last = times.len().checked_sub(1)?;
     let directions = pointing.column_accessor("DIRECTION").ok()?;
     let mut index = 0;
-    let mut previous = None;
-    points
-        .iter()
-        .map(|point| {
-            while index < last && times[index] < point.time_seconds {
-                index += 1;
-            }
-            if let Some((row, elevation)) = previous
-                && row == index
-            {
-                return Some(elevation);
-            }
-            // Keep the on-disk time walk and read only directions used by WVR.
-            let ArrayValue::Float64(direction) = directions.array_cell(index).ok()? else {
+    let mut selected = Vec::with_capacity(points.len());
+    for point in points {
+        while index < last && times[index] < point.time_seconds {
+            index += 1;
+        }
+        selected.push(index);
+    }
+    let mut selected = selected.into_iter().peekable();
+    let mut elevations = Vec::with_capacity(points.len());
+    // CASA falls back to FIELD when any POINTING direction cannot be read.
+    // Validate in physical order without caching every direction in the table.
+    for start in (0..times.len()).step_by(BATCH_ROWS) {
+        let end = start.saturating_add(BATCH_ROWS).min(times.len());
+        let rows = (start..end).collect::<Vec<_>>();
+        let values = directions.array_cells_owned_uncached(&rows).ok()?;
+        for (row, direction) in rows.into_iter().zip(values) {
+            let Some(ArrayValue::Float64(direction)) = direction else {
                 return None;
             };
             let elevation = *direction.get([1, 0])?;
-            previous = Some((index, elevation));
-            Some(elevation)
-        })
-        .collect()
+            while selected.next_if_eq(&row).is_some() {
+                elevations.push(elevation);
+            }
+        }
+    }
+    Some(elevations)
 }
 
 struct FittedObservations {
