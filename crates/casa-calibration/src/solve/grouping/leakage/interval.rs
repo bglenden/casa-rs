@@ -166,6 +166,11 @@ impl IntervalFits {
         }
         let require_all = matches!(self, Self::LeastSquares(..));
         for (channel, mean) in bins.iter_mut().enumerate() {
+            let unflagged = if pair[0] == pair[1] {
+                0
+            } else {
+                mean.unflagged
+            };
             if let Some((mut data, model, mut weights)) = std::mem::take(mean).finish(require_all) {
                 if let Self::LeastSquares(_, mode)
                 | Self::CrossHand(_, _, mode)
@@ -181,7 +186,7 @@ impl IntervalFits {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
                     Self::CrossHand(fits, measurement, _) => {
-                        fits[channel].add(pair[0] == pair[1], *measurement, data, model, weights)
+                        fits[channel].add(*measurement, unflagged, data, model, weights)
                     }
                     Self::Parallactic(_) => unreachable!("time-segment accumulation"),
                     Self::Iterative {

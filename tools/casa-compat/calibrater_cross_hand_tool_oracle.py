@@ -22,7 +22,7 @@ from polcal_position_angle_oracle import plant_angle
 
 
 def solve(factory, vis, product, kind, stokes, *, old=False, prior=(), options=None,
-          selection=None, append=False, parang=True):
+          selection=None, append=False, parang=True, corrdep=False):
     tool = factory()
     assert tool.setvi(old, True) and tool.open(str(vis), addcorr=False, addmodel=False)
     try:
@@ -33,6 +33,7 @@ def solve(factory, vis, product, kind, stokes, *, old=False, prior=(), options=N
             assert tool.setapply(type='P')
         for table in prior:
             assert tool.setapply(table=str(table), calwt=False)
+        assert tool.setcorrdepflags(corrdep)
         setup = {'t': 'inf', 'refant': 'A3'} | (options or {})
         assert tool.setsolve(kind, table=str(product), **setup)
         assert tool.solve()
@@ -127,7 +128,22 @@ def legacy_weights(work, engines, vis, sky, phase):
          options={'apmode': 'P', 'preavg': 0.})
     case(work, engines, vis, 'Xf-legacy-short-intervals', 'Xf', None, old=True,
          options={'t': '900s'})
+    staggered = work/'staggered-baseline.ms'
+    copy_ms(vis, staggered)
+    with opened(staggered, True) as table:
+        first = (time == time[selected].min()) & selected
+        first &= (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 1)
+        assert first.sum() == 1
+        table.removerows(np.flatnonzero(first).tolist())
+    case(work, engines, staggered, 'Xf-legacy-staggered', 'Xf', None, old=True,
+         options={'apmode': 'P', 'preavg': 1300.})
     with opened(vis, True) as table:
+        flags = np.zeros(data.shape, dtype=bool)
+        flags[:, 1:, later] = True
+        assert table.putcol('FLAG', flags)
+    case(work, engines, vis, 'Xj-legacy-unbalanced-channels', 'Xj', None, old=True)
+    with opened(vis, True) as table:
+        assert table.putcol('FLAG', np.zeros(data.shape, dtype=bool))
         for column in ('WEIGHT_SPECTRUM', 'SIGMA_SPECTRUM'):
             if column in table.colnames():
                 table.removecols(column)
@@ -143,6 +159,56 @@ def legacy_weights(work, engines, vis, sky, phase):
         assert table.putcol('WEIGHT_SPECTRUM', np.ones(data.shape, np.float32))
     case(work, engines, vis, 'Xf-legacy-ignores-spectral-sigma', 'Xf', None, old=True)
     compare_autocorrelations(work, engines, vis)
+
+
+def compare_combined(work, engines, vis, stokes):
+    fields = work/'combined-fields.ms'
+    copy_ms(vis, fields)
+    with opened(fields, True) as table:
+        field = table.getcol('FIELD_ID')
+        scans = table.getcol('SCAN_NUMBER')
+        assert table.putcol('SCAN_NUMBER', np.full_like(scans, scans.min()))
+        data = table.getcol('DATA')
+        data[1, :, field == 1] *= np.exp(1.1j)
+        data[2, :, field == 1] *= np.exp(-1.1j)
+        assert table.putcol('DATA', data)
+    for old in (False, True):
+        case(work, engines, fields, f'Xf-combined-fields-old{old}', 'Xf', stokes, old=old,
+             selection={'field': '0,1'}, options={'combine': 'field'})
+
+    windows = work/'combined-windows.ms'
+    copy_ms(vis, windows)
+    assert duplicate_rows(casa_table(), windows/'SPECTRAL_WINDOW') == 1
+    assert duplicate_rows(casa_table(), windows/'DATA_DESCRIPTION') == 1
+    with opened(windows/'DATA_DESCRIPTION', True) as table:
+        assert table.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    rows = duplicate_rows(casa_table(), windows)
+    with opened(windows, True) as table:
+        assert table.putcol('DATA_DESC_ID', np.ones(rows, np.int32), rows, rows)
+        data = table.getcol('DATA', rows, rows)
+        data[1] *= np.exp(1.1j)
+        data[2] *= np.exp(-1.1j)
+        assert table.putcol('DATA', data, rows, rows)
+    for old in (False, True):
+        case(work, engines, windows, f'Xf-combined-windows-old{old}', 'Xf', stokes, old=old,
+             options={'combine': 'spw'})
+
+
+def compare_partial_correlations(work, engines, vis, kind, stokes):
+    with opened(vis, True) as table:
+        previous = table.getcol('FLAG')
+        flags = previous.copy()
+        flags[1, 3] = True
+        flags[0, 4] = True
+        flags[1, 5, ::2] = True
+        flags[2, 5, 1::2] = True
+        assert table.putcol('FLAG', flags)
+    try:
+        case(work, engines, vis, f'{kind}-partial-correlation', kind, stokes,
+             corrdep=True, parang=False)
+    finally:
+        with opened(vis, True) as table:
+            assert table.putcol('FLAG', previous)
 
 
 def compare_autocorrelations(work, engines, vis):
@@ -178,6 +244,24 @@ def compare_basis(work, basis, engines):
     for kind in ('Xparang', 'Xfparang'):
         case(work, engines, vis, kind, kind, stokes)
     reject_legacy(work, engines, vis)
+    compare_partial_correlations(work, engines, vis, 'Xf', stokes)
+    if basis.startswith('RR'):
+        compare_combined(work, engines, vis, stokes)
+        with opened(vis, True) as table:
+            timestamps = table.getcol('TIME')
+            data = table.getcol('DATA')
+            factor = 1. + 1.9 * (timestamps - timestamps.min()) / np.ptp(timestamps)
+            asymmetric = data.copy()
+            asymmetric[1] *= factor
+            asymmetric[2] *= factor**2
+            assert table.putcol('DATA', asymmetric)
+        for kind in ('Xparang', 'Xfparang'):
+            products = case(work, engines, vis, f'{kind}-amplitude-mode', kind, stokes,
+                            options={'apmode': 'A', 'solnorm': True})
+            with opened(products['native']) as table:
+                assert np.abs(table.getcol('CPARAM').imag).max() > .5
+        with opened(vis, True) as table:
+            assert table.putcol('DATA', data)
 
     case(work, engines, vis, 'Xf-ignored-cuts', 'Xf', stokes,
          options={'minblperant': 50, 'minsnr': 1e20})
@@ -211,6 +295,7 @@ def compare_basis(work, basis, engines):
     products = case(work, engines, vis, 'PosAng', 'PosAng', stokes)
     with opened(products['native']) as table:
         np.testing.assert_allclose(table.getcol('FPARAM'), angles, atol=3e-5, rtol=0.)
+    compare_partial_correlations(work, engines, vis, 'PosAng', stokes)
     if basis.startswith('XX'):
         legacy_weights(work, engines, vis, sky, phase)
 
