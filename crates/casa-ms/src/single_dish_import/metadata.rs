@@ -83,7 +83,7 @@ fn add_fixed_tables(ms: &mut MeasurementSet, header: &ImportHeader) -> MsResult<
 fn add_windows(ms: &mut MeasurementSet, header: &ImportHeader) -> MsResult<()> {
     let table = subtable_mut(ms, SubtableId::SpectralWindow)?;
     for (&index, window) in &header.windows {
-        if index < 0 || index > 65_535 || window.channels == 0 {
+        if index < 0 || window.channels == 0 {
             return Err(MsError::InvalidInput(format!(
                 "Invalid imported spectral window {index}"
             )));

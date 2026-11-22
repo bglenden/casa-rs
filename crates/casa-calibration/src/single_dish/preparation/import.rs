@@ -46,7 +46,7 @@ fn publish_import(
     let target = CalibrationOutput::prepare_import(output).map_err(|error| error.to_string())?;
     let mut result = decode(input, parallel).map_err(|error| error.to_string())?;
     result
-        .save_as(&target.staging)
+        .save_as_standard(&target.staging)
         .map_err(|error| error.to_string())?;
     target.commit().map_err(|error| error.to_string())
 }

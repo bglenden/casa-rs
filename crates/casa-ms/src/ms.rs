@@ -194,6 +194,10 @@ impl MeasurementSet {
     /// for another table, or when the wait would deadlock. A refused save
     /// writes nothing.
     pub fn save(&mut self) -> MsResult<()> {
+        self.save_using(save_main_table_with_policy)
+    }
+
+    fn save_using(&mut self, save_main: fn(&mut Table, &Path) -> MsResult<()>) -> MsResult<()> {
         let path = self
             .path
             .as_ref()
@@ -210,7 +214,7 @@ impl MeasurementSet {
         self.sync_main_metadata(&path);
         let mut locks = self.lock_tables_for_in_place_save(&path, true)?;
         locks.record(None);
-        save_main_table_with_policy(&mut self.main, &path)?;
+        save_main(&mut self.main, &path)?;
 
         for (id, table) in &self.subtables {
             let subtable_path = self.subtable_path(&path, *id);
@@ -418,12 +422,35 @@ impl MeasurementSet {
     /// All persisted subtable references are rebased so the copied MS remains
     /// self-consistent when reopened by Rust or C++ casacore tools.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> MsResult<()> {
-        let path = path.as_ref().to_path_buf();
+        self.save_as_using(path.as_ref(), save_main_table_with_policy)
+    }
+
+    /// Save to a new path with StandardStMan for the MAIN columns.
+    ///
+    /// This is the casacore single-dish filler's layout. It packs irregular
+    /// spectral shapes without padding each integration group to a tile and
+    /// preserves explicitly defined empty flag-category cells.
+    ///
+    /// # Errors
+    /// Returns the same destination and storage errors as [`Self::save_as`].
+    pub fn save_as_standard(&mut self, path: impl AsRef<Path>) -> MsResult<()> {
+        self.save_as_using(path.as_ref(), |main, path| {
+            main.save(measurement_set_table_options(path))?;
+            Ok(())
+        })
+    }
+
+    fn save_as_using(
+        &mut self,
+        path: &Path,
+        save_main: fn(&mut Table, &Path) -> MsResult<()>,
+    ) -> MsResult<()> {
+        let path = path.to_path_buf();
         let target = crate::write_session::MeasurementSetCreateTarget::prepare(&path, true)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         self.path = Some(target.staging_path().to_path_buf());
         self.rebase_subtable_paths(target.staging_path());
-        self.save()?;
+        self.save_using(save_main)?;
         target
             .commit()
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
@@ -1136,23 +1163,11 @@ pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<Strin
         );
     }
     bind("FLAG", DataManagerKind::TiledShapeStMan, flag_tile_shape);
-    // Single-dish imports define an empty category array in each row.
-    // Casacore can read zero-sized cells from StandardStMan, while a tiled
-    // hypercube whose cell shape contains zero cannot return that array.
-    let defined_empty_categories = main.rows().is_ok_and(|rows| {
-        rows.iter().any(|row| {
-            matches!(row.get("FLAG_CATEGORY"), Some(Value::Array(array)) if array.shape().contains(&0))
-        })
-    });
-    if defined_empty_categories {
-        bind("FLAG_CATEGORY", DataManagerKind::StandardStMan, None);
-    } else {
-        bind(
-            "FLAG_CATEGORY",
-            DataManagerKind::TiledShapeStMan,
-            flag_category_tile_shape,
-        );
-    }
+    bind(
+        "FLAG_CATEGORY",
+        DataManagerKind::TiledShapeStMan,
+        flag_category_tile_shape,
+    );
     for name in ["SIGMA", "WEIGHT"] {
         bind(
             name,
