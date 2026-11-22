@@ -82,7 +82,8 @@ impl Selection {
             return Self::None;
         };
         let minimum = usable().map(|(_, value)| value).fold(maximum, f32::min);
-        if minimum.abs().max(maximum.abs()) / noise < peak_snr {
+        let signal = minimum.abs().max(maximum.abs());
+        if signal == 0. || signal / noise < peak_snr {
             return Self::None;
         }
         if matches!(method, Method::Bosma) {

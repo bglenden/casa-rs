@@ -9817,6 +9817,13 @@ CASA can produce a moment image with no valid samples because the
 smoothing kernel is undefined. Casa-rs rejects the zero width before
 allocating or publishing an output.
 
+With automatic noise estimation and an all-zero spectrum, the CASA
+noise histogram can fail to fit. Its caller then uses a noise variable
+that the fit did not assign. The pinned build masks the zero spectrum
+for `method=["fit"]` and `method=["window", "fit"]`. Casa-rs rejects a
+spectrum with no signal before calculating its SNR. Plain clipping
+still returns a valid zero.
+
 On an entirely masked Float direction image, default `image.maxfit`
 can dereference an absent maximum and terminate the CASA Python
 process. Casa-rs raises a Python error and preserves the image.

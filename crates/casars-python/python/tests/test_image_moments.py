@@ -274,6 +274,22 @@ def test_moment_fit_admission_on_constant_noise_and_line_profiles(casa, method, 
         _compare(results[1], results[0])
 
 
+def test_zero_spectra_have_no_window_or_fit():
+    image = tools.image()
+    try:
+        assert image.fromshape(shape=[3, 4, 1, 11])
+        for method in ([], ["window"], ["fit"], ["window", "fit"]):
+            product = image.moments(method=method)
+            try:
+                np.testing.assert_array_equal(product.shape(), [3, 4, 1])
+                np.testing.assert_array_equal(product.getchunk(), 0.)
+                np.testing.assert_array_equal(product.getchunk(getmask=True), not method)
+            finally:
+                product.done()
+    finally:
+        image.done()
+
+
 def test_moments_rejects_invalid_requests_without_replacing_a_product(tmp_path):
     input_path = str(tmp_path / "source.im")
     output_path = str(tmp_path / "output.im")
