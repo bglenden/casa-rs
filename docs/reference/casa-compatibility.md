@@ -2623,6 +2623,86 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 14, in CASA's order: yes
 - Defaults that differ: none
 
+#### sdsmooth parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `18c031a2ab8bfdccab322537bde13adb1ff6868d`. Status counts: Default only: 0, Implemented: 14, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `infile` | `''` | `''`; `infile` → `infile` | Implemented | Open the supplied single-dish MeasurementSet. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `path` (measurement_set) | [paired](#sdsmooth-evidence-paired) |
+| `datacolumn` | `'data'` | `'data'`; `datacolumn` → `datacolumn` | Implemented | Convolve the real part of DATA or CORRECTED_DATA, or preserve the FLOAT_DATA layout. [convolution](#sdsmooth-behavior-convolution)<br>Catalog domain: `string` | [paired](#sdsmooth-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Resolve the antenna expression to its first antenna list and select autocorrelations. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `string` | [paired](#sdsmooth-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Select named or indexed fields. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `string` | [paired](#sdsmooth-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Select spectral windows and channel ranges and use a configured kernel of the selected spectrum’s length. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `string` | [paired](#sdsmooth-evidence-paired) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Restrict the observations by CASA timestamp expressions. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `variant` | [paired](#sdsmooth-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Restrict the selected scan rows. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `string` | [paired](#sdsmooth-evidence-paired) |
+| `pol` | `''` | `''`; `pol` → `pol` | Implemented | Select the specified correlations and rewrite the polarization metadata. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `string` | [paired](#sdsmooth-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Filter CASA intent expressions. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `string` | [paired](#sdsmooth-evidence-paired) |
+| `reindex` | `True` | `True`; `reindex` → `reindex` | Implemented | Keep original references or reindex selected subtables. [selection](#sdsmooth-behavior-selection)<br>Catalog domain: `bool` | [paired](#sdsmooth-evidence-paired) |
+| `kernel` | `'gaussian'` | `'gaussian'`; `kernel` → `kernel` | Implemented | Use the Gaussian filter or the shifted finite boxcar. [convolution](#sdsmooth-behavior-convolution)<br>Catalog domain: `gaussian`, `boxcar` | [paired](#sdsmooth-evidence-paired) |
+| `kwidth` | `5` | `5`; `kwidth` → `kwidth` | Implemented | Set width in channels, with Gaussian width expressed as FWHM. [convolution](#sdsmooth-behavior-convolution)<br>Catalog domain: `integer` | [paired](#sdsmooth-evidence-paired) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | Publish a complete CASA-readable selected MeasurementSet. [publication](#sdsmooth-behavior-publication)<br>Catalog domain: `path` (measurement_set) | [paired](#sdsmooth-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Exchange the completed product with the existing MeasurementSet after successful processing. [publication](#sdsmooth-behavior-publication)<br>Catalog domain: `bool` | [paired](#sdsmooth-evidence-paired) |
+
+#### sdsmooth interacting modes and task behavior
+
+<a id="sdsmooth-behavior-selection"></a>
+##### Selected autocorrelation spectra
+
+**Implemented** — Apply CASA row, correlation and channel selectors and match both metadata index modes.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdsmooth-evidence-paired).
+
+<a id="sdsmooth-behavior-convolution"></a>
+##### Spectral and weight convolution
+
+**Implemented** — Match zero-padded data kernels, original flags, scalar and spectral noise propagation, and float-product cells.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdsmooth-evidence-paired).
+
+<a id="sdsmooth-behavior-publication"></a>
+##### MeasurementSet interchange and overwrite
+
+**Implemented** — Read CASA inputs in casa-rs, publish CASA-readable products, and preserve a completed destination on a failed overwrite.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdsmooth-evidence-paired).
+
+#### sdsmooth deviations and unfinished work
+
+##### complete-output-publication: Proposed
+
+- Inputs: Request a channel stripe with no configured convolver and enable overwrite.
+- CASA: Raises a convolver error after creating an incomplete output MeasurementSet.
+- casa-rs: Reports the same convolver error and preserves the previously published MeasurementSet.
+- Rationale: The new output can be published only after every selected spectrum has been transformed.
+- User impact: A caller can correct the selection and retry without losing the prior completed product.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#sdsmooth-evidence-paired).
+
+#### sdsmooth evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="sdsmooth-evidence-paired"></a>
+##### paired
+
+**Public Python CASA/native comparison and measurement-set interchange — passed.** Independent convolution laws and paired values, flags, weights, identities and spectral metadata agree. Both convolution families, three data columns, row/correlation/channel selection, configured and missing partial kernels, reindex, publication and six direct tool methods.
+
+- [tools/casa-compat/sdsmooth_oracle.py](https://github.com/bglenden/casa-rs/blob/18c031a2ab8bfdccab322537bde13adb1ff6868d/tools/casa-compat/sdsmooth_oracle.py)
+- Revision: `18c031a2ab8bfdccab322537bde13adb1ff6868d`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdsmooth_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1976`.
+
 ### setjy
 
 - CASA source: `casatasks/setjy.py`, 23 parameters
