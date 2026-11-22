@@ -140,11 +140,11 @@ fn tile_layout(task: &TaskInvocation<'_>) -> Result<Option<MsTransformTiling>, T
         &[corr, chan, rows]
             if [corr, chan, rows]
                 .into_iter()
-                .all(|n| n > 0 && n <= i64::from(i32::MAX)) =>
+                .all(|n| (0..=i64::from(i32::MAX)).contains(&n)) =>
         {
             MsTransformTiling::Explicit([corr as usize, chan as usize, rows as usize])
         }
-        [_, _, _] => return Err(invalid("Tile extents must be positive 32-bit integers.")),
+        [_, _, _] => return Err(invalid("Tile extents must be nonnegative 32-bit integers.")),
         _ => return Err(invalid("Parameter tileshape must have 1 or 3 elements.")),
     };
     Ok(Some(result))

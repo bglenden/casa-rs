@@ -28,7 +28,7 @@ pub(super) fn resolve_tiling(
     spw: &SpwSelection,
     (channels, widths): (
         &BTreeMap<i32, TransformChannelSelection>,
-        &BTreeMap<i32, usize>,
+        Option<&BTreeMap<i32, usize>>,
     ),
     (descriptions, ddid_to_spw, correlations): (
         &[i32],
@@ -54,7 +54,11 @@ pub(super) fn resolve_tiling(
                         .find_map(|(&ddid, &window)| (window == id).then_some(ddid))
                 })
                 .ok_or_else(|| error(format!("Spectral window {id} has no data description.")))?;
-            let chan = channels[&id].channels.len().div_ceil(widths[&id]);
+            // The storage manager's default is taken from the first input
+            // channel range, before any spectral regridding or combination.
+            let first = channels[&id].ranges[0];
+            let count = 1 + (first.stop - first.start) as usize / first.step.max(1) as usize;
+            let chan = count.div_ceil(widths.map_or(1, |widths| widths[&id]));
             let corr = match correlations.and_then(|selection| selection.axes(ddid)) {
                 Some(axes) => axes.len(),
                 None => {
@@ -96,7 +100,7 @@ pub(super) fn resolve_tiling(
     let max_extent = i32::MAX as usize;
     let noise_rows = chan
         .checked_mul(rows)
-        .filter(|&n| n > 0 && n <= max_extent)
+        .filter(|&n| n <= max_extent)
         .ok_or_else(|| error("The tile shape's channel and row extents are too large.".into()))?;
     let uvw_rows = corr
         .checked_mul(noise_rows)
@@ -131,8 +135,9 @@ impl OutputTiling {
             };
             for shape in &mut column.shapes {
                 shape.tile_shape = match column.name.as_str() {
-                    "UVW" if self.uvw[1] == 0 => vec![3, 10_923],
-                    "UVW" | "WEIGHT" | "SIGMA" | "FLAG_CATEGORY" => default.clone(),
+                    "UVW" | "WEIGHT" | "SIGMA" | "FLAG_CATEGORY" => {
+                        resolve_extensible_tile(&default, &shape.cell_shape)
+                    }
                     // CASA explicitly assigns a 1 MiB visibility tile to
                     // each shape when the first plane of that shape is written.
                     _ => {
@@ -150,6 +155,25 @@ impl OutputTiling {
     }
 }
 
+fn resolve_extensible_tile(default: &[usize], cell: &[usize]) -> Vec<usize> {
+    let mut tile = default.to_vec();
+    let (axes, rows) = tile.split_at_mut(cell.len());
+    for (extent, &cell_extent) in axes.iter_mut().zip(cell) {
+        *extent = if *extent == 0 {
+            cell_extent
+        } else {
+            (*extent).min(cell_extent)
+        };
+    }
+    if rows[0] == 0 {
+        // A zero last extent in TSMCube expresses an extensible axis.
+        // Choose the closest row count to the default 32K-element tile.
+        let cells = axes.iter().copied().product::<usize>();
+        rows[0] = ((32_768 + cells / 2) / cells).max(1);
+    }
+    tile
+}
+
 pub(super) fn pad_ddids(
     output: &std::path::Path,
     offset: usize,
@@ -165,23 +189,35 @@ pub(super) fn pad_ddids(
         path: path.display().to_string(),
         reason: source.to_string(),
     };
-    let rows = Table::open(TableOptions::new(&path))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: path.display().to_string(),
-            source: Box::new(source),
-        })?
-        .row_count();
+    let table_error = |source| MsTransformError::MutateMeasurementSet {
+        path: path.display().to_string(),
+        source: Box::new(source),
+    };
+    let table = Table::open(TableOptions::new(&path)).map_err(table_error)?;
+    let rows = table.row_count();
+    let budget_error = || {
+        MsTransformError::Spectrum("ddistart exceeds the available data-description budget.".into())
+    };
     let output_rows = rows
         .checked_add(offset)
-        .filter(|&rows| {
-            rows <= i32::MAX as usize
-                && rows <= budget_bytes / (std::mem::size_of::<RecordValue>() * 4)
-        })
-        .ok_or_else(|| {
-            MsTransformError::Spectrum(
-                "ddistart exceeds the available data-description budget.".into(),
-            )
-        })?;
+        .filter(|&rows| rows <= i32::MAX as usize)
+        .ok_or_else(budget_error)?;
+    let mut remaining = budget_bytes;
+    for index in 0..rows {
+        let records =
+            super::selection_metadata::read_subtable_rows(&table, &[index]).map_err(table_error)?;
+        let copies = if index == 0 { offset + 1 } else { 1 };
+        // Count variable values as well as the retained row headers and
+        // index vector, allowing for source batches and writer staging.
+        let row_bytes = records[0]
+            .retained_heap_bytes()
+            .and_then(|bytes| bytes.checked_add(size_of::<RecordValue>() + size_of::<usize>()))
+            .and_then(|bytes| bytes.checked_mul(3))
+            .and_then(|bytes| bytes.checked_mul(copies))
+            .ok_or_else(budget_error)?;
+        remaining = remaining.checked_sub(row_bytes).ok_or_else(budget_error)?;
+    }
+    drop(table);
     let sources = std::iter::repeat_n(0, offset)
         .chain(0..rows)
         .collect::<Vec<_>>();
@@ -199,4 +235,44 @@ pub(super) fn pad_ddids(
     })?;
     debug_assert_eq!(written, output_rows);
     fs::remove_dir_all(original).map_err(io_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+    use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+
+    #[test]
+    fn ddi_start_budgets_repeated_optional_array_payload() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("DATA_DESCRIPTION");
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("FLAG_ROW", PrimitiveType::Bool),
+            ColumnSchema::array_variable("EXTRA", PrimitiveType::Int32, Some(1)),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+                RecordField::new(
+                    "EXTRA",
+                    Value::Array(ArrayValue::from_i32_vec(vec![7; 1024])),
+                ),
+            ]))
+            .unwrap();
+        table.save(TableOptions::new(&path)).unwrap();
+
+        let error = super::pad_ddids(directory.path(), 100, 65_536).unwrap_err();
+        assert!(error.to_string().contains("data-description budget"));
+        assert_eq!(
+            Table::open(TableOptions::new(&path)).unwrap().row_count(),
+            1
+        );
+        super::pad_ddids(directory.path(), 1, 65_536).unwrap();
+        assert_eq!(
+            Table::open(TableOptions::new(&path)).unwrap().row_count(),
+            2
+        );
+    }
 }

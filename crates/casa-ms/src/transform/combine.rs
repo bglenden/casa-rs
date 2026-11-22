@@ -41,27 +41,32 @@ impl Grid {
     pub(super) fn new(
         input: &MeasurementSet,
         selection: &BTreeMap<i32, TransformChannelSelection>,
+        grid_selection: &BTreeMap<i32, TransformChannelSelection>,
         bin_width: usize,
         grid_budget: usize,
     ) -> Result<Option<Self>, MsTransformError> {
-        if selection.len() < 2 {
+        if grid_selection.len() < 2 {
             return Ok(None);
         }
         let error = MsTransformError::Spectrum;
         let spw = input
             .spectral_window()
             .map_err(|source| error(source.to_string()))?;
-        let mut axes = Vec::with_capacity(selection.len());
+        let mut axes = Vec::with_capacity(grid_selection.len());
         let mut first_frame = None;
-        let mut first_count = None;
-        for (&id, selected) in selection {
+        let expected = selection
+            .values()
+            .next()
+            .map_or(0, |spw| spw.channels.len());
+        for selected in selection.values() {
             let count = selected.channels.len();
-            let expected = *first_count.get_or_insert(count);
             if count != expected {
                 return Err(error(format!(
                     "Currently the option 'combinespws' is only supported when the number of channels is the same for all the spw's selected. One of the SPWs selected has {expected} channels, but another selected SPW has {count} channels."
                 )));
             }
+        }
+        for (&id, selected) in grid_selection {
             let row = id as usize;
             let frame = spw
                 .reference_frequency_reference(row)
@@ -132,7 +137,7 @@ impl Grid {
         .centres_hz;
         let interpolation = linear_samples(&centres, &frequencies);
         Ok(Some(Self {
-            windows: selection
+            windows: grid_selection
                 .keys()
                 .enumerate()
                 .map(|(pos, &id)| (id, pos))

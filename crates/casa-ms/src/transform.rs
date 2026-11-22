@@ -614,6 +614,24 @@ fn mstransform_staged(
             .collect::<BTreeMap<_, _>>()
     });
     let regrid_options = options.regrid.as_ref();
+    let retained_combination = if options.preserve_ids && options.combine_spws {
+        let all_spws =
+            input
+                .resolve_spw_selector("*")
+                .map_err(|source| MsTransformError::InvalidSpw {
+                    selector: "*".into(),
+                    reason: source.to_string(),
+                })?;
+        let mut channels = resolve_transform_channels(&input, &all_spws, "*")?;
+        channels.extend(
+            channel_selection
+                .iter()
+                .map(|(&id, selection)| (id, selection.clone())),
+        );
+        Some((all_spws, channels))
+    } else {
+        None
+    };
     let mut channel_bins = channel_bins_by_spw(
         &channel_selection,
         &widths,
@@ -633,6 +651,9 @@ fn mstransform_staged(
             combine::Grid::new(
                 &input,
                 &channel_selection,
+                retained_combination
+                    .as_ref()
+                    .map_or(&channel_selection, |(_, channels)| channels),
                 normalized_width(request.width),
                 budget.available_bytes / budget.maximum_live_blocks,
             )?
@@ -966,12 +987,28 @@ fn mstransform_staged(
         0
     };
     let mut compact_metadata = if reindex_spectra {
+        let (metadata_spws, metadata_bins) = if let Some((all_spws, channels)) =
+            &retained_combination
+            && combined_grid.is_some()
+        {
+            (
+                all_spws,
+                Some(
+                    channels
+                        .iter()
+                        .map(|(&id, channels)| (id, vec![channels.channels.clone()]))
+                        .collect::<BTreeMap<_, _>>(),
+                ),
+            )
+        } else {
+            (&spw_selection, None)
+        };
         compact_spectral_subtables(
             &request.input_ms,
             &request.output_ms,
-            &channel_bins,
+            metadata_bins.as_ref().unwrap_or(&channel_bins),
             &ddid_to_spw,
-            &spw_selection,
+            metadata_spws,
             correlations.as_ref(),
             grammar,
         )?
@@ -1034,7 +1071,10 @@ fn mstransform_staged(
                 &input,
                 mode,
                 &spw_selection,
-                (&channel_selection, &widths),
+                (
+                    &channel_selection,
+                    (combined_grid.is_none() && regrid_options.is_none()).then_some(&widths),
+                ),
                 (&selected_ddids, &ddid_to_spw, correlations.as_ref()),
             )
         })
@@ -3418,6 +3458,7 @@ where
     Ok(())
 }
 
+#[derive(Clone)]
 struct TransformChannelSelection {
     channels: Vec<usize>,
     metadata_ends: Vec<usize>,
