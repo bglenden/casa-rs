@@ -210,6 +210,7 @@ fn fringefit(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFail
         model_source: GainSolveModelSource::FromMeasurementSet,
         normalize_average_amplitude: false,
         normalization_type: GainNormalization::Mean,
+        robustness: Default::default(),
         min_snr: task.number("minsnr")? as f32,
         min_baselines_per_antenna: 0,
         smodel: [1., 0., 0., 0.],
@@ -420,7 +421,6 @@ pub(super) fn leakage_request(
             GainSolveMode::AmplitudePhase
         },
         normalization: None,
-        robustness: Default::default(),
         interval: parse_time_solint(time)?,
         frequency_interval: parse_frequency_solint(frequency)?,
         combine: combine(task)?,
