@@ -194,6 +194,29 @@ impl ConcatenationPlan {
                 "You must provide at least two images to concatentate".into(),
             ));
         }
+        Self::checked(inputs, axis, relax, reorder)
+    }
+
+    /// Validate the ordered members listed in a published concatenation.
+    /// A published descriptor can list a single image.
+    ///
+    /// # Errors
+    /// Returns an error for a missing member or incompatible geometry.
+    pub fn from_manifest(inputs: &[ConcatInput<'_>], axis: i64) -> Result<Self, ImageError> {
+        if inputs.is_empty() {
+            return Err(ImageError::CasaSelection(
+                "No lattices set in imageconcat.json".into(),
+            ));
+        }
+        Self::checked(inputs, axis, true, false)
+    }
+
+    fn checked(
+        inputs: &[ConcatInput<'_>],
+        axis: i64,
+        relax: bool,
+        reorder: bool,
+    ) -> Result<Self, ImageError> {
         let bases: Vec<_> = inputs.iter().map(|input| axes(input.coordinates)).collect();
         let axis = resolve_axis(inputs, &bases, axis)?;
         let mut order: Vec<_> = (0..inputs.len()).collect();

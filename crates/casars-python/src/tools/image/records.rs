@@ -95,6 +95,8 @@ impl PyImageTool {
             if let Some(directory) = attachment.saved_expression_directory() {
                 let path = image.path().ok_or_else(|| raised("Saved image expression has no name"))?;
                 directory.write_metadata(path, image.kind(), &record)?;
+            } else if image.image_type_name() == "ImageConcat" {
+                attachment.check_bound_name(&image)?;
             } else {
                 attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             }
