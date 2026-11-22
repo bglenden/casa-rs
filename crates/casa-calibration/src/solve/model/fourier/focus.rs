@@ -78,7 +78,7 @@ fn antenna_positions(
         .ok_or_else(|| model_error("virtual Fourier focus has no visibility buffer"))?;
     let mut sums = BTreeMap::<i32, ([f64; 3], usize)>::new();
     for sample in row.focus_rows {
-        let (uvw, _) = projection.apply(uvw(row.ms, sample.index)?);
+        let (uvw, _) = projection.apply(uvw(row.ms, sample.index, row.uncached_main_reads)?);
         for (antenna, sign) in sample.antennas.into_iter().zip([1.0, -1.0]) {
             let (sum, count) = sums.entry(antenna).or_default();
             for (coordinate, value) in sum.iter_mut().zip(uvw) {

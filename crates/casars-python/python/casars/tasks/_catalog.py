@@ -490,8 +490,6 @@ def mstransform(
     """Materialize a selected MeasurementSet into a new output MS.
 
     CASA's ``mstransform``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #978:
-    ``realmodelcol``.
     """
     return _call_casa(mstransform, locals())
 

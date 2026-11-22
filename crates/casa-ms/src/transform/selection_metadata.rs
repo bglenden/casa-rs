@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Antenna and time references in selected MeasurementSet subtables.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use casa_tables::{ColumnType, Table, TableError, TableOptions};
 use casa_types::{RecordValue, ScalarValue, Value};
@@ -266,6 +267,49 @@ pub(super) fn reindex_fields_and_sources(
             .map(|(new, old)| (old, new as i32))
             .collect()
     }))
+}
+
+/// CASA copies SOURCE_MODEL records to a new transform product without
+/// publishing links to the input iterator's field IDs or model paths.
+pub(super) fn remove_virtual_model_links(
+    input: &MeasurementSet,
+    main: &mut Table,
+    output: &Path,
+) -> Result<(), MsTransformError> {
+    let originals = [Some(input.main_table()), input.subtable(SubtableId::Source)];
+    let mut keys = BTreeSet::new();
+    for original in originals.into_iter().flatten() {
+        for field in original.keywords().fields() {
+            if field.name.starts_with("definedmodel_field_") {
+                keys.insert(field.name.as_str());
+                if let Value::Scalar(ScalarValue::String(key)) = &field.value {
+                    keys.insert(key.as_str());
+                }
+            }
+        }
+    }
+    if keys.is_empty() {
+        return Ok(());
+    }
+    for &key in &keys {
+        main.keywords_mut().remove(key);
+    }
+    let source_path = output.join(SubtableId::Source.name());
+    if source_path.is_dir() {
+        let error = |source| MsTransformError::MutateMeasurementSet {
+            path: source_path.display().to_string(),
+            source: Box::new(source),
+        };
+        let mut source =
+            Table::open_metadata_only(TableOptions::new(&source_path)).map_err(error)?;
+        for key in keys {
+            source.keywords_mut().remove(key);
+        }
+        source
+            .save_keywords_atomically(&source_path)
+            .map_err(error)?;
+    }
+    Ok(())
 }
 
 fn reindex_sources(

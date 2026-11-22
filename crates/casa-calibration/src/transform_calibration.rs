@@ -7,8 +7,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_ms::{
-    MeasurementSet, MsSelection, PreparedTransformInputView, TransformInputColumns,
-    TransformInputView,
+    MeasurementSet, MsSelection, PreparedTransformInputView, ResolvedMsSelectionRow,
+    TransformInputColumns, TransformInputView,
 };
 use casa_tables::{Table, TableError};
 
@@ -51,13 +51,14 @@ impl fmt::Debug for CallibraryView {
 }
 
 impl TransformInputView for CallibraryView {
-    fn prepare(
+    fn prepare<'a>(
         &self,
-        input: &MeasurementSet,
-        rows: &[usize],
+        input: &'a MeasurementSet,
+        rows: &[ResolvedMsSelectionRow],
         channels: &BTreeMap<i32, &[usize]>,
-    ) -> Result<Box<dyn PreparedTransformInputView>, TableError> {
-        let plan = plan_transform_rows(input, &self.request, rows, channels)
+    ) -> Result<Box<dyn PreparedTransformInputView + 'a>, TableError> {
+        let row_indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+        let plan = plan_transform_rows(input, &self.request, &row_indices, channels)
             .map_err(|source| TableError::Schema(source.to_string()))?;
         let prepared = PreparedReadOnlyApply::new(input, plan)
             .map_err(|source| TableError::Schema(source.to_string()))?;
@@ -70,10 +71,11 @@ impl TransformInputView for CallibraryView {
         48
     }
 
-    fn provides(&self, input: &Table, column: &str) -> bool {
+    fn provides(&self, input: &MeasurementSet, column: &str) -> bool {
         match column {
             "CORRECTED_DATA" | "FLAG" | "WEIGHT" => true,
             "WEIGHT_SPECTRUM" => input
+                .main_table()
                 .schema()
                 .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM")),
             _ => false,

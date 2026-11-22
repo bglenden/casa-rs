@@ -49,7 +49,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
-| mstransform | mstransform | yes | 55 | 55 | 0 | 1 | 0 | 0 |
+| mstransform | mstransform | yes | 55 | 55 | 0 | 0 | 0 | 0 |
 | pccor | pccor | yes | 9 | 9 | 0 | 0 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | yes | 102 | 102 | 0 | 12 | 0 | 0 |
@@ -1613,7 +1613,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `realmodelcol`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
 - Defaults that differ: none

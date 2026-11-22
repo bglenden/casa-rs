@@ -662,17 +662,13 @@ fn mstransform_staged(
                 reason: source.to_string(),
             })?;
     let view_factory = options.input_view.as_deref();
-    let visibility = VisibilityColumns::resolve(
-        input.main_table(),
-        request.data_column,
-        &request.input_ms,
-        view_factory,
-    )?;
+    let visibility =
+        VisibilityColumns::resolve(&input, request.data_column, &request.input_ms, view_factory)?;
     let TransformSelection {
         selection,
         correlations,
         time: time_selection,
-        rows,
+        mut rows,
         antenna_ids,
         tile_window,
     } = match partition {
@@ -753,20 +749,13 @@ fn mstransform_staged(
             None
         };
     let ddid_to_spw = data_description_spw_map(&input)?;
-    let mut time_rows = Vec::new();
+    rows.retain(|row| {
+        spw_selection.selects_row(row.data_desc_id)
+            && channel_bins.contains_key(&row.spectral_window_id)
+    });
     let (mut selected_rows, mut selected_ddids): (Vec<_>, Vec<_>) = rows
-        .into_iter()
-        .filter(|row| {
-            spw_selection.selects_row(row.data_desc_id)
-                && channel_bins.contains_key(&row.spectral_window_id)
-        })
-        .map(|row| {
-            let indices = (row.row_index, row.data_desc_id);
-            if options.time_averaging.is_some() {
-                time_rows.push(row);
-            }
-            indices
-        })
+        .iter()
+        .map(|row| (row.row_index, row.data_desc_id))
         .unzip();
     maybe_log_transform_progress(
         "filter_rows_by_spw",
@@ -792,9 +781,9 @@ fn mstransform_staged(
             .map_err(selection_error)?;
         (selected_rows, selected_ddids) =
             keep_unflagged_rows(&input, &selected_rows, &selected_ddids, flag_rows)?;
-        if options.time_averaging.is_some() {
+        if options.time_averaging.is_some() || view_factory.is_some() {
             let kept = selected_rows.iter().copied().collect::<BTreeSet<_>>();
-            time_rows.retain(|row| kept.contains(&row.row_index));
+            rows.retain(|row| kept.contains(&row.row_index));
         }
         maybe_log_transform_progress(
             "drop_fully_flagged_rows",
@@ -821,13 +810,12 @@ fn mstransform_staged(
             .iter()
             .map(|(&id, selection)| (id, selection.channels.as_slice()))
             .collect();
-        Some(
-            view.prepare(&input, &selected_rows, &channels)
-                .map_err(|source| MsTransformError::MutateMeasurementSet {
-                    path: request.input_ms.display().to_string(),
-                    source: Box::new(source),
-                })?,
-        )
+        Some(view.prepare(&input, &rows, &channels).map_err(|source| {
+            MsTransformError::MutateMeasurementSet {
+                path: request.input_ms.display().to_string(),
+                source: Box::new(source),
+            }
+        })?)
     } else {
         None
     };
@@ -848,8 +836,9 @@ fn mstransform_staged(
     let stage_started_at = Instant::now();
     let time_groups = options
         .time_averaging
-        .map(|options| time_average::plan(&input, &time_rows, options, order))
+        .map(|options| time_average::plan(&input, &rows, options, order))
         .transpose()?;
+    drop(rows);
     let selection_metadata::OrderedMainRows {
         rows: selected_rows,
         descriptions: selected_ddids,
@@ -1165,6 +1154,13 @@ fn mstransform_staged(
     };
     if combined_grid.is_some() {
         combine::remap_subtable_references(request)?;
+    }
+    if grammar == RowGrammar::Transform {
+        selection_metadata::remove_virtual_model_links(
+            &input,
+            &mut output_main,
+            &request.output_ms,
+        )?;
     }
     maybe_log_transform_progress(
         "compact_spectral_subtables",

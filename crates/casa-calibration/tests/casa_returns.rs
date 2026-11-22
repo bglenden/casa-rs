@@ -819,31 +819,10 @@ fn split_and_mstransform_return_none() {
 }
 
 #[test]
-fn transform_values_not_implemented_yet_are_refused_naming_978() {
+fn transform_refuses_channel_averaging_by_one_before_creating_output() {
     let workspace = tempfile::tempdir().unwrap();
     let vis = ms_common::create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
     let outputvis = workspace.path().join("out.ms");
-    // Until virtual models can be read by the transform, refuse the request
-    // before creating an output.
-    for (binary, surface, values, parameter) in [(
-        MSTRANSFORM,
-        "mstransform",
-        json!({"outputvis": outputvis, "datacolumn": "model", "realmodelcol": true}),
-        "realmodelcol",
-    )] {
-        let mut values = values;
-        values["vis"] = json!(vis);
-        let Some(TaskReply::Failed {
-            message,
-            parameter: named,
-            ..
-        }) = json_run_binary(binary, workspace.path(), surface, values).1
-        else {
-            panic!("{surface} {parameter}: not refused");
-        };
-        assert_eq!(named.as_deref(), Some(parameter), "{message}");
-        assert!(message.contains("#978"), "{message}");
-    }
     // CASA's mstransform refuses to average by one channel, as casa-rs now
     // does, rather than copy the data unaveraged (Astra's #997 F8).
     let values = json!({"vis": vis, "outputvis": outputvis, "datacolumn": "data",
