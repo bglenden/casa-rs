@@ -26,6 +26,7 @@
   "plotweather": "vis",
   "polcal": "vis",
   "sdcal": "infile",
+  "sdgaincal": "infile",
   "split": "vis",
   "statwt": "vis",
   "uvmodelfit": "vis",

@@ -13,11 +13,18 @@ pub(super) struct GainSample {
     pub(super) flags: ArrayD<bool>,
 }
 
-pub(super) fn radius(requested: Option<f64>, frequencies: &[f64], aperture: f64) -> Result<f64, String> {
+pub(super) fn radius(
+    requested: Option<f64>,
+    frequencies: &[f64],
+    aperture: f64,
+) -> Result<f64, String> {
     if let Some(radius) = requested.filter(|radius| *radius > 0.) {
         return Ok(radius);
     }
-    let last = frequencies.len().checked_sub(1).ok_or("Missing observing frequency.")?;
+    let last = frequencies
+        .len()
+        .checked_sub(1)
+        .ok_or("Missing observing frequency.")?;
     let center = (frequencies[last / 2] + frequencies[frequencies.len() / 2]) / 2.;
     let radius = 0.5 * 1.13 * SPEED_OF_LIGHT_M_S / (aperture * center);
     if !radius.is_finite() || radius <= 0. {
@@ -26,11 +33,18 @@ pub(super) fn radius(requested: Option<f64>, frequencies: &[f64], aperture: f64)
     Ok(radius)
 }
 
-pub(super) fn normalize(samples: &mut [GainSample], radius: f64, smooth: bool) -> Result<(), String> {
+pub(super) fn normalize(
+    samples: &mut [GainSample],
+    radius: f64,
+    smooth: bool,
+) -> Result<(), String> {
     let shape = samples[0].data.shape();
-    let [receptors, channels] = <[usize; 2]>::try_from(shape)
-        .map_err(|_| "Double-circle data must have two axes.")?;
-    if samples.iter().any(|sample| sample.data.shape() != shape || sample.flags.shape() != shape) {
+    let [receptors, channels] =
+        <[usize; 2]>::try_from(shape).map_err(|_| "Double-circle data must have two axes.")?;
+    if samples
+        .iter()
+        .any(|sample| sample.data.shape() != shape || sample.flags.shape() != shape)
+    {
         return Err("Inconsistent visibility or flag shape in the gain group.".into());
     }
     let half_width = (radius * ARCSEC_PER_RADIAN / 1.5).round() as usize;
@@ -55,8 +69,13 @@ pub(super) fn normalize(samples: &mut [GainSample], radius: f64, smooth: bool) -
             } else {
                 &data
             };
-            let (sum, present) = powers.iter().zip(&flags).filter(|&(_, &flag)| !flag)
-                .fold((0., 0), |(sum, count), (&power, _)| (sum + power, count + 1));
+            let (sum, present) = powers
+                .iter()
+                .zip(&flags)
+                .filter(|&(_, &flag)| !flag)
+                .fold((0., 0), |(sum, count), (&power, _)| {
+                    (sum + power, count + 1)
+                });
             let mean = sum / f64::from(present.max(1));
             for (sample, (&raw, &power)) in samples.iter_mut().zip(data.iter().zip(powers)) {
                 let ratio = mean / power;
@@ -88,8 +107,14 @@ fn smooth_power(data: &[f64], flags: &[bool], half_width: usize, output: &mut Ve
             }
         }
         end = bound;
-        output.push(if flag { power } else { sum / f64::from(present.max(1)) });
-        if let Some(left) = center.checked_sub(half_width) && !flags[left] {
+        output.push(if flag {
+            power
+        } else {
+            sum / f64::from(present.max(1))
+        });
+        if let Some(left) = center.checked_sub(half_width)
+            && !flags[left]
+        {
             sum -= data[left];
             present -= 1;
         }

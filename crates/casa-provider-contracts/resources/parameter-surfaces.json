@@ -41956,6 +41956,10 @@
               "label": "smooth",
               "group": "Solve"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "WVR smoothing selects a time interval, while sdgaincal enables flag-aware smoothing within each gain group."
           }
         },
         {
@@ -43944,7 +43948,8 @@
               "field": "fraction"
             },
             "python": {
-              "name": "fraction"
+              "name": "fraction",
+              "type_hint": "str | int | float"
             },
             "presentation": {
               "label": "Fraction of reference integrations selected for an edge",
@@ -44100,7 +44105,8 @@
               "field": "applytable"
             },
             "python": {
-              "name": "applytable"
+              "name": "applytable",
+              "type_hint": "StrPath | list[StrPath] | tuple[StrPath, ...]"
             },
             "presentation": {
               "label": "One calibration table or an ordered list of tables",
@@ -44180,7 +44186,8 @@
               "field": "spwmap"
             },
             "python": {
-              "name": "spwmap"
+              "name": "spwmap",
+              "type_hint": "list[int] | dict[int | str, list[int]]"
             },
             "presentation": {
               "label": "Tsys source window per science window",
@@ -44383,6 +44390,595 @@
             "presentation": {
               "label": "Scan",
               "group": "Selection"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "sdgaincal",
+      "contract_version": 1,
+      "display_name": "Single-Dish Gain Calibration",
+      "category": "Calibration",
+      "summary": "Solve single-dish double-circle gain calibration.",
+      "provider_family": "calibration",
+      "casa_task": "sdgaincal",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "sdgaincal"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "infile",
+          "concept": {
+            "id": "single_dish.sky.infile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infile"
+              ]
+            },
+            "provider": {
+              "field": "infile"
+            },
+            "python": {
+              "name": "infile"
+            },
+            "presentation": {
+              "label": "Input MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "calmode",
+          "concept": {
+            "id": "single_dish.gain.calmode",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "doublecircle"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--calmode"
+              ]
+            },
+            "provider": {
+              "field": "calmode"
+            },
+            "python": {
+              "name": "calmode"
+            },
+            "presentation": {
+              "label": "Calibration mode",
+              "group": "Sky"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "Single-dish gain calibration mode."
+          }
+        },
+        {
+          "name": "radius",
+          "concept": {
+            "id": "single_dish.gain.radius",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--radius"
+              ]
+            },
+            "provider": {
+              "field": "radius"
+            },
+            "python": {
+              "name": "radius",
+              "type_hint": "str | int | float"
+            },
+            "presentation": {
+              "label": "Central radius",
+              "group": "Sky"
+            }
+          }
+        },
+        {
+          "name": "smooth",
+          "concept": {
+            "id": "single_dish.gain.smooth",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--smooth"
+              ]
+            },
+            "provider": {
+              "field": "smooth"
+            },
+            "python": {
+              "name": "smooth"
+            },
+            "presentation": {
+              "label": "Smooth powers",
+              "group": "Sky"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "Spectral window",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "applytable",
+          "concept": {
+            "id": "single_dish.sky.applytable",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--applytable"
+              ]
+            },
+            "provider": {
+              "field": "applytable"
+            },
+            "python": {
+              "name": "applytable",
+              "type_hint": "StrPath | list[StrPath] | tuple[StrPath, ...]"
+            },
+            "presentation": {
+              "label": "One calibration table or an ordered list of tables",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "interp",
+          "concept": {
+            "id": "single_dish.gain.interp",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interp"
+              ]
+            },
+            "provider": {
+              "field": "interp"
+            },
+            "python": {
+              "name": "interp",
+              "type_hint": "str | list[str] | tuple[str, ...]"
+            },
+            "presentation": {
+              "label": "Interpolation per table",
+              "group": "Apply"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "One interpolation string for all prior tables or a string for each prior table."
+          }
+        },
+        {
+          "name": "spwmap",
+          "concept": {
+            "id": "single_dish.gain.spwmap",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spwmap"
+              ]
+            },
+            "provider": {
+              "field": "spwmap"
+            },
+            "python": {
+              "name": "spwmap",
+              "type_hint": "list[int] | list[list[int]] | tuple[int, ...] | tuple[tuple[int, ...], ...] | dict[int, list[int]]"
+            },
+            "presentation": {
+              "label": "Spectral-window maps",
+              "group": "Apply"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "One spectral-window map for all prior tables or maps per table."
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "single_dish.sky.outfile",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "Output calibration table",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "Overwrite output",
+              "group": "Output"
             }
           }
         }

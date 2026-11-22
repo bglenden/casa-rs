@@ -9623,3 +9623,13 @@ solutions. In the 42-solution result both references from the last strip
 are missing. Casa-rs always includes the last strip and checks its
 solutions against the selected integrations and the complete CASA runs.
 [Pinned CASA raster source](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/SingleDishSkyCal.cc?at=refs%2Ftags%2F6.7.6.14)
+
+## Double-circle gain calibration can abort on several selected channels
+
+CASA 6.7.6.14 uses a scalar gain cell while copying the selected spectrum
+into the solve buffer. On the paired total-power map, `sdgaincal` with
+`spw='0:1~2'` terminates with `ArrayShapeError` because a one-channel
+cell receives two channels. The same map with `spw='0:1'` produces 138
+scalar solutions at the selected frequency. Casa-rs reports a catchable
+single-channel requirement before publishing an output. The paired oracle
+runs the CASA crash case in its own process.

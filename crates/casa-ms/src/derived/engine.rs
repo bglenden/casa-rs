@@ -1173,6 +1173,14 @@ pub fn raw_field_phase_direction(ms: &MeasurementSet, field_id: usize) -> MsResu
     Ok(MDirection::from_angles(longitude, latitude, reference))
 }
 
+/// Return the stored FIELD reference direction in its original measure frame.
+pub fn raw_field_reference_direction(ms: &MeasurementSet, field_id: usize) -> MsResult<MDirection> {
+    let field = ms.field()?;
+    let (longitude, latitude) = phase_dir_constant(field.reference_dir(field_id)?)?;
+    let reference = resolve_direction_reference(field.table(), "FIELD", "REFERENCE_DIR", field_id)?;
+    Ok(MDirection::from_angles(longitude, latitude, reference))
+}
+
 /// The epoch of `field_id`'s FIELD row, its `TIME` in that column's
 /// reference (UTC when it names none): the origin of its direction
 /// polynomial and the time casacore evaluates its ephemeris at when asked

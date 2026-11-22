@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 898
-- Surfaces: 53 (53 task, 0 session)
-- Surface bindings: 1218
+- Concepts: 903
+- Surfaces: 54 (54 task, 0 session)
+- Surface bindings: 1232
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -69,6 +69,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Polarization Calibration](#surface-polcal)<br><code>polcal</code> | task | 1 | <code>calibration</code> | 27 | Solve polarization leakage and cross-hand calibration. |
 | [Polarization from Gains](#surface-polfromgain)<br><code>polfromgain</code> | task | 1 | <code>calibration</code> | 5 | Estimate fractional linear polarization from receptor gain amplitude ratios. |
 | [Single-Dish Sky Calibration](#surface-sdcal)<br><code>sdcal</code> | task | 1 | <code>calibration</code> | 14 | Generate and apply single-dish sky and system-temperature calibration. |
+| [Single-Dish Gain Calibration](#surface-sdgaincal)<br><code>sdgaincal</code> | task | 1 | <code>calibration</code> | 14 | Solve single-dish double-circle gain calibration. |
 
 <a id="surface-msexplore"></a>
 
@@ -1976,5 +1977,32 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal scan selector text. |
+
+<a id="surface-sdgaincal"></a>
+
+## Single-Dish Gain Calibration (<code>sdgaincal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Solve single-dish double-circle gain calibration.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>infile</code> | <code>single_dish.sky.infile@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | Input MeasurementSet. |
+| <code>calmode</code> | <code>single_dish.gain.calmode@r1</code> | <code>choice (1 values)</code> | <code>"doublecircle"</code>; optional | Sky | Single-dish gain calibration mode. |
+| <code>radius</code> | <code>single_dish.gain.radius@r1</code> | <code>variant</code> | <code>""</code>; optional | Sky | Central-region angular radius or the default half-primary-beam radius. |
+| <code>smooth</code> | <code>single_dish.gain.smooth@r1</code> | <code>bool</code> | <code>true</code>; optional | Sky | Smooth reference powers before normalizing gain. |
+| <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal antenna selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal scan selector text. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>applytable</code> | <code>single_dish.sky.applytable@r1</code> | <code>variant</code> | <code>""</code>; optional | Apply | One calibration table or an ordered list of tables. |
+| <code>interp</code> | <code>single_dish.gain.interp@r1</code> | <code>variant</code> | <code>""</code>; optional | Apply | One interpolation string for all prior tables or a string for each prior table. |
+| <code>spwmap</code> | <code>single_dish.gain.spwmap@r1</code> | <code>variant</code> | <code>[]</code>; optional | Apply | One spectral-window map for all prior tables or maps per table. |
+| <code>outfile</code> | <code>single_dish.sky.outfile@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Output calibration table. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 
 _End of generated reference._

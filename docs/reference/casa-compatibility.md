@@ -54,6 +54,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
@@ -2499,6 +2500,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1974`.
+
+### sdgaincal
+
+- CASA source: `casatasks/sdgaincal.py`, 14 parameters
+- Implementation: `casatasks/private/task_sdgaincal.py`, `sdgaincal` (line 64): 0 return statements, 7 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 14, in CASA's order: yes
+- Defaults that differ: none
 
 ### setjy
 

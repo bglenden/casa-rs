@@ -18150,6 +18150,109 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.gain.calmode",
+      "semantic_revision": 1,
+      "casa_name": "calmode",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "doublecircle"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Single-dish gain calibration mode.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.gain.radius",
+      "semantic_revision": 1,
+      "casa_name": "radius",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Central-region angular radius or the default half-primary-beam radius.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.gain.smooth",
+      "semantic_revision": 1,
+      "casa_name": "smooth",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Smooth reference powers before normalizing gain.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.gain.interp",
+      "semantic_revision": 1,
+      "casa_name": "interp",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "One interpolation string for all prior tables or a string for each prior table.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.gain.spwmap",
+      "semantic_revision": 1,
+      "casa_name": "spwmap",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "One spectral-window map for all prior tables or maps per table.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }
