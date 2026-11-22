@@ -110,7 +110,6 @@ impl LegacyEpSolver {
         let engine = MsCalEngine::new(ms)?;
         let antenna_count = ms.antenna()?.row_count();
         let mut rows = Rows::new(ms, selected, self.interval_seconds)?;
-        let mut offsets_by_spw = BTreeMap::new();
         let mut results = Vec::new();
         while let Some(chunk) = rows.next() {
             let first = chunk[0].0;
@@ -125,15 +124,15 @@ impl LegacyEpSolver {
             }
             drop(input);
             let _fit = crate::timing::Phase::start("ep_fit");
-            let offsets = offsets_by_spw
-                .entry(first.spectral_window_id)
-                .or_insert_with(|| vec![[0.; 4]; antenna_count]);
-            if fit::solve(&baselines, offsets) {
+            // EPJones::solveRPar aliases pointPar_, which guessPar zeros
+            // at the beginning of every independent solution interval.
+            let mut offsets = vec![[0.; 4]; antenna_count];
+            if fit::solve(&baselines, &mut offsets) {
                 results.push(Slot {
                     spw: first.spectral_window_id,
                     field: first.field_id,
                     time: first.time_mjd_seconds,
-                    offsets: offsets.clone(),
+                    offsets,
                 });
             }
         }
