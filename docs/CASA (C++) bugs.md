@@ -8134,6 +8134,17 @@ metadata incomplete. The native transform uses the available final channel
 as the last footprint and writes metadata for all five selected channels
 (#1618).
 
+## Spectral-window combination can ignore weights when exposures differ
+
+For simultaneous overlapping windows with unequal EXPOSURE, CASA 6.7.6.14
+`mstransform(combinespws=True)` reports that it will use spectral weights.
+`MSTransformManager::combineCubeOfData` modifies a local coefficient during
+its first pass but reloads the original geometric coefficient when it adds
+the visibility. With equal bandwidth and observed weights of 4/9 and 4,
+overlapping real samples 16 and 1000 yield 508. The native task applies
+the matching observed weights in the sum and normalization, giving 901.6.
+Both tasks record the mean input exposure (#1618).
+
 ## Selecting defined spectra or several channel ranges can crash channel averaging
 
 Both CASA 6.7.6.14 tasks can terminate with SIGSEGV and leave an incomplete MS

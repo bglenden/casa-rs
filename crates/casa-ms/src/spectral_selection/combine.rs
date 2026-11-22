@@ -41,28 +41,74 @@ use crate::error::{MsError, MsResult};
 /// Returns an error when no window is given, or a window is empty or its
 /// frequencies and widths differ in length.
 pub fn combine_spectral_windows(windows: &[(&[f64], &[f64])]) -> MsResult<(Vec<f64>, Vec<f64>)> {
+    Ok(combine_windows(windows, false)?
+        .into_iter()
+        .map(|channel| (channel.frequency, channel.width))
+        .unzip())
+}
+
+/// One input channel contributing its fractional bandwidth to a combined channel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct WindowContribution {
+    pub(crate) window: usize,
+    pub(crate) channel: usize,
+    pub(crate) fraction: f64,
+}
+
+/// A channel on the irregular grid before the task interpolates onto its final grid.
+#[derive(Clone)]
+pub(crate) struct CombinedChannel {
+    pub(crate) frequency: f64,
+    pub(crate) width: f64,
+    pub(crate) sources: Vec<WindowContribution>,
+}
+
+impl CombinedChannel {
+    fn lower(&self) -> f64 {
+        self.frequency - self.width / 2.0
+    }
+
+    fn upper(&self) -> f64 {
+        self.frequency + self.width / 2.0
+    }
+
+    fn set_edges(&mut self, lower: f64, upper: f64) {
+        self.width = upper - lower;
+        self.frequency = (lower + upper) / 2.0;
+    }
+}
+
+pub(crate) fn combine_windows(
+    windows: &[(&[f64], &[f64])],
+    track_sources: bool,
+) -> MsResult<Vec<CombinedChannel>> {
     let mut ascending = windows
         .iter()
-        .map(|&(frequencies_hz, widths_hz)| ascending_window(frequencies_hz, widths_hz))
+        .enumerate()
+        .map(|(index, &(frequencies, widths))| {
+            ascending_window(index, frequencies, widths, track_sources)
+        })
         .collect::<MsResult<Vec<_>>>()?;
     // CASA sorts by the lowest channel frequency; the stable sort keeps
     // window-id order for windows starting together.
-    ascending.sort_by(|a, b| a.0[0].total_cmp(&b.0[0]));
+    ascending.sort_by(|a, b| a[0].frequency.total_cmp(&b[0].frequency));
     let mut windows = ascending.into_iter();
-    let (mut frequencies_hz, mut widths_hz) = windows.next().ok_or_else(|| {
+    let mut axis = windows.next().ok_or_else(|| {
         MsError::VersionError("combining spectral windows needs at least one".to_string())
     })?;
-    for (window_hz, window_widths_hz) in windows {
-        (frequencies_hz, widths_hz) = merge_window(
-            (&frequencies_hz, &widths_hz),
-            (&window_hz, &window_widths_hz),
-        );
+    for window in windows {
+        axis = merge_window(axis, window, track_sources);
     }
-    Ok((frequencies_hz, widths_hz))
+    Ok(axis)
 }
 
 /// A window's channels ascending in frequency, with positive widths.
-fn ascending_window(frequencies_hz: &[f64], widths_hz: &[f64]) -> MsResult<(Vec<f64>, Vec<f64>)> {
+fn ascending_window(
+    window: usize,
+    frequencies_hz: &[f64],
+    widths_hz: &[f64],
+    track_sources: bool,
+) -> MsResult<Vec<CombinedChannel>> {
     if frequencies_hz.is_empty() || frequencies_hz.len() != widths_hz.len() {
         return Err(MsError::VersionError(format!(
             "combining spectral windows needs matching non-empty frequency/width arrays, got {} \
@@ -71,94 +117,115 @@ fn ascending_window(frequencies_hz: &[f64], widths_hz: &[f64]) -> MsResult<(Vec<
             widths_hz.len()
         )));
     }
-    let mut frequencies_hz = frequencies_hz.to_vec();
-    let mut widths_hz = widths_hz
+    let mut channels = frequencies_hz
         .iter()
-        .map(|width| width.abs())
+        .zip(widths_hz)
+        .enumerate()
+        .map(|(channel, (&frequency, &width))| CombinedChannel {
+            frequency,
+            width: width.abs(),
+            sources: if track_sources {
+                vec![WindowContribution {
+                    window,
+                    channel,
+                    fraction: 1.0,
+                }]
+            } else {
+                Vec::new()
+            },
+        })
         .collect::<Vec<_>>();
     if frequencies_hz[0] > frequencies_hz[frequencies_hz.len() - 1] {
-        frequencies_hz.reverse();
-        widths_hz.reverse();
+        channels.reverse();
     }
-    Ok((frequencies_hz, widths_hz))
+    Ok(channels)
 }
 
 /// One step of `combineSpwsCore`'s loop: window `i` merged into the axis.
 fn merge_window(
-    (axis_hz, axis_widths_hz): (&[f64], &[f64]),
-    (window_hz, window_widths_hz): (&[f64], &[f64]),
-) -> (Vec<f64>, Vec<f64>) {
-    let n = axis_hz.len();
-    let ni = window_hz.len();
-    let mut merged_hz = Vec::with_capacity(n + ni);
-    let mut merged_widths_hz = Vec::with_capacity(n + ni);
-    let lower = |hz: &[f64], widths: &[f64], k: usize| hz[k] - widths[k] / 2.0;
-    let upper = |hz: &[f64], widths: &[f64], k: usize| hz[k] + widths[k] / 2.0;
-    if upper(axis_hz, axis_widths_hz, n - 1) < lower(window_hz, window_widths_hz, 0) {
-        merged_hz.extend_from_slice(axis_hz);
-        merged_hz.extend_from_slice(window_hz);
-        merged_widths_hz.extend_from_slice(axis_widths_hz);
-        merged_widths_hz.extend_from_slice(window_widths_hz);
-        return (merged_hz, merged_widths_hz);
+    mut axis: Vec<CombinedChannel>,
+    mut window: Vec<CombinedChannel>,
+    track_sources: bool,
+) -> Vec<CombinedChannel> {
+    let last_axis = axis.len() - 1;
+    let last_window = window.len() - 1;
+    let upper_axis = axis[last_axis].upper();
+    let lower_axis = axis[last_axis].lower();
+    if upper_axis < window[0].lower() {
+        axis.append(&mut window);
+        return axis;
     }
-    if lower(axis_hz, axis_widths_hz, 0) > upper(window_hz, window_widths_hz, ni - 1) {
-        merged_hz.extend_from_slice(window_hz);
-        merged_hz.extend_from_slice(axis_hz);
-        merged_widths_hz.extend_from_slice(window_widths_hz);
-        merged_widths_hz.extend_from_slice(axis_widths_hz);
-        return (merged_hz, merged_widths_hz);
+    if axis[0].lower() > window[last_window].upper() {
+        window.append(&mut axis);
+        return window;
     }
+    let mut merged = Vec::with_capacity(axis.len() + window.len());
     let mut axis_start = 0;
     // The window starts below the axis (CASA compares with its last
     // channel's lower edge).
-    if lower(window_hz, window_widths_hz, 0) < lower(axis_hz, axis_widths_hz, n - 1) {
-        let lower_0 = lower(axis_hz, axis_widths_hz, 0);
-        let upper_0 = upper(axis_hz, axis_widths_hz, 0);
-        let (mut lower_k, mut upper_k) = (0.0, 0.0);
-        for k in 0..ni {
-            upper_k = upper(window_hz, window_widths_hz, k);
-            lower_k = lower(window_hz, window_widths_hz, k);
-            if lower_0 < upper_k {
+    if window[0].lower() < lower_axis {
+        for incoming in &window {
+            if axis[0].lower() < incoming.upper() {
+                if incoming.lower() < axis[0].lower() {
+                    let mut wide = incoming.clone();
+                    wide.width = axis[0].upper() - incoming.lower();
+                    wide.frequency = incoming.lower() + wide.width / 2.0;
+                    wide.sources.append(&mut axis[0].sources);
+                    merged.push(wide);
+                    axis_start = 1;
+                }
                 break;
             }
-            merged_hz.push(window_hz[k]);
-            merged_widths_hz.push(window_widths_hz[k]);
-        }
-        if lower_0 < upper_k && lower_k < lower_0 {
-            let width_hz = upper_0 - lower_k;
-            merged_hz.push(lower_k + width_hz / 2.0);
-            merged_widths_hz.push(width_hz);
-            axis_start = 1;
+            merged.push(incoming.clone());
         }
     }
-    merged_hz.extend_from_slice(&axis_hz[axis_start..]);
-    merged_widths_hz.extend_from_slice(&axis_widths_hz[axis_start..]);
-    let upper_j = upper(axis_hz, axis_widths_hz, n - 1);
-    if upper_j < upper(window_hz, window_widths_hz, ni - 1) {
-        let lower_j = lower(axis_hz, axis_widths_hz, n - 1);
+    if track_sources {
+        let half_max_width = window.iter().map(|c| c.width).fold(0.0, f64::max) / 2.0;
+        for current in &mut axis[axis_start..] {
+            let low = current.lower();
+            let high = current.upper();
+            let first = window.partition_point(|c| c.frequency <= low - half_max_width);
+            for incoming in window[first..]
+                .iter()
+                .take_while(|c| c.frequency < high + half_max_width)
+            {
+                let overlap = high.min(incoming.upper()) - low.max(incoming.lower());
+                if overlap > 0.0 {
+                    let mut source = incoming.sources[0];
+                    source.fraction = (overlap / incoming.width).min(1.0);
+                    current.sources.push(source);
+                }
+            }
+        }
+    }
+    merged.extend(axis.into_iter().skip(axis_start));
+    if upper_axis < window[last_window].upper() {
         // The overlap case holds a window channel starting at or below the
         // axis's upper edge.
-        let mut k = (0..ni)
-            .rev()
-            .find(|&k| lower(window_hz, window_widths_hz, k) <= upper_j)
+        let mut k = window
+            .iter()
+            .rposition(|incoming| incoming.lower() <= upper_axis)
             .expect("an overlapping window starts at or below the axis's upper edge");
-        let lower_k = lower(window_hz, window_widths_hz, k);
-        let upper_k = upper(window_hz, window_widths_hz, k);
-        if lower_k < upper_j && upper_j < upper_k {
-            if (upper_j - lower_k) / window_widths_hz[k] > 0.01 {
-                let j = n - 1;
-                merged_hz[j] = (lower_j + upper_k) / 2.0;
-                merged_widths_hz[j] = upper_k - lower_j;
+        let incoming = &window[k];
+        let lower_k = incoming.lower();
+        let upper_k = incoming.upper();
+        if lower_k < upper_axis && upper_axis < upper_k {
+            if (upper_axis - lower_k) / incoming.width > 0.01 {
+                let widened = &mut merged[last_axis];
+                widened.set_edges(lower_axis, upper_k);
+                if let Some(source) = widened.sources.last_mut() {
+                    source.fraction = 1.0;
+                }
             } else {
-                merged_hz.push((upper_j + upper_k) / 2.0);
-                merged_widths_hz.push(upper_k - upper_j);
+                let mut narrow = incoming.clone();
+                narrow.set_edges(upper_axis, upper_k);
+                merged.push(narrow);
             }
             k += 1;
         }
-        merged_hz.extend_from_slice(&window_hz[k..]);
-        merged_widths_hz.extend_from_slice(&window_widths_hz[k..]);
+        merged.extend(window.into_iter().skip(k));
     }
-    (merged_hz, merged_widths_hz)
+    merged
 }
 
 #[cfg(test)]
@@ -171,6 +238,37 @@ mod tests {
             .map(|(frequencies, widths)| (frequencies.as_slice(), widths.as_slice()))
             .collect::<Vec<_>>();
         combine_spectral_windows(&windows).expect("windows combine")
+    }
+
+    #[test]
+    fn fractional_overlap_keeps_the_old_footprints_and_full_widened_edge_contributor() {
+        let axis = combine_windows(
+            &[(&[0., 1., 2.], &[1.; 3]), (&[1.5, 2.5, 3.5], &[1.; 3])],
+            true,
+        )
+        .unwrap();
+        assert_eq!(axis[2].frequency, 2.25);
+        assert_eq!(axis[2].width, 1.5);
+        assert_eq!(
+            axis[2].sources,
+            [
+                WindowContribution {
+                    window: 0,
+                    channel: 2,
+                    fraction: 1.0
+                },
+                WindowContribution {
+                    window: 1,
+                    channel: 0,
+                    fraction: 0.5
+                },
+                WindowContribution {
+                    window: 1,
+                    channel: 1,
+                    fraction: 1.0
+                },
+            ]
+        );
     }
 
     /// `refim_oneshiftpoint.mosaic.ms`: three one-channel windows of

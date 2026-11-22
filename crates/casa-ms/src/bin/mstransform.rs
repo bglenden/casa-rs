@@ -92,6 +92,7 @@ fn transform_request(
     let options = MsTransformTaskOptions {
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
         hanning: task.surface() == "mstransform" && task.flag("hanning")?,
+        combine_spws: task.surface() == "mstransform" && task.flag("combinespws")?,
         channel_widths,
         time_averaging: time_average_options(task)?,
         history: Some(task_history(task)),
