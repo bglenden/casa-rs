@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_images::analysis::{ImageToolExpressionInputs, ImageToolPixelExpression};
-use casa_images::expr_file::{ToolExpressionManifest, is_image_expr, read_tool_manifest};
+use casa_images::concat_file::is_image_concat;
+use casa_images::expr_file::{ToolExpressionManifest, is_image_expr};
 use casa_images::{ImageExpression, TempImage, image_expr::ImageExprValue};
 use casa_tables::lexical_absolute;
 use casa_types::{Complex32, RecordValue};
@@ -54,6 +55,7 @@ fn compile_at(
     let (captured, manifest) = SavedExpressionDirectory::open(path, root.clone())?;
     let initial = PendingExpression::from_manifest(root, manifest, &directory)?;
     let mut graph = CapturedGraph::default();
+    graph.retain_manifest(&captured)?;
     let (pixels, single_precision, misc) = graph.compile(initial, &directory, open_source)?;
     captured.check_name(path)?;
     let image = match pixels {
@@ -126,9 +128,16 @@ impl CapturedGraph {
                     continue;
                 }
                 self.paths.push(path.to_path_buf());
-                if is_image_expr(path) {
-                    active.insert(path.to_path_buf());
-                    let nested = PendingExpression::read(path.to_path_buf(), directory)?;
+                if is_image_concat(path) {
+                    return Err(raised(
+                        "A virtual concatenation cannot yet be used inside a saved image expression (#1625)",
+                    ));
+                } else if is_image_expr(path) {
+                    let path = path.to_path_buf();
+                    active.insert(path.clone());
+                    let (captured, manifest) = SavedExpressionDirectory::open(&path, path.clone())?;
+                    self.retain_manifest(&captured)?;
+                    let nested = PendingExpression::from_manifest(path, manifest, directory)?;
                     pending.push(nested);
                 } else if !path.is_file() {
                     self.retained.push(open_source(path)?);
@@ -149,6 +158,14 @@ impl CapturedGraph {
             }
         }
         unreachable!("completed graph returns its root");
+    }
+
+    fn retain_manifest(&mut self, directory: &SavedExpressionDirectory) -> PyResult<()> {
+        if let Some((entry, referent)) = directory.linked_manifest_paths() {
+            self.retain_operand_aliases(&entry)?;
+            self.paths.push(referent.to_owned());
+        }
+        Ok(())
     }
 
     fn retain_operand_aliases(&mut self, entry: &Path) -> PyResult<()> {
@@ -185,16 +202,6 @@ struct PendingExpression {
 }
 
 impl PendingExpression {
-    fn read(path: PathBuf, directory: &Path) -> PyResult<Self> {
-        if path.join("imageconcat.json").is_file() {
-            return Err(raised(
-                "Opening a virtual concatenated image is not implemented yet (#1749)",
-            ));
-        }
-        let manifest = read_tool_manifest(&path).map_err(raised)?;
-        Self::from_manifest(path, manifest, directory)
-    }
-
     fn from_manifest(
         path: PathBuf,
         manifest: ToolExpressionManifest,

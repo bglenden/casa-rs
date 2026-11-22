@@ -30,19 +30,24 @@ use crate::tools::image::handle::{ImageHandle, Storage, raised, same_file_identi
 use crate::tools::image::saved_expression::SavedExpressionInputs;
 
 pub(in crate::tools::image) fn open(path: &Path) -> PyResult<AttachedImage> {
-    let image = load(path, &mut HashSet::new())?;
+    let image = load(path, false, &mut HashSet::new())?;
     AttachedImage::with_virtual_concat(image, path, &mut registry())
 }
 
 pub(in crate::tools::image) fn open_handle(path: &Path) -> Result<ImageHandle, ImageError> {
-    load(path, &mut HashSet::new()).map_err(|error| ImageError::CasaSelection(error.to_string()))
+    load(path, false, &mut HashSet::new())
+        .map_err(|error| ImageError::CasaSelection(error.to_string()))
 }
 
 pub(in crate::tools::image) fn check_relocation(source: &Path, target: &Path) -> PyResult<()> {
     super::relocation::check_rename(source, target)
 }
 
-fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
+fn load(
+    path: &Path,
+    outer_tempclose: bool,
+    active: &mut HashSet<PathBuf>,
+) -> PyResult<ImageHandle> {
     let root = path.canonicalize().map_err(raised)?;
     if !active.insert(root.clone()) {
         return Err(raised(format!(
@@ -52,7 +57,8 @@ fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
     }
     let manifest = ConcatManifest::open(&root).map_err(raised)?;
     let paths = manifest.paths(&root);
-    let inputs = open_members(&paths, manifest.temp_close(), active)?;
+    let tempclose = outer_tempclose || manifest.temp_close();
+    let inputs = open_members(&paths, tempclose, active)?;
     let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
     let kind = manifest.pixel_type().map_err(raised)?;
     validate_types(&inputs, kind)?;
@@ -63,7 +69,7 @@ fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
         inputs,
         plan,
         manifest.misc_info().map_err(raised)?,
-        manifest.temp_close(),
+        tempclose,
         kind,
     )?;
     active.remove(&root);
@@ -179,7 +185,7 @@ fn open_members<'a>(
         .map(|path| {
             let resolved = path.canonicalize().map_err(raised)?;
             if is_image_concat(&resolved) {
-                let image = load(&resolved, active)?;
+                let image = load(&resolved, tempclose, active)?;
                 Input::from_image(path, image, tempclose, None)
             } else {
                 Input::open_resolved(path, &resolved, tempclose)
@@ -290,7 +296,7 @@ fn typed<T: MemberPixel>(
             writable_mask: input.writable_mask,
             advisory_lock: input.advisory_lock,
             beam_axes: plane_axes(&input.coordinate_record)?,
-            tempclose: tempclose && input.expression.is_none(),
+            tempclose: tempclose && input.expression_operands.is_empty(),
             storage: Mutex::new(storage),
             expression: input.expression,
             expression_operands: input.expression_operands,

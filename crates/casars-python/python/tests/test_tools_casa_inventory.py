@@ -55,6 +55,9 @@ IMPLEMENTED["calibrater"] = {
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
+    "image": {
+        "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
+    },
 }
 
 IMPLEMENTED["coordsys"] = {
@@ -95,7 +98,6 @@ IMPLEMENTED["image"] = {
     "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",
     "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "rotatebeam", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
     "summary", "set", "tofits", "putregion",
-    "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
 }
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",

@@ -240,7 +240,7 @@ impl<'a> Input<'a> {
             writable,
             writable_mask,
             advisory_lock,
-            opened: (!tempclose || expression.is_some()).then_some(image),
+            opened: (!tempclose || !expression_operands.is_empty()).then_some(image),
             expression,
             expression_operands,
             revision,
@@ -259,9 +259,26 @@ impl<'a> Input<'a> {
 }
 
 fn protect_expression_sources(output: &Path, inputs: &[Input<'_>]) -> PyResult<()> {
+    let route = casa_tables::lexical_absolute(output);
+    let entry = route
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .zip(route.file_name())
+        .map(|(parent, name)| parent.join(name));
+    let referent = output.canonicalize().ok();
     for input in inputs {
         for path in &input.expression_operands {
-            ensure_outfile_does_not_alias_input(output, path).map_err(raised)?;
+            if std::iter::once(&route)
+                .chain(entry.iter())
+                .chain(referent.iter())
+                .any(|output| path.starts_with(output) || output.starts_with(path))
+            {
+                return Err(raised(format!(
+                    "Cannot overwrite output {} because it overlaps a saved image expression input {}",
+                    output.display(),
+                    path.display(),
+                )));
+            }
         }
     }
     Ok(())

@@ -131,6 +131,12 @@ impl SavedExpressionDirectory {
         check_name(name, &self.path, &self.identity)
     }
 
+    pub(super) fn linked_manifest_paths(&self) -> Option<(PathBuf, &Path)> {
+        self.link
+            .as_ref()
+            .map(|_| (self.path.join(MANIFEST), self.target.path.as_path()))
+    }
+
     pub(super) fn lock_manifest(&self) -> MutexGuard<'_, fs::File> {
         self.manifest.lock().unwrap_or_else(PoisonError::into_inner)
     }

@@ -488,7 +488,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "fromrecord",
@@ -633,7 +633,7 @@ const METHODS: &[Method] = &[
             param("mode", K::Text, Text("paged")),
         ],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "insert",
@@ -762,7 +762,7 @@ const METHODS: &[Method] = &[
         "newimage",
         &[param("infile", K::Any, Required)],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "newimagefromarray",
@@ -782,7 +782,7 @@ const METHODS: &[Method] = &[
         "newimagefromfile",
         &[param("infile", K::Any, Required)],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "newimagefromfits",
@@ -808,7 +808,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "newimagefromshape",
@@ -831,7 +831,7 @@ const METHODS: &[Method] = &[
             param("cache", K::Bool, Bool(true)),
         ],
         R::Any,
-        Yes,
+        Status::Partial,
     ),
     method(
         "pad",

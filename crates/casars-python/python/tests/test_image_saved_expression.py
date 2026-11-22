@@ -456,6 +456,67 @@ def test_saved_expression_concat_move_keeps_a_required_leaf(tmp_path):
         image.done()
 
 
+@pytest.mark.parametrize("mode", ["paged", "copy"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_concat_refuses_to_replace_a_linked_manifest_referent(tmp_path, mode, nested):
+    api = _backend("casars")
+    output = tmp_path / "output.im"
+    leaf = tmp_path / "leaf.im"
+    other = tmp_path / "other.im"
+    original = _typed_operand(api, output, "float")
+    pixels = _typed_operand(api, leaf, "float")
+    _typed_operand(api, other, "float")
+    referent = output / "expression.json"
+    document = json.dumps({"ImageExpr": f'"{leaf}" * 3'})
+    referent.write_text(document)
+    linked = tmp_path / "linked.im"
+    linked.mkdir()
+    (linked / "imageexpr.json").symlink_to(referent)
+    if nested:
+        expression = tmp_path / "outer.im"
+        _manifest(expression, ImageExpr=f'"{linked}" + 1')
+    else:
+        expression = linked
+    image = api.image()
+    try:
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression input"):
+            image.imageconcat(str(output), [str(expression), str(other)],
+                              axis=0, relax=True, mode=mode, overwrite=True)
+        assert referent.read_text() == document
+        assert image.open(str(output))
+        np.testing.assert_array_equal(image.getchunk(), original)
+        assert image.open(str(expression))
+        np.testing.assert_array_equal(image.getchunk(), pixels * 3 + int(nested))
+    finally:
+        image.done()
+
+
+def test_concat_refuses_to_replace_a_directory_containing_an_operand_alias(tmp_path):
+    api = _backend("casars")
+    output = tmp_path / "output.im"
+    leaf = tmp_path / "leaf.im"
+    other = tmp_path / "other.im"
+    original = _typed_operand(api, output, "float")
+    pixels = _typed_operand(api, leaf, "float")
+    _typed_operand(api, other, "float")
+    alias = output / "alias.im"
+    alias.symlink_to(leaf, target_is_directory=True)
+    expression = tmp_path / "expression.im"
+    _manifest(expression, ImageExpr=f'"{alias}" * 3')
+    image = api.image()
+    try:
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression input"):
+            image.imageconcat(str(output), [str(expression), str(other)],
+                              axis=0, relax=True, overwrite=True)
+        assert alias.is_symlink()
+        assert image.open(str(output))
+        np.testing.assert_array_equal(image.getchunk(), original)
+        assert image.open(str(expression))
+        np.testing.assert_array_equal(image.getchunk(), pixels * 3)
+    finally:
+        image.done()
+
+
 @pytest.mark.parametrize("backend", ["casa", "casars"])
 def test_live_saved_expression_concat_holds_the_operand_for_removal(tmp_path, backend):
     api = _backend(backend)
@@ -478,6 +539,36 @@ def test_live_saved_expression_concat_holds_the_operand_for_removal(tmp_path, ba
         assert image.open(str(source))
         assert image.remove(done=True)
         assert not source.exists()
+    finally:
+        joined.done()
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("inner_tempclose", [False, True])
+def test_outer_tempclose_keeps_nested_saved_expression_leases(tmp_path, backend, inner_tempclose):
+    api = _backend(backend)
+    names = ("leaf.im", "expression.im", "first.im", "second.im", "inner.im", "outer.im")
+    leaf, expression, first, second, inner, outer = (tmp_path / name for name in names)
+    pixels = _typed_operand(api, leaf, "float")
+    first_pixels = _typed_operand(api, first, "float")
+    second_pixels = _typed_operand(api, second, "float")
+    _manifest(expression, ImageExpr=f'"{leaf}" * 3')
+    image = api.image()
+    joined = image.imageconcat(str(inner), [str(expression), str(first)],
+                               axis=0, relax=True, tempclose=inner_tempclose, mode="nomove")
+    joined.done()
+    joined = image.imageconcat(str(outer), [str(inner), str(second)],
+                               axis=0, relax=True, tempclose=True, mode="nomove")
+    try:
+        np.testing.assert_array_equal(joined.haslock(), [True, False])
+        np.testing.assert_array_equal(joined.getchunk(),
+                                      np.concatenate([pixels * 3, first_pixels, second_pixels]))
+        np.testing.assert_array_equal(joined.haslock(), [True, False])
+        assert joined.unlock()
+        np.testing.assert_array_equal(joined.haslock(), [False, False])
+        assert joined.lock(False, 1)
+        np.testing.assert_array_equal(joined.haslock(), [True, False])
     finally:
         joined.done()
         image.done()
