@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
-use casa_tables::TableWriteLock;
+use casa_images::ImagePixelType;
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
+use casa_tables::{TableWriteLock, lexical_absolute};
 use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -16,6 +18,7 @@ use crate::tools::table::casa_record;
 use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
 use super::handle::{ImageHandle, Storage, raised};
+use super::lifecycle::resolve_image_path;
 use super::pixels::Pixels;
 
 enum CreationInput {
@@ -23,9 +26,9 @@ enum CreationInput {
     Pixels(PyResult<Pixels>),
 }
 
-struct Create {
+struct Create<'a> {
     method: &'static str,
-    outfile: String,
+    outfile: &'a str,
     shape: Vec<usize>,
     record: RecordValue,
     linear: bool,
@@ -34,13 +37,14 @@ struct Create {
     kind: String,
 }
 
-impl Create {
-    fn build(
-        &self,
-        pixels: Option<Pixels>,
-        path: Option<&Path>,
-        history: bool,
-    ) -> PyResult<ImageHandle> {
+struct CreationGeometry {
+    record: RecordValue,
+    coordinates: CoordinateSystem,
+    pixel_type: ImagePixelType,
+}
+
+impl Create<'_> {
+    fn geometry(&self, pixels: Option<&Pixels>) -> PyResult<CreationGeometry> {
         let record = if self.record.fields().is_empty() {
             super::default_record::for_shape(&self.shape, self.linear)?
         } else if let [field] = self.record.fields()
@@ -52,18 +56,45 @@ impl Create {
         };
         let coordinates = CoordinateSystem::from_record(&record)
             .map_err(|_| raised("Exception: Invalid coordinate system record"))?;
+        let kind = self.kind.to_ascii_lowercase();
+        let pixel_type = match (kind.as_str(), pixels.is_some_and(Pixels::is_complex)) {
+            ("f", false) => ImagePixelType::Float32,
+            ("d", false) => ImagePixelType::Float64,
+            ("c", _) | ("f", true) => ImagePixelType::Complex32,
+            ("cd", _) | ("d", true) => ImagePixelType::Complex64,
+            _ => {
+                return Err(raised(
+                    "Exception: Input parm type must be either 'f', 'c', 'd', or 'cd'",
+                ));
+            }
+        };
+        Ok(CreationGeometry {
+            record,
+            coordinates,
+            pixel_type,
+        })
+    }
+
+    fn build(
+        &self,
+        geometry: CreationGeometry,
+        pixels: Option<Pixels>,
+        path: Option<&Path>,
+        history: bool,
+    ) -> PyResult<ImageHandle> {
+        let CreationGeometry {
+            record,
+            coordinates,
+            pixel_type,
+        } = geometry;
         if coordinates.n_pixel_axes() != self.shape.len() {
             return Err(raised(
                 "Exception: Supplied CoordinateSystem and image shape are inconsistent.",
             ));
         }
-        let kind = self.kind.to_ascii_lowercase();
         let shape = self.shape.clone();
-        let mut image = match (
-            kind.as_str(),
-            pixels.as_ref().is_some_and(Pixels::is_complex),
-        ) {
-            ("f", false) => ImageHandle::Float(
+        let mut image = match pixel_type {
+            ImagePixelType::Float32 => ImageHandle::Float(
                 Storage::create(
                     shape,
                     coordinates,
@@ -72,7 +103,7 @@ impl Create {
                 )
                 .map_err(raised)?,
             ),
-            ("d", false) => ImageHandle::Double(
+            ImagePixelType::Float64 => ImageHandle::Double(
                 Storage::create(
                     shape,
                     coordinates,
@@ -81,7 +112,7 @@ impl Create {
                 )
                 .map_err(raised)?,
             ),
-            ("c", _) | ("f", true) => ImageHandle::Complex(
+            ImagePixelType::Complex32 => ImageHandle::Complex(
                 Storage::create(
                     shape,
                     coordinates,
@@ -90,7 +121,7 @@ impl Create {
                 )
                 .map_err(raised)?,
             ),
-            ("cd", _) | ("d", true) => ImageHandle::DComplex(
+            ImagePixelType::Complex64 => ImageHandle::DComplex(
                 Storage::create(
                     shape,
                     coordinates,
@@ -99,11 +130,6 @@ impl Create {
                 )
                 .map_err(raised)?,
             ),
-            _ => {
-                return Err(raised(
-                    "Exception: Input parm type must be either 'f', 'c', 'd', or 'cd'",
-                ));
-            }
         };
         image.set_coordinate_record(record)?;
         self.history(&mut image, pixels.as_ref(), history)?;
@@ -172,7 +198,12 @@ impl Create {
         Ok(shape.into_iter().map(|length| length as usize).collect())
     }
 
-    fn run(mut self, input: CreationInput, history: bool) -> PyResult<AttachedImage> {
+    fn run(
+        mut self,
+        input: CreationInput,
+        history: bool,
+        expanded: PyResult<Cow<'_, str>>,
+    ) -> PyResult<AttachedImage> {
         let pixels = match input {
             CreationInput::Shape(shape) => {
                 self.shape = Self::image_shape(shape)?;
@@ -190,15 +221,32 @@ impl Create {
                 Some(pixels)
             }
         };
-        publish_image(&self.outfile, self.overwrite, |path| {
-            self.build(pixels, path, history)
+        let geometry = self.geometry(pixels.as_ref())?;
+        let primary =
+            StagedImage::allocate_creation(self.outfile, expanded?.as_ref(), self.overwrite)?;
+        publish_staged_pair(primary, None, self.overwrite, |path, _| {
+            Ok((self.build(geometry, pixels, path, history)?, None))
         })
     }
+}
+
+fn output_exists(name: &str) -> PyErr {
+    raised(format!(
+        "Exception: File {name} exists, and the user does not want to remove it.."
+    ))
+}
+
+fn output_is_not_a_table(path: &Path) -> PyErr {
+    raised(format!(
+        "Table {} already exists (and is not a true table directory)",
+        path.display()
+    ))
 }
 
 struct StagedImage {
     requested: String,
     target: PathBuf,
+    alias: Option<PathBuf>,
     directory: tempfile::TempDir,
     product: PathBuf,
 }
@@ -208,18 +256,72 @@ impl StagedImage {
         if name.is_empty() {
             return Ok(None);
         }
-        let target = std::path::absolute(name).map_err(raised)?;
+        Self::allocate_at(name, Path::new(name)).map(Some)
+    }
+
+    fn allocate_creation(name: &str, expanded: &str, overwrite: bool) -> PyResult<Option<Self>> {
+        if name.is_empty() {
+            return Ok(None);
+        }
+        let expanded = std::path::absolute(expanded).map_err(raised)?;
+        if expanded.file_name().is_none() {
+            return Err(raised("Invalid output image name"));
+        }
+        if !overwrite && expanded.symlink_metadata().is_ok() {
+            return Err(output_exists(name));
+        }
+        let target = lexical_absolute(&expanded);
+        if !target.parent().is_some_and(Path::is_dir) {
+            return Err(raised(format!(
+                "Directory: {} does not exist and cannot be created",
+                target.display()
+            )));
+        }
+        if overwrite
+            && target
+                .symlink_metadata()
+                .is_ok_and(|entry| entry.is_symlink())
+        {
+            let referent = target.canonicalize().map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    output_is_not_a_table(&target)
+                } else {
+                    raised(error)
+                }
+            })?;
+            let mut stage = Self::allocate_at(name, &referent)?;
+            stage.alias = Some(target);
+            return Ok(Some(stage));
+        }
+        Self::allocate_at(name, &target).map(Some)
+    }
+
+    fn allocate_at(name: &str, target: &Path) -> PyResult<Self> {
+        let target = std::path::absolute(target).map_err(raised)?;
         let parent = target
             .parent()
             .ok_or_else(|| raised("Invalid output image path"))?;
         let directory = tempfile::tempdir_in(parent).map_err(raised)?;
         let product = directory.path().join("image");
-        Ok(Some(Self {
+        Ok(Self {
             requested: name.to_owned(),
             target,
+            alias: None,
             directory,
             product,
-        }))
+        })
+    }
+
+    fn check_alias(&self) -> PyResult<()> {
+        if let Some(alias) = &self.alias
+            && !alias.canonicalize().is_ok_and(|path| path == self.target)
+        {
+            return Err(raised(format!(
+                "The output alias {} changed during image creation",
+                alias.display()
+            )));
+        }
+        Ok(())
     }
 
     fn resolved_key(&self) -> PyResult<PathBuf> {
@@ -236,12 +338,10 @@ impl StagedImage {
         registry: &attachment::OpenImages,
         locks: &mut BTreeMap<PathBuf, TableWriteLock>,
     ) -> PyResult<bool> {
+        self.check_alias()?;
         let path = &self.target;
         match path.symlink_metadata() {
-            Ok(_) if !overwrite => Err(raised(format!(
-                "Exception: File {} exists, and the user does not want to remove it..",
-                self.requested
-            ))),
+            Ok(_) if !overwrite => Err(output_exists(&self.requested)),
             Ok(_) => {
                 let key = attachment::key(path)?;
                 if attachment::conflicting_images(registry, &key, 0)
@@ -262,10 +362,7 @@ impl StagedImage {
                     && casa_tables::Table::open_metadata_only(casa_tables::TableOptions::new(path))
                         .is_err()
                 {
-                    return Err(raised(format!(
-                        "Table {} already exists (and is not a true table directory)",
-                        path.display()
-                    )));
+                    return Err(output_is_not_a_table(path));
                 }
                 attachment::lock_table_tree(&key, locks)?;
                 Ok(true)
@@ -276,6 +373,7 @@ impl StagedImage {
     }
 
     fn install(self, existed: bool) -> PyResult<InstalledImage> {
+        self.check_alias()?;
         #[cfg(unix)]
         let directory = std::fs::File::open(&self.product).map_err(raised)?;
         if existed {
@@ -331,6 +429,23 @@ struct InstalledImage {
 }
 
 impl InstalledImage {
+    fn open(&self, registry: &mut attachment::OpenImages) -> PyResult<AttachedImage> {
+        let stage = &self.stage;
+        let Some(alias) = &stage.alias else {
+            return AttachedImage::open_created(registry, &stage.target);
+        };
+        stage.check_alias()?;
+        let image = AttachedImage::open_created_as(registry, alias, &stage.target)?;
+        stage.check_alias()?;
+        if !self.still_at_destination() {
+            return Err(raised(format!(
+                "The published image at {} changed during creation",
+                stage.target.display()
+            )));
+        }
+        Ok(image)
+    }
+
     fn still_at_destination(&self) -> bool {
         #[cfg(unix)]
         {
@@ -387,8 +502,20 @@ pub(super) fn publish_image_pair(
     overwrite: bool,
     build: impl FnOnce(Option<&Path>, Option<&Path>) -> PyResult<(ImageHandle, Option<ImageHandle>)>,
 ) -> PyResult<AttachedImage> {
-    let primary = StagedImage::allocate(outfile)?;
-    let companion = StagedImage::allocate(companion)?;
+    publish_staged_pair(
+        StagedImage::allocate(outfile)?,
+        StagedImage::allocate(companion)?,
+        overwrite,
+        build,
+    )
+}
+
+fn publish_staged_pair(
+    primary: Option<StagedImage>,
+    companion: Option<StagedImage>,
+    overwrite: bool,
+    build: impl FnOnce(Option<&Path>, Option<&Path>) -> PyResult<(ImageHandle, Option<ImageHandle>)>,
+) -> PyResult<AttachedImage> {
     check_distinct(primary.as_ref(), companion.as_ref())?;
     let (image, secondary) = build(
         primary.as_ref().map(|stage| stage.product.as_path()),
@@ -404,7 +531,7 @@ pub(super) fn publish_image_pair(
     if primary.is_none() && companion.is_none() {
         return Ok(temporary.expect("temporary result"));
     }
-    let target = primary.as_ref().map(|stage| stage.target.clone());
+    let persistent = primary.is_some();
     let mut registry = attachment::registry();
     check_distinct(primary.as_ref(), companion.as_ref())?;
     // The companion becomes visible first. Keep its access lock across
@@ -424,9 +551,13 @@ pub(super) fn publish_image_pair(
         &mut locks,
     )?;
 
-    match target
-        .as_deref()
-        .map(|path| AttachedImage::open_created(&mut registry, path))
+    match persistent
+        .then(|| {
+            installed
+                .last()
+                .expect("primary is installed last")
+                .open(&mut registry)
+        })
         .transpose()
     {
         Ok(native) => Ok(native.or(temporary).expect("image result")),
@@ -600,13 +731,14 @@ impl PyImageTool {
     fn replace_from(
         &self,
         py: Python<'_>,
-        request: Create,
+        request: Create<'_>,
         input: CreationInput,
     ) -> PyResult<bool> {
+        let expanded = resolve_image_path(py, request.outfile);
         py.detach(|| {
             let mut state = self.state();
             state.image = None;
-            state.image = Some(request.run(input, state.history)?);
+            state.image = Some(request.run(input, state.history, expanded)?);
             Ok(true)
         })
     }
@@ -614,12 +746,13 @@ impl PyImageTool {
     fn new_from(
         &self,
         py: Python<'_>,
-        request: Create,
+        request: Create<'_>,
         input: CreationInput,
     ) -> PyResult<Py<Self>> {
+        let expanded = resolve_image_path(py, request.outfile);
         let image = py.detach(|| {
             let history = self.state().history;
-            request.run(input, history)
+            request.run(input, history, expanded)
         })?;
         Py::new(py, Self::attached(image))
     }
@@ -644,7 +777,7 @@ impl PyImageTool {
             method: "fromshape",
             shape: Vec::new(),
             record: casa_record(py, csys)?,
-            outfile: outfile.into(),
+            outfile,
             linear,
             overwrite,
             log,
@@ -669,7 +802,7 @@ impl PyImageTool {
             method: "fromarray",
             shape: Vec::new(),
             record: casa_record(py, csys)?,
-            outfile: outfile.into(),
+            outfile,
             linear,
             overwrite,
             log,
@@ -698,7 +831,7 @@ impl PyImageTool {
             method: "newimagefromshape",
             shape: Vec::new(),
             record: casa_record(py, csys)?,
-            outfile: outfile.into(),
+            outfile,
             linear,
             overwrite,
             log,
@@ -723,7 +856,7 @@ impl PyImageTool {
             method: "newimagefromarray",
             shape: Vec::new(),
             record: casa_record(py, csys)?,
-            outfile: outfile.into(),
+            outfile,
             linear,
             overwrite,
             log,

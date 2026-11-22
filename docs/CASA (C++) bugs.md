@@ -7885,6 +7885,16 @@ image continues reading from the first file. `image.name()` reports the
 second path. casa-rs keeps the attachment name and pixel reads tied to
 the resolved input from the original open. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
 
+## Named image creation can overwrite a lexical destination without permission
+
+With `left/alias` pointing to `right/nested`, create `left/product.im`
+and leave `right/product.im` absent. In CASA 6.7.6.14,
+`image.fromshape("left/alias/../product.im", shape=[2, 3])` can replace
+`left/product.im` with the default `overwrite=False`. CASA checks the
+path through the symlink for a collision, then creates the image at
+the lexical path. casa-rs checks both paths and preserves the existing
+product unless overwrite is enabled. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
 ## An unbraced environment variable at the end of a path can duplicate the directory
 
 With `IMAGE_FILE=source.fits`, CASA 6.7.6.14 can open `/dir/${IMAGE_FILE}`
