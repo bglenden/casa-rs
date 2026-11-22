@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::collections::BTreeMap;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
@@ -28,112 +27,171 @@ pub(in crate::tools::image) struct SavedExpressionDirectory {
     pub(super) path: PathBuf,
     pub(super) identity: fs::Metadata,
     pub(super) expression: String,
-    manifest: Option<Arc<ManifestBinding>>,
+    manifest: Arc<ManifestBinding>,
+    target: ManifestTarget,
+    link: Option<ManifestLink>,
     #[cfg(unix)]
-    handle: fs::File,
+    _directory: Arc<fs::File>,
+}
+
+struct ManifestLink {
+    identity: fs::Metadata,
+    contents: PathBuf,
+}
+
+struct ManifestTarget {
+    path: PathBuf,
+    parent_identity: fs::Metadata,
+    #[cfg(unix)]
+    parent: Arc<fs::File>,
 }
 
 impl SavedExpressionDirectory {
     pub(super) fn open(name: &Path, path: PathBuf) -> PyResult<(Self, ToolExpressionManifest)> {
         #[cfg(unix)]
-        let handle = casa_tables::publication::open_directory_identity(&path).map_err(raised)?;
+        let directory =
+            Arc::new(casa_tables::publication::open_directory_identity(&path).map_err(raised)?);
         #[cfg(unix)]
-        let identity = handle.metadata().map_err(raised)?;
+        let identity = directory.metadata().map_err(raised)?;
         #[cfg(not(unix))]
         let identity = path.metadata().map_err(raised)?;
-        let mut directory = Self {
+        check_name(name, &path, &identity)?;
+        let entry = path.join(MANIFEST);
+        let attributes = entry.symlink_metadata().map_err(raised)?;
+        let (target_path, link) = if attributes.is_symlink() {
+            let contents = fs::read_link(&entry).map_err(raised)?;
+            let link = ManifestLink {
+                contents,
+                identity: attributes,
+            };
+            (entry.canonicalize().map_err(raised)?, Some(link))
+        } else {
+            (entry.clone(), None)
+        };
+        let parent = target_path.parent().ok_or_else(manifest_changed)?;
+        #[cfg(unix)]
+        let target_parent = if parent == path {
+            Arc::clone(&directory)
+        } else {
+            Arc::new(casa_tables::publication::open_directory_identity(parent).map_err(raised)?)
+        };
+        #[cfg(unix)]
+        let parent_identity = target_parent.metadata().map_err(raised)?;
+        #[cfg(not(unix))]
+        let parent_identity = parent.symlink_metadata().map_err(raised)?;
+        let target = ManifestTarget {
+            path: target_path,
+            parent_identity,
+            #[cfg(unix)]
+            parent: target_parent,
+        };
+        let file = target.open()?;
+        let attributes = file.metadata().map_err(raised)?;
+        let manifest = read_tool_manifest_from_reader(&file).map_err(raised)?;
+        check_name(name, &path, &identity)?;
+        target.check_location(link.as_ref(), &entry)?;
+        let current = target.open()?.metadata().map_err(raised)?;
+        if !same_file_identity(&attributes, &current) {
+            return Err(manifest_changed());
+        }
+        let binding = bind_manifest(target.path.clone(), &attributes, file)?;
+        let captured = Self {
             path,
             identity,
-            expression: String::new(),
-            manifest: None,
+            expression: manifest.expression.clone(),
+            manifest: binding,
+            target,
+            link,
             #[cfg(unix)]
-            handle,
+            _directory: directory,
         };
-        directory.check_name(name)?;
-        let entry = directory.path.join(MANIFEST);
-        let attributes = entry.symlink_metadata().map_err(raised)?;
-        let manifest = if attributes.is_symlink() {
-            // Casacore permits reading a linked manifest. Writes need an
-            // owned regular entry in the captured directory.
-            read_tool_manifest(&directory.path).map_err(raised)?
-        } else {
-            let file = directory.open_regular_manifest()?;
-            let manifest = read_tool_manifest_from_reader(&file).map_err(raised)?;
-            let attributes = file.metadata().map_err(raised)?;
-            let visible = directory
-                .open_regular_manifest()?
-                .metadata()
-                .map_err(raised)?;
-            if !same_file_identity(&attributes, &visible) {
-                return Err(raised("Saved image expression manifest has changed"));
-            }
-            directory.manifest = Some(bind_manifest(entry, &attributes, file)?);
-            manifest
-        };
-        directory.expression = manifest.expression.clone();
-        Ok((directory, manifest))
+        Ok((captured, manifest))
     }
 
     pub(super) fn check_name(&self, name: &Path) -> PyResult<()> {
-        if name.canonicalize().is_ok_and(|path| path == self.path)
-            && self
-                .path
-                .symlink_metadata()
-                .is_ok_and(|current| same_file_identity(&self.identity, &current))
-        {
-            return Ok(());
+        check_name(name, &self.path, &self.identity)
+    }
+
+    pub(super) fn lock_manifest(&self) -> MutexGuard<'_, fs::File> {
+        self.manifest.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn open_bound_file(&self, bound: &fs::File) -> PyResult<(fs::File, fs::Metadata)> {
+        self.target
+            .check_location(self.link.as_ref(), &self.path.join(MANIFEST))?;
+        let current = self.target.open()?;
+        let before = current.metadata().map_err(raised)?;
+        if !same_file_identity(&bound.metadata().map_err(raised)?, &before) {
+            return Err(manifest_changed());
         }
-        Err(raised(format!(
-            "Saved image expression at {} has changed",
-            name.display()
-        )))
+        Ok((current, before))
     }
 
-    fn open_regular_manifest(&self) -> PyResult<fs::File> {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        return casa_tables::publication::open_regular_directory_entry(
-            &self.handle,
-            OsStr::new(MANIFEST),
-        )
-        .map_err(raised);
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            let path = self.path.join(MANIFEST);
-            if !path.symlink_metadata().map_err(raised)?.is_file() {
-                return Err(raised(
-                    "Saved image expression manifest must be a regular file",
-                ));
-            }
-            fs::File::open(path).map_err(raised)
-        }
-    }
-
-    pub(super) fn lock_manifest(&self) -> Option<MutexGuard<'_, fs::File>> {
-        self.manifest
-            .as_ref()
-            .map(|binding| binding.lock().unwrap_or_else(PoisonError::into_inner))
-    }
-
-    pub(super) fn read_bound_manifest(
-        &self,
-        bound: Option<&fs::File>,
-    ) -> PyResult<ToolExpressionManifest> {
-        let manifest = if let Some(bound) = bound {
-            let current = self.open_regular_manifest()?;
-            if !same_file_identity(
-                &bound.metadata().map_err(raised)?,
-                &current.metadata().map_err(raised)?,
-            ) {
-                return Err(raised("Saved image expression manifest has changed"));
-            }
-            read_tool_manifest_from_reader(current).map_err(raised)?
-        } else {
-            read_tool_manifest(&self.path).map_err(raised)?
-        };
+    fn read_manifest(&self, file: impl std::io::Read) -> PyResult<ToolExpressionManifest> {
+        let manifest = read_tool_manifest_from_reader(file).map_err(raised)?;
         if manifest.expression != self.expression {
-            return Err(raised("Saved image expression manifest has changed"));
+            return Err(manifest_changed());
         }
         Ok(manifest)
+    }
+
+    pub(super) fn read_bound_manifest(&self, bound: &fs::File) -> PyResult<ToolExpressionManifest> {
+        let (current, _) = self.open_bound_file(bound)?;
+        self.read_manifest(current)
+    }
+
+    pub(super) fn check_staged_manifest(&self, staged: &Path) -> PyResult<()> {
+        let manifest = match &self.link {
+            Some(link) => {
+                if !fs::read_link(staged.join(MANIFEST))
+                    .is_ok_and(|contents| contents == link.contents)
+                {
+                    return Err(manifest_changed());
+                }
+                // A relative link can resolve differently at a temporary staging path.
+                // Read the copied internal file itself, or validate the original external
+                // file when the link reaches its final location.
+                let Ok(relative) = self.target.path.strip_prefix(&self.path) else {
+                    return Ok(());
+                };
+                self.read_manifest(fs::File::open(staged.join(relative)).map_err(raised)?)?
+            }
+            None => {
+                let manifest = read_tool_manifest(staged).map_err(raised)?;
+                if manifest.expression != self.expression {
+                    return Err(manifest_changed());
+                }
+                manifest
+            }
+        };
+        manifest.misc_info().map(drop).map_err(raised)
+    }
+
+    pub(super) fn check_relocated_manifest(
+        &self,
+        relocated: &Self,
+        before: &fs::Metadata,
+        copied: bool,
+    ) -> PyResult<()> {
+        let relative = self.target.path.strip_prefix(&self.path).ok();
+        let expected = relative.map(|path| relocated.path.join(path));
+        if relocated.target.path != expected.as_deref().unwrap_or(&self.target.path) {
+            return Err(manifest_changed());
+        }
+        match (&self.link, &relocated.link) {
+            (Some(old), Some(new))
+                if old.contents == new.contents
+                    && (copied || same_file_identity(&old.identity, &new.identity)) => {}
+            (None, None) => {}
+            _ => return Err(manifest_changed()),
+        }
+        if !copied || relative.is_none() {
+            let current = relocated.lock_manifest().metadata().map_err(raised)?;
+            if !same_file_identity(before, &current) {
+                return Err(manifest_changed());
+            }
+        }
+        Ok(())
     }
 
     pub(in crate::tools::image) fn write_metadata(
@@ -142,6 +200,11 @@ impl SavedExpressionDirectory {
         pixel_type: ImagePixelType,
         record: &RecordValue,
     ) -> PyResult<()> {
+        if self.link.is_some() {
+            return Err(raised(
+                "Saved image expression manifest must be a regular file",
+            ));
+        }
         let pixel_type = match pixel_type {
             ImagePixelType::Float32 => PrimitiveType::Float32,
             ImagePixelType::Float64 => PrimitiveType::Float64,
@@ -149,57 +212,120 @@ impl SavedExpressionDirectory {
             ImagePixelType::Complex64 => PrimitiveType::Complex64,
         };
         let content = encode_tool_manifest(&self.expression, pixel_type, record).map_err(raised)?;
-        let binding = self
-            .manifest
-            .as_ref()
-            .ok_or_else(|| raised("Saved image expression manifest must be a regular file"))?;
-        let mut bound = binding.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut bound = self.lock_manifest();
         self.check_name(name)?;
-        let current = self.open_regular_manifest()?;
-        let before = current.metadata().map_err(raised)?;
-        if !same_file_identity(&bound.metadata().map_err(raised)?, &before) {
-            return Err(raised("Saved image expression manifest has changed"));
-        }
-        casa_tables::publication::check_write_access(&self.path.join(MANIFEST)).map_err(raised)?;
-        if read_tool_manifest_from_reader(&current)
-            .map_err(raised)?
-            .expression
-            != self.expression
+        let (current, before) = self.open_bound_file(&bound)?;
+        casa_tables::publication::check_write_access(&self.target.path).map_err(raised)?;
+        self.read_manifest(current)?;
+        *bound = self.target.publish(&before, &content, || {
+            self.check_name(name)?;
+            self.target
+                .check_location(self.link.as_ref(), &self.path.join(MANIFEST))
+        })?;
+        Ok(())
+    }
+}
+
+impl ManifestTarget {
+    fn parent_path(&self) -> &Path {
+        self.path.parent().expect("manifest has a parent")
+    }
+
+    fn entry_name(&self) -> &OsStr {
+        self.path.file_name().expect("manifest has a name")
+    }
+
+    fn open(&self) -> PyResult<fs::File> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        return casa_tables::publication::open_regular_directory_entry(
+            &self.parent,
+            self.entry_name(),
+        )
+        .map_err(raised);
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            return Err(raised("Saved image expression manifest has changed"));
+            if !self.path.symlink_metadata().map_err(raised)?.is_file() {
+                return Err(raised(
+                    "Saved image expression manifest must be a regular file",
+                ));
+            }
+            fs::File::open(&self.path).map_err(raised)
         }
-        *bound = self.publish(name, &before, &content)?;
+    }
+
+    fn check_location(&self, link: Option<&ManifestLink>, entry: &Path) -> PyResult<()> {
+        if !self
+            .parent_path()
+            .symlink_metadata()
+            .is_ok_and(|actual| same_file_identity(&self.parent_identity, &actual))
+        {
+            return Err(manifest_changed());
+        }
+        if let Some(link) = link
+            && !(entry
+                .symlink_metadata()
+                .is_ok_and(|actual| same_file_identity(&link.identity, &actual))
+                && fs::read_link(entry).is_ok_and(|contents| contents == link.contents)
+                && entry.canonicalize().is_ok_and(|path| path == self.path))
+        {
+            return Err(manifest_changed());
+        }
         Ok(())
     }
 
-    fn publish(&self, name: &Path, before: &fs::Metadata, content: &[u8]) -> PyResult<fs::File> {
+    fn publish(
+        &self,
+        before: &fs::Metadata,
+        content: &[u8],
+        check_location: impl FnOnce() -> PyResult<()>,
+    ) -> PyResult<fs::File> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            let mut staged =
-                casa_tables::publication::StagedDirectoryFile::new(&self.handle, &self.path)
-                    .map_err(raised)?;
+            let mut staged = casa_tables::publication::StagedDirectoryFile::new(
+                &self.parent,
+                self.parent_path(),
+            )
+            .map_err(raised)?;
             write_staged(staged.file_mut(), before, content)?;
-            self.check_name(name)?;
-            staged.replace(OsStr::new(MANIFEST), before).map_err(raised)
+            check_location()?;
+            staged.replace(self.entry_name(), before).map_err(raised)
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let mut staged = tempfile::Builder::new()
                 .prefix(".imageexpr-")
-                .tempfile_in(&self.path)
+                .tempfile_in(self.parent_path())
                 .map_err(raised)?;
             write_staged(staged.as_file_mut(), before, content)?;
-            self.check_name(name)?;
-            let target = self.path.join(MANIFEST);
-            if !target
+            check_location()?;
+            if !self
+                .path
                 .symlink_metadata()
                 .is_ok_and(|current| same_file_snapshot(before, &current))
             {
-                return Err(raised("Saved image expression manifest has changed"));
+                return Err(manifest_changed());
             }
-            staged.persist(target).map_err(raised)
+            staged.persist(&self.path).map_err(raised)
         }
     }
+}
+
+fn check_name(name: &Path, path: &Path, identity: &fs::Metadata) -> PyResult<()> {
+    if name.canonicalize().is_ok_and(|actual| actual == path)
+        && path
+            .symlink_metadata()
+            .is_ok_and(|current| same_file_identity(identity, &current))
+    {
+        return Ok(());
+    }
+    Err(raised(format!(
+        "Saved image expression at {} has changed",
+        name.display()
+    )))
+}
+
+fn manifest_changed() -> PyErr {
+    raised("Saved image expression manifest has changed")
 }
 
 fn bind_manifest(

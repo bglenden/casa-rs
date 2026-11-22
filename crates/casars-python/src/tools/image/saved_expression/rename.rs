@@ -18,7 +18,7 @@ use crate::tools::image::attachment::{
 };
 use crate::tools::image::handle::{ImageHandle, Storage, raised};
 use crate::tools::image::native_rename::{
-    check_path_relationship, move_read_only_directory, native_destination,
+    NativeTableMove, check_path_relationship, move_read_only_directory, native_destination,
 };
 
 impl SavedExpressionDirectory {
@@ -76,13 +76,16 @@ impl SavedExpressionDirectory {
         let images = registry();
         self.check_name(&old_name)?;
         let bound = self.lock_manifest();
-        self.read_bound_manifest(bound.as_deref())?
+        self.read_bound_manifest(&bound)?
             .misc_info()
             .map_err(raised)?;
+        let replace_alias = target_snapshot.as_ref().is_some_and(Metadata::is_symlink);
         if conflicting_images(&images, source, 0)
             || conflicting_images(&images, &destination, 0)
             || containing_tables(source).any(crate::tools::table::path_is_in_use)
             || containing_tables(&destination).any(crate::tools::table::path_is_in_use)
+            || crate::tools::table::path_is_in_use(source)
+            || (!replace_alias && crate::tools::table::path_is_in_use(&destination))
         {
             return Err(raised(
                 "Cannot rename saved image expression while a table in either path is open",
@@ -103,18 +106,21 @@ impl SavedExpressionDirectory {
             lock_table_ancestors(&destination, &mut leases)?;
         }
         self.check_name(&old_name)?;
-        self.read_bound_manifest(bound.as_deref())?;
+        self.read_bound_manifest(&bound)?;
+        let before = bound.metadata().map_err(raised)?;
         let moved = move_read_only_directory(
             source,
             &self.identity,
             &destination,
             target_snapshot.as_ref(),
-            |staged| self.persisted_misc(staged).map(drop),
+            |staged| self.check_staged_manifest(staged),
         )?;
+        let copied = matches!(&moved, NativeTableMove::Copied { .. });
         drop(bound);
         let reopen = || {
             moved.check_target(&destination)?;
             let (directory, manifest) = Self::open(&destination, destination.clone())?;
+            self.check_relocated_manifest(&directory, &before, copied)?;
             if manifest.expression != self.expression {
                 return Err(raised("Saved image expression manifest has changed"));
             }
@@ -140,14 +146,6 @@ impl SavedExpressionDirectory {
         };
         moved.finish(&destination)?;
         Ok(attachment)
-    }
-
-    fn persisted_misc(&self, path: &Path) -> PyResult<Option<RecordValue>> {
-        let manifest = casa_images::expr_file::read_tool_manifest(path).map_err(raised)?;
-        if manifest.expression != self.expression {
-            return Err(raised("Saved image expression manifest has changed"));
-        }
-        manifest.misc_info().map_err(raised)
     }
 }
 
@@ -179,12 +177,9 @@ fn reopened_storage<T: ImageExprValue>(
             "A saved image expression must have a captured graph",
         ));
     };
-    let mut expression = image
+    let expression = image
         .saved_expression()
         .ok_or_else(|| raised("Saved image expression has no captured graph"))?
         .clone();
-    if let Some(misc) = misc {
-        expression = expression.with_misc_info(misc);
-    }
-    expression_storage(expression, destination)
+    expression_storage(expression, destination, misc)
 }

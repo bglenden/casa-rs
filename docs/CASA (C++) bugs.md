@@ -8375,8 +8375,17 @@ it reads, or to its own containing directory. CASA can replace the
 operand before segfaulting or delete the containing directory before
 reporting a move error. Casa-rs refuses overlapping destinations and
 moves that would remove a captured operand's pathname, including an
-alias stored inside the expression directory. See
-[#1959](https://github.com/bglenden/casa-rs/issues/1959).
+alias stored inside the expression directory. This includes an alias
+reached through another alias to the expression directory. CASA can
+move the directory and then fail to reopen its operand, leaving the old
+pathname absent.
+
+If `imageexpr.json` links to `../manifest.json`, moving the image under a
+different parent can make the link resolve to a different manifest.
+CASA accepts the move and attaches the replacement's metadata. Casa-rs
+preserves the referent and restores the original directory entries if
+the move would switch to a different manifest with the same expression.
+See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
 ## `calcmask` can crash on decisive Boolean validity
 
