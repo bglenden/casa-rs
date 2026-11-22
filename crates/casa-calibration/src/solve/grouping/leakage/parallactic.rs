@@ -156,7 +156,7 @@ impl ParallacticAverages {
             let context = segment.context;
             let time = legacy_times
                 .and_then(|clock| clock.time(context))
-                .unwrap_or_else(|| context.start + 0.5 * (context.end - context.start));
+                .unwrap_or(context.start + 0.5 * (context.end - context.start));
             let angle = if self.circular {
                 0.0
             } else {

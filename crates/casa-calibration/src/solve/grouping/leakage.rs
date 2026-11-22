@@ -917,7 +917,6 @@ impl LeakageInputs<'_> {
         };
         let flags = flags.as_ref().unwrap_or(input.flags.as_ref());
         let samples = input.samples();
-        let stokes_i = |channel| (model[[order[0], channel]] + model[[order[3], channel]]) * 0.5;
         // The X solve time combines baseline centroids using spectral
         // weights, while time averaging each baseline uses scalar weights.
         let mut legacy_weights = self.legacy_cross_hand.then(|| {
@@ -944,40 +943,7 @@ impl LeakageInputs<'_> {
         let scalar_weight = if let Some((weights, _)) = legacy_weights {
             Some(f64::from((weights[0] + weights[3]) * 0.5))
         } else if self.request.kind.cross_hand() {
-            let normalized = SolveSamples {
-                flags: samples::two_dimensional(flags),
-                ..samples
-            };
-            let shared_flags = (!self.request.correlation_dependent_flags)
-                .then(|| samples::channel_flags(&normalized));
-            let channels = SelectedChannels {
-                indices: &window.channels,
-                all_channels: false,
-                bin_width: (window.bin_width > 1).then_some(window.bin_width),
-                excluded: &[],
-                bin_weights: None,
-            };
-            let sum = order
-                .into_iter()
-                .map(|corr| {
-                    samples::centroid_weight(
-                        &normalized,
-                        corr,
-                        channels,
-                        shared_flags.as_deref(),
-                        |channel| {
-                            if self.request.kind.intensity_normalized() {
-                                stokes_i(channel)
-                            } else {
-                                model[[corr, channel]]
-                            }
-                        },
-                        true,
-                    )
-                })
-                .filter(|weight| weight.is_finite() && *weight > 0.0)
-                .sum();
-            Some(sum)
+            Some(self.cross_hand_centroid_weight(samples, flags, &model, order, window))
         } else {
             None
         };
@@ -1068,6 +1034,49 @@ impl LeakageInputs<'_> {
                 .filter(|_| legacy_xy)
                 .map(|(weights, _)| weights),
         })
+    }
+
+    fn cross_hand_centroid_weight(
+        &self,
+        samples: SolveSamples<'_>,
+        flags: &ArrayD<bool>,
+        model: &ArrayD<Complex32>,
+        order: [usize; 4],
+        window: &WindowChannels,
+    ) -> f64 {
+        let normalized = SolveSamples {
+            flags: samples::two_dimensional(flags),
+            ..samples
+        };
+        let shared_flags = (!self.request.correlation_dependent_flags)
+            .then(|| samples::channel_flags(&normalized));
+        let channels = SelectedChannels {
+            indices: &window.channels,
+            all_channels: false,
+            bin_width: (window.bin_width > 1).then_some(window.bin_width),
+            excluded: &[],
+            bin_weights: None,
+        };
+        order
+            .into_iter()
+            .map(|corr| {
+                samples::centroid_weight(
+                    &normalized,
+                    corr,
+                    channels,
+                    shared_flags.as_deref(),
+                    |channel| {
+                        if self.request.kind.intensity_normalized() {
+                            (model[[order[0], channel]] + model[[order[3], channel]]) * 0.5
+                        } else {
+                            model[[corr, channel]]
+                        }
+                    },
+                    true,
+                )
+            })
+            .filter(|weight| weight.is_finite() && *weight > 0.0)
+            .sum()
     }
 }
 
