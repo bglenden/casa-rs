@@ -23,12 +23,15 @@ pub struct SingleDishSolveControls<'a> {
     pub radius: &'a str,
     /// Smooth the gain reference timeline before taking the ratio.
     pub smooth: bool,
+    /// The generic amplitude/phase selector could not be resolved.
+    pub invalid_apmode: bool,
 }
 
 pub(crate) struct Solver {
     pub(crate) request: GainSolveRequest,
     pub(crate) mode: CalibrationOutputMode,
     kind: Kind,
+    invalid_apmode: bool,
 }
 
 enum Kind {
@@ -59,6 +62,8 @@ impl Solver {
             "SDGAIN_OTFD" => Kind::Gain(gain::Controls {
                 radius: parse_radius(controls.radius)?,
                 smooth: controls.smooth,
+                solve_mode: request.solve_mode,
+                correlation_dependent_flags: false,
             }),
             _ => return Err(format!("Unknown single-dish solve type {family}")),
         };
@@ -66,6 +71,7 @@ impl Solver {
             request,
             mode,
             kind,
+            invalid_apmode: controls.invalid_apmode,
         })
     }
 
@@ -96,6 +102,7 @@ impl Solver {
         ms_path: &Path,
         apply: ApplyPlanRequest,
         legacy: bool,
+        correlation_dependent_flags: bool,
         activity: &mut ToolSolveActivity,
     ) -> Result<Option<SolveStats>, String> {
         if legacy == matches!(self.kind, Kind::Gain(_)) {
@@ -112,7 +119,11 @@ impl Solver {
         }
         let selection = resolve_casa_calibration_selection(&ms, &apply.selection)
             .map_err(|error| error.to_string())?;
-        if let Kind::Gain(controls) = self.kind {
+        if let Kind::Gain(mut controls) = self.kind {
+            if self.invalid_apmode {
+                return Err("enforceAPonSoln divide-by-zero error.".into());
+            }
+            controls.correlation_dependent_flags = correlation_dependent_flags;
             if self.mode == CalibrationOutputMode::Append && !output.join("table.dat").is_file() {
                 return Err(format!(
                     "Table {}/SPECTRAL_WINDOW does not exist",

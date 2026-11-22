@@ -6,6 +6,7 @@ import argparse
 from contextlib import chdir
 from itertools import product
 from pathlib import Path
+from shutil import copytree
 
 import casatasks
 from casatools import calibrater as casa_calibrater
@@ -36,22 +37,26 @@ def fixture(work, kind):
         return vis, {}, {'fraction': .15}
 
 
-def solve(factory, log, kind, old, vis, product, selection, controls):
+def solve(factory, log, kind, old, vis, product, selection, controls,
+          *, rounds=1, corrdep=False, expected_error=None):
     tool = factory()
     assert tool.setvi(old=old, quiet=True) and tool.open(str(vis))
     try:
-        assert tool.selectvis(field='0', spw='0', **selection)
+        assert tool.selectvis(field='0', **({'spw': '0'} | selection))
+        if corrdep:
+            assert tool.setcorrdepflags(True)
         configured = result(tool.setsolve, kind, 'inf', str(product), **controls)
-        if kind == 'SDSKY_OTF' and not old:
+        if (kind == 'SDSKY_OTF' and not old) or expected_error == 'setsolve':
             assert configured == (False, ('RuntimeError', 'Error in Calibrater::setsolve.'))
             assert list(tool.returndict()['solve_tables']) == []
             return log(tool.state), tool.activityrec(), None
         assert configured == (True, True)
         shown = log(tool.state)
         state = shown[0], [line.replace(str(product), '<output>') for line in shown[1]]
-        expect_product = old == kind.startswith('SDSKY')
+        expect_product = old == kind.startswith('SDSKY') and expected_error is None
         if expect_product:
-            assert result(tool.solve) == (True, True) and product.exists()
+            for _ in range(rounds):
+                assert result(tool.solve) == (True, True) and product.exists()
             recorded = [str(product)] if kind.startswith('SDSKY') else []
             assert list(tool.returndict()['solve_tables']) == recorded
         else:
@@ -77,6 +82,52 @@ def compare_products(paths, kind):
                                                   expected.getcell(name, row), err_msg=name)
 
 
+def compare_case(work, engines, label, kind, old, vis, selection, controls, *, seed=None, **kwargs):
+    paths = {engine: work/f'{label}-{engine}.cal' for engine in engines}
+    values = {}
+    with chdir(work):
+        for engine, factory in engines.items():
+            if seed is not None:
+                copytree(seed[engine], paths[engine])
+            capture = casa_log(work/f'{label}.log') if engine == 'casa' else native_log()
+            with capture as logger:
+                values[engine] = solve(factory, logger, kind, old, vis, paths[engine],
+                                       selection, controls, **kwargs)
+    if 'native' in engines:
+        expected, actual = (values[engine] for engine in ('casa', 'native'))
+        assert actual[0] == expected[0], (label, actual[0], expected[0])
+        same_record(actual[1], expected[1])
+        same_record(actual[2], expected[2])
+        if paths['casa'].exists():
+            compare_products(paths, kind)
+    print(label, 'matched' if 'native' in engines else 'reference', flush=True)
+    return paths
+
+
+def gain_cases(work, engines, kind, vis, selection, seed):
+    for label, controls, kwargs in (
+        ('implicit-radius', {}, {}),
+        ('unsmoothed', {'radius': '65arcsec', 'smooth': False}, {}),
+        ('phase', {'radius': '65arcsec', 'apmode': 'P'}, {}),
+        ('amplitude', {'radius': '65arcsec', 'apmode': 'A'}, {}),
+        ('append', {'radius': '65arcsec', 'append': True}, {'seed': seed}),
+        ('append-missing', {'radius': '65arcsec', 'append': True}, {'expected_error': 'solve'}),
+        ('invalid-radius', {'radius': '-1arcsec'}, {'expected_error': 'setsolve'}),
+        ('invalid-mode', {'radius': '65arcsec', 'apmode': 'unknown'}, {'expected_error': 'solve'}),
+    ):
+        compare_case(work, engines, label, kind, False, vis, selection, controls, **kwargs)
+    flagged = work/'gain-flagged.ms'
+    copytree(vis, flagged)
+    with opened(flagged, True) as table:
+        flags = table.getcol('FLAG')
+        flags[0, :, ::17] = True
+        flags[:, :, ::43] = True
+        assert table.putcol('FLAG', flags)
+    for corrdep in (False, True):
+        compare_case(work, engines, f'flagged-{corrdep}', kind, False, flagged,
+                     selection, {'radius': '65arcsec'}, corrdep=corrdep)
+
+
 def run(args):
     assert casatasks.version_string() == '6.7.6.14'
     args.work.mkdir()
@@ -87,27 +138,21 @@ def run(args):
         engines['native'] = native_calibrater
     for kind, old in product(FAMILIES, (False, True)):
         label = f'{kind}-VI{1 if old else 2}'
+        if args.only is not None and label != args.only:
+            continue
         vis, selection, controls = fixture(args.work/label, kind)
-        paths = {engine: args.work/f'{label}-{engine}.cal' for engine in engines}
-        values = {}
-        with chdir(args.work):
-            for engine, factory in engines.items():
-                capture = casa_log(args.work/f'{label}.log') if engine == 'casa' else native_log()
-                with capture as logger:
-                    values[engine] = solve(factory, logger, kind, old, vis, paths[engine],
-                                           selection, controls)
-        if not args.reference_only:
-            expected, actual = (values[engine] for engine in ('casa', 'native'))
-            assert actual[0] == expected[0], (label, actual[0], expected[0])
-            same_record(actual[1], expected[1])
-            same_record(actual[2], expected[2])
-            if paths['casa'].exists():
-                compare_products(paths, kind)
-        print(label, 'reference' if args.reference_only else 'matched', flush=True)
+        paths = compare_case(args.work, engines, label, kind, old, vis, selection, controls)
+        if kind == 'SDGAIN_OTFD' and not old:
+            gain_cases(args.work, engines, kind, vis, selection, paths)
+        if kind == 'SDSKY_PS' and old:
+            compare_case(args.work, engines, 'sky-append', kind, old, vis,
+                         selection | {'spw': '0:0'}, {'append': True}, rounds=2)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=lambda path: Path(path).resolve())
     parser.add_argument('--reference-only', action='store_true')
+    parser.add_argument('--only', choices=[f'{kind}-VI{version}' for kind in FAMILIES
+                                          for version in (1, 2)])
     run(parser.parse_args())

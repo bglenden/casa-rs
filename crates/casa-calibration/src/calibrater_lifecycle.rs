@@ -1054,6 +1054,7 @@ impl CalibraterLifecycle {
                         calibration_tables: equation.apply.tables.clone(),
                     },
                     self.legacy_iterator,
+                    self.correlation_dependent_flags.unwrap_or_default(),
                     &mut activity,
                 )
                 .map_err(CalibraterLifecycleError::SingleDishSolve)

@@ -28,7 +28,7 @@ use crate::table_maintenance::{overlaps_measurement_set, write_standard_calibrat
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, new_calibration_table_schema,
 };
-use crate::{ApplyMode, ApplyPlanRequest, CalibrationOutputMode, plan_apply};
+use crate::{ApplyMode, ApplyPlanRequest, CalibrationOutputMode, GainSolveMode, plan_apply};
 use normalization::GainSample;
 
 const SUBTYPE: &str = "SDGAIN_OTFD";
@@ -37,6 +37,8 @@ const SUBTYPE: &str = "SDGAIN_OTFD";
 pub(super) struct Controls {
     pub(super) radius: Option<f64>,
     pub(super) smooth: bool,
+    pub(super) solve_mode: GainSolveMode,
+    pub(super) correlation_dependent_flags: bool,
 }
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -86,6 +88,8 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let controls = Controls {
         radius: options::radius(task)?,
         smooth: task.flag("smooth")?,
+        solve_mode: GainSolveMode::AmplitudePhase,
+        correlation_dependent_flags: false,
     };
     if overlaps_measurement_set(&ms, output).map_err(TaskFailure::execution)? {
         return Err(TaskFailure::execution(
@@ -211,7 +215,7 @@ fn solve<'a>(
         )?;
         let mut samples = Vec::new();
         for row in group {
-            let sample = read_sample(ms, row, priors, &correlations, channel)?;
+            let sample = read_sample(ms, row, priors, &correlations, channel, controls)?;
             if let Some(intervals) = intervals.as_deref_mut() {
                 intervals.observe(row, sample.as_ref());
             }
@@ -252,8 +256,10 @@ impl GainIntervals {
         );
         let hands = self.0.entry(key).or_default();
         if let Some(sample) = sample {
-            for hand in hands.iter_mut().take(sample.data.shape()[0]) {
-                hand.insert(row.antenna);
+            for (index, hand) in hands.iter_mut().take(sample.data.shape()[0]).enumerate() {
+                if !sample.flags[[index, 0]] {
+                    hand.insert(row.antenna);
+                }
             }
         }
     }
@@ -290,6 +296,7 @@ fn read_sample<'a>(
     priors: Option<&SolvePriorApply>,
     correlations: &[Vec<i32>],
     channel: usize,
+    controls: Controls,
 ) -> Result<Option<GainSample<'a>>, String> {
     let main = ms.main_table();
     let source = crate::model_columns::observed_column(ms);
@@ -330,7 +337,7 @@ fn read_sample<'a>(
     if data.ndim() != 2 || data.shape() != flags.shape() || channel >= data.shape()[1] {
         return Err("Visibility data and flags do not cover the selected gain channel.".into());
     }
-    let (data, flags) = if data.shape()[1] == 1 {
+    let (mut data, flags) = if data.shape()[1] == 1 {
         (data, flags)
     } else {
         (
@@ -338,10 +345,29 @@ fn read_sample<'a>(
             flags.select(Axis(1), &[channel]),
         )
     };
-    // CASA's solve buffers share the channel admission flag across the
-    // selected correlations. An unusable scalar sample has no table row.
-    if flags.iter().any(|&flagged| flagged) {
+    let usable = if controls.correlation_dependent_flags {
+        flags.iter().any(|&flagged| !flagged)
+    } else {
+        flags.iter().all(|&flagged| !flagged)
+    };
+    if !usable {
         return Ok(None);
+    }
+    for (value, &flagged) in data.iter_mut().zip(flags.iter()) {
+        if flagged {
+            *value = Complex32::default();
+        } else {
+            match controls.solve_mode {
+                GainSolveMode::Amplitude => *value = Complex32::new(value.norm(), 0.),
+                GainSolveMode::Phase => {
+                    let magnitude = value.norm();
+                    if magnitude > 0. {
+                        *value /= magnitude;
+                    }
+                }
+                GainSolveMode::AmplitudePhase => {}
+            }
+        }
     }
     Ok(Some(GainSample {
         integration: row,

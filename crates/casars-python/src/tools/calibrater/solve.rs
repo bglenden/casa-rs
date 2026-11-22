@@ -298,6 +298,7 @@ impl super::PyCalibrater {
                 numedge: setsolve_long(numedge, 21, -1)?,
                 radius: &radius_text,
                 smooth: setsolve_bool(smooth, 23, true)?,
+                invalid_apmode: false,
             })
         } else {
             None
@@ -415,7 +416,8 @@ impl super::PyCalibrater {
                 robustness: GainSolveRobustness::from_casa(robust_mode(&solve_mode), thresholds)
                     .expect("recognized CASA robust mode"),
             };
-            if let Some(controls) = single_dish {
+            if let Some(mut controls) = single_dish {
+                controls.invalid_apmode = invalid_mode;
                 state
                     .set_tool_single_dish_solve(&family, standard.gain(GainType::G), mode, controls)
                     .map_err(|_| setup_error())?;
