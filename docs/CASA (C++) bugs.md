@@ -8279,6 +8279,14 @@ Casa-rs records the manifest's absolute name at attachment so the name
 continues to identify the same image. See
 [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
+### Cyclic saved expressions can crash `image.open`
+
+Create two saved image-expression directories whose `ImageExpr` fields
+refer to each other, then open either directory. CASA 6.7.6.14 recurses
+until the Python process segfaults. Casa-rs resolves aliases to the same
+directory and raises an error on the cycle before publishing an output.
+See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

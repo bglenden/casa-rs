@@ -5,6 +5,7 @@
 mod geometry;
 pub(super) use geometry::validate_mask;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -87,7 +88,7 @@ struct ResolvedOperand {
 
 /// Resolved image operand paths for a public calculator expression.
 pub struct ImageToolExpressionInputs<'a> {
-    expression: &'a str,
+    expression: Cow<'a, str>,
     operands: Vec<ResolvedOperand>,
 }
 
@@ -96,14 +97,32 @@ impl<'a> ImageToolExpressionInputs<'a> {
     /// # Errors
     /// Returns an error for a missing operand or invalid expression.
     pub fn resolve(expression: &'a str) -> Result<Self, ImageError> {
+        let directory =
+            std::env::current_dir().map_err(|error| ImageError::Io(error.to_string()))?;
+        Self::resolve_in_directory(expression, &directory)
+    }
+
+    /// Resolve operand names against an already captured working directory.
+    ///
+    /// # Errors
+    /// Returns an error for a missing operand or invalid expression.
+    pub fn resolve_in_directory(
+        expression: impl Into<Cow<'a, str>>,
+        directory: &Path,
+    ) -> Result<Self, ImageError> {
+        let expression = expression.into();
         if expression.is_empty() {
             return Err(ImageError::CasaSelection(
                 "Exception: You must specify an expression.".into(),
             ));
         }
+        let operands = referenced_images(&expression)?
+            .into_iter()
+            .map(|name| resolve_named_operand(directory, name))
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             expression,
-            operands: resolve_operands(expression)?,
+            operands,
         })
     }
 
@@ -136,15 +155,89 @@ impl<'a> ImageToolExpressionInputs<'a> {
         self.compile_with_source_locks(true)
     }
 
+    /// Compile a lazy numeric expression with resolved saved expression operands.
+    ///
+    /// Callers supply already validated expressions keyed by resolved path. Each
+    /// saved operand is captured as a section reader with its original precision.
+    ///
+    /// # Errors
+    /// Returns an error for an unreadable operand, a mask selector on a saved
+    /// expression, or an invalid expression.
+    pub fn compile_with_saved_operands(
+        &self,
+        saved: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
+    ) -> Result<(ImageToolPixelExpression, bool), ImageError> {
+        let opened = self
+            .operands
+            .iter()
+            .map(|operand| {
+                let source = match saved.get(&operand.path) {
+                    Some((pixels, single_precision)) => {
+                        if let Some(mask) = &operand.mask {
+                            return Err(ImageError::CasaSelection(format!(
+                                "Image Expression: Parse error at or near ':{mask}'"
+                            )));
+                        }
+                        saved_operand(pixels, *single_precision)?
+                    }
+                    None => open_path_with_mask_name(&operand.path, operand.mask.clone(), true)?,
+                };
+                Ok((operand.name.clone(), source))
+            })
+            .collect::<Result<Vec<_>, ImageError>>()?;
+        self.compile_opened(&opened)
+    }
+
     fn compile_with_source_locks(
         &self,
         temporary_source_locks: bool,
     ) -> Result<(ImageToolPixelExpression, bool), ImageError> {
         let opened = open_operands(&self.operands, temporary_source_locks)?;
-        let (real, complex) = operand_resolvers(&opened);
-        compile_image_tool_pixels(self.expression, &real, &complex, &|name| {
-            is_single_precision(&opened, name)
+        self.compile_opened(&opened)
+    }
+
+    fn compile_opened(
+        &self,
+        opened: &[(String, Operand)],
+    ) -> Result<(ImageToolPixelExpression, bool), ImageError> {
+        let (real, complex) = operand_resolvers(opened);
+        compile_image_tool_pixels(&self.expression, &real, &complex, &|name| {
+            is_single_precision(opened, name)
         })
+    }
+}
+
+fn saved_operand(pixels: &ImageToolPixelExpression, single: bool) -> Result<Operand, ImageError> {
+    match pixels {
+        ImageToolPixelExpression::Real(image) => {
+            let sections = image.clone().convert_pixels(move |value| {
+                if single {
+                    f64::from(value as f32)
+                } else {
+                    value
+                }
+            })?;
+            Ok(Operand::Real(
+                MaskSource::Sections(Box::new(sections)),
+                single,
+            ))
+        }
+        ImageToolPixelExpression::Complex(image) => {
+            let sections = image.clone().convert_pixels(move |value| {
+                if single {
+                    Complex64::new(f64::from(value.re as f32), f64::from(value.im as f32))
+                } else {
+                    value
+                }
+            })?;
+            Ok(Operand::Complex(
+                MaskSource::Sections(Box::new(sections)),
+                single,
+            ))
+        }
+        ImageToolPixelExpression::Boolean(_) => Err(ImageError::CasaSelection(
+            "A saved expression operand must have numeric pixels".into(),
+        )),
     }
 }
 

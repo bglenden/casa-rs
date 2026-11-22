@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use casa_images::analysis::{ImageToolExpressionInputs, ImageToolPixelExpression};
-use casa_images::expr_file::{is_image_expr, read_tool_manifest};
+use casa_images::expr_file::{ToolExpressionManifest, is_image_expr, read_tool_manifest};
 use casa_images::{ImageExpression, TempImage, image_expr::ImageExprValue};
 use casa_types::{Complex32, RecordValue};
 use pyo3::prelude::*;
@@ -12,17 +13,10 @@ use super::attachment::AttachedImage;
 use super::handle::{ImageHandle, Storage, raised};
 
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
-    let manifest = read_tool_manifest(path).map_err(raised)?;
-    let operands = ImageToolExpressionInputs::resolve(&manifest.expression).map_err(raised)?;
-    if operands.paths().any(is_image_expr) {
-        return Err(raised(
-            "Nested saved image expressions are not implemented yet (#1959)",
-        ));
-    }
-    let retained = AttachedImage::open_expression_inputs(operands.paths())?;
-    let (pixels, single_precision) = operands.compile_lazy_inferred().map_err(raised)?;
-    super::imagecalc::check_geometry(&pixels, operands.paths().next().is_some())?;
-    let misc = manifest.misc_info().map_err(raised)?;
+    let directory = std::env::current_dir().map_err(raised)?;
+    let root = path.canonicalize().map_err(raised)?;
+    let mut graph = CapturedGraph::default();
+    let (pixels, single_precision) = graph.compile(root, &directory)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
             ImageHandle::Float(expression_storage(
@@ -30,11 +24,10 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
                     .convert_pixels(|value| value as f32)
                     .map_err(raised)?,
                 path,
-                misc,
             )?)
         }
         ImageToolPixelExpression::Real(expression) => {
-            ImageHandle::Double(expression_storage(expression, path, misc)?)
+            ImageHandle::Double(expression_storage(expression, path)?)
         }
         ImageToolPixelExpression::Complex(expression) if single_precision => {
             ImageHandle::Complex(expression_storage(
@@ -42,30 +35,138 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
                     .convert_pixels(|value| Complex32::new(value.re as f32, value.im as f32))
                     .map_err(raised)?,
                 path,
-                misc,
             )?)
         }
         ImageToolPixelExpression::Complex(expression) => {
-            ImageHandle::DComplex(expression_storage(expression, path, misc)?)
+            ImageHandle::DComplex(expression_storage(expression, path)?)
         }
         ImageToolPixelExpression::Boolean(_) => unreachable!("saved image geometry is numeric"),
     };
     let mut attachment = AttachedImage::temporary(image);
-    attachment.retain_expression_inputs(retained, operands.paths().map(PathBuf::from).collect());
+    attachment.retain_expression_inputs(graph.retained, graph.paths);
     Ok(attachment)
+}
+
+#[derive(Default)]
+struct CapturedGraph {
+    paths: Vec<PathBuf>,
+    seen_paths: HashSet<PathBuf>,
+    retained: Vec<AttachedImage>,
+}
+
+impl CapturedGraph {
+    fn compile(
+        &mut self,
+        root: PathBuf,
+        directory: &Path,
+    ) -> PyResult<(ImageToolPixelExpression, bool)> {
+        let mut pending = vec![PendingExpression::read(root.clone(), directory)?];
+        let mut active = HashSet::from([root]);
+        let mut compiled = HashMap::new();
+        while let Some(frame) = pending.last_mut() {
+            if let Some(path) = frame.next_path() {
+                if active.contains(path) {
+                    return Err(raised(format!(
+                        "Cycle in saved image expression at {}",
+                        path.display()
+                    )));
+                }
+                if !self.seen_paths.insert(path.to_path_buf()) {
+                    continue;
+                }
+                self.paths.push(path.to_path_buf());
+                if is_image_expr(path) {
+                    active.insert(path.to_path_buf());
+                    pending.push(PendingExpression::read(path.to_path_buf(), directory)?);
+                } else {
+                    self.retained
+                        .extend(AttachedImage::open_expression_inputs(std::iter::once(
+                            path,
+                        ))?);
+                }
+            } else {
+                let frame = pending.pop().expect("checked for an expression frame");
+                let result = frame.compile(&compiled)?;
+                if pending.is_empty() {
+                    return Ok(result);
+                }
+                active.remove(&frame.path);
+                compiled.insert(frame.path, result);
+            }
+        }
+        unreachable!("completed graph returns its root");
+    }
+}
+
+struct PendingExpression {
+    path: PathBuf,
+    manifest: ToolExpressionManifest,
+    inputs: ImageToolExpressionInputs<'static>,
+    next: usize,
+}
+
+impl PendingExpression {
+    fn read(path: PathBuf, directory: &Path) -> PyResult<Self> {
+        if path.join("imageconcat.json").is_file() {
+            return Err(raised(
+                "Opening a virtual concatenated image is not implemented yet (#1749)",
+            ));
+        }
+        let manifest = read_tool_manifest(&path).map_err(raised)?;
+        let inputs =
+            ImageToolExpressionInputs::resolve_in_directory(manifest.expression.clone(), directory)
+                .map_err(raised)?;
+        Ok(Self {
+            path,
+            manifest,
+            inputs,
+            next: 0,
+        })
+    }
+
+    fn next_path(&mut self) -> Option<&Path> {
+        let path = self.inputs.paths().nth(self.next)?;
+        self.next += 1;
+        Some(path)
+    }
+
+    fn compile(
+        &self,
+        compiled: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
+    ) -> PyResult<(ImageToolPixelExpression, bool)> {
+        let (mut pixels, single) = self
+            .inputs
+            .compile_with_saved_operands(compiled)
+            .map_err(raised)?;
+        super::imagecalc::check_geometry(&pixels, self.inputs.paths().len() != 0)?;
+        if let Some(misc) = self.manifest.misc_info().map_err(raised)? {
+            pixels = replace_misc_info(pixels, misc);
+        }
+        Ok((pixels, single))
+    }
+}
+
+fn replace_misc_info(
+    pixels: ImageToolPixelExpression,
+    misc: RecordValue,
+) -> ImageToolPixelExpression {
+    match pixels {
+        ImageToolPixelExpression::Real(expression) => {
+            ImageToolPixelExpression::Real(expression.with_misc_info(misc))
+        }
+        ImageToolPixelExpression::Complex(expression) => {
+            ImageToolPixelExpression::Complex(expression.with_misc_info(misc))
+        }
+        ImageToolPixelExpression::Boolean(_) => unreachable!("saved image geometry is numeric"),
+    }
 }
 
 fn expression_storage<T: ImageExprValue>(
     expression: ImageExpression<T>,
     path: &Path,
-    misc: Option<RecordValue>,
 ) -> PyResult<Storage<T>> {
     let record = expression.coordinate_record();
-    let mut image =
-        TempImage::from_saved_expression(expression, path.to_path_buf()).map_err(raised)?;
-    if let Some(misc) = misc {
-        image.set_misc_info(misc).map_err(raised)?;
-    }
+    let image = TempImage::from_saved_expression(expression, path.to_path_buf()).map_err(raised)?;
     Ok(Storage::Temp {
         image: Box::new(image),
         record,

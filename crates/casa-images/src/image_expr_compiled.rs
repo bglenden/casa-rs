@@ -1324,6 +1324,12 @@ impl<T: ImageExprValue> ImageExpression<T> {
         &self.meta.misc_info
     }
 
+    /// Replace the metadata exposed by an owned expression while retaining its graph.
+    pub fn with_misc_info(mut self, misc_info: RecordValue) -> Self {
+        self.meta.misc_info = misc_info;
+        self
+    }
+
     /// Returns the compiled image info metadata.
     pub fn image_info_ref(&self) -> &ImageInfo {
         &self.meta.image_info

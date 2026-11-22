@@ -102,6 +102,88 @@ def test_saved_expression_miscinfo_overrides_the_operand(tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("method", ["open", "newimage", "newimagefromfile"])
+def test_nested_saved_expressions_capture_a_shared_operand(tmp_path, monkeypatch, backend, method):
+    api = _backend(backend)
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    expected_world = _operand(api, tmp_path / "input.im", pixels)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _operand(api, elsewhere / "input.im", pixels + 100)
+    _manifest(tmp_path / "operands" / "inner.im", MiscInfo={"origin": "inner"})
+    (tmp_path / "alias.im").symlink_to("operands/inner.im", target_is_directory=True)
+    _manifest(tmp_path / "left.im", ImageExpr='"operands/inner.im" + 2')
+    _manifest(tmp_path / "right.im", ImageExpr='"alias.im" + 3')
+    _manifest(tmp_path / "outer.im", ImageExpr='"left.im" + "right.im"')
+    receiver = api.image()
+    opened = receiver
+    monkeypatch.chdir(tmp_path)
+    try:
+        assert receiver.fromarray(pixels=[41., 42.])
+        result = getattr(receiver, method)("outer.im")
+        if method == "open":
+            assert result is True
+        else:
+            opened = result
+            np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
+        monkeypatch.chdir(elsewhere)
+        assert opened.miscinfo() == {"origin": "inner"}
+        assert opened.brightnessunit() == "Jy/pixel"
+        assert opened.history() == []
+        assert opened.pixeltype() == "float"
+        validity = opened.getchunk(getmask=True)
+        np.testing.assert_array_equal(validity, pixels > 4)
+        np.testing.assert_array_equal(opened.getchunk()[validity], (6 * pixels + 5)[validity])
+        coordinates = opened.coordsys()
+        try:
+            np.testing.assert_allclose(coordinates.toworld([2, 3])["numeric"], expected_world)
+        finally:
+            coordinates.done()
+    finally:
+        opened.done()
+        if opened is not receiver:
+            receiver.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("selector", ["nomask", "mask0"])
+def test_saved_expression_operand_rejects_a_named_mask(tmp_path, monkeypatch, backend, selector):
+    api = _backend(backend)
+    _operand(api, tmp_path / "input.im", np.arange(12, dtype=np.float32).reshape(3, 4))
+    _manifest(tmp_path / "inner.im")
+    _manifest(tmp_path / "outer.im", ImageExpr=f'"inner.im":{selector} + 2')
+    monkeypatch.chdir(tmp_path)
+    receiver = api.image()
+    try:
+        assert receiver.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match=f"Parse error at or near ':{selector}'"):
+            receiver.newimagefromfile("outer.im")
+        np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
+    finally:
+        receiver.done()
+
+
+@pytest.mark.parametrize("second_operand", ["original.im", "alias.im"])
+def test_saved_expression_cycle_preserves_the_factory_receiver(tmp_path, monkeypatch, second_operand):
+    # Pinned CASA overflows its stack opening this graph. The factory must fail safely.
+    _manifest(tmp_path / "original.im", ImageExpr='"other.im" + 1')
+    _manifest(tmp_path / "other.im", ImageExpr=f'"{second_operand}" + 2')
+    (tmp_path / "alias.im").symlink_to("original.im", target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    receiver = _backend("casars").image()
+    try:
+        assert receiver.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match="Cycle in saved image expression"):
+            receiver.newimagefromfile("original.im")
+        np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
+        with pytest.raises(RuntimeError, match="Cycle in saved image expression"):
+            receiver.newimagefromfile("original.im", outfile="must-not-exist.im")
+        assert not (tmp_path / "must-not-exist.im").exists()
+    finally:
+        receiver.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
 def test_saved_expression_nonrecord_miscinfo_preserves_the_factory_receiver(tmp_path, monkeypatch, backend):
     api = _backend(backend)
     _operand(api, tmp_path / "input.im", np.arange(12, dtype=np.float32).reshape(3, 4))
