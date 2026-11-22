@@ -685,6 +685,31 @@ fn interval_window(rows: &[BucketedRow<'_>]) -> i32 {
 }
 
 impl LeakageInputs<'_> {
+    fn read_interval_batch(
+        &self,
+        rows: &[BucketedRow<'_>],
+    ) -> Result<SolveInputBatch, GainSolveError> {
+        let indices = rows
+            .iter()
+            .map(|(row, _, _)| row.row_index)
+            .collect::<Vec<_>>();
+        read_input_batch(
+            self.ms,
+            &indices,
+            (
+                self.preapplied.is_none_or(|prior| prior.data.is_empty()),
+                rows.iter()
+                    .any(|(row, _, _)| self.models.uses_fourier(row.field_id)),
+            ),
+            rows.iter()
+                .any(|(row, _, _)| self.models.reads_column(row.field_id)),
+            rows.iter()
+                .map(|row| self.spectral_weights.contains(row))
+                .collect(),
+            false,
+        )
+    }
+
     fn preaverage_span(&self) -> Option<f64> {
         let requested = if self.request.preaverage_seconds < 0.0 {
             match self.request.kind {
@@ -750,28 +775,7 @@ impl LeakageInputs<'_> {
             .then(cross_hand::LegacyCrossHandAveraging::default);
         let mut gain_data = gain_stats.as_ref().map(|_| GainIntervalData::default());
         for batch in rows.chunks(256) {
-            let indices = batch
-                .iter()
-                .map(|(row, _, _)| row.row_index)
-                .collect::<Vec<_>>();
-            let input = read_input_batch(
-                self.ms,
-                &indices,
-                (
-                    self.preapplied.is_none_or(|prior| prior.data.is_empty()),
-                    batch
-                        .iter()
-                        .any(|(row, _, _)| self.models.uses_fourier(row.field_id)),
-                ),
-                batch
-                    .iter()
-                    .any(|(row, _, _)| self.models.reads_column(row.field_id)),
-                batch
-                    .iter()
-                    .map(|row| self.spectral_weights.contains(row))
-                    .collect(),
-                false,
-            )?;
+            let input = self.read_interval_batch(batch)?;
             for (index, &(row, _, _)) in batch.iter().enumerate() {
                 let pair = [row.antenna1, row.antenna2];
                 let start = legacy.as_mut().map_or(row.time_seconds, |legacy| {
