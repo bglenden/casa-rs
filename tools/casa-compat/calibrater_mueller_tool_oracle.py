@@ -82,7 +82,10 @@ def main():
     solve_case(work, tools, vis, 'mf-append', {'type': 'MF'}, append=True)
     solve_case(work, tools, flagged, 'mf-flagged', {}, outcome='empty')
     solve_case(work, tools, vis, 'm-legacy', {'type': 'M'}, legacy=True)
-    solve_case(work, tools, vis, 'mf-legacy', {'type': 'MF'}, legacy=True)
+    solve_case(work, tools, vis, 'm-legacy-narrow', {'type': 'M'}, legacy=True,
+               selection={'spw': '0:1~12'})
+    solve_case(work, tools, vis, 'mf-legacy', {'type': 'MF'}, legacy=True,
+               selection={'spw': '0:1~12'})
     solve_case(work, tools, flagged, 'mf-legacy-flagged', {}, legacy=True, outcome='empty')
     solve_case(work, tools, vis, 'mf-legacy-binned', {'t': 'inf,2ch'}, legacy=True,
                selection={'spw': '0:1~12'}, outcome='error')

@@ -153,7 +153,14 @@ pub(crate) fn solve(
         bin_widths: &bin_widths,
         selected_rows: &context.rows,
     });
-    write_baseline_caltable(ms, request, &solved, mode, channels)
+    write_baseline_caltable(
+        ms,
+        request,
+        &solved,
+        mode,
+        channels,
+        direct && legacy_iterator,
+    )
 }
 
 fn legacy_binned_windows(
