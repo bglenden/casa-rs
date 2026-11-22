@@ -13582,8 +13582,7 @@
             "provider": {"field": "douvcontsub"},
             "python": {"name": "douvcontsub"},
             "presentation": {"label": "Continuum Subtraction", "group": "Continuum", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "fitspw",
@@ -13597,8 +13596,7 @@
             "provider": {"field": "fitspw"},
             "python": {"name": "fitspw"},
             "presentation": {"label": "Fit SPW", "group": "Continuum", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "fitorder",
@@ -13612,8 +13610,7 @@
             "provider": {"field": "fitorder"},
             "python": {"name": "fitorder"},
             "presentation": {"label": "Fit Order", "group": "Continuum", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "want_cont",
@@ -13627,8 +13624,7 @@
             "provider": {"field": "want_cont"},
             "python": {"name": "want_cont"},
             "presentation": {"label": "Keep Continuum", "group": "Continuum", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "denoising_lib",
@@ -13642,8 +13638,7 @@
             "provider": {"field": "denoising_lib"},
             "python": {"name": "denoising_lib"},
             "presentation": {"label": "Denoising Library", "group": "Continuum", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "nthreads",
@@ -13657,8 +13652,7 @@
             "provider": {"field": "nthreads"},
             "python": {"name": "nthreads"},
             "presentation": {"label": "Threads", "group": "Continuum", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "niter",
@@ -13673,8 +13667,7 @@
             "python": {"name": "niter"},
             "presentation": {"label": "Iterations", "group": "Continuum", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's niter is the continuum fit's iteration count, distinct from the imager's and imstat's iteration limits."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's niter is the continuum fit's iteration count, distinct from the imager's and imstat's iteration limits."}
         },
         {
           "name": "disableparallel",

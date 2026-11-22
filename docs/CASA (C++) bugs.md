@@ -10355,6 +10355,45 @@ In CASA 6.7.6.14, use the [direct FRINGE fixture](../tools/casa-compat/calibrate
 
 With CASA 6.7.6.14, call `calibrater.specifycal(caltable='gain.cal', caltype='amp', parameter=[1.5], antenna='*')` on the [direct fixture](../tools/casa-compat/calibrater_specifycal_tool_oracle.py). CASA passes antenna index `-1` into a parameter-array slice and aborts. A literal `spw='*'` likewise reaches an invalid spectral-window index. Casa-rs broadcasts over the requested wildcard axes and verifies the resulting table against CASA's empty-selector form, which expresses the same prescription. [#2015](https://github.com/bglenden/casa-rs/pull/2015)
 
+## `mstransform` silently skips requested continuum fitting
+
+CASA 6.7.6.14 `mstransform` sends the public `fitspw` argument to its continuum
+visibility iterator under the key `fitspw`. `UVContSubTVI::parseFitSpec` reads
+`fitspec`, so the iterator receives no fit windows and copies each visibility
+unchanged. Reproduce with `douvcontsub=True` and `fitspw="0:1~4"` on a dataset
+with a varying spectrum. The same task with `douvcontsub=False` writes the
+same visibility values.
+
+casa-rs fits the requested polynomial on the unflagged line-free channels and
+writes residuals, or the estimate when `want_cont=True`. The paired oracle in
+`tools/casa-compat/ms_transform_continuum_oracle.py` reproduces the public
+wrapper bug and independently compares the native result with CASA's compiled
+fitter after correcting only the configuration key. The native task also
+discards its staged product when fit selection fails, which allows the caller
+to correct the selection and retry at the same path.
+
+The compiled denoising fitter has a second defect in
+`GslMultifitLinearBase::calcFitModelCore`. It replaces the model vector for
+each coefficient instead of adding the polynomial terms. That helper
+evaluates the stored float output and the residuals used to reweight both
+the real and imaginary data during later iterations. For example, a linear
+float spectrum with nonzero offset retains the full offset after CASA
+subtraction. casa-rs evaluates the whole polynomial in both places. The
+oracle compares those cases with a separate NumPy weighted fit.
+
+When the compiled fitter follows time averaging, its line-channel mask is
+written through a reference to the averaging iterator's cached visibility
+flags. It can replace valid flags and change scalar weights and sigmas. The
+native fit reads the flags and applies the mask only to the fit samples.
+The oracle takes the averaged flags and noise from CASA's public task, where
+the misnamed configuration key leaves the mask inactive.
+
+The compiled path can also try to change the shape of an allocated
+`WEIGHT_SPECTRUM` cell when the original task selects only part of a spectral
+window. For the selection case, the oracle applies CASA's channel selection
+first and fits using the equivalent local channel indices. The native task
+computes the intersection on the selected grid in one transform.
+
 ## Direct fluxscale can terminate Python with an empty window map
 
 In CASA 6.7.6.14, use the [direct fluxscale fixture](../tools/casa-compat/calibrater_fluxscale_tool_oracle.py), attach the MS, and transfer from `FLUX` to `PHASE` with `refspwmap=[]`. The reference process can terminate with SIGSEGV. Casa-rs treats an empty map as no remapping and compares its returned record, caltable and HISTORY against CASA's default `refspwmap=[-1]`. [#2017](https://github.com/bglenden/casa-rs/pull/2017)

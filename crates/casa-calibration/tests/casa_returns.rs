@@ -823,13 +823,13 @@ fn transform_values_not_implemented_yet_are_refused_naming_978() {
     let workspace = tempfile::tempdir().unwrap();
     let vis = ms_common::create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
     let outputvis = workspace.path().join("out.ms");
-    // Regridding now runs through the native provider. Exercise the refusal
-    // with the task's still-unimplemented continuum subtraction operation.
+    // Until virtual models can be read by the transform, refuse the request
+    // before creating an output.
     for (binary, surface, values, parameter) in [(
         MSTRANSFORM,
         "mstransform",
-        json!({"outputvis": outputvis, "datacolumn": "data", "douvcontsub": true}),
-        "douvcontsub",
+        json!({"outputvis": outputvis, "datacolumn": "model", "realmodelcol": true}),
+        "realmodelcol",
     )] {
         let mut values = values;
         values["vis"] = json!(vis);

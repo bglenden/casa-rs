@@ -8,10 +8,10 @@ use std::{io::ErrorKind, num::NonZeroUsize, path::Path, process::ExitCode};
 use casa_calibration::{CallibError, transform_callibrary};
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MsPartitionAxis, MsRegridOptions, MsTransformError, MsTransformMultiMsOptions,
-    MsTransformRequest, MsTransformTaskOptions, MsTransformTiling, TimeAverageOptions,
-    TransformDataColumn, TransformTaskHistory, ms_task_success, mstransform_task,
-    mstransform_task_schema_bundle, task_selection_text,
+    ContinuumFitOptions, MsPartitionAxis, MsRegridOptions, MsTransformError,
+    MsTransformMultiMsOptions, MsTransformRequest, MsTransformTaskOptions, MsTransformTiling,
+    TimeAverageOptions, TransformDataColumn, TransformTaskHistory, ms_task_success,
+    mstransform_task, mstransform_task_schema_bundle, task_selection_text,
 };
 use casa_provider_contracts::{
     CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr,
@@ -42,7 +42,12 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let (request, mut options) = transform_request(task)?;
     if request.input_ms != request.output_ms && !request.output_ms.exists() {
-        options.input_view = callibrary(task)?;
+        let calibration = callibrary(task)?;
+        // CASA builds a continuum iterator in place of the calibration
+        // iterator when both task switches are enabled.
+        if options.continuum.is_none() {
+            options.input_view = calibration;
+        }
     }
     // The output the transform refuses before it starts is the argument's
     // fault; anything else failed the transform.
@@ -105,6 +110,7 @@ fn transform_request(
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
         hanning: task.surface() == "mstransform" && task.flag("hanning")?,
         combine_spws: task.surface() == "mstransform" && task.flag("combinespws")?,
+        continuum: continuum_options(task)?,
         regrid: regrid_options(task)?,
         tiling: tile_layout(task)?,
         preserve_ids: task.surface() == "mstransform" && !task.flag("reindex")?,
@@ -123,6 +129,28 @@ fn transform_request(
         ..MsTransformTaskOptions::default()
     };
     Ok((request, options))
+}
+
+fn continuum_options(
+    task: &TaskInvocation<'_>,
+) -> Result<Option<ContinuumFitOptions>, TaskFailure> {
+    if task.surface() != "mstransform" || !task.flag("douvcontsub")? {
+        return Ok(None);
+    }
+    let nonnegative = |name| {
+        usize::try_from(task.integer(name)?).map_err(|_| {
+            TaskFailure::execution(format!("{name} must be nonnegative for continuum fitting"))
+                .at(name)
+        })
+    };
+    Ok(Some(ContinuumFitOptions {
+        fit_spw: task.text("fitspw")?.unwrap_or_default(),
+        order: nonnegative("fitorder")?,
+        want_continuum: task.flag("want_cont")?,
+        reweight: task.flag("denoising_lib")?,
+        iterations: nonnegative("niter")?,
+        threads: usize::try_from(task.integer("nthreads")?).unwrap_or(usize::MAX),
+    }))
 }
 
 fn callibrary(
