@@ -413,7 +413,7 @@ pub(super) fn leakage_request(
         model_source,
         stokes,
         priors: chain(task, Chain::Solve)?,
-        parang: !gain || task.flag("parang")?,
+        parang_terms: usize::from(!gain || task.flag("parang")?),
         correlation_dependent_flags: gain && task.flag("corrdepflags")?,
         solve_mode: if gain {
             calmode(task)?

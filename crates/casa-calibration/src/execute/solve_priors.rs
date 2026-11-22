@@ -21,7 +21,7 @@ pub(crate) enum PriorSolveBoundary {
     Gain,
     GainSpline,
     ScalarGain,
-    Leakage,
+    Leakage { parang_terms: usize },
     CrossHand,
     PositionAngle,
 }
@@ -34,7 +34,7 @@ impl PriorSolveBoundary {
             Self::Delay => "K Jones",
             Self::Accor | Self::Gain | Self::GainSpline => "G Jones",
             Self::ScalarGain => "T Jones",
-            Self::Leakage => "D Jones",
+            Self::Leakage { .. } => "D Jones",
             Self::CrossHand => "X Jones",
             Self::PositionAngle => "PosAng Jones",
         })
@@ -67,6 +67,7 @@ pub(crate) struct SolvePriorApply {
     geometry: RefCell<RowGeometryCache>,
     forward: bool,
     calwt: bool,
+    share_input_flags: bool,
 }
 
 impl SolvePriorApply {
@@ -74,6 +75,8 @@ impl SolvePriorApply {
         ms: &MeasurementSet,
         plan: ApplyPlan,
         forward: bool,
+        share_input_flags: bool,
+        parang_terms: usize,
     ) -> Result<Self, ApplyExecutionError> {
         let rows = plan
             .selected_rows
@@ -81,7 +84,8 @@ impl SolvePriorApply {
             .enumerate()
             .map(|(position, row)| (row.row_index, position))
             .collect();
-        let chain = ApplyChain::load(ms, &plan, forward)?;
+        let mut chain = ApplyChain::load(ms, &plan, forward)?;
+        chain.repeat_parang(parang_terms);
         let calwt = !forward && applies_preview_weights(&plan, &chain);
         Ok(Self {
             plan,
@@ -90,6 +94,7 @@ impl SolvePriorApply {
             geometry: RefCell::default(),
             forward,
             calwt,
+            share_input_flags,
         })
     }
 
@@ -97,7 +102,7 @@ impl SolvePriorApply {
         ms: &MeasurementSet,
         plan: ApplyPlan,
     ) -> Result<Self, ApplyExecutionError> {
-        Self::new(ms, plan, false)
+        Self::new(ms, plan, false, false, 1)
     }
 
     pub(crate) fn correct_single_dish(
@@ -123,7 +128,11 @@ impl SolvePriorApply {
         let Some(&position) = self.rows.get(&row) else {
             return Ok(None);
         };
-        let flags = shared_channel_flags(flags).unwrap_or_else(|| flags.clone());
+        let flags = if self.share_input_flags {
+            shared_channel_flags(flags).unwrap_or_else(|| flags.clone())
+        } else {
+            flags.clone()
+        };
         self.apply(position, correlations, data, flags).map(Some)
     }
 
@@ -216,10 +225,14 @@ pub(crate) fn evaluate_solve_priors(
 ) -> Result<PreappliedRows, ApplyExecutionError> {
     let deferred_data = matches!(
         boundary,
-        PriorSolveBoundary::Leakage
+        PriorSolveBoundary::Leakage { .. }
             | PriorSolveBoundary::CrossHand
             | PriorSolveBoundary::PositionAngle
     );
+    let parang_terms = match boundary {
+        PriorSolveBoundary::Leakage { parang_terms } => parang_terms,
+        _ => usize::from(plan.parang),
+    };
     let polarized = deferred_data || has_polarization_matrix(&plan);
     let baseline = plan
         .calibration_tables
@@ -264,7 +277,7 @@ pub(crate) fn evaluate_solve_priors(
     plan.parang &= !forward_parang;
     plan.calibration_tables = data_tables;
     let data_prior = (deferred_data && (!plan.calibration_tables.is_empty() || plan.parang))
-        .then(|| SolvePriorApply::new(ms, plan.clone(), false))
+        .then(|| SolvePriorApply::new(ms, plan.clone(), false, share_input_flags, parang_terms))
         .transpose()?;
     let mut rows = if deferred_data {
         HashMap::new()
@@ -288,7 +301,13 @@ pub(crate) fn evaluate_solve_priors(
         return Ok(PreappliedRows {
             data: rows,
             data_prior,
-            model: Some(SolvePriorApply::new(ms, plan, true)?),
+            model: Some(SolvePriorApply::new(
+                ms,
+                plan,
+                true,
+                share_input_flags,
+                parang_terms,
+            )?),
             polarized,
         });
     }

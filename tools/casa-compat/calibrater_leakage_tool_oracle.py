@@ -21,14 +21,15 @@ from polcal_standard_leakage_oracle import compare
 
 
 def solve(factory, vis, output, options, *, legacy=False, selection=None, stokes=None,
-          prior=None, append=False, corrdep=False):
+          prior=None, append=False, corrdep=False, parang_terms=1):
     tool = factory()
     assert tool.setvi(legacy, True)
     assert tool.open(str(vis), addcorr=False, addmodel=False)
     assert tool.selectvis(**({'field': '0'} | (selection or {})))
     if stokes is not None:
         assert tool.setptmodel(stokes)
-    assert tool.setapply(type='P')
+    for _ in range(parang_terms):
+        assert tool.setapply(type='P')
     if prior:
         assert tool.setapply(table=str(prior), calwt=False)
     assert tool.setcorrdepflags(corrdep)
@@ -136,6 +137,10 @@ def main():
         for kind in ('D', 'Df', 'DLLS', 'DfLLS', 'Dgen', 'Dfgen', 'D+QU', 'Df+QU', 'D+X',
                      'Df+X', 'Dgen+QU', 'Dfgen+QU', 'Dgen+X', 'Dfgen+X', 'D JONES', 'DFGENERAL'):
             case(work, engines, vis, kind.replace(' ', '-'), kind)
+        repeated = case(work, engines, vis, 'D-repeated-parang', 'D', parang_terms=2)
+        for engine, output in repeated.items():
+            with opened(output) as table, opened(work/f'D-{engine}.cal') as single:
+                assert np.linalg.norm(table.getcol('CPARAM') - single.getcol('CPARAM')) > .01
         for kind in ('DLLS', 'DfLLS'):
             case(work, engines, vis, f'{kind}-legacy', kind, legacy=True)
         for kind in ('D', 'Dgen'):
@@ -190,10 +195,12 @@ def main():
             flags[0] = True
             assert table.putcol('FLAG', flags)
         for kind in ('DLLS', 'DfLLS'):
-            products = case(work, engines, partial, f'{kind}-partial-correlation', kind, corrdep=True)
-            with opened(products['native']) as table:
-                assert table.getcol('FLAG').all()
-                assert not table.getcol('CPARAM').any()
+            for gain in (None, prior):
+                label = f'{kind}-partial-correlation' + ('-prior' if gain else '')
+                products = case(work, engines, partial, label, kind, corrdep=True, prior=gain)
+                with opened(products['native']) as table:
+                    assert table.getcol('FLAG').all()
+                    assert not table.getcol('CPARAM').any()
         flagged = work/'flagged.ms'
         copy_ms(vis, flagged)
         with opened(flagged, True) as table:
@@ -206,6 +213,11 @@ def main():
         linear, _, _, _, _, _ = fixture(work/'linear', 'XX XY YX YY')
         case(work, engines, linear, 'D-linear', 'D')
         case(work, engines, linear, 'Df-linear', 'Df')
+        observed = put_observations(vis, sky, [leakage])
+        with opened(vis, True) as table:
+            assert table.putcol('DATA', observed + noise)
+        case(work, engines, vis, 'Df-phase-whole-interval', 'Df',
+             options={'preavg': 0., 'phaseonly': True})
 
 
 if __name__ == '__main__':

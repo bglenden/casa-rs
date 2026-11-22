@@ -52,7 +52,7 @@ impl CalibraterLifecycle {
             model_source: standard.model_source,
             stokes: standard.smodel,
             priors: standard.prior_calibration_tables,
-            parang: standard.parang,
+            parang_terms: usize::from(standard.parang),
             correlation_dependent_flags: standard.correlation_dependent_flags,
             solve_mode: standard.solve_mode,
             normalization: standard
@@ -98,7 +98,7 @@ impl CalibraterLifecycle {
         }
         request.selection = equation.attachment.selection().clone();
         request.priors = equation.apply.tables.clone();
-        request.parang = equation.apply.parang_terms > 0;
+        request.parang_terms = equation.apply.parang_terms;
         request.correlation_dependent_flags = self
             .correlation_dependent_flags
             .unwrap_or(request.correlation_dependent_flags);

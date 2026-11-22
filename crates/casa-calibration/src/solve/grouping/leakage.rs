@@ -136,7 +136,7 @@ pub(crate) struct LeakageSolveRequest {
     pub(crate) model_source: GainSolveModelSource,
     pub(crate) stokes: [f32; 4],
     pub(crate) priors: Vec<ApplyCalibrationTableSpec>,
-    pub(crate) parang: bool,
+    pub(crate) parang_terms: usize,
     pub(crate) correlation_dependent_flags: bool,
     pub(crate) solve_mode: GainSolveMode,
     pub(crate) normalization: Option<crate::GainNormalization>,
@@ -198,14 +198,17 @@ pub(crate) fn solve_polarization_with_activity(
         &request.selection,
         &request.refant,
         &request.priors,
-        request.parang,
+        request.parang_terms > 0,
         true,
         match request.kind {
             LeakageSolveKind::PosAng => PriorCalibrationMode::PositionAngle,
             kind if kind.cross_hand() => PriorCalibrationMode::CrossHand {
                 share_input_flags: !request.correlation_dependent_flags,
             },
-            _ => PriorCalibrationMode::Leakage,
+            _ => PriorCalibrationMode::Leakage {
+                share_input_flags: !request.correlation_dependent_flags,
+                parang_terms: request.parang_terms,
+            },
         },
     )
     .map_err(error)?;
