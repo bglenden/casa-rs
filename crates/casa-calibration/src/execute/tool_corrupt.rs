@@ -34,6 +34,7 @@ pub(crate) fn execute_tool_corrupt(
         tracking.names,
         tracking.libraries,
         correction.parang_terms,
+        tracking.opacity,
         tracking.previous,
     );
     let mut chain = ApplyChain::load(ms, &plan, false)?;
@@ -42,6 +43,9 @@ pub(crate) fn execute_tool_corrupt(
     let (all_calibrated, missing_library) =
         select_corruption_rows(ms, &mut plan, tracking.libraries, operation)?;
     if !plan.selected_rows.is_empty() {
+        if correction.tableless_opacity {
+            return Err(unresolved_opacity(ms));
+        }
         write_corrupted_model(ms, &mut plan, &chain, lock)?;
     }
     if let Some(name) = missing_library {

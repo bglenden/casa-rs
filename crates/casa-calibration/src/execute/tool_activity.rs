@@ -24,7 +24,7 @@ pub(crate) struct ApplyTermCounts {
 struct ApplyTermActivity {
     name: Option<String>,
     subtype: String,
-    position: usize,
+    position: (usize, u8),
     counts: ApplyTermCounts,
 }
 
@@ -41,6 +41,7 @@ impl ToolApplyActivity {
         table_names: &[String],
         library_terms: &[LibraryApplyRegistration],
         parang_terms: usize,
+        opacity: &[(&'static str, usize)],
         previous: ApplyTermCounts,
     ) -> Self {
         let mut terms = Vec::new();
@@ -53,7 +54,7 @@ impl ToolApplyActivity {
             terms.push(ApplyTermActivity {
                 name: Some(registration.name.clone()),
                 subtype: registration.subtype.clone(),
-                position: registration.tables.start,
+                position: (registration.tables.start, 1),
                 counts: ApplyTermCounts::default(),
             });
         }
@@ -63,16 +64,22 @@ impl ToolApplyActivity {
                 terms.push(ApplyTermActivity {
                     name: Some(name.clone()),
                     subtype: table.summary.table_subtype.clone(),
-                    position: index,
+                    position: (index, 1),
                     counts: ApplyTermCounts::default(),
                 });
             }
         }
+        terms.extend(opacity.iter().map(|&(subtype, index)| ApplyTermActivity {
+            name: Some(String::new()),
+            subtype: subtype.into(),
+            position: (index, 0),
+            counts: ApplyTermCounts::default(),
+        }));
         let first_parang_term = terms.len();
         terms.extend((0..parang_terms).map(|index| ApplyTermActivity {
             name: None,
             subtype: "P Jones".into(),
-            position: plan.calibration_tables.len() + index,
+            position: (plan.calibration_tables.len() + index, 1),
             counts: ApplyTermCounts::default(),
         }));
         if let [term] = terms.as_mut_slice() {

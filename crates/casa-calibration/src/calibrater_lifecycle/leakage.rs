@@ -90,6 +90,7 @@ impl CalibraterLifecycle {
 
     pub(super) fn solve_polarization_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
+        equation.check_opacity_parameters()?;
         let Some(ConfiguredSolve::Polarization {
             request,
             invalid_mode,

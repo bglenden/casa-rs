@@ -61,6 +61,11 @@ impl CalibraterLifecycle {
         let using_callibrary = self.using_callibrary;
         let legacy = self.legacy_iterator;
         let equation = self.equation_mut()?;
+        let origin = match operation {
+            ApplyOperation::Correct(_) => "Calibrater::correct",
+            ApplyOperation::Corrupt if legacy => "Calibrater::corrupt",
+            ApplyOperation::Corrupt => "Calibrater::corrupt2",
+        };
         let mode = match operation {
             ApplyOperation::Correct("") => String::from("CALFLAG"),
             ApplyOperation::Correct(mode) => mode.to_ascii_uppercase(),
@@ -85,6 +90,7 @@ impl CalibraterLifecycle {
             trial,
             parang_terms: equation.apply.parang_terms,
             parang_calwt: equation.apply.parang_calwt,
+            tableless_opacity: !equation.apply.tableless_opacity.is_empty(),
         };
         let names = equation
             .apply
@@ -92,9 +98,16 @@ impl CalibraterLifecycle {
             .iter()
             .map(|table| equation.apply.source_name(table))
             .collect::<Vec<_>>();
+        let opacity = equation
+            .apply
+            .tableless_opacity
+            .iter()
+            .map(|term| (term.subtype, term.index))
+            .collect::<Vec<_>>();
         let tracking = ToolActivityInput {
             names: &names,
             libraries: &equation.apply.library_tables,
+            opacity: &opacity,
             previous: equation.apply.counts,
         };
         let result = equation.attachment.with_write(|ms, selected, lock| {
@@ -117,11 +130,6 @@ impl CalibraterLifecycle {
             };
             applied.map_err(|error| casa_ms::MsError::InvalidInput(error.to_string()).into())
         });
-        let origin = match operation {
-            ApplyOperation::Correct(_) => "Calibrater::correct",
-            ApplyOperation::Corrupt if legacy => "Calibrater::corrupt",
-            ApplyOperation::Corrupt => "Calibrater::corrupt2",
-        };
         let (all_calibrated, activity) = result.map_err(|error| {
             equation.apply = super::ApplyTerms::default();
             tracing::error!(%error, origin, "could not apply calibration to selected visibilities");

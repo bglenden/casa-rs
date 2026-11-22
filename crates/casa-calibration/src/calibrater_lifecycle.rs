@@ -51,6 +51,31 @@ struct VisibilityEquation {
     apply: ApplyTerms,
     solve: Option<ConfiguredSolve>,
     solve_description: Option<String>,
+    opacity_spectral_windows: Option<usize>,
+}
+
+impl VisibilityEquation {
+    fn check_opacity_parameters(&self) -> Result<(), CalibraterLifecycleError> {
+        if self.apply.tableless_opacity.is_empty() {
+            return Ok(());
+        }
+        let failure = CalibraterLifecycleError::ApplyConfiguration;
+        if !self.apply.tables.is_empty() {
+            let ms = MeasurementSet::open(self.attachment.path()).map_err(AttachmentError::from)?;
+            let request = crate::ApplyPlanRequest {
+                selection: self.attachment.selection().clone(),
+                apply_mode: crate::ApplyMode::Trial,
+                parang: self.apply.parang_terms > 0,
+                calibration_tables: self.apply.tables.clone(),
+            };
+            let (plan, _) = crate::plan::plan_with_visibility_metadata(&ms, &request, None)
+                .map_err(|error| failure(error.to_string()))?;
+            if !crate::execute::has_usable_apply_rows(&plan) {
+                return Ok(());
+            }
+        }
+        Err(failure("Error in TOpac::calcPar()".into()))
+    }
 }
 
 enum ConfiguredSolve {
@@ -76,6 +101,7 @@ struct ApplyTerms {
     counts: ApplyTermCounts,
     parang_terms: usize,
     parang_calwt: bool,
+    tableless_opacity: Vec<traditional_apply::TablelessOpacity>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -282,6 +308,7 @@ impl CalibraterLifecycle {
             apply: ApplyTerms::default(),
             solve: None,
             solve_description: None,
+            opacity_spectral_windows: None,
         });
         Ok(())
     }
@@ -832,6 +859,7 @@ impl CalibraterLifecycle {
                 }
                 None => return Err(CalibraterLifecycleError::NoSolver),
             };
+        equation.check_opacity_parameters()?;
         if activity.is_some() && !self.legacy_iterator {
             if matches!(&request, CalibrationSolveRequest::GainSpline { .. }) {
                 return Err(CalibraterLifecycleError::SplineNeedsLegacyIterator);

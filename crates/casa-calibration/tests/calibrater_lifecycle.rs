@@ -85,6 +85,27 @@ fn expect_no_solver(calibrater: &CalibraterLifecycle, path: &Path) {
     assert!(!path.exists());
 }
 
+#[test]
+fn tableless_opacity_prevents_public_rust_solve_from_writing() {
+    let work = tempfile::tempdir().unwrap();
+    let dataset = gain_model(&work.path().join("input"), 1.0);
+    let mut calibrater = CalibraterLifecycle::default();
+    calibrater.open(&dataset).unwrap();
+    calibrater.select(select_field("0")).unwrap();
+    let output = configure(&mut calibrater, work.path().join("gain.cal"));
+    calibrater
+        .set_tableless_opacity("TOpac", vec![0.1])
+        .unwrap();
+    assert!(
+        matches!(calibrater.solve(), Err(CalibraterLifecycleError::ApplyConfiguration(message))
+                     if message == "Error in TOpac::calcPar()")
+    );
+    assert!(!output.exists());
+    calibrater.reset(true, false).unwrap();
+    calibrater.solve().unwrap();
+    assert!(output.exists());
+}
+
 fn exercise_model_lifecycle(ms: &Path, other: &Path, outputs: &Path, legacy: bool) {
     let mut calibrater = CalibraterLifecycle::default();
     assert!(calibrater.set_legacy_iterator(legacy));

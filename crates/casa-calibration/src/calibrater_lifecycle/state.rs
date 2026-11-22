@@ -70,7 +70,7 @@ fn describe_apply(equation: &VisibilityEquation) -> Vec<String> {
             && let Some(snapshot) = apply.table_snapshots.get(&table.path)
         {
             terms.push((
-                (viscal_order(&snapshot.subtype), index),
+                (viscal_order(&snapshot.subtype), index, 1),
                 snapshot.description.clone(),
             ));
         }
@@ -81,16 +81,32 @@ fn describe_apply(equation: &VisibilityEquation) -> Vec<String> {
             .get(library.tables.start)
             .is_some_and(|table| table.calwt);
         terms.push((
-            (viscal_order(&library.subtype), library.tables.start),
+            (viscal_order(&library.subtype), library.tables.start, 1),
             format!(
                 "{}: table={} (by cal library) calWt={calwt}",
                 library.subtype, library.name
             ),
         ));
     }
+    terms.extend(apply.tableless_opacity.iter().map(|term| {
+        let opacity = term
+            .values
+            .iter()
+            .copied()
+            .map(format_calibration_number)
+            .collect::<Vec<_>>();
+        (
+            (viscal_order(term.subtype), term.index, 0),
+            format!(
+                "{}: opacity=[{}] calWt=false",
+                term.subtype,
+                opacity.join(", ")
+            ),
+        )
+    }));
     terms.extend((0..apply.parang_terms).map(|_| {
         (
-            (viscal_order("P Jones"), usize::MAX),
+            (viscal_order("P Jones"), usize::MAX, 1),
             "P Jones <pre-computed>".into(),
         )
     }));
@@ -315,12 +331,12 @@ impl<'a> SolveState<'a> {
             self.subtype,
             self.table.display(),
             self.append,
-            format_snr(self.min_snr),
+            format_calibration_number(f64::from(self.min_snr)),
         )
     }
 }
 
-fn format_snr(value: f32) -> String {
+fn format_calibration_number(value: f64) -> String {
     if !value.is_finite() {
         return value.to_string().to_ascii_lowercase();
     }
