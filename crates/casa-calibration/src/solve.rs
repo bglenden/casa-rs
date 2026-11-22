@@ -16,10 +16,12 @@
 #[cfg(test)]
 mod batch_trial;
 mod delay;
+pub(crate) mod fringe;
 pub(crate) mod grouping;
 pub(crate) mod gspline;
 pub(crate) mod kernel;
 mod model;
+mod normal;
 mod trace;
 pub(crate) mod writer;
 

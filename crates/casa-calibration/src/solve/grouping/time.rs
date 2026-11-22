@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveBaseKey,
-    SolveBucketKey,
+    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveAccumulator,
+    SolveBaseKey, SolveBucketKey,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,11 +53,6 @@ impl WeightedTime {
         (self.weight > 0.0).then(|| self.origin + self.weighted_offset / self.weight)
     }
 
-    #[cfg(test)]
-    pub(super) fn merge(&mut self, other: Self) {
-        self.add(other.origin, other.weighted_offset, other.weight);
-    }
-
     fn add(&mut self, origin: f64, weighted_offset: f64, weight: f64) {
         // Measure offsets before weighting. Summing absolute MS epochs
         // can split equal caltable times depending on baseline order.
@@ -66,6 +61,12 @@ impl WeightedTime {
         }
         self.weighted_offset += weighted_offset + weight * (origin - self.origin);
         self.weight += weight;
+    }
+}
+
+impl SolveAccumulator {
+    pub(in crate::solve) fn integration_times(&self) -> impl Iterator<Item = f64> + '_ {
+        self.unique_time_bits.iter().copied().map(f64::from_bits)
     }
 }
 

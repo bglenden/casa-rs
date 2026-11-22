@@ -136,13 +136,20 @@ fn read_row_packed<T: Clone>(
     wrap: fn(ArrayD<T>) -> ArrayValue,
 ) -> Result<Option<Vec<Option<ArrayValue>>>, casa_tables::TableError> {
     let mut values = Vec::new();
-    let Some(shape) = column.fill_array_cells_2d_channel_range_typed_uncached(
+    let packed = column.fill_array_cells_2d_channel_range_typed_uncached(
         rows,
         0,
         channels,
         destination(&mut values),
-    )?
-    else {
+    );
+    // Old storage managers can provide an owned cell batch through their
+    // whole-column reader. The typed channel reader deliberately declines it.
+    if matches!(&packed, Err(casa_tables::TableError::Storage(reason))
+        if reason.contains("its data manager can read this layout only as a whole column"))
+    {
+        return Ok(None);
+    }
+    let Some(shape) = packed? else {
         return Ok(None);
     };
     let shape = [shape.axis0_count, shape.channel_count];

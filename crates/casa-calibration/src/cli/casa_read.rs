@@ -42,6 +42,7 @@ pub(super) fn task_request(
     Ok(match task.surface() {
         "applycal" => CalibrationTaskRequest::ExecuteApply(applycal(task)?),
         "gaincal" => CalibrationTaskRequest::SolveGain(gaincal(task)?),
+        "fringefit" => CalibrationTaskRequest::SolveGain(fringefit(task)?),
         "bandpass" => CalibrationTaskRequest::SolveBandpass(bandpass(task)?),
         "fluxscale" => CalibrationTaskRequest::FluxScale(fluxscale(task)?),
         "gencal" => CalibrationTaskRequest::Gencal(gencal(task)?),
@@ -104,6 +105,7 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         output_table: PathBuf::from(task.required_text("caltable")?),
         gain_type,
         spline_controls,
+        fringe_controls: None,
         solve_mode: calmode(task)?,
         solve_interval: if spline {
             GainSolveInterval::Infinite
@@ -147,6 +149,70 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         },
         smodel,
         measurement_set,
+    })
+}
+
+fn fringefit(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
+    let reference = task.required_text("refant")?;
+    let active_parameters = task.flags("paramactive")?;
+    let active_parameters = match active_parameters.as_slice() {
+        [] => [true, true, false],
+        [delay, rate, dispersion] => [*delay, *rate, *dispersion],
+        _ => {
+            return Err(TaskFailure::validation(
+                "paramactive vector must have exactly three entries",
+            ));
+        }
+    };
+    let search_window = |name| -> Result<[f64; 2], TaskFailure> {
+        Ok(task.numbers(name)?.try_into().unwrap_or([-1e6, 1e6]))
+    };
+    let iterations = usize::try_from(task.integer("niter")?).unwrap_or(usize::MAX);
+    let correlation_combination = match task.required_text("corrcomb")?.as_str() {
+        "none" => crate::FringeCorrelation::Separate,
+        "stokes" => crate::FringeCorrelation::Stokes,
+        "parallel" => crate::FringeCorrelation::Parallel,
+        other => return Err(unknown("corrcomb", other, "'none', 'stokes' or 'parallel'")),
+    };
+    Ok(SolveGainTaskRequest {
+        measurement_set: task.path("vis")?,
+        selection: selection(task)?,
+        output_table: PathBuf::from(task.required_text("caltable")?),
+        append: task.flag("append")?,
+        gain_type: GainType::K,
+        spline_controls: None,
+        fringe_controls: Some(crate::FringeControls {
+            delay_window: search_window("delaywindow")?,
+            rate_window: search_window("ratewindow")?,
+            global_solve: task.flag("globalsolve")?,
+            iterations,
+            active_parameters,
+            zero_rates: task.flag("zerorates")?,
+            correlation_combination,
+            concatenate_windows: task.flag("concatspws")?,
+        }),
+        solve_mode: GainSolveMode::Phase,
+        solve_interval: solint(task)?,
+        preaverage_seconds: 0.,
+        correlation_dependent_flags: task.flag("corrdepflags")?,
+        combine: combine(task)?,
+        refant: if reference.is_empty() {
+            RefAntSelector::Unspecified
+        } else {
+            RefAntSelector::Expression {
+                selection: reference,
+                strict: false,
+            }
+        },
+        prior_calibration_tables: chain(task, Chain::Solve)?,
+        parang: task.flag("parang")?,
+        model_source: GainSolveModelSource::FromMeasurementSet,
+        normalize_average_amplitude: false,
+        normalization_type: GainNormalization::Mean,
+        robustness: Default::default(),
+        min_snr: task.number("minsnr")? as f32,
+        min_baselines_per_antenna: 0,
+        smodel: [1., 0., 0., 0.],
     })
 }
 

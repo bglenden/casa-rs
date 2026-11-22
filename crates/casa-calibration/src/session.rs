@@ -23,8 +23,8 @@ use crate::solve::grouping::{
     load_preapplied_rows, resolve_refants,
 };
 use crate::solve::{
-    GainSolveError, GainSolveReport, GainSolveRequest, GainSplineControls, RefAntSelector, gspline,
-    solve_gain,
+    GainSolveError, GainSolveReport, GainSolveRequest, GainSplineControls, RefAntSelector, fringe,
+    gspline, solve_gain,
 };
 
 /// Input ownership for one calibration solve.
@@ -58,6 +58,13 @@ pub enum CalibrationSolveRequest {
         gain: GainSolveRequest,
         /// Spline knot spacing and phase-wrap controls.
         controls: GainSplineControls,
+    },
+    /// Solve VLBI delay, rate and phase over selected visibility data.
+    Fringe {
+        /// Shared selection, prior and output settings.
+        gain: GainSolveRequest,
+        /// Fringe search and global refinement controls.
+        controls: fringe::FringeControls,
     },
     /// Solve channelized or polynomial bandpass calibration.
     Bandpass(BandpassSolveRequest),
@@ -149,6 +156,11 @@ fn solve_open_dataset(
             .map_err(CalibrationError::from),
         CalibrationSolveRequest::GainSpline { gain, controls } => {
             gspline::solve(measurement_set, &gain, controls, mode)
+                .map(CalibrationSolveResult::Gain)
+                .map_err(CalibrationError::from)
+        }
+        CalibrationSolveRequest::Fringe { gain, controls } => {
+            fringe::solve(measurement_set, &gain, controls, mode)
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }
