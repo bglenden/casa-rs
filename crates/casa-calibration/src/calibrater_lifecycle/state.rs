@@ -28,10 +28,9 @@ impl CalibraterLifecycle {
         }
         lines.push("The following calibration term is arranged for solve:".into());
         let solve = equation.solve.as_ref().map(|solver| {
-            equation
-                .solve_description
-                .clone()
-                .unwrap_or_else(|| SolveState::of(solver).description(equation, "", "AP", "flex"))
+            equation.solve_description.clone().unwrap_or_else(|| {
+                SolveState::of(solver).description(equation, "", "AP", "flex", None)
+            })
         });
         lines.push(format!(".   {}", solve.as_deref().unwrap_or("(None)")));
         Some(lines)
@@ -39,12 +38,23 @@ impl CalibraterLifecycle {
 
     /// Retain the original interval and mode spellings for the configured
     /// tool solve. The resolved numerical controls remain in the solver.
-    pub fn record_solve_description(&mut self, interval: &str, apmode: &str, refant_mode: &str) {
+    pub fn record_solve_description(
+        &mut self,
+        interval: &str,
+        apmode: &str,
+        refant_mode: &str,
+        reference: Option<&RefAntSelector>,
+    ) {
         if let Some(equation) = &mut self.equation
             && let Some(solver) = &equation.solve
         {
-            equation.solve_description =
-                Some(SolveState::of(solver).description(equation, interval, apmode, refant_mode));
+            equation.solve_description = Some(SolveState::of(solver).description(
+                equation,
+                interval,
+                apmode,
+                refant_mode,
+                reference,
+            ));
         }
     }
 }
@@ -146,7 +156,6 @@ pub(super) fn traditional_apply_description(
                 | "GlinXphf Jones"
                 | "PosAng Jones"
         );
-    let spwmap = if spwmap.is_empty() { &[-1] } else { spwmap };
     format!(
         "{subtype}: table={name} select= interp={interpolation} spwmap={spwmap:?} calWt={calwt}"
     )
@@ -266,31 +275,33 @@ impl<'a> SolveState<'a> {
         interval: &str,
         apmode: &str,
         refant_mode: &str,
+        reference: Option<&RefAntSelector>,
     ) -> String {
         let (time, frequency) = interval.split_once(',').unwrap_or((interval, ""));
-        let time = if time.is_empty() {
-            match self.interval {
-                GainSolveInterval::Infinite => "inf".into(),
-                GainSolveInterval::Integration => "int".into(),
-                GainSolveInterval::Seconds(seconds) => format!("{seconds}s"),
-            }
-        } else {
-            time.into()
+        let time = match self.interval {
+            GainSolveInterval::Infinite => "inf".into(),
+            GainSolveInterval::Integration if time.is_empty() => "int".into(),
+            GainSolveInterval::Seconds(seconds) if time.is_empty() => format!("{seconds}s"),
+            _ if time.trim().parse::<f64>().is_ok() => format!("{time}s"),
+            _ => time.into(),
         };
         let interval = if self.frequency_dependent {
-            format!(
-                "{time},{}",
-                if frequency.is_empty() {
-                    "none"
-                } else {
-                    frequency
-                }
-            )
+            let lower_frequency = frequency.to_ascii_lowercase();
+            let frequency = if frequency.is_empty() || lower_frequency.contains("none") {
+                "none".into()
+            } else if lower_frequency.contains("ch") {
+                lower_frequency
+            } else if frequency.trim().parse::<f64>().is_ok() {
+                format!("{frequency}ch")
+            } else {
+                frequency.into()
+            };
+            format!("{time},{frequency}")
         } else {
             time
         };
-        let reference = self
-            .reference
+        let reference = reference
+            .or(self.reference)
             .and_then(|selector| antenna_names(equation, selector))
             .unwrap_or_else(|| "none".into());
         let normalization = match self.normalization {
@@ -303,8 +314,33 @@ impl<'a> SolveState<'a> {
             self.subtype,
             self.table.display(),
             self.append,
-            self.min_snr,
+            format_snr(self.min_snr),
         )
+    }
+}
+
+fn format_snr(value: f32) -> String {
+    if !value.is_finite() {
+        return value.to_string().to_ascii_lowercase();
+    }
+    // Match the default CASA stream's six significant digits.
+    let scientific = format!("{value:.5e}");
+    let (mantissa, exponent) = scientific.split_once('e').expect("scientific notation");
+    let exponent: i32 = exponent.parse().expect("decimal exponent");
+    if (-4..=5).contains(&exponent) {
+        let decimals = (5 - exponent) as usize;
+        let fixed = format!("{value:.decimals$}");
+        trimmed_decimal(&fixed).into()
+    } else {
+        format!("{}e{exponent:+03}", trimmed_decimal(mantissa))
+    }
+}
+
+fn trimmed_decimal(value: &str) -> &str {
+    if value.contains('.') {
+        value.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        value
     }
 }
 

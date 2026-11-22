@@ -65,6 +65,9 @@ def collect(factory, capture, vis, leakage, gain, output, legacy):
     try:
         states['open'] = capture(tool.state)
         assert tool.selectvis(field='0')
+        assert tool.setapply(table=str(gain), spwmap=[])
+        states['explicit-empty-map'] = capture(tool.state)
+        assert tool.reset(True, False)
         assert tool.setapply(type='P') and tool.setapply(type='P')
         assert tool.setapply(table=str(leakage), interp='nearest,cubic', calwt=True)
         assert tool.setapply(table=str(gain), field='0', interp='nearest', spwmap=[0])
@@ -82,17 +85,20 @@ def collect(factory, capture, vis, leakage, gain, output, legacy):
             ('gain', 'G', '20s', {'refant': 'A3,A0', 'refantmode': 'strict', 'minsnr': 2.3}),
             ('bandpass', 'B', 'inf,2chan', {'apmode': 'p', 'solnorm': True, 'normtype': 'median'}),
             ('default-freq', 'B', 'inf', {}),
+            ('unitless-interval', 'B', '20,2', {}),
+            ('uppercase-interval', 'B', 'INF,2CHAN', {}),
+            ('rounded-snr', 'G', 'inf', {'minsnr': 1.2345678}),
+            ('scientific-snr', 'G', 'inf', {'minsnr': 1.2345678e7}),
             ('leakage', 'Df', 'inf', {'append': True, 'apmode': 'unknown'}),
             ('cross-hand', 'Xf', '10s,2MHz', {'refant': 'A3'}),
         )
         for label, kind, interval, kwargs in options:
             assert tool.setsolve(kind, interval, str(output), **kwargs)
             states[label] = capture(tool.state)
-        assert tool.setsolvebandpoly(str(output), t='inf', refant='A1')
+        assert tool.setsolvebandpoly(str(output), t='inf', refant='A3,A0')
         states['bandpoly'] = capture(tool.state)
-        if legacy:
-            assert tool.setsolvegainspline(str(output), refant='A1')
-            states['spline'] = capture(tool.state)
+        assert tool.setsolvegainspline(str(output), refant='A3,A0')
+        states['spline'] = capture(tool.state)
 
         assert tool.reset(False, True)
         states['reset-solve'] = capture(tool.state)
