@@ -44,6 +44,7 @@ pub(super) fn task_request(
         "gaincal" => CalibrationTaskRequest::SolveGain(gaincal(task)?),
         "fringefit" => CalibrationTaskRequest::SolveGain(fringefit(task)?),
         "accor" => CalibrationTaskRequest::SolveAccor(accor(task)?),
+        "blcal" => blcal(task)?,
         "bandpass" => CalibrationTaskRequest::SolveBandpass(bandpass(task)?),
         "fluxscale" => CalibrationTaskRequest::FluxScale(fluxscale(task)?),
         "gencal" => CalibrationTaskRequest::Gencal(gencal(task)?),
@@ -241,6 +242,60 @@ fn accor(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure>
         min_snr: 0.,
         min_baselines_per_antenna: 0,
         smodel: [1., 0., 0., 0.],
+    })
+}
+
+fn blcal(task: &TaskInvocation<'_>) -> Result<CalibrationTaskRequest, TaskFailure> {
+    if task.flag("selectdata")?
+        && let Some(ParameterValue::Bool(observation)) = task.value("observation")
+    {
+        let name = if *observation { "True" } else { "False" };
+        let first = name.chars().next().expect("boolean text");
+        return Err(TaskFailure::execution(format!(
+            "Error in data selection specification: Scan Expression: Parse error at or near '{first}'\n(near char. 1 in string \"{name}\")"
+        )));
+    }
+    let frequency_dependent = task.flag("freqdep")?;
+    let output_table = task.required_text("caltable")?;
+    if output_table.is_empty() {
+        return Err(TaskFailure::execution("Error in Calibrater::setsolve."));
+    }
+    let supplied_interval = selector_text(task.value("solint")).unwrap_or_default();
+    let (time, frequency) = supplied_interval
+        .split_once(',')
+        .unwrap_or((&supplied_interval, ""));
+    let frequency_interval = if frequency_dependent {
+        parse_frequency_solint(frequency)?
+    } else {
+        None
+    };
+    Ok(CalibrationTaskRequest::SolveBaseline {
+        frequency_dependent,
+        frequency_interval,
+        gain: SolveGainTaskRequest {
+            measurement_set: task.path("vis")?,
+            selection: selection(task)?,
+            output_table: PathBuf::from(output_table),
+            append: false,
+            gain_type: GainType::G,
+            spline_controls: None,
+            fringe_controls: None,
+            solve_mode: calmode(task)?,
+            solve_interval: parse_time_solint(time)?,
+            preaverage_seconds: 0.,
+            correlation_dependent_flags: false,
+            combine: combine(task)?,
+            refant: RefAntSelector::Unspecified,
+            prior_calibration_tables: traditional_chain(task, Chain::Solve)?.0,
+            parang: task.flag("parang")?,
+            model_source: GainSolveModelSource::FromMeasurementSet,
+            normalize_average_amplitude: task.flag("solnorm")?,
+            normalization_type: GainNormalization::Mean,
+            robustness: Default::default(),
+            min_snr: 0.,
+            min_baselines_per_antenna: 0,
+            smodel: [1., 0., 0., 0.],
+        },
     })
 }
 

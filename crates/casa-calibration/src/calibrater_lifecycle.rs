@@ -582,7 +582,8 @@ impl CalibraterLifecycle {
             CalibrationSolveRequest::Gain(gain)
             | CalibrationSolveRequest::GainSpline { gain, .. }
             | CalibrationSolveRequest::Fringe { gain, .. }
-            | CalibrationSolveRequest::Accor(gain) => {
+            | CalibrationSolveRequest::Accor(gain)
+            | CalibrationSolveRequest::Baseline { gain, .. } => {
                 gain.selection = selection;
                 gain.model_source = model_source;
                 gain.smodel = stokes;

@@ -37,6 +37,8 @@ pub(crate) enum SolveInputRows {
     Fringe,
     /// Keep the individual antennas' autocorrelations for normalization.
     Autocorrelations,
+    /// Retain all antenna pairs for a baseline Mueller solve.
+    Baselines,
 }
 
 impl SolveInputRows {
@@ -46,7 +48,11 @@ impl SolveInputRows {
         index: usize,
         data_desc_id: i32,
     ) -> Result<(usize, usize), GainSolveError> {
-        if self != Self::Autocorrelations {
+        if self == Self::Baselines && !(correlations.len() == 4 && matches!(index, 1 | 2)) {
+            let parameter = index % 2;
+            return Ok((parameter, parameter));
+        }
+        if !matches!(self, Self::Autocorrelations | Self::Baselines) {
             return correlation_receptors(correlations[index]).ok_or_else(|| {
                 GainSolveError::UnsupportedCorrelationLayout {
                     data_desc_id,
@@ -57,7 +63,7 @@ impl SolveInputRows {
                 }
             });
         }
-        // AccorJones reads the first and last elements of a four-correlation
+        // CASA reads the first and last elements of a four-correlation
         // row and both elements of a two-correlation row in storage order.
         Ok(match (correlations.len(), index) {
             (_, 0) => (0, 0),
@@ -165,12 +171,16 @@ pub(super) fn bucketed_rows(
     combine: GainSolveCombine,
     include_autocorrelations: bool,
     legacy_intervals: bool,
+    baseline_solve: bool,
 ) -> Vec<BucketedRow<'_>> {
     let mut keyed = rows
         .iter()
         .filter(|row| include_autocorrelations || row.antenna1 != row.antenna2)
         .map(|row| (row, SolveBaseKey::for_row(row, combine)))
         .collect::<Vec<_>>();
+    if baseline_solve && combine.scans && !combine.fields {
+        assign_field_visits(&mut keyed);
+    }
     keyed.sort_by(|(a, a_key), (b, b_key)| {
         a_key
             .cmp(b_key)
@@ -222,6 +232,43 @@ pub(super) fn bucketed_rows(
             (row, base_key, bucket_key)
         })
         .collect()
+}
+
+/// CASA's time-averaging iterator starts a new baseline solution when a
+/// scan-combined sequence changes field. The next visit to the same field
+/// starts its own time interval, even with `solint='inf'`.
+fn assign_field_visits(rows: &mut [(&SelectedSolveRow, SolveBaseKey)]) {
+    let Some((first, _)) = rows.first() else {
+        return;
+    };
+    if rows.iter().all(|(row, _)| row.field_id == first.field_id) {
+        return;
+    }
+    let scope = |key: &SolveBaseKey| {
+        (
+            key.array_id,
+            key.observation_id,
+            key.spw_id,
+            key.data_desc_id,
+        )
+    };
+    rows.sort_by(|(left, left_key), (right, right_key)| {
+        scope(left_key)
+            .cmp(&scope(right_key))
+            .then(left.time_seconds.total_cmp(&right.time_seconds))
+            .then(left.field_id.cmp(&right.field_id))
+            .then(left.row_index.cmp(&right.row_index))
+    });
+    let mut visit = 0;
+    let mut previous = None;
+    for (row, key) in rows {
+        let current = (scope(key), row.field_id);
+        if previous.is_some_and(|previous| previous != current) {
+            visit += 1;
+        }
+        key.field_visit = visit;
+        previous = Some(current);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -2,6 +2,7 @@
   "accor": "vis",
   "applycal": "vis",
   "bandpass": "vis",
+  "blcal": "vis",
   "calstat": "caltable",
   "clearcal": "vis",
   "delmod": "vis",

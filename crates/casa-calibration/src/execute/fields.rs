@@ -112,6 +112,7 @@ pub(crate) fn load(
         for (field, solutions) in groups {
             let selected = LoadedCalibrationTable {
                 path: table.path.clone(),
+                baseline: table.baseline,
                 interp: table.interp,
                 supports_calwt: false,
                 engine: None,
@@ -146,6 +147,21 @@ pub(super) struct GridAtTime {
     pub interpolated: bool,
 }
 
+pub(super) fn mapped_antenna(table: &LoadedCalibrationTable, antenna: i32) -> i32 {
+    table
+        .callibrary
+        .as_ref()
+        .and_then(|library| {
+            library
+                .antenna_map
+                .get(antenna as usize)
+                .or_else(|| library.antenna_map.last())
+        })
+        .copied()
+        .filter(|id| *id >= 0)
+        .unwrap_or(antenna)
+}
+
 pub(super) fn lookup(
     table: &LoadedCalibrationTable,
     field: i32,
@@ -171,18 +187,11 @@ pub(super) fn lookup(
         )
         .map(pinned));
     }
-    let antenna = table
-        .callibrary
-        .as_ref()
-        .and_then(|library| {
-            library
-                .antenna_map
-                .get(antenna as usize)
-                .or_else(|| library.antenna_map.last())
-        })
-        .copied()
-        .filter(|id| *id >= 0)
-        .unwrap_or(antenna);
+    let antenna = if table.baseline {
+        antenna
+    } else {
+        mapped_antenna(table, antenna)
+    };
     let Some(plan) = table.time_plans.get(&field) else {
         if !table.time_plans.is_empty() {
             return Ok(table.missing_grids.get(&window).cloned().map(pinned));

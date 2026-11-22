@@ -30,12 +30,13 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 36] = [
+pub const CALIBRATION_SURFACES: [&str; 37] = [
     "calibrate",
     "applycal",
     "gaincal",
     "fringefit",
     "accor",
+    "blcal",
     "pccor",
     "appendantab",
     "bandpass",
@@ -478,6 +479,15 @@ pub enum CalibrationTaskRequest {
     SolveGain(SolveGainTaskRequest),
     /// Normalize sampler amplitudes using antenna autocorrelations.
     SolveAccor(SolveGainTaskRequest),
+    /// Solve a CASA baseline Mueller calibration.
+    SolveBaseline {
+        /// Shared visibility and calibration selections.
+        gain: SolveGainTaskRequest,
+        /// Keep a solution for each selected frequency bin.
+        frequency_dependent: bool,
+        /// Optional grouping of selected channels by count or bandwidth.
+        frequency_interval: Option<BandpassFrequencyInterval>,
+    },
     /// Solve bandpass terms.
     SolveBandpass(SolveBandpassTaskRequest),
     /// Bootstrap flux density scaling.
@@ -548,7 +558,9 @@ impl CalibrationTaskRequest {
                 .map(CalibrationTaskResult::ExportCorrectedData)
                 .map_err(|error| error.to_string())
             }
-            Self::SolveGain(request) | Self::SolveAccor(request) => {
+            Self::SolveGain(request)
+            | Self::SolveAccor(request)
+            | Self::SolveBaseline { gain: request, .. } => {
                 let gain = GainSolveRequest {
                     selection: request.selection.clone(),
                     output_table: request.output_table.clone(),
@@ -571,6 +583,19 @@ impl CalibrationTaskRequest {
                 };
                 let solve = match (self, request.spline_controls, request.fringe_controls) {
                     (Self::SolveAccor(_), _, _) => CalibrationSolveRequest::Accor(gain),
+                    (
+                        Self::SolveBaseline {
+                            frequency_dependent,
+                            frequency_interval,
+                            ..
+                        },
+                        _,
+                        _,
+                    ) => CalibrationSolveRequest::Baseline {
+                        gain,
+                        frequency_dependent: *frequency_dependent,
+                        frequency_interval: *frequency_interval,
+                    },
                     (_, _, Some(controls)) => CalibrationSolveRequest::Fringe { gain, controls },
                     (_, Some(controls), _) => {
                         CalibrationSolveRequest::GainSpline { gain, controls }

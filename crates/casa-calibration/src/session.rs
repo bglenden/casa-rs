@@ -68,6 +68,15 @@ pub enum CalibrationSolveRequest {
     },
     /// Normalize the sampler response from antenna autocorrelations.
     Accor(GainSolveRequest),
+    /// Solve one multiplicative response per baseline and parallel hand.
+    Baseline {
+        /// Shared selection, prior, model and output parameters.
+        gain: GainSolveRequest,
+        /// Keep a solution for each selected frequency bin.
+        frequency_dependent: bool,
+        /// Optional channel or bandwidth interval for frequency-dependent fits.
+        frequency_interval: Option<crate::BandpassFrequencyInterval>,
+    },
     /// Solve channelized or polynomial bandpass calibration.
     Bandpass(BandpassSolveRequest),
 }
@@ -177,6 +186,19 @@ fn solve_open_dataset(
         CalibrationSolveRequest::Accor(gain) => accor::solve(measurement_set, &gain, mode)
             .map(CalibrationSolveResult::Gain)
             .map_err(CalibrationError::from),
+        CalibrationSolveRequest::Baseline {
+            gain,
+            frequency_dependent,
+            frequency_interval,
+        } => crate::solve::baseline::solve(
+            measurement_set,
+            &gain,
+            frequency_dependent,
+            frequency_interval,
+            mode,
+        )
+        .map(CalibrationSolveResult::Gain)
+        .map_err(|error| CalibrationError::Gain(Box::new(error))),
         CalibrationSolveRequest::Bandpass(request) => {
             solve_bandpass(measurement_set, &request, mode)
                 .map(CalibrationSolveResult::Bandpass)

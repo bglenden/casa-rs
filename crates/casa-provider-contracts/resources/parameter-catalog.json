@@ -11076,6 +11076,18 @@
       "persistence_class": "profile"
     },
     {
+      "id": "setsolve.freqdep",
+      "semantic_revision": 1,
+      "casa_name": "freqdep",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Fit separate baseline responses in each selected frequency bin.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "setsolve.gaintype",
       "semantic_revision": 1,
       "casa_name": "gaintype",

@@ -55,7 +55,7 @@ impl SelectedData {
         Self::of_rows(ms, rows.iter().filter(|row| row.antenna1 == row.antenna2))
     }
 
-    fn of_rows<'a>(
+    pub(crate) fn of_rows<'a>(
         ms: &MeasurementSet,
         rows: impl Iterator<Item = &'a SelectedSolveRow>,
     ) -> Result<Self, GainSolveError> {

@@ -75,6 +75,25 @@
     "interp": "cStrVec",
     "parang": "cBool"
   },
+  "blcal": {
+    "caltable": "cStr",
+    "field": "cStr",
+    "spw": "cStr",
+    "intent": "cStr",
+    "selectdata": "cBool",
+    "timerange": "cStr",
+    "antenna": "cStr",
+    "scan": "cStr",
+    "msselect": "cStr",
+    "combine": "cStr",
+    "freqdep": "cBool",
+    "calmode": "cStr",
+    "solnorm": "cBool",
+    "gaintable": "cStrVec",
+    "gainfield": "cStrVec",
+    "interp": "cStrVec",
+    "parang": "cBool"
+  },
   "calstat": {
     "axis": "cStr",
     "datacolumn": "cStr"

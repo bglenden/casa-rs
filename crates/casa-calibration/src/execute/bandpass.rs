@@ -220,6 +220,7 @@ mod tests {
             flags: ArrayD::from_elem(IxDyn(&[2, channels]), false),
         }));
         let table = LoadedCalibrationTable {
+            baseline: false,
             path: "constant.bcal".into(),
             interp: ApplyInterpolationMode::Linear,
             supports_calwt: true,

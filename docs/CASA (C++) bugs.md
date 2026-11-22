@@ -9982,3 +9982,20 @@ follow the wrong SPW when those orders differ. Casa-rs assembles each row
 using its stated spectral-window identifier. It also ignores an unknown
 station's GAIN record while preserving the following GAIN header. CASA
 can consume that header while skipping to the next slash.
+
+## Baseline Mueller calibration assumes ordered antennas
+
+CASA 6.7.6.14 computes its `M Mueller` and `Mf Mueller` baseline index
+assuming the first antenna ID is at most the second. For five antennas,
+`(0,3)` uses slot 3, while `(3,0)` uses slot 9, the slot for `(2,2)`.
+This can select or update the wrong baseline response. Exchanging antennas
+also conjugates the parallel-hand visibilities. Casa-rs stores the response
+for the ordered pair and conjugates it when solving or applying a reversed
+row. The [paired BLCAL oracle](../tools/casa-compat/blcal_oracle.py) checks
+the reversed-input solve and apply against the known sky model.
+
+When cross-hands carry weight and both parallel hands have zero weight,
+CASA can attempt the interval and publish unflagged NaNs from a zero-weight
+division. Casa-rs retains the interval and flags the unavailable
+parallel-hand responses, with the same zero coefficients as other absent
+solutions. The oracle compares the attempt and checks the output flags.
