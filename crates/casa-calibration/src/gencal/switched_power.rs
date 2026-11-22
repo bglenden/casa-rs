@@ -288,7 +288,7 @@ fn visibility_labels(
     let arrays = ids(COL_ARRAY_ID)?;
     let mut fields_by_time = HashMap::new();
     let mut scan_limits = HashMap::new();
-    let mut observe = |row: usize| {
+    let observe = |row: usize| {
         let time = times[row];
         if !time.is_finite() {
             return;

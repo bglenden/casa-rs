@@ -14,7 +14,7 @@ use casa_types::{RecordValue, Value};
 use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyList, PyTuple},
+    types::{PyDict, PyTuple},
 };
 
 use super::{

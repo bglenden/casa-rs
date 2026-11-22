@@ -4,7 +4,12 @@
 use std::path::Path;
 
 use casa_calibration::CalibrationSpecification;
-use pyo3::{exceptions::PySystemError, prelude::*, types::PyTuple};
+use numpy::PyUntypedArray;
+use pyo3::{
+    exceptions::PySystemError,
+    prelude::*,
+    types::{PyBytes, PyList, PyListMethods, PyString, PyTuple},
+};
 
 use super::arguments::{append_double_vector, strict_bool, supplied, text};
 use super::{PyCalibrater, runtime_error};
@@ -71,19 +76,7 @@ impl PyCalibrater {
         let antenna = text(antenna, "antenna", "")?;
         let polarization = text(pol, "pol", "")?;
         let caltype = text(caltype, "caltype", "")?;
-        let tuple = parameter
-            .as_ref()
-            .is_some_and(|value| value.is_instance_of::<PyTuple>());
-        let parameters = match parameter {
-            None => vec![1.],
-            Some(value) if value.is_none() => Vec::new(),
-            Some(value) if tuple => value.extract::<DoubleList>()?.0,
-            Some(value) => {
-                let mut values = Vec::new();
-                append_double_vector(&value, &mut values, 0)?;
-                values
-            }
-        };
+        let (parameters, tuple) = specify_parameters(parameter.as_ref())?;
         let infile = text(infile, "infile", "")?;
         let uniform = uniform
             .as_ref()
@@ -116,4 +109,42 @@ impl PyCalibrater {
     fn state(&self) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "state", 1528)
     }
+}
+
+fn specify_parameters(value: Option<&Bound<'_, PyAny>>) -> PyResult<(Vec<f64>, bool)> {
+    let Some(value) = value else {
+        return Ok((vec![1.], false));
+    };
+    if value.is_none()
+        || value.is_instance(&value.py().import("numpy")?.getattr("complexfloating")?)?
+        || value.is_instance_of::<pyo3::types::PyComplex>()
+    {
+        return Ok((Vec::new(), false));
+    }
+    if value.is_instance_of::<PyUntypedArray>()
+        && value.getattr("dtype")?.getattr("kind")?.extract::<char>()? == 'O'
+    {
+        return Ok((Vec::new(), false));
+    }
+    // Scalar text takes the default value of the failed Python-to-double cast.
+    // Text within a list or array goes through CASA's vector element conversion.
+    if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytes>() {
+        return Ok((vec![-1.], false));
+    }
+    if value.is_instance_of::<PyTuple>() {
+        return Ok((value.extract::<DoubleList>()?.0, true));
+    }
+    let mut parameters = Vec::new();
+    if let Ok(list) = value.cast::<PyList>()
+        && list.iter().any(|item| item.is_instance_of::<PyList>())
+    {
+        let array = value
+            .py()
+            .import("numpy")?
+            .call_method1("asarray", (value,))?;
+        append_double_vector(&array, &mut parameters, 0)?;
+    } else {
+        append_double_vector(value, &mut parameters, 0)?;
+    }
+    Ok((parameters, false))
 }

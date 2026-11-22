@@ -174,7 +174,8 @@ def main():
         ('fortran-parameter-order', np.array([[2., 3.], [5., 7.]])),
         ('nested-list', [[2., 3.], [5., 7.]]),
         ('numeric-text', '2.25'),
-        ('real-part', 2.25 + 3j),
+        ('numeric-text-list', ['2.25']),
+        ('real-part', [2.25 + 3j]),
     ]:
         prescribe(work, engines, vis, label, [
             (dict(caltype='G', spw='0,1', pol='R,L', parameter=parameters), ok),
@@ -234,6 +235,9 @@ def main():
         ('pol-error', {'pol': 'P'}, ERROR),
         ('parameter-error', {'parameter': [1., 2., 3.]}, ERROR),
         ('parameter-none', {'parameter': None}, ERROR),
+        ('complex-scalar', {'parameter': 2.25 + 3j}, ERROR),
+        ('complex-numpy-scalar', {'parameter': np.complex64(2.25 + 3j)}, ERROR),
+        ('object-parameter-array', {'parameter': np.array([2.25], dtype=object)}, ERROR),
         ('time-none', {'time': None}, (False, ('TypeError', 'argument _time must be a string'))),
         ('uniform-int', {'uniform': 1}, (False, ('TypeError',
                          "in method 'calibrater_specifycal', argument 10 of type 'bool'"))),
