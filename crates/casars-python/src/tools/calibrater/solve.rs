@@ -406,7 +406,7 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
-            if matches!(family.as_str(), "TF" | "TF JONES") {
+            if matches!(family.as_str(), "TF" | "TF JONES" | "TF NOISE") {
                 let frequency = casa_calibration::BandpassFrequencyInterval::from_casa(
                     frequency.unwrap_or_default(),
                 )

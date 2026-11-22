@@ -5,15 +5,17 @@
 import argparse
 from contextlib import chdir
 from pathlib import Path
+from shutil import copytree
 
 import casatasks
-from casatools import calibrater as casa_calibrater
+from casatools import calibrater as casa_calibrater, table as casa_table
 import numpy as np
 
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_solve_tool_oracle import compare_readers, compare_solutions
 from calibrater_state_oracle import casa_log, native_log
 from calibration_smoothcal_oracle import opened
+from gaincal_delay_oracle import duplicate_rows
 from record_casa_returns import make_cal_ms
 
 
@@ -21,11 +23,10 @@ def solve(factory, capture, vis, product, selection, interval, options, *, produ
     tool = factory()
     assert tool.open(str(vis), addcorr=False, addmodel=False)
     try:
-        assert tool.selectvis(field='0', spw=selection)
-        assert tool.setptmodel([1., 0., 0., 0.])
-        kind = options.get('type', 'Tf')
         kwargs = {'refant': 'A0', 'minblperant': 3, 'minsnr': 0.} | options
-        kwargs.pop('type', None)
+        assert tool.selectvis(field=kwargs.pop('field', '0'), spw=selection)
+        assert tool.setptmodel([1., 0., 0., 0.])
+        kind = kwargs.pop('type', 'Tf')
         assert tool.setsolve(kind, interval, str(product), **kwargs)
         state = capture(tool.state)
         assert list(tool.returndict()['solve_tables']) == [str(product)]
@@ -43,10 +44,12 @@ def solve(factory, capture, vis, product, selection, interval, options, *, produ
 def compare_window(products):
     with opened(products['casa']/'SPECTRAL_WINDOW') as expected, \
             opened(products['native']/'SPECTRAL_WINDOW') as actual:
-        for name in ('NUM_CHAN', 'CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION',
-                     'REF_FREQUENCY', 'TOTAL_BANDWIDTH', 'FLAG_ROW'):
-            np.testing.assert_array_equal(actual.getcell(name, 0), expected.getcell(name, 0),
-                                          err_msg=name)
+        assert actual.nrows() == expected.nrows()
+        for row in range(expected.nrows()):
+            for name in ('NUM_CHAN', 'CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION',
+                         'REF_FREQUENCY', 'TOTAL_BANDWIDTH', 'FLAG_ROW'):
+                np.testing.assert_array_equal(actual.getcell(name, row), expected.getcell(name, row),
+                                              err_msg=f'SPW {row} {name}')
 
 
 def compare_case(work, vis, factory, label, selection, interval, product_expected, options):
@@ -68,6 +71,19 @@ def compare_case(work, vis, factory, label, selection, interval, product_expecte
         compare_readers(products)
         compare_window(products)
     print(label, 'matched', flush=True)
+
+
+def second_window(original, path):
+    copytree(original, path)
+    assert duplicate_rows(casa_table(), path/'SPECTRAL_WINDOW') == 1
+    assert duplicate_rows(casa_table(), path/'DATA_DESCRIPTION') == 1
+    with opened(path/'SPECTRAL_WINDOW', True) as table:
+        for column in ('CHAN_FREQ', 'REF_FREQUENCY'):
+            assert table.putcell(column, 1, table.getcell(column, 0) + 10e9)
+    with opened(path/'DATA_DESCRIPTION', True) as table:
+        assert table.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    with opened(path, True) as table:
+        assert table.putcol('DATA_DESC_ID', table.getcol('FIELD_ID'))
 
 
 def main():
@@ -93,6 +109,12 @@ def main():
         make_cal_ms(str(vis))
         for case in cases:
             compare_case(work, vis, native_calibrater, *case)
+        twin = work/'two-windows.ms'
+        second_window(vis, twin)
+        compare_case(work, twin, native_calibrater, 'unselected-window', '0:3', 'inf', True,
+                     {'type': 'Tf Noise'})
+        compare_case(work, twin, native_calibrater, 'combined-windows', '0:3,1:3', 'inf', True,
+                     {'field': '0,1', 'combine': 'spw'})
 
 
 if __name__ == '__main__':
