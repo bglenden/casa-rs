@@ -152,7 +152,11 @@ impl BaselineTable {
                 let boundaries = spline_boundaries(params, receptor, pieces, channels)?;
                 ModelBasis::Spline { pieces, boundaries }
             }
-            Some(3) => ModelBasis::Sinusoid(sinusoid_waves(parameters, receptor)?),
+            Some(3) => {
+                let waves = sinusoid_waves(parameters, receptor)?;
+                sinusoid::validate_context(*waves.last().expect("nonempty waves"), channels)?;
+                ModelBasis::Sinusoid(waves)
+            }
             _ => return Err("Unsupported baseline type.".into()),
         };
         let coefficients_count = match &basis {

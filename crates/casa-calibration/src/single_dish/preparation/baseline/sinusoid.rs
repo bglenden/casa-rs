@@ -21,12 +21,12 @@ pub(super) enum WaveSelection {
 }
 
 impl WaveSelection {
-    pub(super) fn from_numbers(numbers: impl IntoIterator<Item = i64>) -> Result<Self, String> {
+    pub(super) fn explicit(numbers: impl IntoIterator<Item = i64>) -> Result<Self, String> {
         numbers
             .into_iter()
             .map(|number| usize::try_from(number).map_err(|_| INVALID_WAVE.into()))
-            .collect::<Result<BTreeSet<_>, _>>()
-            .map(|numbers| Self::Explicit(numbers.into_iter().collect()))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Self::Explicit)
     }
 
     pub(super) fn from_task_text(text: &str) -> Result<Self, String> {
@@ -38,8 +38,18 @@ impl WaveSelection {
                 .collect::<Result<BTreeSet<_>, _>>()?;
             return Ok(Self::Explicit(indexes.into_iter().collect()));
         }
-        if let Some((first, last)) = text.split_once(['-', '~']) {
-            let (first, last) = (index(first)?, index(last)?);
+        if let Some(delimiter) = ['-', '~']
+            .into_iter()
+            .find(|&delimiter| text.contains(delimiter))
+        {
+            let bounds = text
+                .split(delimiter)
+                .map(index)
+                .collect::<Result<Vec<_>, _>>()?;
+            let [first, last, ..] = bounds.as_slice() else {
+                return Err(INVALID_WAVE.into());
+            };
+            let (first, last) = (*first, *last);
             return Ok(Self::Interval {
                 first: first.min(last),
                 last: first.max(last),
@@ -114,11 +124,15 @@ impl WaveSelection {
 
 // The direct binding passes each comma-delimited token through atoi.
 fn c_integer(text: &str) -> i32 {
+    parse_integer_prefix(text).unwrap_or_default() as i32
+}
+
+fn parse_integer_prefix(text: &str) -> Option<i64> {
     let text = text.trim_start();
-    let digits = text.trim_start_matches(['-', '+']);
+    let digits = text.strip_prefix(['-', '+']).unwrap_or(text);
     let count = digits.bytes().take_while(u8::is_ascii_digit).count();
     let sign = text.len() - digits.len();
-    text[..sign + count].parse::<i64>().unwrap_or_default() as i32
+    text[..sign + count].parse().ok()
 }
 
 #[derive(Clone, Copy)]
@@ -128,41 +142,33 @@ pub(super) enum FftThreshold {
 }
 
 impl FftThreshold {
-    pub(super) fn parse(text: &str) -> Result<Self, String> {
+    pub(super) fn validate(text: &str) -> Result<(), String> {
         const FORMAT: &str = "fftthresh has a wrong format.";
         const POSITIVE: &str = "threshold given to fftthresh must be positive.";
-        if let Some(top) = text.strip_prefix("top") {
-            let count: usize = top
+        let not_positive = if let Some(top) = text.strip_prefix("top") {
+            top.trim().parse::<i64>().map_err(|_| FORMAT)? <= 0
+        } else {
+            text.strip_suffix("sigma")
+                .unwrap_or(text)
                 .trim()
-                .parse::<i64>()
+                .parse::<f64>()
                 .map_err(|_| FORMAT)?
-                .try_into()
-                .map_err(|_| POSITIVE)?;
-            if count == 0 {
-                return Err(POSITIVE.into());
-            }
-            return Ok(Self::Top(count));
+                <= 0.
+        };
+        if not_positive {
+            Err(POSITIVE.into())
+        } else {
+            Ok(())
         }
-        let sigma: f32 = text
-            .strip_suffix("sigma")
-            .unwrap_or(text)
-            .trim()
-            .parse()
-            .map_err(|_| FORMAT)?;
-        if sigma <= 0. {
-            return Err(POSITIVE.into());
-        }
-        Ok(Self::Sigma(sigma))
     }
 
     fn from_tool(text: &str) -> Result<Self, &'static str> {
         const INVALID: &str = "fftthresh has a wrong value";
         if let Some(count) = text.strip_prefix("top") {
-            return count
-                .trim()
-                .parse::<i32>()
+            return parse_integer_prefix(count)
+                .and_then(|count| i32::try_from(count).ok())
                 .map(|count| Self::Top(count.max(0) as usize))
-                .map_err(|_| INVALID);
+                .ok_or(INVALID);
         }
         let sigma = if let Some(sigma) = text.strip_suffix("sigma") {
             sigma
@@ -176,8 +182,14 @@ impl FftThreshold {
         } else {
             text
         };
-        sigma
-            .trim()
+        let sigma = sigma.trim_start();
+        let prefix = sigma
+            .bytes()
+            .take_while(|&byte| {
+                byte.is_ascii_digit() || matches!(byte, b'+' | b'-' | b'.' | b'e' | b'E')
+            })
+            .count();
+        sigma[..prefix]
             .parse::<f32>()
             .ok()
             .filter(|value| value.is_finite())
@@ -245,21 +257,31 @@ impl SingleDishSinusoid {
     ) -> Result<Option<(Fit, Vec<usize>)>, String> {
         let maximum = (spectrum.len() / 2).checked_sub(1).ok_or(NO_WAVES)?;
         let extended = matches!(self.exclude, WaveSelection::ThroughNyquist(_));
-        let mut waves = match &self.include {
-            WaveSelection::Explicit(values) => values
+        let first_rejected = match self.exclude {
+            WaveSelection::ThroughNyquist(first) => Some(first),
+            _ => None,
+        };
+        let mut waves = match (&self.include, first_rejected) {
+            (WaveSelection::Explicit(values), _) => values
                 .iter()
                 .copied()
                 .filter(|&wave| (extended || wave <= maximum) && !self.exclude.includes(wave))
                 .collect::<Vec<_>>(),
+            (WaveSelection::Interval { first, last }, Some(rejected)) => {
+                let last = (*last).min(rejected.checked_sub(1).ok_or(NO_WAVES)?);
+                if last < *first {
+                    return Err(NO_WAVES.into());
+                }
+                validate_context(last, spectrum.len())?;
+                (*first..=last).collect()
+            }
             _ => (0..=maximum)
                 .filter(|&wave| self.include.includes(wave) && !self.exclude.includes(wave))
                 .collect(),
         };
         let base_maximum = *waves.last().ok_or(NO_WAVES)?;
-        if (self.fft.is_none() || extended) && terms_for_maximum(base_maximum) > spectrum.len() {
-            return Err(
-                "sakura_CreateLSQFitContextSinusoidFloat() failed -- InvalidArgument".into(),
-            );
+        if self.fft.is_none() || extended {
+            validate_context(base_maximum, spectrum.len())?;
         }
         if !has_unflagged_data {
             return Ok(None);
@@ -280,10 +302,8 @@ impl SingleDishSinusoid {
             return Ok(None);
         }
         let largest = *waves.last().expect("nonempty waves");
-        if self.fft.is_some() && !extended && terms_for_maximum(largest) > spectrum.len() {
-            return Err(
-                "sakura_CreateLSQFitContextSinusoidFloat() failed -- InvalidArgument".into(),
-            );
+        if self.fft.is_some() && !extended {
+            validate_context(largest, spectrum.len())?;
         }
         if (extended && largest > base_maximum) || !waves.windows(2).all(|pair| pair[0] < pair[1]) {
             return Err(INVALID_FIT.into());
@@ -304,8 +324,12 @@ impl SingleDishSinusoid {
     }
 }
 
-fn terms_for_maximum(wave: usize) -> usize {
-    wave.saturating_mul(2).saturating_add(1)
+pub(super) fn validate_context(wave: usize, channels: usize) -> Result<(), String> {
+    if wave.saturating_mul(2).saturating_add(2) > channels {
+        Err("sakura_CreateLSQFitContextSinusoidFloat() failed -- InvalidArgument".into())
+    } else {
+        Ok(())
+    }
 }
 
 fn peaks(
@@ -358,7 +382,9 @@ fn peaks(
             indexes.truncate(count);
             indexes.extend(std::iter::repeat_n(
                 0,
-                count.saturating_sub(indexes.len()).min(2),
+                count
+                    .saturating_sub(indexes.len())
+                    .min(spectrum.len().saturating_add(1)),
             ));
             Ok(indexes)
         }

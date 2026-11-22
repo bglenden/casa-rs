@@ -10,6 +10,7 @@ import casatasks as casa
 from casatools import singledishms
 import numpy as np
 
+from applycal_oracle import copy_ms
 from calibration_smoothcal_oracle import opened
 from sdbaseline_mask_spline_oracle import one_spectrum
 from sdbaseline_oracle import check_application, compare_baselines, compare_reports, tool_apply
@@ -109,6 +110,10 @@ def main():
         (dict(applyfft=True, fftmethod='FFT', fftthresh='TOP3'), [0, 3, 7]),
         (dict(applyfft=True, fftthresh='2sigma'), [0]),
         (dict(applyfft=True, fftthresh=2.), [0]),
+        (dict(applyfft=True, fftthresh=np.float32(2.)), [0]),
+        (dict(applyfft=True, fftthresh=np.int64(2)), [0]),
+        (dict(applyfft=True, fftthresh='1e-50sigma'), [0, 3, 7]),
+        (dict(applyfft=False, addwn='3~0~1', rejwn=[1, 2]), [0, 3]),
         (dict(applyfft=True, fftthresh='top3', rejwn=[7]), [0, 3]),
     ]
     for index, (options, waves) in enumerate(cases):
@@ -174,6 +179,13 @@ def main():
         (dict(applyfft=False, fftthresh='wrong'), ValueError, 'fftthresh has a wrong format.'),
         (dict(fftthresh='top3', addwn=0, rejwn='>=7'), RuntimeError, 'InvalidArgument'),
         (dict(fftthresh='1e0'), RuntimeError, 'fftthresh has a wrong value'),
+        (dict(applyfft=False, addwn=[3.1, 3.3]), RuntimeError, 'InvalidArgument'),
+        (dict(applyfft=False, addwn=['3', '12']), RuntimeError, 'InvalidArgument'),
+        (dict(addwn=['3', 0]), TypeError, 'str'),
+        (dict(addwn=(0, 3)), AssertionError, 'must be of cVariant type'),
+        (dict(addwn=np.array([0, 3])), ValueError, 'wrong value given for addwn/rejwn'),
+        (dict(applyfft=False, addwn='47~48', rejwn='>=55'), RuntimeError, 'CreateLSQFitContext'),
+        (dict(applyfft=False, addwn=[47, 48], rejwn='>=55'), RuntimeError, 'CreateLSQFitContext'),
     ]
     for name, task in tasks.items():
         for index, (options, error_type, message) in enumerate(errors):
@@ -193,6 +205,10 @@ def main():
         output, table = fit_tool(factory, source, root / f'numeric-array-{name}',
                                  applyfft=True, fftthresh=[2.0], addwn='nonnumeric')
         check_coefficients(table, spectra, [[0]] * 2)
+        for index, (text, waves) in enumerate((('top2xyz', [0, 3]), ('2s', [0]))):
+            _, table = fit_tool(factory, source, root / f'threshold-prefix-{name}-{index}',
+                                applyfft=True, fftthresh=text)
+            check_coefficients(table, spectra, [waves] * 2)
     print(f'paired task and direct-tool errors ({len(errors) + 3})', flush=True)
 
     clipped_source = one_spectrum(full, root / 'clipped.ms')
@@ -221,6 +237,8 @@ def main():
         compare_baselines(clipped_products['casa'][1], clipped_products['native'][1])
     print('paired clipping and selected-channel mask', flush=True)
 
+    check_context_boundaries(root, full, source, spectra, direct, tasks, tools)
+
     for name, task in tasks.items():
         prefix = root / f'timing-{name}'
         start = time.perf_counter()
@@ -230,6 +248,63 @@ def main():
         print(f'{name} matched spectrum, MS and table elapsed {time.perf_counter()-start:.6f} s',
               flush=True)
     print('sinusoidal baselines passed', flush=True)
+
+
+def check_context_boundaries(root, full, source, spectra, direct, tasks, tools):
+    odd_root = root / 'odd'
+    odd_root.mkdir()
+    odd = one_spectrum(spectral_map(odd_root, (95, 95)), odd_root / 'one.ms')
+    with opened(odd, True) as table:
+        table.putcell('FLAG', 0, np.zeros((2, 95), dtype=bool))
+    for name, task in tasks.items():
+        def fit(wave):
+            prefix = odd_root / f'wave-{wave}-{name}'
+            return task(str(odd), outfile=str(prefix.with_suffix('.ms')), blfunc='sinusoid',
+                        addwn=wave, rejwn='>=55', applyfft=False, dosubtract=False,
+                        blformat='table', bloutput=str(prefix.with_suffix('.bltable')))
+
+        assert fit(46) is None
+        expected_error(lambda: fit(47), RuntimeError, 'CreateLSQFitContext')
+
+    invalid = root / 'invalid-context.bltable'
+    copy_ms(direct['casa'][1], invalid)
+    with opened(invalid, True) as table:
+        table.putcell('FUNC_PARAM', 0, np.tile([0, 3, 49], (2, 1)).astype('int32'))
+    for name, factory in tools.items():
+        expected_error(lambda: tool_apply(factory, source, invalid, root / f'bad-table-{name}.ms'),
+                       RuntimeError, 'CreateLSQFitContext')
+
+    sparse = root / 'sparse-first.ms'
+    with opened(full) as table:
+        rows = np.flatnonzero(table.getcol('ANTENNA1') == table.getcol('ANTENNA2'))[:2]
+        selected = table.selectrows(rows.tolist())
+        try:
+            written = selected.copy(str(sparse), deep=True, valuecopy=True)
+            written.close()
+        finally:
+            selected.close()
+    with opened(sparse, True) as table:
+        flags = np.ones((2, 96), dtype=bool)
+        flags[:, :8] = False
+        table.putcell('FLAG', 0, flags)
+        table.putcell('DATA', 0, np.zeros((2, 96), dtype=np.complex64))
+        table.putcell('DATA', 1, spectra.astype(np.complex64))
+
+    products = {}
+    for name, task in tasks.items():
+        prefix = root / f'top6-sparse-{name}'
+        output, table = prefix.with_suffix('.ms'), prefix.with_suffix('.bltable')
+        assert task(str(sparse), outfile=str(output), blfunc='sinusoid', addwn=3, fftthresh='top6',
+                    blformat='table', bloutput=str(table)) is None
+        with opened(output) as main, opened(table) as models:
+            assert main.nrows() == 2 and models.nrows() == 1
+            np.testing.assert_array_equal(main.getcell('FLAG', 0), True)
+            np.testing.assert_array_equal(main.getcell('FLAG', 1), False)
+        products[name] = (output, table)
+    if 'native' in products:
+        compare_outputs(products['casa'][0], products['native'][0])
+        compare_baselines(products['casa'][1], products['native'][1])
+    print('paired 95/96-channel context bounds, invalid table and sparse FFT skip', flush=True)
 
 
 if __name__ == '__main__':

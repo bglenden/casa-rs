@@ -149,7 +149,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 fn sinusoid(task: &TaskInvocation<'_>) -> Result<SingleDishSinusoid, TaskFailure> {
     let include = wave_selection(task, "addwn")?;
     let exclude = wave_selection(task, "rejwn")?;
-    let threshold = match task.value("fftthresh") {
+    let threshold = match task.value("fftthresh").map(numpy_scalar) {
         Some(ParameterValue::Integer(value)) => value.to_string(),
         Some(ParameterValue::Float(value)) => value.to_string(),
         Some(ParameterValue::String(value)) => value.to_ascii_lowercase(),
@@ -160,7 +160,7 @@ fn sinusoid(task: &TaskInvocation<'_>) -> Result<SingleDishSinusoid, TaskFailure
             );
         }
     };
-    FftThreshold::parse(&threshold)
+    FftThreshold::validate(&threshold)
         .map_err(|message| TaskFailure::validation(message).at("fftthresh"))?;
     if matches!(&include, WaveSelection::Explicit(values) if values.is_empty()) {
         return Err(TaskFailure::execution("addwn must contain at least one element.").at("addwn"));
@@ -174,29 +174,62 @@ fn sinusoid(task: &TaskInvocation<'_>) -> Result<SingleDishSinusoid, TaskFailure
     ))
 }
 
+fn numpy_scalar(value: &ParameterValue) -> &ParameterValue {
+    match value {
+        ParameterValue::NumpyScalar { value, .. } => value,
+        value => value,
+    }
+}
+
 fn wave_selection(task: &TaskInvocation<'_>, name: &str) -> Result<WaveSelection, TaskFailure> {
-    let integer = |value: &ParameterValue| -> Result<i64, String> {
-        match value {
-            ParameterValue::Integer(value) => Ok(*value),
-            ParameterValue::String(text) => text.trim().parse().map_err(|_| INVALID_WAVE.into()),
-            // CASA checks the truncated value before its direct binding parses
-            // the numeric prefix of each list element.
-            ParameterValue::Float(value) if value.is_finite() => Ok(*value as i64),
-            ParameterValue::Bool(_) => Ok(0),
-            _ => Err(INVALID_WAVE.into()),
-        }
-    };
     let selection = match task.value(name) {
         Some(ParameterValue::String(text)) => WaveSelection::from_task_text(text),
-        Some(ParameterValue::Integer(value)) => WaveSelection::from_numbers([*value]),
-        Some(ParameterValue::Array(values)) => values
-            .iter()
-            .map(integer)
-            .collect::<Result<Vec<_>, _>>()
-            .and_then(WaveSelection::from_numbers),
+        Some(ParameterValue::Integer(value)) => WaveSelection::explicit([*value]),
+        Some(ParameterValue::Array(values)) => wave_list(values),
         _ => Err(INVALID_WAVE.into()),
     };
     selection.map_err(|message| TaskFailure::validation(message).at(name))
+}
+
+fn wave_list(values: &[ParameterValue]) -> Result<WaveSelection, String> {
+    if values
+        .iter()
+        .any(|value| matches!(value, ParameterValue::String(_)))
+    {
+        let mut text = Vec::with_capacity(values.len());
+        for value in values {
+            let ParameterValue::String(value) = value else {
+                return Err("Cannot sort a wavenumber list containing strings and numbers.".into());
+            };
+            text.push(value.as_str());
+        }
+        text.sort_unstable();
+        text.dedup();
+        let indexes = text
+            .into_iter()
+            .map(|value| value.trim().parse::<i64>().map_err(|_| INVALID_WAVE))
+            .collect::<Result<Vec<_>, _>>()?;
+        return WaveSelection::explicit(indexes);
+    }
+
+    // CASA sorts and deduplicates the original Python values, then converts
+    // the joined list to integer prefixes in the direct tool.
+    let mut numbers = Vec::with_capacity(values.len());
+    for value in values.iter().map(numpy_scalar) {
+        let number = match value {
+            ParameterValue::Float(value) if value.is_finite() => (*value, *value as i64),
+            ParameterValue::Integer(value) => (*value as f64, *value),
+            ParameterValue::Bool(value) => (f64::from(u8::from(*value)), 0),
+            _ => return Err(INVALID_WAVE.into()),
+        };
+        if number.1 < 0 {
+            return Err(INVALID_WAVE.into());
+        }
+        numbers.push(number);
+    }
+    numbers.sort_by(|left, right| left.0.partial_cmp(&right.0).expect("finite wave number"));
+    numbers.dedup_by(|left, right| left.0 == right.0);
+    WaveSelection::explicit(numbers.into_iter().map(|(_, index)| index))
 }
 
 fn selected_windows(input: &Path, mask: &str) -> Result<String, TaskFailure> {
