@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "sdbaseline",
   "casa_version": "6.7.6.14",
-  "audit_revision": "5995e36027dc7383185a234aca60c8596fd7014e",
+  "audit_revision": "9988be830413ce58f7a05b46a413e8de21a0dc46",
   "parameters": {
     "infile": {
       "scope": "Open a MeasurementSet through the public task.",
@@ -105,72 +105,67 @@
       ]
     },
     "maskmode": {
-      "scope": "Fit the supplied channel mask. Lowercase auto selects automatic line detection in CASA.",
-      "status": "Partial",
+      "scope": "Use a list mask or detect spectral lines with lowercase auto.",
+      "status": "Implemented",
       "behaviors": [
-        "selection",
-        "future-fits"
+        "automatic-masking"
       ],
       "evidence": [
-        "paired",
-        "pending"
-      ],
-      "gap": "Automatic line detection remains open on #1532."
+        "automatic-and-spline"
+      ]
     },
     "thresh": {
-      "scope": "Automatic masking uses this line-detection threshold.",
-      "status": "Not implemented",
+      "scope": "Set the masked median absolute deviation threshold for line detection.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "automatic-masking"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "automatic-and-spline"
       ]
     },
     "avg_limit": {
-      "scope": "Automatic masking uses this maximum channel-averaging width.",
-      "status": "Not implemented",
+      "scope": "Allow channel bins up to the specified width.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "automatic-masking"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "automatic-and-spline"
       ]
     },
     "minwidth": {
-      "scope": "Automatic masking uses this minimum detected line width.",
-      "status": "Not implemented",
+      "scope": "Set the minimum width of a detected spectral line.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "automatic-masking"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "automatic-and-spline"
       ]
     },
     "edge": {
-      "scope": "Automatic masking removes these channels from each end.",
-      "status": "Not implemented",
+      "scope": "Exclude zero, symmetric or asymmetric edge channels from line finding.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "automatic-masking"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "automatic-and-spline"
       ]
     },
     "blmode": {
-      "scope": "Fit or apply polynomial and Chebyshev baselines.",
+      "scope": "Fit or apply polynomial, Chebyshev and cubic-spline baselines.",
       "status": "Partial",
       "behaviors": [
-        "fit-apply"
+        "fit-apply",
+        "cubic-spline"
       ],
       "evidence": [
-        "paired"
+        "paired",
+        "automatic-and-spline"
       ],
-      "gap": "Other baseline families remain open on #1532."
+      "gap": "Sinusoidal and variable baseline combinations remain open on #1532."
     },
     "dosubtract": {
       "scope": "Write corrected spectra or publish only the requested fits.",
@@ -203,26 +198,30 @@
       ]
     },
     "bltable": {
-      "scope": "Read and apply the polynomial and Chebyshev coefficients in a CASA baseline table.",
+      "scope": "Apply polynomial, Chebyshev and cubic-spline coefficients from a CASA baseline table.",
       "status": "Partial",
       "behaviors": [
-        "fit-apply"
+        "fit-apply",
+        "cubic-spline"
       ],
       "evidence": [
-        "paired"
+        "paired",
+        "automatic-and-spline"
       ],
-      "gap": "Cubic-spline and sinusoid rows remain open on #1532."
+      "gap": "Sinusoidal and variable baseline combinations remain open on #1532."
     },
     "blfunc": {
-      "scope": "Fit polynomial or Chebyshev models.",
+      "scope": "Fit polynomial, Chebyshev or cubic-spline models.",
       "status": "Partial",
       "behaviors": [
-        "fit-apply"
+        "fit-apply",
+        "cubic-spline"
       ],
       "evidence": [
-        "paired"
+        "paired",
+        "automatic-and-spline"
       ],
-      "gap": "Cubic-spline, sinusoid and variable fitting remain open on #1532."
+      "gap": "Sinusoidal and variable baseline combinations remain open on #1532."
     },
     "order": {
       "scope": "Set the degree of the polynomial or Chebyshev family.",
@@ -235,14 +234,13 @@
       ]
     },
     "npiece": {
-      "scope": "Cubic-spline fits use this number of pieces.",
-      "status": "Not implemented",
+      "scope": "Set the number of cubic-spline pieces and choose knots from the initial fit mask.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "cubic-spline"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "automatic-and-spline"
       ]
     },
     "applyfft": {
@@ -413,7 +411,7 @@
       "title": "Polynomial and Chebyshev fitting and application",
       "scope": "Fit spectra and apply compatible baseline tables across implementations.",
       "status": "Partial",
-      "gap": "Other baseline families and automatic masking are tracked by #1532.",
+      "gap": "Sinusoidal and variable fitting remain tracked by #1532.",
       "evidence": [
         "paired"
       ]
@@ -431,11 +429,31 @@
     {
       "id": "future-fits",
       "title": "Remaining fitting and mask families",
-      "scope": "Add cubic-spline, sinusoid, variable fits and automatic line masks.",
+      "scope": "Add sinusoidal and variable-parameter fits.",
       "status": "Not implemented",
       "gap": "Tracked by #1532.",
       "evidence": [
         "pending"
+      ]
+    },
+    {
+      "id": "automatic-masking",
+      "title": "Automatic single-dish line masks",
+      "scope": "Detect emission and absorption channels with masked MAD and CASA channel averaging.",
+      "status": "Implemented",
+      "gap": "Release-scale performance follows functionality under #979.",
+      "evidence": [
+        "automatic-and-spline"
+      ]
+    },
+    {
+      "id": "cubic-spline",
+      "title": "Continuous piecewise cubic fitting and table application",
+      "scope": "Derive knots from the initial fit mask, clip within segments, and exchange tables.",
+      "status": "Implemented",
+      "gap": "Release-scale performance follows functionality under #979.",
+      "evidence": [
+        "automatic-and-spline"
       ]
     }
   ],
@@ -491,6 +509,32 @@
       "evidence": [
         "iteration-source"
       ]
+    },
+    {
+      "id": "dense-spline-accuracy",
+      "state": "Proposed",
+      "inputs": "Fit 47 or 93 cubic pieces to a 96-channel seeded Gaussian spectrum.",
+      "casa": "Residuals differ from the independent B-spline least-squares solution.",
+      "ours": "An SVD of the design matrix reproduces that solution within 2.2e-8 RMS.",
+      "rationale": "The normal system squares the condition number of a dense spline design.",
+      "impact": "Highly segmented fits retain numerical accuracy.",
+      "record": "Dense single-dish cubic splines can lose numerical accuracy in CASA",
+      "evidence": [
+        "automatic-and-spline"
+      ]
+    },
+    {
+      "id": "line-finder-index-limits",
+      "state": "Proposed",
+      "inputs": "Select a narrow fitted range or detect a line touching channel zero.",
+      "casa": "Can index before the median array or decrement an unsigned zero channel index.",
+      "ours": "Stop an averaging level with fewer than two eligible bins and bound wing extension.",
+      "rationale": "Those cases have no contributing bins or channels beyond the available data.",
+      "impact": "A narrow range can be fitted even if a coarser bin has no eligible channels.",
+      "record": "Single-dish automatic line masks can access invalid channels in CASA",
+      "evidence": [
+        "automatic-and-spline"
+      ]
     }
   ],
   "evidence": {
@@ -505,14 +549,16 @@
       "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_oracle.py <new-dir>",
       "links": [
         "tools/casa-compat/sdbaseline_oracle.py"
-      ]
+      ],
+      "source_revision": "5995e36027dc7383185a234aca60c8596fd7014e"
     },
     "progress-controls": {
       "kind": "Pinned upstream task source inspection",
       "state": "inspected",
       "scope": "The private CASA task never reads showprogress or minnrow.",
       "result": "The accepted switches do not affect output products.",
-      "links": []
+      "links": [],
+      "source_revision": "5995e36027dc7383185a234aca60c8596fd7014e"
     },
     "performance-smoke": {
       "kind": "Matched public task timing, compact map",
@@ -523,21 +569,50 @@
       "links": [],
       "revision": "5995e36027dc7383185a234aca60c8596fd7014e",
       "casa_version": "6.7.6.14",
-      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_oracle.py <new-dir>"
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_oracle.py <new-dir>",
+      "source_revision": "5995e36027dc7383185a234aca60c8596fd7014e"
     },
     "pending": {
       "kind": "Remaining baseline families and masks",
       "state": "planned",
       "scope": "Cubic-spline, sinusoid, variable and automatic masking.",
       "result": "Tracked by #1532.",
-      "links": []
+      "links": [],
+      "source_revision": "5995e36027dc7383185a234aca60c8596fd7014e"
     },
     "iteration-source": {
       "kind": "Pinned upstream inspection and negative-count probe",
       "state": "inspected",
       "scope": "CASA 6.7.6.14 sdbaseline passes clipniter plus one to an unsigned solver count.",
       "result": "A task call with clipniter=-1 emits no fitted baseline. Casa-rs rejects negative counts.",
-      "links": []
+      "links": [],
+      "source_revision": "5995e36027dc7383185a234aca60c8596fd7014e"
+    },
+    "automatic-and-spline": {
+      "kind": "Public task/tool physics, diagnostics and table interchange",
+      "state": "passed",
+      "casa_version": "6.7.6.14",
+      "revision": "9988be830413ce58f7a05b46a413e8de21a0dc46",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1978",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_mask_spline_oracle.py <new-dir>",
+      "scope": "Six line masks, a narrow channel stripe, invalid controls, one to three spline pieces, clipping, reports and both table readers. Includes infinite thresholds, unused controls on fully flagged spectra, skipped-receptor metadata and an independent dense-spline comparison.",
+      "result": "The paired outputs, expected masks, knot boundaries, model coefficients and residual laws agree.",
+      "links": [
+        "tools/casa-compat/sdbaseline_mask_spline_oracle.py"
+      ]
+    },
+    "spline-debug-performance": {
+      "kind": "Matched compact runtime and native phase trace",
+      "state": "measured",
+      "casa_version": "6.7.6.14",
+      "revision": "9988be830413ce58f7a05b46a413e8de21a0dc46",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1978",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_mask_spline_oracle.py <new-dir>",
+      "scope": "Two-piece fit on 240 selected rows and 96 channels with the same MeasurementSet, table, text and CSV products.",
+      "result": "Native debug wall times were 0.51–0.68 s versus CASA 0.22–0.52 s. One trace spent 0.434 s processing spectra and 0.017 s saving MAIN. Dataset-scale release profiling follows functionality under #979.",
+      "links": [
+        "tools/casa-compat/sdbaseline_mask_spline_oracle.py"
+      ]
     }
   }
 }
