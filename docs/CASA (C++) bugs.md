@@ -8449,6 +8449,16 @@ but can retain the write lock on the earlier native table. Casa-rs restores
 each member's physical lease independently of the MIRIAD advisory flags.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+### A virtual concatenation beam edit can abort when a member cannot publish
+
+Concatenate two native images with `tempclose=False`. Remove `table.lock`
+from the second image and make its directory read-only while keeping the
+table files writable. CASA 6.7.6.14 reports success from
+`setrestoringbeam`, then aborts on `done()` when casacore cannot create
+`table.dat_tmp`. Casa-rs checks every native member's write access before
+the beam edit, so the call returns an error and the earlier member keeps
+its original beam. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ### A null field in saved image-expression metadata can crash `image.open`
 
 Create a saved Float expression with `"MiscInfo": {"unknown": null}` in
