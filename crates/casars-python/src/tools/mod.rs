@@ -23,6 +23,7 @@ pub(crate) mod msmetadata;
 pub(crate) mod quanta;
 pub(crate) mod simulator;
 pub(crate) mod simutil;
+pub(crate) mod singledishms;
 pub(crate) mod surface;
 pub(crate) mod table;
 pub(crate) mod wvr;
@@ -37,7 +38,7 @@ use pyo3::prelude::*;
 /// bundle builds every tool entry from this one list
 /// (`crate::object_contract`). `casars.simutil` is not a CASA tool and is
 /// not listed.
-pub(crate) const TOOLS: [&surface::ToolSurface; 13] = [
+pub(crate) const TOOLS: [&surface::ToolSurface; 14] = [
     &simulator::surface::SURFACE,
     &measures::surface::SURFACE,
     &quanta::surface::SURFACE,
@@ -51,6 +52,7 @@ pub(crate) const TOOLS: [&surface::ToolSurface; 13] = [
     &imager::surface::SURFACE,
     &agentflagger::surface::SURFACE,
     &wvr::surface::SURFACE,
+    &singledishms::surface::SURFACE,
 ];
 
 /// A Python logging level for a CASA log message.

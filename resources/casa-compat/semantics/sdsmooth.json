@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "task": "sdsmooth",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "18c031a2ab8bfdccab322537bde13adb1ff6868d",
+  "parameters": {
+    "infile": {
+      "scope": "Open the supplied single-dish MeasurementSet.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "datacolumn": {
+      "scope": "Convolve the real part of DATA or CORRECTED_DATA, or preserve the FLOAT_DATA layout.",
+      "status": "Implemented",
+      "behaviors": [
+        "convolution"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "antenna": {
+      "scope": "Resolve the antenna expression to its first antenna list and select autocorrelations.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "field": {
+      "scope": "Select named or indexed fields.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "spw": {
+      "scope": "Select spectral windows and channel ranges and use a configured kernel of the selected spectrum’s length.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "timerange": {
+      "scope": "Restrict the observations by CASA timestamp expressions.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "scan": {
+      "scope": "Restrict the selected scan rows.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "pol": {
+      "scope": "Select the specified correlations and rewrite the polarization metadata.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "intent": {
+      "scope": "Filter CASA intent expressions.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "reindex": {
+      "scope": "Keep original references or reindex selected subtables.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "kernel": {
+      "scope": "Use the Gaussian filter or the shifted finite boxcar.",
+      "status": "Implemented",
+      "behaviors": [
+        "convolution"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "kwidth": {
+      "scope": "Set width in channels, with Gaussian width expressed as FWHM.",
+      "status": "Implemented",
+      "behaviors": [
+        "convolution"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "outfile": {
+      "scope": "Publish a complete CASA-readable selected MeasurementSet.",
+      "status": "Implemented",
+      "behaviors": [
+        "publication"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "overwrite": {
+      "scope": "Exchange the completed product with the existing MeasurementSet after successful processing.",
+      "status": "Implemented",
+      "behaviors": [
+        "publication"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "selection",
+      "title": "Selected autocorrelation spectra",
+      "scope": "Apply CASA row, correlation and channel selectors and match both metadata index modes.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "convolution",
+      "title": "Spectral and weight convolution",
+      "scope": "Match zero-padded data kernels, original flags, scalar and spectral noise propagation, and float-product cells.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "publication",
+      "title": "MeasurementSet interchange and overwrite",
+      "scope": "Read CASA inputs in casa-rs, publish CASA-readable products, and preserve a completed destination on a failed overwrite.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "complete-output-publication",
+      "state": "Proposed",
+      "inputs": "Request a channel stripe with no configured convolver and enable overwrite.",
+      "casa": "Raises a convolver error after creating an incomplete output MeasurementSet.",
+      "ours": "Reports the same convolver error and preserves the previously published MeasurementSet.",
+      "rationale": "The new output can be published only after every selected spectrum has been transformed.",
+      "impact": "A caller can correct the selection and retry without losing the prior completed product.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Public Python CASA/native comparison and measurement-set interchange",
+      "state": "passed",
+      "casa_version": "6.7.6.14",
+      "revision": "18c031a2ab8bfdccab322537bde13adb1ff6868d",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1976",
+      "scope": "Both convolution families, three data columns, row/correlation/channel selection, configured and missing partial kernels, reindex, publication and six direct tool methods.",
+      "result": "Independent convolution laws and paired values, flags, weights, identities and spectral metadata agree.",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdsmooth_oracle.py <new-dir>",
+      "links": [
+        "tools/casa-compat/sdsmooth_oracle.py"
+      ]
+    }
+  }
+}

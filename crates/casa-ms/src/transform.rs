@@ -39,6 +39,7 @@ use crate::write_session::{
 };
 
 mod channel_average;
+mod convolution;
 mod correlation_metadata;
 mod flag_commands;
 mod main_arrays;
@@ -51,6 +52,8 @@ mod time_projection;
 mod visibility_columns;
 
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
+use convolution::Convolution;
+pub use convolution::{SpectrumConvolution, convolve_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
 pub use task_history::{TransformTaskHistory, append_task_history};
@@ -170,6 +173,9 @@ pub struct MsTransformReport {
 /// Errors returned by [`mstransform`].
 #[derive(Debug, Error)]
 pub enum MsTransformError {
+    /// Validation or computation of the selected spectrum failed.
+    #[error("{0}")]
+    Spectrum(String),
     /// The retained Multi-MS cannot average across the selected scans.
     #[error("Unable to continue with MMS processing")]
     MultiMsScanSpan,
@@ -388,8 +394,9 @@ fn materialize_transform(
             grammar,
             options,
             members.first().map(PathBuf::as_path),
+            None,
         )?,
-        _ => transform_product(&physical_request, grammar, options, None)?,
+        _ => transform_product(&physical_request, grammar, options, None, None)?,
     };
     target
         .commit()
@@ -406,8 +413,9 @@ fn transform_product(
     grammar: RowGrammar,
     options: &MsTransformTaskOptions,
     metadata_template: Option<&Path>,
+    convolution: Option<Convolution<'_>>,
 ) -> Result<MsTransformReport, MsTransformError> {
-    let report = mstransform_staged(request, grammar, options, metadata_template)?;
+    let report = mstransform_staged(request, grammar, options, metadata_template, convolution)?;
     if let Some(history) = &options.history {
         task_history::append_task_history(&request.output_ms, history)?;
     }
@@ -423,6 +431,7 @@ fn mstransform_staged(
     grammar: RowGrammar,
     options: &MsTransformTaskOptions,
     metadata_template: Option<&Path>,
+    mut convolution: Option<Convolution<'_>>,
 ) -> Result<MsTransformReport, MsTransformError> {
     let started_at = Instant::now();
     tracing::info!(
@@ -472,6 +481,12 @@ fn mstransform_staged(
     let visibility =
         VisibilityColumns::resolve(input.main_table(), request.data_column, &request.input_ms)?;
     let mut selection = request.selection.clone();
+    if convolution.is_some() {
+        selection.antenna = Some(convolution::auto_correlations(
+            &input,
+            selection.antenna.as_deref(),
+        )?);
+    }
     if selection.spw.is_none() {
         selection.spw = Some(spw.to_string());
     }
@@ -614,8 +629,28 @@ fn mstransform_staged(
             request,
             selected_rows,
             selected_ddids,
+            convolution.is_some(),
         )?
     };
+    if let Some(convolution) = &mut convolution {
+        let windows = input
+            .spectral_window()
+            .map_err(|source| selection_error(MsSelectionError::Domain(source)))?;
+        let selected = selected_ddids.iter().copied().collect::<BTreeSet<_>>();
+        let counts = selected
+            .iter()
+            .map(|ddid| {
+                windows
+                    .num_chan(ddid_to_spw[ddid] as usize)
+                    .map(|channels| channels as usize)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|source| selection_error(MsSelectionError::Domain(source)))?;
+        convolution
+            .kernel
+            .prepare(&counts)
+            .map_err(MsTransformError::Spectrum)?;
+    }
     let averaging_time = time_groups.is_some();
     let selected_field_ids_for_metadata =
         selected_field_ids_for_rows(input.main_table(), &selected_rows, &request.output_ms)?;
@@ -625,18 +660,23 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    let spectra = SpectrumProjection::resolve(
+    let float_convolution =
+        convolution.is_some() && request.data_column == TransformDataColumn::FloatData;
+    let mut spectra = SpectrumProjection::resolve(
         input.main_table(),
         first_selected_row,
         grammar,
         options.use_weight_spectrum,
-        (task_average, averaging_time),
+        (task_average, averaging_time, convolution.is_some()),
         &visibility,
     )
     .map_err(|source| MsTransformError::MutateMeasurementSet {
         path: request.input_ms.display().to_string(),
         source: Box::new(source),
     })?;
+    if float_convolution {
+        spectra.source.clear();
+    }
     prepare_output_root(&request.output_ms)?;
     let mut output_main = materialize_empty_main_table(
         metadata_template.unwrap_or(&request.input_ms),
@@ -672,37 +712,49 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    let compact_metadata = compact_spectral_subtables(
-        &request.input_ms,
-        &request.output_ms,
-        &channel_bins,
-        &ddid_to_spw,
-        &spw_selection,
-        correlations.as_ref(),
-        grammar,
-    )?;
+    let reindex = convolution
+        .as_ref()
+        .is_none_or(|operation| operation.reindex);
+    let compact_metadata = if reindex {
+        compact_spectral_subtables(
+            &request.input_ms,
+            &request.output_ms,
+            &channel_bins,
+            &ddid_to_spw,
+            &spw_selection,
+            correlations.as_ref(),
+            grammar,
+        )?
+    } else {
+        preserve_spectral_ids(&input, request, &channel_bins, &ddid_to_spw)?
+    };
     if let Some(correlations) = correlations.as_ref() {
         correlations.write_polarizations(request)?;
     }
-    let field_id_map = selection_metadata::reindex_fields_and_sources(
-        &input,
-        request,
-        selection.field.as_deref(),
-        &compact_metadata.spw_map,
-    )?;
-    let antenna_id_map = selection_metadata::reindex_antenna_subtables(
-        &input,
-        request,
-        antenna_ids.as_deref(),
-        &compact_metadata.spw_map,
-        time_selection.as_ref(),
-    )?;
-    let row_id_maps = selection_metadata::reindex_selected_row_ids(
-        &input,
-        request,
-        antenna_id_map,
-        grammar == RowGrammar::Transform,
-    )?;
+    let (field_id_map, row_id_maps) = if reindex {
+        let field_id_map = selection_metadata::reindex_fields_and_sources(
+            &input,
+            request,
+            selection.field.as_deref(),
+            &compact_metadata.spw_map,
+        )?;
+        let antenna_id_map = selection_metadata::reindex_antenna_subtables(
+            &input,
+            request,
+            antenna_ids.as_deref(),
+            &compact_metadata.spw_map,
+            time_selection.as_ref(),
+        )?;
+        let row_id_maps = selection_metadata::reindex_selected_row_ids(
+            &input,
+            request,
+            antenna_id_map,
+            grammar == RowGrammar::Transform,
+        )?;
+        (field_id_map, row_id_maps)
+    } else {
+        (None, selection_metadata::RowIdMaps::default())
+    };
     maybe_log_transform_progress(
         "compact_spectral_subtables",
         stage_started_at.elapsed(),
@@ -878,16 +930,21 @@ fn mstransform_staged(
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
             };
-            let weight = weight_values
-                .next()
-                .flatten()
-                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "WEIGHT"))?;
-            let sigma = sigma_values
-                .next()
-                .flatten()
-                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "SIGMA"))?;
-            let weight = select_correlations(weight, "WEIGHT")?;
-            let sigma = select_correlations(sigma, "SIGMA")?;
+            let noise =
+                if float_convolution {
+                    None
+                } else {
+                    let weight = weight_values.next().flatten().ok_or_else(|| {
+                        missing_column_error(&request.output_ms, row_index, "WEIGHT")
+                    })?;
+                    let sigma = sigma_values.next().flatten().ok_or_else(|| {
+                        missing_column_error(&request.output_ms, row_index, "SIGMA")
+                    })?;
+                    Some((
+                        select_correlations(weight, "WEIGHT")?,
+                        select_correlations(sigma, "SIGMA")?,
+                    ))
+                };
             for (((name, values), output), available) in spectrum_values
                 .iter_mut()
                 .zip(&mut row_spectra)
@@ -925,20 +982,27 @@ fn mstransform_staged(
                 sigma: source_spectrum("SIGMA_SPECTRUM")
                     .and_then(|index| row_spectra[index].as_ref()),
             };
-            let averages = task_average
-                .then(|| {
+            let averages = if let (true, Some((weight, sigma))) = (task_average, &noise) {
+                Some(
                     ChannelAverages::new(
                         &flags,
                         bins,
-                        &weight,
-                        &sigma,
+                        weight,
+                        sigma,
                         spectra_cells,
                         &visibility,
                         (spectra.propagate_weights || averaging_time, averaging_time),
                     )
-                })
-                .transpose()
-                .map_err(mutation_error)?;
+                    .map_err(mutation_error)?,
+                )
+            } else {
+                None
+            };
+            let transformed_flags = if let Some(averages) = &averages {
+                averages.flags()
+            } else {
+                transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
+            };
             for (column, values) in &mut data_values {
                 let source = column.source.name();
                 let target = column.output.name();
@@ -955,7 +1019,7 @@ fn mstransform_staged(
                     return Err(missing_column_error(&request.output_ms, row_index, source));
                 };
                 let value = select_correlations(value, source)?;
-                let transformed = if column.source == OptionalMainColumn::LagData {
+                let mut transformed = if column.source == OptionalMainColumn::LagData {
                     value
                 } else if let Some(averages) = &averages {
                     averages
@@ -969,6 +1033,17 @@ fn mstransform_staged(
                         }
                     })?
                 };
+                if let Some(operation) = &mut convolution {
+                    let ArrayValue::Bool(output_flags) = &transformed_flags else {
+                        return Err(MsTransformError::Spectrum(
+                            "Spectral flags must be Bool.".into(),
+                        ));
+                    };
+                    operation
+                        .kernel
+                        .apply(&mut transformed, output_flags)
+                        .map_err(MsTransformError::Spectrum)?;
+                }
                 if column.source == OptionalMainColumn::FloatData {
                     push_f32_array_row(
                         &mut write_session,
@@ -987,11 +1062,6 @@ fn mstransform_staged(
                     )?;
                 }
             }
-            let transformed_flags = if let Some(averages) = &averages {
-                averages.flags()
-            } else {
-                transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
-            };
             push_bool_array_row(
                 &mut write_session,
                 "FLAG",
@@ -1038,8 +1108,50 @@ fn mstransform_staged(
                 &request.output_ms,
                 row_index,
             )?;
-            let (mut weight, mut sigma, task_spectra) = if let Some(averages) = averages {
-                let averages = averages.statistics();
+            let averaged_noise = averages.map(|averages| averages.statistics());
+            let Some((weight, sigma)) = noise else {
+                // CASA publishes these columns with undefined cells when the
+                // transformed visibility column is FLOAT_DATA.
+                for column in ["WEIGHT", "SIGMA"]
+                    .into_iter()
+                    .chain(spectra.output.iter().copied())
+                {
+                    write_session.push_undefined_row(column).map_err(|error| {
+                        MsTransformError::WriteMeasurementSet {
+                            path: request.output_ms.display().to_string(),
+                            reason: error.to_string(),
+                        }
+                    })?;
+                }
+                touched_spws.insert(spw_id);
+                continue;
+            };
+            let (mut weight, mut sigma, task_spectra) = if let Some(operation) = &convolution {
+                let corrected = visibility.corrected_becomes_data();
+                let (weight, sigma) =
+                    unaveraged_spectra(&weight, &sigma, spectra_cells, &flags, bins, corrected)
+                        .map_err(mutation_error)?;
+                let ArrayValue::Bool(output_flags) = &transformed_flags else {
+                    return Err(MsTransformError::Spectrum(
+                        "Spectral flags must be Bool.".into(),
+                    ));
+                };
+                let statistics = convolution::statistics(
+                    weight,
+                    sigma,
+                    output_flags,
+                    operation.kernel.weight_kernel(),
+                    corrected,
+                )
+                .map_err(mutation_error)?;
+                (
+                    statistics.weight,
+                    statistics.sigma,
+                    spectra
+                        .fill_standard
+                        .then_some((statistics.weight_spectrum, statistics.sigma_spectrum)),
+                )
+            } else if let Some(averages) = averaged_noise {
                 (
                     averages.weight,
                     averages.sigma,
@@ -1061,7 +1173,11 @@ fn mstransform_staged(
             } else {
                 (weight, sigma, None)
             };
-            if grammar == RowGrammar::Transform && !task_average && !averaging_time {
+            if grammar == RowGrammar::Transform
+                && !task_average
+                && !averaging_time
+                && convolution.is_none()
+            {
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
             }
             push_f32_array_row(
@@ -1503,7 +1619,7 @@ impl SpectrumProjection {
         selected_row: usize,
         grammar: RowGrammar,
         force_spectra: bool,
-        (channel_average, time_average): (bool, bool),
+        (channel_average, time_average, spectral_convolution): (bool, bool, bool),
         visibility: &VisibilityColumns,
     ) -> Result<Self, TableError> {
         let exists = |name| {
@@ -1543,7 +1659,7 @@ impl SpectrumProjection {
                 .any(|column| column.source == OptionalMainColumn::CorrectedData)
                 || (copies.len() == 1 && copies[0].source == OptionalMainColumn::LagData)
         } else {
-            channel_average || fill_standard
+            channel_average || fill_standard || spectral_convolution
         };
         if needs_weight && exists("WEIGHT_SPECTRUM") {
             source.push("WEIGHT_SPECTRUM");
@@ -1554,7 +1670,7 @@ impl SpectrumProjection {
                     || (time_average && column.source == OptionalMainColumn::FloatData)
             })
         } else {
-            fill_standard && !visibility.corrected_becomes_data()
+            (fill_standard || spectral_convolution) && !visibility.corrected_becomes_data()
         };
         if needs_sigma && exists("SIGMA_SPECTRUM") {
             source.push("SIGMA_SPECTRUM");
@@ -2314,6 +2430,34 @@ struct CompactSpectralMetadata {
     ddid_map: BTreeMap<i32, i32>,
     spw_map: BTreeMap<i32, i32>,
     channel_bins: BTreeMap<i32, Vec<Vec<usize>>>,
+}
+
+fn preserve_spectral_ids(
+    input: &MeasurementSet,
+    request: &MsTransformRequest,
+    channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
+    ddid_to_spw: &BTreeMap<i32, i32>,
+) -> Result<CompactSpectralMetadata, MsTransformError> {
+    let name = SubtableId::SpectralWindow.name();
+    let windows = input
+        .spectral_window()
+        .map_err(|source| MsTransformError::SpectralMetadata {
+            path: request.input_ms.join(name).display().to_string(),
+            reason: source.to_string(),
+        })?;
+    let rows = (0..windows.row_count()).collect::<Vec<_>>();
+    rewrite_table_rows_with_variable_arrays(
+        &request.input_ms.join(name),
+        &request.output_ms.join(name),
+        &rows,
+        &["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"],
+        |_, row| Ok(row),
+    )?;
+    Ok(CompactSpectralMetadata {
+        ddid_map: ddid_to_spw.keys().map(|&id| (id, id)).collect(),
+        spw_map: channel_bins.keys().map(|&id| (id, id)).collect(),
+        channel_bins: channel_bins.clone(),
+    })
 }
 
 fn compact_spectral_subtables(

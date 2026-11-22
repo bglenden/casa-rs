@@ -127,7 +127,7 @@ fn refuse_unless_whole(destination: &Path) -> Result<(), ObservationError> {
 
 /// A directory the plan reserved beside its destination, holding the
 /// MeasurementSet being written (at the destination's own name).
-pub(super) struct Stage {
+pub(crate) struct Stage {
     reserved: PathBuf,
     measurement_set: PathBuf,
 }
@@ -135,7 +135,7 @@ pub(super) struct Stage {
 impl Stage {
     /// Reserve a directory beside `destination` for `purpose`, created
     /// atomically: a name already taken, by anything, is passed over.
-    pub(super) fn reserve(destination: &Path, purpose: &str) -> Result<Self, ObservationError> {
+    pub(crate) fn reserve(destination: &Path, purpose: &str) -> Result<Self, ObservationError> {
         let name = destination
             .file_name()
             .ok_or_else(|| request_error("a MeasurementSet's path ends in a name"))?;
@@ -160,13 +160,13 @@ impl Stage {
     }
 
     /// Where the MeasurementSet is written.
-    pub(super) fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.measurement_set
     }
 
     /// Publish the staged MeasurementSet at `destination`, a new path,
     /// without replacing anything that appeared there.
-    pub(super) fn publish_new(&self, destination: &Path) -> Result<(), ObservationError> {
+    pub(crate) fn publish_new(&self, destination: &Path) -> Result<(), ObservationError> {
         rename_without_replacing(&self.measurement_set, destination).map_err(|error| {
             request_error(format!(
                 "the MeasurementSet could not be published at {}: {error}",
@@ -178,12 +178,12 @@ impl Stage {
     /// Release the reservation once its MeasurementSet is published: the
     /// directory, then empty (a replaced copy that could not be deleted
     /// keeps it).
-    pub(super) fn release(self) {
+    pub(crate) fn release(self) {
         let _ = fs::remove_dir(&self.reserved);
     }
 
     /// Remove the reservation and whatever was written in it.
-    pub(super) fn remove(self) {
+    pub(crate) fn remove(self) {
         let _ = fs::remove_dir_all(&self.reserved);
     }
 }

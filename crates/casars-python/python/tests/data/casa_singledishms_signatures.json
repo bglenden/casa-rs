@@ -1,0 +1,575 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "apply_baseline_table": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bltable"
+      },
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "updateweight"
+      },
+      {
+        "default": "'stddev'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sigmavalue"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      }
+    ],
+    "atmcor": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "config"
+      },
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      }
+    ],
+    "close": [],
+    "done": [],
+    "fit_line": [
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pol"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timebin"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timespan"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polaverage"
+      },
+      {
+        "default": "'gaussian'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitfunc"
+      },
+      {
+        "default": "'0'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nfit"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linefinding"
+      },
+      {
+        "default": "5.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "avg_limit"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minwidth"
+      },
+      {
+        "default": "[0, 0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "edge"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tempfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tempoutfile"
+      }
+    ],
+    "importasap": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "parallel"
+      }
+    ],
+    "importnro": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "parallel"
+      }
+    ],
+    "name": [],
+    "open": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ms_name"
+      }
+    ],
+    "set_selection": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timerange"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "observation"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "beam"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "feed"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "taql"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reindex"
+      }
+    ],
+    "smooth": [
+      {
+        "default": "'gaussian'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      }
+    ],
+    "subtract_baseline": [
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bloutput"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dosubtract"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "updateweight"
+      },
+      {
+        "default": "'stddev'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sigmavalue"
+      },
+      {
+        "default": "'poly'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "blfunc"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "order"
+      },
+      {
+        "default": "3.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "clip_threshold_sigma"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "num_fitting_max"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linefinding"
+      },
+      {
+        "default": "5.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "avg_limit"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minwidth"
+      },
+      {
+        "default": "[0, 0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "edge"
+      }
+    ],
+    "subtract_baseline_cspline": [
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bloutput"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dosubtract"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "updateweight"
+      },
+      {
+        "default": "'stddev'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sigmavalue"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "npiece"
+      },
+      {
+        "default": "3.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "clip_threshold_sigma"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "num_fitting_max"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linefinding"
+      },
+      {
+        "default": "5.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "avg_limit"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minwidth"
+      },
+      {
+        "default": "[0, 0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "edge"
+      }
+    ],
+    "subtract_baseline_sinusoid": [
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bloutput"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dosubtract"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "updateweight"
+      },
+      {
+        "default": "'stddev'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sigmavalue"
+      },
+      {
+        "default": "'0'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "addwn"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "rejwn"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "applyfft"
+      },
+      {
+        "default": "'fft'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fftmethod"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fftthresh"
+      },
+      {
+        "default": "3.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "clip_threshold_sigma"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "num_fitting_max"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linefinding"
+      },
+      {
+        "default": "5.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "avg_limit"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minwidth"
+      },
+      {
+        "default": "[0, 0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "edge"
+      }
+    ],
+    "subtract_baseline_variable": [
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bloutput"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dosubtract"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "updateweight"
+      },
+      {
+        "default": "'stddev'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sigmavalue"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "blparam"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ]
+  },
+  "tool": "singledishms"
+}

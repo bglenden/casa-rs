@@ -41,6 +41,7 @@ TOOLS = (
     "imager",
     "agentflagger",
     "wvr",
+    "singledishms",
 )
 
 

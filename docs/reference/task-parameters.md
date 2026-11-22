@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 903
-- Surfaces: 54 (54 task, 0 session)
-- Surface bindings: 1232
+- Concepts: 906
+- Surfaces: 55 (55 task, 0 session)
+- Surface bindings: 1246
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -70,6 +70,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Polarization from Gains](#surface-polfromgain)<br><code>polfromgain</code> | task | 1 | <code>calibration</code> | 5 | Estimate fractional linear polarization from receptor gain amplitude ratios. |
 | [Single-Dish Sky Calibration](#surface-sdcal)<br><code>sdcal</code> | task | 1 | <code>calibration</code> | 14 | Generate and apply single-dish sky and system-temperature calibration. |
 | [Single-Dish Gain Calibration](#surface-sdgaincal)<br><code>sdgaincal</code> | task | 1 | <code>calibration</code> | 14 | Solve single-dish double-circle gain calibration. |
+| [Single-dish spectral smoothing](#surface-sdsmooth)<br><code>sdsmooth</code> | task | 1 | <code>calibration</code> | 14 | Convolve selected single-dish spectra and publish a MeasurementSet. |
 
 <a id="surface-msexplore"></a>
 
@@ -2003,6 +2004,33 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>interp</code> | <code>single_dish.gain.interp@r1</code> | <code>variant</code> | <code>""</code>; optional | Apply | One interpolation string for all prior tables or a string for each prior table. |
 | <code>spwmap</code> | <code>single_dish.gain.spwmap@r1</code> | <code>variant</code> | <code>[]</code>; optional | Apply | One spectral-window map for all prior tables or maps per table. |
 | <code>outfile</code> | <code>single_dish.sky.outfile@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Output calibration table. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+
+<a id="surface-sdsmooth"></a>
+
+## Single-dish spectral smoothing (<code>sdsmooth</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Convolve selected single-dish spectra and publish a MeasurementSet.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>infile</code> | <code>single_dish.sky.infile@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | Input MeasurementSet. |
+| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"data"</code>; optional | Data | Visibility data column used by the surface. |
+| <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal antenna selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
+| <code>timerange</code> | <code>ms.selection.timerange@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA timerange selection for MeasurementSet transforms. |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal scan selector text. |
+| <code>pol</code> | <code>specifycal.pol@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Polarizations the calibration applies to; empty for all. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>reindex</code> | <code>mstransform.reindex@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Re-index the output's subtable ids from zero. |
+| <code>kernel</code> | <code>single_dish.smoothing.kernel@r1</code> | <code>choice (2 values)</code> | <code>"gaussian"</code>; optional | Smoothing | Single-dish convolution kernel. |
+| <code>kwidth</code> | <code>single_dish.smoothing.kwidth@r1</code> | <code>integer</code> | <code>5</code>; optional | Smoothing | Kernel width in channels. Gaussian width is its FWHM. |
+| <code>outfile</code> | <code>single_dish.smoothing.outfile@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; optional | Output | Output smoothed MeasurementSet. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 
 _End of generated reference._

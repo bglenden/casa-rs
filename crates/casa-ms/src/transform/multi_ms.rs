@@ -61,7 +61,7 @@ pub(super) fn retain(
                 }
             }
         }
-        match transform_product(&part, grammar, &member_options, None) {
+        match transform_product(&part, grammar, &member_options, None, None) {
             Ok(result) => {
                 accumulate(&mut report, result);
                 let table = Table::open(TableOptions::new(&part.output_ms))

@@ -86,6 +86,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("rerefant", "casatasks"),
     ("sdcal", "casatasks"),
     ("sdgaincal", "casatasks"),
+    ("sdsmooth", "casatasks"),
     ("setjy", "casatasks"),
     ("simanalyze", "casatasks"),
     ("simalma", "casatasks"),

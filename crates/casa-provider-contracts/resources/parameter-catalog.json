@@ -18215,6 +18215,71 @@
       "persistence_class": "profile"
     },
     {
+      "id": "single_dish.smoothing.kernel",
+      "semantic_revision": 1,
+      "casa_name": "kernel",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "gaussian",
+          "boxcar"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Single-dish convolution kernel.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.smoothing.kwidth",
+      "semantic_revision": 1,
+      "casa_name": "kwidth",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Kernel width in channels. Gaussian width is its FWHM.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.smoothing.outfile",
+      "semantic_revision": 1,
+      "casa_name": "outfile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "measurement_set"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Output smoothed MeasurementSet.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "single_dish.gain.interp",
       "semantic_revision": 1,
       "casa_name": "interp",
