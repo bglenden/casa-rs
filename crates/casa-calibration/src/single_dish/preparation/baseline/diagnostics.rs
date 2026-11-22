@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use casa_types::quanta::MvTime;
 use tempfile::NamedTempFile;
 
-use super::BaselineFamily;
+use super::ModelBasis;
 use super::SingleDishBaselineDiagnostics;
 use super::polynomial::Polynomial;
 use super::table::{BaselineRow, SpectrumModel};
@@ -42,19 +42,59 @@ impl Diagnostics {
         self.csv.is_some() || self.text.is_some()
     }
 
-    pub(super) fn report(
+    pub(super) fn report(&mut self, row: &BaselineRow) -> Result<(), String> {
+        let wave_width = row
+            .models
+            .iter()
+            .flatten()
+            .filter_map(|model| match &model.basis {
+                ModelBasis::Sinusoid(waves) => Some(waves.len()),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        for (pol, model) in row.models.iter().enumerate() {
+            if let Some(model) = model {
+                self.report_spectrum(row, pol, model, wave_width)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn report_spectrum(
         &mut self,
         row: &BaselineRow,
         pol: usize,
         model: &SpectrumModel,
-        clipped: usize,
+        wave_width: usize,
     ) -> Result<(), String> {
-        let (family, parameter_name) = match model.family {
-            BaselineFamily::Polynomial(Polynomial::Monomial) => ("poly", "order"),
-            BaselineFamily::Polynomial(Polynomial::Chebyshev) => ("chebyshev", "order"),
-            BaselineFamily::CubicSpline => ("cspline", "npiece"),
+        let (family, parameter_name, csv_parameter, text_parameter) = match &model.basis {
+            ModelBasis::Polynomial(kind, order) => {
+                let family = match kind {
+                    Polynomial::Monomial => "poly",
+                    Polynomial::Chebyshev => "chebyshev",
+                };
+                (family, "order", order.to_string(), order.to_string())
+            }
+            ModelBasis::Spline { pieces, .. } => {
+                ("cspline", "npiece", pieces.to_string(), pieces.to_string())
+            }
+            ModelBasis::Sinusoid(waves) => {
+                let padded = waves
+                    .iter()
+                    .copied()
+                    .chain(std::iter::repeat_n(0, wave_width - waves.len()))
+                    .map(|wave| wave.to_string())
+                    .collect::<Vec<_>>();
+                (
+                    "sinusoid",
+                    "nwave",
+                    padded.join(";"),
+                    format!("{} ", padded.join(" ")),
+                )
+            }
         };
-        let parameter = model.parameter;
+        let clipped = model.clipped;
         let rms = significant(f64::from(model.rms), 8);
         if let Some(csv) = &mut self.csv {
             let writer = &mut csv.writer;
@@ -68,7 +108,7 @@ impl Diagnostics {
                 significant(row.time, 12),
                 ranges(&model.mask, true),
                 family,
-                parameter,
+                csv_parameter,
                 model
                     .coefficients
                     .iter()
@@ -90,15 +130,26 @@ impl Diagnostics {
                 time.month_day()
             );
             let time = time.format_time(2);
-            writeln!(writer, "Scan[{}] Beam[{}] Spw[{}] Pol[{pol}] Time[{date}/{time}]\n\nFitter range = {}\n\nBaseline parameters  Function = {family}  {parameter_name} = {parameter}\n\nResults of baseline fit\n",
+            writeln!(writer, "Scan[{}] Beam[{}] Spw[{}] Pol[{pol}] Time[{date}/{time}]\n\nFitter range = {}\n\nBaseline parameters  Function = {family}  {parameter_name} = {text_parameter}\n\nResults of baseline fit\n",
                      row.scan, row.beam, row.window, ranges(&model.mask, false)).map_err(error_text)?;
-            for (index, &value) in model.coefficients.iter().enumerate() {
-                write!(
-                    writer,
-                    "p{index} = {}  ",
-                    significant(f64::from(value as f32), 8)
-                )
-                .map_err(error_text)?;
+            if let ModelBasis::Sinusoid(waves) = &model.basis {
+                let mut coefficients = model.coefficients.iter().copied();
+                for &wave in waves {
+                    for prefix in if wave == 0 { &['c'][..] } else { &['s', 'c'] } {
+                        let value = coefficients.next().expect("one coefficient per basis term");
+                        let value = significant(f64::from(value as f32), 8);
+                        write!(writer, "{prefix}{wave} = {value:<13}  ").map_err(error_text)?;
+                    }
+                }
+            } else {
+                for (index, &value) in model.coefficients.iter().enumerate() {
+                    write!(
+                        writer,
+                        "p{index} = {}  ",
+                        significant(f64::from(value as f32), 8)
+                    )
+                    .map_err(error_text)?;
+                }
             }
             writeln!(writer, "\n\nrms = {rms}\n\nNumber of clipped channels = {clipped}\n\n------------------------------------------------------\n")
                 .map_err(error_text)?;

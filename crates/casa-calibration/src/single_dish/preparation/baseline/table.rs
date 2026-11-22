@@ -11,7 +11,7 @@ use ndarray::{Array2, Axis};
 
 use crate::writer::{set_fixed_unit_keyword, set_measinfo_keyword};
 
-use super::{BaselineFamily, polynomial::Polynomial};
+use super::{BaselineFamily, ModelBasis, polynomial::Polynomial, sinusoid};
 
 pub(super) struct BaselineRow {
     pub(super) scan: u32,
@@ -24,12 +24,11 @@ pub(super) struct BaselineRow {
 }
 
 pub(super) struct SpectrumModel {
-    pub(super) family: BaselineFamily,
-    pub(super) parameter: usize,
+    pub(super) basis: ModelBasis,
     pub(super) coefficients: Vec<f64>,
-    pub(super) boundaries: Vec<usize>,
     pub(super) mask: Vec<u32>,
     pub(super) rms: f32,
+    pub(super) clipped: usize,
     pub(super) clip_threshold: f32,
     pub(super) clip_iterations: u32,
 }
@@ -49,9 +48,8 @@ pub(super) struct BaselineTable {
 }
 
 pub(super) struct AppliedBaseline {
-    pub(super) family: BaselineFamily,
+    pub(super) basis: ModelBasis,
     pub(super) coefficients: Vec<f64>,
-    pub(super) boundaries: Vec<usize>,
     pub(super) included: Vec<bool>,
 }
 
@@ -134,23 +132,35 @@ impl BaselineTable {
         let ArrayValue::UInt32(families) = cell("FUNC_TYPE")? else {
             return Err("Expected an unsigned FUNC_TYPE cell.".into());
         };
-        let family = match baseline_scalar(families, receptor) {
-            Some(0) => BaselineFamily::Polynomial(Polynomial::Monomial),
-            Some(1) => BaselineFamily::Polynomial(Polynomial::Chebyshev),
-            Some(2) => BaselineFamily::CubicSpline,
-            _ => return Err("Unsupported baseline type.".into()),
-        };
-        let ArrayValue::Int32(degrees) = cell("FUNC_PARAM")? else {
+        let ArrayValue::Int32(parameters) = cell("FUNC_PARAM")? else {
             return Err("Expected an integer FUNC_PARAM cell.".into());
         };
-        let parameter = baseline_scalar(degrees, receptor)
-            .and_then(|&value| usize::try_from(value).ok())
-            .ok_or("Invalid baseline order or piece count.")?;
-        let coefficients_count = match family {
-            BaselineFamily::Polynomial(_) => parameter + 1,
-            BaselineFamily::CubicSpline => parameter
+        let parameter = || {
+            baseline_scalar(parameters, receptor)
+                .and_then(|&value| usize::try_from(value).ok())
+                .ok_or("Invalid baseline order or piece count.")
+        };
+        let channels = scalar_uint(&self.table, row, "NCHAN")? as usize;
+        let basis = match baseline_scalar(families, receptor) {
+            Some(0) => ModelBasis::Polynomial(Polynomial::Monomial, parameter()?),
+            Some(1) => ModelBasis::Polynomial(Polynomial::Chebyshev, parameter()?),
+            Some(2) => {
+                let pieces = parameter()?;
+                let ArrayValue::Float32(params) = cell("FUNC_FPARAM")? else {
+                    return Err("Expected floating-point spline boundaries.".into());
+                };
+                let boundaries = spline_boundaries(params, receptor, pieces, channels)?;
+                ModelBasis::Spline { pieces, boundaries }
+            }
+            Some(3) => ModelBasis::Sinusoid(sinusoid_waves(parameters, receptor)?),
+            _ => return Err("Unsupported baseline type.".into()),
+        };
+        let coefficients_count = match &basis {
+            ModelBasis::Polynomial(_, order) => order + 1,
+            ModelBasis::Spline { pieces, .. } => pieces
                 .checked_mul(4)
                 .ok_or("Invalid number of cubic-spline coefficients.")?,
+            ModelBasis::Sinusoid(waves) => sinusoid::terms(waves),
         };
         let ArrayValue::Float32(result) = cell("RESULT")? else {
             return Err("Expected a floating-point RESULT cell.".into());
@@ -177,23 +187,31 @@ impl BaselineTable {
             .iter()
             .copied()
             .collect::<Vec<_>>();
-        let channels = scalar_uint(&self.table, row, "NCHAN")? as usize;
         let included = decode_ranges(&ranges, channels)?;
-        let boundaries = if matches!(family, BaselineFamily::CubicSpline) {
-            let ArrayValue::Float32(params) = cell("FUNC_FPARAM")? else {
-                return Err("Expected floating-point spline boundaries.".into());
-            };
-            spline_boundaries(params, receptor, parameter, channels)?
-        } else {
-            Vec::new()
-        };
         Ok(Some(AppliedBaseline {
-            family,
+            basis,
             coefficients,
-            boundaries,
             included,
         }))
     }
+}
+
+fn sinusoid_waves(values: &ndarray::ArrayD<i32>, receptor: usize) -> Result<Vec<usize>, String> {
+    if values.ndim() != 2 || receptor >= values.shape()[0] {
+        return Err("Invalid polarization axis in sinusoidal FUNC_PARAM.".into());
+    }
+    let mut waves = Vec::new();
+    for &value in values.index_axis(Axis(0), receptor) {
+        // A leading zero represents the DC term. Later zeros are table padding.
+        if value == 0 && !waves.is_empty() {
+            break;
+        }
+        waves.push(usize::try_from(value).map_err(|_| "Negative sinusoidal wavenumber.")?);
+    }
+    if waves.is_empty() || !waves.windows(2).all(|pair| pair[0] < pair[1]) {
+        return Err("Invalid sinusoidal wavenumbers in baseline table.".into());
+    }
+    Ok(waves)
 }
 
 fn spline_boundaries(
@@ -316,16 +334,24 @@ impl BaselineRow {
                 .unwrap_or_default()
         };
         let coefficients = widest(|model| model.coefficients.len());
-        let boundaries = widest(|model| model.boundaries.len());
+        let parameters = widest(|model| match &model.basis {
+            ModelBasis::Sinusoid(waves) => waves.len(),
+            _ => 1,
+        });
+        let boundaries = widest(|model| match &model.basis {
+            ModelBasis::Spline { boundaries, .. } => boundaries.len(),
+            _ => 0,
+        });
         let ranges = widest(|model| model.mask.len());
         let mut apply = Array2::from_elem((receptors, 1), false);
         let storage_family = |family| match family {
             BaselineFamily::Polynomial(Polynomial::Monomial) => 0,
             BaselineFamily::Polynomial(Polynomial::Chebyshev) => 1,
             BaselineFamily::CubicSpline => 2,
+            BaselineFamily::Sinusoid => 3,
         };
         let mut family = Array2::from_elem((receptors, 1), storage_family(default_family));
-        let mut degree = Array2::<i32>::zeros((receptors, 1));
+        let mut parameter = Array2::<i32>::zeros((receptors, parameters));
         let mut boundaries = Array2::<f32>::zeros((receptors, boundaries));
         let mut result = Array2::<f32>::zeros((receptors, coefficients));
         let mut mask = Array2::<u32>::zeros((receptors, ranges));
@@ -335,10 +361,23 @@ impl BaselineRow {
         for (receptor, model) in self.models.iter().enumerate() {
             let Some(model) = model else { continue };
             apply[[receptor, 0]] = true;
-            family[[receptor, 0]] = storage_family(model.family);
-            degree[[receptor, 0]] = model.parameter as i32;
-            for (index, &value) in model.boundaries.iter().enumerate() {
-                boundaries[[receptor, index]] = value as f32;
+            family[[receptor, 0]] = storage_family(model.basis.family());
+            match &model.basis {
+                ModelBasis::Polynomial(_, order) => parameter[[receptor, 0]] = *order as i32,
+                ModelBasis::Spline {
+                    pieces,
+                    boundaries: knots,
+                } => {
+                    parameter[[receptor, 0]] = *pieces as i32;
+                    for (index, &value) in knots.iter().enumerate() {
+                        boundaries[[receptor, index]] = value as f32;
+                    }
+                }
+                ModelBasis::Sinusoid(waves) => {
+                    for (index, &value) in waves.iter().enumerate() {
+                        parameter[[receptor, index]] = value as i32;
+                    }
+                }
             }
             for (index, &value) in model.coefficients.iter().enumerate() {
                 result[[receptor, index]] = value as f32;
@@ -369,7 +408,7 @@ impl BaselineRow {
             RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(self.time))),
             array("APPLY", ArrayValue::Bool(apply.into_dyn())),
             array("FUNC_TYPE", ArrayValue::UInt32(family.into_dyn())),
-            array("FUNC_PARAM", ArrayValue::Int32(degree.into_dyn())),
+            array("FUNC_PARAM", ArrayValue::Int32(parameter.into_dyn())),
             array("FUNC_FPARAM", ArrayValue::Float32(boundaries.into_dyn())),
             array("MASKLIST", ArrayValue::UInt32(mask.into_dyn())),
             array("RESULT", ArrayValue::Float32(result.into_dyn())),

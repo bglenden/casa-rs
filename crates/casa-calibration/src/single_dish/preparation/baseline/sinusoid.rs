@@ -1,0 +1,427 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Sinusoidal bases and Fourier-assisted wavenumber selection for baseline fitting.
+
+use std::collections::BTreeSet;
+use std::f64::consts::TAU;
+
+use casa_fft::RealFft2;
+use casa_types::Complex32;
+
+use super::linear_fit::{Fit, LinearFit};
+
+pub(super) const INVALID_WAVE: &str = "wrong value given for addwn/rejwn";
+const NO_WAVES: &str = "No effective wave number given for sinusoidal fitting.";
+pub(super) const INVALID_FIT: &str = "sakura_LSQFitSinusoidFloat() failed -- InvalidArgument";
+
+#[derive(Clone)]
+pub(super) enum WaveSelection {
+    Explicit(Vec<usize>),
+    Interval { first: usize, last: usize },
+    ThroughNyquist(usize),
+}
+
+impl WaveSelection {
+    pub(super) fn from_numbers(numbers: impl IntoIterator<Item = i64>) -> Result<Self, String> {
+        numbers
+            .into_iter()
+            .map(|number| usize::try_from(number).map_err(|_| INVALID_WAVE.into()))
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map(|numbers| Self::Explicit(numbers.into_iter().collect()))
+    }
+
+    pub(super) fn from_task_text(text: &str) -> Result<Self, String> {
+        let index = |value: &str| value.trim().parse::<usize>().map_err(|_| INVALID_WAVE);
+        if text.contains(',') {
+            let indexes = text
+                .split(',')
+                .map(index)
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            return Ok(Self::Explicit(indexes.into_iter().collect()));
+        }
+        if let Some((first, last)) = text.split_once(['-', '~']) {
+            let (first, last) = (index(first)?, index(last)?);
+            return Ok(Self::Interval {
+                first: first.min(last),
+                last: first.max(last),
+            });
+        }
+        if let Some(last) = text
+            .strip_prefix("<=")
+            .or_else(|| text.strip_prefix("=<"))
+            .or_else(|| text.strip_suffix(">="))
+            .or_else(|| text.strip_suffix("=>"))
+        {
+            return Ok(Self::Interval {
+                first: 0,
+                last: index(last)?,
+            });
+        }
+        if let Some(last) = text.strip_prefix('<').or_else(|| text.strip_suffix('>')) {
+            return Ok(Self::Interval {
+                first: 0,
+                last: index(last)?.checked_sub(1).ok_or(INVALID_WAVE)?,
+            });
+        }
+        if let Some(first) = text
+            .strip_prefix(">=")
+            .or_else(|| text.strip_prefix("=>"))
+            .or_else(|| text.strip_suffix("<="))
+            .or_else(|| text.strip_suffix("=<"))
+        {
+            return Ok(Self::ThroughNyquist(index(first)?));
+        }
+        if let Some(first) = text.strip_prefix('>').or_else(|| text.strip_suffix('<')) {
+            return Ok(Self::ThroughNyquist(
+                index(first)?.checked_add(1).ok_or(INVALID_WAVE)?,
+            ));
+        }
+        Ok(Self::Explicit(vec![index(text)?]))
+    }
+
+    fn from_tool_text(text: &str) -> Self {
+        let values = text
+            .split(',')
+            .filter(|term| !term.is_empty())
+            .map(c_integer)
+            .collect::<Vec<_>>();
+        if let [first, -999] = values.as_slice() {
+            return Self::ThroughNyquist(usize::try_from(*first).unwrap_or_default());
+        }
+        Self::Explicit(
+            values
+                .into_iter()
+                .filter_map(|value| usize::try_from(value).ok())
+                .collect(),
+        )
+    }
+
+    fn includes(&self, wave: usize) -> bool {
+        match self {
+            Self::Explicit(values) => values.contains(&wave),
+            Self::Interval { first, last } => (*first..=*last).contains(&wave),
+            Self::ThroughNyquist(first) => wave >= *first,
+        }
+    }
+
+    fn rejects_fft(&self, wave: usize) -> bool {
+        match self {
+            // CASA's merge sees the original two-element sentinel representation.
+            Self::ThroughNyquist(first) => wave == *first,
+            _ => self.includes(wave),
+        }
+    }
+}
+
+// The direct binding passes each comma-delimited token through atoi.
+fn c_integer(text: &str) -> i32 {
+    let text = text.trim_start();
+    let digits = text.trim_start_matches(['-', '+']);
+    let count = digits.bytes().take_while(u8::is_ascii_digit).count();
+    let sign = text.len() - digits.len();
+    text[..sign + count].parse::<i64>().unwrap_or_default() as i32
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum FftThreshold {
+    Sigma(f32),
+    Top(usize),
+}
+
+impl FftThreshold {
+    pub(super) fn parse(text: &str) -> Result<Self, String> {
+        const FORMAT: &str = "fftthresh has a wrong format.";
+        const POSITIVE: &str = "threshold given to fftthresh must be positive.";
+        if let Some(top) = text.strip_prefix("top") {
+            let count: usize = top
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| FORMAT)?
+                .try_into()
+                .map_err(|_| POSITIVE)?;
+            if count == 0 {
+                return Err(POSITIVE.into());
+            }
+            return Ok(Self::Top(count));
+        }
+        let sigma: f32 = text
+            .strip_suffix("sigma")
+            .unwrap_or(text)
+            .trim()
+            .parse()
+            .map_err(|_| FORMAT)?;
+        if sigma <= 0. {
+            return Err(POSITIVE.into());
+        }
+        Ok(Self::Sigma(sigma))
+    }
+
+    fn from_tool(text: &str) -> Result<Self, &'static str> {
+        const INVALID: &str = "fftthresh has a wrong value";
+        if let Some(count) = text.strip_prefix("top") {
+            return count
+                .trim()
+                .parse::<i32>()
+                .map(|count| Self::Top(count.max(0) as usize))
+                .map_err(|_| INVALID);
+        }
+        let sigma = if let Some(sigma) = text.strip_suffix("sigma") {
+            sigma
+        } else if text.is_empty()
+            || !text
+                .bytes()
+                .take(text.len() - 1)
+                .all(|byte| byte.is_ascii_digit() || byte == b'.')
+        {
+            return Err(INVALID);
+        } else {
+            text
+        };
+        sigma
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(Self::Sigma)
+            .ok_or(INVALID)
+    }
+}
+
+/// Wave selection for the sinusoidal single-dish baseline.
+pub struct SingleDishSinusoid {
+    include: WaveSelection,
+    exclude: WaveSelection,
+    fft: Option<Result<FftThreshold, &'static str>>,
+}
+
+impl SingleDishSinusoid {
+    /// Interpret the comma-delimited wavenumbers from the direct CASA tool.
+    /// A final sentinel of `-999` denotes an interval through Nyquist.
+    pub fn from_tool(
+        addwn: &str,
+        rejwn: &str,
+        applyfft: bool,
+        fftmethod: &str,
+        fftthresh: &str,
+    ) -> Result<Self, String> {
+        if addwn.split(',').all(str::is_empty) {
+            return Err("addwn must contain at least one element.".into());
+        }
+        Ok(Self::new(
+            WaveSelection::from_tool_text(addwn),
+            WaveSelection::from_tool_text(rejwn),
+            applyfft,
+            fftmethod,
+            fftthresh,
+        ))
+    }
+
+    pub(super) fn new(
+        include: WaveSelection,
+        exclude: WaveSelection,
+        applyfft: bool,
+        fftmethod: &str,
+        fftthresh: &str,
+    ) -> Self {
+        let fft = applyfft.then(|| {
+            if fftmethod != "fft" {
+                return Err("fftmethod must be 'fft' for now.");
+            }
+            FftThreshold::from_tool(fftthresh)
+        });
+        Self {
+            include,
+            exclude,
+            fft,
+        }
+    }
+
+    pub(super) fn fit(
+        &self,
+        spectrum: &[f32],
+        included: &[bool],
+        clip_sigma: f64,
+        max_fits: usize,
+        has_unflagged_data: bool,
+    ) -> Result<Option<(Fit, Vec<usize>)>, String> {
+        let maximum = (spectrum.len() / 2).checked_sub(1).ok_or(NO_WAVES)?;
+        let extended = matches!(self.exclude, WaveSelection::ThroughNyquist(_));
+        let mut waves = match &self.include {
+            WaveSelection::Explicit(values) => values
+                .iter()
+                .copied()
+                .filter(|&wave| (extended || wave <= maximum) && !self.exclude.includes(wave))
+                .collect::<Vec<_>>(),
+            _ => (0..=maximum)
+                .filter(|&wave| self.include.includes(wave) && !self.exclude.includes(wave))
+                .collect(),
+        };
+        let base_maximum = *waves.last().ok_or(NO_WAVES)?;
+        if (self.fft.is_none() || extended) && terms_for_maximum(base_maximum) > spectrum.len() {
+            return Err(
+                "sakura_CreateLSQFitContextSinusoidFloat() failed -- InvalidArgument".into(),
+            );
+        }
+        if !has_unflagged_data {
+            return Ok(None);
+        }
+        let base_len = waves.len();
+        if let Some(choice) = self.fft {
+            let choice = choice?;
+            let selected = peaks(spectrum, included, maximum, choice)?;
+            for wave in selected {
+                if !self.exclude.rejects_fft(wave) && !waves[..base_len].contains(&wave) {
+                    waves.push(wave);
+                }
+            }
+            waves.sort_unstable();
+        }
+        let terms = terms(&waves);
+        if included.iter().filter(|&&value| value).count() < terms {
+            return Ok(None);
+        }
+        let largest = *waves.last().expect("nonempty waves");
+        if self.fft.is_some() && !extended && terms_for_maximum(largest) > spectrum.len() {
+            return Err(
+                "sakura_CreateLSQFitContextSinusoidFloat() failed -- InvalidArgument".into(),
+            );
+        }
+        if (extended && largest > base_maximum) || !waves.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Err(INVALID_FIT.into());
+        }
+        let size = spectrum.len();
+        let basis = (0..size)
+            .map(|channel| basis(channel, size, &waves))
+            .collect();
+        let linear = LinearFit {
+            basis,
+            terms,
+            segment_ends: vec![size],
+            failure: "sakura_LSQFitSinusoidFloat() failed -- NG",
+        };
+        Ok(linear
+            .solve(spectrum, included, clip_sigma, max_fits)?
+            .map(|fit| (fit, waves)))
+    }
+}
+
+fn terms_for_maximum(wave: usize) -> usize {
+    wave.saturating_mul(2).saturating_add(1)
+}
+
+fn peaks(
+    spectrum: &[f32],
+    included: &[bool],
+    maximum: usize,
+    threshold: FftThreshold,
+) -> Result<Vec<usize>, String> {
+    let samples = interpolate(spectrum, included)?;
+    let mut fft = RealFft2::<f32>::with_threads([1, spectrum.len()], 1)
+        .map_err(|error| error.to_string())?
+        .with_estimated_plan();
+    let mut storage = vec![Complex32::new(0., 0.); fft.storage_len()];
+    for (i, sample) in samples.into_iter().enumerate() {
+        if i.is_multiple_of(2) {
+            storage[i / 2].re = sample;
+        } else {
+            storage[i / 2].im = sample;
+        }
+    }
+    fft.forward(&mut storage)
+        .map_err(|error| error.to_string())?;
+    let scale = (2. / spectrum.len() as f64) as f32;
+    let amplitudes = storage
+        .into_iter()
+        .map(|amplitude| amplitude.norm() * scale)
+        .collect::<Vec<_>>();
+    match threshold {
+        FftThreshold::Sigma(sigma) => {
+            let count = amplitudes.len() as f32;
+            let sum = amplitudes.iter().sum::<f32>();
+            let squared = amplitudes
+                .iter()
+                .map(|&amplitude| amplitude * amplitude)
+                .sum::<f32>();
+            let mean = sum / count;
+            let cutoff = mean + sigma * (squared / count - mean * mean).sqrt();
+            Ok(amplitudes
+                .iter()
+                .take(maximum + 1)
+                .enumerate()
+                .filter_map(|(wave, &amplitude)| (cutoff <= amplitude).then_some(wave))
+                .collect())
+        }
+        FftThreshold::Top(count) => {
+            let mut indexes = (0..=maximum)
+                .filter(|&index| amplitudes[index] > 0.)
+                .collect::<Vec<_>>();
+            indexes.sort_by(|&left, &right| amplitudes[right].total_cmp(&amplitudes[left]));
+            indexes.truncate(count);
+            indexes.extend(std::iter::repeat_n(
+                0,
+                count.saturating_sub(indexes.len()).min(2),
+            ));
+            Ok(indexes)
+        }
+    }
+}
+
+fn interpolate(spectrum: &[f32], included: &[bool]) -> Result<Vec<f32>, String> {
+    let mut values = spectrum.to_vec();
+    let mut previous = None;
+    let mut from = 0;
+    for (channel, &valid) in included.iter().enumerate() {
+        if !valid {
+            continue;
+        }
+        if from < channel {
+            let value = previous.map_or(spectrum[channel], |before| {
+                (before + spectrum[channel]) / 2.
+            });
+            values[from..channel].fill(value);
+        }
+        previous = Some(spectrum[channel]);
+        from = channel + 1;
+    }
+    let last = previous.ok_or("Bad data. all channels are masked.")?;
+    values[from..].fill(last);
+    Ok(values)
+}
+
+pub(super) fn terms(waves: &[usize]) -> usize {
+    2 * waves.len() - usize::from(waves.first() == Some(&0))
+}
+
+fn basis(channel: usize, channels: usize, waves: &[usize]) -> Vec<f64> {
+    let norm = TAU / channels.saturating_sub(1).max(1) as f64;
+    let mut result = Vec::with_capacity(terms(waves));
+    for &wave in waves {
+        if wave == 0 {
+            result.push(1.);
+        } else {
+            let (sine, cosine) = (channel as f64 * wave as f64 * norm).sin_cos();
+            result.extend([sine, cosine]);
+        }
+    }
+    result
+}
+
+pub(super) fn subtract(
+    spectrum: &mut [f32],
+    coefficients: &[f64],
+    waves: &[usize],
+) -> Result<(), String> {
+    if waves.is_empty() || coefficients.len() != terms(waves) {
+        return Err("Invalid sinusoidal baseline coefficients.".into());
+    }
+    let channels = spectrum.len();
+    for (channel, sample) in spectrum.iter_mut().enumerate() {
+        let terms = basis(channel, channels, waves);
+        let fitted = terms
+            .iter()
+            .zip(coefficients)
+            .map(|(basis, coefficient)| basis * coefficient)
+            .sum::<f64>();
+        *sample -= fitted as f32;
+    }
+    Ok(())
+}

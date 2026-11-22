@@ -205,7 +205,7 @@ const METHODS: &[Method] = &[
                 param("edge", K::Ints, D::Ints(&[0, 0])),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
     Method {
