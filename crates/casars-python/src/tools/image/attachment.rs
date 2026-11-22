@@ -32,6 +32,7 @@ pub(super) struct SharedImage {
     use_lock: Option<Arc<TableUseLock>>,
     miriad_directory: Option<MiriadDirectory>,
     saved_expression_directory: Option<SavedExpressionDirectory>,
+    expression_operands: Vec<PathBuf>,
     shareable: bool,
     coordinates_replaced: AtomicBool,
 }
@@ -92,12 +93,14 @@ impl AttachedImage {
         saved_expression_directory: Option<SavedExpressionDirectory>,
     ) -> Self {
         let beam_view = BeamView::from_image(&image);
+        let expression_operands = image.concat_expression_operands();
         Self {
             image: Arc::new(SharedImage {
                 handle: Mutex::new(image),
                 use_lock: None,
                 miriad_directory,
                 saved_expression_directory,
+                expression_operands,
                 shareable: false,
                 coordinates_replaced: AtomicBool::new(false),
             }),
@@ -329,11 +332,13 @@ impl AttachedImage {
             .map_err(raised)?;
         let shareable = lock_attempts.is_some() && handle.image_type_name() != "ComponentListImage";
         let beam_view = BeamView::from_image(&handle);
+        let expression_operands = handle.concat_expression_operands();
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
             use_lock,
             miriad_directory: None,
             saved_expression_directory: None,
+            expression_operands,
             shareable,
             coordinates_replaced: AtomicBool::new(false),
         });
@@ -429,6 +434,10 @@ impl AttachedImage {
             .filter(|path| !path.is_file())
             .map(Self::open)
             .collect()
+    }
+
+    pub(super) fn open_concat_expression_operand(path: &Path) -> PyResult<Self> {
+        Self::open_native(path, path, Some(0), TableUseLock::acquire_waiting, true)
     }
 
     pub(super) fn retain_expression_inputs(&mut self, inputs: Vec<Self>, paths: Vec<PathBuf>) {
@@ -585,7 +594,10 @@ impl AttachedImage {
             } else {
                 crate::tools::table::path_is_in_use(path)
             };
-            if conflicting_images(&registry, path, expected) || in_table_use {
+            if conflicting_images(&registry, path, expected)
+                || in_table_use
+                || (path == target && !replaces_link && in_use_by_expression(&registry, path))
+            {
                 return Err(raised(format!(
                     "Cannot rename image because {} is still open in this process",
                     path.display()
@@ -657,11 +669,13 @@ impl AttachedImage {
         };
         moved.finish(&target)?;
         let beam_view = BeamView::from_image(&handle);
+        let expression_operands = handle.concat_expression_operands();
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
             use_lock: copied_lock.or_else(|| self.image.use_lock.clone()),
             miriad_directory: None,
             saved_expression_directory: None,
+            expression_operands,
             shareable: self.image.shareable,
             coordinates_replaced: AtomicBool::new(
                 self.image.coordinates_replaced.load(Ordering::Relaxed),
@@ -751,7 +765,7 @@ impl AttachedImage {
         };
         let name = self.name_path(&self.lock()).unwrap_or(key).to_path_buf();
         let mut registry = registry();
-        if conflicting_images(&registry, key, 1) {
+        if conflicting_images(&registry, key, 1) || in_use_by_expression(&registry, key) {
             return Err(in_use(key, "this"));
         }
         {
@@ -801,7 +815,7 @@ pub(super) fn remove_file(path: &Path) -> PyResult<bool> {
     let name = std::path::absolute(path).map_err(raised)?;
     let key = key(&name)?;
     let registry = registry();
-    if conflicting_images(&registry, &key, 0) {
+    if conflicting_images(&registry, &key, 0) || in_use_by_expression(&registry, &key) {
         return Err(in_use(&key, "this"));
     }
     remove_native_table(&name, &key, None)?;
@@ -821,6 +835,19 @@ pub(super) fn conflicting_images(
                 && images.iter().any(|image| image.strong_count() > 0)
         }
     })
+}
+
+pub(super) fn in_use_by_expression(registry: &OpenImages, path: &Path) -> bool {
+    registry
+        .values()
+        .flatten()
+        .filter_map(Weak::upgrade)
+        .any(|image| {
+            image
+                .expression_operands
+                .iter()
+                .any(|operand| path.starts_with(operand) || operand.starts_with(path))
+        })
 }
 
 fn in_use(path: &Path, process: &str) -> PyErr {

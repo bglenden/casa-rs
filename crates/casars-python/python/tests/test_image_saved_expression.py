@@ -360,6 +360,273 @@ def _typed_operand(api, path, pixeltype):
     return values
 
 
+@pytest.mark.parametrize("writer_backend", ["casa", "casars"])
+@pytest.mark.parametrize("reader_backend", ["casa", "casars"])
+@pytest.mark.parametrize("pixeltype", ["float", "double", "complex", "dcomplex"])
+@pytest.mark.parametrize("mode", ["paged", "nomove", "copy", "move"])
+def test_concat_nested_saved_expressions_in_every_numeric_type(
+    tmp_path, writer_backend, reader_backend, pixeltype, mode,
+):
+    writer_api, reader_api = _backend(writer_backend), _backend(reader_backend)
+    leaf, inner, expression, native, output = (
+        tmp_path / name for name in ("leaf.im", "inner.im", "outer.im", "native.im", "joined.im")
+    )
+    pixels = _typed_operand(writer_api, leaf, pixeltype)
+    other = _typed_operand(writer_api, native, pixeltype)
+    _manifest(inner, ImageExpr=f'"{leaf}" * 3', DataType="ignored")
+    _manifest(expression, ImageExpr=f'"{inner}" + 1', MiscInfo={"origin": "nested"})
+    expected = np.concatenate([pixels * 3 + 1, other])
+    writer, reader = writer_api.image(), reader_api.image()
+    joined = None
+    try:
+        joined = writer.imageconcat(str(output), [str(expression), str(native)], axis=0, relax=True,
+                                    mode=mode, tempclose=True)
+        assert joined.pixeltype() == pixeltype
+        np.testing.assert_array_equal(joined.getchunk(), expected)
+        assert joined.done()
+        assert reader.open(str(output))
+        assert reader.pixeltype() == pixeltype
+        np.testing.assert_array_equal(reader.shape(), expected.shape)
+        actual = reader.getchunk()
+        assert actual.dtype == (np.complex128 if "complex" in pixeltype else np.float64)
+        np.testing.assert_array_equal(actual, expected)
+        assert expression.exists() == (mode != "move")
+        assert native.exists() == (mode != "move")
+        assert leaf.is_dir() and inner.is_dir()
+        if pixeltype in {"float", "complex"} and mode != "paged":
+            np.testing.assert_array_equal(reader.haslock(), [True, False])
+            assert reader.unlock()
+            np.testing.assert_array_equal(reader.haslock(), [False, False])
+            assert reader.lock(nattempts=1)
+            np.testing.assert_array_equal(reader.haslock(), [True, False])
+    finally:
+        reader.done()
+        if joined is not None:
+            joined.done()
+        writer.done()
+
+
+@pytest.mark.parametrize("mode", ["paged", "nomove", "copy", "move"])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_saved_expression_concat_protects_its_transitive_table(tmp_path, mode, wrapped):
+    api = _backend("casars")
+    source, inner, expression, companion = (
+        tmp_path / name for name in ("leaf.im", "inner.im", "outer.im", "companion.im")
+    )
+    pixels = _typed_operand(api, source, "float")
+    _typed_operand(api, companion, "float")
+    _manifest(inner, ImageExpr=f'"{source}" * 3')
+    _manifest(expression, ImageExpr=f'"{inner}" + 1')
+    image = api.image()
+    try:
+        operand = expression
+        if wrapped:
+            operand = tmp_path / "wrapped.im"
+            product = image.imageconcat(str(operand), [str(expression), str(companion)],
+                                        axis=0, relax=True, mode="nomove", tempclose=True)
+            assert product.done()
+        assert image.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match="input|overlap|overwrite"):
+            image.imageconcat(str(source), [str(operand), str(companion)],
+                              axis=0, relax=True, mode=mode, overwrite=True)
+        np.testing.assert_array_equal(image.getchunk(), [41., 42.])
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+        assert companion.is_dir() and inner.is_dir() and expression.is_dir()
+    finally:
+        image.done()
+
+
+def test_saved_expression_concat_move_keeps_a_required_leaf(tmp_path):
+    api = _backend("casars")
+    source, expression, output = (tmp_path / name for name in ("leaf.im", "expression.im", "joined.im"))
+    pixels = _typed_operand(api, source, "float")
+    _manifest(expression, ImageExpr=f'"{source}" * 3')
+    image = api.image()
+    try:
+        assert image.fromarray(str(output), [33.]) and image.done()
+        with pytest.raises(RuntimeError, match="Cannot relocate virtual concatenation"):
+            image.imageconcat(str(output), [str(expression), str(source)],
+                              axis=0, relax=True, overwrite=True, mode="move")
+        assert image.open(str(output))
+        np.testing.assert_array_equal(image.getchunk(), [33.])
+        assert image.open(str(expression))
+        np.testing.assert_array_equal(image.getchunk(), pixels * 3)
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("mode", ["paged", "copy"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_concat_refuses_to_replace_a_linked_manifest_referent(tmp_path, mode, nested):
+    api = _backend("casars")
+    output = tmp_path / "output.im"
+    leaf = tmp_path / "leaf.im"
+    other = tmp_path / "other.im"
+    original = _typed_operand(api, output, "float")
+    pixels = _typed_operand(api, leaf, "float")
+    _typed_operand(api, other, "float")
+    referent = output / "expression.json"
+    document = json.dumps({"ImageExpr": f'"{leaf}" * 3'})
+    referent.write_text(document)
+    linked = tmp_path / "linked.im"
+    linked.mkdir()
+    (linked / "imageexpr.json").symlink_to(referent)
+    if nested:
+        expression = tmp_path / "outer.im"
+        _manifest(expression, ImageExpr=f'"{linked}" + 1')
+    else:
+        expression = linked
+    image = api.image()
+    try:
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression input"):
+            image.imageconcat(str(output), [str(expression), str(other)],
+                              axis=0, relax=True, mode=mode, overwrite=True)
+        assert referent.read_text() == document
+        assert image.open(str(output))
+        np.testing.assert_array_equal(image.getchunk(), original)
+        assert image.open(str(expression))
+        np.testing.assert_array_equal(image.getchunk(), pixels * 3 + int(nested))
+    finally:
+        image.done()
+
+
+def test_concat_refuses_to_replace_a_directory_containing_an_operand_alias(tmp_path):
+    api = _backend("casars")
+    output = tmp_path / "output.im"
+    leaf = tmp_path / "leaf.im"
+    other = tmp_path / "other.im"
+    original = _typed_operand(api, output, "float")
+    pixels = _typed_operand(api, leaf, "float")
+    _typed_operand(api, other, "float")
+    alias = output / "alias.im"
+    alias.symlink_to(leaf, target_is_directory=True)
+    expression = tmp_path / "expression.im"
+    _manifest(expression, ImageExpr=f'"{alias}" * 3')
+    image = api.image()
+    try:
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression input"):
+            image.imageconcat(str(output), [str(expression), str(other)],
+                              axis=0, relax=True, overwrite=True)
+        assert alias.is_symlink()
+        assert image.open(str(output))
+        np.testing.assert_array_equal(image.getchunk(), original)
+        assert image.open(str(expression))
+        np.testing.assert_array_equal(image.getchunk(), pixels * 3)
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_live_saved_expression_concat_holds_the_operand_for_removal(tmp_path, backend):
+    api = _backend(backend)
+    source, expression, companion, output = (
+        tmp_path / name for name in ("leaf.im", "expression.im", "companion.im", "joined.im")
+    )
+    pixels = _typed_operand(api, source, "float")
+    _typed_operand(api, companion, "float")
+    _manifest(expression, ImageExpr=f'"{source}" * 3')
+    image = api.image()
+    joined = image.imageconcat(str(output), [str(expression), str(companion)],
+                               axis=0, relax=True, mode="nomove", tempclose=True)
+    try:
+        assert image.open(str(source))
+        with pytest.raises(RuntimeError, match="still open in this process"):
+            image.remove(done=True)
+        assert source.is_dir()
+        np.testing.assert_array_equal(joined.getchunk()[:3], pixels * 3)
+        assert joined.done()
+        assert image.open(str(source))
+        assert image.remove(done=True)
+        assert not source.exists()
+    finally:
+        joined.done()
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("inner_tempclose", [False, True])
+def test_outer_tempclose_keeps_nested_saved_expression_leases(tmp_path, backend, inner_tempclose):
+    api = _backend(backend)
+    names = ("leaf.im", "expression.im", "first.im", "second.im", "inner.im", "outer.im")
+    leaf, expression, first, second, inner, outer = (tmp_path / name for name in names)
+    pixels = _typed_operand(api, leaf, "float")
+    first_pixels = _typed_operand(api, first, "float")
+    second_pixels = _typed_operand(api, second, "float")
+    _manifest(expression, ImageExpr=f'"{leaf}" * 3')
+    image = api.image()
+    joined = image.imageconcat(str(inner), [str(expression), str(first)],
+                               axis=0, relax=True, tempclose=inner_tempclose, mode="nomove")
+    joined.done()
+    joined = image.imageconcat(str(outer), [str(inner), str(second)],
+                               axis=0, relax=True, tempclose=True, mode="nomove")
+    try:
+        np.testing.assert_array_equal(joined.haslock(), [True, False])
+        np.testing.assert_array_equal(joined.getchunk(),
+                                      np.concatenate([pixels * 3, first_pixels, second_pixels]))
+        np.testing.assert_array_equal(joined.haslock(), [True, False])
+        assert joined.unlock()
+        np.testing.assert_array_equal(joined.haslock(), [False, False])
+        assert joined.lock(False, 1)
+        np.testing.assert_array_equal(joined.haslock(), [True, False])
+    finally:
+        joined.done()
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_copy_concat_materializes_a_relocated_expression_manifest_link(tmp_path, backend):
+    api = _backend(backend)
+    source, companion, referent = (
+        tmp_path / name for name in ("leaf.im", "companion.im", "oracle.json")
+    )
+    pixels = _typed_operand(api, source, "float")
+    other = _typed_operand(api, companion, "float")
+    expression = tmp_path / "holder" / "expression.im"
+    expression.mkdir(parents=True)
+    referent.write_text(json.dumps({"ImageExpr": f'"{source}" * 3'}))
+    link = expression / "imageexpr.json"
+    link.symlink_to("../../oracle.json")
+    output = tmp_path / "products" / "joined.im"
+    output.parent.mkdir()
+    maker, reader = api.image(), api.image()
+    product = maker.imageconcat(str(output), [str(expression), str(companion)],
+                                axis=0, relax=True, mode="copy")
+    try:
+        assert product.done()
+        assert link.is_symlink()
+        assert reader.open(str(output))
+        np.testing.assert_array_equal(reader.getchunk(), np.concatenate([pixels * 3, other]))
+    finally:
+        product.done()
+        reader.done()
+        maker.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("mode", ["paged", "nomove", "copy", "move"])
+@pytest.mark.parametrize("tempclose", [False, True])
+def test_concat_saved_expression_keeps_the_source_mask(tmp_path, backend, mode, tempclose):
+    api = _backend(backend)
+    source, expression, companion, output = (
+        tmp_path / name for name in ("leaf.im", "expression.im", "companion.im", "joined.im")
+    )
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    _operand(api, source, pixels)
+    _typed_operand(api, companion, "float")
+    _manifest(expression, ImageExpr=f'"{source}" * 3')
+    tool = api.image()
+    product = tool.imageconcat(str(output), [str(expression), str(companion)],
+                               axis=0, relax=True, mode=mode, tempclose=tempclose)
+    try:
+        np.testing.assert_array_equal(product.getchunk(getmask=True),
+                                      np.concatenate([pixels > 4, np.ones_like(pixels, dtype=bool)]))
+        np.testing.assert_array_equal(product.getchunk()[:3][pixels > 4], (pixels * 3)[pixels > 4])
+    finally:
+        product.done()
+        tool.done()
+
+
 @pytest.mark.parametrize("backend", ["casa", "casars"])
 @pytest.mark.parametrize("pixeltype", ["float", "double", "complex", "dcomplex"])
 @pytest.mark.parametrize("factory", ["open", "newimage", "newimagefromfile"])

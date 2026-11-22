@@ -294,6 +294,14 @@ impl ImageHandle {
         self.image_type_name() == "ImageExpr" && self.path().is_some()
     }
 
+    pub(super) fn concat_expression_operands(&self) -> Vec<PathBuf> {
+        with_pixels!(self, storage => match storage {
+            Storage::Temp { image, .. } => image.concat_source()
+                .map_or_else(Vec::new, |source| source.expression_operands().cloned().collect()),
+            Storage::Paged(_) => Vec::new(),
+        })
+    }
+
     pub(super) fn kind(&self) -> ImagePixelType {
         match self {
             Self::Float(_) => ImagePixelType::Float32,
