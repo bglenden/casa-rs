@@ -193,6 +193,7 @@ pub(crate) fn solve_polarization_with_activity(
     request: &LeakageSolveRequest,
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<PolarizationSolveOutcome, String> {
+    let preparation = crate::timing::Phase::start("polarization_prepare");
     let error = |error: GainSolveError| error.to_string();
     let context = prepare_calibration_solve(
         ms,
@@ -318,6 +319,8 @@ pub(crate) fn solve_polarization_with_activity(
     } else {
         None
     };
+    drop(preparation);
+    let fitting = crate::timing::Phase::start("polarization_gather_and_fit");
     for rows in intervals {
         let previous_interval = previous
             .and_then(|index| solutions.get(index))
@@ -374,6 +377,8 @@ pub(crate) fn solve_polarization_with_activity(
             }
         }
     }
+    drop(fitting);
+    let _publication = crate::timing::Phase::start("polarization_write");
     let rows = output::write(ms, request, &context.rows, &solutions, bin_widths)?;
     Ok(PolarizationSolveOutcome {
         rows,
@@ -480,6 +485,8 @@ impl LeakageInputs<'_> {
         let spectral_window = interval_window(rows);
         let count = self.windows[&spectral_window].count();
         let kind = self.request.kind;
+        let segment_centroid =
+            kind.cross_hand() || (self.tool && self.request.solve_mode == GainSolveMode::Phase);
         let requested = if self.request.preaverage_seconds < 0.0 {
             match kind {
                 LeakageSolveKind::PosAng => 30.0,
@@ -543,7 +550,7 @@ impl LeakageInputs<'_> {
                     if let Some(data) = &mut gain_data {
                         data.observe(pair, &active.bins);
                     }
-                    if kind.cross_hand() {
+                    if segment_centroid {
                         active.finish_time(&mut time, self.request.solve_mode);
                     }
                     let segment = BaselineSegment {
@@ -564,6 +571,10 @@ impl LeakageInputs<'_> {
                     active
                         .centroid
                         .observe(row.time_centroid_seconds, scalar_weight);
+                } else if segment_centroid {
+                    active
+                        .centroid
+                        .observe(row.time_centroid_seconds, spectral_weight);
                 } else {
                     time.observe(row.time_centroid_seconds, spectral_weight);
                 }
@@ -573,13 +584,16 @@ impl LeakageInputs<'_> {
             if let Some(data) = &mut gain_data {
                 data.observe(pair, &active.bins);
             }
-            if kind.cross_hand() {
+            if segment_centroid {
                 active.finish_time(&mut time, self.request.solve_mode);
             }
             fits.accumulate(pair, &mut active.bins, antennas, active.segment)?;
         }
         let mut stages = self.tool.then(LeakageFitStages::default);
         let solution = if gain_data.as_ref().is_none_or(|data| data.positive_weight) {
+            if self.tool && kind.iterative() && self.request.correlation_dependent_flags {
+                return Err(GainSolveError::LeakageCorrelationFlagging);
+            }
             fits.finish(
                 antennas,
                 references,

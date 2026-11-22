@@ -410,6 +410,9 @@ pub enum GainSolveError {
     /// The cross-hand data cannot constrain both terms of the source fit.
     #[error("Source polarization solution is singular; try solving for D-terms only.")]
     SingularSourcePolarization,
+    /// The generic leakage solve does not accept correlation-dependent flags.
+    #[error("correlation-dependent flags are unsupported for an iterative leakage solve")]
+    LeakageCorrelationFlagging,
     #[error("accumulated data entirely flagged")]
     NoUnflaggedParallacticData,
     #[error(

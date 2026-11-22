@@ -359,7 +359,7 @@ fn step_scale(
         high = mid;
         step *= 0.5;
         mid = evaluate(step);
-        while mid > loss && step > 0.125 {
+        while mid > loss && step > f32::MIN_POSITIVE {
             step *= 0.5;
             high = mid;
             mid = evaluate(step);
