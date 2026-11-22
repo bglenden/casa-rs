@@ -542,7 +542,19 @@ pub fn referenced_images(expression: &str) -> Result<Vec<String>, ExprParseError
     let mut current = lexer.next_token()?.0;
     let mut names = Vec::new();
     while current != Token::Eof {
-        let next = lexer.next_token()?.0;
+        let (next, position) = lexer.next_token()?;
+        if matches!(current, Token::QuotedPath(_)) && next == Token::Colon {
+            let selector = expression[position + 1..]
+                .split(|character: char| {
+                    !character.is_ascii_alphanumeric() && !matches!(character, '_' | '.')
+                })
+                .next()
+                .unwrap_or_default();
+            return Err(ExprParseError {
+                message: format!("Parse error at or near ':{selector}'"),
+                position,
+            });
+        }
         let name = match current {
             Token::QuotedPath(name) => Some(name),
             Token::Ident(name) if !matches!(name.as_str(), "T" | "F") && next != Token::LParen => {

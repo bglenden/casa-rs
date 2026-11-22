@@ -158,11 +158,11 @@ impl<'a> ImageToolExpressionInputs<'a> {
     /// Compile a lazy numeric expression with resolved saved expression operands.
     ///
     /// Callers supply already validated expressions keyed by resolved path. Each
-    /// saved operand is captured as a section reader with its original precision.
+    /// saved operand is captured as a section reader with its original precision
+    /// and intrinsic validity. CASA ignores mask selectors on saved expressions.
     ///
     /// # Errors
-    /// Returns an error for an unreadable operand, a mask selector on a saved
-    /// expression, or an invalid expression.
+    /// Returns an error for an unreadable operand or an invalid expression.
     pub fn compile_with_saved_operands(
         &self,
         saved: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
@@ -172,14 +172,7 @@ impl<'a> ImageToolExpressionInputs<'a> {
             .iter()
             .map(|operand| {
                 let source = match saved.get(&operand.path) {
-                    Some((pixels, single_precision)) => {
-                        if let Some(mask) = &operand.mask {
-                            return Err(ImageError::CasaSelection(format!(
-                                "Image Expression: Parse error at or near ':{mask}'"
-                            )));
-                        }
-                        saved_operand(pixels, *single_precision)?
-                    }
+                    Some((pixels, single_precision)) => saved_operand(pixels, *single_precision)?,
                     None => open_path_with_mask_name(&operand.path, operand.mask.clone(), true)?,
                 };
                 Ok((operand.name.clone(), source))

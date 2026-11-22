@@ -147,7 +147,7 @@ def test_nested_saved_expressions_capture_a_shared_operand(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
 @pytest.mark.parametrize("selector", ["nomask", "mask0"])
-def test_saved_expression_operand_rejects_a_named_mask(tmp_path, monkeypatch, backend, selector):
+def test_saved_expression_operand_rejects_a_selector_outside_its_quotes(tmp_path, monkeypatch, backend, selector):
     api = _backend(backend)
     _operand(api, tmp_path / "input.im", np.arange(12, dtype=np.float32).reshape(3, 4))
     _manifest(tmp_path / "inner.im")
@@ -159,6 +159,25 @@ def test_saved_expression_operand_rejects_a_named_mask(tmp_path, monkeypatch, ba
         with pytest.raises(RuntimeError, match=f"Parse error at or near ':{selector}'"):
             receiver.newimagefromfile("outer.im")
         np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
+    finally:
+        receiver.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("operand", ['"inner.im:nomask"', "inner.im:no_such_mask"])
+def test_saved_expression_operand_keeps_intrinsic_validity(tmp_path, monkeypatch, backend, operand):
+    api = _backend(backend)
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    _operand(api, tmp_path / "input.im", pixels)
+    _manifest(tmp_path / "inner.im")
+    _manifest(tmp_path / "outer.im", ImageExpr=f"{operand} + 2")
+    monkeypatch.chdir(tmp_path)
+    receiver = api.image()
+    try:
+        assert receiver.open("outer.im")
+        valid = receiver.getchunk(getmask=True)
+        np.testing.assert_array_equal(valid, pixels > 4)
+        np.testing.assert_array_equal(receiver.getchunk()[valid], (pixels * 3 + 2)[valid])
     finally:
         receiver.done()
 
@@ -177,7 +196,8 @@ def test_saved_expression_cycle_preserves_the_factory_receiver(tmp_path, monkeyp
             receiver.newimagefromfile("original.im")
         np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
         with pytest.raises(RuntimeError, match="Cycle in saved image expression"):
-            receiver.newimagefromfile("original.im", outfile="must-not-exist.im")
+            receiver.fromimage(outfile="must-not-exist.im", infile="original.im")
+        np.testing.assert_array_equal(receiver.getchunk(), [41., 42.])
         assert not (tmp_path / "must-not-exist.im").exists()
     finally:
         receiver.done()
