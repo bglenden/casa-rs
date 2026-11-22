@@ -5,7 +5,7 @@ use casa_tables::{Table, TableError};
 use casa_types::ArrayValue;
 
 use super::visibility_columns::VisibilityColumns;
-use super::{TransformInputColumns, TransformInputView};
+use super::{PreparedTransformInputView, TransformInputColumns};
 
 pub(super) type ArrayCells = Vec<Option<ArrayValue>>;
 
@@ -37,7 +37,7 @@ impl MainArrayBlock {
         rows: &[usize],
         visibility: &VisibilityColumns,
         spectra: &[&str],
-        view: Option<&dyn TransformInputView>,
+        view: Option<&dyn PreparedTransformInputView>,
     ) -> Result<Self, TableError> {
         let mut computed = if let Some(view) = view {
             let mut columns = Vec::from(["FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"]);

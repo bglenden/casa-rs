@@ -17,8 +17,8 @@ use super::time_average::{
 };
 use super::visibility_columns::VisibilityColumns;
 use super::{
-    MsTransformError, STANDARD_SPECTRA, TransformInputView, missing_column_error, scalar_f64,
-    select_channels, transform_flag_category_channels,
+    MsTransformError, PreparedTransformInputView, STANDARD_SPECTRA, missing_column_error,
+    scalar_f64, select_channels, transform_flag_category_channels,
 };
 use crate::schema::main_table::OptionalMainColumn;
 
@@ -33,7 +33,7 @@ pub(super) struct TimeProjection<'a> {
     visibility: &'a VisibilityColumns,
     available: BTreeMap<(usize, &'static str), bool>,
     rows_per_block: usize,
-    view: Option<&'a dyn TransformInputView>,
+    view: Option<&'a dyn PreparedTransformInputView>,
 }
 
 pub(super) struct TimeGroupRead<'a> {
@@ -63,7 +63,7 @@ impl<'a> TimeProjection<'a> {
         spectra: &'a [&'static str],
         visibility: &'a VisibilityColumns,
         rows_per_block: usize,
-        view: Option<&'a dyn TransformInputView>,
+        view: Option<&'a dyn PreparedTransformInputView>,
     ) -> Self {
         Self {
             table,
@@ -162,12 +162,7 @@ impl<'a> TimeProjection<'a> {
             let mut missing = BTreeSet::new();
             for (_, row) in block {
                 let first = row.buffer_first;
-                if self
-                    .view
-                    .is_some_and(|view| view.provides(self.table, name))
-                {
-                    self.available.insert((first, name), true);
-                } else if let Some(&offset) = offsets.get(&first) {
+                if let Some(&offset) = offsets.get(&first) {
                     self.available
                         .insert((first, name), cells[offset].is_some());
                 } else if !self.available.contains_key(&(first, name)) {

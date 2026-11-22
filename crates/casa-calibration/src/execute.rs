@@ -83,9 +83,11 @@ mod solve_priors;
 mod switched_power;
 mod tool_activity;
 mod tool_corrupt;
+mod transform;
 use tool_activity::ToolApplyActivity;
 pub(crate) use tool_activity::{ApplyTermCounts, LibraryApplyRegistration};
 pub(crate) use tool_corrupt::{ModelCorruption, execute_tool_corrupt};
+pub(crate) use transform::PreparedReadOnlyApply;
 pub(crate) mod tsys_weights;
 mod weights;
 pub(crate) use chain::has_polarization_matrix;
@@ -628,8 +630,8 @@ fn for_each_apply_row(
     forward_model: bool,
     share_input_flags: bool,
     weight_source: PreviewWeightSource,
-    tool: Option<&mut ToolApplyExecution<'_>>,
-    consume: impl FnMut(usize, EvaluatedApplyRow),
+    mut tool: Option<&mut ToolApplyExecution<'_>>,
+    mut consume: impl FnMut(usize, EvaluatedApplyRow),
 ) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
     let correlation_types_by_ddid = load_correlation_types_by_ddid(ms).map_err(|source| {
@@ -643,82 +645,29 @@ fn for_each_apply_row(
         chain.arrange_for_tool(plan, run.correction.parang_terms);
     }
 
-    for_each_prepared_apply_row(
-        ms.main_table(),
-        plan,
-        ReadOnlyApplyInputs {
-            observed_column,
-            forward_model,
-            share_input_flags,
-            weight_source,
-            read_spectrum_direct: false,
-            chain: &chain,
-            correlation_types: &correlation_types_by_ddid,
-        },
-        plan.selected_rows.iter(),
-        tool,
-        consume,
-    )
-}
-
-struct ReadOnlyApplyInputs<'a> {
-    observed_column: &'a str,
-    forward_model: bool,
-    share_input_flags: bool,
-    weight_source: PreviewWeightSource,
-    read_spectrum_direct: bool,
-    chain: &'a ApplyChain,
-    correlation_types: &'a HashMap<i32, Vec<i32>>,
-}
-
-fn for_each_prepared_apply_row<'a>(
-    table: &Table,
-    plan: &ApplyPlan,
-    inputs: ReadOnlyApplyInputs<'_>,
-    rows: impl IntoIterator<Item = &'a ApplyRowPlan>,
-    mut tool: Option<&mut ToolApplyExecution<'_>>,
-    mut consume: impl FnMut(usize, EvaluatedApplyRow),
-) -> Result<(), ApplyExecutionError> {
-    let ReadOnlyApplyInputs {
-        observed_column,
-        forward_model,
-        share_input_flags,
-        weight_source,
-        read_spectrum_direct,
-        chain,
-        correlation_types: correlation_types_by_ddid,
-    } = inputs;
-    let ms_path = table
-        .path()
-        .map_or_else(|| "<memory>".into(), |path| path.display().to_string());
-    let table_error = |source| ApplyExecutionError::MutateMeasurementSet {
-        path: ms_path.clone(),
-        source: MsError::from(source),
-    };
-    let any_calwt = applies_preview_weights(plan, chain);
+    let any_calwt = applies_preview_weights(plan, &chain);
     let mut columns = vec!["FLAG"];
     if !forward_model {
         columns.push(observed_column);
     }
-    let first_row = plan.selected_rows.first().map(|row| row.row_index);
     let has_sigma_spectrum = if weight_source == PreviewWeightSource::FromSigma {
         columns.push("SIGMA");
-        weights::has_spectrum(table, first_row, "SIGMA_SPECTRUM")?
+        let first_row = plan.selected_rows.first().map(|row| row.row_index);
+        weights::has_spectrum(ms.main_table(), first_row, "SIGMA_SPECTRUM")?
     } else {
         false
     };
-    if has_sigma_spectrum && !read_spectrum_direct {
+    if has_sigma_spectrum {
         columns.push("SIGMA_SPECTRUM");
     }
-    let has_weight_spectrum = if read_spectrum_direct {
-        weights::has_spectrum(table, first_row, "WEIGHT_SPECTRUM")?
-    } else {
-        has_sigma_spectrum
-    };
-    let mut main_rows = table
+    let mut main_rows = ms
+        .main_table()
         .row_accessor()
         .prepare(&columns)
-        .map_err(table_error)?;
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+            path: ms_path.clone(),
+            source: MsError::from(source),
+        })?;
     let data_index = main_rows.column_index(observed_column);
     let flag_index = main_rows
         .column_index("FLAG")
@@ -727,15 +676,25 @@ fn for_each_prepared_apply_row<'a>(
         .column_index("SIGMA")
         .map(|scalar| (scalar, main_rows.column_index("SIGMA_SPECTRUM")));
     let mut geometry_cache = RowGeometryCache::default();
-    for row in rows {
+    for row in &plan.selected_rows {
         let correlation_types = correlation_types_by_ddid
             .get(&row.data_desc_id)
             .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
                 data_desc_id: row.data_desc_id,
                 correlation_types: Vec::new(),
             })?;
-        main_rows.load(row.row_index).map_err(table_error)?;
-        let input_flags = main_rows.array_at(flag_index).map_err(table_error)?;
+        main_rows.load(row.row_index).map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            }
+        })?;
+        let input_flags = main_rows.array_at(flag_index).map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::from(source),
+            }
+        })?;
         let shared;
         let original_flags =
             if share_input_flags && let Some(flags) = shared_channel_flags(input_flags) {
@@ -746,7 +705,12 @@ fn for_each_prepared_apply_row<'a>(
             };
         let units;
         let data = if let Some(index) = data_index {
-            main_rows.array_at(index).map_err(table_error)?
+            main_rows.array_at(index).map_err(|source| {
+                ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(source),
+                }
+            })?
         } else {
             units = ArrayValue::Complex32(ArrayD::from_elem(
                 IxDyn(original_flags.shape()).f(),
@@ -761,29 +725,9 @@ fn for_each_prepared_apply_row<'a>(
         } else {
             data
         };
-        let mut plot_weights = sigma_slots
+        let plot_weights = sigma_slots
             .map(|slots| read_plot_weights(&main_rows, slots, &ms_path))
             .transpose()?;
-        if read_spectrum_direct && has_weight_spectrum {
-            let plot = plot_weights
-                .as_mut()
-                .expect("read-only weighting is enabled");
-            let spectrum = weights::transform_weight_spectrum(
-                table,
-                row.row_index,
-                has_sigma_spectrum,
-                &plot.scalar,
-                data.shape(),
-            )?;
-            let indices = plan
-                .channel_selections
-                .get(&row.data_spw_id)
-                .map(|selection| selection.indices.as_slice());
-            if let Some(scalar) = weights::scalar_medians(&spectrum, indices) {
-                plot.scalar = scalar;
-            }
-            plot.spectrum = Some(spectrum);
-        }
         if !availability::available(row, plan) {
             if plan.apply_mode == ApplyMode::Trial {
                 continue;
@@ -822,7 +766,7 @@ fn for_each_prepared_apply_row<'a>(
                     .as_ref()
                     .and_then(|weights| weights.spectrum.as_ref()),
                 has_weight_spectrum: if plot_weights.is_some() {
-                    has_weight_spectrum
+                    has_sigma_spectrum
                 } else {
                     any_calwt
                 },
@@ -830,28 +774,24 @@ fn for_each_prepared_apply_row<'a>(
                 preserved_weight_spectrum: None,
                 channel_grid: None,
                 forward_model,
+                skip_unavailable_terms: false,
                 trial: false,
                 parang_calwt: false,
             },
             plan,
-            chain,
+            &chain,
             Some(&mut geometry_cache),
             None,
             tool.as_deref_mut().map(|run| &mut *run.activity),
         )?;
         let (plot_weights, weight_factors) = match plot_weights {
-            Some(weights) => {
-                let spectrum = result.updated_weight_spectrum.or(weights.spectrum);
-                let mut scalar = result.updated_weight.unwrap_or(weights.scalar);
-                if read_spectrum_direct && let Some(spectrum) = &spectrum {
-                    let indices = plan
-                        .channel_selections
-                        .get(&row.data_spw_id)
-                        .map(|selection| selection.indices.as_slice());
-                    scalar = weights::scalar_medians(spectrum, indices).unwrap_or(scalar);
-                }
-                (Some(PlotWeights { scalar, spectrum }), None)
-            }
+            Some(weights) => (
+                Some(PlotWeights {
+                    scalar: result.updated_weight.unwrap_or(weights.scalar),
+                    spectrum: result.updated_weight_spectrum.or(weights.spectrum),
+                }),
+                None,
+            ),
             None => (
                 None,
                 match result.updated_weight_spectrum {
@@ -875,80 +815,6 @@ fn for_each_prepared_apply_row<'a>(
     }
 
     Ok(())
-}
-
-/// Prepared read-only calibration of an arbitrary bounded block of physical rows.
-pub(crate) struct PreparedReadOnlyApply {
-    plan: ApplyPlan,
-    chain: ApplyChain,
-    row_positions: HashMap<usize, usize>,
-    correlation_types: HashMap<i32, Vec<i32>>,
-    observed_column: &'static str,
-}
-
-impl PreparedReadOnlyApply {
-    pub(crate) fn new(ms: &MeasurementSet, plan: ApplyPlan) -> Result<Self, ApplyExecutionError> {
-        let chain = ApplyChain::load(ms, &plan, false)?;
-        let correlation_types = load_correlation_types_by_ddid(ms).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: display_ms_path(ms),
-                source,
-            }
-        })?;
-        let row_positions = plan
-            .selected_rows
-            .iter()
-            .enumerate()
-            .map(|(position, row)| (row.row_index, position))
-            .collect();
-        Ok(Self {
-            plan,
-            chain,
-            row_positions,
-            correlation_types,
-            observed_column: apply_observed_column(ms, false),
-        })
-    }
-
-    pub(crate) fn visit_rows(
-        &self,
-        table: &Table,
-        rows: &[usize],
-        mut visit: impl FnMut(EvaluatedApplyRow),
-    ) -> Result<(), ApplyExecutionError> {
-        let planned = rows
-            .iter()
-            .map(|row| {
-                self.row_positions
-                    .get(row)
-                    .map(|&position| &self.plan.selected_rows[position])
-                    .ok_or_else(|| ApplyExecutionError::MutateMeasurementSet {
-                        path: table
-                            .path()
-                            .map_or_else(String::new, |path| path.display().to_string()),
-                        source: MsError::InvalidInput(format!(
-                            "calibration did not plan input row {row}"
-                        )),
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for_each_prepared_apply_row(
-            table,
-            &self.plan,
-            ReadOnlyApplyInputs {
-                observed_column: self.observed_column,
-                forward_model: false,
-                share_input_flags: false,
-                weight_source: PreviewWeightSource::FromSigma,
-                read_spectrum_direct: true,
-                chain: &self.chain,
-                correlation_types: &self.correlation_types,
-            },
-            planned,
-            None,
-            |_, row| visit(row),
-        )
-    }
 }
 
 fn applies_preview_weights(plan: &ApplyPlan, chain: &ApplyChain) -> bool {
@@ -1865,6 +1731,7 @@ struct ExecutionRowInputs<'a> {
     preserved_weight_spectrum: Option<&'a ArrayValue>,
     channel_grid: Option<DataChannelGrid<'a>>,
     forward_model: bool,
+    skip_unavailable_terms: bool,
     trial: bool,
     parang_calwt: bool,
 }
@@ -2337,6 +2204,7 @@ fn apply_row_all_channels(
         has_weight_spectrum,
         channel_grid,
         forward_model,
+        skip_unavailable_terms,
         trial,
         parang_calwt,
         ..
@@ -2513,7 +2381,8 @@ fn apply_row_all_channels(
         let table_plan = &plan.calibration_tables[table_index];
         let loaded_table = &chain.tables[table_index];
         if !table_plan.applies_to(row)
-            || (forward_model && !availability::table_available(row, table_plan))
+            || ((forward_model || skip_unavailable_terms)
+                && !availability::table_available(row, table_plan))
         {
             continue;
         }
@@ -3766,6 +3635,7 @@ fn apply_row_prefetched(
             preserved_weight_spectrum: inputs.preserved_weight_spectrum.as_ref(),
             channel_grid: None,
             forward_model: false,
+            skip_unavailable_terms: false,
             trial: inputs.trial,
             parang_calwt: inputs.parang_calwt,
         },

@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use casa_ms::ChannelSelection;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::{MsSelection, ResolvedMsSelection};
@@ -565,13 +566,6 @@ pub(crate) fn plan_with_selection(
     preparation_error: Option<ApplyPreparationError<'_>>,
     registered: Option<RegisteredApplySelection<'_>>,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
-    let requires_corrected_data_column = request.apply_mode.writes_corrected_data()
-        && match ms.data_column(VisibilityDataColumn::CorrectedData) {
-            Ok(_) => false,
-            Err(MsError::ColumnNotPresent(_)) => true,
-            Err(other) => return Err(ApplyPlanError::Selection { source: other }),
-        };
-
     let selection_started_at = Instant::now();
     let resolved;
     let resolved_selection = if let Some(registration) = registered {
@@ -587,17 +581,63 @@ pub(crate) fn plan_with_selection(
         })?;
         &resolved
     };
-    let requested_channels = resolved_selection.channel_selections.clone();
     let selected_row_indices = resolved_selection.row_indices().collect::<Vec<_>>();
+    let selection_ns = selection_started_at.elapsed().as_nanos() as u64;
+    let (plan, mut timings) = plan_selected_rows(
+        ms,
+        request,
+        preparation_error,
+        registered,
+        &selected_row_indices,
+        ApplyChannelInput::Ranges(&resolved_selection.channel_selections),
+    )?;
+    timings.selection_ns = selection_ns;
+    Ok((plan, timings))
+}
+
+pub(crate) fn plan_transform_rows(
+    ms: &MeasurementSet,
+    request: &ApplyPlanRequest,
+    rows: &[usize],
+    channels: &BTreeMap<i32, &[usize]>,
+) -> Result<ApplyPlan, ApplyPlanError> {
+    plan_selected_rows(
+        ms,
+        request,
+        None,
+        None,
+        rows,
+        ApplyChannelInput::Indices(channels),
+    )
+    .map(|(plan, _)| plan)
+}
+
+enum ApplyChannelInput<'a> {
+    Ranges(&'a BTreeMap<i32, ChannelSelection>),
+    Indices(&'a BTreeMap<i32, &'a [usize]>),
+}
+
+fn plan_selected_rows(
+    ms: &MeasurementSet,
+    request: &ApplyPlanRequest,
+    preparation_error: Option<ApplyPreparationError<'_>>,
+    registered: Option<RegisteredApplySelection<'_>>,
+    selected_row_indices: &[usize],
+    requested_channels: ApplyChannelInput<'_>,
+) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
+    let requires_corrected_data_column = request.apply_mode.writes_corrected_data()
+        && match ms.data_column(VisibilityDataColumn::CorrectedData) {
+            Ok(_) => false,
+            Err(MsError::ColumnNotPresent(_)) => true,
+            Err(other) => return Err(ApplyPlanError::Selection { source: other }),
+        };
     if selected_row_indices.is_empty() {
         return Err(ApplyPlanError::Selection {
             source: MsError::InvalidInput("selection produced no rows".into()),
         });
     }
-    let selection_ns = selection_started_at.elapsed().as_nanos() as u64;
-
     let selected_rows_started_at = Instant::now();
-    let selected_rows = build_selected_rows(ms, &selected_row_indices)?;
+    let selected_rows = build_selected_rows(ms, selected_row_indices)?;
     let selected_rows_ns = selected_rows_started_at.elapsed().as_nanos() as u64;
 
     let selected_field_ids = unique_i32(selected_rows.iter().map(|row| row.field_id));
@@ -608,10 +648,17 @@ pub(crate) fn plan_with_selection(
     let measurement_set_spectral_windows = load_ms_spectral_windows(ms, &selected_data_spw_ids)?;
     let mut channel_selections = BTreeMap::new();
     for spw in &measurement_set_spectral_windows {
-        if let Some(selection) = requested_channels.get(&spw.spw_id) {
-            let mut indices = selection
-                .indices(spw.channel_frequencies_hz.len())
-                .map_err(|source| ApplyPlanError::Selection { source })?;
+        let indices = match requested_channels {
+            ApplyChannelInput::Ranges(ranges) => ranges
+                .get(&spw.spw_id)
+                .map(|selection| selection.indices(spw.channel_frequencies_hz.len()))
+                .transpose()
+                .map_err(|source| ApplyPlanError::Selection { source })?,
+            ApplyChannelInput::Indices(channels) => {
+                channels.get(&spw.spw_id).map(|indices| indices.to_vec())
+            }
+        };
+        if let Some(mut indices) = indices {
             indices.sort_unstable();
             indices.dedup();
             if indices.is_empty() {
@@ -693,7 +740,7 @@ pub(crate) fn plan_with_selection(
             calibration_tables,
         },
         ApplyPlanTimings {
-            selection_ns,
+            selection_ns: 0,
             selected_rows_ns,
             measurement_set_spectral_windows_ns,
             calibration_table_plans_ns,

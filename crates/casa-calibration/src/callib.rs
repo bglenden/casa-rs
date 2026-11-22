@@ -564,6 +564,9 @@ fn parse_gainfield_selector(value: &str) -> Result<Option<GainFieldSelector>, St
 
 fn parse_int_array(value: &str, label: &str) -> Result<Vec<i32>, String> {
     let value = strip_quotes(value);
+    if value == "[]" {
+        return Ok(Vec::new());
+    }
     let inner = value
         .strip_prefix('[')
         .and_then(|value| value.strip_suffix(']'))

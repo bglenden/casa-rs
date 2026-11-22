@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 
 import casatasks
 from casatools import table as casa_table
-from casacore.tables import table
+from casacore.tables import makearrcoldesc, maketabdesc, table
 import numpy as np
 
 from casars import tasks
@@ -99,6 +99,46 @@ def retries(root, source, valid):
     print("passed invalid callibrary and retry", flush=True)
 
 
+def irregular_spectra(root, gain):
+    undefined = make_pair(root, "undefined-source", 7, counts=(7, 7), spectra=False)
+    with table(str(undefined), ack=False, readonly=False) as ms:
+        if "WEIGHT_SPECTRUM" in ms.colnames():
+            ms.removecols("WEIGHT_SPECTRUM")
+        ms.addcols(maketabdesc(makearrcoldesc("WEIGHT_SPECTRUM", 0, ndim=2, valuetype="float")))
+    paired(root, undefined, "undefined-weight-spectrum", gain, usewtspectrum=False)
+
+    sparse = make_pair(root, "sparse-source", 7, counts=(7, 7), spectra=True)
+    with table(str(sparse), ack=False, readonly=False) as ms:
+        sigmas = ms.getcol("SIGMA_SPECTRUM")
+        ms.removecols("SIGMA_SPECTRUM")
+        ms.addcols(maketabdesc(makearrcoldesc("SIGMA_SPECTRUM", 0, ndim=2, valuetype="float")))
+        for row in range(ms.nrows()):
+            if row != 1:
+                ms.putcell("SIGMA_SPECTRUM", row, sigmas[row])
+    before = snapshot(sparse)
+    for engine in (casatasks, tasks):
+        output = root / f"sparse-{engine.__name__}.ms"
+        try:
+            engine.mstransform(
+                vis=str(sparse), outputvis=str(output), datacolumn="corrected",
+                docallib=True, callib=str(gain),
+            )
+        except RuntimeError as error:
+            assert "SIGMA_SPECTRUM" in str(error) and "row 1" in str(error), str(error)
+            if engine is tasks:
+                assert not output.exists()
+        else:
+            raise AssertionError(f"undefined spectral noise succeeded in {engine.__name__}")
+        assert snapshot(sparse) == before
+    with table(str(sparse), ack=False, readonly=False) as ms:
+        ms.putcell("SIGMA_SPECTRUM", 1, sigmas[1])
+    assert tasks.mstransform(
+        vis=str(sparse), outputvis=str(output), datacolumn="corrected",
+        docallib=True, callib=str(gain),
+    ) is None
+    print("passed undefined sigma spectrum and retry", flush=True)
+
+
 def main(cases):
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="mstransform-callib-") as scratch:
@@ -114,6 +154,8 @@ def main(cases):
             ("data", gain, dict(datacolumn="data")),
             ("all", gain, dict(datacolumn="all")),
             ("selected-channels", gain, dict(spw="1:0~3", field="0")),
+            ("qualified-correlation", gain, dict(correlation="0:XX")),
+            ("array-inequality", gain, dict(array="<2")),
             ("hanning", gain, dict(hanning=True)),
             ("channel-average", gain, dict(chanaverage=True, chanbin=2)),
             ("time-average", gain, dict(timeaverage=True, timebin="24s")),
@@ -131,6 +173,14 @@ def main(cases):
                     ["taql", f"select DATA_DESC_ID from [{native}] limit 1"], text=True
                 ).splitlines()[-1] == "0"
                 print("passed standalone calibrated readback", flush=True)
+        if selected("unmapped"):
+            unmapped = root / "unmapped.callib"
+            unmapped.write_text(gain.read_text().replace("spwmap=[0,0]", "spwmap=[]"))
+            paired(root, source, "unmapped", unmapped)
+            unmapped.write_text(unmapped.read_text() + no_weights.read_text())
+            paired(root, source, "unmapped-chain", unmapped)
+        if selected("irregular-spectra"):
+            irregular_spectra(root, gain)
         if selected("virtual"):
             virtual = make_pair(root, "virtual", 7, counts=(7, 7), spectra=False)
             tool = casa_table()

@@ -55,7 +55,7 @@ pub(super) fn from_sigma(
     Ok(value)
 }
 
-fn broadcast_spectrum(
+pub(super) fn broadcast_spectrum(
     scalar: &ArrayValue,
     shape: &[usize],
 ) -> Result<ArrayValue, ApplyExecutionError> {
@@ -74,37 +74,6 @@ fn broadcast_spectrum(
             path: "<measurement-set weight spectrum>".into(),
             shape: shape.to_vec(),
         }),
-    }
-}
-
-pub(super) fn transform_weight_spectrum(
-    table: &Table,
-    row: usize,
-    has_sigma_spectrum: bool,
-    scalar: &ArrayValue,
-    shape: &[usize],
-) -> Result<ArrayValue, ApplyExecutionError> {
-    let column = "SIGMA_SPECTRUM";
-    // The transform can visit a mixed-shape MS in any physical row
-    // order. Read spectral cells through the selected array reader.
-    let sigma = if has_sigma_spectrum {
-        table
-            .column_accessor(column)
-            .and_then(|accessor| accessor.array_cells_owned_uncached(&[row]))
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: table
-                    .path()
-                    .map_or_else(String::new, |path| path.display().to_string()),
-                source: MsError::from(source),
-            })?
-            .pop()
-            .flatten()
-    } else {
-        None
-    };
-    match sigma {
-        Some(sigma) => from_sigma(sigma, column),
-        None => broadcast_spectrum(scalar, shape),
     }
 }
 

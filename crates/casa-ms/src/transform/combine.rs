@@ -23,8 +23,8 @@ use super::time_average::{TimeCoordinates, TimeGroup};
 use super::time_projection::{TimeGroupRead, TimeProjection};
 use super::visibility_columns::VisibilityColumns;
 use super::{
-    CompactSpectralMetadata, MsTransformError, MsTransformRequest, STANDARD_SPECTRA,
-    TransformChannelSelection, TransformInputView, scalar_bool, scalar_f64, scalar_i32,
+    CompactSpectralMetadata, MsTransformError, MsTransformRequest, PreparedTransformInputView,
+    STANDARD_SPECTRA, TransformChannelSelection, scalar_bool, scalar_f64, scalar_i32,
     select_channels, transform_flag_category_channels,
 };
 
@@ -453,7 +453,7 @@ pub(super) fn projected_times(
     channels: &BTreeMap<i32, TransformChannelSelection>,
     ddid_to_spw: &BTreeMap<i32, i32>,
     correlations: Option<&CorrelationSelection>,
-    input_view: Option<&dyn TransformInputView>,
+    input_view: Option<&dyn PreparedTransformInputView>,
 ) -> Result<Vec<f64>, MsTransformError> {
     let table_error = |source: TableError| MsTransformError::MutateMeasurementSet {
         path: input
@@ -484,7 +484,6 @@ pub(super) fn projected_times(
                 for member in group.rows.iter().rev() {
                     let indices = [member.physical];
                     let mut computed = input_view
-                        .filter(|view| view.provides(table, "FLAG"))
                         .map(|view| view.read(table, &indices, &["FLAG"]))
                         .transpose()
                         .map_err(table_error)?;
@@ -531,7 +530,11 @@ pub(super) fn read_batch(
         &BTreeMap<i32, i32>,
         Option<&CorrelationSelection>,
     ),
-    (columns, spectra, input_view): (&VisibilityColumns, &[&str], Option<&dyn TransformInputView>),
+    (columns, spectra, input_view): (
+        &VisibilityColumns,
+        &[&str],
+        Option<&dyn PreparedTransformInputView>,
+    ),
     time: Option<(&mut TimeProjection<'_>, &[TimeGroup])>,
 ) -> Result<Batch, MsTransformError> {
     let error = |source: TableError| MsTransformError::MutateMeasurementSet {

@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 use casa_tables::{Table, TableError};
 use casa_types::ArrayValue;
 
+use crate::MeasurementSet;
+
 /// A bounded, read-only source for columns computed from the input
 /// MeasurementSet, for example calibrated visibilities.
 ///
@@ -14,13 +16,25 @@ use casa_types::ArrayValue;
 /// returns one cell per requested physical row in request order and may
 /// leave untouched column names to the ordinary table reader.
 pub trait TransformInputView: std::fmt::Debug + Send + Sync {
+    /// Prepare the input view for the exact physical rows and channels used
+    /// by one transform product. Called again for each Multi-MS partition.
+    fn prepare(
+        &self,
+        input: &MeasurementSet,
+        rows: &[usize],
+        channels: &BTreeMap<i32, &[usize]>,
+    ) -> Result<Box<dyn PreparedTransformInputView>, TableError>;
+
     /// Additional transient bytes per input visibility sample while reading.
     fn additional_bytes_per_sample(&self) -> usize;
 
     /// Whether the view provides this column for the supplied physical
     /// input table even when the column does not exist on disk.
     fn provides(&self, input: &Table, column: &str) -> bool;
+}
 
+/// Computed visibility arrays bound to one physical transform selection.
+pub trait PreparedTransformInputView: Send + Sync {
     /// Materialize requested computed columns for a bounded block.
     fn read(
         &self,

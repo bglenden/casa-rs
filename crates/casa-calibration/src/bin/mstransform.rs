@@ -42,7 +42,7 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let (request, mut options) = transform_request(task)?;
     if request.input_ms != request.output_ms && !request.output_ms.exists() {
-        options.input_view = callibrary(task, &request)?;
+        options.input_view = callibrary(task)?;
     }
     // The output the transform refuses before it starts is the argument's
     // fault; anything else failed the transform.
@@ -127,17 +127,12 @@ fn transform_request(
 
 fn callibrary(
     task: &TaskInvocation<'_>,
-    request: &MsTransformRequest,
 ) -> Result<Option<std::sync::Arc<dyn casa_ms::TransformInputView>>, TaskFailure> {
     if task.surface() != "mstransform" || !task.flag("docallib")? {
         return Ok(None);
     }
     let filename = task.text("callib")?.unwrap_or_default();
-    let mut selection = request.selection.clone();
-    if !request.spw.is_empty() {
-        selection.spw = Some(request.spw.clone());
-    }
-    transform_callibrary(Path::new(&filename), selection).map_err(|error| {
+    transform_callibrary(Path::new(&filename)).map_err(|error| {
         let reason = match &error {
             CallibError::ReadFile { source, .. } if source.kind() == ErrorKind::NotFound => {
                 "No such file or directory".into()

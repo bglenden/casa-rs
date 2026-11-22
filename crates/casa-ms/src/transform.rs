@@ -64,7 +64,7 @@ use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use convolution::{SpectralOperation, SpectrumOperator};
 pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
-pub use input_view::{TransformInputColumns, TransformInputView};
+pub use input_view::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use main_arrays::MainArrayBlock;
 use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
@@ -656,12 +656,12 @@ fn mstransform_staged(
                 selector: request.spw.clone(),
                 reason: source.to_string(),
             })?;
-    let input_view = options.input_view.as_deref();
+    let view_factory = options.input_view.as_deref();
     let visibility = VisibilityColumns::resolve(
         input.main_table(),
         request.data_column,
         &request.input_ms,
-        input_view,
+        view_factory,
     )?;
     let TransformSelection {
         selection,
@@ -806,6 +806,22 @@ fn mstransform_staged(
         .copied()
         .min()
         .expect("nonempty row selection");
+    let prepared_view = if let Some(view) = view_factory {
+        let channels = channel_selection
+            .iter()
+            .map(|(&id, selection)| (id, selection.channels.as_slice()))
+            .collect();
+        Some(
+            view.prepare(&input, &selected_rows, &channels)
+                .map_err(|source| MsTransformError::MutateMeasurementSet {
+                    path: request.input_ms.display().to_string(),
+                    source: Box::new(source),
+                })?,
+        )
+    } else {
+        None
+    };
+    let input_view = prepared_view.as_deref();
     let mut regrid = regrid_options
         .map(|options| {
             regrid::Plan::new(
@@ -972,7 +988,6 @@ fn mstransform_staged(
             hanning,
         ),
         &visibility,
-        input_view,
     )
     .map_err(|source| MsTransformError::MutateMeasurementSet {
         path: request.input_ms.display().to_string(),
@@ -1187,7 +1202,7 @@ fn mstransform_staged(
         (
             &visibility,
             &spectra,
-            input_view.map_or(0, TransformInputView::additional_bytes_per_sample),
+            view_factory.map_or(0, TransformInputView::additional_bytes_per_sample),
         ),
         write_resources,
     )?;
@@ -2533,14 +2548,11 @@ impl SpectrumProjection {
         force_spectra: bool,
         (channel_average, time_average, spectral_convolution, hanning): (bool, bool, bool, bool),
         visibility: &VisibilityColumns,
-        view: Option<&dyn TransformInputView>,
     ) -> Result<Self, TableError> {
-        let computed = |name| view.is_some_and(|view| view.provides(table, name));
         let exists = |name| {
-            computed(name)
-                || table
-                    .schema()
-                    .is_some_and(|schema| schema.contains_column(name))
+            table
+                .schema()
+                .is_some_and(|schema| schema.contains_column(name))
         };
         if grammar != RowGrammar::Transform {
             let source = MAIN_SPECTRA
@@ -2554,11 +2566,9 @@ impl SpectrumProjection {
                 fill_standard: false,
             });
         }
-        let defined =
-            |row, name| -> Result<bool, TableError> {
-                Ok(computed(name)
-                    || (exists(name) && table.array_shape_uncached(row, name)?.is_some()))
-            };
+        let defined = |row, name| -> Result<bool, TableError> {
+            Ok(exists(name) && table.array_shape_uncached(row, name)?.is_some())
+        };
         let propagate_weights = defined(selected_row, "WEIGHT_SPECTRUM")?;
         let fill_standard = force_spectra || propagate_weights;
         // The selected MS can supply spectra even if row zero of the physical
