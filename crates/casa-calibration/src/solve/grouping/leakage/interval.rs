@@ -21,7 +21,7 @@ use super::{
 
 pub(super) enum IntervalFits {
     LeastSquares(Vec<LeakageFit>, GainSolveMode),
-    CrossHand(Vec<CrossHandFit>, Measurement),
+    CrossHand(Vec<CrossHandFit>, Measurement, GainSolveMode),
     Parallactic(ParallacticAverages),
     Iterative {
         algebra: LeakageAlgebra,
@@ -133,6 +133,7 @@ impl IntervalFits {
             Self::CrossHand(
                 (0..channels).map(|_| CrossHandFit::default()).collect(),
                 measurement,
+                mode,
             )
         } else if kind.iterative() {
             Self::Iterative {
@@ -155,6 +156,7 @@ impl IntervalFits {
         bins: &mut [CoherencyMean],
         antennas: usize,
         segment: BaselineSegment,
+        legacy_cross_hand: bool,
     ) -> Result<(), GainSolveError> {
         let pair = pair.map(|antenna| antenna as usize);
         if pair.iter().any(|&antenna| antenna >= antennas) {
@@ -164,21 +166,34 @@ impl IntervalFits {
             return average.add(pair.map(|antenna| antenna as i32), segment, bins);
         }
         let require_all = matches!(self, Self::LeastSquares(..));
+        let legacy_phase_normalization = (legacy_cross_hand
+            && matches!(self, Self::CrossHand(_, _, GainSolveMode::Phase)))
+        .then(|| super::cross_hand::legacy_phase_normalization(bins));
         for (channel, mean) in bins.iter_mut().enumerate() {
+            let unflagged = if pair[0] == pair[1] {
+                0
+            } else {
+                mean.unflagged
+            };
             if let Some((mut data, model, mut weights)) = std::mem::take(mean).finish(require_all) {
-                if let Self::LeastSquares(_, mode) | Self::Iterative { mode, .. } = self
+                if let Self::LeastSquares(_, mode)
+                | Self::CrossHand(_, _, mode)
+                | Self::Iterative { mode, .. } = self
                     && *mode != GainSolveMode::AmplitudePhase
                 {
-                    for (value, weight) in data.iter_mut().zip(&mut weights) {
-                        (*value, *weight) = solve_sample(*mode, *value, *weight);
+                    for (corr, (value, weight)) in data.iter_mut().zip(&mut weights).enumerate() {
+                        let (normalized, scaled) = solve_sample(*mode, *value, *weight);
+                        *value = normalized;
+                        *weight = legacy_phase_normalization
+                            .map_or(scaled, |normalization| *weight * normalization[corr]);
                     }
                 }
                 match self {
                     Self::LeastSquares(fits, _) => {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
-                    Self::CrossHand(fits, measurement) => {
-                        fits[channel].add(*measurement, data, model, weights)
+                    Self::CrossHand(fits, measurement, _) => {
+                        fits[channel].add(*measurement, unflagged, data, model, weights)
                     }
                     Self::Parallactic(_) => unreachable!("time-segment accumulation"),
                     Self::Iterative {
@@ -230,7 +245,7 @@ impl IntervalFits {
                 previous,
                 stages.is_some(),
             )),
-            Self::CrossHand(fits, measurement) => {
+            Self::CrossHand(fits, measurement, _) => {
                 Ok(cross_hand(fits, measurement, antennas, location))
             }
             Self::Parallactic(average) => {

@@ -74,7 +74,7 @@ impl ParallacticAverages {
         let mut unflagged = vec![0; channels.len().div_ceil(64)];
         for (channel, mean) in channels.iter_mut().enumerate() {
             let mean = std::mem::take(mean);
-            if mean.unflagged {
+            if mean.unflagged != 0 {
                 unflagged[channel / 64] |= 1 << (channel % 64);
                 segment.usable = true;
             }

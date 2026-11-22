@@ -1,9 +1,107 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Weighted cross-hand phase and position angle for a known source.
 
+use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
+use std::collections::BTreeMap;
 
 use crate::solve::kernel::complex32_to_64;
+
+use super::{BaselineSegment, CoherencyMean, SelectedSolveRow, SolveSamples};
+
+/// VisBuffGroupAcc uses one time origin per field/window and gives X Jones
+/// the first nonempty accumulated buffer for its phase fit.
+#[derive(Default)]
+pub(super) struct LegacyCrossHandAveraging {
+    starts: BTreeMap<(i32, i32), f64>,
+    output: Option<(i32, i32)>,
+}
+
+impl LegacyCrossHandAveraging {
+    pub(super) fn start(&mut self, row: &SelectedSolveRow, span: f64) -> f64 {
+        let group = (row.field_id, row.data_spw_id);
+        if row.flag_row {
+            return self.starts.get(&group).copied().unwrap_or(row.time_seconds);
+        }
+        let start = self.starts.entry(group).or_insert(row.time_seconds);
+        if row.time_seconds - *start > span {
+            *start = row.time_seconds;
+        }
+        *start
+    }
+
+    pub(super) fn observe(&mut self, segment: BaselineSegment) {
+        self.output
+            .get_or_insert((segment.field, segment.spectral_window));
+    }
+
+    pub(super) fn fits(&self, segment: BaselineSegment) -> bool {
+        self.output == Some((segment.field, segment.spectral_window))
+    }
+
+    pub(super) fn field(&self) -> Option<i32> {
+        self.output.map(|(field, _)| field)
+    }
+}
+
+/// VI1 normalizes each correlation's scalar weight by the square of its
+/// mean nonzero model amplitude over unflagged channels.
+pub(super) fn legacy_row_weights(
+    samples: &SolveSamples<'_>,
+    flags: &ArrayD<bool>,
+    model: &ArrayD<Complex32>,
+    order: [usize; 4],
+    channels: &[usize],
+) -> ([f32; 4], usize) {
+    let mut amplitudes = [0.0; 4];
+    let mut counts = [0; 4];
+    let mut weights = [0.0; 4];
+    let mut usable = 0;
+    for &channel in channels {
+        if channel >= samples.data.ncols() || order.iter().any(|&corr| flags[[corr, channel]]) {
+            continue;
+        }
+        usable += 1;
+        for (index, corr) in order.into_iter().enumerate() {
+            let amplitude = model[[corr, channel]].norm();
+            if amplitude > 0.0 {
+                if counts[index] == 0 {
+                    weights[index] = samples.weights[[corr, channel]];
+                }
+                amplitudes[index] += amplitude;
+                counts[index] += 1;
+            }
+        }
+    }
+    for (index, weight) in weights.iter_mut().enumerate() {
+        if counts[index] != 0 {
+            let amplitude = amplitudes[index] / counts[index] as f32;
+            *weight *= amplitude * amplitude;
+        }
+    }
+    (weights, usable)
+}
+
+/// CalVisBuffer adjusts its scalar weights once, after time averaging.
+pub(super) fn legacy_phase_normalization(bins: &[CoherencyMean]) -> [f32; 4] {
+    let mut amplitudes = [0.0; 4];
+    let mut counts = [0; 4];
+    for bin in bins {
+        for (corr, weight) in bin.weights.into_iter().enumerate() {
+            if weight > 0.0 {
+                let amplitude = (bin.data[corr] / weight).norm();
+                if amplitude > 0.0 {
+                    amplitudes[corr] += amplitude;
+                    counts[corr] += 1;
+                }
+            }
+        }
+    }
+    std::array::from_fn(|corr| {
+        let average = amplitudes[corr] / counts[corr].max(1) as f32;
+        average * average
+    })
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum Measurement {
@@ -22,11 +120,19 @@ impl CrossHandFit {
     pub(super) fn add(
         &mut self,
         measurement: Measurement,
+        unflagged: u8,
         data: [Complex32; 4],
         model: [Complex32; 4],
         weights: [f32; 4],
     ) {
         self.saw_samples = true;
+        let required = match measurement {
+            Measurement::LinearAngle => 0b1111,
+            Measurement::Phase | Measurement::CircularAngle => 0b0110,
+        };
+        if unflagged & required != required {
+            return;
+        }
         let cross_weight = 0.5 * (weights[1] + weights[2]);
         self.sum += match measurement {
             Measurement::Phase => {
