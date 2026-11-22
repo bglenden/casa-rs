@@ -285,6 +285,9 @@ impl<T: ImagePixel> TempImage<T> {
     /// Replaces the image info.
     pub fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
         self.check_beams(info)?;
+        if let Some(source) = self.concat_source() {
+            source.write_image_info(info, &info.to_record())?;
+        }
         if let Some(path) = self.component_table_path() {
             crate::component_list_image::write_component_keyword(
                 path,
@@ -309,6 +312,9 @@ impl<T: ImagePixel> TempImage<T> {
     pub fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
         let info = ImageInfo::from_record(&record)?;
         self.check_beams(&info)?;
+        if let Some(source) = self.concat_source() {
+            source.write_image_info(&info, &record)?;
+        }
         if let Some(path) = self.component_table_path() {
             crate::component_list_image::write_component_keyword(
                 path,
@@ -807,6 +813,9 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
     }
 
     fn active_pixel_mask_name(&self) -> Option<String> {
+        if let Some(source) = self.concat_source() {
+            return source.has_pixel_mask().then(String::new);
+        }
         if let Some(source) = self.native_component_source() {
             return source
                 .default_mask_name()
@@ -818,6 +827,9 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
     }
 
     fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
+        if let Some(source) = self.concat_source() {
+            return Ok(name.is_empty() && source.mask_writable());
+        }
         if let Some(source) = self.native_component_source() {
             return Ok(source.mask_names().iter().any(|stored| stored == name));
         }

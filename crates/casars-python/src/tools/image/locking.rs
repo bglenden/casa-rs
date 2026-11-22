@@ -62,7 +62,7 @@ impl ImageHandle {
         #[cfg(unix)]
         return with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.release_requested_lock().map_err(raised),
-            Storage::Temp { image, .. } => image.concat_source().map_or(Ok(()), |source| source.unlock().map_err(raised)),
+            Storage::Temp { image, .. } => image.concat_source().map_or(Ok(()), |source| source.release_requested_lock().map_err(raised)),
         });
         #[cfg(not(unix))]
         Ok(())
@@ -89,7 +89,12 @@ impl AttachedImage {
 
     pub(super) fn require_lock(&self, handle: &mut ImageHandle, kind: LockType) -> PyResult<()> {
         self.check_bound_name(handle)?;
-        if kind == LockType::Read && handle.image_type_name() == "ImageConcat" {
+        let implicit_concat = with_pixels!(&*handle, storage => match storage {
+            Storage::Temp { image, .. } => image.concat_source().is_some_and(|source|
+                kind == LockType::Read || source.temp_close()),
+            Storage::Paged(_) => false,
+        });
+        if implicit_concat {
             return Ok(());
         }
         if handle.lock_storage(kind, 0)? {

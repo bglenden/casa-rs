@@ -8,7 +8,7 @@ use casa_coordinates::CoordinateSystem;
 use casa_images::analysis::ensure_outfile_does_not_alias_input;
 use casa_images::concatenate::{ConcatInput, ConcatenationPlan, copy_concatenated_input};
 use casa_images::image::{ImageHistoryRow, image_history_rows};
-use casa_images::{ImageError, ImageInfo, ImagePixel, ImagePixelType};
+use casa_images::{ImageError, ImageInfo, ImagePixel, ImagePixelType, MutableImageInterface};
 use casa_types::{RecordField, RecordValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
@@ -139,6 +139,7 @@ impl InputRevision {
 
 struct Input<'a> {
     path: &'a Path,
+    resolved_path: PathBuf,
     shape: Vec<usize>,
     kind: ImagePixelType,
     coordinates: CoordinateSystem,
@@ -149,6 +150,8 @@ struct Input<'a> {
     misc: RecordValue,
     history: Vec<ImageHistoryRow>,
     has_mask: bool,
+    writable: bool,
+    writable_mask: bool,
     opened: Option<ImageHandle>,
     revision: Option<InputRevision>,
 }
@@ -160,6 +163,7 @@ impl<'a> Input<'a> {
     }
 
     fn from_image(path: &'a Path, image: ImageHandle, tempclose: bool) -> PyResult<Self> {
+        let resolved_path = image.path().unwrap_or(path).to_path_buf();
         let coordinate_record = image.coordinate_record();
         let coordinates = CoordinateSystem::from_record(&coordinate_record).map_err(raised)?;
         let (units, misc, has_mask) = with_pixels!(&image, storage => with_storage!(storage, image => (
@@ -172,10 +176,23 @@ impl<'a> Input<'a> {
             Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
         });
         let revision = tempclose
-            .then(|| InputRevision::read(path, &image))
+            .then(|| InputRevision::read(&resolved_path, &image))
             .transpose()?;
+        let writable = with_pixels!(&image, storage => match storage {
+            Storage::Paged(_) => casa_tables::publication::check_write_access(&resolved_path.join("table.dat")).is_ok(),
+            Storage::Temp { image, fits, .. } => fits.is_none() && image.is_writable(),
+        });
+        let writable_mask = with_pixels!(&image, storage => match storage {
+            Storage::Paged(image) => {
+                image.active_pixel_mask_name().is_some_and(|name| {
+                    image.named_mask_is_writable(&name).unwrap_or(false)
+                })
+            }
+            Storage::Temp { image, .. } => image.concat_source().is_some_and(|source| source.mask_writable()),
+        }) && writable;
         Ok(Self {
             path,
+            resolved_path,
             shape: image.shape().to_vec(),
             kind: image.kind(),
             coordinates,
@@ -186,6 +203,8 @@ impl<'a> Input<'a> {
             misc,
             history,
             has_mask: has_mask || image.fits().is_some_and(|fits| fits.has_mask),
+            writable,
+            writable_mask,
             opened: (!tempclose).then_some(image),
             revision,
         })

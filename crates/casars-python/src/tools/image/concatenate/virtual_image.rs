@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use casa_images::concat_file::{ConcatManifest, is_image_concat};
 use casa_images::concatenate::ConcatenationPlan;
 use casa_images::virtual_concat::{ConcatImage, ConcatMember};
-use casa_images::{ImageError, ImageInterface, ImagePixel, ImagePixelType, TempImage};
+use casa_images::{
+    ImageError, ImageInfo, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
+    TempImage,
+};
 use casa_lattices::Lattice;
 use casa_tables::LockType;
 use casa_types::RecordValue;
@@ -16,7 +19,7 @@ use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
 use pyo3::prelude::*;
 
-use super::{Input, Request, beam_records, coordinate_record, merge_misc};
+use super::{Input, Request, beam_records, coordinate_record, merge_misc, plane_axes};
 use crate::tools::LogLine;
 use crate::tools::image::attachment::{AttachedImage, registry};
 use crate::tools::image::handle::{ImageHandle, Storage, raised, same_file_identity, with_storage};
@@ -40,17 +43,17 @@ fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
     }
     let manifest = ConcatManifest::open(&root).map_err(raised)?;
     let paths = manifest.paths(&root);
-    let inputs = open_members(&paths, active)?;
+    let inputs = open_members(&paths, manifest.temp_close(), active)?;
     let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
     let kind = manifest.pixel_type().map_err(raised)?;
     validate_types(&inputs, kind)?;
     let axis = i64::try_from(manifest.axis()).map_err(raised)?;
-    let plan = ConcatenationPlan::new(&geometry, axis, true, false).map_err(geometry_error)?;
+    let plan = ConcatenationPlan::from_manifest(&geometry, axis).map_err(geometry_error)?;
     let output = assemble(
         &root,
         inputs,
         plan,
-        manifest.misc_info(),
+        manifest.misc_info().map_err(raised)?,
         manifest.temp_close(),
         kind,
     )?;
@@ -83,7 +86,7 @@ pub(super) fn stage_nomove(
             ));
         }
     }
-    let inputs = open_members(paths, &mut HashSet::new())?;
+    let inputs = open_members(paths, request.tempclose, &mut HashSet::new())?;
     let kind = inputs[0].kind;
     validate_types(&inputs, kind)?;
     let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
@@ -104,7 +107,8 @@ pub(super) fn stage_nomove(
             .iter()
             .map(|&index| inputs[index].path.to_path_buf()),
         &misc,
-    );
+    )
+    .map_err(raised)?;
     fs::create_dir(stage).map_err(raised)?;
     manifest.write(stage).map_err(raised)?;
     assemble(
@@ -119,17 +123,19 @@ pub(super) fn stage_nomove(
 
 fn open_members<'a>(
     paths: &'a [PathBuf],
+    tempclose: bool,
     active: &mut HashSet<PathBuf>,
 ) -> PyResult<Vec<Input<'a>>> {
     paths
         .iter()
         .map(|path| {
-            let image = if is_image_concat(path) {
-                load(path, active)?
+            let resolved = path.canonicalize().map_err(raised)?;
+            let image = if is_image_concat(&resolved) {
+                load(&resolved, active)?
             } else {
-                ImageHandle::open_for_concatenation(path).map_err(raised)?
+                ImageHandle::open_for_concatenation(&resolved).map_err(raised)?
             };
-            Input::from_image(path, image, false)
+            Input::from_image(path, image, tempclose)
         })
         .collect()
 }
@@ -212,31 +218,29 @@ fn typed<T: MemberPixel>(
     let mut history = Vec::new();
     for mut input in inputs {
         history.append(&mut input.history);
-        let path = input.path.canonicalize().map_err(raised)?;
+        let path = input.resolved_path;
         if let Some(member) = by_path.get(&path) {
             members.push(Arc::clone(member));
             continue;
         }
-        let expected = fs::metadata(&path).map_err(raised)?;
-        let mut storage = T::unpack(input.opened.take().unwrap()).map_err(raised)?;
-        let writable = match &storage {
-            Storage::Paged(_) => {
-                casa_tables::publication::check_write_access(&path.join("table.dat")).is_ok()
-            }
-            Storage::Temp { image, fits, .. } => fits.is_none() && image.is_writable(),
-        };
-        let storage = if tempclose {
-            unlock(&mut storage).map_err(raised)?;
-            None
-        } else {
-            Some(storage)
-        };
+        let expected = input
+            .revision
+            .map(|revision| revision.file)
+            .map_or_else(|| fs::metadata(&path).map_err(raised), Ok)?;
+        let storage = input
+            .opened
+            .take()
+            .map(T::unpack)
+            .transpose()
+            .map_err(raised)?;
         let member: Arc<dyn ConcatMember<T>> = Arc::new(Member::<T> {
             path: path.clone(),
             expected,
             shape: input.shape,
             masked: input.has_mask,
-            writable,
+            writable: input.writable,
+            writable_mask: input.writable_mask,
+            beam_axes: plane_axes(&input.coordinate_record)?,
             tempclose,
             storage: Mutex::new(storage),
         });
@@ -245,13 +249,7 @@ fn typed<T: MemberPixel>(
     }
     let joined = ConcatImage::new(path.to_path_buf(), plan, members, misc, units, tempclose)
         .map_err(raised)?;
-    let mut image = TempImage::from_read_only_image(
-        joined,
-        "ImageConcat",
-        "Some of the underlying lattices are not writable",
-    )
-    .map_err(raised)?;
-    image.set_image_info_record(beams).map_err(raised)?;
+    let mut image = TempImage::from_virtual_concat(joined, beams).map_err(raised)?;
     image.append_history_entries(&history).map_err(raised)?;
     Ok(Storage::Temp {
         image: Box::new(image),
@@ -266,6 +264,8 @@ struct Member<T: MemberPixel> {
     shape: Vec<usize>,
     masked: bool,
     writable: bool,
+    writable_mask: bool,
+    beam_axes: (Option<usize>, Option<usize>),
     tempclose: bool,
     storage: Mutex<Option<Storage<T>>>,
 }
@@ -306,6 +306,11 @@ impl<T: MemberPixel> Member<T> {
     ) -> Result<R, ImageError> {
         self.check_path()?;
         let mut storage = self.slot();
+        if self.tempclose
+            && let Some(mut opened) = storage.take()
+        {
+            return operation(&mut opened);
+        }
         match storage.as_mut() {
             Some(storage) => operation(storage),
             None => operation(&mut self.reopen()?),
@@ -322,6 +327,10 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
     }
     fn has_mask(&self) -> bool {
         self.masked
+    }
+
+    fn mask_writable(&self) -> bool {
+        self.writable_mask
     }
     fn is_writable(&self) -> bool {
         self.writable
@@ -359,6 +368,51 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         })
     }
 
+    fn write_mask(&self, values: &ArrayD<bool>, start: &[usize]) -> Result<(), ImageError> {
+        self.use_storage(|storage| {
+            require(storage, LockType::Write)?;
+            with_storage!(storage, image => {
+                let name = image.active_pixel_mask_name().ok_or_else(|| ImageError::CasaSelection(
+                    "The member's pixel mask is no longer available".into(),
+                ))?;
+                image.put_mask_slice(&name, values, start)?;
+            });
+            storage.save()
+        })
+    }
+
+    fn write_image_info(
+        &self,
+        info: &ImageInfo,
+        record: &RecordValue,
+        axis: usize,
+        offset: usize,
+    ) -> Result<(), ImageError> {
+        let beams = &info.beam_set;
+        let nchan = beams.n_channels();
+        let nstokes = beams.n_stokes();
+        let split = if self.beam_axes.0 == Some(axis) && nchan > 1 {
+            Some((offset..offset + self.shape[axis], 0..nstokes))
+        } else if self.beam_axes.1 == Some(axis) && nstokes > 1 {
+            Some((0..nchan, offset..offset + self.shape[axis]))
+        } else {
+            None
+        };
+        let local = if let Some((channels, stokes)) = split {
+            let mut local = info.clone();
+            local.beam_set =
+                beams.subset(&channels.collect::<Vec<_>>(), &stokes.collect::<Vec<_>>())?;
+            local.to_record()
+        } else {
+            record.clone()
+        };
+        self.use_storage(|storage| {
+            require(storage, LockType::Write)?;
+            with_storage!(storage, image => image.set_image_info_record(local))?;
+            storage.save()
+        })
+    }
+
     fn lock(&self, kind: LockType, attempts: u32) -> Result<bool, ImageError> {
         self.check_path()?;
         let mut slot = self.slot();
@@ -387,6 +441,31 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         }
         if self.tempclose {
             *storage = None;
+        }
+        Ok(())
+    }
+
+    fn release_requested_lock(&self) -> Result<(), ImageError> {
+        let mut slot = self.slot();
+        let Some(storage) = slot.as_mut() else {
+            return Ok(());
+        };
+        match storage {
+            #[cfg(unix)]
+            Storage::Paged(image) => image.release_requested_lock()?,
+            Storage::Temp { image, .. } => {
+                if let Some(source) = image.concat_source() {
+                    source.release_requested_lock()?;
+                }
+            }
+            #[cfg(not(unix))]
+            Storage::Paged(_) => {}
+        }
+        if self.tempclose
+            && !has_lock(storage, LockType::Read)
+            && !has_lock(storage, LockType::Write)
+        {
+            *slot = None;
         }
         Ok(())
     }

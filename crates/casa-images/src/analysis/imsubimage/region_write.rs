@@ -28,18 +28,19 @@ pub fn put_image_region<T: ImagePixel>(
         pixels.as_ref().map(ArrayD::shape),
         mask.as_ref().map(ArrayD::shape),
     )?;
-    let component = image
+    let temporary = image
         .as_any()
-        .and_then(|image| image.downcast_ref::<TempImage<T>>())
-        .is_some_and(|image| image.image_type_name() == "ComponentListImage");
-    if !image.is_writable() && !component {
+        .and_then(|image| image.downcast_ref::<TempImage<T>>());
+    let component = temporary.is_some_and(|image| image.image_type_name() == "ComponentListImage");
+    let concat = temporary.is_some_and(|image| image.concat_source().is_some());
+    if !image.is_writable() && !component && !concat {
         return Err(ImageError::CasaSelection(
             "This image is not writable".into(),
         ));
     }
     let selection = ImageRegionWrite::new(image, region, array_shape, replicate)?;
     // CASA's mask attacher leaves a temporary component image unmasked.
-    let mask = if component && image.name().is_none() {
+    let mask = if (component && image.name().is_none()) || (concat && !image.has_pixel_mask()) {
         None
     } else {
         mask

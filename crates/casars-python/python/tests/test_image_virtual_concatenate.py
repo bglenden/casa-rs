@@ -1,6 +1,9 @@
 """Native imageconcat manifest interoperability and strided access."""
 
 import json
+import os
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -65,6 +68,11 @@ def test_nomove_manifest_and_write_through(tmp_path, kind, dtype, precision, sto
         if kind in {"float", "complex"}:
             assert reader_tool.unlock()
             np.testing.assert_array_equal(reader_tool.haslock(), [False, False])
+            assert reader_tool.lock(True, 1)
+            np.testing.assert_array_equal(reader_tool.haslock(), [not tempclose, not tempclose])
+            np.testing.assert_array_equal(reader_tool.getchunk(), expected)
+            np.testing.assert_array_equal(reader_tool.haslock(), [not tempclose, not tempclose])
+            assert reader_tool.unlock()
         assert reader_tool.setmiscinfo({"intent": "write-through"})
         if kind in {"float", "complex"}:
             np.testing.assert_array_equal(reader_tool.haslock(), [tempclose, False])
@@ -254,6 +262,15 @@ def test_virtual_concat_combines_restoring_beams_on_the_spectral_axis(tmp_path, 
                 [qa.convert(beam["major"], "arcsec")["value"] for beam in beams],
                 [2, 2, 3, 3],
             )
+            assert reader.setrestoringbeam("4arcsec", "1arcsec", "0deg", channel=2, polarization=0)
+            assert reader.done()
+            for path, expected in [(target, [2, 2, 4, 3]), (paths[1], [4, 3])]:
+                assert reader.open(str(path))
+                beams = [reader.restoringbeam(channel=channel, polarization=0) for channel in range(len(expected))]
+                np.testing.assert_allclose(
+                    [qa.convert(beam["major"], "arcsec")["value"] for beam in beams], expected,
+                )
+                assert reader.done()
         finally:
             qa.done()
     finally:
@@ -325,3 +342,156 @@ def test_virtual_concat_metadata_and_mask_handler_state(tmp_path, backend):
             out.done()
         image.done()
         source.done()
+
+
+@pytest.mark.parametrize("action", ["write", "rename"])
+def test_attached_virtual_concat_refuses_mutation_after_replacement(tmp_path, action):
+    api = _backend("casars")
+    source = api.image()
+    paths = [tmp_path / "a.im", tmp_path / "b.im"]
+    original, backup, destination = [tmp_path / f"{name}.im" for name in ("original", "backup", "renamed")]
+    attached = None
+    try:
+        for path in paths:
+            assert source.fromarray(str(path), np.ones((3, 4)), linear=True)
+            assert source.done()
+        attached = source.imageconcat(str(original), list(map(str, paths)), axis=0,
+                                      mode="nomove", relax=True)
+        original.rename(backup)
+        assert source.fromarray(str(original), np.full((2, 2), 9.))
+        assert source.done()
+        with pytest.raises(RuntimeError, match="changed"):
+            if action == "write":
+                attached.putchunk([[5.]], blc=[0, 0])
+            else:
+                attached.rename(str(destination))
+        assert (backup / "imageconcat.json").is_file()
+        assert not destination.exists()
+        assert source.open(str(original))
+        np.testing.assert_array_equal(source.getchunk(), np.full((2, 2), 9.))
+        assert source.done()
+        assert source.open(str(paths[0]))
+        np.testing.assert_array_equal(source.getchunk(), np.ones((3, 4)))
+    finally:
+        if attached is not None:
+            attached.done()
+        source.done()
+
+
+@pytest.mark.parametrize("tempclose", [False, True])
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_virtual_concat_putregion_writes_physical_default_masks(tmp_path, backend, tempclose):
+    api = _backend(backend)
+    tool, joined = api.image(), None
+    sources = [tmp_path / "one.im", tmp_path / "two.im"]
+    valid = np.ones((4, 2), dtype=bool)
+    valid[1:3, 0] = False
+    try:
+        for source in sources:
+            assert tool.fromarray(str(source), np.ones((2, 2)), linear=True)
+            assert tool.calcmask("T", "valid")
+            assert tool.done()
+        joined = tool.imageconcat(str(tmp_path / "join.im"), list(map(str, sources)),
+                                   axis=0, relax=True, tempclose=tempclose, mode="nomove")
+        assert joined.putregion(pixelmask=valid)
+        np.testing.assert_array_equal(joined.getchunk(getmask=True), valid)
+        assert joined.done()
+        for index, source in enumerate(sources):
+            assert tool.open(str(source))
+            np.testing.assert_array_equal(tool.getchunk(getmask=True), valid[2 * index:2 * index + 2])
+            np.testing.assert_array_equal(tool.getchunk(), np.ones((2, 2)))
+            assert tool.done()
+    finally:
+        if joined is not None:
+            joined.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("tempclose", [False, True])
+def test_attached_virtual_concat_pins_physical_member_before_retarget(tmp_path, tempclose):
+    api = _backend("casars")
+    tool, joined = api.image(), None
+    one, two, other, alias = (tmp_path / name for name in ("one.im", "two.im", "other.im", "alias.im"))
+    try:
+        for path, value in [(one, 1.), (two, 2.), (other, 9.)]:
+            assert tool.fromarray(str(path), np.full((2, 2), value), linear=True)
+            assert tool.done()
+        alias.symlink_to(one.name, target_is_directory=True)
+        joined = tool.imageconcat(str(tmp_path / "join.im"), [str(alias), str(two)],
+                                   axis=0, relax=True, tempclose=tempclose, mode="nomove")
+        alias.unlink()
+        alias.symlink_to(other.name, target_is_directory=True)
+        np.testing.assert_array_equal(joined.getchunk()[:, 0], [1, 1, 2, 2])
+        assert joined.putchunk([[5.]], blc=[0, 0])
+        assert joined.done()
+        for path, expected in [(one, [[5, 1], [1, 1]]), (other, [[9, 9], [9, 9]])]:
+            assert tool.open(str(path))
+            np.testing.assert_array_equal(tool.getchunk(), expected)
+            assert tool.done()
+    finally:
+        if joined is not None:
+            joined.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_published_single_member_and_miscinfo_vectors(tmp_path, backend):
+    api = _backend(backend)
+    tool = api.image()
+    source, joined = tmp_path / "one.im", tmp_path / "join.im"
+    output = joined / "imageconcat.json"
+    try:
+        original = np.arange(6., dtype=np.float32).reshape(3, 2)
+        assert tool.fromarray(str(source), original, linear=True)
+        assert tool.done()
+        joined.mkdir()
+        output.write_text(json.dumps({"Version": 1, "DataType": "float", "Axis": 0,
+                                      "TempClose": True, "Images": ["./one.im"]}))
+        assert tool.open(str(joined))
+        np.testing.assert_array_equal(tool.getchunk(), original)
+        record = {"channels": [1, 2, 3], "nested": {"offsets": [0.25, 0.5]}}
+        assert tool.setmiscinfo(record)
+        assert tool.done()
+        assert json.loads(output.read_text())["MiscInfo"] == record
+        assert tool.open(str(joined))
+        read = tool.miscinfo()
+        np.testing.assert_array_equal(read["channels"], record["channels"])
+        np.testing.assert_array_equal(read["nested"]["offsets"], record["nested"]["offsets"])
+    finally:
+        tool.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX file descriptor limit")
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_tempclose_admission_under_file_descriptor_limit(tmp_path, backend):
+    api = _backend(backend)
+    tool = api.image()
+    paths = [tmp_path / f"member-{i}.im" for i in range(48)]
+    destination = tmp_path / "join.im"
+    try:
+        for i, path in enumerate(paths):
+            assert tool.fromarray(str(path), np.full((2, 2), i + 1., dtype=np.float32), linear=True)
+            assert tool.done()
+    finally:
+        tool.done()
+    module = {"casa": "casatools", "casars": "casars.tools"}[backend]
+    subprocess.run(
+        [sys.executable, "-c", """
+import importlib
+import resource
+import sys
+
+import numpy as np
+
+api = importlib.import_module(sys.argv[1])
+_, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (min(64, hard) if hard >= 0 else 64, hard))
+tool = api.image()
+joined = tool.imageconcat(sys.argv[2], sys.argv[3:], axis=0, relax=True, tempclose=True, mode="nomove")
+np.testing.assert_array_equal(joined.shape(), [96, 2])
+np.testing.assert_array_equal(joined.getchunk()[:, 0], np.repeat(np.arange(1, 49), 2))
+assert joined.done()
+assert tool.done()
+""", module, str(destination), *map(str, paths)],
+        check=True, timeout=60,
+    )

@@ -8535,6 +8535,18 @@ in the same attachment reads the mask from its new path when the
 rename succeeds.
 See [#1691](https://github.com/bglenden/casa-rs/issues/1691).
 
+## An attached virtual concatenation can write to a retargeted input symlink
+
+Create a `nomove` concatenation using a symlink as one input, then retarget
+that symlink to a second image of the same shape while the tool is still
+attached. CASA 6.7.6.14 reads the new image and sends `putchunk` writes to it
+under both `TempClose` settings. casa-rs pins the physical input for the
+attachment, so the write reaches the original image. A new open resolves the
+manifest paths again. This prevents an existing handle from modifying an
+unrelated image.
+
+See [#1749](https://github.com/bglenden/casa-rs/issues/1749).
+
 ## A strided write to a virtual concatenation can abort at a skipped member
 
 In CASA 6.7.6.14, concatenate three `[3, 4]` Float members along

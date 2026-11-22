@@ -20,7 +20,7 @@ use pyo3::prelude::*;
 use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
-use super::handle::{ImageHandle, raised};
+use super::handle::{ImageHandle, Storage, raised, with_pixels};
 use super::miriad_rename::MiriadDirectory;
 use super::native_rename::{check_path_relationship, move_native_table, native_destination};
 use super::saved_expression::SavedExpressionDirectory;
@@ -265,6 +265,7 @@ impl AttachedImage {
         let mut attached = Self::temporary(image);
         attached.key = Some(key(name)?);
         attached.native_name = Some(std::path::absolute(name).map_err(raised)?);
+        attached.check_bound_name(&attached.lock())?;
         attached.register(registry);
         Ok(attached)
     }
@@ -466,6 +467,13 @@ impl AttachedImage {
 
     pub(super) fn check_bound_name(&self, handle: &ImageHandle) -> PyResult<()> {
         self.check_directory()?;
+        with_pixels!(handle, storage => {
+            if let Storage::Temp { image, .. } = storage
+                && let Some(source) = image.concat_source()
+            {
+                source.check_directory().map_err(raised)?;
+            }
+        });
         if let (Some(key), Some(path)) = (&self.key, handle.path())
             && path != key
             && !path.canonicalize().is_ok_and(|actual| &actual == key)
@@ -593,11 +601,17 @@ impl AttachedImage {
             lock_table_ancestors(&target, &mut locks)?;
         }
         let source_metadata = source.symlink_metadata().map_err(raised)?;
-        if self
-            .image
-            .use_lock
-            .as_ref()
-            .is_some_and(|lease| !lease.matches_directory_metadata(&source_metadata))
+        let concat_matches = with_pixels!(&*self.lock(), storage => match storage {
+            Storage::Temp { image, .. } => image.concat_source().is_none_or(|source|
+                source.matches_directory_metadata(&source_metadata)),
+            Storage::Paged(_) => true,
+        });
+        if !concat_matches
+            || self
+                .image
+                .use_lock
+                .as_ref()
+                .is_some_and(|lease| !lease.matches_directory_metadata(&source_metadata))
         {
             return Err(source_changed());
         }

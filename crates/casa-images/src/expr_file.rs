@@ -58,7 +58,7 @@ use crate::image::{ImageInterface, ImagePixelType, PagedImage, image_pixel_type}
 use crate::image_expr::{ImageExprValue, ImageExpression};
 use crate::image_info::ImageInfo;
 
-mod tool_metadata;
+pub(crate) mod tool_metadata;
 
 // ---------------------------------------------------------------------------
 // Type string mapping
@@ -300,7 +300,7 @@ where
 // MiscInfo JSON conversion (simple scalars only)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn misc_info_to_json(record: &RecordValue) -> serde_json::Value {
+fn misc_info_to_json(record: &RecordValue) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for field in record.fields() {
         let val = match &field.value {
@@ -321,7 +321,7 @@ pub(crate) fn misc_info_to_json(record: &RecordValue) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-pub(crate) fn json_to_misc_info(val: &serde_json::Value) -> RecordValue {
+fn json_to_misc_info(val: &serde_json::Value) -> RecordValue {
     let mut record = RecordValue::default();
     if let Some(obj) = val.as_object() {
         for (key, v) in obj {

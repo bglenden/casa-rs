@@ -10,7 +10,7 @@ use casa_types::RecordValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::expr_file::{json_to_misc_info, misc_info_to_json};
+use crate::expr_file::tool_metadata;
 use crate::{ImageError, ImagePixelType};
 
 const FILE: &str = "imageconcat.json";
@@ -64,11 +64,15 @@ impl ConcatManifest {
             ));
         }
         manifest.pixel_type()?;
+        manifest.misc_info()?;
         Ok(manifest)
     }
 
     /// Prepare a descriptor for operands already in validated output order.
     /// Relative paths use the final manifest directory as their owner.
+    ///
+    /// # Errors
+    /// Returns an error for metadata that cannot be represented in JSON.
     pub fn new(
         owner: &Path,
         kind: ImagePixelType,
@@ -76,14 +80,14 @@ impl ConcatManifest {
         temp_close: bool,
         images: impl IntoIterator<Item = PathBuf>,
         misc: &RecordValue,
-    ) -> Self {
+    ) -> Result<Self, ImageError> {
         let data_type = match kind {
             ImagePixelType::Float32 => "float",
             ImagePixelType::Float64 => "double",
             ImagePixelType::Complex32 => "Complex",
             ImagePixelType::Complex64 => "DComplex",
         };
-        Self {
+        Ok(Self {
             version: 1,
             data_type: data_type.into(),
             axis,
@@ -92,9 +96,9 @@ impl ConcatManifest {
                 .into_iter()
                 .map(|image| strip_directory(&image, owner))
                 .collect(),
-            misc_info: Some(misc_info_to_json(misc)),
+            misc_info: Some(tool_metadata::encode(misc)?),
             extra: Map::new(),
-        }
+        })
     }
 
     /// Return the pixel type required from each operand.
@@ -142,8 +146,14 @@ impl ConcatManifest {
     }
 
     /// Explicit miscellaneous image metadata, if the file supplies it.
-    pub fn misc_info(&self) -> Option<RecordValue> {
-        self.misc_info.as_ref().map(json_to_misc_info)
+    ///
+    /// # Errors
+    /// Returns an error for a malformed record.
+    pub fn misc_info(&self) -> Result<Option<RecordValue>, ImageError> {
+        self.misc_info
+            .as_ref()
+            .map(tool_metadata::decode)
+            .transpose()
     }
 
     /// Serialize a new descriptor in an unpublished staging directory.
@@ -210,7 +220,7 @@ pub(crate) fn update_misc_info(directory: &Path, misc: &RecordValue) -> Result<(
 fn replace_misc_info(contents: &[u8], misc: &RecordValue) -> Result<Vec<u8>, ImageError> {
     let mut manifest: ConcatManifest = serde_json::from_slice(contents)
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-    manifest.misc_info = Some(misc_info_to_json(misc));
+    manifest.misc_info = Some(tool_metadata::encode(misc)?);
     manifest.to_bytes()
 }
 

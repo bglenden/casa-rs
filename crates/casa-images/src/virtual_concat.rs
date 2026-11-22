@@ -29,6 +29,8 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
     /// Whether the member has nontrivial intrinsic validity.
     fn has_mask(&self) -> bool;
 
+    /// Whether this member's intrinsic mask supports writes.
+    fn mask_writable(&self) -> bool;
     /// Read pixels from a local section.
     fn read(
         &self,
@@ -48,6 +50,17 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
     /// Write pixels to a local rectangular section.
     fn write(&self, values: &ArrayD<T>, start: &[usize]) -> Result<(), ImageError>;
 
+    /// Write the intrinsic validity of a local rectangular section.
+    fn write_mask(&self, values: &ArrayD<bool>, start: &[usize]) -> Result<(), ImageError>;
+
+    /// Update image metadata using the member's section of the joined beam grid.
+    fn write_image_info(
+        &self,
+        info: &ImageInfo,
+        record: &RecordValue,
+        axis: usize,
+        offset: usize,
+    ) -> Result<(), ImageError>;
     /// Take a table access lock if this member uses locking.
     fn lock(&self, kind: LockType, attempts: u32) -> Result<bool, ImageError>;
 
@@ -56,6 +69,9 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
 
     /// Release the access locks held by this member.
     fn unlock(&self) -> Result<(), ImageError>;
+
+    /// Respond to a pending access-lock request without clearing explicit locks.
+    fn release_requested_lock(&self) -> Result<(), ImageError>;
 }
 
 /// An image whose pixels and mask are supplied by ordered member images.
@@ -206,35 +222,97 @@ impl<T: ImagePixel> ConcatImage<T> {
         Ok(())
     }
 
-    pub(crate) fn write_misc_info(&self, misc: &RecordValue) -> Result<(), ImageError> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let current = self
-                .path
-                .metadata()
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-            if !self
-                .directory
-                .as_ref()
-                .and_then(|dir| dir.metadata().ok())
-                .is_some_and(|expected| {
-                    (expected.dev(), expected.ino()) == (current.dev(), current.ino())
-                })
-            {
-                return Err(ImageError::Io(
-                    "The virtual concatenation directory changed".into(),
-                ));
-            }
+    /// Whether implicit section operations close their member handles.
+    pub fn temp_close(&self) -> bool {
+        self.temp_close
+    }
+
+    /// Whether all members have writable intrinsic masks.
+    pub fn mask_writable(&self) -> bool {
+        self.members.iter().all(|member| member.mask_writable())
+    }
+
+    pub(crate) fn write_mask_slice(
+        &self,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        if !self.mask_writable() {
+            return Err(ImageError::CasaSelection(
+                "The mask is not writable. Probably an ImageExpr or SubImage".into(),
+            ));
         }
-        #[cfg(not(unix))]
-        let _ = &self.directory;
-        if self.temp_close && !self.lock(LockType::Read, 0)? {
+        let stride = vec![1; self.ndim()];
+        validate_slice_request(&self.shape, start, data.shape(), &stride)?;
+        for (member, samples, start, _) in self.windows(start, data.shape(), &stride) {
+            let section = data
+                .slice_axis(Axis(self.axis), Slice::from(samples))
+                .to_owned();
+            member.write_mask(&section, &start)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn write_image_info(
+        &self,
+        info: &ImageInfo,
+        record: &RecordValue,
+    ) -> Result<(), ImageError> {
+        self.check_directory()?;
+        for (member, &offset) in self.members.iter().zip(&self.boundaries) {
+            member.write_image_info(info, record, self.axis, offset)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn write_misc_info(&self, misc: &RecordValue) -> Result<(), ImageError> {
+        self.check_directory()?;
+        if self.temp_close && !self.members[0].lock(LockType::Read, 0)? {
             return Err(ImageError::CasaSelection(
                 "Could not acquire the image Read lock".into(),
             ));
         }
         crate::concat_file::update_misc_info(&self.path, misc)
+    }
+
+    /// Verify that the attached manifest directory still occupies its path.
+    ///
+    /// # Errors
+    /// Returns an error if the directory was moved or replaced.
+    pub fn check_directory(&self) -> Result<(), ImageError> {
+        let current = self
+            .path
+            .symlink_metadata()
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        if !self.matches_directory_metadata(&current) {
+            return Err(ImageError::Io(format!(
+                "The virtual concatenation directory {} changed",
+                self.path.display(),
+            )));
+        }
+        Ok(())
+    }
+
+    /// Check a directory entry against the identity held by this attachment.
+    pub fn matches_directory_metadata(&self, current: &std::fs::Metadata) -> bool {
+        if !current.is_dir() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            self.directory
+                .as_ref()
+                .and_then(|dir| dir.metadata().ok())
+                .is_some_and(|expected| {
+                    (expected.dev(), expected.ino()) == (current.dev(), current.ino())
+                })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = &self.directory;
+            true
+        }
     }
     /// Lock the members in manifest order. Release newly acquired locks if
     /// any member refuses the request.
@@ -246,6 +324,14 @@ impl<T: ImagePixel> ConcatImage<T> {
         let mut acquired: Vec<(&dyn ConcatMember<T>, bool)> = Vec::new();
         for member in &self.members {
             if !seen.insert(member.path()) {
+                continue;
+            }
+            if self.temp_close {
+                let result = member.lock(kind, attempts);
+                member.unlock()?;
+                if !result? {
+                    return Ok(false);
+                }
                 continue;
             }
             let read = member.has_lock(LockType::Read);
@@ -285,6 +371,16 @@ impl<T: ImagePixel> ConcatImage<T> {
     /// Returns an error if any member fails to unlock.
     pub fn unlock(&self) -> Result<(), ImageError> {
         self.members.iter().try_for_each(|member| member.unlock())
+    }
+
+    /// Release locks requested by other table holders.
+    ///
+    /// # Errors
+    /// Returns an error if a member fails to release a requested lock.
+    pub fn release_requested_lock(&self) -> Result<(), ImageError> {
+        self.members
+            .iter()
+            .try_for_each(|member| member.release_requested_lock())
     }
 }
 
