@@ -6578,6 +6578,88 @@
       "persistence_class": "profile"
     },
     {
+      "id": "calibration.antab.outvis",
+      "semantic_revision": 1,
+      "casa_name": "outvis",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "measurement_set"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Name of the copy to receive ANTAB calibration.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.antab.antab",
+      "semantic_revision": 1,
+      "casa_name": "antab",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "file"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Input ANTAB text containing temperature and gain records.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.antab.append_tsys",
+      "semantic_revision": 1,
+      "casa_name": "append_tsys",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Import measured system temperatures into SYSCAL.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.antab.append_gc",
+      "semantic_revision": 1,
+      "casa_name": "append_gc",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Import station gain polynomials into GAIN_CURVE.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.selectdata",
       "semantic_revision": 1,
       "casa_name": "selectdata",

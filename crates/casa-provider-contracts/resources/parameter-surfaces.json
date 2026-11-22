@@ -18154,6 +18154,288 @@
     },
     {
       "kind": "task",
+      "id": "appendantab",
+      "contract_version": 1,
+      "display_name": "Append ANTAB",
+      "category": "Calibration",
+      "summary": "Import ANTAB temperatures and gain curves into a copied MeasurementSet.",
+      "provider_family": "calibration",
+      "casa_task": "appendantab",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "appendantab"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outvis"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "outvis",
+          "concept": {
+            "id": "calibration.antab.outvis",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outvis"
+              ]
+            },
+            "provider": {
+              "field": "outvis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outvis",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Output MeasurementSet",
+              "group": "ANTAB"
+            }
+          }
+        },
+        {
+          "name": "antab",
+          "concept": {
+            "id": "calibration.antab.antab",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antab"
+              ]
+            },
+            "provider": {
+              "field": "antab",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antab",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "ANTAB File",
+              "group": "ANTAB"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ],
+              "false_flags": [
+                "--no-overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "Overwrite Matching Rows",
+              "group": "ANTAB"
+            }
+          }
+        },
+        {
+          "name": "append_tsys",
+          "concept": {
+            "id": "calibration.antab.append_tsys",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--append-tsys"
+              ],
+              "false_flags": [
+                "--no-append-tsys"
+              ]
+            },
+            "provider": {
+              "field": "append_tsys",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "append_tsys"
+            },
+            "presentation": {
+              "label": "Import System Temperatures",
+              "group": "ANTAB"
+            }
+          }
+        },
+        {
+          "name": "append_gc",
+          "concept": {
+            "id": "calibration.antab.append_gc",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--append-gc"
+              ],
+              "false_flags": [
+                "--no-append-gc"
+              ]
+            },
+            "provider": {
+              "field": "append_gc",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "append_gc"
+            },
+            "presentation": {
+              "label": "Import Gain Curves",
+              "group": "ANTAB"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "bandpass",
       "contract_version": 6,
       "display_name": "Bandpass",

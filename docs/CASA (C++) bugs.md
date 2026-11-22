@@ -9955,3 +9955,30 @@ CASA can also raise `UnboundLocalError` when the first selected reference
 antenna has pulse data only outside the reference interval. Casa-rs
 reports the missing reference data with a `RuntimeError`. The paired
 PCCOR oracle covers both cases and checks destination preservation.
+
+## `appendantab` attaches new subtable links to the child tables
+
+CASA 6.7.6.14 creates `SYSCAL` and `GAIN_CURVE` under the copied
+MeasurementSet and writes each keyword on the corresponding child table.
+The embedded gain-curve consumer reads the `GAIN_CURVE` link on MAIN.
+Casa-rs attaches both links on MAIN. The paired oracle compares the
+subtable contents and gives the CASA reference copy the same MAIN links
+before checking its independent `gencal` consumer.
+
+With `overwrite=True` on a copy that has no gain rows, CASA also indexes
+the first receptor of an empty sensitivity array and raises `IndexError`.
+Casa-rs imports the gain records and publishes the completed copy. Its
+test compares the output with the default CASA import.
+
+CASA uses the position of an ANTAB gain record as a channel index when
+overwriting a gain row. This raises `IndexError` when the second antenna
+has a gain record for a one-channel window. Casa-rs tests the window's
+frequency coverage against the gain record's range. The oracle checks
+both antennas' replaced sensitivities.
+
+CASA assembles Tsys temperatures in spectral-window number order, then
+writes row identifiers in data-description order. The temperatures can
+follow the wrong SPW when those orders differ. Casa-rs assembles each row
+using its stated spectral-window identifier. It also ignores an unknown
+station's GAIN record while preserving the following GAIN header. CASA
+can consume that header while skipping to the next slash.

@@ -269,6 +269,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_polfromgain(values, arguments)
     if name == "pccor":
         return _call_pccor(values, arguments)
+    if name == "appendantab":
+        return _call_appendantab(values, arguments)
     if name == "polcal":
         _validate_required_path(values, "vis", arguments["vis"], search_data=True)
         try:
@@ -1684,6 +1686,37 @@ def _resolve_relative_data_path(path: str) -> str:
         if candidate.exists():
             return str(candidate)
     return path
+
+
+def _call_appendantab(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    for key in ("vis", "antab"):
+        value = arguments[key]
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise AssertionError(
+                f"the {key} parameter must be a path that exists ('{value}' does not exist)")
+        _validate_required_path(values, key, value, search_data=True)
+    errors = {}
+    for key, value in arguments.items():
+        if value is None:
+            errors[key] = ["null value not allowed"]
+        elif key == "outvis" and not isinstance(value, str):
+            errors[key] = ["must be of cStr type"]
+        elif key in ("overwrite", "append_tsys", "append_gc") and not isinstance(value, bool):
+            from numpy import bool_
+            if not isinstance(value, bool_):
+                errors[key] = ["must be of cBool type"]
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
+    try:
+        return run("appendantab", **values).value
+    except TaskExecutionError as error:
+        if error.completion.parameter == "antab_header":
+            raise KeyError(error.completion.message) from error
+        raise RuntimeError(error.completion.message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
 
 
 def _call_pccor(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:

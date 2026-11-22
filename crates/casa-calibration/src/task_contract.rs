@@ -30,13 +30,14 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 35] = [
+pub const CALIBRATION_SURFACES: [&str; 36] = [
     "calibrate",
     "applycal",
     "gaincal",
     "fringefit",
     "accor",
     "pccor",
+    "appendantab",
     "bandpass",
     "fluxscale",
     "gencal",
