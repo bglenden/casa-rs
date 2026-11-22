@@ -327,6 +327,15 @@ impl SubimagePlan {
         self.selection.has_multiple_regions
     }
 
+    pub(in crate::analysis) fn require_single_region(&self) -> Result<(), ImageError> {
+        if self.has_multiple_regions() {
+            return Err(ImageError::CasaSelection(
+                "Only a single n-dimensional rectangular region is supported".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Check an optional mask expression against the parent image. This also
     /// checks stretching along the selected axes. Operations that edit the
     /// underlying pixel values can validate a mask without materializing it.

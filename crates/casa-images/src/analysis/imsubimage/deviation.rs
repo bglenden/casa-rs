@@ -105,6 +105,7 @@ impl<'a> ImageDeviation<'a> {
             },
             Some(beams),
         )?;
+        section.require_single_region()?;
         let grid = Grid::new(options.grid, axes.map(|axis| section.shape[axis]), {
             let local = section.coordinates.to_pixel(&world_anchor)?;
             axes.map(|axis| local[axis].round_ties_even() as i64)
