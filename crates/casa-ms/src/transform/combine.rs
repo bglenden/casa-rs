@@ -1228,9 +1228,9 @@ pub(super) fn remap_subtable_references(
             path: path.display().to_string(),
             source: Box::new(source),
         };
-        let mut subtable = Table::open(TableOptions::new(&path)).map_err(error)?;
+        let subtable = Table::open(TableOptions::new(&path)).map_err(error)?;
         let mut records = std::collections::BTreeSet::new();
-        let mut remove = Vec::new();
+        let mut keep = Vec::new();
         for row in 0..subtable.row_count() {
             let key = keys
                 .iter()
@@ -1244,21 +1244,24 @@ pub(super) fn remap_subtable_references(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             if records.insert(key) {
-                subtable
-                    .column_accessor_mut("SPECTRAL_WINDOW_ID")
-                    .and_then(|mut column| column.set(row, Value::Scalar(ScalarValue::Int32(0))))
-                    .map_err(error)?;
-            } else {
-                remove.push(row);
+                keep.push(row);
             }
         }
-        if subtable.row_count() > 0 {
-            subtable.remove_rows(&remove).map_err(error)?;
-            subtable
-                .prepare_write()
-                .save(TableOptions::new(&path))
-                .map_err(error)?;
+        if keep.is_empty() {
+            continue;
         }
+        drop(subtable);
+        let original = request.output_ms.join(format!(".{table}.combine-original"));
+        let io_error = |source: std::io::Error| MsTransformError::PrepareOutput {
+            path: path.display().to_string(),
+            reason: source.to_string(),
+        };
+        std::fs::rename(&path, &original).map_err(io_error)?;
+        super::rewrite_selected_table_rows(&original, &path, &keep, |_, mut row| {
+            row.upsert("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0)));
+            Ok(row)
+        })?;
+        std::fs::remove_dir_all(original).map_err(io_error)?;
     }
     Ok(())
 }
