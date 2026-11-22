@@ -49,9 +49,10 @@ IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit", "initweights",
     "accumulate", "createcaltable", "updatecaltable", "smooth", "rerefant", "listcal", "plotcal",
+    "linpolcor", "parsecallibfile", "validatecallib",
 }
 PARTIAL = {
-    "calibrater": {"setmodel", "setsolve"},
+    "calibrater": {"setmodel", "setsolve", "posangcal", "setcallib", "returndict"},
     "image": {
         "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },
@@ -174,6 +175,8 @@ def test_calibrater_method_returns_before_open() -> None:
     assert instance.reset() is False
     assert instance.initcalset() is False
     assert instance.delmod() is False
+    assert instance.linpolcor() is False
+    assert instance.posangcal([12.0], "unused.cal") is False
     with pytest.raises(RuntimeError, match=r"Error in Calibrater::setModel: no VisEquation\."):
         instance.setptmodel()
 

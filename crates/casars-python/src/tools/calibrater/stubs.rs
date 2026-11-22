@@ -56,16 +56,6 @@ impl PyCalibrater {
         not_yet_implemented_in("calibrater", "fluxscale", 1528)
     }
 
-    #[pyo3(signature = (filein), text_signature = "($self, filein)")]
-    fn parsecallibfile(&self, filein: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "parsecallibfile", 1528)
-    }
-
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn returndict(&self) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "returndict", 1528)
-    }
-
     #[pyo3(signature = (r#type = None, t = None, table = None, field = None, interp = None, select = None, calwt = None, spwmap = None, opacity = None), text_signature = "($self, type='', t=0.0, table='', field=[], interp='linear', select='', calwt=False, spwmap=[-1], opacity=[0.0])")]
     fn setapply(
         &self,
@@ -80,11 +70,6 @@ impl PyCalibrater {
         opacity: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "setapply", 1528)
-    }
-
-    #[pyo3(signature = (callib = None), text_signature = "($self, callib={})")]
-    fn setcallib(&self, callib: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "setcallib", 1528)
     }
 
     #[pyo3(signature = (corrdepflags), text_signature = "($self, corrdepflags)")]
@@ -276,10 +261,5 @@ impl PyCalibrater {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn state(&self) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "state", 1528)
-    }
-
-    #[pyo3(signature = (callib = None), text_signature = "($self, callib={})")]
-    fn validatecallib(&self, callib: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "validatecallib", 1528)
     }
 }

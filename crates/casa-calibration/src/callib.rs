@@ -4,6 +4,10 @@
 
 #[path = "callib_parser.rs"]
 mod parser;
+#[path = "callib_record.rs"]
+mod record;
+pub(crate) use record::tool_library_specs;
+pub use record::{load_callibrary_record, validate_callibrary_record};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -118,11 +122,38 @@ pub fn load_apply_specs_from_callib(
     path: impl AsRef<Path>,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
     let path = path.as_ref();
-    let contents = fs::read_to_string(path).map_err(|source| CallibError::ReadFile {
+    let contents = read_contents(path)?;
+    parse_apply_specs(&path.display().to_string(), &contents)
+}
+
+fn read_contents(path: &Path) -> Result<String, CallibError> {
+    fs::read_to_string(path).map_err(|source| CallibError::ReadFile {
         path: path.display().to_string(),
         source,
-    })?;
-    parse_apply_specs(&path.display().to_string(), &contents)
+    })
+}
+
+fn parse_entries(source_name: &str, contents: &str) -> Result<Vec<parser::Entry>, CallibError> {
+    parser::parse(contents)
+        .map_err(|(line_number, reason)| line_error(source_name, contents, line_number, reason))
+}
+
+fn line_error(
+    source_name: &str,
+    contents: &str,
+    line_number: usize,
+    reason: String,
+) -> CallibError {
+    CallibError::ParseLine {
+        path: source_name.to_owned(),
+        line_number,
+        line: contents
+            .lines()
+            .nth(line_number.saturating_sub(1))
+            .unwrap_or_default()
+            .to_string(),
+        reason,
+    }
 }
 
 pub(crate) fn parse_apply_specs(
@@ -138,31 +169,9 @@ pub(crate) fn parse_apply_specs(
     let mut specs = Vec::new();
     let mut calwt_by_table = BTreeMap::<String, bool>::new();
 
-    let entries =
-        parser::parse(contents).map_err(|(line_number, reason)| CallibError::ParseLine {
-            path: source_name.to_owned(),
-            line_number,
-            line: contents
-                .lines()
-                .nth(line_number.saturating_sub(1))
-                .unwrap_or_default()
-                .to_string(),
-            reason,
-        })?;
-    for entry in entries {
-        let line_number = entry.line;
-        let mut spec = parse_callib_entry(entry.values, &base_dir).map_err(|reason| {
-            CallibError::ParseLine {
-                path: source_name.to_owned(),
-                line_number,
-                line: contents
-                    .lines()
-                    .nth(line_number.saturating_sub(1))
-                    .unwrap_or_default()
-                    .to_string(),
-                reason,
-            }
-        })?;
+    for entry in parse_entries(source_name, contents)? {
+        let mut spec = parse_callib_entry(entry.values, &base_dir)
+            .map_err(|reason| line_error(source_name, contents, entry.line, reason))?;
         let literal = spec
             .callibrary
             .as_ref()

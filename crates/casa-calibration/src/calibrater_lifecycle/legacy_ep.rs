@@ -43,6 +43,10 @@ pub(crate) struct FirstBuffer {
 }
 
 impl LegacyEpSolver {
+    pub(super) fn output_path(&self) -> &Path {
+        &self.table
+    }
+
     pub(super) fn new(table: &Path, cache: &Path, angle_increment_deg: f64) -> MsResult<Self> {
         if !angle_increment_deg.is_finite() {
             return Err(invalid("EP painc must be a finite angle"));
