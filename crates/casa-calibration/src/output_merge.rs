@@ -81,7 +81,10 @@ pub(crate) fn validate_identity(
     new: &Table,
     path: &Path,
 ) -> Result<(), CalibrationTableWriteError> {
-    if matches!(new.info().sub_type.as_str(), "BPOLY" | "GSPLINE") {
+    if matches!(
+        new.info().sub_type.as_str(),
+        "BPOLY" | "GSPLINE" | "EP Jones"
+    ) {
         return if old.info().sub_type == new.info().sub_type {
             Ok(())
         } else {
@@ -102,7 +105,7 @@ pub(crate) fn validate_identity(
     Ok(())
 }
 
-/// Legacy polynomial tables reuse a CAL_DESC row for the same window
+/// Legacy calibration tables reuse a CAL_DESC row for the same window
 /// and append MAIN in solution order.
 pub(crate) fn append_legacy(
     old: &mut Table,

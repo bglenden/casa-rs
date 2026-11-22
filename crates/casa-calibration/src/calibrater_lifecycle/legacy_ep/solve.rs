@@ -30,6 +30,11 @@ struct Rows<'a> {
     interval: f64,
 }
 
+struct LoadedChunk {
+    baselines: Vec<Baseline>,
+    reference_time: f64,
+}
+
 impl<'a> Rows<'a> {
     fn new(
         ms: &MeasurementSet,
@@ -109,8 +114,13 @@ impl LegacyEpSolver {
         while let Some(chunk) = rows.next() {
             let first = chunk[0].0;
             let input = crate::timing::Phase::start("ep_gather");
-            let baselines =
-                load_chunk(ms, selected, model, &engine, chunk, self.preaverage_seconds)?;
+            let Some(LoadedChunk {
+                baselines,
+                reference_time,
+            }) = load_chunk(ms, selected, model, &engine, chunk, self.preaverage_seconds)?
+            else {
+                continue;
+            };
             if baselines
                 .iter()
                 .any(|baseline| baseline.antennas.iter().any(|&id| id >= antenna_count))
@@ -126,10 +136,13 @@ impl LegacyEpSolver {
                 results.push(Slot {
                     spw: first.spectral_window_id,
                     field: first.field_id,
-                    time: first.time_mjd_seconds,
+                    time: reference_time,
                     offsets,
                 });
             }
+        }
+        if results.is_empty() {
+            return Err(invalid("No valid calibration solutions; no table written."));
         }
         let _write = crate::timing::Phase::start("ep_write");
         table::write(ms, self, &results)?;
@@ -144,15 +157,16 @@ fn load_chunk(
     geometry: &MsCalEngine,
     chunk: &[(&ResolvedMsSelectionRow, [i32; 4])],
     preaverage_seconds: f64,
-) -> MsResult<Vec<Baseline>> {
+) -> MsResult<Option<LoadedChunk>> {
+    let first = chunk[0].0;
     let rows = chunk
         .iter()
         .map(|(row, _)| *row)
-        .filter(|row| !row.flag_row && row.antenna1_id != row.antenna2_id)
+        .filter(|row| !row.flag_row)
         .collect::<Vec<_>>();
-    let Some(first) = rows.first() else {
-        return Ok(Vec::new());
-    };
+    if rows.is_empty() {
+        return Ok(None);
+    }
     let spectra = ms.spectral_window()?;
     let spw = first.spectral_window_id;
     let frequencies = spectra.chan_freq(spw as usize)?;
@@ -165,6 +179,7 @@ fn load_chunk(
     };
     let matches = crate::ft::image::match_channels(axis, 1, &frequencies);
     let hand_count = model.correlation_planes.len();
+    let hands = input_hand_indices(ms, first.polarization_id, &model.correlation_planes)?;
     let CoordinateModel::Direction(direction) = model.coordinates.coordinate(0) else {
         return Err(invalid("EP model is missing its direction coordinate"));
     };
@@ -187,6 +202,8 @@ fn load_chunk(
     let mut angles = BTreeMap::new();
     let mut epoch_start = first.time_mjd_seconds;
     let mut bucket = 0;
+    let mut weighted_time = 0.;
+    let mut time_weight = 0.;
     for ((((row, data), flags), uvw), weights) in
         rows.iter().zip(data).zip(flags).zip(uvw).zip(weights)
     {
@@ -214,6 +231,14 @@ fn load_chunk(
         if weight <= 0. || !weight.is_finite() {
             continue;
         }
+        // syncSolveMeta uses flagRow and the weighted clock of the first VB.
+        if row.time_mjd_seconds == first.time_mjd_seconds {
+            weighted_time += row.time_mjd_seconds * f64::from(weight);
+            time_weight += f64::from(weight);
+        }
+        if row.antenna1_id == row.antenna2_id {
+            continue;
+        }
         if row.time_mjd_seconds - epoch_start > preaverage_seconds {
             epoch_start = row.time_mjd_seconds;
             bucket += 1;
@@ -230,11 +255,12 @@ fn load_chunk(
             if hand >= hand_count {
                 return result;
             }
+            let input_hand = hands[hand];
             for &channel in &channels {
-                if flags[[hand, channel]] {
+                if flags[[input_hand, channel]] {
                     continue;
                 }
-                result.data += data[[hand, channel]];
+                result.data += data[[input_hand, channel]];
                 result.channels += 1;
                 // dpbwgrad selects the conjugate convolution plane. A
                 // single circular hand has no conjugate kernel to sample.
@@ -264,5 +290,30 @@ fn load_chunk(
             .observations
             .push(Observation { weight, hands });
     }
-    Ok(baselines.into_values().collect())
+    Ok((time_weight > 0.).then(|| LoadedChunk {
+        reference_time: weighted_time / time_weight,
+        baselines: baselines.into_values().collect(),
+    }))
+}
+
+fn input_hand_indices(
+    ms: &MeasurementSet,
+    polarization: i32,
+    model: &[StokesType],
+) -> MsResult<Vec<usize>> {
+    let correlations = ms.polarization()?.corr_type(polarization as usize)?;
+    let incompatible =
+        || invalid("EP selected a different set of circular hands from the image model");
+    if correlations.len() != model.len() {
+        return Err(incompatible());
+    }
+    model
+        .iter()
+        .map(|hand| {
+            correlations
+                .iter()
+                .position(|&code| code == *hand as i32)
+                .ok_or_else(incompatible)
+        })
+        .collect()
 }

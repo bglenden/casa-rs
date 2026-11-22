@@ -68,6 +68,52 @@ def compare_reader(path, cells):
         assert reader.close()
 
 
+def compare_cells(actual, expected):
+    for column in SOLUTION_COLUMNS:
+        if column == 'GAIN':
+            np.testing.assert_allclose(actual[column], expected[column], rtol=1e-3, atol=1e-7)
+        elif column == 'TIME':
+            np.testing.assert_allclose(actual[column], expected[column], rtol=0., atol=1e-4)
+        else:
+            np.testing.assert_array_equal(actual[column], expected[column], err_msg=column)
+
+
+def compare_append(args, products, factories):
+    tables = {}
+    for engine, factory in factories.items():
+        incoming = args.work/f'append-{engine}.EP'
+        copytree(products[engine], incoming)
+        capture = casa_log(args.work/'append-casa.log') if engine == 'casa' else native_log()
+        with capture as logger:
+            solve(factory, logger, args.work/f'three-{engine}.ms', args.model,
+                  args.work/f'three-{engine}-cache', incoming, '0s', append=True)
+        tables[engine] = solution(incoming, 3)
+        epochs, counts = np.unique(tables[engine]['TIME'], return_counts=True)
+        np.testing.assert_array_equal(counts, [56, 28, 28])
+    compare_cells(tables['native'], tables['casa'])
+    np.testing.assert_array_equal(tables['native']['TIME'], tables['casa']['TIME'])
+
+    incompatible = args.work/'incompatible.EP'
+    copytree(products['casa'], incompatible)
+    with opened(incompatible, True) as table:
+        info = table.info()
+        info['subType'] = 'GSPLINE'
+        table.putinfo(info)
+    tool = factories['native']()
+    assert tool.setvi(True, True) and tool.open(str(args.work/'three-native.ms'))
+    try:
+        cache = args.work/'three-native-cache'
+        assert tool.setsolve('EP', '0s', str(incompatible), cfcache=str(cache), append=True)
+        assert tool.setmodel(str(args.model))
+        assert result(tool.solve) == (False, ('RuntimeError', 'Error in Calibrater::solve.'))
+    finally:
+        assert tool.close()
+    with opened(incompatible) as table, opened(products['casa']) as original:
+        assert table.info()['subType'] == 'GSPLINE' and table.nrows() == original.nrows()
+        np.testing.assert_array_equal(table.getcol('GAIN'), original.getcol('GAIN'))
+    print('append epochs and incompatible destination matched', flush=True)
+
+
 def compare_predictions(args, products):
     from casatools import imager as casa_imager
     from casars.tools import imager as native_imager
@@ -105,6 +151,10 @@ def setup_cases(args, factories):
         tool = factory()
         assert tool.setvi(old=True, quiet=True) and tool.open(str(dataset))
         try:
+            missing = args.work/f'without-model-{engine}.EP'
+            assert tool.setsolve('EP', '1s', str(missing), cfcache=str(cache))
+            assert result(tool.solve) == (False, ('RuntimeError', 'Error in Calibrater::solve.'))
+            assert not missing.exists() and list(tool.returndict()['solve_tables']) == []
             for index, options in enumerate(cases):
                 kwargs = dict(type='EP', table=str(args.work/'setup.EP'), cfcache=str(cache)) | options
                 ready = result(tool.setsolve, **kwargs)
@@ -150,18 +200,12 @@ def run(args):
             if not args.reference_only:
                 assert results['native'][:2] == results['casa'][:2]
                 same_record(results['native'][2], results['casa'][2])
-                for column in SOLUTION_COLUMNS:
-                    expected, actual = (tables[label][column] for label in ('casa', 'native'))
-                    if column == 'GAIN':
-                        np.testing.assert_allclose(actual, expected, rtol=1e-3, atol=1e-7)
-                    elif column == 'TIME':
-                        np.testing.assert_allclose(actual, expected, rtol=0., atol=1e-4)
-                    else:
-                        np.testing.assert_array_equal(actual, expected, err_msg=column)
+                compare_cells(tables['native'], tables['casa'])
                 for engine, cells in tables.items():
                     compare_reader(products[engine], cells)
                 if name == 'three':
                     compare_predictions(args, products)
+                    compare_append(args, products, factories)
             print(name, interval, epochs, 'reference' if args.reference_only else 'matched',
                   flush=True)
 
