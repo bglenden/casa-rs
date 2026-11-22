@@ -341,6 +341,14 @@ impl CorrelationSelection {
         })
     }
 
+    pub(super) fn has_active_products(&self) -> bool {
+        self.unknown_clip_expression.is_some()
+            || self.by_description.iter().any(|selection| match selection {
+                SelectedCorrelations::Stored(planes) => !planes.is_empty(),
+                SelectedCorrelations::Clip(projections) => !projections.is_empty(),
+            })
+    }
+
     pub(super) fn clip_metric(&self) -> Option<ClipMetric> {
         self.clip_metric
     }
@@ -551,6 +559,15 @@ impl TfcropCorrelations {
             .get(ddid as usize)
             .and_then(Option::as_ref)
             .map_or(&[], |products| products.extension_planes.as_slice())
+    }
+
+    pub(super) fn has_setup(&self) -> bool {
+        self.unknown_product.is_some()
+            || self
+                .by_description
+                .iter()
+                .flatten()
+                .any(|products| !products.fits.is_empty() || !products.extension_planes.is_empty())
     }
 }
 

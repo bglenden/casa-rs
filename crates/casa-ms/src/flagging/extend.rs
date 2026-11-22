@@ -49,6 +49,7 @@ pub(super) fn apply(
     if let Some(reason) = invalid {
         tracing::warn!("Cannot create agent Extend: {reason}");
         tracing::error!("There is no agent to run in list");
+        changed.agent_skipped = true;
         return Ok(changed);
     }
     let timed =

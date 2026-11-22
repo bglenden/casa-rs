@@ -13,14 +13,21 @@ use casa_types::quanta::{Quantity, Unit};
 use super::super::command_values::{Assignments, parse_assignments};
 use super::super::shadow;
 
-pub(super) fn read(task: &TaskInvocation<'_>) -> Result<Vec<Assignments>, TaskFailure> {
-    let buffer = task.value("tbuff");
-    let padded = match buffer {
+pub(crate) fn tbuff_active(task: &TaskInvocation<'_>) -> bool {
+    match task.value("tbuff") {
         Some(ParameterValue::Float(seconds)) => *seconds != 0.0,
         Some(ParameterValue::Integer(seconds)) => *seconds != 0,
+        Some(ParameterValue::String(text)) => {
+            text.parse::<f64>().is_ok_and(|seconds| seconds != 0.0)
+        }
         Some(ParameterValue::Array(values)) => !values.is_empty(),
         _ => false,
-    };
+    }
+}
+
+pub(super) fn read(task: &TaskInvocation<'_>) -> Result<Vec<Assignments>, TaskFailure> {
+    let buffer = task.value("tbuff");
+    let padded = tbuff_active(task);
     let padding = padding(buffer)?;
     let (lines, from_file) = match task.value("inpfile") {
         Some(ParameterValue::String(line)) if padded && !Path::new(line).is_file() => {
@@ -135,6 +142,7 @@ fn padding(input: Option<&ParameterValue>) -> Result<Option<[f64; 2]>, TaskFailu
     let numeric = |value: &ParameterValue| match value {
         ParameterValue::Float(seconds) => Ok(*seconds),
         ParameterValue::Integer(seconds) => Ok(*seconds as f64),
+        ParameterValue::String(text) => text.parse::<f64>().map_err(|_| error()),
         _ => Err(error()),
     };
     match input {
@@ -187,29 +195,40 @@ fn pad_timerange(values: &mut Assignments, [before, after]: [f64; 2]) -> Result<
 }
 
 pub(super) fn command_line(values: &Assignments, reason: &str) -> String {
+    render_command_line(values, Some(reason))
+}
+
+pub(super) fn command_line_without_reason(values: &Assignments) -> String {
+    render_command_line(values, None)
+}
+
+fn render_command_line(values: &Assignments, reason: Option<&str>) -> String {
     let render = |key: &str, value: &ParameterValue| match value {
         ParameterValue::String(text) => format!("{key}='{}'", text.trim_matches('\'')),
         value => format!("{key}={}", python_repr(value)),
     };
-    let replacement = ParameterValue::String(reason.to_owned());
+    let replacement = reason.map(|text| ParameterValue::String(text.to_owned()));
     let mut arguments = values
         .iter()
+        .filter(|(key, _)| reason.is_some() || key.as_str() != "reason")
         .map(|(key, value)| {
             if let Some(spelling) = values.spelling(key) {
                 return format!("{key}={spelling}");
             }
-            render(
-                key,
-                if key == "reason" && !reason.is_empty() {
-                    &replacement
-                } else {
-                    value
-                },
-            )
+            let rendered_value = match replacement.as_ref() {
+                Some(replacement) if key == "reason" && !reason.unwrap_or_default().is_empty() => {
+                    replacement
+                }
+                _ => value,
+            };
+            render(key, rendered_value)
         })
         .collect::<Vec<_>>();
-    if !reason.is_empty() && values.get("reason").is_none() {
-        arguments.push(render("reason", &replacement));
+    if let (Some(text), Some(replacement)) = (reason, replacement.as_ref())
+        && !text.is_empty()
+        && values.get("reason").is_none()
+    {
+        arguments.push(render("reason", replacement));
     }
     arguments.join(" ")
 }

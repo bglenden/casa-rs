@@ -59,6 +59,7 @@ mod correlation;
 mod elevation;
 mod extend;
 mod geometry;
+mod program;
 mod shadow;
 mod summary;
 
@@ -67,8 +68,9 @@ use clip::{ClipOptions, apply_clip_array};
 use clip_average::{ChannelBins, bin_members, check_channel_bins};
 use clip_columns::ClipColumns;
 use clip_time::{TimeClip, time_bin_seconds};
-pub use command::append_flag_command;
+pub use command::{append_flag_command, append_flag_commands};
 use correlation::{ClipMetric, ClipProjection, CorrelationSelection, TfcropCorrelations};
+pub use program::flagdata_ms_program;
 pub use shadow::{ShadowAntenna, ShadowOptions};
 mod version_backup;
 mod version_storage;
@@ -568,175 +570,7 @@ fn flagdata_with_persistence(
     if is_calibration_table(ms) {
         return calibration::run(ms, request, persist);
     }
-    let ms_path = display_ms_path(ms);
-    tracing::info!(
-        path = %ms_path,
-        mode = ?request.mode,
-        action = ?request.action,
-        "flagdata started"
-    );
-    // The CASA controller saves the working flags before selection. Typed
-    // callers keep their existing selection-first backup behavior.
-    let early_backup = persist
-        && request.flagbackup
-        && request.casa_row_selection
-        && matches!(
-            request.mode,
-            FlagDataMode::Manual
-                | FlagDataMode::Clip
-                | FlagDataMode::Quack
-                | FlagDataMode::Elevation
-                | FlagDataMode::Extend
-                | FlagDataMode::Shadow
-                | FlagDataMode::Antint
-                | FlagDataMode::Tfcrop
-                | FlagDataMode::Rflag
-        );
-    let mut backup_version = early_backup
-        .then(|| save_next_casa_flag_backup(ms, "flagdata"))
-        .transpose()?;
-    let selection = selected_rows(ms, request)?;
-    let selected_rows = selection.rows;
-    if selected_rows.is_empty() {
-        tracing::warn!(path = %ms_path, mode = ?request.mode, "flagdata selected no rows");
-    }
-    let channel_selections = flagging_channels(ms, request, selection.channel_ranges)?;
-    let correlation = request
-        .correlation
-        .as_deref()
-        .filter(|expression| !expression.is_empty() && !expression.starts_with('\0'))
-        .or_else(|| (request.mode == FlagDataMode::Clip).then_some(""));
-    let auto_correlations = matches!(request.mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag)
-        && request.casa_row_selection;
-    let correlations = match correlation.filter(|_| !auto_correlations) {
-        Some(expression) => {
-            CorrelationSelection::read(ms, request.mode, request.data_column, expression)?
-        }
-        None => None,
-    };
-    if !request.display_column_is_scalar {
-        return Err(FlaggingError::DisplayColumnVector);
-    }
-
-    if request.mode == FlagDataMode::Summary {
-        return summary::report(
-            ms,
-            &selected_rows,
-            channel_selections.as_ref(),
-            correlations.as_ref(),
-            request.summary_options,
-        );
-    }
-
-    // The manual agent filters baselines after full MS selection, including
-    // the rows that supply the default date for a partial time selector.
-    let autocorrelation_rows = if request.autocorr
-        && request.mode == FlagDataMode::Manual
-        && request.action == FlagDataAction::Flag
-    {
-        Some(select_autocorrelations(ms, &selected_rows, &ms_path)?)
-    } else {
-        None
-    };
-    if persist && request.flagbackup && !early_backup && !selected_rows.is_empty() {
-        backup_version = Some(save_next_flag_backup(ms, "flagdata")?);
-    }
-
-    let changes = match request.mode {
-        FlagDataMode::Manual => set_selected_flags(
-            ms,
-            autocorrelation_rows.as_deref().unwrap_or(&selected_rows),
-            channel_selections.as_ref(),
-            correlations.as_ref(),
-            request.action.value(),
-            selected_flag_row_policy(correlations.as_ref(), SelectedFlagRowPolicy::ChangedSamples),
-        )?,
-        FlagDataMode::Clip => apply_clip_flags(
-            ms,
-            &selected_rows,
-            channel_selections.as_ref(),
-            correlations.as_ref(),
-            request,
-            model_factory,
-        )?,
-        FlagDataMode::Quack => apply_quack_flags(
-            ms,
-            &selected_rows,
-            channel_selections.as_ref(),
-            correlations.as_ref(),
-            request,
-        )?,
-        FlagDataMode::Elevation => elevation::apply(
-            ms,
-            &selected_rows,
-            request.elevation_limits_deg,
-            channel_selections.as_ref(),
-            correlations.as_ref(),
-            &ms_path,
-        )?,
-        FlagDataMode::Shadow => shadow::apply(
-            ms,
-            &selected_rows,
-            &request.shadow,
-            channel_selections.as_ref(),
-            correlations.as_ref(),
-            &ms_path,
-        )?,
-        FlagDataMode::Antint => antint::apply(
-            ms,
-            &selected_rows,
-            &request.antint,
-            channel_selections.as_ref(),
-            correlations.as_ref(),
-            &ms_path,
-        )?,
-        FlagDataMode::Tfcrop => apply_tfcrop_flags(
-            ms,
-            &selected_rows,
-            channel_selections.as_ref(),
-            request,
-            model_factory,
-        )?,
-        FlagDataMode::Rflag => apply_rflag_flags(
-            ms,
-            &selected_rows,
-            channel_selections.as_ref(),
-            request,
-            !persist,
-            model_factory,
-        )?,
-        FlagDataMode::Extend => extend::apply(
-            ms,
-            &selected_rows,
-            channel_selections.as_ref(),
-            correlations.as_ref(),
-            request,
-            &ms_path,
-        )?,
-        FlagDataMode::Summary => ChangeSet::default(),
-    };
-
-    if persist && !changes.changed_row_indices.is_empty() {
-        persist_changed_flags(ms, &changes, &ms_path)?;
-    }
-    let thresholds = changes.thresholds;
-    let report = report_after(
-        ms,
-        request,
-        &selected_rows,
-        changes,
-        backup_version,
-        thresholds,
-    )?;
-    tracing::info!(
-        path = %ms_path,
-        mode = ?report.mode,
-        selected_rows = report.selected_rows,
-        changed_rows = report.changed_rows,
-        changed_samples = report.changed_samples,
-        "flagdata completed"
-    );
-    Ok(report)
+    program::run_ms_single(ms, request, persist, model_factory)
 }
 
 fn persist_changed_flags(
@@ -1224,15 +1058,24 @@ fn apply_clip_flags(
     let Some(mut columns) =
         ClipColumns::bind(ms.main_table(), request.data_column, average, models)?
     else {
-        return Ok(ChangeSet::default());
+        return Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        });
     };
     if time_average == Some(None) {
         tracing::warn!("unrecognized timebin disables the clip agent");
-        return Ok(ChangeSet::default());
+        return Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        });
     }
     let Some(outside) = request.clipoutside else {
         tracing::warn!("clipoutside must be a scalar Boolean to start the clip agent");
-        return Ok(ChangeSet::default());
+        return Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        });
     };
     if let Some(widths) = widths {
         check_channel_bins(ms, widths, &path)?;
@@ -1450,11 +1293,19 @@ fn apply_quack_flags(
     let from_start = match request.quackmode {
         QuackMode::Beg | QuackMode::Tail => true,
         QuackMode::End | QuackMode::BeforeEnd => false,
-        QuackMode::Disabled => return Ok(ChangeSet::default()),
+        QuackMode::Disabled => {
+            return Ok(ChangeSet {
+                agent_skipped: true,
+                ..ChangeSet::default()
+            });
+        }
     };
     if request.quackinterval.is_nan() || request.quackinterval <= 0.0 {
         tracing::warn!("quackinterval must be greater than zero to start the quack agent");
-        return Ok(ChangeSet::default());
+        return Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        });
     }
     let table = ms.main_table();
     let mut scan_times = Vec::with_capacity(selected_rows.len());
@@ -1528,10 +1379,17 @@ fn apply_tfcrop_flags(
         .as_deref()
         .filter(|_| public_ms)
         .map(time_bin_seconds);
+    let correlations = public_ms
+        .then(|| TfcropCorrelations::read(ms, request.correlation.as_deref(), column))
+        .transpose()?;
+    let corr_admitted = correlations
+        .as_ref()
+        .is_none_or(TfcropCorrelations::has_setup);
     let options = request.tfcrop.filter(|options| {
         (1..=9).contains(&options.max_pieces)
             && (1..=3).contains(&options.half_window)
             && time_average != Some(None)
+            && corr_admitted
     });
     let widths = request.clip_channel_bins.as_deref().filter(|_| public_ms);
     let average = time_average.flatten().is_some()
@@ -1550,13 +1408,13 @@ fn apply_tfcrop_flags(
     };
     let options =
         options.filter(|_| !request.casa_row_selection || calibration || columns.is_some());
-    if options.is_none() && !request.extendflags {
-        return Ok(ChangeSet::default());
+    if (public_ms && !configures_averaging) || (options.is_none() && !request.extendflags) {
+        return Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        });
     }
-    let correlations = public_ms
-        .then(|| TfcropCorrelations::read(ms, request.correlation.as_deref(), column))
-        .transpose()?;
-    let configures_averaging = configures_averaging && time_average != Some(None);
+    let configures_averaging = configures_averaging && corr_admitted && time_average != Some(None);
     let widths = widths.filter(|_| configures_averaging);
     if let Some(widths) = widths {
         check_channel_bins(ms, widths, &display_ms_path(ms))?;
@@ -1638,7 +1496,7 @@ fn apply_tfcrop_flags(
             &samples,
             fit_flags,
             request.casa_row_selection && channel_selections.is_some() && widths.is_none(),
-            correlations.as_ref(),
+            correlations.as_ref().filter(|_| corr_admitted),
             &mut modified,
         );
     }
@@ -2070,8 +1928,11 @@ fn apply_rflag_flags(
         (None, false)
     };
     let active = active && (!public_ms || columns.is_some());
-    if !active && !request.extendflags {
-        return Ok(ChangeSet::default());
+    if (public_ms && !configures_averaging) || (!active && !request.extendflags) {
+        return Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        });
     }
     let configures_averaging = configures_averaging && corr_admitted && time_average != Some(None);
     let widths = widths.filter(|_| configures_averaging);
@@ -5392,6 +5253,7 @@ struct ChangeSet {
     thresholds: Option<(f64, f64)>,
     rflag_report: Option<RFlagThresholdReport>,
     changed_flag_row_rows: usize,
+    agent_skipped: bool,
 }
 
 #[derive(Clone)]

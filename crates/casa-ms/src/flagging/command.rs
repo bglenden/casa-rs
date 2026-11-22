@@ -16,24 +16,43 @@ pub fn append_flag_command(
     reason: &str,
     applied: bool,
 ) -> Result<(), FlaggingError> {
+    append_flag_commands(ms, &[(command.to_owned(), reason.to_owned())], applied)
+}
+
+/// Append a batch of CASA-style `(command, reason)` entries to FLAG_CMD under
+/// one subtable write lock.
+pub fn append_flag_commands(
+    ms: &Path,
+    entries: &[(String, String)],
+    applied: bool,
+) -> Result<(), FlaggingError> {
     let path = ms.join(SubtableId::FlagCmd.name());
     let fail = |source: TableError| FlaggingError::MutateFlags {
         path: path.display().to_string(),
         reason: format!("append FLAG_CMD: {source}"),
     };
     let mut table = open_staged_subtable_for_write(&path).map_err(fail)?;
-    let mut row = RecordValue::default();
-    for (name, value) in [
-        ("APPLIED", ScalarValue::Bool(applied)),
-        ("COMMAND", ScalarValue::String(command.to_string())),
-        ("REASON", ScalarValue::String(reason.to_string())),
-        ("INTERVAL", ScalarValue::Float64(0.0)),
-        ("TIME", ScalarValue::Float64(0.0)),
-        ("LEVEL", ScalarValue::Int32(0)),
-        ("SEVERITY", ScalarValue::Int32(0)),
-        ("TYPE", ScalarValue::String(String::new())),
-    ] {
-        row.upsert(name, Value::Scalar(value));
+    if entries.is_empty() {
+        return Ok(());
     }
-    table.append_records_in_place(&[row]).map_err(fail)
+    let rows = entries
+        .iter()
+        .map(|(command, reason)| {
+            let mut row = RecordValue::default();
+            for (name, value) in [
+                ("APPLIED", ScalarValue::Bool(applied)),
+                ("COMMAND", ScalarValue::String(command.clone())),
+                ("REASON", ScalarValue::String(reason.clone())),
+                ("INTERVAL", ScalarValue::Float64(0.0)),
+                ("TIME", ScalarValue::Float64(0.0)),
+                ("LEVEL", ScalarValue::Int32(0)),
+                ("SEVERITY", ScalarValue::Int32(0)),
+                ("TYPE", ScalarValue::String(String::new())),
+            ] {
+                row.upsert(name, Value::Scalar(value));
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    table.append_records_in_place(&rows).map_err(fail)
 }

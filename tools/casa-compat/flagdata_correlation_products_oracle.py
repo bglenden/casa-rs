@@ -265,12 +265,11 @@ def compare_refusals(vis):
     assert_preserved(vis, before, auxiliary)
 
     for mode, correlation in (("rflag", "RR"),):
-        try:
-            tasks.flagdata(vis=vis, mode=mode, correlation=correlation)
-        except RuntimeError as error:
-            assert "#978" in str(error)
-        else:
-            raise AssertionError(f"flagdata accepted pending {mode} selector {correlation}")
+        reference, native = "rflag-rr-casa.ms", "rflag-rr-native.ms"
+        for path, module in ((reference, casatasks), (native, tasks)):
+            copytree(vis, path)
+            assert module.flagdata(vis=path, mode=mode, correlation=correlation, flagbackup=False) == {}
+        assert_equal(reference, native)
         assert_preserved(vis, before, auxiliary)
     return 2 * len(cases)
 
@@ -289,7 +288,7 @@ def main():
         refusals = compare_refusals(vis)
     print(f"{products} flag products, three previews, two inactive calls and "
           f"{refusals} paired argument errors compared with CASA, plus three backup "
-          "comparisons and one guarded pending case")
+          "comparisons and paired rflag correlation parity")
 
 
 if __name__ == "__main__":
