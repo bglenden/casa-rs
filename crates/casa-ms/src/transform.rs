@@ -43,6 +43,7 @@ mod channel_average;
 mod convolution;
 mod correlation_metadata;
 mod flag_commands;
+mod hanning;
 mod main_arrays;
 mod multi_ms;
 mod selection_metadata;
@@ -117,6 +118,8 @@ pub struct MsTransformRequest {
 pub struct MsTransformTaskOptions {
     /// Create and fill weight and sigma spectra even when the input has none.
     pub use_weight_spectrum: bool,
+    /// Apply a three-channel Hanning window after selection and averaging.
+    pub hanning: bool,
     /// Active per-selected-SPW widths, or a single width broadcast to each SPW.
     /// When absent, the task uses the scalar width in the request.
     pub channel_widths: Option<Vec<usize>>,
@@ -449,6 +452,7 @@ fn mstransform_staged(
         None => selection_metadata::MainRowOrder::Transform,
     };
     let convolving = matches!(order, selection_metadata::MainRowOrder::SingleDish);
+    let hanning = options.hanning && operation.is_none();
     let started_at = Instant::now();
     tracing::info!(
         input_ms = %request.input_ms.display(),
@@ -726,7 +730,7 @@ fn mstransform_staged(
         first_selected_row,
         grammar,
         options.use_weight_spectrum,
-        (task_average, averaging_time, convolving),
+        (task_average, averaging_time, convolving || hanning),
         &visibility,
     )
     .map_err(|source| MsTransformError::MutateMeasurementSet {
@@ -1142,6 +1146,22 @@ fn mstransform_staged(
             } else {
                 transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
             };
+            let hanning_noise = if let (true, Some(noise)) = (hanning, noise.as_ref()) {
+                let statistics = hanning::statistics(
+                    noise,
+                    spectra_cells,
+                    &flags,
+                    bins,
+                    averages.as_ref(),
+                    &visibility,
+                    averaging_time,
+                )
+                .map_err(mutation_error)?;
+                hanning::flag(&mut transformed_flags);
+                Some(statistics)
+            } else {
+                None
+            };
             if let Some(original) = input_row_flags.as_mut().and_then(Iterator::next) {
                 let flag_row = match &transformed_flags {
                     ArrayValue::Bool(flags) if averaged_polarization => {
@@ -1187,6 +1207,10 @@ fn mstransform_staged(
                         }
                     })?
                 };
+                if hanning && column.source != OptionalMainColumn::LagData {
+                    hanning::smooth(&mut transformed, transformed_flags.shape())
+                        .map_err(mutation_error)?;
+                }
                 if let Some(operation) = &mut operation {
                     let ArrayValue::Bool(output_flags) = &mut transformed_flags else {
                         return Err(MsTransformError::Spectrum(
@@ -1306,7 +1330,8 @@ fn mstransform_staged(
                 &request.output_ms,
                 row_index,
             )?;
-            let averaged_noise = averages.map(|averages| averages.statistics());
+            let averaged_noise =
+                hanning_noise.or_else(|| averages.map(|averages| averages.statistics()));
             if let Some(weights) = baseline_weights
                 && let Some((original_weight, sigma)) = &noise
             {
@@ -1405,7 +1430,12 @@ fn mstransform_staged(
             } else {
                 (weight, sigma, None)
             };
-            if grammar == RowGrammar::Transform && !task_average && !averaging_time && !convolving {
+            if grammar == RowGrammar::Transform
+                && !task_average
+                && !averaging_time
+                && !convolving
+                && !hanning
+            {
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
             }
             push_f32_array_row(
