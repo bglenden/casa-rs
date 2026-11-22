@@ -3509,7 +3509,7 @@ impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
     }
 }
 
-fn make_paged_mask_record(relative_mask_path: &str, shape: &[usize]) -> RecordValue {
+pub(crate) fn make_paged_mask_record(relative_mask_path: &str, shape: &[usize]) -> RecordValue {
     let mut record = RecordValue::default();
     record.upsert(
         REGION_TYPE_FIELD,

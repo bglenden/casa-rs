@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use casa_coordinates::CoordinateSystem;
+use casa_lattices::Lattice;
+use casa_tables::TableUseLock;
 use casa_types::{ArrayD, Complex32, Complex64};
 use ndarray::{IxDyn, Slice};
 
@@ -27,8 +29,8 @@ use crate::image_expr::{
 };
 use crate::image_expr_lel::broadcast_array;
 use crate::{
-    AnyPagedImage, ImageError, ImageExprBuilder, ImageExpression, ImageInterface, ImagePixel,
-    PagedImage,
+    AnyPagedImage, ComponentListImage, ImageError, ImageExprBuilder, ImageExpression,
+    ImageInterface, ImagePixel, PagedImage,
 };
 
 enum MaskSource<T: ImageExprValue> {
@@ -782,6 +784,15 @@ fn open_path_with_mask_name(
             true,
         ));
     }
+    if ComponentListImage::recognizes_native(path) {
+        if mask_name.is_some() {
+            return Err(ImageError::CasaSelection(format!(
+                "ImageExprParse: {} is not a PagedImage",
+                path.display(),
+            )));
+        }
+        return open_component_mask_source(path).map(|source| Operand::Real(source, true));
+    }
 
     match open_mask_image(path)? {
         AnyPagedImage::Float64(_) | AnyPagedImage::Complex64(_) if mask_name.is_some() => {
@@ -805,6 +816,29 @@ fn open_path_with_mask_name(
             .map(|image| Operand::Complex(image, true))
         }
     }
+}
+
+fn open_component_mask_source(path: &Path) -> Result<MaskSource<f64>, ImageError> {
+    let in_use = TableUseLock::acquire_readonly(path)?;
+    let (source, _) = ComponentListImage::open_native(path, true)?;
+    let meta = ImageExprMeta::from_image(&source)?;
+    let has_mask = source.has_pixel_mask();
+    let source = Arc::new((source, in_use));
+    let mask = has_mask.then(|| {
+        let source = Arc::clone(&source);
+        Arc::new(move |start: &[usize], count: &[usize], stride: &[usize]| {
+            source.0.get_mask_slice(start, count, stride)
+        }) as crate::image_expr::OwnedMaskReader
+    });
+    let expression = ImageExprBuilder::from_section_readers(
+        meta,
+        Arc::new(move |start, count, stride| {
+            Ok(source.0.get_slice(start, count, stride)?.mapv(f64::from))
+        }),
+        mask,
+    )
+    .compile()?;
+    Ok(MaskSource::Sections(Box::new(expression)))
 }
 
 fn open_mask_image(path: &Path) -> Result<AnyPagedImage, ImageError> {
