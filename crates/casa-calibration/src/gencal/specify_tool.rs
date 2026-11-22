@@ -106,7 +106,7 @@ fn prior_type(kind: &str) -> Option<GencalType> {
         kind if kind.contains("GC") && kind.contains("EFF") => GencalType::Gceff,
         kind if kind.contains("GC") => GencalType::Gc,
         kind if kind.contains("EFF") => GencalType::Eff,
-        kind if kind.contains("TEC") => GencalType::Tecim,
+        "TECIM" => GencalType::Tecim,
         _ => return None,
     })
 }

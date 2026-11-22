@@ -78,8 +78,11 @@ def derived_prescriptions(work, engines, vla_source, gaincurves):
     tec_image = work/'ionosphere.tec'
     make_image(tec_image, epoch)
     prescribe(work, engines, ionosphere_ms, 'ionosphere', [
-        (dict(caltype='TEC', parameter=[600.], infile=str(tec_image)), ok),
+        (dict(caltype='TECIM', parameter=[600.], infile=str(tec_image)), ok),
     ], compare=lambda native, casa: compare_tec(native, casa)[0])
+    prescribe(work, engines, ionosphere_ms, 'ionosphere-mode-error', [
+        (dict(caltype='TEC', parameter=[600.], infile=str(tec_image)), ERROR),
+    ], product=False)
     if vla_source is None:
         return
     vla = work/'vla.ms'
@@ -148,9 +151,15 @@ def main():
         (dict(caltype='opacity', spw='1', antenna='A1', parameter=[.05]), ok),
         (dict(caltype='opac', spw='1', antenna='A1', parameter=[.03]), ok),
     ])
-    prescribe(work, engines, vis, 'default-parameters', [
+    defaults = prescribe(work, engines, vis, 'default-parameters', [
         (dict(caltype='G', infile=str(work/'absent'), uniform=True), ok),
     ])
+    native = native_calibrater()
+    assert native.open(str(vis), addcorr=False, addmodel=False)
+    wildcard = work/'wildcard-native.cal'
+    assert native.specifycal(str(wildcard), antenna='*', spw='*', caltype='G') and native.close()
+    assert compare_tables(wildcard, defaults['casa']) == 0.
+    compare_readers({'casa': defaults['casa'], 'native': wildcard})
     prescribe(work, engines, vis, 'tuple-publishes', [
         (dict(caltype='amp', parameter=(2.,)), TUPLE_ERROR),
     ])
@@ -171,7 +180,7 @@ def main():
         ('time-none', {'time': None}, (False, ('TypeError', 'argument _time must be a string'))),
         ('uniform-int', {'uniform': 1}, (False, ('TypeError',
                          "in method 'calibrater_specifycal', argument 10 of type 'bool'"))),
-        ('tec-missing', {'caltype': 'TEC', 'infile': str(work/'absent')}, ERROR),
+        ('tec-missing', {'caltype': 'TECIM', 'infile': str(work/'absent')}, ERROR),
     ]:
         prescribe(work, engines, vis, name, [(dict(caltype='amp') | options, expectation)], product=False)
     derived_prescriptions(work, engines, args.vla_source, args.gaincurves)

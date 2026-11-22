@@ -10124,3 +10124,11 @@ returns normally when `minblperant=99` blocks the fit. Casa-rs completes the
 fit using its shared solver and checks the resulting table and activity
 against the successful CASA modern-iterator solve. Legacy return records
 retain their original layout without `solvestats`.
+
+## Direct FRINGE can terminate Python with an empty mask and default windows
+
+In CASA 6.7.6.14, use the [direct FRINGE fixture](../tools/casa-compat/calibrater_fringe_tool_oracle.py), set a valid reference antenna, and call `setsolve(type='FRINGE')` with the default empty `paramactive`, `delaywindow`, and `ratewindow` lists. On unflagged selected data, `solve()` can terminate Python. The same empty mask with explicit search bounds raises `Error in Calibrater::solve.`. Casa-rs reports that error for a nonempty gather that requires global refinement with no active parameters. An empty gather still completes and reports zero attempts. [#2012](https://github.com/bglenden/casa-rs/pull/2012)
+
+## Direct specifycal aborts for literal wildcard selectors
+
+With CASA 6.7.6.14, call `calibrater.specifycal(caltable='gain.cal', caltype='amp', parameter=[1.5], antenna='*')` on the [direct fixture](../tools/casa-compat/calibrater_specifycal_tool_oracle.py). CASA passes antenna index `-1` into a parameter-array slice and aborts. A literal `spw='*'` likewise reaches an invalid spectral-window index. Casa-rs broadcasts over the requested wildcard axes and verifies the resulting table against CASA's empty-selector form, which expresses the same prescription. [#2015](https://github.com/bglenden/casa-rs/pull/2015)
