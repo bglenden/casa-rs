@@ -75,8 +75,12 @@ pub(crate) enum PriorCalibrationMode {
     },
     CrossHand {
         share_input_flags: bool,
+        parang_terms: usize,
     },
-    PositionAngle,
+    PositionAngle {
+        share_input_flags: bool,
+        parang_terms: usize,
+    },
 }
 
 pub(crate) fn load_preapplied_rows(
@@ -148,12 +152,24 @@ pub(crate) fn load_preapplied_rows(
             PriorSolveBoundary::Leakage { parang_terms },
             share_input_flags,
         ),
-        PriorCalibrationMode::CrossHand { share_input_flags } => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::CrossHand, share_input_flags)
-        }
-        PriorCalibrationMode::PositionAngle => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::PositionAngle, true)
-        }
+        PriorCalibrationMode::CrossHand {
+            share_input_flags,
+            parang_terms,
+        } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::CrossHand { parang_terms },
+            share_input_flags,
+        ),
+        PriorCalibrationMode::PositionAngle {
+            share_input_flags,
+            parang_terms,
+        } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::PositionAngle { parang_terms },
+            share_input_flags,
+        ),
     };
     preapplied
         .map(Some)

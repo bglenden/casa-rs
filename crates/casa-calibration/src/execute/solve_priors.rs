@@ -22,8 +22,8 @@ pub(crate) enum PriorSolveBoundary {
     GainSpline,
     ScalarGain,
     Leakage { parang_terms: usize },
-    CrossHand,
-    PositionAngle,
+    CrossHand { parang_terms: usize },
+    PositionAngle { parang_terms: usize },
 }
 
 impl PriorSolveBoundary {
@@ -35,8 +35,8 @@ impl PriorSolveBoundary {
             Self::Accor | Self::Gain | Self::GainSpline => "G Jones",
             Self::ScalarGain => "T Jones",
             Self::Leakage { .. } => "D Jones",
-            Self::CrossHand => "X Jones",
-            Self::PositionAngle => "PosAng Jones",
+            Self::CrossHand { .. } => "X Jones",
+            Self::PositionAngle { .. } => "PosAng Jones",
         })
     }
 }
@@ -226,11 +226,13 @@ pub(crate) fn evaluate_solve_priors(
     let deferred_data = matches!(
         boundary,
         PriorSolveBoundary::Leakage { .. }
-            | PriorSolveBoundary::CrossHand
-            | PriorSolveBoundary::PositionAngle
+            | PriorSolveBoundary::CrossHand { .. }
+            | PriorSolveBoundary::PositionAngle { .. }
     );
     let parang_terms = match boundary {
-        PriorSolveBoundary::Leakage { parang_terms } => parang_terms,
+        PriorSolveBoundary::Leakage { parang_terms }
+        | PriorSolveBoundary::CrossHand { parang_terms }
+        | PriorSolveBoundary::PositionAngle { parang_terms } => parang_terms,
         _ => usize::from(plan.parang),
     };
     let polarized = deferred_data || has_polarization_matrix(&plan);
