@@ -68,27 +68,30 @@ const METHODS: &[Method] = &[
         )
     },
     method("done", &[], R::Bool, S::Implemented),
-    method(
-        "fluxscale",
-        &[
-            param("tablein", K::Any, D::Required),
-            param("reference", K::Any, D::Empty),
-            param("tableout", K::Text, D::Text("")),
-            param("transfer", K::Any, D::Empty),
-            param("listfile", K::Text, D::Text("")),
-            param("append", K::Bool, D::Bool(false)),
-            param("refspwmap", K::Ints, D::Ints(&[-1])),
-            param("gainthreshold", K::Float, D::Float(-1.0)),
-            param("antenna", K::Text, D::Text("")),
-            param("timerange", K::Text, D::Text("")),
-            param("scan", K::Text, D::Text("")),
-            param("incremental", K::Bool, D::Bool(false)),
-            param("fitorder", K::Int, D::Int(1)),
-            param("display", K::Bool, D::Bool(false)),
-        ],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "fluxscale",
+            &[
+                param("tablein", K::Any, D::Required),
+                param("reference", K::Any, D::Empty),
+                param("tableout", K::Text, D::Text("")),
+                param("transfer", K::Any, D::Empty),
+                param("listfile", K::Text, D::Text("")),
+                param("append", K::Bool, D::Bool(false)),
+                param("refspwmap", K::Ints, D::Ints(&[-1])),
+                param("gainthreshold", K::Float, D::Float(-1.0)),
+                param("antenna", K::Text, D::Text("")),
+                param("timerange", K::Text, D::Text("")),
+                param("scan", K::Text, D::Text("")),
+                param("incremental", K::Bool, D::Bool(false)),
+                param("fitorder", K::Int, D::Int(1)),
+                param("display", K::Bool, D::Bool(false)),
+            ],
+            R::Record,
+            S::Implemented,
+        )
+    },
     Method {
         mutating: true,
         ..method(
@@ -386,22 +389,25 @@ const METHODS: &[Method] = &[
         mutating: true,
         ..method("solve", &[], R::Bool, S::Partial)
     },
-    method(
-        "specifycal",
-        &[
-            param("caltable", K::Text, D::Text("")),
-            param("time", K::Text, D::Text("")),
-            param("spw", K::Text, D::Text("")),
-            param("antenna", K::Text, D::Text("")),
-            param("pol", K::Text, D::Text("")),
-            param("caltype", K::Text, D::Text("")),
-            param("parameter", K::Floats, D::Floats(&[1.0])),
-            param("infile", K::Text, D::Text("")),
-            param("uniform", K::Bool, D::Bool(true)),
-        ],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "specifycal",
+            &[
+                param("caltable", K::Text, D::Text("")),
+                param("time", K::Text, D::Text("")),
+                param("spw", K::Text, D::Text("")),
+                param("antenna", K::Text, D::Text("")),
+                param("pol", K::Text, D::Text("")),
+                param("caltype", K::Text, D::Text("")),
+                param("parameter", K::Floats, D::Floats(&[1.0])),
+                param("infile", K::Text, D::Text("")),
+                param("uniform", K::Bool, D::Bool(true)),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
     method("state", &[], R::Bool, S::Implemented),
     Method {
         mutating: true,
