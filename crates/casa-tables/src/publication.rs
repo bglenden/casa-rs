@@ -10,6 +10,11 @@ use crate::{TableError, TableWriteLock};
 mod copy_tree;
 pub use copy_tree::copy_locked_table_tree;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod bound_file;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use bound_file::{StagedDirectoryFile, open_regular_directory_entry};
+
 /// Keep a directory's filesystem identity alive without listing its entries.
 ///
 /// # Errors
@@ -28,38 +33,6 @@ pub fn open_directory_identity(path: &Path) -> std::io::Result<std::fs::File> {
         .read(true)
         .custom_flags(flags)
         .open(path)
-}
-
-/// Replace a file with a staged file in the same already opened directory.
-///
-/// The file names are single entries within the directory. Publication stays
-/// bound to that directory even if its pathname is concurrently replaced.
-///
-/// # Errors
-/// Returns an I/O error for an invalid entry name or failed rename.
-#[cfg(unix)]
-pub fn replace_file_in_directory(
-    directory: &std::fs::File,
-    staged: &std::ffi::OsStr,
-    target: &std::ffi::OsStr,
-) -> std::io::Result<()> {
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-
-    let entry_name = |entry: &std::ffi::OsStr| {
-        if Path::new(entry).file_name() != Some(entry) {
-            return Err(std::io::Error::other("expected a directory entry name"));
-        }
-        CString::new(entry.as_bytes()).map_err(|_| std::io::Error::other("entry name contains NUL"))
-    };
-    let staged = entry_name(staged)?;
-    let target = entry_name(target)?;
-    let directory = directory.as_raw_fd();
-    // SAFETY: the descriptor stays open and both C strings are valid here.
-    let status = unsafe { libc::renameat(directory, staged.as_ptr(), directory, target.as_ptr()) };
-    (status == 0)
-        .then_some(())
-        .ok_or_else(std::io::Error::last_os_error)
 }
 
 /// Lock an existing casacore table and its physical subtables for replacement.
@@ -191,45 +164,43 @@ pub fn rename_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
 ///
 /// When either path does not exist, they are on different filesystems, or
 /// the filesystem cannot exchange directories.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let staging = CString::new(staging.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::other("staging path contains NUL"))?;
     let target = CString::new(target.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::other("target path contains NUL"))?;
-    // SAFETY: both C strings remain valid for the duration of this atomic call.
-    let status = unsafe { libc::renamex_np(staging.as_ptr(), target.as_ptr(), libc::RENAME_SWAP) };
-    (status == 0)
-        .then_some(())
-        .ok_or_else(std::io::Error::last_os_error)
+    exchange_paths_at(libc::AT_FDCWD, &staging, &target)
 }
 
-/// Exchange the directories at `staging` and `target` in one atomic call
-/// (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`):
-/// afterwards each path names what the other did, and no moment exists at
-/// which `target` is missing. Elsewhere it is `std::io::ErrorKind::Unsupported`.
-///
-/// # Errors
-///
-/// When either path does not exist, they are on different filesystems, or
-/// the filesystem cannot exchange directories.
-#[cfg(target_os = "linux")]
-pub fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
-    use std::os::unix::ffi::OsStrExt;
-    let staging = CString::new(staging.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::other("staging path contains NUL"))?;
-    let target = CString::new(target.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::other("target path contains NUL"))?;
-    // SAFETY: both C strings remain valid for the duration of this atomic call.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn exchange_paths_at(
+    directory: i32,
+    staging: &std::ffi::CStr,
+    target: &std::ffi::CStr,
+) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    // SAFETY: both C strings and the directory descriptor stay valid.
     let status = unsafe {
         libc::syscall(
             libc::SYS_renameat2,
-            libc::AT_FDCWD,
+            directory,
             staging.as_ptr(),
-            libc::AT_FDCWD,
+            directory,
             target.as_ptr(),
             libc::RENAME_EXCHANGE,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    // SAFETY: both C strings and the directory descriptor stay valid.
+    let status = unsafe {
+        libc::renameatx_np(
+            directory,
+            staging.as_ptr(),
+            directory,
+            target.as_ptr(),
+            libc::RENAME_SWAP,
         )
     };
     (status == 0)

@@ -74,7 +74,9 @@ fn decode_vector(values: &[Json]) -> Result<ArrayValue, ImageError> {
     }
     if let Some(items) = values
         .iter()
-        .map(decode_complex)
+        .map(|item| {
+            decode_complex(item).or_else(|| item.as_f64().map(|real| Complex64::new(real, 0.)))
+        })
         .collect::<Option<Vec<_>>>()
     {
         return Ok(ArrayValue::Complex64(Array1::from_vec(items).into_dyn()));

@@ -8134,6 +8134,33 @@ metadata incomplete. The native transform uses the available final channel
 as the last footprint and writes metadata for all five selected channels
 (#1618).
 
+## Spectral-window combination can ignore weights when exposures differ
+
+For simultaneous overlapping windows with unequal EXPOSURE, CASA 6.7.6.14
+`mstransform(combinespws=True)` reports that it will use spectral weights.
+`MSTransformManager::combineCubeOfData` modifies a local coefficient during
+its first pass but reloads the original geometric coefficient when it adds
+the visibility. With equal bandwidth and observed weights of 4/9 and 4,
+overlapping real samples 16 and 1000 yield 508. The native task applies
+the matching observed weights in the sum and normalization, giving 901.6.
+Both tasks record the mean input exposure (#1618).
+
+## Combining spectral windows can copy the last row's FLAG_ROW
+
+With simultaneous windows whose row flags disagree, CASA 6.7.6.14
+`mstransform(combinespws=True)` can mark a usable combined row flagged
+when the last input row is flagged. The loop in
+`MSTransformManager::mapAndAverageVector` never increments its count,
+so the branch that combines flags with AND is skipped. The native task
+marks the row flagged only if all participating rows are flagged (#1618).
+
+When spectral windows are combined, CASA also leaves the input's category
+flags undefined and can leave an association to a deleted spectral window.
+The native task preserves category flags through the channel mapping and
+removes associations between windows that no longer exist separately. It
+refuses to combine distinct LAG_DATA cells when requested, since a merged
+frequency window has no mapping for their independent lag grids (#1618).
+
 ## Selecting defined spectra or several channel ranges can crash channel averaging
 
 Both CASA 6.7.6.14 tasks can terminate with SIGSEGV and leave an incomplete MS
@@ -8319,8 +8346,9 @@ Open `expression.im` by relative name, then change into a directory that
 also contains `expression.im`. CASA 6.7.6.14 writes `setmiscinfo` to the
 second directory while the tool still reads from the first expression. An
 external replacement at the original pathname can also receive the write.
-Casa-rs updates the original directory after a working-directory change
-and refuses the write if the directory or its expression has changed.
+Casa-rs updates the original directory after a working-directory change.
+It refuses a stale write when the directory or manifest was replaced,
+even if the replacement contains the same expression.
 See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
 ### Writing some saved-expression metadata can break reopen or lose values

@@ -13271,8 +13271,7 @@
             "provider": {"field": "combinespws"},
             "python": {"name": "combinespws"},
             "presentation": {"label": "Combine SPWs", "group": "Spectral", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "chanaverage",

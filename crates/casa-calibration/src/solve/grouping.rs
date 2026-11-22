@@ -966,7 +966,7 @@ impl SolveAccumulator {
             self.receptor_accumulations
                 .resize_with(graph_count, HashMap::new);
         }
-        self.observe_metadata(row, options.input_rows == SolveInputRows::Fringe);
+        self.observe_metadata(row, options.input_rows.is_fringe());
         let legacy_spline = options.gain_type == GainType::GSpline;
         let shared_flags = (legacy_spline || !options.correlation_dependent_flags)
             .then(|| samples::channel_flags(samples));

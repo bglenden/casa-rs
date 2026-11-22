@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
 use casa_ms::MeasurementSet;
-use casa_types::Complex32;
+use casa_types::{Complex32, Complex64};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -19,16 +19,18 @@ use self::fit::FitOptions;
 use self::multiband::MultibandSearch;
 use self::search::{FringePeak, FringeSearch, GridSpec};
 use super::grouping::{
-    PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions,
+    PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows,
     build_solve_groups, correlation_types_for_ddid, selected_channels,
 };
 use super::kernel::SolutionRow;
 use super::writer::{combined_window_frequency, write_new_style_gain_caltable};
 use super::{
-    GainSolveError, GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType, SolvedGains,
+    GainSolveError, GainSolveMode, GainSolveModelSource, GainSolveReport, GainSolveRequest,
+    GainType, SolvedGains,
 };
 use crate::CalibrationOutputMode;
 use crate::session::prepare_calibration_solve;
+use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 
 /// Search and refinement controls for the VLBI fringe solver.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -62,11 +64,25 @@ pub enum FringeCorrelation {
     Parallel,
 }
 
+pub(crate) struct ToolOptions<'a> {
+    pub(crate) active_phase: bool,
+    pub(crate) legacy_iterator: bool,
+    pub(crate) activity: Option<&'a mut ToolSolveActivity>,
+}
+
+#[derive(Clone, Copy)]
+struct GroupFit {
+    controls: FringeControls,
+    solve_mode: GainSolveMode,
+    active_phase: bool,
+}
+
 pub(crate) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     controls: FringeControls,
     mode: CalibrationOutputMode,
+    tool: Option<ToolOptions<'_>>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let input = crate::timing::Phase::start("fringe_select_read");
     super::validate_solve_interval(request.solve_interval)?;
@@ -88,7 +104,11 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            input_rows: super::grouping::SolveInputRows::Fringe,
+            input_rows: tool.as_ref().map_or(SolveInputRows::Fringe, |tool| {
+                SolveInputRows::FringeTool {
+                    legacy: tool.legacy_iterator,
+                }
+            }),
             gain_type: GainType::K,
             model_source: request.model_source,
             point_stokes: if request.model_source == GainSolveModelSource::PointSource {
@@ -126,9 +146,25 @@ pub(crate) fn solve(
     };
     let references =
         std::iter::once(context.refant_id).chain(context.refant_alternates.iter().copied());
-    if context.refant_id < 0 {
+    if tool.is_none() && context.refant_id < 0 {
         return Err(error("No valid reference antenna supplied"));
     }
+    let mut stats = if tool.is_some() {
+        Some(SolveStatsBuilder::new(
+            8,
+            super::spectral_window_ids(ms)?,
+            &context.available_antennas,
+        ))
+    } else {
+        None
+    };
+    let fit = GroupFit {
+        controls,
+        solve_mode: tool
+            .as_ref()
+            .map_or(GainSolveMode::AmplitudePhase, |_| request.solve_mode),
+        active_phase: tool.as_ref().is_none_or(|tool| tool.active_phase),
+    };
     let combined_frequency = (request.combine.spectral_windows
         && solved.selected_data.spectral_windows.len() > 1)
         .then(|| combined_window_frequency(ms, &solved))
@@ -136,6 +172,40 @@ pub(crate) fn solve(
     drop(input);
     let fitting = crate::timing::Phase::start("fringe_fit");
     for group in groups.into_values() {
+        if let Some(stats) = &mut stats {
+            let legacy = tool.as_ref().is_some_and(|tool| tool.legacy_iterator);
+            let mut stages = IntervalStages::of(&group, 0);
+            let parallel_data = stages.with_data.iter().any(|antennas| !antennas.is_empty());
+            if !legacy && controls.correlation_combination != FringeCorrelation::Separate {
+                // Both statistic slots describe the original parallel-hand
+                // coverage after the correlation layer changes the weights.
+                if let [first, second] = stages.with_data.as_mut_slice() {
+                    first.append(second);
+                    second.clone_from(first);
+                }
+                stages.attempted_interval = Some(match controls.correlation_combination {
+                    FringeCorrelation::Stokes => correlations::has_stokes_data(&group, &windows),
+                    _ => parallel_data,
+                });
+            }
+            let attempted = stages.attempted_interval.unwrap_or(false);
+            stats.interval(&stages);
+            if !attempted {
+                continue;
+            }
+            if legacy {
+                return Err(error("Attempt to call un-implemented selfSolveOne()"));
+            }
+            if context.refant_id < 0 || !parallel_data {
+                return Err(error("No valid reference antenna supplied"));
+            }
+            if controls.global_solve
+                && !fit.active_phase
+                && !controls.active_parameters.contains(&true)
+            {
+                return Err(error("No parameters specified!"));
+            }
+        }
         let antennas = &context.available_antennas;
         let rows = solve_group(
             &group,
@@ -144,11 +214,14 @@ pub(crate) fn solve(
             references.clone(),
             combined_frequency,
             request.min_snr,
-            controls,
+            fit,
         )?;
         if !rows.is_empty() {
             solved.attempted_spw_ids.insert(group.spw_id);
             solved.rows.extend(rows);
+            if let Some(stats) = &mut stats {
+                stats.record_success(group.spw_id, true);
+            }
         }
     }
     reference::connect_intervals(
@@ -156,7 +229,15 @@ pub(crate) fn solve(
         &mut solved.rows,
         context.available_antennas.len(),
         references,
+        matches!(
+            request.refant,
+            super::RefAntSelector::Expression { strict: true, .. }
+        ),
     )?;
+    if let Some(stats) = stats {
+        stats.track_activity(tool.and_then(|tool| tool.activity));
+        solved.solve_stats = stats.finish();
+    }
     drop(fitting);
     write_new_style_gain_caltable(ms, request, &solved, mode, "Fringe Jones")
 }
@@ -232,8 +313,13 @@ fn solve_group(
     mut references: impl Iterator<Item = i32>,
     combined_frequency: Option<f64>,
     min_snr: f32,
-    controls: FringeControls,
+    fit: GroupFit,
 ) -> Result<Vec<SolutionRow>, GainSolveError> {
+    let GroupFit {
+        controls,
+        solve_mode,
+        active_phase,
+    } = fit;
     if !group.delay_spectra().any(|spectrum| {
         spectrum.parallel_hand && spectrum.channels().any(|(_, weight)| weight > 0.)
     }) {
@@ -256,6 +342,7 @@ fn solve_group(
             Vec::new(),
         ];
     }
+    enforce_visibility_mode(&mut hands, solve_mode);
     if hands.iter().all(Vec::is_empty) {
         return Ok(Vec::new());
     }
@@ -319,14 +406,18 @@ fn solve_group(
             first_time_seconds: axis.first_time,
             first_frequency_hz: axis.first_frequency,
             active_parameters: [
-                true,
+                active_phase,
                 controls.active_parameters[0],
                 controls.active_parameters[1],
                 controls.active_parameters[2],
             ],
             iterations: controls.iterations,
         };
-        if controls.global_solve && fit::refine(baselines, estimates, &options).is_none() {
+        // CASA only transcribes a global fit when phase occupies a slot.
+        if controls.global_solve
+            && active_phase
+            && fit::refine(baselines, estimates, &options).is_none()
+        {
             for (antenna, estimate) in estimates.iter_mut().enumerate() {
                 if antenna != reference
                     && let Some(estimate) = estimate
@@ -353,17 +444,32 @@ fn solve_group(
     }
     Ok(antennas
         .iter()
-        .map(|&antenna| {
-            make_row(
-                antenna,
-                reference,
-                group,
-                &estimates,
-                reference_time,
-                controls,
-            )
-        })
+        .map(|&antenna| make_row(antenna, reference, group, &estimates, reference_time, fit))
         .collect())
+}
+
+fn enforce_visibility_mode(hands: &mut [Vec<FringeBaseline>; 2], mode: GainSolveMode) {
+    if mode == GainSolveMode::AmplitudePhase {
+        return;
+    }
+    for sample in hands
+        .iter_mut()
+        .flatten()
+        .flat_map(|baseline| &mut baseline.samples)
+    {
+        let amplitude = sample.visibility.norm();
+        if mode == GainSolveMode::Phase && amplitude > 0. {
+            sample.visibility /= amplitude;
+            sample.weight *= amplitude.powi(2);
+        } else if mode == GainSolveMode::Amplitude && amplitude > 0. {
+            // CASA divides by the rounded single-precision phasor using a
+            // widened complex division. The remaining phase enters its SNR.
+            let phase = sample.visibility / amplitude;
+            let widen = |value: Complex32| Complex64::new(f64::from(value.re), f64::from(value.im));
+            let corrected = widen(sample.visibility) / widen(phase);
+            sample.visibility = Complex32::new(corrected.re as f32, corrected.im as f32);
+        }
+    }
 }
 
 enum GroupSearch {
@@ -551,8 +657,9 @@ fn make_row(
     group: &SolveAccumulator,
     estimates: &[Vec<Option<FringePeak>>; 2],
     time_seconds: f64,
-    controls: FringeControls,
+    fit: GroupFit,
 ) -> SolutionRow {
+    let controls = fit.controls;
     let mut row = SolutionRow {
         time_seconds,
         field_id: group.field_id,
@@ -560,7 +667,7 @@ fn make_row(
         antenna_id: antenna,
         scan_number: group.scan_number(),
         observation_id: group.observation_id,
-        refant_id: reference as i32,
+        refant_id: -1,
         gains: Vec::with_capacity(8),
         flags: Vec::with_capacity(8),
         param_errors: vec![1.; 8],
@@ -585,6 +692,7 @@ fn make_row(
         ];
         row.snrs.extend(active.map(|active| {
             if !controls.global_solve
+                || !fit.active_phase
                 || active
                 || antenna as usize == reference
                 || peak.is_some_and(|peak| !peak.active)
