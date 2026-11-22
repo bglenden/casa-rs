@@ -69,7 +69,7 @@ impl LeakageSolveKind {
         }
     }
 
-    fn channelized(self) -> bool {
+    pub(crate) fn channelized(self) -> bool {
         matches!(
             self,
             Self::Df

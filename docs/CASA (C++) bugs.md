@@ -7495,6 +7495,16 @@ Source: `synthesis/MeasurementComponents/SolvableVisCal.cc`,
 `tools/casa-compat/calibration_gencal_opacity_oracle.py` runs the CASA probes
 in isolated processes and checks native table preservation (#32).
 
+## Legacy iterative leakage solving can terminate the Python process
+
+CASA 6.7.6.14 accepts `calibrater.setsolve(type='D')` and `type='Dgen'`
+with `setvi(old=True)`, then segfaults in `solve()` on the circular-feed
+cross-hand fixture. The direct leakage oracle verifies that setup succeeds
+before each isolated CASA crash. Casa-rs uses its native iterative solver
+on the same selected dataset, and verifies the solutions, flags and formal
+errors against CASA's working VI2 path. CASA's `DLLS` and `DfLLS` solvers
+produce tables in both iterators.
+
 ## Fluxscale history can contain uninitialized object identifiers
 
 `MSHistoryHandler::addMessage` writes every required HISTORY column except

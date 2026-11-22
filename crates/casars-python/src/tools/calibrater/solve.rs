@@ -353,7 +353,7 @@ impl super::PyCalibrater {
                     .set_tool_leakage(
                         &family,
                         standard.gain(GainType::G),
-                        bandpass_frequency(frequency)?,
+                        frequency,
                         mode,
                         invalid_mode,
                     )

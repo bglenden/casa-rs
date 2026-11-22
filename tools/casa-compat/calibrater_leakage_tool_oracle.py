@@ -95,6 +95,20 @@ def assert_legacy_abort(work, vis, kind):
     print(kind, 'pinned VI1 terminates after successful setup', flush=True)
 
 
+def verify_correlation_flag_guard(work, engines, vis):
+    for name, factory in engines.items():
+        tool = factory()
+        output = work/f'unsupported-corrdep-{name}.cal'
+        assert tool.open(str(vis), addcorr=False, addmodel=False)
+        assert tool.selectvis(field='0') and tool.setapply(type='P')
+        assert tool.setsolve('D', 'inf', str(output), refant='A0')
+        assert tool.setcorrdepflags(True)
+        assert result(tool.solve) == (False, ('RuntimeError', 'Error in Calibrater::solve.'))
+        assert list(tool.returndict()['solve_tables']) == []
+        assert not output.exists() and tool.close()
+    print('iterative-correlation-flag-guard passed', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -129,12 +143,17 @@ def main():
             case(work, engines, vis, f'{kind}-legacy-native', kind, legacy=True, casa_modern=True)
         case(work, engines, vis, 'Df-binned', 'Df', selection={'spw': '0:2~6'},
              options={'t': 'inf,2chan', 'preavg': 0.})
+        case(work, engines, vis, 'D-frequency-suffix', 'D', options={'t': 'inf,bogus'})
         case(work, engines, vis, 'Df-baseline-cut', 'Df', options={'minblperant': 20}, no_product=True)
         case(work, engines, vis, 'D-snr-cut', 'D', options={'minsnr': 1e20})
         case(work, engines, vis, 'D-norm-mean', 'D', options={'solnorm': True})
         case(work, engines, vis, 'Df-norm-median', 'Df', options={'solnorm': True, 'normtype': 'median'})
         case(work, engines, vis, 'D-amplitude-only', 'D', options={'apmode': 'A'})
         case(work, engines, vis, 'Df-phase-only', 'Df', options={'phaseonly': True})
+        for kind in ('Dgen', 'Dfgen'):
+            case(work, engines, vis, f'{kind}-phase-no-convergence', kind, no_product=True,
+                 options={'apmode': 'P'})
+        verify_correlation_flag_guard(work, engines, vis)
         outliers = work/'outliers.ms'
         copy_ms(vis, outliers)
         with opened(outliers, True) as table:

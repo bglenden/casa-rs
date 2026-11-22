@@ -24,18 +24,30 @@ impl CalibraterLifecycle {
     /// and priors are read from the retained equation when the fit runs.
     ///
     /// # Errors
-    /// Returns an error without an open MS or for an unknown leakage type.
+    /// Returns an error without an open MS, for an unknown leakage type or
+    /// when a channelized solver's frequency interval is invalid.
     pub fn set_tool_leakage(
         &mut self,
         name: &str,
         standard: GainSolveRequest,
-        frequency_interval: Option<BandpassFrequencyInterval>,
+        frequency: Option<&str>,
         output_mode: CalibrationOutputMode,
         invalid_mode: bool,
     ) -> Result<(), CalibraterLifecycleError> {
         let kind = leakage_kind(name).ok_or_else(|| {
             CalibraterLifecycleError::LeakageSolve(format!("unknown type {name}"))
         })?;
+        let frequency_interval = if kind.channelized() {
+            BandpassFrequencyInterval::from_casa(frequency.unwrap_or_default()).ok_or_else(
+                || {
+                    CalibraterLifecycleError::LeakageSolve(
+                        "invalid frequency solution interval".into(),
+                    )
+                },
+            )?
+        } else {
+            None
+        };
         let request = LeakageSolveRequest {
             output: standard.output_table,
             selection: standard.selection,
