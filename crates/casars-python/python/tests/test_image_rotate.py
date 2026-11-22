@@ -177,25 +177,36 @@ def test_rotate_half_turn_excludes_pixels_outside_the_exact_source_grid(method):
         source.done()
 
 
-def test_rotate_normalizes_obtuse_direction_transform(casa):
+@pytest.mark.parametrize("angle", [120, 180, 240])
+def test_obtuse_rotation_preserves_direction_transform(casa, angle):
+    products = []
     for api in (casa, tools):
         source = api.image()
         product = coords = None
         try:
             assert source.fromarray(pixels=_ramp())
-            product = source.rotate(pa="120deg", replicate=True)
+            product = source.rotate(pa=f"{angle}deg", replicate=True)
             coords = product.coordsys()
+            increments = coords.increment()["numeric"]
+            matrix = coords.lineartransform(type="direction")
+            # PC and CDELT can change signs together. Check the complete
+            # transform against the requested rotation.
             np.testing.assert_allclose(
-                coords.lineartransform(type="direction"),
-                -_plane_rotation(np.deg2rad(120)), atol=2e-14,
+                np.diag(increments) @ matrix,
+                np.diag([-1., 1.]) @ _plane_rotation(np.deg2rad(angle)), atol=2e-14,
             )
-            np.testing.assert_allclose(coords.increment()["numeric"], [1., -1.], atol=2e-14)
+            products.append((increments, matrix, product.getchunk(), product.getchunk(getmask=True)))
         finally:
             if coords is not None:
                 coords.done()
             if product is not None:
                 product.done()
             source.done()
+    native, reference = products[1], products[0]
+    np.testing.assert_allclose(native[0], reference[0], atol=2e-14)
+    np.testing.assert_allclose(native[1], reference[1], atol=2e-14)
+    np.testing.assert_allclose(native[2], reference[2], atol=2e-6)
+    np.testing.assert_array_equal(native[3], reference[3])
 
 
 @pytest.mark.parametrize("linear", [False, True])

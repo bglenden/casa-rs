@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::CoordinateSystem;
+use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_types::quanta::{Unit, unit::normalize_casa_unit_name};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -89,7 +89,16 @@ impl PyImageTool {
                     Some(base) => base,
                     None => {
                         let base = result.n_world_axes();
-                        result.add_coordinate(placement.model(&record).map_err(raised)?);
+                        // Sampled one-axis models retain their live reference
+                        // until the image is reopened. Restoring their saved
+                        // records here would rebase the selected coordinate.
+                        let model = coordinates.coordinate(index);
+                        let model = match model {
+                            CoordinateModel::Spectral(spectral) if !spectral.has_linear_mapping() => model.clone(),
+                            CoordinateModel::Tabular(_) => model.clone(),
+                            _ => placement.model(&record).map_err(raised)?,
+                        };
+                        result.add_coordinate(model);
                         offsets[index] = Some(base);
                         base
                     }

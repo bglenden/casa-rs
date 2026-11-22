@@ -226,6 +226,26 @@ def test_rebin_sampled_frequencies_survive_native_reopen(casa, tmp_path, limits,
             assert reopened.done()
 
 
+def test_rebin_selected_tabular_axis_keeps_live_reference(casa):
+    for api in (casa, tools):
+        system, source = api.coordsys(), api.image()
+        product = full = selected = None
+        try:
+            assert system.newcoordsys(tabular=True)
+            assert system.settabular(pixel=np.arange(7.), world=[3., 4., 10., 14., 64., 80., 90.])
+            assert source.fromarray(pixels=np.arange(7, dtype=np.float32), csys=system.torecord())
+            product = source.rebin("", [3])
+            np.testing.assert_array_equal(product.getchunk(), [1., 4., 6.])
+            full, selected = product.coordsys(), product.coordsys([0])
+            for coordinate in (full, selected):
+                assert coordinate.referencepixel()["numeric"][0] == pytest.approx(-1 / 3)
+                assert coordinate.toworld([1.])["numeric"][0] == pytest.approx(20.5)
+        finally:
+            for tool in (selected, full, product, source, system):
+                if tool is not None:
+                    tool.done()
+
+
 @pytest.mark.parametrize("form", ["inline", "file"])
 @pytest.mark.parametrize("case", ["single", "off_image", "off_plane", "range", "corr"])
 def test_rebin_crtf_admission_classifies_regions_after_clipping(casa, tmp_path, form, case):
