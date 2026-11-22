@@ -83,6 +83,7 @@ pub fn compile_image_tool_expression(
 struct ResolvedOperand {
     name: String,
     path: PathBuf,
+    entry: PathBuf,
     mask: Option<String>,
 }
 
@@ -129,6 +130,13 @@ impl<'a> ImageToolExpressionInputs<'a> {
     /// Paths of the images supplying expression values or masks.
     pub fn paths(&self) -> impl ExactSizeIterator<Item = &Path> {
         self.operands.iter().map(|operand| operand.path.as_path())
+    }
+
+    /// Resolved paths and the directory entries used to reach them.
+    pub fn paths_and_entries(&self) -> impl ExactSizeIterator<Item = (&Path, &Path)> {
+        self.operands
+            .iter()
+            .map(|operand| (operand.path.as_path(), operand.entry.as_path()))
     }
 
     /// Compile the expression against these resolved operands.
@@ -375,13 +383,18 @@ fn resolve_named_operands(names: Vec<String>) -> Result<Vec<ResolvedOperand>, Im
 }
 
 fn resolve_named_operand(base: &Path, name: String) -> Result<ResolvedOperand, ImageError> {
-    let (path, mask) = operand_path(base, &name).ok_or_else(|| ImageError::CasaSelection(format!(
+    let (entry, mask) = operand_path(base, &name).ok_or_else(|| ImageError::CasaSelection(format!(
         "Input mask specification is incorrect: ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"
     )))?;
-    let path = path
+    let path = entry
         .canonicalize()
         .map_err(|error| ImageError::Io(error.to_string()))?;
-    Ok(ResolvedOperand { name, path, mask })
+    Ok(ResolvedOperand {
+        name,
+        path,
+        entry,
+        mask,
+    })
 }
 
 fn open_operands(

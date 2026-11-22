@@ -44,6 +44,18 @@ impl<T: ImagePixel> TempImage<T> {
         Self::with_expression(expression, Some(name))
     }
 
+    /// Borrow the captured graph behind a named saved expression.
+    pub fn saved_expression(&self) -> Option<&ImageExpression<T>>
+    where
+        T: ImageExprValue,
+    {
+        let source = self.read_only.as_ref()?;
+        if source.name.is_none() || source.image_type != "ImageExpr" {
+            return None;
+        }
+        source.source.as_any()?.downcast_ref()
+    }
+
     fn with_expression(
         expression: ImageExpression<T>,
         name: Option<PathBuf>,

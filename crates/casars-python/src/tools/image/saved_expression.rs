@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_images::analysis::{ImageToolExpressionInputs, ImageToolPixelExpression};
 use casa_images::expr_file::{ToolExpressionManifest, is_image_expr, read_tool_manifest};
 use casa_images::{ImageExpression, TempImage, image_expr::ImageExprValue};
+use casa_tables::lexical_absolute;
 use casa_types::{Complex32, RecordValue};
 use pyo3::prelude::*;
 
@@ -13,6 +15,7 @@ use super::attachment::AttachedImage;
 use super::handle::{ImageHandle, Storage, raised};
 
 mod manifest;
+mod rename;
 pub(super) use manifest::SavedExpressionDirectory;
 
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
@@ -21,7 +24,7 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
     let (captured, manifest) = SavedExpressionDirectory::open(path, root.clone())?;
     let initial = PendingExpression::from_manifest(root, manifest, &directory)?;
     let mut graph = CapturedGraph::default();
-    let (pixels, single_precision) = graph.compile(initial, &directory)?;
+    let (pixels, single_precision, misc) = graph.compile(initial, &directory)?;
     captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
@@ -30,10 +33,11 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
                     .convert_pixels(|value| value as f32)
                     .map_err(raised)?,
                 path,
+                misc,
             )?)
         }
         ImageToolPixelExpression::Real(expression) => {
-            ImageHandle::Double(expression_storage(expression, path)?)
+            ImageHandle::Double(expression_storage(expression, path, misc)?)
         }
         ImageToolPixelExpression::Complex(expression) if single_precision => {
             ImageHandle::Complex(expression_storage(
@@ -41,10 +45,11 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
                     .convert_pixels(|value| Complex32::new(value.re as f32, value.im as f32))
                     .map_err(raised)?,
                 path,
+                misc,
             )?)
         }
         ImageToolPixelExpression::Complex(expression) => {
-            ImageHandle::DComplex(expression_storage(expression, path)?)
+            ImageHandle::DComplex(expression_storage(expression, path, misc)?)
         }
         ImageToolPixelExpression::Boolean(_) => unreachable!("saved image geometry is numeric"),
     };
@@ -57,6 +62,7 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
 struct CapturedGraph {
     paths: Vec<PathBuf>,
     seen_paths: HashSet<PathBuf>,
+    links: HashSet<PathBuf>,
     retained: Vec<AttachedImage>,
 }
 
@@ -65,17 +71,20 @@ impl CapturedGraph {
         &mut self,
         root: PendingExpression,
         directory: &Path,
-    ) -> PyResult<(ImageToolPixelExpression, bool)> {
+    ) -> PyResult<(ImageToolPixelExpression, bool, Option<RecordValue>)> {
         let mut active = HashSet::from([root.path.clone()]);
         let mut pending = vec![root];
         let mut compiled = HashMap::new();
         while let Some(frame) = pending.last_mut() {
-            if let Some(path) = frame.next_path() {
+            if let Some((path, entry)) = frame.next_path() {
                 if active.contains(path) {
                     return Err(raised(format!(
                         "Cycle in saved image expression at {}",
                         path.display()
                     )));
+                }
+                if entry != path {
+                    self.retain_operand_aliases(entry)?;
                 }
                 if !self.seen_paths.insert(path.to_path_buf()) {
                     continue;
@@ -93,15 +102,45 @@ impl CapturedGraph {
                 }
             } else {
                 let frame = pending.pop().expect("checked for an expression frame");
-                let result = frame.compile(&compiled)?;
+                let (pixels, single) = frame.compile(&compiled)?;
+                let misc = frame.manifest.misc_info().map_err(raised)?;
                 if pending.is_empty() {
-                    return Ok(result);
+                    return Ok((pixels, single, misc));
                 }
+                let pixels = match misc {
+                    Some(misc) => replace_misc_info(pixels, misc),
+                    None => pixels,
+                };
                 active.remove(&frame.path);
-                compiled.insert(frame.path, result);
+                compiled.insert(frame.path, (pixels, single));
             }
         }
         unreachable!("completed graph returns its root");
+    }
+
+    fn retain_operand_aliases(&mut self, entry: &Path) -> PyResult<()> {
+        self.paths.push(lexical_absolute(entry));
+        let mut routes = vec![entry.to_path_buf()];
+        while let Some(route) = routes.pop() {
+            for prefix in route.ancestors() {
+                if !prefix
+                    .symlink_metadata()
+                    .is_ok_and(|entry| entry.is_symlink())
+                {
+                    continue;
+                }
+                let (Some(parent), Some(name)) = (prefix.parent(), prefix.file_name()) else {
+                    continue;
+                };
+                let parent = parent.canonicalize().map_err(raised)?;
+                let link = parent.join(name);
+                if self.links.insert(link.clone()) {
+                    routes.push(parent.join(fs::read_link(&link).map_err(raised)?));
+                    self.paths.push(link);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -139,24 +178,21 @@ impl PendingExpression {
         })
     }
 
-    fn next_path(&mut self) -> Option<&Path> {
-        let path = self.inputs.paths().nth(self.next)?;
+    fn next_path(&mut self) -> Option<(&Path, &Path)> {
+        let paths = self.inputs.paths_and_entries().nth(self.next)?;
         self.next += 1;
-        Some(path)
+        Some(paths)
     }
 
     fn compile(
         &self,
         compiled: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
     ) -> PyResult<(ImageToolPixelExpression, bool)> {
-        let (mut pixels, single) = self
+        let (pixels, single) = self
             .inputs
             .compile_with_saved_operands(compiled)
             .map_err(raised)?;
         super::imagecalc::check_geometry(&pixels, self.inputs.paths().len() != 0)?;
-        if let Some(misc) = self.manifest.misc_info().map_err(raised)? {
-            pixels = replace_misc_info(pixels, misc);
-        }
         Ok((pixels, single))
     }
 }
@@ -179,9 +215,14 @@ fn replace_misc_info(
 fn expression_storage<T: ImageExprValue>(
     expression: ImageExpression<T>,
     path: &Path,
+    misc: Option<RecordValue>,
 ) -> PyResult<Storage<T>> {
     let record = expression.coordinate_record();
-    let image = TempImage::from_saved_expression(expression, path.to_path_buf()).map_err(raised)?;
+    let mut image =
+        TempImage::from_saved_expression(expression, path.to_path_buf()).map_err(raised)?;
+    if let Some(misc) = misc {
+        image.set_misc_info(misc).map_err(raised)?;
+    }
     Ok(Storage::Temp {
         image: Box::new(image),
         record,

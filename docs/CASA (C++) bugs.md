@@ -8365,6 +8365,31 @@ Casa-rs stores wider integers without truncation in the same JSON fields,
 which both implementations can read. See
 [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
+### Renaming a saved expression can move a replacement or erase an operand
+
+Open a named saved expression and move its directory outside the image
+tool. If another expression is then created at the old pathname, CASA
+6.7.6.14 renames and opens the replacement. A relative name can also
+point at a different directory after `chdir`. Casa-rs preserves the
+captured directory and rejects an external replacement.
+
+Rename a saved expression with `overwrite=True` to the native table
+it reads, or to its own containing directory. CASA can replace the
+operand before segfaulting or delete the containing directory before
+reporting a move error. Casa-rs refuses overlapping destinations and
+moves that would remove a captured operand's pathname, including an
+alias stored inside the expression directory. This includes an alias
+reached through another alias to the expression directory. CASA can
+move the directory and then fail to reopen its operand, leaving the old
+pathname absent.
+
+If `imageexpr.json` links to `../manifest.json`, moving the image under a
+different parent can make the link resolve to a different manifest.
+CASA accepts the move and attaches the replacement's metadata. Casa-rs
+preserves the referent and restores the original directory entries if
+the move would switch to a different manifest with the same expression.
+See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values
