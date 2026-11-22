@@ -6390,6 +6390,10 @@ oracle checks the CASA product, the native return, and retained intervals.
 The direct polynomial setter rejects degrees below -1. CASA 6.7.6.14 can
 abort in `solve` while constructing a negative-sized coefficient array.
 
+Configuring an existing BPOLY output with `append=False` deletes it
+immediately in CASA 6.7.6.14. If the subsequent fit raises, the earlier
+table is gone. Casa-rs keeps that table until a new solution replaces it.
+
 ## BPOLY reads a second channel from a singleton selection
 
 - Date noted: 2026-11-18
