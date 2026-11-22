@@ -1266,6 +1266,18 @@ def _present_listcal(report: Mapping[str, Any]) -> None:
 
 
 def _call_sdatmcor(values: dict[str, Any]) -> None:
+    if "datacolumn" in values:
+        column = values["datacolumn"]
+        if column is None:
+            messages = ["unallowed value None", "null value not allowed"]
+        elif not isinstance(column, str):
+            messages = ["must be of cStr type"]
+        elif column not in ("data", "float_data", "corrected"):
+            messages = [f"unallowed value {column}"]
+        else:
+            messages = []
+        if messages:
+            raise AssertionError(str({"datacolumn": messages}))
     if isinstance(values.get("gainfactor"), dict):
         values["gainfactor"] = {str(key): item for key, item in values["gainfactor"].items()}
     try:
