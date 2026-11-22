@@ -17,6 +17,7 @@
 mod batch_trial;
 mod delay;
 pub(crate) mod grouping;
+pub(crate) mod gspline;
 pub(crate) mod kernel;
 mod model;
 mod trace;
@@ -54,6 +55,9 @@ pub enum GainType {
     /// Shared cross-hand delay in nanoseconds.
     #[serde(rename = "KCROSS")]
     KCross,
+    /// Time-domain cubic-spline gains per receptor.
+    #[serde(rename = "GSPLINE")]
+    GSpline,
 }
 
 impl GainType {
@@ -63,6 +67,7 @@ impl GainType {
             Self::T => "T Jones",
             Self::K => "K Jones",
             Self::KCross => "Kcross Jones",
+            Self::GSpline => "GSPLINE",
         }
     }
 
@@ -70,13 +75,34 @@ impl GainType {
     /// for both for T.
     pub(crate) fn polarizations(self) -> usize {
         match self {
-            Self::G | Self::K | Self::KCross => 2,
+            Self::G | Self::K | Self::KCross | Self::GSpline => 2,
             Self::T => 1,
         }
     }
 
     fn is_delay(self) -> bool {
         matches!(self, Self::K | Self::KCross)
+    }
+}
+
+/// Controls for the GSPLINE mode of gaincal.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GainSplineControls {
+    /// Requested interval between spline knots, in seconds.
+    pub splinetime: f64,
+    /// Number of points in each phase-unwrapping median.
+    pub npointaver: i64,
+    /// Phase difference that identifies a wrap, in degrees.
+    pub phasewrap: f64,
+}
+
+impl Default for GainSplineControls {
+    fn default() -> Self {
+        Self {
+            splinetime: 3600.,
+            npointaver: 3,
+            phasewrap: 180.,
+        }
     }
 }
 
@@ -419,6 +445,9 @@ pub(crate) fn solve_gain(
     request: &GainSolveRequest,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GainSolveReport, GainSolveError> {
+    if request.gain_type == GainType::GSpline {
+        return gspline::solve(ms, request, GainSplineControls::default(), mode);
+    }
     let solved = solve_gain_rows(ms, request)?;
     write_gain_caltable(ms, request, &solved, mode)
 }

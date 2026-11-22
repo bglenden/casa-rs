@@ -5,7 +5,7 @@
 //! should be CASA-compatible on disk and should yield corrected visibilities
 //! close to CASA's own `bandpass` when applied after the same prior gains.
 
-mod bpoly;
+pub(crate) mod bpoly;
 mod metadata;
 pub(crate) use metadata::{
     bin_widths as solution_frequency_bin_widths, write as write_solution_spectral_windows,

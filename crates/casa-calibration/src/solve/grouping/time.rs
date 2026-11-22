@@ -16,6 +16,16 @@ pub(super) struct AveragedBaseline {
     pub(super) start_bits: u64,
 }
 
+impl AveragedBaseline {
+    /// A common interval and centroid for all baselines in the old iterator.
+    pub(super) fn time_bucket_key(self, shared: bool) -> Self {
+        Self {
+            antennas: if shared { (-1, -1) } else { self.antennas },
+            ..self
+        }
+    }
+}
+
 /// A weighted mean of times.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct WeightedTime {

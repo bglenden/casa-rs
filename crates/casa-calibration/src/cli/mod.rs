@@ -402,6 +402,15 @@ fn casa_value(
     result: &CalibrationTaskResult,
 ) -> CasaValue {
     match (surface, result) {
+        ("gaincal", CalibrationTaskResult::SolveGain(report))
+            if report.gain_type == crate::GainType::GSpline =>
+        {
+            crate::casa_return::polynomial_solve_record(
+                applied,
+                &report.selected_data,
+                &report.output_table,
+            )
+        }
         ("gaincal", CalibrationTaskResult::SolveGain(report)) => solve_record(
             applied,
             &report.selected_data,

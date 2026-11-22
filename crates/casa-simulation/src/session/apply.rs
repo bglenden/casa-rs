@@ -30,7 +30,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use casa_calibration::{
-    CalibrationTableLookup, FrequencyInterpolation, TimeInterpolation, TimeInterpolationOptions,
+    CalibrationTableLookup, FrequencyInterpolation, LegacySplineTable, TimeInterpolation,
+    TimeInterpolationOptions,
 };
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_tables::{Table, TableOptions};
@@ -48,12 +49,10 @@ mod baseline;
 mod matrix;
 #[path = "apply_physical.rs"]
 mod physical;
-#[path = "apply_spline.rs"]
-mod spline;
 
 enum Lookup {
     Sampled(Box<CalibrationTableLookup>),
-    Spline(spline::SplineTable),
+    Spline(LegacySplineTable),
 }
 
 impl Lookup {
@@ -67,14 +66,14 @@ impl Lookup {
     fn has_spectral_window(&self, window: i32) -> bool {
         match self {
             Self::Sampled(table) => table.has_spectral_window(window),
-            Self::Spline(table) => window >= 0 && (window as usize) < table.windows,
+            Self::Spline(table) => window >= 0 && (window as usize) < table.windows(),
         }
     }
 
     fn first_spectral_window(&self) -> Option<i32> {
         match self {
             Self::Sampled(table) => table.first_spectral_window(),
-            Self::Spline(table) => (table.windows > 0).then_some(0),
+            Self::Spline(table) => (table.windows() > 0).then_some(0),
         }
     }
 }
@@ -267,7 +266,7 @@ impl AppliedTable {
             Lookup::Spline(lookup) => {
                 let data = &sm.spectral_windows[scan.spectral_window_id];
                 let centroid = data.centroid_hz();
-                lookup.solution(antenna as i32, scan.field_id, time_s, centroid)
+                lookup.solution(antenna as i32, scan.field_id, time_s, Some(centroid))
             }
         })
     }
@@ -545,7 +544,7 @@ impl Simulator {
             Vec::new()
         };
         let layout = if gspline {
-            spline::SplineTable::layout(path, self.spectral_windows.len())?
+            LegacySplineTable::layout(path, self.spectral_windows.len()).map_err(raised)?
         } else {
             CalibrationTableLookup::layout_for_simulation_on_grids(path, interp, &data_frequencies)
                 .map_err(raised)?
@@ -576,10 +575,9 @@ impl Simulator {
         )
         .map_err(SimulatorError::admission)?;
         let lookup = if gspline {
-            Lookup::Spline(spline::SplineTable::open(
-                path,
-                self.spectral_windows.len(),
-            )?)
+            Lookup::Spline(
+                LegacySplineTable::open(path, self.spectral_windows.len()).map_err(raised)?,
+            )
         } else if baseline {
             Lookup::Sampled(Box::new(
                 CalibrationTableLookup::open_for_baseline_simulation(

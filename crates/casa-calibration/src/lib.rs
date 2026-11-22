@@ -40,6 +40,7 @@ mod gencal;
 mod imaging_memory_test;
 mod initweights;
 mod interpolation;
+mod legacy_spline;
 mod listing;
 mod lookup;
 mod lookup_frequency;
@@ -145,6 +146,7 @@ pub use fluxscale::{
     FluxScaleSpwResult, fluxscale,
 };
 pub use gencal::{AntposInputError, GencalError, GencalReport, GencalRequest, GencalType, gencal};
+pub use legacy_spline::LegacySplineTable;
 pub use lookup::{
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection,
     LOOKUP_KEPT_ROW_BYTES, LOOKUP_LOADING_ROW_BYTES, TimeInterpolation, TimeInterpolationOptions,
@@ -183,8 +185,8 @@ pub use simulated::{
 };
 pub use solve::{
     GainNormalization, GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode,
-    GainSolveModelSource, GainSolveReport, GainSolveRequest, GainSolveRobustness, GainType,
-    RefAntSelector, point_model_stokes,
+    GainSolveModelSource, GainSolveReport, GainSolveRequest, GainSolveRobustness,
+    GainSplineControls, GainType, RefAntSelector, point_model_stokes,
 };
 pub use solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
 pub use stats::{

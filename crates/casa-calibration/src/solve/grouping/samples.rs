@@ -14,7 +14,7 @@ use crate::solve::model::ModelInputs;
 
 use super::{
     AveragedBaseline, GainSolveError, GainSolveMode, SelectedChannels, SelectedSolveRow,
-    SolveAccumulator, SolveSamples, get_i32, median_with_even_mean,
+    SolveAccumulator, SolveSamples, get_i32,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -276,6 +276,36 @@ pub(super) fn rotate_model(
     Ok(Some(point.into_raw_vec_and_offset().0))
 }
 
+/// The median, the mean of the middle two for an even count, as casacore's
+/// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
+/// channel-independent weight.
+pub(in crate::solve) fn median_with_even_mean(values: &mut [f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let middle = values.len() / 2;
+    let even = values.len().is_multiple_of(2);
+    let first = values[0];
+    if values
+        .iter()
+        .all(|value| value.to_bits() == first.to_bits())
+    {
+        return if even { (first + first) / 2.0 } else { first };
+    }
+    let (lower, upper, _) = values.select_nth_unstable_by(middle, f32::total_cmp);
+    let upper = *upper;
+    if even {
+        let lower = lower
+            .iter()
+            .copied()
+            .max_by(f32::total_cmp)
+            .expect("nonempty even lower half");
+        (lower + upper) / 2.0
+    } else {
+        upper
+    }
+}
+
 /// The time averager sees all correlations before G restricts the fit.
 pub(super) fn centroid_weight(
     samples: &SolveSamples<'_>,
@@ -534,6 +564,65 @@ fn average_channels<const POINT: bool, const KEEP_ZERO_DATA: bool>(
         average.model_weight = average.weight * model_channels as f32 / channel_count as f32;
     }
     (average, channel_count > 0)
+}
+
+/// The old GSPLINE iterator divides by the model before frequency averaging.
+/// The row weight uses the squared mean model amplitude over accepted channels.
+pub(super) fn collapse_spline_channels(
+    samples: &SolveSamples<'_>,
+    correlation: usize,
+    channels: &[usize],
+    flags: &[bool],
+    point: Complex32,
+) -> SolveEdgeAccumulation {
+    let mut data = Complex32::default();
+    let mut amplitude = 0.;
+    let mut modeled_channels = 0;
+    let mut count = 0;
+    let promote =
+        |value: Complex32| num_complex::Complex64::new(f64::from(value.re), f64::from(value.im));
+    for &channel in channels {
+        if !flags[channel] {
+            count += 1;
+            let sample = samples.data[[correlation, channel]];
+            if let Some(model) = &samples.model {
+                let model = model[[correlation, channel]];
+                let scale = model.norm();
+                if scale > 0. {
+                    let normalized = promote(sample) / promote(model);
+                    data += Complex32::new(normalized.re as f32, normalized.im as f32);
+                    amplitude += scale;
+                    modeled_channels += 1;
+                }
+            } else {
+                data += sample;
+            }
+        }
+    }
+    if count == 0 {
+        return SolveEdgeAccumulation::default();
+    }
+    let scale = (count as f32).recip();
+    let (normalized, model_power) = if samples.model.is_some() {
+        (
+            data * scale,
+            (amplitude / modeled_channels.max(1) as f32).powi(2),
+        )
+    } else if point.norm_sqr() > 0. {
+        let normalized = promote(data * scale) / promote(point);
+        (
+            Complex32::new(normalized.re as f32, normalized.im as f32),
+            point.norm_sqr(),
+        )
+    } else {
+        return SolveEdgeAccumulation::default();
+    };
+    let weight = samples.weights[[correlation, channels[0]]] * model_power;
+    SolveEdgeAccumulation {
+        weighted_sum: normalized * weight,
+        weight,
+        ..SolveEdgeAccumulation::default()
+    }
 }
 
 /// After frequency averaging, FreqAxisTVI uses the mean of the weights of

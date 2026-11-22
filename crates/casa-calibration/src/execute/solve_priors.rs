@@ -17,6 +17,7 @@ pub(crate) enum PriorSolveBoundary {
     Bandpass,
     Delay,
     Gain,
+    GainSpline,
     ScalarGain,
     Leakage,
     CrossHand,
@@ -28,7 +29,7 @@ impl PriorSolveBoundary {
         viscal_order(match self {
             Self::Bandpass => "B Jones",
             Self::Delay => "K Jones",
-            Self::Gain => "G Jones",
+            Self::Gain | Self::GainSpline => "G Jones",
             Self::ScalarGain => "T Jones",
             Self::Leakage => "D Jones",
             Self::CrossHand => "X Jones",
@@ -214,6 +215,7 @@ pub(crate) fn evaluate_solve_priors(
             | PriorSolveBoundary::PositionAngle
     );
     let polarized = deferred_data || has_polarization_matrix(&plan);
+    let legacy_spline = matches!(boundary, PriorSolveBoundary::GainSpline);
     if !polarized
         && matches!(
             boundary,
@@ -222,15 +224,15 @@ pub(crate) fn evaluate_solve_priors(
     {
         return evaluate_apply_rows(ms, &plan, false).map(Into::into);
     }
-    // VisEquation::collapse2 corrects DATA with earlier terms and corrupts
-    // MODEL_DATA with terms at or after K. This distinction matters even for
-    // diagonal terms because CASA leaves data over a zero model undivided.
+    // The measurement equation corrects DATA with earlier terms and corrupts
+    // MODEL_DATA with the remaining terms. Old spline normalization also
+    // uses the corrupted model amplitude in the scalar solve weights.
     let (data_tables, mut model_tables): (Vec<_>, Vec<_>) =
         std::mem::take(&mut plan.calibration_tables)
             .into_iter()
             .partition(|table| {
                 let subtype = table.summary.table_subtype.as_str();
-                if polarized {
+                if legacy_spline || polarized {
                     return viscal_order(subtype) < boundary.viscal_order();
                 }
                 match subtype {
@@ -239,8 +241,9 @@ pub(crate) fn evaluate_solve_priors(
                     _ => false,
                 }
             });
-    let forward_parang =
-        polarized && plan.parang && viscal_order("P Jones") >= boundary.viscal_order();
+    let forward_parang = (legacy_spline || polarized)
+        && plan.parang
+        && viscal_order("P Jones") >= boundary.viscal_order();
     plan.parang &= !forward_parang;
     plan.calibration_tables = data_tables;
     let data_prior = (deferred_data && (!plan.calibration_tables.is_empty() || plan.parang))
@@ -264,7 +267,7 @@ pub(crate) fn evaluate_solve_priors(
     }
     plan.calibration_tables = model_tables;
     plan.parang = forward_parang;
-    if polarized {
+    if polarized || forward_parang {
         return Ok(PreappliedRows {
             data: rows,
             data_prior,

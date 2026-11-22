@@ -28,7 +28,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
-| gaincal | gaincal | yes | 38 | 38 | 0 | 3 | 4 | 0 |
+| gaincal | gaincal | yes | 38 | 38 | 0 | 0 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 0 | 4 | 0 |
 | getantposalma | getantposalma | yes | 10 | 10 | 0 | 0 | 0 | 0 |
 | getcalmodvla | getcalmodvla | yes | 8 | 8 | 0 | 0 | 0 | 0 |
@@ -823,7 +823,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `splinetime`, `npointaver`, `phasewrap`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 38, in CASA's order: yes
 - Defaults that differ: none

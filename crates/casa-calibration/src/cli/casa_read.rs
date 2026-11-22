@@ -30,9 +30,9 @@ use crate::{
     ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassFrequencyInterval,
     BandpassSolveCombine, BandpassSolveCuts, BandpassType, CalibrationTaskRequest,
     ExecuteApplyTaskRequest, FluxScaleRequest, GainNormalization, GainSolveCombine,
-    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalRequest,
-    GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
-    load_apply_specs_from_callib,
+    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSplineControls, GainType,
+    GencalRequest, GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest,
+    SolveGainTaskRequest, load_apply_specs_from_callib,
 };
 
 /// The request a CASA-named surface makes.
@@ -77,11 +77,23 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
 }
 
 fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
+    let gain_type = gaintype(task)?;
+    let spline = gain_type == GainType::GSpline;
+    let spline_controls = if spline {
+        Some(GainSplineControls {
+            splinetime: task.number("splinetime")?,
+            npointaver: task.integer("npointaver")?,
+            phasewrap: task.number("phasewrap")?,
+        })
+    } else {
+        None
+    };
     let measurement_set = task.path("vis")?;
-    let min_snr = min_snr(task)?;
+    let min_snr = if spline { 0. } else { min_snr(task)? };
     let (model_source, smodel) = model(task, &measurement_set, true)?;
     let reference = task.required_text("refant")?;
     let strict = match task.required_text("refantmode")?.as_str() {
+        _ if spline => false,
         "flex" => false,
         "strict" => true,
         other => return Err(unknown("refantmode", other, "'flex' or 'strict'")),
@@ -90,12 +102,21 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
-        gain_type: gaintype(task)?,
+        gain_type,
+        spline_controls,
         solve_mode: calmode(task)?,
-        solve_interval: solint(task)?,
+        solve_interval: if spline {
+            GainSolveInterval::Infinite
+        } else {
+            solint(task)?
+        },
         preaverage_seconds: task.number("preavg")?,
         correlation_dependent_flags: task.flag("corrdepflags")?,
-        combine: combine(task)?,
+        combine: if spline {
+            GainSolveCombine::default()
+        } else {
+            combine(task)?
+        },
         refant: if reference.is_empty() {
             RefAntSelector::Unspecified
         } else {
@@ -113,9 +134,17 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
             "median" => GainNormalization::Median,
             other => return Err(unknown("normtype", other, "'mean' or 'median'")),
         },
-        robustness: robust_gain_solve(task)?,
+        robustness: if spline {
+            Default::default()
+        } else {
+            robust_gain_solve(task)?
+        },
         min_snr,
-        min_baselines_per_antenna: count(task, "minblperant")?,
+        min_baselines_per_antenna: if spline {
+            0
+        } else {
+            count(task, "minblperant")?
+        },
         smodel,
         measurement_set,
     })
@@ -713,6 +742,7 @@ fn gaintype(task: &TaskInvocation<'_>) -> Result<GainType, TaskFailure> {
         "T" => Ok(GainType::T),
         "K" => Ok(GainType::K),
         "KCROSS" => Ok(GainType::KCross),
+        "GSPLINE" => Ok(GainType::GSpline),
         other => Err(not_yet("gaintype", other)),
     }
 }

@@ -144,7 +144,7 @@ impl CalibrationTableSummary {
     /// - float `FPARAM` support for `K Jones`, `Kcross Jones` and the VLA prior families
     ///   `KAntPos Jones`, `EGainCurve`, `EPowerCurve`, `G EVLASWPOW`, and
     ///   `TOpac`, plus `B TSYS`, `PosAng Jones`, `F Jones` and `Fringe Jones`
-    /// - legacy `BPOLY` bandpass tables
+    /// - legacy `BPOLY` bandpass and `GSPLINE` gain tables
     ///
     /// and carries no error-level validation issues.
     pub fn supported_for_v1_apply(&self) -> bool {
@@ -152,7 +152,7 @@ impl CalibrationTableSummary {
             && (self.parameter_family == CalibrationParameterFamily::Complex
                 || (self.parameter_family == CalibrationParameterFamily::Float
                     && supports_float_apply_subtype(&self.table_subtype))
-                || self.table_subtype == "BPOLY")
+                || matches!(self.table_subtype.as_str(), "BPOLY" | "GSPLINE"))
             && self
                 .issues
                 .iter()

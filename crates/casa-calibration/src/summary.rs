@@ -83,7 +83,7 @@ fn build_summary(path: &Path, table: &Table) -> CalibrationTableSummary {
         parameter_family,
     );
     let coverage = scan_coverage(table, &columns, &mut issues);
-    let spectral_window_ids = if info.sub_type == "BPOLY" {
+    let spectral_window_ids = if matches!(info.sub_type.as_str(), "BPOLY" | "GSPLINE") {
         scan_bpoly_spectral_window_ids(path, &mut issues)
     } else {
         coverage.spw_ids.into_iter().collect()
@@ -125,7 +125,7 @@ fn infer_parameter_family(
     columns: &[String],
     keywords: &CalibrationKeywordSummary,
 ) -> CalibrationParameterFamily {
-    if table_subtype == "BPOLY" {
+    if matches!(table_subtype, "BPOLY" | "GSPLINE") {
         return CalibrationParameterFamily::Unknown;
     }
     match keywords.par_type.as_deref() {
@@ -201,24 +201,25 @@ fn summarize_parameter_column(
     family: CalibrationParameterFamily,
     table_subtype: &str,
 ) -> CalibrationColumnSummary {
-    let parameter_column =
-        if table_subtype == "BPOLY" && columns.iter().any(|column| column == COL_POLY_COEFF_AMP) {
-            Some(COL_POLY_COEFF_AMP.to_string())
-        } else {
-            match family {
-                CalibrationParameterFamily::Complex
-                    if columns.iter().any(|column| column == COL_CPARAM) =>
-                {
-                    Some(COL_CPARAM.to_string())
-                }
-                CalibrationParameterFamily::Float
-                    if columns.iter().any(|column| column == COL_FPARAM) =>
-                {
-                    Some(COL_FPARAM.to_string())
-                }
-                _ => None,
+    let parameter_column = if matches!(table_subtype, "BPOLY" | "GSPLINE")
+        && columns.iter().any(|column| column == COL_POLY_COEFF_AMP)
+    {
+        Some(COL_POLY_COEFF_AMP.to_string())
+    } else {
+        match family {
+            CalibrationParameterFamily::Complex
+                if columns.iter().any(|column| column == COL_CPARAM) =>
+            {
+                Some(COL_CPARAM.to_string())
             }
-        };
+            CalibrationParameterFamily::Float
+                if columns.iter().any(|column| column == COL_FPARAM) =>
+            {
+                Some(COL_FPARAM.to_string())
+            }
+            _ => None,
+        }
+    };
     let parameter_primitive_type = parameter_column
         .as_deref()
         .and_then(|column| table.schema()?.column(column))
@@ -253,8 +254,8 @@ fn validate_shape(
 ) -> Vec<CalibrationValidationIssue> {
     let mut issues = Vec::new();
 
-    if table_subtype == "BPOLY" {
-        return validate_bpoly_shape(path, table_type, columns);
+    if matches!(table_subtype, "BPOLY" | "GSPLINE") {
+        return validate_legacy_polynomial_shape(path, table_type, table_subtype, columns);
     }
 
     if table_type != TABLE_INFO_TYPE {
@@ -379,9 +380,10 @@ fn validate_shape(
     issues
 }
 
-fn validate_bpoly_shape(
+fn validate_legacy_polynomial_shape(
     path: &Path,
     table_type: &str,
+    subtype: &str,
     columns: &[String],
 ) -> Vec<CalibrationValidationIssue> {
     let mut issues = Vec::new();
@@ -393,12 +395,24 @@ fn validate_bpoly_shape(
         ));
     }
 
-    for column in REQUIRED_BPOLY_COLUMNS {
+    let spline = [
+        "N_KNOTS_AMP",
+        "N_KNOTS_PHASE",
+        "SPLINE_KNOTS_AMP",
+        "SPLINE_KNOTS_PHASE",
+        "REF_FREQUENCY",
+    ];
+    let spline = if subtype == "GSPLINE" {
+        &spline[..]
+    } else {
+        &[]
+    };
+    for column in REQUIRED_BPOLY_COLUMNS.iter().chain(spline) {
         if !columns.iter().any(|present| present == column) {
             issues.push(issue(
                 format!("missing-column-{column}"),
                 CalibrationIssueSeverity::Error,
-                format!("missing required BPOLY MAIN column {column}"),
+                format!("missing required {subtype} MAIN column {column}"),
             ));
         }
     }
@@ -408,13 +422,13 @@ fn validate_bpoly_shape(
         issues.push(issue(
             "missing-cal-desc",
             CalibrationIssueSeverity::Error,
-            "missing required CAL_DESC keyword subtable for BPOLY".to_string(),
+            format!("missing required CAL_DESC keyword subtable for {subtype}"),
         ));
     } else if let Err(error) = Table::open(TableOptions::new(&cal_desc_path)) {
         issues.push(issue(
             "failed-open-cal-desc",
             CalibrationIssueSeverity::Error,
-            format!("failed to open CAL_DESC subtable for BPOLY: {error}"),
+            format!("failed to open CAL_DESC subtable for {subtype}: {error}"),
         ));
     }
 
