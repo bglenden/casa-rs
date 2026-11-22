@@ -2,7 +2,9 @@
 //! Single-dish calibration task entry points.
 
 mod application;
+mod edges;
 mod position_switch;
+mod spectrum;
 
 use std::path::{Path, PathBuf};
 
@@ -22,7 +24,7 @@ pub(crate) fn is_sky_subtype(subtype: &str) -> bool {
 
 pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let mode = task.required_text("calmode")?;
-    let generates_table = matches!(mode.as_str(), "ps" | "tsys");
+    let generates_table = matches!(mode.as_str(), "ps" | "tsys" | "otfraster" | "otf");
     let infile = task.input_path("infile")?;
     let outfile = task.text("outfile")?.unwrap_or_default();
     let overwrite = task.flag("overwrite")?;
@@ -50,7 +52,14 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
     }
     if matches!(
         mode.as_str(),
-        "apply" | "ps,apply" | "tsys,apply" | "ps,tsys,apply"
+        "apply"
+            | "ps,apply"
+            | "tsys,apply"
+            | "ps,tsys,apply"
+            | "otfraster,apply"
+            | "otfraster,tsys,apply"
+            | "otf,apply"
+            | "otf,tsys,apply"
     ) {
         return application::run(task, &mode, ms, selection, selected);
     }
@@ -76,6 +85,7 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
     };
     let count = match mode.as_str() {
         "ps" => generate_position_switch(task, &ms, selected, Path::new(&outfile), overwrite)?,
+        "otfraster" | "otf" => generate_edges(task, &ms, selected, Path::new(&outfile), overwrite)?,
         "tsys" => tsys(infile, PathBuf::from(&outfile), overwrite)?,
         _ => {
             return Err(TaskFailure::validation(format!(
@@ -108,6 +118,29 @@ fn generate_position_switch(
     })
 }
 
+fn generate_edges(
+    task: &TaskInvocation<'_>,
+    ms: &MeasurementSet,
+    selected: ResolvedMsSelection,
+    output: &Path,
+    overwrite: bool,
+) -> Result<usize, TaskFailure> {
+    let fraction = check_fraction(task)?;
+    let selection = if task.required_text("calmode")?.starts_with("otfraster") {
+        edges::Selection::Raster {
+            fraction,
+            noff: task.integer("noff")?,
+        }
+    } else {
+        edges::Selection::Otf { fraction }
+    };
+    let rows = selected.row_indices().collect::<Vec<_>>();
+    edges::generate(ms, &rows, output, overwrite, selection).map_err(|error| {
+        tracing::error!(%error, "Single-dish map sky solve failed");
+        TaskFailure::execution("Error in Calibrater::solve.")
+    })
+}
+
 fn selector(task: &TaskInvocation<'_>, key: &str) -> Result<Option<String>, TaskFailure> {
     task.text(key)
         .map(|selector| selector.filter(|text| !text.is_empty()))
@@ -133,7 +166,7 @@ fn tsys(infile: PathBuf, outfile: PathBuf, overwrite: bool) -> Result<usize, Tas
         .map_err(|error| TaskFailure::execution(error.to_string()))
 }
 
-fn check_fraction(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
+fn check_fraction(task: &TaskInvocation<'_>) -> Result<f64, TaskFailure> {
     let fraction = match task.value("fraction") {
         Some(ParameterValue::String(text)) if text.trim().is_empty() => 0.1,
         Some(ParameterValue::String(text)) => {
@@ -174,7 +207,7 @@ fn check_fraction(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
             TaskFailure::validation("Too many edge points. fraction must be < 0.5.").at("fraction"),
         );
     }
-    Ok(())
+    Ok(fraction)
 }
 
 fn invalid_fraction(reason: &str) -> TaskFailure {
