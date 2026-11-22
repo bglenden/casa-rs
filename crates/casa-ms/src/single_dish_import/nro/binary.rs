@@ -75,15 +75,11 @@ impl<'a> Record<'a> {
             .map_err(|_| invalid("text field"))
     }
 
-    pub(super) fn spectrum(self, count: usize, bits: usize, array_scale: f64) -> Vec<f32> {
+    pub(super) fn spectrum(self, count: usize, array_scale: f64) -> Vec<f32> {
         let scale = self.f64(408);
         let offset = self.f64(416);
         if scale == 0. && offset == 0. {
             return vec![0.; count];
-        }
-        if bits != 12 {
-            // The upstream filler decodes packed unsigned 12-bit samples.
-            return vec![(offset * array_scale) as f32; count];
         }
         let values = &self.bytes[SCAN_HEADER_BYTES..];
         let scaled = |code: u16| ((f64::from(code) * scale + offset) * array_scale) as f32;

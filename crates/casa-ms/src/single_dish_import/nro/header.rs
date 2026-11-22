@@ -30,7 +30,6 @@ pub(super) struct Header {
     pub n_beam: usize,
     pub n_windows: usize,
     pub n_channels: usize,
-    pub bits: usize,
     pub record_bytes: usize,
     pub interval: f64,
     pub arrays: [Option<Array>; ARRAYS],
@@ -55,6 +54,9 @@ impl Header {
         let n_channels = positive(record.i32(620), "channel count")?;
         let record_bytes = positive(record.i32(14_936), "scan record length")?;
         let bits = positive(record.i32(14_944), "sample bit width")?;
+        if bits != 12 {
+            return Err(invalid("sample bit width (expected packed 12-bit samples)"));
+        }
         let payload = n_channels
             .checked_mul(bits)
             .ok_or_else(|| invalid("spectrum size"))?
@@ -94,7 +96,6 @@ impl Header {
             n_beam,
             n_windows,
             n_channels,
-            bits,
             record_bytes,
             interval,
             arrays,

@@ -17,7 +17,7 @@ use self::binary::{ARRAYS, OBSERVATION_HEADER_BYTES, Record, invalid};
 use self::header::Header;
 use super::{
     Antenna, Direction, Field, ImportHeader, ImportedScanTable, RawIntegration, Source, TimeGroups,
-    Window, metadata, writer::Writer,
+    Window, antenna_diameter, metadata, writer::Writer,
 };
 use crate::subtable_rows::i;
 use crate::{MsError, MsResult, OptionalMainColumn};
@@ -41,7 +41,15 @@ pub fn read_nro(path: &Path, parallel: bool) -> MsResult<ImportedScanTable> {
     let header = Header::read(&bytes, size)?;
     let mut record_bytes = vec![0; header.record_bytes];
     let (setup, fields, sources) = setup(&mut input, &mut record_bytes, &header)?;
-    let column = OptionalMainColumn::FloatData;
+    let column = if header.arrays[..header.n_arrays]
+        .iter()
+        .flatten()
+        .any(|array| array.plane == 3)
+    {
+        OptionalMainColumn::Data
+    } else {
+        OptionalMainColumn::FloatData
+    };
     let ms = metadata::create(&setup, column, &fields, &sources)?;
     let mut writer = Writer::new(ms, column);
     let mut groups = TimeGroups::default();
@@ -85,16 +93,13 @@ fn setup(
     let last = (header.n_scans - 1) * header.n_arrays;
     let end = scan::start_time(read_record(input, bytes, header, last)?)? + header.interval;
     let mid = 0.5 * (start + end);
+    let diameter = antenna_diameter(&header.site);
     let antenna = (0..header.n_beam)
         .map(|beam| Antenna {
             name: format!("{}-BEAM{beam}", header.site),
             station: String::new(),
             position: [-3_871_023.5, 3_428_106.8, 3_724_039.5],
-            diameter: if header.site.to_ascii_uppercase().contains("NRO") {
-                45.0
-            } else {
-                0.0
-            },
+            diameter,
         })
         .collect();
     let mut windows = BTreeMap::new();

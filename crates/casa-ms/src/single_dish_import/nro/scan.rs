@@ -66,7 +66,7 @@ pub(super) fn decode(record: Record<'_>, header: &Header, start: f64) -> MsResul
         },
         plane: Plane {
             index: array.plane,
-            data: record.spectrum(header.n_channels, header.bits, array.scale),
+            data: record.spectrum(header.n_channels, array.scale),
             flag: None,
             flag_row: false,
             system_temperature: vec![record.f32(148)],

@@ -22,7 +22,7 @@ pub(super) struct Writer {
     descriptions: HashMap<(i32, i32), i32>,
     polarizations: HashMap<Vec<i32>, i32>,
     states: HashMap<(&'static str, i32), i32>,
-    feeds: HashMap<(i32, i32, Basis), i32>,
+    feeds: HashMap<(i32, i32, i32, Basis), i32>,
     reference_feed: Option<i32>,
     pointing: BTreeMap<(i32, u64), (Direction, f64)>,
     weather: Vec<((i32, Weather), TimeSpan)>,
@@ -170,12 +170,13 @@ impl Writer {
         } else {
             Basis::Linear
         };
-        let key = (row.feed, row.window, basis);
+        let key = (row.antenna, row.feed, row.window, basis);
         if let std::collections::hash_map::Entry::Vacant(entry) = self.feeds.entry(key) {
             let id = insert(
                 &mut self.ms,
                 SubtableId::Feed,
                 &[
+                    ("ANTENNA_ID", i(row.antenna)),
                     ("FEED_ID", i(row.feed)),
                     ("NUM_RECEPTORS", i(2)),
                     ("SPECTRAL_WINDOW_ID", i(row.window)),

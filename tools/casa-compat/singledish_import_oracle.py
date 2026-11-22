@@ -70,7 +70,36 @@ def compare_products(reference, output, fixes=None):
     assert subtables == sorted(entry.name for entry in output.iterdir()
                               if entry.is_dir() and (entry / 'table.dat').is_file())
     for name in subtables:
-        compare_tables(reference / name, output / name, fixes)
+        if fixes == 'nro' and name == 'FEED':
+            compare_nro_feeds(reference, output)
+        else:
+            compare_tables(reference / name, output / name, fixes)
+
+
+def compare_nro_feeds(reference, output):
+    with opened(reference / 'FEED') as left, opened(output / 'FEED') as right, \
+            opened(output) as main, opened(output / 'DATA_DESCRIPTION') as descriptions:
+        columns = ('ANTENNA1', 'FEED1', 'DATA_DESC_ID')
+        spws = descriptions.getcol('SPECTRAL_WINDOW_ID')
+        expected = {(antenna, feed, spws[desc])
+                    for antenna, feed, desc in zip(*(main.getcol(name) for name in columns))}
+        assert set(left.getcol('ANTENNA_ID')) == {0}
+        keys = ('ANTENNA_ID', 'FEED_ID', 'SPECTRAL_WINDOW_ID')
+        rows = list(zip(*(right.getcol(name) for name in keys)))
+        assert len(rows) == len(expected) and set(rows) == expected
+        reference_rows = {key: row for row, key in enumerate(
+            zip(left.getcol('FEED_ID'), left.getcol('SPECTRAL_WINDOW_ID')))}
+        compare(sorted(left.colnames()), sorted(right.colnames()), 'FEED columns')
+        for row, (_, feed, spw) in enumerate(rows):
+            original = reference_rows[feed, spw]
+            for column in left.colnames():
+                if column == 'ANTENNA_ID':
+                    continue
+                if column == 'NUM_RECEPTORS':
+                    value = len(left.getcell('POLARIZATION_TYPE', original))
+                else:
+                    value = left.getcell(column, original)
+                compare(value, right.getcell(column, row), f'FEED:{column}[{row}]')
 
 
 def check_readers(paths):
@@ -82,8 +111,9 @@ def check_readers(paths):
             try:
                 assert native.open(str(path))
                 assert native.nrows() == reference.nrows()
+                data = 'FLOAT_DATA' if 'FLOAT_DATA' in reference.colnames() else 'DATA'
                 for row in (0, reference.nrows() - 1):
-                    for name in ('FLOAT_DATA', 'FLAG', 'WEIGHT', 'SIGMA', 'DATA_DESC_ID'):
+                    for name in (data, 'FLAG', 'WEIGHT', 'SIGMA', 'DATA_DESC_ID'):
                         compare(reference.getcell(name, row), native.getcell(name, row), name)
             finally:
                 assert native.close()
@@ -346,13 +376,67 @@ def check_nro_byte_order(root, source, factories):
             check_nro_spectra(operand, output)
             products.append(output)
         compare_products(*products)
+    unsupported = root / 'unsupported-8.nostar'
+    corrupt = bytearray(big.read_bytes())
+    struct.pack_into('>i', corrupt, 14944, 8)
+    unsupported.write_bytes(corrupt)
+    rejected = root / 'unsupported-casa.ms'
+    assert factories['casa']().importnro(str(unsupported), str(rejected)) is False
     if 'native' in factories:
         truncated = root / 'truncated.nostar'
         truncated.write_bytes(little.read_bytes()[:-1])
         protected = root / 'trimmed-little-native.ms'
         before = (protected / 'table.dat').read_bytes()
-        assert factories['native']().importnro(str(truncated), str(protected), True) is False
+        with opened(protected) as table:
+            data = table.getcell('FLOAT_DATA', 0)
+        for bad in (truncated, unsupported):
+            for parallel in (False, True):
+                assert factories['native']().importnro(str(bad), str(protected), parallel) is False
         assert (protected / 'table.dat').read_bytes() == before
+        with opened(protected) as table:
+            np.testing.assert_array_equal(table.getcell('FLOAT_DATA', 0), data)
+
+
+def check_nro_cross_hands(root, source, factories):
+    # Reuse the original dimensions and clocks with one integration and a
+    # known spectrum in each of the four real instrument planes.
+    names = ('XX', 'YY', 'XY', 'YX')
+    with source.open('rb') as raw:
+        header = bytearray(raw.read(15136))
+        stride = struct.unpack_from('>i', header, 14936)[0]
+        scans = [bytearray(raw.read(stride)) for _ in names]
+    struct.pack_into('>ii', header, 144, 4, 1)
+    struct.pack_into('>iii', header, 14972, 1, 4, 1)
+    struct.pack_into('>36h', header, 15028, 1101, 1201, 1301, 1401, *([0] * 32))
+    struct.pack_into('>dddd', header, 4576, 1., 1., 1., 1.)
+    header[14948:14956] = b'ASTE\0\0\0\0'
+    header[15100:15136] = b''.join(name.encode() + b'\0' for name in names) + bytes(24)
+    for index, (scan, name) in enumerate(zip(scans, names), start=1):
+        scan[32:40] = b'ON' + bytes(6)
+        scan[120:124] = f'A{index}'.encode() + bytes(2)
+        scan[264:272] = f'01{name}01'.encode() + bytes(2)
+        struct.pack_into('>dd', scan, 408, 0., float(index))
+    operand = root / 'full-polarization.nostar'
+    operand.write_bytes(header + b''.join(scans))
+    products = []
+    for backend, factory in factories.items():
+        output = root / f'full-polarization-{backend}.ms'
+        assert factory().importnro(str(operand), str(output))
+        column = 'DATA' if backend == 'native' else 'FLOAT_DATA'
+        expected = [1, 3 + 4j, 3 - 4j, 2] if backend == 'native' else [1, 3, 3, 2]
+        with opened(output) as table:
+            assert table.nrows() == 1
+            values = table.getcell(column, 0)
+            np.testing.assert_array_equal(values, np.broadcast_to(
+                np.array(expected)[:, np.newaxis], values.shape))
+            assert not table.getcell('FLAG', 0).any()
+        with opened(output / 'POLARIZATION') as table:
+            np.testing.assert_array_equal(table.getcell('CORR_TYPE', 0), [9, 10, 11, 12])
+        with opened(output / 'ANTENNA') as table:
+            np.testing.assert_array_equal(table.getcol('DISH_DIAMETER'), [10.])
+        products.append(output)
+    if 'native' in factories:
+        check_readers(products)
 
 
 def run_imports(factory, name, kind, source, work):
@@ -439,6 +523,7 @@ def main():
         if 'native' in factories:
             check_nro_spectra(source, native[0])
         check_nro_byte_order(root, source, factories)
+        check_nro_cross_hands(root, source, factories)
     print(f'{args.kind.upper()} import, serial/parallel equivalence and product checks passed.', flush=True)
 
 

@@ -9838,3 +9838,20 @@ even for YY, LL and cross-hands. The imported spectra themselves are in
 the order indicated by `CORR_TYPE`. casa-rs writes the receptor count and
 maps directly measured linear and circular products to the corresponding
 ordered pairs. Derived Stokes products retain their placeholders.
+
+## NOSTAR import writes FEED rows only for the first beam
+
+On the upstream Orion KL NOSTAR file, CASA 6.7.6.14 writes MAIN spectra
+for antenna IDs 0 through 3, but FEED rows only for antenna ID 0. The
+other three beams reference feeds with no corresponding metadata.
+casa-rs writes one FEED row for each beam and spectral window referenced
+by MAIN.
+
+## NOSTAR import discards the imaginary part of cross-hand spectra
+
+In a four-plane NOSTAR integration, the third and fourth planes encode
+the real and imaginary components of the cross-hands. CASA 6.7.6.14
+always writes `FLOAT_DATA`. A test with the instrument planes
+`[XX=1, YY=2, XY=3, YX=4]` produces `[1, 3, 3, 2]`.
+casa-rs writes complex `DATA` with both components in the conjugate
+products `[1, 3+4i, 3-4i, 2]`.
