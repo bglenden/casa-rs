@@ -967,11 +967,8 @@ impl SolveAccumulator {
         let shared_flags = (legacy_spline || !options.correlation_dependent_flags)
             .then(|| samples::channel_flags(samples));
         let no_weighted_data = shared_flags.as_ref().is_some_and(|flags| {
-            if legacy_spline {
-                channels.indices.iter().all(|&channel| flags[channel])
-            } else {
-                flags.iter().all(|flag| *flag)
-            }
+            flags.iter().all(|flag| *flag)
+                || legacy_spline && channels.indices.iter().all(|&channel| flags[channel])
         }) || samples.weights.iter().all(|weight| *weight <= 0.0);
         if legacy_spline && no_weighted_data {
             return Ok(());
