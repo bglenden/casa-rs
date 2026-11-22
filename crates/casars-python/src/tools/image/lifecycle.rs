@@ -177,12 +177,12 @@ impl PyImageTool {
         py.detach(|| self.state().image.is_some())
     }
 
-    fn ispersistent(&self, py: Python<'_>) -> bool {
+    fn ispersistent(&self, py: Python<'_>) -> PyResult<bool> {
         py.detach(|| {
             self.state()
                 .image
                 .as_ref()
-                .is_some_and(AttachedImage::is_persistent)
+                .map_or(Ok(false), AttachedImage::is_persistent)
         })
     }
 
