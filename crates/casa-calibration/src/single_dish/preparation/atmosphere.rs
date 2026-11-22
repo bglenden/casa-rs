@@ -12,8 +12,8 @@ use casa_atmosphere::{AtmosphereType, ProfileParameters};
 use casa_ms::{
     MeasurementSet,
     transform::{
-        MsTransformReport, MsTransformRequest, MsTransformTaskOptions, SpectrumBaseline,
-        SpectrumRow, SpectrumWeights, transform_baseline_spectra,
+        MsTransformReport, MsTransformRequest, SpectrumBaseline, SpectrumRow, SpectrumWeights,
+        transform_baseline_spectra,
     },
 };
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -67,14 +67,21 @@ impl SingleDishSession {
         }
         let destination = CalibrationOutput::prepare_measurement_set(output, request.overwrite)
             .map_err(error_text)?;
-        let config = Configuration::read(request.config)?;
+        let options = self.line_averaging.operation_options()?;
         let spw = self
             .selection
             .spw
             .as_deref()
             .filter(|text| !text.is_empty())
             .unwrap_or("*");
-        let mut worker = Correction::prepare(path, ms, rows, config, spw)?;
+        // The selected averaging iterator takes precedence over ATM in CASA.
+        let mut worker: Box<dyn SpectrumBaseline> =
+            if options.time_averaging.is_some() || options.single_dish_polarization.is_some() {
+                Box::new(AveragedSpectra)
+            } else {
+                let config = Configuration::read(request.config)?;
+                Box::new(Correction::prepare(path, ms, rows, config, spw)?)
+            };
         let mut report = transform_baseline_spectra(
             &MsTransformRequest {
                 input_ms: path.to_path_buf(),
@@ -85,14 +92,44 @@ impl SingleDishSession {
                 selection: self.selection.clone(),
                 keep_flags: true,
             },
-            &MsTransformTaskOptions::default(),
+            &options,
             self.reindex.unwrap_or(true),
-            &mut worker,
+            worker.as_mut(),
         )
         .map_err(error_text)?;
         destination.commit().map_err(error_text)?;
         report.output_ms = request.outfile.to_path_buf();
         Ok(report)
+    }
+}
+
+struct AveragedSpectra;
+
+impl SpectrumBaseline for AveragedSpectra {
+    fn atmospheric_order(&self) -> bool {
+        true
+    }
+
+    fn writes_rows(&self) -> bool {
+        true
+    }
+
+    fn updates_weight(&self) -> bool {
+        false
+    }
+
+    fn omit_spectral_weights(&self) -> bool {
+        false
+    }
+
+    fn process(
+        &mut self,
+        _: &SpectrumRow,
+        _: &mut ArrayValue,
+        _: &mut ArrayD<bool>,
+        _: SpectrumWeights<'_>,
+    ) -> Result<Option<ArrayValue>, String> {
+        Ok(None)
     }
 }
 

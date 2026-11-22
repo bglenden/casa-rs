@@ -12,7 +12,7 @@ use super::{MsTransformError, MsTransformRequest, scalar_f64, scalar_i32};
 pub struct SpectrumRow {
     /// Physical row index in MAIN.
     pub row: usize,
-    /// Row index within the selected MAIN view, before visibility iteration.
+    /// Selected MAIN row index, or the row within a time-averaged iterator chunk.
     pub selection_row: usize,
     /// Original spectral-window identifier.
     pub window: i32,
