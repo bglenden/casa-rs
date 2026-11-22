@@ -84,7 +84,7 @@ impl PySingleDishMs {
                 updateweight,
                 sigmavalue,
             },
-            ToolFit {
+            ToolFit::Fixed {
                 basis: SingleDishBaselineBasis::Polynomial {
                     order,
                     chebyshev: blfunc.eq_ignore_ascii_case("chebyshev"),
@@ -138,7 +138,7 @@ impl PySingleDishMs {
                 updateweight,
                 sigmavalue,
             },
-            ToolFit {
+            ToolFit::Fixed {
                 basis: SingleDishBaselineBasis::CubicSpline { pieces },
                 clip_sigma: clip_threshold_sigma,
                 num_fitting_max,
@@ -192,7 +192,7 @@ impl PySingleDishMs {
                 updateweight,
                 sigmavalue,
             },
-            ToolFit {
+            ToolFit::Fixed {
                 basis: SingleDishBaselineBasis::Sinusoid(sinusoid),
                 clip_sigma: clip_threshold_sigma,
                 num_fitting_max,
@@ -203,6 +203,39 @@ impl PySingleDishMs {
                     minwidth,
                     edge.as_ref(),
                 ),
+            },
+        )
+    }
+
+    #[pyo3(signature = (datacolumn="data", outfile="", bloutput="", dosubtract=true, spw=Variant::Empty, updateweight=false, sigmavalue="stddev", blparam="", verbose=false), text_signature = "($self, datacolumn='data', outfile='', bloutput='', dosubtract=True, spw=[], updateweight=False, sigmavalue='stddev', blparam='', verbose=False)")]
+    #[allow(clippy::too_many_arguments)]
+    fn subtract_baseline_variable(
+        &self,
+        py: Python<'_>,
+        datacolumn: &str,
+        outfile: &str,
+        bloutput: &str,
+        dosubtract: bool,
+        spw: Variant,
+        updateweight: bool,
+        sigmavalue: &str,
+        blparam: &str,
+        verbose: bool,
+    ) -> PyResult<bool> {
+        self.run_fit(
+            py,
+            ToolOutput {
+                datacolumn,
+                outfile,
+                bloutput,
+                dosubtract,
+                spw,
+                updateweight,
+                sigmavalue,
+            },
+            ToolFit::Variable {
+                parameters: Path::new(blparam),
+                verbose,
             },
         )
     }
@@ -218,11 +251,21 @@ struct ToolOutput<'a> {
     sigmavalue: &'a str,
 }
 
-struct ToolFit {
-    basis: SingleDishBaselineBasis,
-    clip_sigma: f64,
-    num_fitting_max: i32,
-    line_finder: Option<SingleDishLineFinder>,
+enum ToolFit<'a> {
+    Fixed {
+        basis: SingleDishBaselineBasis,
+        clip_sigma: f64,
+        num_fitting_max: i32,
+        line_finder: Option<SingleDishLineFinder>,
+    },
+    Variable {
+        parameters: &'a Path,
+        verbose: bool,
+    },
+}
+
+fn diagnostic_path(path: &str) -> Option<&Path> {
+    (!path.is_empty()).then(|| Path::new(path))
 }
 
 fn line_finder(
@@ -243,7 +286,7 @@ fn line_finder(
 }
 
 impl PySingleDishMs {
-    fn run_fit(&self, py: Python<'_>, output: ToolOutput<'_>, fit: ToolFit) -> PyResult<bool> {
+    fn run_fit(&self, py: Python<'_>, output: ToolOutput<'_>, fit: ToolFit<'_>) -> PyResult<bool> {
         let ToolOutput {
             datacolumn,
             outfile,
@@ -253,35 +296,58 @@ impl PySingleDishMs {
             updateweight,
             sigmavalue,
         } = output;
-        let max_fits = usize::try_from(fit.num_fitting_max)
-            .map_err(|_| PyRuntimeError::new_err("Number of fits must be positive."))?;
-        let diagnostic_paths = bloutput.splitn(3, ',').collect::<Vec<_>>();
-        let path = |value: &str| (!value.is_empty()).then(|| value.to_owned());
-        let (csv, text, table) = match diagnostic_paths.as_slice() {
+        let paths = bloutput.splitn(3, ',').collect::<Vec<_>>();
+        let (csv, text, table) = match paths.as_slice() {
             [""] => (None, None, None),
-            [csv, text, table] => (path(csv), path(text), path(table)),
+            [csv, text, table] => (
+                diagnostic_path(csv),
+                diagnostic_path(text),
+                diagnostic_path(table),
+            ),
             _ => {
                 return Err(PyRuntimeError::new_err(
                     "bloutput must specify CSV, text and table paths.",
                 ));
             }
         };
+        let diagnostics = SingleDishBaselineDiagnostics {
+            csv,
+            text,
+            heading: None,
+        };
+        let mode = match fit {
+            ToolFit::Fixed {
+                basis,
+                clip_sigma,
+                num_fitting_max,
+                line_finder,
+            } => {
+                let max_fits = usize::try_from(num_fitting_max)
+                    .map_err(|_| PyRuntimeError::new_err("Number of fits must be positive."))?;
+                SingleDishBaselineMode::Fit {
+                    basis,
+                    clip_sigma,
+                    max_fits,
+                    line_finder,
+                    table,
+                    diagnostics,
+                }
+            }
+            ToolFit::Variable {
+                parameters,
+                verbose,
+            } => SingleDishBaselineMode::Variable {
+                parameters,
+                verbose,
+                table,
+                diagnostics,
+            },
+        };
         let mask = selector(&spw).unwrap_or_default();
         self.run_baseline(
             py,
             SingleDishBaseline {
-                mode: SingleDishBaselineMode::Fit {
-                    basis: fit.basis,
-                    clip_sigma: fit.clip_sigma,
-                    max_fits,
-                    line_finder: fit.line_finder,
-                    table: table.as_deref().map(Path::new),
-                    diagnostics: SingleDishBaselineDiagnostics {
-                        csv: csv.as_deref().map(Path::new),
-                        text: text.as_deref().map(Path::new),
-                        heading: None,
-                    },
-                },
+                mode,
                 datacolumn,
                 mask: &mask,
                 output: (!outfile.is_empty() || dosubtract).then(|| Path::new(outfile)),

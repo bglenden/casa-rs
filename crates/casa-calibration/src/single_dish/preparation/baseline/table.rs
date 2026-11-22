@@ -11,7 +11,7 @@ use ndarray::{Array2, Axis};
 
 use crate::writer::{set_fixed_unit_keyword, set_measinfo_keyword};
 
-use super::{BaselineFamily, ModelBasis, polynomial::Polynomial, sinusoid};
+use super::{BaselineFamily, ModelBasis, StoredLineFinder, polynomial::Polynomial, sinusoid};
 
 pub(super) struct BaselineRow {
     pub(super) scan: u32,
@@ -31,6 +31,7 @@ pub(super) struct SpectrumModel {
     pub(super) clipped: usize,
     pub(super) clip_threshold: f32,
     pub(super) clip_iterations: u32,
+    pub(super) line_finder: StoredLineFinder,
 }
 
 #[derive(Clone, Copy)]
@@ -327,7 +328,7 @@ fn scalar_uint(table: &Table, row: usize, column: &str) -> Result<u32, String> {
 }
 
 impl BaselineRow {
-    pub(super) fn record(&self, default_family: BaselineFamily) -> RecordValue {
+    pub(super) fn record(&self, fixed_family: Option<BaselineFamily>) -> RecordValue {
         let receptors = self.models.len();
         let widest = |size: fn(&SpectrumModel) -> usize| {
             self.models
@@ -354,7 +355,7 @@ impl BaselineRow {
             BaselineFamily::CubicSpline => 2,
             BaselineFamily::Sinusoid => 3,
         };
-        let mut family = Array2::from_elem((receptors, 1), storage_family(default_family));
+        let mut family = Array2::from_elem((receptors, 1), fixed_family.map_or(0, storage_family));
         let mut parameter = Array2::<i32>::zeros((receptors, parameters));
         let mut boundaries = Array2::<f32>::zeros((receptors, boundaries));
         let mut result = Array2::<f32>::zeros((receptors, coefficients));
@@ -362,6 +363,10 @@ impl BaselineRow {
         let mut rms = Array2::<f32>::zeros((receptors, 1));
         let mut clip = Array2::<f32>::zeros((receptors, 1));
         let mut iterations = Array2::<u32>::zeros((receptors, 1));
+        let mut use_line_finder = Array2::from_elem((receptors, 1), false);
+        let mut line_threshold = Array2::<f32>::zeros((receptors, 1));
+        let mut line_average = Array2::<u32>::zeros((receptors, 1));
+        let mut line_edges = Array2::<u32>::zeros((receptors, 2));
         for (receptor, model) in self.models.iter().enumerate() {
             let Some(model) = model else { continue };
             apply[[receptor, 0]] = true;
@@ -387,19 +392,22 @@ impl BaselineRow {
                 result[[receptor, index]] = value as f32;
             }
             for (index, slot) in mask.row_mut(receptor).iter_mut().enumerate() {
-                // A shorter mask repeats its last valid range to fill the
-                // rectangular table cell without adding new fitted channels.
+                // CASA's variable fits zero-pad the cell. The fixed-family
+                // writer repeats the last range to preserve the model mask.
                 let previous = model.mask.len().saturating_sub(2) + index % 2;
-                *slot = model
-                    .mask
-                    .get(index)
-                    .or_else(|| model.mask.get(previous))
-                    .copied()
-                    .unwrap_or_default();
+                *slot = model.mask.get(index).copied().unwrap_or_else(|| {
+                    fixed_family
+                        .and_then(|_| model.mask.get(previous).copied())
+                        .unwrap_or_default()
+                });
             }
             rms[[receptor, 0]] = model.rms;
             clip[[receptor, 0]] = model.clip_threshold;
             iterations[[receptor, 0]] = model.clip_iterations;
+            use_line_finder[[receptor, 0]] = model.line_finder.enabled;
+            line_threshold[[receptor, 0]] = model.line_finder.threshold;
+            line_average[[receptor, 0]] = model.line_finder.average;
+            [line_edges[[receptor, 0]], line_edges[[receptor, 1]]] = model.line_finder.edges;
         }
         let uint = |name, value| RecordField::new(name, Value::Scalar(ScalarValue::UInt32(value)));
         let array = |name, value| RecordField::new(name, Value::Array(value));
@@ -420,22 +428,13 @@ impl BaselineRow {
             uint("NCHAN", self.channels as u32),
             array("CLIP_THRESHOLD", ArrayValue::Float32(clip.into_dyn())),
             array("CLIP_ITERATION", ArrayValue::UInt32(iterations.into_dyn())),
-            array(
-                "USE_LF",
-                ArrayValue::Bool(Array2::from_elem((receptors, 1), false).into_dyn()),
-            ),
+            array("USE_LF", ArrayValue::Bool(use_line_finder.into_dyn())),
             array(
                 "LF_THRESHOLD",
-                ArrayValue::Float32(Array2::zeros((receptors, 1)).into_dyn()),
+                ArrayValue::Float32(line_threshold.into_dyn()),
             ),
-            array(
-                "LF_AVERAGE",
-                ArrayValue::UInt32(Array2::zeros((receptors, 1)).into_dyn()),
-            ),
-            array(
-                "LF_EDGE",
-                ArrayValue::UInt32(Array2::zeros((receptors, 2)).into_dyn()),
-            ),
+            array("LF_AVERAGE", ArrayValue::UInt32(line_average.into_dyn())),
+            array("LF_EDGE", ArrayValue::UInt32(line_edges.into_dyn())),
         ])
     }
 }

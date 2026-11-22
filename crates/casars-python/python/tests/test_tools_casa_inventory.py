@@ -35,6 +35,7 @@ IMPLEMENTED["wvr"] = {"gcal"}
 IMPLEMENTED["singledishms"] = {
     "open", "close", "done", "name", "set_selection", "smooth",
     "subtract_baseline", "subtract_baseline_cspline", "subtract_baseline_sinusoid",
+    "subtract_baseline_variable", "apply_baseline_table",
 }
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["agentflagger"] = {
@@ -50,7 +51,6 @@ IMPLEMENTED["calibrater"] = {
 }
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve"},
-    "singledishms": {"apply_baseline_table"},
     "image": {
         "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },

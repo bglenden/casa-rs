@@ -60,20 +60,4 @@ impl PySingleDishMs {
     ) -> PyResult<bool> {
         not_yet_implemented_in("singledishms", "importnro", 1532)
     }
-
-    #[pyo3(signature = (datacolumn = None, outfile = None, bloutput = None, dosubtract = None, spw = None, updateweight = None, sigmavalue = None, blparam = None, verbose = None), text_signature = "($self, datacolumn='data', outfile='', bloutput='', dosubtract=True, spw=[], updateweight=False, sigmavalue='stddev', blparam='', verbose=False)")]
-    fn subtract_baseline_variable(
-        &self,
-        datacolumn: Option<&Bound<'_, PyAny>>,
-        outfile: Option<&Bound<'_, PyAny>>,
-        bloutput: Option<&Bound<'_, PyAny>>,
-        dosubtract: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        updateweight: Option<&Bound<'_, PyAny>>,
-        sigmavalue: Option<&Bound<'_, PyAny>>,
-        blparam: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        not_yet_implemented_in("singledishms", "subtract_baseline_variable", 1532)
-    }
 }
