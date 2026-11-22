@@ -3,10 +3,12 @@
 
 use num_complex::{Complex32, Complex64};
 
+use crate::GainSolveRobustness;
 use crate::solve::kernel::complex32_to_64;
 
 use super::LeakageEstimate;
 use super::general;
+use super::robust::RobustWeights;
 
 #[derive(Clone, Copy)]
 pub(super) enum LeakageAlgebra {
@@ -14,6 +16,7 @@ pub(super) enum LeakageAlgebra {
     General,
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct StandardSample {
     pub(super) pair: [usize; 2],
     pub(super) data: [Complex32; 4],
@@ -29,6 +32,7 @@ pub(super) fn solve_channel(
     eligible: &[bool],
     min_snr: f32,
     algebra: LeakageAlgebra,
+    robustness: &GainSolveRobustness,
 ) -> Result<Vec<LeakageEstimate>, Vec<[bool; 2]>> {
     let mut valid = eligible
         .iter()
@@ -46,19 +50,76 @@ pub(super) fn solve_channel(
     if usable.is_empty() {
         return Err(valid);
     }
+    let mut robust = robustness.enabled().then(RobustWeights::default);
+    if robustness.l1 {
+        for gain in gains.iter_mut().flatten() {
+            *gain *= 1.0001;
+        }
+    }
+    let clamps: &[f32] = if robustness.l1 {
+        &[5e-3, 5e-4, 5e-5]
+    } else {
+        &[0.0]
+    };
+    for pass in 0..=robustness.rms_thresholds.len() {
+        for (stage, &clamp) in clamps.iter().enumerate() {
+            let final_pass = pass == robustness.rms_thresholds.len() && stage + 1 == clamps.len();
+            let Some(solution) = fit_pass(
+                &usable,
+                gains,
+                &mut valid,
+                min_snr,
+                algebra,
+                robust.as_mut(),
+                clamp,
+                final_pass,
+            ) else {
+                return Err(valid);
+            };
+            if final_pass {
+                return Ok(solution);
+            }
+        }
+        if let Some(threshold) = robustness.rms_thresholds.get(pass) {
+            robust
+                .as_mut()
+                .expect("RMS rejection enabled")
+                .reject(&usable, gains, &valid, algebra, *threshold);
+        }
+    }
+    unreachable!("a leakage solve always runs a final pass")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fit_pass(
+    nominal: &[&StandardSample],
+    gains: &mut Vec<[Complex32; 2]>,
+    valid: &mut [[bool; 2]],
+    min_snr: f32,
+    algebra: LeakageAlgebra,
+    mut robust: Option<&mut RobustWeights>,
+    clamp: f32,
+    final_pass: bool,
+) -> Option<Vec<LeakageEstimate>> {
+    let robust_fit = robust.is_some();
     let mut last_loss = f64::MAX;
     let mut stable_steps = 0_usize;
     let mut last_gains = gains.clone();
     let mut direction = vec![[Complex32::ZERO; 2]; gains.len()];
     let mut derivatives = Derivatives::new(gains.len());
     for _ in 0..=50 {
-        let loss = chi_squared(&usable, gains, &valid, algebra);
+        let working = robust
+            .as_mut()
+            .map(|robust| robust.working(nominal, gains, valid, algebra, clamp));
+        let usable = working.as_deref().unwrap_or(nominal);
+        let loss = chi_squared(usable, gains, valid, algebra);
         if !loss.is_finite() {
             gains.clone_from(&last_gains);
-            return Err(vec![[false; 2]; gains.len()]);
+            valid.fill([false; 2]);
+            return None;
         }
         if loss == 0.0 {
-            return Err(valid);
+            return None;
         }
         let change = loss - last_loss;
         if (change / loss) as f32 <= 0.001 {
@@ -69,19 +130,17 @@ pub(super) fn solve_channel(
             stable_steps = stable_steps.saturating_sub(1);
         }
         if stable_steps > 5 {
-            derivatives.accumulate(&usable, gains, &valid, algebra);
-            return Ok(estimate(
-                gains,
-                &valid,
-                &derivatives,
-                &usable,
-                loss,
-                min_snr,
-            ));
+            let solution = if final_pass {
+                derivatives.accumulate(usable, gains, valid, algebra);
+                estimate(gains, valid, &derivatives, usable, loss, min_snr)
+            } else {
+                Vec::new()
+            };
+            return Some(solution);
         }
-        if change <= 0.0 {
+        if change <= 0.0 || robust_fit {
             last_loss = loss;
-            derivatives.accumulate(&usable, gains, &valid, algebra);
+            derivatives.accumulate(usable, gains, valid, algebra);
             for (antenna, deltas) in direction.iter_mut().enumerate() {
                 for (receptor, delta) in deltas.iter_mut().enumerate() {
                     let hessian = derivatives.hessian[antenna][receptor];
@@ -98,19 +157,21 @@ pub(super) fn solve_channel(
             gains.clone_from(&last_gains);
         }
         if !valid.iter().flatten().any(|&usable| usable) {
-            return Err(valid);
+            return None;
         }
-        let scale = match algebra {
-            LeakageAlgebra::Linearized => step_scale(&usable, gains, &direction, &valid, loss),
+        let scale = match (algebra, clamp > 0.0) {
+            (LeakageAlgebra::Linearized, false) => {
+                step_scale(usable, gains, &direction, valid, loss)
+            }
             // CASA materializes full Jones matrices and refreshes them on
             // accepted parameter updates. Its trial steps see the same
             // matrices, keeping the nominal damped step for Dgen.
-            LeakageAlgebra::General => 1.0,
+            _ => 1.0,
         };
         last_gains.clone_from(gains);
         update(gains, &direction, scale);
     }
-    Err(valid)
+    None
 }
 
 pub(super) fn eligible_antennas(
@@ -200,7 +261,7 @@ impl Derivatives {
 }
 
 impl StandardSample {
-    fn residual(
+    pub(super) fn residual(
         &self,
         gains: &[[Complex32; 2]],
         valid: &[[bool; 2]],

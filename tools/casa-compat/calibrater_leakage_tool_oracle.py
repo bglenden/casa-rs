@@ -134,6 +134,27 @@ def main():
         case(work, engines, vis, 'Df-norm-median', 'Df', options={'solnorm': True, 'normtype': 'median'})
         case(work, engines, vis, 'D-amplitude-only', 'D', options={'apmode': 'A'})
         case(work, engines, vis, 'Df-phase-only', 'Df', options={'phaseonly': True})
+        outliers = work/'outliers.ms'
+        copy_ms(vis, outliers)
+        with opened(outliers, True) as table:
+            data = table.getcol('DATA')
+            cases = (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 3)
+            selected = np.flatnonzero(cases)[:2]
+            assert selected.size == 2
+            data[1:3, :, selected] += .35 + .1j
+            assert table.putcol('DATA', data)
+        for mode, thresholds in [('L1', []), ('R', [3.2, 2.8]), ('L1R', [3.2, 2.8])]:
+            case(work, engines, outliers, f'D-robust-{mode}', 'D',
+                 options={'solmode': mode, 'rmsthresh': thresholds})
+        refant_dropout = work/'refant-dropout.ms'
+        copy_ms(vis, refant_dropout)
+        with opened(refant_dropout, True) as table:
+            flags = table.getcol('FLAG')
+            flags[..., (table.getcol('ANTENNA1') == 0) | (table.getcol('ANTENNA2') == 0)] = True
+            assert table.putcol('FLAG', flags)
+        for refantmode in ('flex', 'strict'):
+            case(work, engines, refant_dropout, f'D-refant-{refantmode}', 'D',
+                 options={'refant': 'A0,A1', 'refantmode': refantmode, 'minblperant': 3})
         case(work, engines, vis, 'D-append', 'D', append=True)
         flagged = work/'flagged.ms'
         copy_ms(vis, flagged)

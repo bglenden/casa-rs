@@ -10,6 +10,7 @@ mod joint;
 mod output;
 mod parallactic;
 mod parallactic_fit;
+mod robust;
 mod standard;
 
 use super::*;
@@ -140,6 +141,7 @@ pub(crate) struct LeakageSolveRequest {
     pub(crate) correlation_dependent_flags: bool,
     pub(crate) solve_mode: GainSolveMode,
     pub(crate) normalization: Option<crate::GainNormalization>,
+    pub(crate) robustness: crate::GainSolveRobustness,
     pub(crate) interval: GainSolveInterval,
     pub(crate) frequency_interval: Option<crate::BandpassFrequencyInterval>,
     pub(crate) combine: GainSolveCombine,
@@ -290,11 +292,19 @@ pub(crate) fn solve_polarization_with_activity(
     let mut references = Vec::new();
     if context.refant_id >= 0 && !request.kind.cross_hand() {
         references.extend([context.refant_id, context.refant_id]);
-        references.extend(context.refant_alternates.iter().copied());
-        references.extend(
-            super::super::refant_distance_order(ms, *references.last().expect("primary antenna"))
+        if !matches!(
+            request.refant,
+            RefAntSelector::Expression { strict: true, .. }
+        ) {
+            references.extend(context.refant_alternates.iter().copied());
+            references.extend(
+                super::super::refant_distance_order(
+                    ms,
+                    *references.last().expect("primary antenna"),
+                )
                 .map_err(error)?,
-        );
+            );
+        }
     }
     let mut previous: Option<usize> = None;
     let mut solutions: Vec<LeakageSolution> = Vec::new();
