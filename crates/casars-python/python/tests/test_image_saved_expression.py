@@ -5,6 +5,7 @@ import json
 import numpy as np
 import pytest
 
+from test_image_miriad_input import _sky
 from test_image_removal import _backend
 
 
@@ -25,7 +26,7 @@ def _operand(api, path, pixels):
 
 
 def _manifest(path, **fields):
-    path.mkdir(parents=True)
+    path.mkdir(parents=True, exist_ok=True)
     (path / "imageexpr.json").write_text(
         json.dumps({"ImageExpr": '"input.im" * 3', **fields}), encoding="utf-8"
     )
@@ -113,3 +114,124 @@ def test_saved_expression_nonrecord_miscinfo_preserves_the_factory_receiver(tmp_
         np.testing.assert_array_equal(image.getchunk(), [41., 42.])
     finally:
         image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("backing", ["native", "miriad", "concat"])
+def test_saved_expression_factory_discriminator_precedence(tmp_path, monkeypatch, backend, backing):
+    api = _backend(backend)
+    _operand(api, tmp_path / "input.im", np.arange(12, dtype=np.float32).reshape(3, 4))
+    path = tmp_path / "also-an-image.im"
+    if backing == "native":
+        writer = api.image()
+        assert writer.fromarray(outfile=str(path), pixels=np.full((3, 4), 111., dtype=np.float32))
+        assert writer.done()
+    elif backing == "miriad":
+        _sky(path)
+    else:
+        path.mkdir()
+        (path / "imageconcat.json").write_text("not a JSON record", encoding="ascii")
+    _manifest(path)
+    monkeypatch.chdir(tmp_path)
+    image = api.image()
+    try:
+        if backing == "concat":
+            message = "Json parse error" if backend == "casa" else "#1749"
+            with pytest.raises(RuntimeError, match=message):
+                image.open(str(path))
+            assert not image.isopen()
+        else:
+            assert image.open(str(path))
+            assert image.getchunk(blc=[2, 3], trc=[2, 3]).item() == 33.
+            with pytest.raises(RuntimeError, match="not writable"):
+                image.putchunk([[99.]], blc=[2, 3])
+            assert image.getchunk(blc=[2, 3], trc=[2, 3]).item() == 33.
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_saved_expression_miscinfo_preserves_nested_vectors(tmp_path, monkeypatch, backend):
+    api = _backend(backend)
+    _operand(api, tmp_path / "input.im", np.arange(12, dtype=np.float32).reshape(3, 4))
+    path = tmp_path / "vectors.im"
+    vectors = {"channels": [2, 3], "samples": [2, 3.5], "flags": [True, False], "names": ["a", "b"]}
+    _manifest(path, MiscInfo={"nested": vectors})
+    monkeypatch.chdir(tmp_path)
+    image = api.image()
+    try:
+        assert image.open(str(path))
+        record = image.miscinfo()
+        assert set(record) == {"nested"}
+        assert set(record["nested"]) == set(vectors)
+        for name, expected in vectors.items():
+            actual = record["nested"][name]
+            np.testing.assert_array_equal(actual, expected)
+            assert np.asarray(actual).dtype.kind == np.asarray(expected).dtype.kind
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize(("backend", "malformed", "message"), [
+    ("casa", [1, "string"], "vector of mixed data types"),
+    ("casars", [1, "string"], "vector of mixed data types"),
+    ("casars", None, "JsonValue::getValueHolder - invalid data type"),
+])
+def test_saved_expression_rejects_an_unusable_miscinfo_field(tmp_path, backend, malformed, message):
+    api = _backend(backend)
+    source = tmp_path / "input.im"
+    _operand(api, source, np.arange(12, dtype=np.float32).reshape(3, 4))
+    image = api.image()
+    path = tmp_path / "malformed.im"
+    _manifest(path, ImageExpr=f'"{source}" * 3', MiscInfo={"invalid": malformed})
+    try:
+        assert image.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match=message):
+            image.newimagefromfile(str(path))
+        np.testing.assert_array_equal(image.getchunk(), [41., 42.])
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_saved_expression_reports_missing_operand_before_miscinfo(tmp_path, backend):
+    image = _backend(backend).image()
+    path = tmp_path / "invalid.im"
+    source = tmp_path / "absent.im"
+    _manifest(path, ImageExpr=f'"{source}" * 3', MiscInfo={"invalid": [1, "text"]})
+    try:
+        assert image.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match="unknown lattice or image"):
+            image.newimagefromfile(str(path))
+        np.testing.assert_array_equal(image.getchunk(), [41., 42.])
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("operation", ["rebin", "spectralindex"])
+def test_saved_expression_infers_float_function_results(tmp_path, backend, operation):
+    api = _backend(backend)
+    writer = api.image()
+    shape = (3, 4, 1, 1)
+    low = tmp_path / "low.im"
+    high = tmp_path / "high.im"
+    try:
+        for path, value, frequency in [(low, 2., 1.e9), (high, 8., 2.e9)]:
+            assert writer.fromarray(outfile=str(path), pixels=np.full(shape, value, dtype=np.float32))
+            coordinates = writer.coordsys()
+            try:
+                assert coordinates.setreferencevalue(value=[frequency], type="spectral")
+                assert writer.setcoordsys(coordinates.torecord())
+            finally:
+                coordinates.done()
+            assert writer.done()
+        text = (f'rebin("{low}", [1,1,1,1])' if operation == "rebin"
+                else f'spectralindex("{high}", "{low}")')
+        manifest = tmp_path / "expression.im"
+        _manifest(manifest, ImageExpr=text, DataType="double")
+        assert writer.open(str(manifest))
+        assert writer.pixeltype() == "float"
+        np.testing.assert_array_equal(writer.getchunk(), np.full(shape, 2.))
+    finally:
+        writer.done()

@@ -144,23 +144,25 @@ impl AttachedImage {
         if path != probe && (!probe.is_dir() || !path.is_dir()) {
             return Err(unrecognized());
         }
+        if casa_images::expr_file::is_image_expr(probe) {
+            if probe.join("imageconcat.json").is_file() {
+                return Err(raised(
+                    "Opening a virtual concatenated image is not implemented yet (#1749)",
+                ));
+            }
+            return super::saved_expression::open(path);
+        }
         let key = key(path)?;
         let has_table_control = key.join("table.dat").is_file();
         if !has_table_control
             || !fs::read_to_string(key.join("table.info"))
                 .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image")
         {
-            let miriad = MiriadImage::recognizes(probe);
-            let expression = casa_images::expr_file::is_image_expr(probe);
-            if (miriad || expression)
+            if MiriadImage::recognizes(probe)
                 && (!has_table_control
                     || Table::open_metadata_only(TableOptions::new(&key)).is_err())
             {
-                return if miriad {
-                    Self::open_miriad(path)
-                } else {
-                    super::saved_expression::open(path)
-                };
+                return Self::open_miriad(path);
             }
             return Err(unrecognized());
         }

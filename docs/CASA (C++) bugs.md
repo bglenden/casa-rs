@@ -8261,6 +8261,15 @@ before raising `Failed AlwaysAssert setCoordinateInfo`. casa-rs reports
 the shape and decoded coordinates and rejects the copy before publication.
 See [#1955](https://github.com/bglenden/casa-rs/issues/1955).
 
+### A null field in saved image-expression metadata can crash `image.open`
+
+Create a saved Float expression with `"MiscInfo": {"unknown": null}` in
+its `imageexpr.json` and open the directory. CASA 6.7.6.14 can segfault
+while opening the manifest. Casa-rs rejects the null field with a
+catchable error. An absent `MiscInfo` field still inherits the operand
+record, and a present empty record still overrides it. See
+[#1959](https://github.com/bglenden/casa-rs/issues/1959).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

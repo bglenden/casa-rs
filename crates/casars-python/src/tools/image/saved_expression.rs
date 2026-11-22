@@ -37,7 +37,7 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
     let record = expression.coordinate_record();
     let mut image =
         TempImage::from_saved_expression(expression, path.to_path_buf()).map_err(raised)?;
-    if let Some(misc) = manifest.misc_info {
+    if let Some(misc) = manifest.misc_info().map_err(raised)? {
         image.set_misc_info(misc).map_err(raised)?;
     }
     let mut attachment = AttachedImage::temporary(ImageHandle::Float(Storage::Temp {
