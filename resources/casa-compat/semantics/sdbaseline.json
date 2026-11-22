@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "sdbaseline",
   "casa_version": "6.7.6.14",
-  "audit_revision": "d7ec4faf0aed4d239894396c4e164bcb8f67b689",
+  "audit_revision": "c05d0f79dff04cb7949ee8c7d85064017d8cc385",
   "parameters": {
     "infile": {
       "scope": "Open a MeasurementSet through the public task.",
@@ -155,19 +155,20 @@
       ]
     },
     "blmode": {
-      "scope": "Fit or apply polynomial, Chebyshev, cubic-spline and sinusoidal baselines.",
-      "status": "Partial",
+      "scope": "Fit or apply the fixed or per-spectrum baseline models.",
+      "status": "Implemented",
       "behaviors": [
         "fit-apply",
         "cubic-spline",
-        "sinusoidal"
+        "sinusoidal",
+        "variable-baseline"
       ],
       "evidence": [
         "paired",
         "automatic-and-spline",
-        "sinusoidal-wave-selection"
-      ],
-      "gap": "Per-spectrum variable baseline combinations remain open on #1532."
+        "sinusoidal-wave-selection",
+        "variable-baseline"
+      ]
     },
     "dosubtract": {
       "scope": "Write corrected spectra or publish only the requested fits.",
@@ -200,34 +201,36 @@
       ]
     },
     "bltable": {
-      "scope": "Apply polynomial, Chebyshev, cubic-spline and sinusoidal coefficients from a CASA baseline table.",
-      "status": "Partial",
+      "scope": "Apply a compatible CASA table containing one or several fitted model families.",
+      "status": "Implemented",
       "behaviors": [
         "fit-apply",
         "cubic-spline",
-        "sinusoidal"
+        "sinusoidal",
+        "variable-baseline"
       ],
       "evidence": [
         "paired",
         "automatic-and-spline",
-        "sinusoidal-wave-selection"
-      ],
-      "gap": "Per-spectrum variable baseline combinations remain open on #1532."
+        "sinusoidal-wave-selection",
+        "variable-baseline"
+      ]
     },
     "blfunc": {
-      "scope": "Fit polynomial, Chebyshev, cubic-spline or sinusoidal models.",
-      "status": "Partial",
+      "scope": "Select polynomial, Chebyshev, cubic spline, sinusoid or per-spectrum variable fitting.",
+      "status": "Implemented",
       "behaviors": [
         "fit-apply",
         "cubic-spline",
-        "sinusoidal"
+        "sinusoidal",
+        "variable-baseline"
       ],
       "evidence": [
         "paired",
         "automatic-and-spline",
-        "sinusoidal-wave-selection"
-      ],
-      "gap": "Per-spectrum variable baseline combinations remain open on #1532."
+        "sinusoidal-wave-selection",
+        "variable-baseline"
+      ]
     },
     "order": {
       "scope": "Set the degree of the polynomial or Chebyshev family.",
@@ -320,25 +323,23 @@
       ]
     },
     "blparam": {
-      "scope": "Variable fitting reads the per-spectrum configuration file.",
-      "status": "Not implemented",
+      "scope": "Read per-spectrum fit settings keyed by the selected row and polarization.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "variable-baseline"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "variable-baseline"
       ]
     },
     "verbose": {
-      "scope": "Variable fitting uses this logging option.",
-      "status": "Not implemented",
+      "scope": "Report the selected fit basis, mask and controls for each eligible variable-baseline spectrum.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "variable-baseline"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "variable-baseline"
       ]
     },
     "updateweight": {
@@ -409,12 +410,13 @@
     },
     {
       "id": "fit-apply",
-      "title": "Polynomial and Chebyshev fitting and application",
+      "title": "Fitting and application of saved baselines",
       "scope": "Fit spectra and apply compatible baseline tables across implementations.",
-      "status": "Partial",
-      "gap": "Per-spectrum variable fitting remains tracked by #1532.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
       "evidence": [
-        "paired"
+        "paired",
+        "variable-baseline"
       ]
     },
     {
@@ -428,13 +430,14 @@
       "gap": "Dataset-scale release profiling follows functionality under #979."
     },
     {
-      "id": "future-fits",
-      "title": "Remaining fitting and mask families",
-      "scope": "Fit per-spectrum baseline parameters from a variable baseline file.",
-      "status": "Not implemented",
-      "gap": "Tracked by #1532.",
+      "id": "variable-baseline",
+      "title": "Per-spectrum baseline fit parameters",
+      "scope": "Fit each requested spectrum from its file entry and exchange mixed-family tables.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
       "evidence": [
-        "pending"
+        "variable-baseline",
+        "variable-debug-performance"
       ]
     },
     {
@@ -639,7 +642,8 @@
       "result": "Paired outputs and independently evaluated sine/cosine coefficients agree.",
       "links": [
         "tools/casa-compat/sdbaseline_sinusoid_oracle.py"
-      ]
+      ],
+      "source_revision": "d7ec4faf0aed4d239894396c4e164bcb8f67b689"
     },
     "sinusoidal-debug-performance": {
       "kind": "Matched compact runtime and native phase trace",
@@ -652,6 +656,33 @@
       "result": "Native debug was 0.78 s versus CASA 0.30 s in the reviewed paired run. The same-size native phase trace spent 0.532 s processing spectra and 0.036 s saving MAIN. Dataset-scale release profiling follows functionality under #979.",
       "links": [
         "tools/casa-compat/sdbaseline_sinusoid_oracle.py"
+      ],
+      "source_revision": "d7ec4faf0aed4d239894396c4e164bcb8f67b689"
+    },
+    "variable-baseline": {
+      "kind": "Public task, direct tool, independent residual law and product interchange",
+      "state": "passed",
+      "casa_version": "6.7.6.14",
+      "revision": "c05d0f79dff04cb7949ee8c7d85064017d8cc385",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1984",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_variable_oracle.py <new-dir>",
+      "scope": "Variable rows with mixed families, select-view identities, reports, clipping, weights, stored line controls, missing entries and malformed parameter files.",
+      "result": "The pinned task and direct tool agree with native fitting, full table interchange, and analytic residual and scalar-weight examples.",
+      "links": [
+        "tools/casa-compat/sdbaseline_variable_oracle.py"
+      ]
+    },
+    "variable-debug-performance": {
+      "kind": "Matched compact runtime",
+      "state": "measured",
+      "casa_version": "6.7.6.14",
+      "revision": "c05d0f79dff04cb7949ee8c7d85064017d8cc385",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1984",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_variable_oracle.py <new-dir>",
+      "scope": "240 selected rows, 96 channels, independent polynomial settings and identical MeasurementSet and table products.",
+      "result": "Native debug completed in 0.435 s and CASA in 0.202 s.",
+      "links": [
+        "tools/casa-compat/sdbaseline_variable_oracle.py"
       ]
     }
   }
