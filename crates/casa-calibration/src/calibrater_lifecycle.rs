@@ -142,6 +142,9 @@ pub enum CalibraterLifecycleError {
     /// Creating a calibration table failed.
     #[error("{0}")]
     CreateTable(String),
+    /// Creating or updating the calibration table from supplied parameters failed.
+    #[error("Error in Calibrater::specifycal.")]
+    Specify(#[source] Box<crate::GencalError>),
     /// Smoothing an attached calibration table failed.
     #[error("Error in Calibrater::smooth.")]
     Smooth(#[source] casa_ms::MsError),
@@ -160,6 +163,27 @@ pub enum CalibraterLifecycleError {
 }
 
 impl CalibraterLifecycle {
+    /// Create or update a prior table using the attached dataset's axes.
+    ///
+    /// # Errors
+    /// Returns an error without an attachment or if the prescription fails.
+    pub fn specify_calibration(
+        &self,
+        specification: crate::CalibrationSpecification<'_>,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let attachment = &self.equation()?.attachment;
+        specification
+            .write(
+                attachment.path(),
+                self.legacy_iterator,
+                attachment.selection(),
+            )
+            .map_err(|error| {
+                tracing::error!(%error, "Calibration specification failed");
+                CalibraterLifecycleError::Specify(Box::new(error))
+            })
+    }
+
     /// Choose the visibility iterator before opening a MeasurementSet.
     ///
     /// Returns false when a MeasurementSet is already attached.

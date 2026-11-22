@@ -44,6 +44,7 @@ pub(super) fn rows(
     power_path: &Path,
     noise_path: &Path,
     caltype: GencalType,
+    selection: Option<&casa_ms::MsSelection>,
 ) -> Result<Vec<PriorCalRow>, GencalError> {
     let power = open(power_path, "SYSPOWER")?;
     let noise = open(noise_path, "CALDEVICE")?;
@@ -58,7 +59,7 @@ pub(super) fn rows(
     )?;
     let antennas = ms.antenna().map_err(invalid)?.row_count();
     let windows = ms.spectral_window().map_err(invalid)?.row_count();
-    let labels = visibility_labels(ms.main_table())?;
+    let labels = visibility_labels(ms, selection)?;
     let noise = noise_temperatures(&noise, antennas, windows)?;
     let mut samples = (0..power.row_count())
         .map(|row| {
@@ -260,8 +261,12 @@ fn power_parameters(
     Ok((parameters, valid))
 }
 
-fn visibility_labels(main: &Table) -> Result<VisibilityLabels, GencalError> {
-    let columns = main
+fn visibility_labels(
+    ms: &MeasurementSet,
+    selection: Option<&casa_ms::MsSelection>,
+) -> Result<VisibilityLabels, GencalError> {
+    let columns = ms
+        .main_table()
         .required_scalar_columns_owned(&[
             COL_TIME,
             COL_FIELD_ID,
@@ -283,11 +288,11 @@ fn visibility_labels(main: &Table) -> Result<VisibilityLabels, GencalError> {
     let arrays = ids(COL_ARRAY_ID)?;
     let mut fields_by_time = HashMap::new();
     let mut scan_limits = HashMap::new();
-    for (row, &time) in times
-        .iter()
-        .enumerate()
-        .filter(|(_, time)| time.is_finite())
-    {
+    let observe = |row: usize| {
+        let time = times[row];
+        if !time.is_finite() {
+            return;
+        }
         fields_by_time
             .entry(time.to_bits())
             .and_modify(|field: &mut i32| *field = (*field).min(fields[row]))
@@ -297,6 +302,14 @@ fn visibility_labels(main: &Table) -> Result<VisibilityLabels, GencalError> {
             .or_insert((time, time));
         limits.0 = limits.0.min(time);
         limits.1 = limits.1.max(time);
+    };
+    if let Some(selection) = selection {
+        crate::session::resolve_casa_calibration_selection(ms, selection)
+            .map_err(invalid)?
+            .row_indices()
+            .for_each(observe);
+    } else {
+        (0..times.len()).for_each(observe);
     }
     // At any visibility time CASA's set reports the smallest field ID.
     let mut fields_by_time = fields_by_time

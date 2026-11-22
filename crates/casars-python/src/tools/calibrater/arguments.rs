@@ -4,9 +4,11 @@
 use numpy::PyUntypedArray;
 use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBoolMethods, PyBytes, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::types::{
+    PyBool, PyBoolMethods, PyBytes, PyComplex, PyFloat, PyInt, PyList, PyString, PyTuple,
+};
 
-use crate::convert::{Variant, integer_vector};
+use crate::convert::{Variant, double_vector_element, integer_vector};
 
 pub(super) fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
     Ok(Some(value.clone()))
@@ -21,6 +23,32 @@ pub(super) fn strict_bool(value: &Bound<'_, PyAny>, method: &str, position: u8) 
                 "in method 'calibrater_{method}', argument {position} of type 'bool'"
             ))
         })
+}
+
+pub(super) fn append_double_vector(
+    value: &Bound<'_, PyAny>,
+    output: &mut Vec<f64>,
+    depth: usize,
+) -> PyResult<()> {
+    if depth > 32 {
+        return Err(PyValueError::new_err("numeric vector is too deeply nested"));
+    }
+    if value.is_instance_of::<PyUntypedArray>() {
+        let values = value
+            .call_method1("ravel", ("F",))?
+            .call_method0("tolist")?;
+        return append_double_vector(&values, output, depth + 1);
+    }
+    if value.is_instance_of::<PyList>() {
+        for item in value.try_iter()? {
+            append_double_vector(&item?, output, depth + 1)?;
+        }
+    } else if let Ok(complex) = value.cast::<PyComplex>() {
+        output.push(complex.real());
+    } else {
+        output.push(double_vector_element(value)?);
+    }
+    Ok(())
 }
 
 pub(super) fn number(
