@@ -8,18 +8,21 @@ use std::io::{BufReader, ErrorKind, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use casa_coordinates::{CoordinateSystem, FitsHeader, FitsValue, fits::from_fits_header};
+use casa_coordinates::{
+    CoordinateSystem, CoordinateType, FitsHeader, FitsValue, StokesCoordinate, StokesType,
+    fits::from_fits_header,
+};
 use casa_lattices::{Lattice, LatticeError};
 use casa_types::{
     RecordValue,
     measures::{EpochRef, MEpoch},
-    quanta::Unit,
+    quanta::{Quantity, Unit},
 };
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::{
     GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImageType,
-    fits_read::brightness_unit,
+    StoredGaussianBeam, fits_read::brightness_unit,
 };
 
 const MAX_AXES: usize = 7;
@@ -85,8 +88,16 @@ impl MiriadImage {
             return Err(malformed("invalid MIRIAD Float pixel payload"));
         }
 
-        let wcs = header.wcs(&shape)?;
+        let (wcs, stokes) = header.wcs(&shape)?;
         let mut coordinates = from_fits_header(&wcs, &shape)?;
+        if let Some(stokes) = stokes {
+            let index = coordinates
+                .find_coordinate(CoordinateType::Stokes)
+                .ok_or_else(|| {
+                    malformed("MIRIAD Stokes axis missing from the coordinate system")
+                })?;
+            coordinates.replace_coordinate(index, stokes);
+        }
         let observation = coordinates.obs_info_mut();
         observation.telescope = header.text("telescop")?;
         let obstime = header.number("obstime", -1.)?;
@@ -110,6 +121,11 @@ impl MiriadImage {
         let minor = header.number("bmin", 0.)?;
         let angle = header.number("bpa", 0.)?;
         if major > 0. && minor > 0. && angle.abs() > 0. {
+            StoredGaussianBeam::new(
+                Quantity::new(major, "rad").expect("built-in radians"),
+                Quantity::new(minor, "rad").expect("built-in radians"),
+                Quantity::new(angle, "deg").expect("built-in degrees"),
+            )?;
             info.beam_set = ImageBeamSet::new(GaussianBeam::new(major, minor, angle.to_radians()));
         }
         Ok(Self {
@@ -360,18 +376,15 @@ impl<'a> Items<'a> {
         })
     }
 
-    fn wcs(&self, shape: &[usize]) -> Result<FitsHeader, ImageError> {
+    fn wcs(&self, shape: &[usize]) -> Result<(FitsHeader, Option<StokesCoordinate>), ImageError> {
         let mut header = FitsHeader::new();
+        let mut stokes = None;
         header.set("NAXIS", FitsValue::Integer(shape.len() as i64));
         let epoch = self.number("epoch", 2000.)?;
-        header.set(
-            "EQUINOX",
-            FitsValue::Float(if (epoch - 1950.).abs() <= 1e-8 {
-                1950.
-            } else {
-                2000.
-            }),
-        );
+        if (epoch - 1950.).abs() <= 1950. * 1e-13 {
+            header.set("EQUINOX", FitsValue::Float(1950.));
+            header.set("RADESYS", FitsValue::String("FK4".into()));
+        }
         header.set("BUNIT", FitsValue::String(self.text("bunit")?));
         for axis in 1..=shape.len() {
             header.set(
@@ -379,21 +392,42 @@ impl<'a> Items<'a> {
                 FitsValue::Integer(shape[axis - 1] as i64),
             );
             let mut kind = self.text(&format!("ctype{axis}"))?;
-            let pix = self.number(&format!("crpix{axis}"), 0.)?;
+            if !kind.is_ascii() {
+                return Err(malformed(format!("CTYPE{axis} must be ASCII")));
+            }
+            let mut pix = self.number(&format!("crpix{axis}"), 0.)?;
             let mut step = self.number(&format!("cdelt{axis}"), 0.)?;
             let mut value = self.number(&format!("crval{axis}"), 0.)?;
-            let unit = if kind.starts_with("RA---")
+            let unit = if kind.contains("STOKES") {
+                if stokes.is_some() {
+                    return Err(malformed(
+                        "multiple MIRIAD Stokes axes are not implemented (#1955)",
+                    ));
+                }
+                stokes = Some(miriad_stokes(shape[axis - 1], pix, step, value)?);
+                // Let the shared FITS reader assemble the axis mapping, then
+                // replace these placeholder values with the MIRIAD codes.
+                kind = "STOKES".into();
+                (pix, step, value) = (1., 1., 1.);
+                ""
+            } else if kind.starts_with("RA---")
                 || kind.starts_with("DEC--")
                 || kind.starts_with("GLON-")
                 || kind.starts_with("GLAT-")
             {
-                if step == 0. && pix == 1. {
+                if step == 0. && (pix - 1.).abs() <= 1e-13 {
                     step = 1.;
+                }
+                if step == 0. {
+                    return Err(singular_wcs());
                 }
                 step = step.to_degrees();
                 value = value.to_degrees();
                 "deg"
             } else if kind.starts_with("FREQ") {
+                if step == 0. {
+                    return Err(singular_wcs());
+                }
                 let rest = self.number("restfreq", -1.)?;
                 if rest >= 0. {
                     header.set("RESTFRQ", FitsValue::Float(rest * 1e9));
@@ -403,10 +437,8 @@ impl<'a> Items<'a> {
                 "Hz"
             } else if kind.starts_with("VELO") || kind.starts_with("FELO") {
                 let rest = self.number("restfreq", -1.)? * 1e9;
-                if rest <= 0. {
-                    return Err(ImageError::CasaSelection(
-                        "wcs wcsset_error: Linear transformation matrix is singular".into(),
-                    ));
+                if rest <= 0. || step == 0. {
+                    return Err(singular_wcs());
                 }
                 let velocity = value * 1e3;
                 let velocity_step = step * 1e3;
@@ -430,8 +462,57 @@ impl<'a> Items<'a> {
             header.set(format!("CRVAL{axis}"), FitsValue::Float(value));
             header.set(format!("CUNIT{axis}"), FitsValue::String(unit.into()));
         }
-        Ok(header)
+        Ok((header, stokes))
     }
+}
+
+fn miriad_stokes(
+    planes: usize,
+    reference_pixel: f64,
+    increment: f64,
+    reference_value: f64,
+) -> Result<StokesCoordinate, ImageError> {
+    if planes > 4 {
+        return Err(ImageError::CasaSelection(
+            "Stokes axis longer than 4 pixels.  This is not acceptable".into(),
+        ));
+    }
+    let mut stokes = Vec::with_capacity(planes);
+    for pixel in 1..=planes {
+        let value = reference_value + (pixel as f64 - reference_pixel) * increment;
+        if !value.is_finite() {
+            return Err(malformed("non-finite MIRIAD Stokes coordinate"));
+        }
+        let code = (value + 0.01_f64.copysign(value)) as i32;
+        let polarization = match code {
+            -8 => StokesType::YX,
+            -7 => StokesType::XY,
+            -6 => StokesType::YY,
+            -5 => StokesType::XX,
+            -4 => StokesType::LR,
+            -3 => StokesType::RL,
+            -2 => StokesType::LL,
+            -1 => StokesType::RR,
+            1 => StokesType::I,
+            2 => StokesType::Q,
+            3 => StokesType::U,
+            4 => StokesType::V,
+            5 | 6 => StokesType::PFlinear,
+            7 => StokesType::Pangle,
+            _ => StokesType::Undefined,
+        };
+        if stokes.contains(&polarization) {
+            return Err(malformed(
+                "repeated MIRIAD Stokes values are not implemented (#1955)",
+            ));
+        }
+        stokes.push(polarization);
+    }
+    Ok(StokesCoordinate::new(stokes))
+}
+
+fn singular_wcs() -> ImageError {
+    ImageError::CasaSelection("wcs wcsset_error: Linear transformation matrix is singular".into())
 }
 
 fn is_image_keyword(name: &str) -> bool {

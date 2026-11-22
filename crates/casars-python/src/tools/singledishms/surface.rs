@@ -19,7 +19,7 @@ const METHODS: &[Method] = &[
                 param("outfile", K::Text, D::Text("")),
             ],
             R::Bool,
-            S::Partial,
+            S::Implemented,
         )
     },
     Method {
@@ -224,7 +224,7 @@ const METHODS: &[Method] = &[
                 param("verbose", K::Bool, D::Bool(false)),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
 ];

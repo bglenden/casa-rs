@@ -1,7 +1,10 @@
 """Read independent MIRIAD directories through the public image tool."""
 
 import math
+import os
 import struct
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -32,7 +35,16 @@ def _write_cache(path, items):
                 cache.write(bytes(-len(value) % 16))
 
 
-def _sky(path, layout="cached", external_pixels=True, cube=None, rest_frequency=1.420405751786):
+def _replace_cached_number(path, name, original, replacement):
+    header = path / "header"
+    data = header.read_bytes()
+    tag = struct.pack(">15sB", name.encode("ascii"), len(_real(original)))
+    assert tag + _real(original) in data
+    header.write_bytes(data.replace(tag + _real(original), tag + _real(replacement)))
+
+
+def _sky(path, layout="cached", external_pixels=True, cube=None, rest_frequency=1.420405751786,
+         stokes_planes=2):
     path.mkdir()
     shape = (128, 16)
     values = np.arange(shape[0])[:, None] + 10 * np.arange(shape[1])[None, :]
@@ -55,12 +67,12 @@ def _sky(path, layout="cached", external_pixels=True, cube=None, rest_frequency=
         values = (
             values[:, :, None, None]
             + 1000 * np.arange(5)[None, None, :, None]
-            + 10_000 * np.arange(2)[None, None, None, :]
+            + 10_000 * np.arange(stokes_planes)[None, None, None, :]
         )
         items.update({
             "naxis": _integer(4),
             "naxis3": _integer(5),
-            "naxis4": _integer(2),
+            "naxis4": _integer(stokes_planes),
             "ctype3": _text(cube),
             "ctype4": _text("STOKES"),
             "crpix3": _real(1.),
@@ -152,6 +164,42 @@ def test_direct_miriad_file_factories(tmp_path, monkeypatch, backend, method, kw
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_b1950_direction_frame(tmp_path, backend):
+    source = tmp_path / "b1950.mir"
+    _sky(source)
+    _replace_cached_number(source, "epoch", 2000., 1950.)
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(source))
+        coordinate = image.coordsys()
+        try:
+            assert coordinate.referencecode("direction")[0] == "B1950"
+            assert coordinate.setunits(["rad", "rad"])
+            np.testing.assert_allclose(
+                coordinate.toworld([40, 8])["numeric"], _sin_pixel(40, 8), rtol=0, atol=1e-10
+            )
+        finally:
+            coordinate.done()
+    finally:
+        image.done()
+
+
+def test_miriad_non_ascii_coordinate_type_preserves_the_factory_receiver(tmp_path):
+    source = tmp_path / "non-ascii-axis.mir"
+    _sky(source)
+    header = source / "header"
+    header.write_bytes(header.read_bytes().replace(b"RA---SIN", b"RA-\xc3\xa9SIN"))
+    image = tools.image()
+    try:
+        assert image.fromarray(pixels=[31., 42.])
+        with pytest.raises(RuntimeError, match="CTYPE1 must be ASCII"):
+            image.newimagefromfile(str(source))
+        np.testing.assert_array_equal(image.getchunk(), [31., 42.])
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
 @pytest.mark.parametrize("kind", ["FREQ-LSR", "VELO-LSR", "FELO-LSR"])
 def test_miriad_frequency_stokes_and_beam_metadata(tmp_path, backend, kind):
     path = tmp_path / "frequency.mir"
@@ -203,6 +251,73 @@ def test_miriad_velocity_needs_a_nonzero_rest_frequency(tmp_path, backend, rest_
         with pytest.raises(RuntimeError, match="Linear transformation matrix is singular"):
             image.newimagefromfile(str(path))
         np.testing.assert_array_equal(image.getchunk(), [31., 42.])
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_rejects_more_than_four_stokes_planes(tmp_path, backend):
+    path = tmp_path / "too-many-stokes.mir"
+    _sky(path, cube="FREQ-LSR", stokes_planes=5)
+    image = _backend(backend).image()
+    try:
+        assert image.fromarray(pixels=[31., 42.])
+        with pytest.raises(RuntimeError, match="Stokes axis longer than 4 pixels"):
+            image.newimagefromfile(str(path))
+        np.testing.assert_array_equal(image.getchunk(), [31., 42.])
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize(("code", "expected"), [(-8., "YX"), (5., "PFlinear"),
+                                                (6., "PFlinear"), (7., "Pangle"), (8., "??")])
+def test_miriad_stokes_codes(tmp_path, backend, code, expected):
+    path = tmp_path / "polarization.mir"
+    _sky(path, cube="FREQ-LSR", stokes_planes=1)
+    _replace_cached_number(path, "crval4", 1., code)
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(path))
+        coordinates = image.coordsys()
+        try:
+            assert coordinates.stokes() == [expected]
+        finally:
+            coordinates.done()
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("case", ["direction", "reference-pixel-one", "frequency", "beam"])
+def test_miriad_validates_calibrated_metadata_before_attaching(tmp_path, backend, case):
+    path = tmp_path / "validation.mir"
+    _sky(path, cube="FREQ-LSR" if case in {"frequency", "beam"} else None)
+    message = "Linear transformation matrix is singular"
+    if case == "beam":
+        _replace_cached_number(path, "bmaj", .0002, .00005)
+        message = "(?i)major axis.*minor axis"
+    elif case == "frequency":
+        _replace_cached_number(path, "cdelt3", .002, 0.)
+    else:
+        _replace_cached_number(path, "cdelt1", -.0001, 0.)
+        if case == "reference-pixel-one":
+            _replace_cached_number(path, "crpix1", 2., 1.)
+    image = _backend(backend).image()
+    try:
+        assert image.fromarray(pixels=[31., 42.])
+        if case == "reference-pixel-one":
+            assert image.open(str(path))
+            coordinates = image.coordsys()
+            try:
+                assert coordinates.setunits(["rad", "rad"])
+                np.testing.assert_allclose(coordinates.increment()["numeric"], [1., .0001])
+            finally:
+                coordinates.done()
+        else:
+            with pytest.raises(RuntimeError, match=message):
+                image.newimagefromfile(str(path))
+            np.testing.assert_array_equal(image.getchunk(), [31., 42.])
     finally:
         image.done()
 
@@ -266,6 +381,8 @@ def test_miriad_pixels_and_masks_cannot_be_written(tmp_path, backend):
         with pytest.raises(RuntimeError, match="not writable"):
             image.putchunk(np.asarray([[99.]], dtype=np.float32), blc=[2, 1])
         with pytest.raises(RuntimeError, match="not writable"):
+            image.putchunk(np.asarray([[99.]], dtype=np.float32), replicate=True)
+        with pytest.raises(RuntimeError, match="not writable"):
             image.putregion(pixels=np.full(pixels.shape, 99., dtype=np.float32))
         with pytest.raises(RuntimeError, match=r"to\.isWritable\(\)"):
             image.set(pixels=99., pixelmask=0)
@@ -302,6 +419,23 @@ def test_miriad_admission_needs_external_pixels_and_preserves_table_precedence(t
             assert not image.isopen()
     finally:
         image.done()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires a POSIX named pipe")
+def test_miriad_admission_does_not_open_a_nonregular_table_control_file(tmp_path):
+    path = tmp_path / "pipe-control.mir"
+    _sky(path)
+    os.mkfifo(path / "table.dat")
+    script = """
+import sys
+from casars import tools
+
+image = tools.image()
+assert image.open(sys.argv[1])
+assert image.getchunk(blc=[2, 1], trc=[2, 1]).item() == 12.
+assert image.done()
+"""
+    subprocess.run([sys.executable, "-c", script, str(path)], check=True, timeout=10)
 
 
 def test_malformed_miriad_payload_preserves_the_factory_receiver(tmp_path):

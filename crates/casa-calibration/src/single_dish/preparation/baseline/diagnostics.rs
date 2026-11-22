@@ -42,7 +42,7 @@ impl Diagnostics {
         self.csv.is_some() || self.text.is_some()
     }
 
-    pub(super) fn report(&mut self, row: &BaselineRow) -> Result<(), String> {
+    pub(super) fn report(&mut self, row: &BaselineRow, variable: bool) -> Result<(), String> {
         let wave_width = row
             .models
             .iter()
@@ -55,7 +55,7 @@ impl Diagnostics {
             .unwrap_or(0);
         for (pol, model) in row.models.iter().enumerate() {
             if let Some(model) = model {
-                self.report_spectrum(row, pol, model, wave_width)?;
+                self.report_spectrum(row, pol, model, wave_width, variable)?;
             }
         }
         Ok(())
@@ -67,6 +67,7 @@ impl Diagnostics {
         pol: usize,
         model: &SpectrumModel,
         wave_width: usize,
+        variable: bool,
     ) -> Result<(), String> {
         let (family, parameter_name, csv_parameter, text_parameter) = match &model.basis {
             ModelBasis::Polynomial(kind, order) => {
@@ -86,12 +87,12 @@ impl Diagnostics {
                     .chain(std::iter::repeat_n(0, wave_width - waves.len()))
                     .map(|wave| wave.to_string())
                     .collect::<Vec<_>>();
-                (
-                    "sinusoid",
-                    "nwave",
-                    padded.join(";"),
-                    format!("{} ", padded.join(" ")),
-                )
+                let text = if variable {
+                    format!("[{}]", padded.join(", "))
+                } else {
+                    format!("{} ", padded.join(" "))
+                };
+                ("sinusoid", "nwave", padded.join(";"), text)
             }
         };
         let clipped = model.clipped;
@@ -132,7 +133,9 @@ impl Diagnostics {
             let time = time.format_time(2);
             writeln!(writer, "Scan[{}] Beam[{}] Spw[{}] Pol[{pol}] Time[{date}/{time}]\n\nFitter range = {}\n\nBaseline parameters  Function = {family}  {parameter_name} = {text_parameter}\n\nResults of baseline fit\n",
                      row.scan, row.beam, row.window, ranges(&model.mask, false)).map_err(error_text)?;
-            if let ModelBasis::Sinusoid(waves) = &model.basis {
+            if let ModelBasis::Sinusoid(waves) = &model.basis
+                && !variable
+            {
                 let mut coefficients = model.coefficients.iter().copied();
                 for &wave in waves {
                     for prefix in if wave == 0 { &['c'][..] } else { &['s', 'c'] } {

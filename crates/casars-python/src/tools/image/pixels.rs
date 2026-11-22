@@ -247,6 +247,12 @@ impl Chunk {
     }
 
     fn put<T: ImagePixel>(&self, storage: &mut Storage<T>, mut data: ArrayD<T>) -> PyResult<()> {
+        if let Storage::Temp { image, .. } = storage {
+            image
+                .require_writable_pixels()
+                .map_err(casa_images::ImageError::from)
+                .map_err(raised)?;
+        }
         while data.ndim() < self.start.len() {
             let axis = ndarray::Axis(data.ndim());
             data = data.insert_axis(axis);

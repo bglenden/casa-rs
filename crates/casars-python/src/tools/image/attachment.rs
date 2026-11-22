@@ -131,12 +131,14 @@ impl AttachedImage {
             return Err(unrecognized());
         }
         let key = key(path)?;
-        if !key.join("table.dat").is_file()
+        let has_table_control = key.join("table.dat").is_file();
+        if !has_table_control
             || !fs::read_to_string(key.join("table.info"))
                 .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image")
         {
             if MiriadImage::recognizes(probe)
-                && Table::open_metadata_only(TableOptions::new(&key)).is_err()
+                && (!has_table_control
+                    || Table::open_metadata_only(TableOptions::new(&key)).is_err())
             {
                 return ImageHandle::open_miriad(path)
                     .map(Self::temporary)

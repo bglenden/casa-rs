@@ -121,7 +121,11 @@ impl<T: ImagePixel> TempImage<T> {
         }
     }
 
-    fn require_writable_pixels(&self) -> Result<(), LatticeError> {
+    /// Check whether a pixel write is allowed before preparing its values.
+    ///
+    /// # Errors
+    /// Returns the source-specific write error for a read-only image.
+    pub fn require_writable_pixels(&self) -> Result<(), LatticeError> {
         match &self.read_only {
             Some(image) => Err(LatticeError::Table(image.write_error.into())),
             None => Ok(()),

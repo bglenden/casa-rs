@@ -55,7 +55,19 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let maskmode = task.required_text("maskmode")?;
     let header = text_header(&input, output, &maskmode);
     let table = task.text("bltable")?.unwrap_or_default();
+    let parameter_file = task.text("blparam")?.unwrap_or_default();
+    let diagnostics = SingleDishBaselineDiagnostics {
+        csv: products.csv.as_deref(),
+        text: products.text.as_deref(),
+        heading: Some(&header),
+    };
     let baseline_mode = match mode.as_str() {
+        "fit" if family == "variable" => SingleDishBaselineMode::Variable {
+            parameters: Path::new(&parameter_file),
+            verbose: task.flag("verbose")?,
+            table: products.table.as_deref(),
+            diagnostics,
+        },
         "fit" => {
             let basis = match family.as_str() {
                 "poly" | "chebyshev" => SingleDishBaselineBasis::Polynomial {
@@ -89,11 +101,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                 max_fits: nonnegative(task, "clipniter")? + 1,
                 line_finder,
                 table: products.table.as_deref(),
-                diagnostics: SingleDishBaselineDiagnostics {
-                    csv: products.csv.as_deref(),
-                    text: products.text.as_deref(),
-                    heading: Some(&header),
-                },
+                diagnostics,
             }
         }
         "apply" => {
