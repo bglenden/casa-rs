@@ -91,6 +91,12 @@ fn solve(ms: &MeasurementSet, request: &PccorRequest) -> Result<PathBuf, PccorEr
 fn read(path: &Path, selection: &Selection) -> Result<BTreeMap<Pair, FringeSolution>, PccorError> {
     let table = Table::open(TableOptions::new(path))?;
     let parameters = table.column_accessor("FPARAM")?;
+    let windows = validate_windows(path)?;
+    if table.row_count() == 0 {
+        return Err(PccorError::Index(
+            "index 0 is out of bounds for axis 0 with size 0".into(),
+        ));
+    }
     let malformed =
         |row| PccorError::Execution(format!("Invalid FPARAM cell in fringe fit row {row}"));
     let [start, stop] = selection.interval;
@@ -154,21 +160,48 @@ fn read(path: &Path, selection: &Selection) -> Result<BTreeMap<Pair, FringeSolut
         ));
     }
     let mut selected = BTreeMap::new();
-    for &antenna in &selection.antennas {
-        for &window in &selection.windows {
-            let pair = (antenna, window);
-            if let Some(mut values) = solutions.remove(&pair)
-                && values.len() == 1
-            {
-                selected.insert(pair, values.pop().expect("checked single solution"));
-                continue;
-            }
+    for pair in selection.pairs() {
+        let Some(values) = solutions.remove(&pair).filter(|values| values.len() == 1) else {
             return Err(PccorError::FringeTable(
                 "Expected a single fringe fit solution for the time interval".into(),
             ));
+        };
+        if pair.1 as usize >= windows {
+            return Err(PccorError::Index(format!(
+                "index {} is out of bounds for axis 0 with size {windows}",
+                pair.1,
+            )));
         }
+        selected.insert(
+            pair,
+            values.into_iter().next().expect("checked single solution"),
+        );
     }
     Ok(selected)
+}
+
+fn validate_windows(path: &Path) -> Result<usize, PccorError> {
+    let table = Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW")))?;
+    let frequencies = table.column_accessor("CHAN_FREQ")?;
+    let mut count = None;
+    for row in 0..table.row_count() {
+        let shape = frequencies.array_cell(row)?.shape();
+        if !matches!(shape, [channels] if *channels > 0)
+            || count
+                .replace(shape[0])
+                .is_some_and(|previous| previous != shape[0])
+        {
+            return Err(PccorError::Execution(
+                "Invalid fringe SPECTRAL_WINDOW CHAN_FREQ".into(),
+            ));
+        }
+    }
+    if count.is_none() {
+        return Err(PccorError::Execution(
+            "Fringe SPECTRAL_WINDOW contains no frequencies".into(),
+        ));
+    }
+    Ok(table.row_count())
 }
 
 fn scalar_error(error: crate::GainSolveError) -> PccorError {

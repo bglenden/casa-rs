@@ -268,21 +268,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "polfromgain":
         return _call_polfromgain(values, arguments)
     if name == "pccor":
-        _validate_required_path(values, "vis", arguments["vis"], search_data=True)
-        nulls = {key: ["null value not allowed"] for key, value in arguments.items()
-                 if value is None}
-        if nulls:
-            raise AssertionError(str(nulls))
-        try:
-            return run(name, **values).value
-        except TaskExecutionError as error:
-            if error.completion.parameter == "selection":
-                raise ValueError(error.completion.message) from error
-            if error.completion.parameter == "ff_table":
-                raise Exception(error.completion.message) from error
-            raise RuntimeError(error.completion.message) from error
-        except (TypeError, ValueError) as error:
-            raise AssertionError(str(error)) from error
+        return _call_pccor(values, arguments)
     if name == "polcal":
         _validate_required_path(values, "vis", arguments["vis"], search_data=True)
         try:
@@ -1698,6 +1684,33 @@ def _resolve_relative_data_path(path: str) -> str:
         if candidate.exists():
             return str(candidate)
     return path
+
+
+def _call_pccor(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    errors = {}
+    for key, value in arguments.items():
+        if value is None:
+            errors[key] = ["null value not allowed"]
+        elif key == "vis" and not isinstance(value, str):
+            errors[key] = [f"the vis parameter must be a path that exists ('{value}' does not exist)"]
+        elif key != "cablecal_correction" and not isinstance(value, str):
+            errors[key] = ["must be of cStr type"]
+    if errors:
+        if list(errors) == ["vis"] and arguments["vis"] is not None:
+            raise AssertionError(errors["vis"][0])
+        raise AssertionError(str(errors))
+    _validate_required_path(values, "vis", arguments["vis"], search_data=True)
+    try:
+        return run("pccor", **values).value
+    except TaskExecutionError as error:
+        kind = {
+            "selection": ValueError,
+            "ff_table": Exception,
+            "pccor_index": IndexError,
+        }.get(error.completion.parameter, RuntimeError)
+        raise kind(error.completion.message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
 
 
 def _call_polfromgain(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:

@@ -696,8 +696,8 @@ def fringefit(
     return _call_casa(fringefit, locals())
 
 def pccor(
-    vis: StrPath = '',
-    pccor_caltable: StrPath = '',
+    vis: str = '',
+    pccor_caltable: str = '',
     refant: str = '',
     timerange: str = 'none',
     scan: str = 'none',

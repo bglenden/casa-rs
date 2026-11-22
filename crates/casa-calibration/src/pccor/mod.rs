@@ -6,6 +6,7 @@ mod pulse;
 mod selection;
 mod table;
 
+use std::collections::BTreeSet;
 use std::f64::consts::{PI, TAU};
 use std::path::PathBuf;
 
@@ -38,6 +39,8 @@ enum PccorError {
     #[error("{0}")]
     FringeTable(String),
     #[error("{0}")]
+    Index(String),
+    #[error("{0}")]
     Execution(String),
     #[error(transparent)]
     MeasurementSet(#[from] casa_ms::MsError),
@@ -67,6 +70,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let (result, rows_written) = execute(&request).map_err(|error| match error {
         PccorError::Selection(message) => TaskFailure::execution(message).at("selection"),
         PccorError::FringeTable(message) => TaskFailure::execution(message).at("ff_table"),
+        PccorError::Index(message) => TaskFailure::execution(message).at("pccor_index"),
         _ => TaskFailure::execution(error.to_string()),
     })?;
     TaskSuccess::new(
@@ -88,14 +92,25 @@ fn execute(request: &PccorRequest) -> Result<(CasaValue, usize), PccorError> {
     let fit = crate::timing::Phase::start("pccor_reference_fringe");
     let fringes = fringe::read_or_solve(&ms, request, &selection)?;
     drop(fit);
+    if selection.windows.is_empty() {
+        return Err(PccorError::Index("list index out of range".into()));
+    }
 
     let align = crate::timing::Phase::start("pccor_align");
     let mut antennas = Vec::with_capacity(selection.antennas.len());
+    let mut seen_antennas = BTreeSet::new();
     let mut table_rows = Vec::new();
     for &antenna in &selection.antennas {
+        let first_antenna = seen_antennas.insert(antenna);
         let mut windows = Vec::with_capacity(selection.windows.len());
+        let mut seen_windows = BTreeSet::new();
         for &window in &selection.windows {
             let pair = (antenna, window);
+            if request.cable && pulses[&pair].missing_single_tone {
+                return Err(PccorError::Selection(
+                    "non-broadcastable output operand with shape (2,1) doesn't match the broadcast shape (2,0)".into(),
+                ));
+            }
             let options = Alignment {
                 pulse: &pulses[&pair],
                 reference: &pulses[&(selection.reference, window)],
@@ -114,10 +129,14 @@ fn execute(request: &PccorRequest) -> Result<(CasaValue, usize), PccorError> {
                     delay: row.delay,
                 })
             }));
-            windows.push((format!("spw_{window}"), options.record(aligned)));
+            if first_antenna && seen_windows.insert(window) {
+                windows.push((format!("spw_{window}"), options.record(aligned)));
+            }
         }
-        let name = &selection.antenna_names[antenna as usize];
-        antennas.push((format!("ant_{name}"), CasaValue::dict(windows)));
+        if first_antenna {
+            let name = &selection.antenna_names[antenna as usize];
+            antennas.push((format!("ant_{name}"), CasaValue::dict(windows)));
+        }
     }
     drop(align);
     let publish = crate::timing::Phase::start("pccor_write");

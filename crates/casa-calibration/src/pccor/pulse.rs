@@ -20,6 +20,7 @@ pub(super) struct PulseSeries {
     pub(super) samples: Vec<PulseSample>,
     pub(super) mean_phase: [Vec<f64>; 2],
     pub(super) mean_delay: [f64; 2],
+    pub(super) missing_single_tone: bool,
     phase_sum: [Vec<Complex64>; 2],
     delay_sum: [f64; 2],
     count: u32,
@@ -30,6 +31,13 @@ pub(super) struct PulseSample {
     pub(super) phase: [f64; 2],
     pub(super) delay: [f64; 2],
     pub(super) cable: f64,
+}
+
+#[derive(Clone, Copy)]
+struct MissingPulse {
+    time: f64,
+    tones: usize,
+    inside_interval: bool,
 }
 
 pub(super) fn read(
@@ -57,41 +65,45 @@ pub(super) fn read(
         .map_err(unreadable)?;
     let phases = table.column_accessor("PHASE_CAL").map_err(unreadable)?;
     let [start, stop] = selection.interval;
-    let placeholder_tones = if times
-        .first()
-        .is_some_and(|time| (start..=stop).contains(time))
-    {
+    let shape = if !times.is_empty() {
         let phasors = phases.array_cell(0).map_err(unreadable)?;
-        *phasors
-            .shape()
-            .get(1)
-            .ok_or_else(|| missing_subtable(ms_path))?
+        phasors.shape().to_vec()
     } else {
-        1
+        Vec::new()
     };
+    let missing = times
+        .first()
+        .zip(shape.get(1))
+        .map(|(&time, &tones)| MissingPulse {
+            time,
+            tones,
+            inside_interval: (start..=stop).contains(&time),
+        });
     let mut series = BTreeMap::<Pair, PulseSeries>::new();
-    let rows: Vec<_> = antennas
-        .iter()
-        .zip(&windows)
-        .enumerate()
-        .filter_map(|(row, (antenna, window))| {
-            (selection.antennas.contains(antenna) && selection.windows.contains(window))
-                .then_some(row)
-        })
-        .collect();
-    for chunk in rows.chunks(4096) {
+    let pairs = selection.pairs();
+    for start_row in (0..table.row_count()).step_by(4096) {
+        let chunk: Vec<_> = (start_row..(start_row + 4096).min(table.row_count())).collect();
         let frequency_cells = tones
-            .array_cells_owned_uncached(chunk)
+            .array_cells_owned_uncached(&chunk)
             .map_err(unreadable)?;
         let phase_cells = phases
-            .array_cells_owned_uncached(chunk)
+            .array_cells_owned_uncached(&chunk)
             .map_err(unreadable)?;
         for ((&row, frequencies), phasors) in chunk.iter().zip(frequency_cells).zip(phase_cells) {
             let (Some(ArrayValue::Float64(frequencies)), Some(phasors)) = (frequencies, phasors)
             else {
                 return Err(missing_subtable(ms_path));
             };
-            let pulse = series.entry((antennas[row], windows[row])).or_default();
+            // CASA's getcol requires one shape for the whole subtable,
+            // including antennas outside the user's selection.
+            if phasors.shape() != shape || frequencies.shape() != shape {
+                return Err(missing_subtable(ms_path));
+            }
+            let pair = (antennas[row], windows[row]);
+            if !pairs.contains(&pair) {
+                continue;
+            }
+            let pulse = series.entry(pair).or_default();
             pulse.observe(
                 times[row],
                 cables[row],
@@ -101,17 +113,15 @@ pub(super) fn read(
             )?;
         }
     }
-    for &antenna in &selection.antennas {
-        for &window in &selection.windows {
-            let series = series.entry((antenna, window)).or_default();
-            if antenna == selection.reference && series.count == 0 {
-                let name = &selection.antenna_names[antenna as usize];
-                return Err(PccorError::Execution(format!(
-                    "Missing pulse cal data for the reference antenna ({name}) nothing to do.",
-                )));
-            }
-            series.finish(placeholder_tones);
+    for (antenna, window) in pairs {
+        let series = series.entry((antenna, window)).or_default();
+        if antenna == selection.reference && series.count == 0 {
+            let name = &selection.antenna_names[antenna as usize];
+            return Err(PccorError::Execution(format!(
+                "Missing pulse cal data for the reference antenna ({name}) nothing to do.",
+            )));
         }
+        series.finish(missing);
     }
     Ok(series)
 }
@@ -196,15 +206,30 @@ impl PulseSeries {
         Ok(())
     }
 
-    fn finish(&mut self, placeholder_tones: usize) {
+    fn finish(&mut self, missing: Option<MissingPulse>) {
         if self.count == 0 {
             // CASA creates one synthetic pulse at the first table time for a
             // missing antenna/window. When in range, it contributes every tone.
-            let tones = if self.samples.is_empty() {
-                placeholder_tones
-            } else {
-                1
-            };
+            let mut tones = 1;
+            if let Some(missing) = missing.filter(|_| self.samples.is_empty()) {
+                if missing.inside_interval {
+                    tones = missing.tones;
+                }
+                if missing.tones == 1 {
+                    // The first and last tone are the same, so the synthetic
+                    // delay is 0/0 and does not trigger the zero-delay fallback.
+                    self.missing_single_tone = true;
+                    self.samples.push(PulseSample {
+                        time: missing.time,
+                        phase: [0.; 2],
+                        delay: [f64::NAN; 2],
+                        cable: 0.,
+                    });
+                    if missing.inside_interval {
+                        self.mean_delay = [f64::NAN; 2];
+                    }
+                }
+            }
             self.mean_phase = [vec![0.; tones], vec![0.; tones]];
             return;
         }

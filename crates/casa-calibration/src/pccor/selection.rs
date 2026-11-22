@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Antenna, spectral-window, and scan selections for pulse calibration.
 
+use std::collections::BTreeSet;
+
 use casa_ms::MeasurementSet;
-use casa_ms::selection::time_expr::{TimeDefaults, resolve_time_selector};
 use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
+use casa_types::quanta::Quantity;
+use time::Date;
 
 use super::{PccorError, PccorRequest};
 
@@ -56,6 +59,13 @@ impl Selection {
     pub(super) fn scan_at(&self, time: f64) -> Option<&Scan> {
         self.scans.iter().rfind(|scan| time >= scan.start)
     }
+
+    pub(super) fn pairs(&self) -> BTreeSet<(i32, i32)> {
+        self.antennas
+            .iter()
+            .flat_map(|&antenna| self.windows.iter().map(move |&window| (antenna, window)))
+            .collect()
+    }
 }
 
 fn antenna_id(name: &str, antenna_names: &[String]) -> Result<i32, PccorError> {
@@ -75,8 +85,9 @@ fn select_windows(text: &str, count: i32) -> Result<Vec<i32>, PccorError> {
             .map_err(|_| PccorError::Selection(format!("{text} is not a valid SPW specification")))
     };
     if !text.contains('!')
-        && let Some((start, stop)) = text.split_once('~')
+        && let Some((start, tail)) = text.split_once('~')
     {
+        let stop = tail.split_once('~').map_or(tail, |(stop, _)| stop);
         return Ok((parse(start)?.max(0)..=parse(stop)?.min(count - 1)).collect());
     }
     select_ids(text, count, "SPWs", |part| {
@@ -199,23 +210,36 @@ fn parse_scan(text: &str, scans: &[Scan], final_time: f64) -> Result<[f64; 2], P
 }
 
 fn parse_timerange(text: &str, first: f64) -> Result<[f64; 2], PccorError> {
-    if text.bytes().filter(|&byte| byte == b'~').count() != 1 {
+    let Some((start, stop)) = text.split_once('~').filter(|(_, stop)| !stop.contains('~')) else {
         return Err(PccorError::Selection(
             "timerange must contain one and only one <~> to separate start and finish times".into(),
         ));
-    }
-    let selection = resolve_time_selector(
-        text,
-        TimeDefaults {
-            time_mjd_s: first,
-            exposure_s: 0.,
-        },
-    )
-    .map_err(|error| PccorError::Selection(error.to_string()))?;
-    let mut intervals = selection.time_list();
-    let entry = intervals
-        .next()
-        .filter(|_| intervals.len() == 0)
-        .ok_or_else(|| PccorError::Selection("Invalid solution timerange".into()))?;
-    Ok([entry.start_s, entry.end_s])
+    };
+    // PCCOR sends both bounds through measures. The nested fringefit still
+    // uses the MeasurementSet expression grammar for its own selection.
+    let date = if start.contains('/') {
+        start.split('/').take(3).collect::<Vec<_>>().join("/")
+    } else {
+        let first_day = Date::from_julian_day(2_400_001 + (first / 86400.).floor() as i32)
+            .map_err(|error| PccorError::Selection(error.to_string()))?;
+        format!(
+            "{}/{:02}/{:02}",
+            first_day.year(),
+            u8::from(first_day.month()),
+            first_day.day()
+        )
+    };
+    let seconds = |bound: &str, label: &str| {
+        let qualified = if bound.contains('/') {
+            bound.to_owned()
+        } else {
+            format!("{date}/{bound}")
+        };
+        Quantity::read(&qualified)
+            .ok()
+            .filter(|value| value.unit().name() == "d" && value.value().is_finite())
+            .map(|value| value.value() * 86400.)
+            .ok_or_else(|| PccorError::Selection(format!("{label} time in timerange is invalid")))
+    };
+    Ok([seconds(start, "Start")?, seconds(stop, "Stop")?])
 }

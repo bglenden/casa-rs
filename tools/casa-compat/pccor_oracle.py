@@ -4,6 +4,7 @@
 
 import argparse
 from contextlib import chdir
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
 import time
@@ -95,7 +96,7 @@ def compare(products, records, fitted=False):
         compare_tables(products['casa'], products['native'], fitted)
 
 
-def write_tones(vis, times):
+def write_tones(vis, times, tone_count=2):
     types = dict(ANTENNA_ID='int', SPECTRAL_WINDOW_ID='int', TIME='double', CABLE_CAL='double',
                  TONE_FREQUENCY='double', PHASE_CAL='dcomplex')
     columns = {
@@ -104,7 +105,9 @@ def write_tones(vis, times):
         for name, kind in types.items()
     }
     for key in ('TONE_FREQUENCY', 'PHASE_CAL'):
-        columns[key].update(option=4, ndim=2, shape=np.array([2, 2], dtype=np.int32))
+        columns[key].update(ndim=2)
+        if isinstance(tone_count, int):
+            columns[key].update(option=4, shape=np.array([2, tone_count], dtype=np.int32))
     proc_rows = [(ant, tick, when) for ant in range(4) for tick, when in enumerate(times)]
     tone_frequencies = np.array([[8.4e9, 8.408e9], [8.4e9, 8.408e9]])
     phases, delays, cables, phasors = {}, {}, {}, {}
@@ -113,12 +116,14 @@ def write_tones(vis, times):
     tool.create(str(path), columns, nrow=len(proc_rows))
     try:
         for row, (ant, tick, when) in enumerate(proc_rows):
+            count = tone_count if isinstance(tone_count, int) else tone_count[ant]
             first = np.array([.4, -.7]) + (.21 + .02 * ant) * tick
             delay = (2.2 + .8 * ant + .25 * tick + np.array([0., .4])) * 1e-9
             phase = np.column_stack((first, first + 2. * np.pi * 8e6 * delay))
             phasor = (1. + .6 * tick) * np.exp(1j * phase)
             cable = (.1 + .3 * tick + .2 * ant) * 1e-9
-            for name, value in zip(types, (ant, 0, when, cable, tone_frequencies, phasor),
+            for name, value in zip(types, (ant, 0, when, cable, tone_frequencies[:, :count],
+                                           phasor[:, :count]),
                                    strict=True):
                 tool.putcell(name, row, value)
             phases[ant, tick], delays[ant, tick] = first, delay
@@ -203,6 +208,103 @@ def check_analytic(root, tasks):
                 assert not bad.exists()
             else:
                 raise AssertionError(f'{engine} accepted {kwargs}')
+    check_review_edges(root, vis, fringe, times, scan, tasks)
+
+
+def check_review_edges(root, vis, fringe, times, scan, tasks):
+    options = dict(refant='A0', ff_table=str(fringe))
+    epoch = datetime(1858, 11, 17, tzinfo=timezone.utc)
+    first = epoch + timedelta(seconds=float(times[0]))
+    end = first + timedelta(seconds=120)
+    short = f'{first:%H:%M}~{end:%H:%M}'
+    subsecond = first + timedelta(microseconds=100)
+    for label, selectors, row_count in [
+        ('repeated-windows', dict(spw='0,0', scan=str(scan)), 26),
+        ('repeated-antennas', dict(antenna='A0,A1,A0', scan=str(scan)), 9),
+        ('repeated-range-marker', dict(spw='0~0~0', scan=str(scan)), 13),
+        ('hour-and-minute', dict(timerange=short), 13),
+        ('subsecond-boundary', dict(timerange=f'{subsecond:%H:%M:%S.%f}~{end:%H:%M:%S}'), 13),
+        ('named-month', dict(timerange=f'{first:%Y-%b-%d/%H:%M:00}~{end:%Y-%b-%d/%H:%M:00}'), 13),
+    ]:
+        products, records = run(root, label, vis, tasks, **(options | selectors))
+        for path in products.values():
+            with opened(path) as table:
+                assert table.nrows() == row_count
+        if label == 'subsecond-boundary':
+            for result in records.values():
+                assert result['ant_A4']['spw_0']['pc_mean_phase'].shape == (2, 1)
+        compare(products, records)
+
+    one_tone = root / 'one-tone.ms'
+    shutil.copytree(vis, one_tone, ignore=shutil.ignore_patterns('PHASE_CAL'))
+    write_tones(one_tone, times, 1)
+    products, records = run(root, 'one-tone', one_tone, tasks, **options, scan=str(scan))
+    for result in records.values():
+        fallback = result['ant_A4']['spw_0']
+        np.testing.assert_array_equal(fallback['time'], [times[0]])
+        assert np.isnan(fallback['delay']).all()
+        assert np.isnan(fallback['pc_mean_delay']).all()
+    compare(products, records)
+
+    variable = root / 'variable-tones.ms'
+    shutil.copytree(vis, variable, ignore=shutil.ignore_patterns('PHASE_CAL'))
+    write_tones(variable, times, [2, 2, 2, 1])
+    missing_reference = root / 'reference-outside-interval.ms'
+    shutil.copytree(vis, missing_reference)
+    with opened(missing_reference / 'PHASE_CAL', True) as table:
+        timestamps = table.getcol('TIME')
+        timestamps[table.getcol('ANTENNA_ID') == 0] = times[0] - 10
+        table.putcol('TIME', timestamps)
+    missing_window = root / 'fringe-without-spectral-window.cal'
+    shutil.copytree(fringe, missing_window, ignore=shutil.ignore_patterns('SPECTRAL_WINDOW'))
+    empty_fringe = root / 'empty-fringe.cal'
+    shutil.copytree(fringe, empty_fringe)
+    with opened(empty_fringe, True) as table:
+        table.removerows(list(range(table.nrows())))
+    invalid = [
+        ('missing-window', vis, dict(ff_table=str(missing_window)), RuntimeError, ''),
+        ('empty-fringe', vis, dict(ff_table=str(empty_fringe)), IndexError, 'out of bounds'),
+        ('bracketed-time', vis, dict(timerange=f'[{short}]'), ValueError, 'Start time in timerange'),
+        ('empty-exclusion', vis, dict(spw='!0'), IndexError, 'list index out of range'),
+        ('empty-range', vis, dict(spw='2~1'), IndexError, 'list index out of range'),
+        ('variable-tones', variable, dict(antenna='A0,A1'), RuntimeError, 'does not contain a PHASE_CAL'),
+        ('one-tone-cable', one_tone, dict(cablecal_correction=True), ValueError, 'broadcast shape'),
+        ('path-fringe', vis, dict(ff_table=fringe), AssertionError, 'must be of cStr type'),
+        ('path-caltable', vis, dict(pccor_caltable=root / 'not-written.pccor'), AssertionError,
+         'must be of cStr type'),
+        ('path-vis', vis, dict(vis=vis), AssertionError, 'the vis parameter must be a path'),
+        ('null-vis', vis, dict(vis=None), AssertionError, 'null value not allowed'),
+    ]
+    for engine, task in tasks.items():
+        for label, dataset, selectors, kind, message in invalid:
+            bad = root / f'{engine}-{label}.pccor'
+            kwargs = dict(vis=str(dataset), pccor_caltable=str(bad), scan=str(scan)) | options | selectors
+            try:
+                task(**kwargs)
+            except kind as error:
+                assert type(error) is kind and message in str(error), (label, error)
+                if engine == 'native' or not label.startswith('empty-') or label == 'empty-fringe':
+                    assert not bad.exists()
+                else:
+                    with opened(bad) as table:
+                        assert table.nrows() == 0
+            else:
+                raise AssertionError(f'{engine} accepted {label}')
+        try:
+            task(str(missing_reference), str(root / f'{engine}-no-ref.pccor'), **options, scan=str(scan))
+        except (RuntimeError, UnboundLocalError) as error:
+            assert type(error) is (UnboundLocalError if engine == 'casa' else RuntimeError)
+        else:
+            raise AssertionError(f'{engine} accepted a reference without in-interval pulses')
+    if 'native' in tasks:
+        destination = root / 'analytic-native.pccor'
+        try:
+            tasks['native'](str(vis), str(destination), **options, scan=str(scan), spw='!0')
+        except IndexError:
+            with opened(destination) as table:
+                assert table.nrows() == 13
+        else:
+            raise AssertionError('Native PCCOR replaced a product after an empty selection')
 
 
 def check_archive(root, recorded, tasks, appliers):

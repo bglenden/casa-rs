@@ -17824,7 +17824,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "vis"
+              "name": "vis",
+              "type_hint": "str"
             },
             "presentation": {
               "label": "MeasurementSet",
@@ -17864,7 +17865,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "pccor_caltable"
+              "name": "pccor_caltable",
+              "type_hint": "str"
             },
             "presentation": {
               "label": "Output Calibration Table",
