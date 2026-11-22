@@ -13,12 +13,12 @@ mod parallactic_fit;
 mod standard;
 
 use super::*;
-use crate::SelectedData;
 use crate::execute::{ParallacticAngleState, coherency_order, load_parallactic_angle_state};
 use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{
     AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity,
 };
+use crate::{ApplyCalibrationTableSpec, SelectedData};
 use casa_provider_contracts::CasaValue;
 use std::path::PathBuf;
 
