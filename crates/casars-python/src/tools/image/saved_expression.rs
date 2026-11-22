@@ -77,7 +77,8 @@ impl CapturedGraph {
                 self.paths.push(path.to_path_buf());
                 if is_image_expr(path) {
                     active.insert(path.to_path_buf());
-                    pending.push(PendingExpression::read(path.to_path_buf(), directory)?);
+                    let nested = PendingExpression::read(path.to_path_buf(), directory)?;
+                    pending.push(nested);
                 } else {
                     self.retained
                         .extend(AttachedImage::open_expression_inputs(std::iter::once(
