@@ -20,7 +20,7 @@ use pyo3::prelude::*;
 use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
-use super::handle::{ImageHandle, raised};
+use super::handle::{ImageHandle, Storage, raised, with_pixels};
 use super::miriad_rename::MiriadDirectory;
 use super::native_rename::{check_path_relationship, move_native_table, native_destination};
 use super::saved_expression::SavedExpressionDirectory;
@@ -172,12 +172,10 @@ impl AttachedImage {
         if path != probe && (!probe.is_dir() || !path.is_dir()) {
             return Err(unrecognized());
         }
+        if casa_images::concat_file::is_image_concat(probe) {
+            return super::concatenate::virtual_image::open(path);
+        }
         if casa_images::expr_file::is_image_expr(probe) {
-            if probe.join("imageconcat.json").is_file() {
-                return Err(raised(
-                    "Opening a virtual concatenated image is not implemented yet (#1749)",
-                ));
-            }
             return super::saved_expression::open(path);
         }
         let key = key(path)?;
@@ -257,6 +255,19 @@ impl AttachedImage {
         }
         opened.register(registry);
         Ok(opened)
+    }
+
+    pub(super) fn with_virtual_concat(
+        image: ImageHandle,
+        name: &Path,
+        registry: &mut OpenImages,
+    ) -> PyResult<Self> {
+        let mut attached = Self::temporary(image);
+        attached.key = Some(key(name)?);
+        attached.native_name = Some(std::path::absolute(name).map_err(raised)?);
+        attached.check_bound_name(&attached.lock())?;
+        attached.register(registry);
+        Ok(attached)
     }
 
     fn shared(registry: &OpenImages, key: &Path, name: &Path) -> Option<Self> {
@@ -436,7 +447,7 @@ impl AttachedImage {
 
     pub(super) fn is_persistent(&self) -> PyResult<bool> {
         let image = self.lock();
-        if image.is_saved_expression() {
+        if image.is_saved_expression() || image.image_type_name() == "ImageConcat" {
             image.check_single_precision("ispersistent")?;
         }
         Ok(self.key.is_some() || image.path().is_some())
@@ -456,6 +467,13 @@ impl AttachedImage {
 
     pub(super) fn check_bound_name(&self, handle: &ImageHandle) -> PyResult<()> {
         self.check_directory()?;
+        with_pixels!(handle, storage => {
+            if let Storage::Temp { image, .. } = storage
+                && let Some(source) = image.concat_source()
+            {
+                source.check_directory().map_err(raised)?;
+            }
+        });
         if let (Some(key), Some(path)) = (&self.key, handle.path())
             && path != key
             && !path.canonicalize().is_ok_and(|actual| &actual == key)
@@ -583,11 +601,17 @@ impl AttachedImage {
             lock_table_ancestors(&target, &mut locks)?;
         }
         let source_metadata = source.symlink_metadata().map_err(raised)?;
-        if self
-            .image
-            .use_lock
-            .as_ref()
-            .is_some_and(|lease| !lease.matches_directory_metadata(&source_metadata))
+        let concat_matches = with_pixels!(&*self.lock(), storage => match storage {
+            Storage::Temp { image, .. } => image.concat_source().is_none_or(|source|
+                source.matches_directory_metadata(&source_metadata)),
+            Storage::Paged(_) => true,
+        });
+        if !concat_matches
+            || self
+                .image
+                .use_lock
+                .as_ref()
+                .is_some_and(|lease| !lease.matches_directory_metadata(&source_metadata))
         {
             return Err(source_changed());
         }
@@ -696,6 +720,18 @@ impl AttachedImage {
     }
 
     pub(super) fn remove(&self) -> PyResult<String> {
+        {
+            let image = self.lock();
+            if image.image_type_name() == "ImageConcat" {
+                let name = self
+                    .name_path(&image)
+                    .expect("persistent concatenation name");
+                return Err(raised(format!(
+                    "Cannot delete file {} because table is not writable",
+                    name.display()
+                )));
+            }
+        }
         let Some(key) = &self.key else {
             if let Some(path) = self.lock().path() {
                 return Err(raised(format!(

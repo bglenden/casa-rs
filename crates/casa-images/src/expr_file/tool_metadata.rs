@@ -5,7 +5,7 @@ use serde_json::{Map, Value as Json, json};
 
 use crate::ImageError;
 
-pub(super) fn decode(value: &Json) -> Result<RecordValue, ImageError> {
+pub(crate) fn decode(value: &Json) -> Result<RecordValue, ImageError> {
     let object = value.as_object().ok_or_else(|| {
         ImageError::CasaSelection("Json error: JsonValue::getValueMap - invalid data type".into())
     })?;
@@ -93,7 +93,7 @@ fn decode_vector(values: &[Json]) -> Result<ArrayValue, ImageError> {
     ))
 }
 
-pub(super) fn encode(record: &RecordValue) -> Result<Json, ImageError> {
+pub(crate) fn encode(record: &RecordValue) -> Result<Json, ImageError> {
     let mut fields = Map::new();
     for field in record.fields() {
         fields.insert(field.name.clone(), encode_value(&field.value)?);

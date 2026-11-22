@@ -21,7 +21,7 @@ impl PyImageTool {
             } else {
                 kind
             };
-            if !mask.is_empty() && matches!(kind, "FITSImage" | "ImageExpr" | "MIRIADImage" | "Temporary ComponentListImage") {
+            if !mask.is_empty() && matches!(kind, "FITSImage" | "ImageExpr" | "ImageConcat" | "MIRIADImage" | "Temporary ComponentListImage") {
                 return Err(raised(format!("Exception: Cannot make requested mask for this image type which is {kind}.")));
             }
             if mask.is_empty() {

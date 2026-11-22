@@ -63,6 +63,7 @@ pub mod analysis;
 pub mod beam;
 mod casa_return;
 mod component_list_image;
+pub mod concat_file;
 pub mod concatenate;
 pub mod convolve2d;
 pub mod error;
@@ -84,6 +85,7 @@ pub mod saved_region;
 pub mod subimage;
 mod task_front_end;
 pub mod temp_image;
+pub mod virtual_concat;
 
 #[cfg(test)]
 mod mask;
