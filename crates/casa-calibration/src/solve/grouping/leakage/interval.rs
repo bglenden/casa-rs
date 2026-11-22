@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Solve the averaged coherencies and carry the leakage reference across intervals.
 
+use std::collections::BTreeSet;
+
 use num_complex::Complex32;
 
 use super::channel_samples::ChannelSamples;
@@ -8,25 +10,33 @@ use super::cross_hand::{CrossHandFit, Measurement};
 use super::fit::LeakageFit;
 use super::joint::{SourceFit, SourceFitMode};
 use super::parallactic::{BaselineSegment, ParallacticAverages};
-use super::standard::{LeakageAlgebra, StandardSample, solve_channel};
+use super::parallactic_fit::solve_sample;
+use super::standard::{LeakageAlgebra, StandardSample, eligible_antennas, solve_channel};
 use super::{
     CoherencyMean, GainSolveError, GainSolveMode, LeakageEstimate, LeakageSolution,
     LeakageSolveKind, LeakageSolveRequest, ParallacticAngleState,
 };
 
 pub(super) enum IntervalFits {
-    LeastSquares(Vec<LeakageFit>),
+    LeastSquares(Vec<LeakageFit>, GainSolveMode),
     CrossHand(Vec<CrossHandFit>, Measurement),
     Parallactic(ParallacticAverages),
     Iterative {
         algebra: LeakageAlgebra,
         samples: ChannelSamples,
         source: Option<(SourceFitMode, SourceFit)>,
+        mode: GainSolveMode,
     },
 }
 
 type ChannelEstimates = Vec<LeakageEstimate>;
 type IntervalEstimates = (i32, Vec<ChannelEstimates>, Option<Complex32>);
+
+#[derive(Default)]
+pub(super) struct LeakageFitStages {
+    pub(super) constrained: BTreeSet<i32>,
+    pub(super) passed: Vec<[bool; 2]>,
+}
 
 impl IntervalFits {
     pub(super) fn new(
@@ -58,9 +68,13 @@ impl IntervalFits {
                 algebra: kind.algebra(),
                 samples: ChannelSamples::new(channels),
                 source: kind.source().map(|mode| (mode, SourceFit::default())),
+                mode,
             }
         } else {
-            Self::LeastSquares((0..channels).map(|_| LeakageFit::new(antennas)).collect())
+            Self::LeastSquares(
+                (0..channels).map(|_| LeakageFit::new(antennas)).collect(),
+                mode,
+            )
         }
     }
 
@@ -78,11 +92,18 @@ impl IntervalFits {
         if let Self::Parallactic(average) = self {
             return average.add(pair.map(|antenna| antenna as i32), segment, bins);
         }
-        let require_all = matches!(self, Self::LeastSquares(_));
+        let require_all = matches!(self, Self::LeastSquares(..));
         for (channel, mean) in bins.iter_mut().enumerate() {
-            if let Some((data, model, weights)) = std::mem::take(mean).finish(require_all) {
+            if let Some((mut data, model, mut weights)) = std::mem::take(mean).finish(require_all) {
+                if let Self::LeastSquares(_, mode) | Self::Iterative { mode, .. } = self
+                    && *mode != GainSolveMode::AmplitudePhase
+                {
+                    for (value, weight) in data.iter_mut().zip(&mut weights) {
+                        (*value, *weight) = solve_sample(*mode, *value, *weight);
+                    }
+                }
                 match self {
-                    Self::LeastSquares(fits) => {
+                    Self::LeastSquares(fits, _) => {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
                     Self::CrossHand(fits, measurement) => {
@@ -93,6 +114,7 @@ impl IntervalFits {
                         algebra,
                         samples,
                         source,
+                        ..
                     } => {
                         let mut weights = weights;
                         if matches!(algebra, LeakageAlgebra::Linearized) {
@@ -118,6 +140,7 @@ impl IntervalFits {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finish(
         self,
         antennas: usize,
@@ -126,9 +149,10 @@ impl IntervalFits {
         request: &LeakageSolveRequest,
         location: (i32, i32),
         angles: Option<&ParallacticAngleState>,
+        stages: Option<&mut LeakageFitStages>,
     ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
-            Self::LeastSquares(fits) => Ok(least_squares(fits, antennas, references, previous)),
+            Self::LeastSquares(fits, _) => Ok(least_squares(fits, antennas, references, previous)),
             Self::CrossHand(fits, measurement) => {
                 Ok(cross_hand(fits, measurement, antennas, location))
             }
@@ -161,6 +185,7 @@ impl IntervalFits {
                 algebra,
                 samples,
                 source,
+                ..
             } => {
                 if samples.is_empty() || source.as_ref().is_some_and(|(_, fit)| !fit.has_model()) {
                     return Ok(None);
@@ -174,8 +199,10 @@ impl IntervalFits {
                         Ok::<_, GainSolveError>(multiplier)
                     })
                     .transpose()?;
-                Ok(iterative(samples, antennas, request, multiplier, algebra)?
-                    .map(|values| (-1, values, None)))
+                Ok(
+                    iterative(samples, antennas, request, multiplier, algebra, stages)?
+                        .map(|values| (-1, values, None)),
+                )
             }
         }
     }
@@ -273,11 +300,15 @@ fn iterative(
     request: &LeakageSolveRequest,
     multiplier: Option<Complex32>,
     algebra: LeakageAlgebra,
+    mut stages: Option<&mut LeakageFitStages>,
 ) -> Result<Option<Vec<ChannelEstimates>>, GainSolveError> {
     let mut gains = vec![[Complex32::ZERO; 2]; antennas];
     let mut diagnostics = vec![LeakageEstimate::default(); antennas];
     let mut converged = false;
     let mut values = Vec::with_capacity(samples.len());
+    if let Some(stages) = &mut stages {
+        stages.passed.resize(antennas, [false; 2]);
+    }
     for channel in (0..samples.len()).rev() {
         let mut channel_samples = samples
             .take(channel)
@@ -288,15 +319,31 @@ fn iterative(
                 sample.model[2] *= multiplier.conj();
             }
         }
+        let eligible = eligible_antennas(&channel_samples, antennas, request.min_baselines);
+        if let Some(stages) = &mut stages {
+            stages.constrained.extend(
+                eligible
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, &valid)| valid.then_some(id as i32)),
+            );
+        }
         values.push(
             match solve_channel(
                 &channel_samples,
                 &mut gains,
-                request.min_baselines,
+                &eligible,
                 request.min_snr,
                 algebra,
             ) {
                 Ok(result) => {
+                    if let Some(stages) = &mut stages {
+                        for (passed, estimate) in stages.passed.iter_mut().zip(&result) {
+                            for (pass, valid) in passed.iter_mut().zip(estimate.valid) {
+                                *pass |= valid;
+                            }
+                        }
+                    }
                     diagnostics.copy_from_slice(&result);
                     converged = true;
                     result

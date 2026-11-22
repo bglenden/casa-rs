@@ -347,6 +347,18 @@ impl super::PyCalibrater {
                 robustness: GainSolveRobustness::from_casa(robust_mode(&solve_mode), thresholds)
                     .expect("recognized CASA robust mode"),
             };
+            if casa_calibration::CalibraterLifecycle::recognizes_leakage_solve_type(&family) {
+                state
+                    .set_tool_leakage(
+                        &family,
+                        standard.gain(GainType::G),
+                        bandpass_frequency(frequency)?,
+                        mode,
+                        invalid_mode,
+                    )
+                    .map_err(|_| setup_error())?;
+                return Ok(true);
+            }
             let request = match family.as_str() {
                 "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
                 "T" | "T JONES" | "T NOISE" => {
