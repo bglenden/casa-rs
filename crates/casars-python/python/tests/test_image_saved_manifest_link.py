@@ -1,6 +1,8 @@
 """Linked saved image-expression manifests and their captured referents."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from time import sleep
 
 import numpy as np
 import pytest
@@ -79,7 +81,9 @@ def test_linked_manifest_stays_writable_after_rename(tmp_path, monkeypatch, kind
         image.done()
 
 
-@pytest.mark.parametrize("change", ["link", "same-link-target", "intermediate-link", "referent", "referent-directory"])
+@pytest.mark.parametrize("change", [
+    "link", "same-link-target", "same-link-recreated", "intermediate-link", "referent", "referent-directory",
+])
 def test_linked_manifest_write_refuses_changed_identity(tmp_path, monkeypatch, change):
     api = _backend("casars")
     source = _fixture(tmp_path, api)
@@ -110,6 +114,9 @@ def test_linked_manifest_write_refuses_changed_identity(tmp_path, monkeypatch, c
             retargeted = source / "other-link"
             retargeted.symlink_to(referent)
             retargeted.replace(link)
+        elif change == "same-link-recreated":
+            link.unlink()
+            link.symlink_to(referent)
         elif change == "intermediate-link":
             replacement.write_bytes(decoy)
             swapped = tmp_path / "new-selection"
@@ -165,6 +172,34 @@ def test_linked_manifest_attachments_share_referent_updates(tmp_path, monkeypatc
         first.done()
         second.done()
         reader.done()
+
+
+def test_linked_manifest_peer_can_attach_during_publication(tmp_path, monkeypatch):
+    api = _backend("casars")
+    source = _fixture(tmp_path, api)
+    monkeypatch.chdir(tmp_path)
+    link, referent = _link_manifest(source, "absolute")
+    peer = tmp_path / "peer.im"
+    peer.mkdir()
+    (peer / link.name).symlink_to(referent)
+    writer, reader = api.image(), api.image()
+    record = {"payload": "x" * 2_000_000}
+    try:
+        assert writer.open(str(source))
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            for attempt in range(10):
+                assert writer.setmiscinfo({"before": attempt})
+                publish = worker.submit(writer.setmiscinfo, record)
+                while not publish.done() and not any(tmp_path.glob(".imageexpr-*")):
+                    sleep(0.0001)
+                assert reader.open(str(peer))
+                assert publish.result(timeout=5)
+                assert reader.setmiscinfo({"after": attempt})
+                assert _record(referent) == {"after": attempt}
+                assert reader.done()
+    finally:
+        reader.done()
+        writer.done()
 
 
 @pytest.mark.parametrize("kind", ["absolute", "internal"])

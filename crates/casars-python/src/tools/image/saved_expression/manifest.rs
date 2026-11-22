@@ -37,6 +37,8 @@ pub(in crate::tools::image) struct SavedExpressionDirectory {
 struct ManifestLink {
     identity: fs::Metadata,
     contents: PathBuf,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    _handle: fs::File,
 }
 
 struct ManifestTarget {
@@ -59,10 +61,22 @@ impl SavedExpressionDirectory {
         let entry = path.join(MANIFEST);
         let attributes = entry.symlink_metadata().map_err(raised)?;
         let (target_path, link) = if attributes.is_symlink() {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let handle = casa_tables::publication::open_symlink_directory_entry(
+                &directory,
+                OsStr::new(MANIFEST),
+            )
+            .map_err(raised)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if !same_file_identity(&attributes, &handle.metadata().map_err(raised)?) {
+                return Err(manifest_changed());
+            }
             let contents = fs::read_link(&entry).map_err(raised)?;
             let link = ManifestLink {
                 contents,
                 identity: attributes,
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                _handle: handle,
             };
             (entry.canonicalize().map_err(raised)?, Some(link))
         } else {
@@ -85,8 +99,13 @@ impl SavedExpressionDirectory {
             #[cfg(unix)]
             parent: target_parent,
         };
+        let binding = bind_manifest(&target)?;
+        let bound = binding.lock().unwrap_or_else(PoisonError::into_inner);
         let file = target.open()?;
         let attributes = file.metadata().map_err(raised)?;
+        if !same_file_identity(&bound.metadata().map_err(raised)?, &attributes) {
+            return Err(manifest_changed());
+        }
         let manifest = read_tool_manifest_from_reader(&file).map_err(raised)?;
         check_name(name, &path, &identity)?;
         target.check_location(link.as_ref(), &entry)?;
@@ -94,7 +113,7 @@ impl SavedExpressionDirectory {
         if !same_file_identity(&attributes, &current) {
             return Err(manifest_changed());
         }
-        let binding = bind_manifest(target.path.clone(), &attributes, file)?;
+        drop(bound);
         let captured = Self {
             path,
             identity,
@@ -323,25 +342,27 @@ fn manifest_changed() -> PyErr {
     raised("Saved image expression manifest has changed")
 }
 
-fn bind_manifest(
-    entry: PathBuf,
-    attributes: &fs::Metadata,
-    file: fs::File,
-) -> PyResult<Arc<ManifestBinding>> {
+fn bind_manifest(target: &ManifestTarget) -> PyResult<Arc<ManifestBinding>> {
     let mut manifests = MANIFESTS.lock().unwrap_or_else(PoisonError::into_inner);
     manifests.retain(|_, binding| binding.strong_count() > 0);
-    if let Some(existing) = manifests.get(&entry).and_then(Weak::upgrade) {
-        let existing_attributes = existing
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .metadata()
-            .map_err(raised)?;
-        if same_file_identity(attributes, &existing_attributes) {
+    let file = if let Some(existing) = manifests.get(&target.path).and_then(Weak::upgrade) {
+        // An atomic update may be replacing the referent. Inspect the open
+        // file and its name under the same lock the publisher holds.
+        let bound = existing.lock().unwrap_or_else(PoisonError::into_inner);
+        let file = target.open()?;
+        if same_file_identity(
+            &bound.metadata().map_err(raised)?,
+            &file.metadata().map_err(raised)?,
+        ) {
+            drop(bound);
             return Ok(existing);
         }
-    }
+        file
+    } else {
+        target.open()?
+    };
     let binding = Arc::new(Mutex::new(file));
-    manifests.insert(entry, Arc::downgrade(&binding));
+    manifests.insert(target.path.clone(), Arc::downgrade(&binding));
     Ok(binding)
 }
 
