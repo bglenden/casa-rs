@@ -356,16 +356,28 @@ def test_clear_default_mask_written_by_casa(tmp_path):
 def test_reopened_native_component_evaluates_a_small_section(tmp_path, cache):
     api = _backend("casars")
     path = tmp_path / "large.im"
+    small = tmp_path / "small.im"
     image = api.image()
     expected = np.zeros((3, 3))
     expected[1, 1] = 2.
+
+    def stored_sizes(directory):
+        return {
+            entry.relative_to(directory): entry.stat().st_size
+            for entry in directory.rglob("*")
+            if entry.is_file() and entry.name != "table.lock"
+        }
+
     try:
-        assert image.fromcomplist(str(path), [50_000, 50_000], _component_record(api), cache=cache)
+        record = _component_record(api)
+        assert image.fromcomplist(str(small), [6, 8], record, cache=cache)
+        assert image.done()
+        assert image.fromcomplist(str(path), [50_000, 50_000], record, cache=cache)
         assert image.done()
         assert image.open(str(path), cache=cache)
         for _ in range(2):
             actual = image.getchunk([24_998, 24_998], [25_002, 25_002], [2, 2])
             np.testing.assert_array_equal(actual, expected)
-        assert sum(entry.stat().st_size for entry in path.rglob("*") if entry.is_file()) < 100_000
+        assert stored_sizes(path) == stored_sizes(small)
     finally:
         image.done()
