@@ -9922,3 +9922,14 @@ fit that antenna along with the connected array. The singular fit can
 publish nonfinite coefficients, including for antennas that have data.
 Casa-rs fits the connected array and omits antennas without accepted data.
 Both legacy readers then flag visibilities with a missing antenna gain.
+
+## `fringefit` can abort with one selected channel per spectral window
+
+With `combine='spw'`, CASA 6.7.6.14 can abort if every selected window
+contributes only one channel. In a test with two windows 48 MHz apart and
+`spw='0:0,1:0'`, the concatenated FFT tried to address channel zero on an
+array with a zero-length frequency axis. CASA raised `ArrayError` and
+terminated before publishing the table. Casa-rs derives the grid spacing
+from the separation of the selected frequencies and checks the FFT memory
+requirement before allocating the grid. Its two-band regression exercises
+both search modes.

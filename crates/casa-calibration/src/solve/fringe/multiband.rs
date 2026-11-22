@@ -33,21 +33,17 @@ impl MultibandSearch {
         windows.sort_by_key(|(description, window)| (window.spw, *description));
         let first = windows[0].1.selected_hz[0] as f32;
         let last = &windows[windows.len() - 1].1.selected_hz;
+        grid.padding = PADDING;
         grid.channels = windows
             .iter()
             .map(|(_, w)| w.selected_hz.len())
             .max()
             .unwrap_or(0);
-        grid.channel_spacing_hz = last.get(1).map_or(1., |&second| second - last[0]);
-        let [Some(channels), Some(times)] =
-            [grid.channels, grid.timestamps].map(|size| size.checked_mul(PADDING))
-        else {
-            return Err(error("fringe FFT dimensions overflow"));
-        };
-        let elements = channels
-            .checked_mul(times)
-            .ok_or_else(|| error("fringe FFT size overflow"))?;
-        let fft = Fft2::with_threads([channels, times], 1)
+        grid.channel_spacing_hz = last
+            .get(1)
+            .map_or(grid.channel_spacing_hz, |&second| second - last[0]);
+        let (shape, elements) = grid.transform_shape(windows.len())?;
+        let fft = Fft2::with_threads(shape, 1)
             .map_err(error)?
             .with_estimated_plan();
         let bandwidth = grid.channels as f64 * grid.channel_spacing_hz;
@@ -132,6 +128,7 @@ impl MultibandSearch {
             },
             snr: weights.snr(amplitude.norm()),
             accepted: true,
+            active: true,
         }))
     }
 

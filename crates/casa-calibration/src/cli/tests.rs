@@ -430,6 +430,30 @@ fn gain_solve() -> SolveGainTaskRequest {
     }
 }
 
+#[test]
+fn fringe_request_rejects_complex_schema_before_opening_input() {
+    let request = SolveGainTaskRequest {
+        fringe_controls: Some(crate::FringeControls {
+            delay_window: [-1e6, 1e6],
+            rate_window: [-1e6, 1e6],
+            global_solve: true,
+            iterations: 100,
+            active_parameters: [true, true, false],
+            zero_rates: false,
+            correlation_combination: crate::FringeCorrelation::Separate,
+            concatenate_windows: true,
+        }),
+        ..gain_solve()
+    };
+    let error = CalibrationTaskRequest::SolveGain(request)
+        .execute()
+        .unwrap_err();
+    assert!(
+        error.contains("fringe controls require the real delay parameter schema"),
+        "{error}"
+    );
+}
+
 const GAIN_ARGS: [&str; 26] = [
     "--ms",
     "dataset.ms",

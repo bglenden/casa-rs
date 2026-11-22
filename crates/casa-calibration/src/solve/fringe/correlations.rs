@@ -14,13 +14,7 @@ pub(super) fn combine(
         for baseline in baselines {
             let by_channel = by_baseline.entry(baseline.antennas).or_default();
             for sample in baseline.samples {
-                let key = (
-                    sample.data_description,
-                    sample.field_id,
-                    sample.time_seconds.to_bits(),
-                    sample.local_channel,
-                );
-                by_channel.entry(key).or_default()[hand] = Some(sample);
+                by_channel.entry(sample.buffer_channel_key()).or_default()[hand] = Some(sample);
             }
         }
     }
@@ -31,7 +25,10 @@ pub(super) fn combine(
                 .into_values()
                 .filter_map(|hands| combine_sample(hands, combination))
                 .collect::<Vec<_>>();
-            (!samples.is_empty()).then_some(FringeBaseline { antennas, samples })
+            samples
+                .iter()
+                .any(|sample| sample.weight > 0.)
+                .then_some(FringeBaseline { antennas, samples })
         })
         .collect()
 }
@@ -40,7 +37,12 @@ fn combine_sample(
     hands: [Option<FringeSample>; 2],
     combination: FringeCorrelation,
 ) -> Option<FringeSample> {
-    match hands {
+    let empty = hands[0].or(hands[1]).map(|sample| FringeSample {
+        weight: 0.,
+        visibility: Default::default(),
+        ..sample
+    });
+    match hands.map(|hand| hand.filter(|sample| sample.weight > 0.)) {
         [Some(left), Some(right)] => {
             let (visibility, weight) = match combination {
                 FringeCorrelation::Stokes => (
@@ -65,6 +67,6 @@ fn combine_sample(
         [Some(value), None] | [None, Some(value)] if combination == FringeCorrelation::Parallel => {
             Some(value)
         }
-        _ => None,
+        _ => empty,
     }
 }

@@ -23,8 +23,8 @@ use crate::solve::grouping::{
     load_preapplied_rows, resolve_refants,
 };
 use crate::solve::{
-    GainSolveError, GainSolveReport, GainSolveRequest, GainSplineControls, RefAntSelector, fringe,
-    gspline, solve_gain,
+    GainSolveError, GainSolveReport, GainSolveRequest, GainSplineControls, GainType,
+    RefAntSelector, fringe, gspline, solve_gain,
 };
 
 /// Input ownership for one calibration solve.
@@ -127,6 +127,14 @@ pub fn solve_calibration_with_output_mode(
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
+    if let CalibrationSolveRequest::Fringe { gain, .. } = &request
+        && gain.gain_type != GainType::K
+    {
+        return Err(GainSolveError::Delay(
+            "fringe controls require the real delay parameter schema".into(),
+        )
+        .into());
+    }
     match dataset {
         CalibrationDataset::Path(path) => {
             let open_phase = crate::timing::Phase::start("open_ms");

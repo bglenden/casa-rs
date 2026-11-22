@@ -53,6 +53,11 @@ impl WeightedTime {
         (self.weight > 0.0).then(|| self.origin + self.weighted_offset / self.weight)
     }
 
+    #[cfg(test)]
+    pub(super) fn merge(&mut self, other: Self) {
+        self.add(other.origin, other.weighted_offset, other.weight);
+    }
+
     fn add(&mut self, origin: f64, weighted_offset: f64, weight: f64) {
         // Measure offsets before weighting. Summing absolute MS epochs
         // can split equal caltable times depending on baseline order.
@@ -65,6 +70,11 @@ impl WeightedTime {
 }
 
 impl SolveAccumulator {
+    pub(super) fn observe_fringe_buffer(&mut self, row: &super::SolveSampleRow) {
+        self.fringe_buffers
+            .insert((row.data_desc_id, row.field_id, row.time_seconds.to_bits()));
+    }
+
     pub(in crate::solve) fn integration_times(&self) -> impl Iterator<Item = f64> + '_ {
         self.unique_time_bits.iter().copied().map(f64::from_bits)
     }

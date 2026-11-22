@@ -121,10 +121,11 @@ def compare_tables(reference, actual, delay_tolerance=.001, *, dispersion_tolera
                                        atol=.01, err_msg=column)
 
 
-def apply(root, vis, task, solution, name, field='FLUX', field_id=0):
+def apply(root, vis, task, solution, name, field='FLUX', field_id=0, **options):
     output = root / f'{name}.ms'
     shutil.copytree(vis, output)
-    assert task(str(output), field=field, gaintable=[str(solution)], flagbackup=False) is None
+    assert task(str(output), field=field, gaintable=[str(solution)], flagbackup=False,
+                **options) is None
     with opened(output) as table:
         mask = table.getcol('FIELD_ID') == field_id
         return table.getcol('CORRECTED_DATA')[..., mask], table.getcol('FLAG')[..., mask]
@@ -247,8 +248,8 @@ def check_reference_switch(root, vis, solvers):
                 assert table.getcol('FLAG').sum() == 8
 
 
-def duplicate_spectral_window(root, vis, delays):
-    output = root / 'two-windows.ms'
+def duplicate_spectral_window(root, vis, delays, name='two-windows.ms'):
+    output = root / name
     shutil.copytree(vis, output)
     for path in (output / 'SPECTRAL_WINDOW', output / 'DATA_DESCRIPTION', output):
         count = duplicate_rows(casa_table(), path)
@@ -268,19 +269,26 @@ def duplicate_spectral_window(root, vis, delays):
     return output
 
 
-def check_two_windows(root, vis, law, solvers):
+def check_two_windows(root, vis, law, solvers, appliers):
     selected = duplicate_spectral_window(root, vis, law[1])
     library = root / 'fringe.callib'
     library.write_text(
         f"caltable='{root / 'channel-selection-casa.cal'}' tinterp='nearest' "
         "calwt=True fldmap=[0] spwmap=[0,0]\n")
+    gain = root / 'prior-gain.cal'
+    casa.gaincal(str(selected), str(gain), field='FLUX', spw='1', refant='A0', calmode='a',
+                 minsnr=0., minblperant=1)
     cases = [
         ('channel-selection', dict(spw='0:5~21')),
         ('combined-fft-grid', dict(spw='0,1', combine='spw')),
         ('separate-fft-grids', dict(spw='0,1', combine='spw', concatspws=False, globalsolve=False)),
+        ('separate-fft-global', dict(spw='0,1', combine='spw', concatspws=False)),
         ('prior-apply', dict(spw='0', gaintable=['channel-selection-casa.cal'], gainfield=['0'],
                              interp=['nearest'], spwmap=[0, 0])),
         ('prior-callibrary', dict(spw='0', docallib=True, callib=str(library))),
+        ('mapped-chain', dict(spw='1', gaintable=['channel-selection-casa.cal', str(gain)],
+                              gainfield=['0', '0'], interp=['nearest', 'linear'],
+                              spwmap=[[0, 0], [1, 1]])),
     ]
     for label, options in cases:
         results = {key: solve(root, selected, run, f'{label}-{key}', **options)
@@ -291,6 +299,8 @@ def check_two_windows(root, vis, law, solvers):
             with opened(results['casa']) as table:
                 delays = table.getcol('FPARAM')[1::4, 0]
                 np.testing.assert_allclose(delays, law[1], atol=.001, rtol=0.)
+        if label == 'separate-fft-global':
+            compare_consumers(root, selected, results, appliers, label, spwmap=[[0, 0]])
 
 
 def check_append(root, vis, solvers):
@@ -305,7 +315,7 @@ def check_append(root, vis, solvers):
         compare_tables(outputs['casa'], outputs['native'])
 
 
-def check_dispersion(root, vis, law, solvers):
+def check_dispersion(root, vis, law, solvers, appliers):
     selected = root / 'dispersive.ms'
     shutil.copytree(vis, selected)
     dispersion = 5e6 * np.array([[0., 2., -.7, 1.2, -.4], [0., -.3, 1.4, .6, -.8]])
@@ -325,6 +335,7 @@ def check_dispersion(root, vis, law, solvers):
         np.testing.assert_allclose(parameters[:, 3], dispersion, atol=2e4, rtol=0.)
     if 'native' in results:
         compare_tables(results['casa'], results['native'], dispersion_tolerance=2.)
+    compare_consumers(root, selected, results, appliers, 'dispersion')
 
 
 
@@ -341,19 +352,143 @@ def check_recorded(root, vis, solvers, appliers):
         assert (~table.getcol('FLAG')).sum() == 96
     if 'native' in products:
         compare_tables(products['casa'], products['native'], delay_tolerance=.012)
-    expected = apply(root, vis, appliers['casa'], products['casa'], 'n08c1-casa-to-casa', field,
-                     field_id)
+    compare_consumers(root, vis, products, appliers, 'n08c1', field, field_id)
+
+
+def compare_consumers(root, vis, products, appliers, name, field='FLUX', field_id=0, **options):
+    expected = apply(root, vis, appliers['casa'], products['casa'], f'{name}-casa-to-casa',
+                     field, field_id, **options)
     assert (~expected[1]).any()
     for producer, solution in products.items():
         for consumer, task in appliers.items():
             if (producer, consumer) == ('casa', 'casa'):
                 continue
-            actual = apply(root, vis, task, solution, f'n08c1-{producer}-to-{consumer}', field,
-                           field_id)
+            actual = apply(root, vis, task, solution, f'{name}-{producer}-to-{consumer}', field,
+                           field_id, **options)
             np.testing.assert_array_equal(actual[1], expected[1])
             rms = np.linalg.norm(actual[0] - expected[0]) / np.linalg.norm(expected[0])
-            print(f'n08c1 {producer} to {consumer} NRMS {rms:.8g}', flush=True)
+            print(f'{name} {producer} to {consumer} NRMS {rms:.8g}', flush=True)
             assert rms < 1e-3
+
+
+def copy_selected_rows(source, output, mask):
+    with opened(source) as table:
+        view = table.selectrows(np.flatnonzero(mask).tolist())
+        try:
+            view.copy(str(output), deep=True, valuecopy=True)
+        finally:
+            view.close()
+
+
+def check_flagged_intervals(root, vis, solvers):
+    selected = root / 'flagged-interval.ms'
+    shutil.copytree(vis, selected)
+    with opened(selected, True) as table:
+        time = table.getcol('TIME')
+        missing = (time - time.min() >= 48.) & (time - time.min() < 94.)
+        flag = table.getcol('FLAG')
+        flag[:, 4:28, missing] = True
+        table.putcol('FLAG', flag)
+    for dependent in (False, True):
+        results = {key: solve(root, selected, run, f'missing-{dependent}-{key}',
+                             spw='0:4~27', solint='47s', corrdepflags=dependent)
+                   for key, run in solvers.items()}
+        with opened(results['casa']) as table:
+            assert table.nrows() == 15
+        if 'native' in results:
+            compare_tables(results['casa'], results['native'])
+
+    noisy = root / 'one-noisy-hand.ms'
+    shutil.copytree(vis, noisy)
+    with opened(noisy, True) as table:
+        first, second = (table.getcol(name) for name in ('ANTENNA1', 'ANTENNA2'))
+        affected = (first == 3) | (second == 3)
+        data = table.getcol('DATA')
+        rng = np.random.default_rng(221)
+        data[0][:, affected] = np.exp(1j * rng.uniform(-np.pi, np.pi, (32, affected.sum())))
+        table.putcol('DATA', data)
+        table.putcol('CORRECTED_DATA', data)
+    products = {key: solve(root, noisy, task, f'snr-threshold-{key}', minsnr=10.)
+                for key, task in solvers.items()}
+    with opened(products['casa']) as table:
+        flag = table.getcol('FLAG')[:, 0, 3]
+        np.testing.assert_array_equal(flag, np.repeat([True, False], 4))
+    if 'native' in products:
+        compare_tables(products['casa'], products['native'])
+
+
+def check_fft_boundaries(root, vis, solvers):
+    nyquist = root / 'nyquist.ms'
+    shutil.copytree(vis, nyquist)
+    with opened(nyquist, True) as table:
+        time, first, second = (table.getcol(name) for name in ('TIME', 'ANTENNA1', 'ANTENNA2'))
+        channel = (np.arange(32) % 2)[:, None]
+        odd_time = (np.rint((time - time.min()) / 2.).astype(int) % 2)[None, :]
+        sign = ((first == 1).astype(int) - (second == 1)) * channel
+        sign += ((first == 2).astype(int) - (second == 2)) * odd_time
+        visibility = np.repeat((1 - 2 * (sign % 2))[None, :, :], 2, axis=0).astype(np.complex64)
+        for name in ('DATA', 'CORRECTED_DATA'):
+            table.putcol(name, visibility)
+    results = {key: solve(root, nyquist, run, f'nyquist-{key}', globalsolve=False,
+                         delaywindow=[], ratewindow=[]) for key, run in solvers.items()}
+    with opened(results['casa']) as table:
+        params = table.getcol('FPARAM')
+        assert abs(params[1, 0, 1]) == 500.
+        assert abs(params[2, 0, 2]) > 2.9e-11
+    if 'native' in results:
+        compare_tables(results['casa'], results['native'])
+
+    irregular = root / 'irregular.ms'
+    with opened(vis) as table:
+        times = table.getcol('TIME')
+    available = np.unique(times)[:4]
+    copy_selected_rows(vis, irregular, np.isin(times, available))
+    with opened(irregular, True) as table:
+        times = table.getcol('TIME')
+        mapped = available[0] + np.array([0., 1., 2., 10.])[np.searchsorted(available, times)]
+        table.putcol('TIME', mapped)
+        table.putcol('TIME_CENTROID', mapped)
+    for concat in (True, False):
+        results = {key: solve(root, irregular, run, f'irregular-{concat}-{key}',
+                             globalsolve=False, concatspws=concat) for key, run in solvers.items()}
+        if 'native' in results:
+            repeat = solve(root, irregular, solvers['native'], f'irregular-{concat}-repeat',
+                           globalsolve=False, concatspws=concat)
+            compare_tables(results['casa'], results['native'])
+            compare_tables(results['native'], repeat)
+
+
+def check_unequal_windows(root, vis, law, solvers, appliers):
+    both = duplicate_spectral_window(root, vis, law[1], 'unequal-widths.ms')
+    with opened(both / 'SPECTRAL_WINDOW', True) as table:
+        for name in ('CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION', 'TOTAL_BANDWIDTH'):
+            table.putcell(name, 1, 2 * table.getcell(name, 1))
+    with opened(both) as table:
+        time = table.getcol('TIME')
+        missing = (table.getcol('DATA_DESC_ID') == 1) & (time - time.min() > 80.)
+    selected = root / 'unsynchronized-windows.ms'
+    copy_selected_rows(both, selected, ~missing)
+    for global_solve in (False, True):
+        label = f'unequal-global-{global_solve}'
+        products = {name: solve(root, selected, task, f'{label}-{name}', spw='0,1', combine='spw',
+                                solint='80s', globalsolve=global_solve)
+                    for name, task in solvers.items()}
+        with opened(products['casa'] / 'SPECTRAL_WINDOW') as table:
+            np.testing.assert_allclose(table.getcell('CHAN_FREQ', 0), [8.4475e9], atol=.01, rtol=0.)
+        if 'native' in products:
+            compare_tables(products['casa'], products['native'])
+        if global_solve:
+            compare_consumers(root, selected, products, appliers, label, spwmap=[[0, 0]])
+    # CASA's concatenated solver aborts when both windows provide only one
+    # channel. Exercise the bounded native grid for both search modes.
+    if 'native' in solvers:
+        for concatenate in (True, False):
+            product = solve(root, both, solvers['native'], f'single-channel-bands-{concatenate}',
+                            spw='0:0,1:0', combine='spw', concatspws=concatenate, globalsolve=False)
+            with opened(product) as table:
+                assert table.nrows() == 5
+                assert np.isfinite(table.getcol('FPARAM')).all()
+                assert not table.getcol('FLAG').any()
 
 
 def main():
@@ -363,6 +498,7 @@ def main():
     parser.add_argument('--controls', action='store_true')
     parser.add_argument('--recorded', type=Path, help='Path to the CASA n08c1.ms test fixture')
     parser.add_argument('--controls-only', action='store_true')
+    parser.add_argument('--edge-cases', action='store_true')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     root = args.work.resolve()
@@ -381,11 +517,15 @@ def main():
             check_controls(root, vis, solvers)
             check_descending_axis(root, vis, solvers)
             check_reference_switch(root, vis, solvers)
-            check_two_windows(root, vis, law, solvers)
+            check_two_windows(root, vis, law, solvers, appliers)
             check_append(root, vis, solvers)
-            check_dispersion(root, vis, law, solvers)
+            check_dispersion(root, vis, law, solvers, appliers)
         if recorded:
             check_recorded(root, recorded, solvers, appliers)
+        if args.edge_cases:
+            check_flagged_intervals(root, vis, solvers)
+            check_fft_boundaries(root, vis, solvers)
+            check_unequal_windows(root, vis, law, solvers, appliers)
     print('Fringe FFT, global solve, zero-rate and consumer checks passed.', flush=True)
 
 

@@ -5,6 +5,7 @@ use std::f64::consts::FRAC_PI_2;
 use std::ops::Range;
 
 use casa_fft::Fft2;
+use casa_ms::MsSelectionIoBudget;
 use casa_types::Complex32;
 
 use super::{FringeParameters, FringeSample};
@@ -20,6 +21,39 @@ pub(super) struct GridSpec {
     pub(super) padding: usize,
 }
 
+impl GridSpec {
+    pub(super) fn transform_shape(
+        self,
+        bands: usize,
+    ) -> Result<([usize; 2], usize), GainSolveError> {
+        if self.timestamps < 2 {
+            return Err(error("Can't do a 2-dimensional FFT on a single timestep"));
+        }
+        let [Some(channels), Some(times)] =
+            [self.channels, self.timestamps].map(|extent| extent.checked_mul(self.padding))
+        else {
+            return Err(error("fringe FFT dimensions overflow"));
+        };
+        let elements = channels
+            .checked_mul(times)
+            .ok_or_else(|| error("fringe FFT size overflow"))?;
+        let bytes_per_band = elements
+            .checked_mul(size_of::<Complex32>())
+            .ok_or_else(|| error("fringe FFT size overflow"))?;
+        let budget =
+            MsSelectionIoBudget::from_system_memory(bands, bytes_per_band, None).map_err(error)?;
+        if bytes_per_band
+            .checked_mul(bands)
+            .is_none_or(|bytes| bytes > budget.available_bytes)
+        {
+            return Err(error(
+                "fringe FFT grid exceeds the system memory budget; select fewer channels or a shorter solution interval",
+            ));
+        }
+        Ok(([channels, times], elements))
+    }
+}
+
 pub(super) struct FringeSearch {
     grid: GridSpec,
     fft: Fft2<f32>,
@@ -31,24 +65,15 @@ pub(super) struct FringePeak {
     pub(super) parameters: FringeParameters,
     pub(super) snr: f32,
     pub(super) accepted: bool,
+    pub(super) active: bool,
 }
 
 impl FringeSearch {
     pub(super) fn new(grid: GridSpec) -> Result<Self, GainSolveError> {
-        if grid.timestamps < 2 {
-            return Err(error("Can't do a 2-dimensional FFT on a single timestep"));
-        }
-        let [Some(channels), Some(times)] =
-            [grid.channels, grid.timestamps].map(|extent| extent.checked_mul(grid.padding))
-        else {
-            return Err(error("fringe FFT dimensions overflow"));
-        };
-        let fft = Fft2::with_threads([channels, times], 1)
+        let (shape, elements) = grid.transform_shape(1)?;
+        let fft = Fft2::with_threads(shape, 1)
             .map_err(error)?
             .with_estimated_plan();
-        let elements = channels
-            .checked_mul(times)
-            .ok_or_else(|| error("fringe FFT size overflow"))?;
         let mut plane = Vec::new();
         plane.try_reserve_exact(elements).map_err(error)?;
         plane.resize(elements, Complex32::default());
@@ -117,9 +142,9 @@ impl FringeSearch {
         let delay_ns = if self.grid.channels == 1 {
             0.
         } else {
-            sign * best_delay as f64 / bandwidth_ghz
+            sign * folded_bin(best_delay, channels) / bandwidth_ghz
         };
-        let rate = sign * best_rate as f64 / time_frequency;
+        let rate = sign * folded_bin(best_rate, times) / time_frequency;
         Ok(Some(FringePeak {
             parameters: FringeParameters {
                 phase_rad,
@@ -129,7 +154,16 @@ impl FringeSearch {
             },
             snr: weights.snr(maximum),
             accepted: true,
+            active: true,
         }))
+    }
+}
+
+fn folded_bin(bin: isize, size: usize) -> f64 {
+    if size.is_multiple_of(2) && bin == -(size as isize / 2) {
+        -bin as f64
+    } else {
+        bin as f64
     }
 }
 
@@ -161,9 +195,11 @@ pub(super) struct NoiseWeights {
 
 impl NoiseWeights {
     pub(super) fn add(&mut self, weight: f32) {
-        self.count += 1;
-        self.total += f64::from(weight);
-        self.squares += f64::from(weight).powi(2);
+        if weight > 0. {
+            self.count += 1;
+            self.total += f64::from(weight);
+            self.squares += f64::from(weight).powi(2);
+        }
     }
 
     pub(super) fn snr(&self, peak: f32) -> f32 {

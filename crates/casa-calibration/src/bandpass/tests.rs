@@ -13,6 +13,7 @@ const CHANNELS: usize = 40;
 /// each sample 1 but baseline 0-1's, `perturbed`.
 fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
     let options = SolveGroupOptions {
+        retain_fringe_buffers: false,
         gain_type: GainType::G,
         model_source: GainSolveModelSource::PointSource,
         point_stokes: [1.0, 0.0, 0.0, 0.0],

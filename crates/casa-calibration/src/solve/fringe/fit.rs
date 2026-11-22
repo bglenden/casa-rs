@@ -31,7 +31,7 @@ pub(super) fn refine(
         .map(|(antenna, estimate)| {
             estimate
                 .as_ref()
-                .filter(|estimate| estimate.accepted)
+                .filter(|estimate| estimate.active)
                 .map(|estimate| {
                     let values = estimate.parameters.values();
                     std::array::from_fn(|parameter| {

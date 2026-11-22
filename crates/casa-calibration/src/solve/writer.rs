@@ -362,6 +362,16 @@ fn write_gain_spectral_window_subtable(
     Ok(())
 }
 
+pub(super) fn combined_window_frequency(
+    ms: &MeasurementSet,
+    solved: &SolvedGains,
+) -> Result<f64, GainSolveError> {
+    let spectral_windows = ms
+        .subtable(SubtableId::SpectralWindow)
+        .expect("required subtable available");
+    Ok(combined_window_metadata(spectral_windows, solved)?.frequency)
+}
+
 fn combined_window_metadata(
     table: &Table,
     solved: &SolvedGains,

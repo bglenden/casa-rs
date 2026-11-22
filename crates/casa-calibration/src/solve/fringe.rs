@@ -23,7 +23,7 @@ use super::grouping::{
     build_solve_groups, correlation_types_for_ddid, selected_channels,
 };
 use super::kernel::SolutionRow;
-use super::writer::write_fringe_caltable;
+use super::writer::{combined_window_frequency, write_fringe_caltable};
 use super::{
     GainSolveError, GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType, SolvedGains,
 };
@@ -88,6 +88,7 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
+            retain_fringe_buffers: true,
             gain_type: GainType::K,
             model_source: request.model_source,
             point_stokes: if request.model_source == GainSolveModelSource::PointSource {
@@ -128,6 +129,10 @@ pub(crate) fn solve(
     if context.refant_id < 0 {
         return Err(error("No valid reference antenna supplied"));
     }
+    let combined_frequency = (request.combine.spectral_windows
+        && solved.selected_data.spectral_windows.len() > 1)
+        .then(|| combined_window_frequency(ms, &solved))
+        .transpose()?;
     drop(input);
     let fitting = crate::timing::Phase::start("fringe_fit");
     for group in groups.into_values() {
@@ -137,6 +142,7 @@ pub(crate) fn solve(
             &windows,
             antennas,
             references.clone(),
+            combined_frequency,
             request.min_snr,
             controls,
         )?;
@@ -215,6 +221,7 @@ struct GroupAxis {
     grid: GridSpec,
     first_time: f64,
     first_frequency: f64,
+    table_frequency: f64,
     grid_start_hz: f64,
 }
 
@@ -223,17 +230,21 @@ fn solve_group(
     all_windows: &BTreeMap<i32, Window>,
     antennas: &BTreeSet<i32>,
     mut references: impl Iterator<Item = i32>,
+    combined_frequency: Option<f64>,
     min_snr: f32,
     controls: FringeControls,
 ) -> Result<Vec<SolutionRow>, GainSolveError> {
-    let descriptions = group
-        .delay_spectra()
-        .map(|spectrum| spectrum.buffer.0)
-        .collect::<BTreeSet<_>>();
-    if descriptions.is_empty() {
+    if !group.delay_spectra().any(|spectrum| {
+        spectrum.parallel_hand && spectrum.channels().any(|(_, weight)| weight > 0.)
+    }) {
         return Ok(Vec::new());
     }
-    let axis = axis(group, all_windows, &descriptions)?;
+    let descriptions = group
+        .fringe_buffers
+        .iter()
+        .map(|&(description, _, _)| description)
+        .collect::<BTreeSet<_>>();
+    let axis = axis(group, all_windows, &descriptions, combined_frequency)?;
     let mut hands = samples(group, all_windows, &axis);
     let single_hand = descriptions
         .iter()
@@ -244,6 +255,9 @@ fn solve_group(
             correlations::combine(hands, controls.correlation_combination),
             Vec::new(),
         ];
+    }
+    if hands.iter().all(Vec::is_empty) {
+        return Ok(Vec::new());
     }
     let reference_time = reference_time(&hands, axis.first_time);
     let Some(reference) = references.find_map(|antenna| {
@@ -257,7 +271,6 @@ fn solve_group(
         return Err(error("No valid reference antenna supplied"));
     };
     let size = antennas.last().map_or(0, |&id| id as usize + 1);
-    let center_hz = axis.grid.center_hz;
     let mut search = if controls.concatenate_windows {
         GroupSearch::Concatenated(FringeSearch::new(axis.grid)?)
     } else {
@@ -267,6 +280,7 @@ fn solve_group(
         )?)
     };
     let mut estimates = [Vec::new(), Vec::new()];
+    let mut below_threshold = BTreeSet::new();
     let hands_present = if combined || single_hand { 1 } else { 2 };
     for (hand, (baselines, estimates)) in hands.iter().zip(&mut estimates).enumerate() {
         estimates.resize_with(size, || None);
@@ -277,6 +291,7 @@ fn solve_group(
             parameters: FringeParameters::default(),
             snr: 999.,
             accepted: true,
+            active: true,
         });
         for baseline in baselines
             .iter()
@@ -291,7 +306,11 @@ fn solve_group(
             estimates[antenna] = search
                 .peak(&baseline.samples, sign, controls)?
                 .map(|mut peak| {
-                    peak.accepted = peak.snr >= min_snr;
+                    if peak.snr < min_snr {
+                        peak.accepted = false;
+                        below_threshold.insert(antenna);
+                    }
+                    peak.active = !below_threshold.contains(&antenna);
                     peak
                 });
         }
@@ -311,6 +330,7 @@ fn solve_group(
             for (antenna, estimate) in estimates.iter_mut().enumerate() {
                 if antenna != reference
                     && let Some(estimate) = estimate
+                    && estimate.active
                 {
                     estimate.accepted = false;
                 }
@@ -318,10 +338,10 @@ fn solve_group(
         }
         for estimate in estimates.iter_mut().flatten() {
             let p = &mut estimate.parameters;
-            if estimate.accepted {
+            if estimate.active {
                 p.phase_rad += TAU
-                    * (p.delay_ns * (center_hz - axis.first_frequency) * 1e-9
-                        + p.rate * center_hz * (reference_time - axis.first_time));
+                    * (p.delay_ns * (axis.table_frequency - axis.first_frequency) * 1e-9
+                        + p.rate * axis.table_frequency * (reference_time - axis.first_time));
             }
             if controls.zero_rates {
                 p.rate = 0.;
@@ -371,6 +391,7 @@ fn axis(
     group: &SolveAccumulator,
     all_windows: &BTreeMap<i32, Window>,
     descriptions: &BTreeSet<i32>,
+    combined_frequency: Option<f64>,
 ) -> Result<GroupAxis, GainSolveError> {
     let mut times = group.integration_times().collect::<Vec<_>>();
     times.sort_unstable_by(f64::total_cmp);
@@ -389,8 +410,10 @@ fn axis(
     let nominal_spacing = windows
         .clone()
         .filter_map(|window| (window.spacing_hz != 0.).then_some(window.spacing_hz))
-        .last()
-        .unwrap_or(1.);
+        .next_back()
+        .unwrap_or_else(|| {
+            ((high - low) / descriptions.len().saturating_sub(1).max(1) as f64).max(1.)
+        });
     let start_hz = if nominal_spacing < 0. { high } else { low };
     let intervals = ((high - low) / nominal_spacing.abs()).round() as usize;
     let channels = intervals
@@ -401,18 +424,27 @@ fn axis(
     } else {
         nominal_spacing
     };
+    let (frequency_sum, frequency_count) = group
+        .fringe_buffers
+        .iter()
+        .flat_map(|(description, _, _)| &all_windows[description].selected_hz)
+        .fold((0., 0), |(sum, count), frequency| {
+            (sum + frequency, count + 1)
+        });
     let grid = GridSpec {
         channels,
         timestamps: times.len(),
         channel_spacing_hz: spacing,
         integration_seconds: (times[times.len() - 1] - times[0]) / (times.len() - 1) as f64,
-        center_hz: all_hz.iter().sum::<f64>() / all_hz.len() as f64,
+        center_hz: frequency_sum / frequency_count as f64,
         padding: (8 / descriptions.len()).max(2),
     };
     Ok(GroupAxis {
         grid,
         first_time: times[0],
         first_frequency: all_hz[0],
+        table_frequency: combined_frequency
+            .unwrap_or_else(|| all_hz.iter().sum::<f64>() / all_hz.len() as f64),
         grid_start_hz: start_hz,
     })
 }
@@ -469,9 +501,11 @@ fn samples(
         for (local_channel, ((sum, weight), &frequency_hz)) in
             spectrum.channels().zip(&window.selected_hz).enumerate()
         {
-            if !weight.is_finite() || weight <= 0. || !sum.is_finite() {
-                continue;
-            }
+            let (visibility, weight) = if weight.is_finite() && weight > 0. && sum.is_finite() {
+                (sum / weight, weight)
+            } else {
+                (Complex32::default(), 0.)
+            };
             let offset = if reversed {
                 last - local_channel
             } else {
@@ -490,7 +524,7 @@ fn samples(
                 centroid_seconds: spectrum.time_seconds,
                 frequency_hz,
                 window_edges_hz: window.edges_hz,
-                visibility: sum / weight,
+                visibility,
                 weight,
             });
         }
@@ -498,8 +532,14 @@ fn samples(
     hands.map(|baselines| {
         baselines
             .into_iter()
-            .filter_map(|(antennas, samples)| {
-                (!samples.is_empty()).then_some(FringeBaseline { antennas, samples })
+            .filter_map(|(antennas, mut samples)| {
+                if !samples.iter().any(|sample| sample.weight > 0.) {
+                    return None;
+                }
+                // Later buffers replace earlier cells when rounded integration
+                // times or overlapping windows land on the same FFT bin.
+                samples.sort_unstable_by_key(FringeSample::buffer_channel_key);
+                Some(FringeBaseline { antennas, samples })
             })
             .collect()
     })
@@ -547,7 +587,7 @@ fn make_row(
             if !controls.global_solve
                 || active
                 || antenna as usize == reference
-                || peak.is_some_and(|peak| !peak.accepted)
+                || peak.is_some_and(|peak| !peak.active)
             {
                 peak.map_or(0., |peak| peak.snr)
             } else {
@@ -601,6 +641,15 @@ struct FringeSample {
 }
 
 impl FringeSample {
+    fn buffer_channel_key(&self) -> (i32, i32, u64, usize) {
+        (
+            self.data_description,
+            self.field_id,
+            self.time_seconds.to_bits(),
+            self.local_channel,
+        )
+    }
+
     fn weighted_unit_visibility(self) -> Complex32 {
         let amplitude = self.visibility.norm();
         let divisor = if amplitude < f32::EPSILON {

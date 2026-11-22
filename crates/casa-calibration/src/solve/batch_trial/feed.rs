@@ -69,6 +69,7 @@ fn observe(
     let per_time = batch.samples_per_time();
     let first = samples.start;
     let options = SolveGroupOptions {
+        retain_fringe_buffers: false,
         gain_type: request.gain_type,
         model_source: request.model_source,
         point_stokes: request.smodel,
