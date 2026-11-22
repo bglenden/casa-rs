@@ -3,6 +3,7 @@
 
 mod apply;
 mod arguments;
+mod fluxscale;
 mod polynomial;
 mod solve;
 mod stubs;

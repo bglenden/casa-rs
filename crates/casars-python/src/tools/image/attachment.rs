@@ -450,7 +450,7 @@ impl AttachedImage {
     }
 
     pub(super) fn rename(
-        &self,
+        self,
         name: &str,
         expanded: PyResult<Cow<'_, str>>,
         overwrite: bool,
@@ -460,36 +460,7 @@ impl AttachedImage {
             return Err(raised("Exception: new file name must be specified."));
         }
         let Some(source) = &self.key else {
-            if let Some(directory) = &self.image.miriad_directory {
-                let old_name = self.lock().path().map(Path::to_path_buf).ok_or_else(|| {
-                    raised("Exception: The image to be renamed no longer exists.")
-                })?;
-                return directory.rename(&old_name, name, expanded?.as_ref(), overwrite, history);
-            }
-            let fits_path = {
-                let image = self.lock();
-                if image.is_saved_expression() {
-                    return Err(raised(
-                        "Saved image expression rename is not implemented yet (#1959)",
-                    ));
-                }
-                image
-                    .fits()
-                    .and_then(|_| image.path())
-                    .map(Path::to_path_buf)
-            };
-            if let Some(old_name) = fits_path {
-                return super::fits_rename::rename(
-                    &old_name,
-                    name,
-                    expanded?.as_ref(),
-                    overwrite,
-                    history,
-                );
-            }
-            return Err(raised(
-                "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
-            ));
+            return self.rename_non_native(name, expanded, overwrite, history);
         };
         let source_changed = || {
             raised(format!(
@@ -659,6 +630,50 @@ impl AttachedImage {
             operand_paths: Vec::new(),
             live_coordinates: self.live_coordinates.clone(),
         })
+    }
+
+    fn rename_non_native(
+        mut self,
+        name: &str,
+        expanded: PyResult<Cow<'_, str>>,
+        overwrite: bool,
+        history: bool,
+    ) -> PyResult<Self> {
+        if let Some(directory) = &self.image.saved_expression_directory {
+            let mut relocated =
+                directory.rename(&self, name, expanded?.as_ref(), overwrite, history)?;
+            relocated.retain_expression_inputs(
+                std::mem::take(&mut self.retained_inputs),
+                std::mem::take(&mut self.operand_paths),
+            );
+            return Ok(relocated);
+        }
+        if let Some(directory) = &self.image.miriad_directory {
+            let old_name =
+                self.lock().path().map(Path::to_path_buf).ok_or_else(|| {
+                    raised("Exception: The image to be renamed no longer exists.")
+                })?;
+            return directory.rename(&old_name, name, expanded?.as_ref(), overwrite, history);
+        }
+        let fits_path = {
+            let image = self.lock();
+            image
+                .fits()
+                .and_then(|_| image.path())
+                .map(Path::to_path_buf)
+        };
+        if let Some(old_name) = fits_path {
+            return super::fits_rename::rename(
+                &old_name,
+                name,
+                expanded?.as_ref(),
+                overwrite,
+                history,
+            );
+        }
+        Err(raised(
+            "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
+        ))
     }
 
     pub(super) fn remove(&self) -> PyResult<String> {

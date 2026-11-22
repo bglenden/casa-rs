@@ -24,27 +24,6 @@ use crate::tools::not_yet_implemented_in;
     clippy::unused_self
 )]
 impl PyCalibrater {
-    #[pyo3(signature = (tablein, reference = None, tableout = None, transfer = None, listfile = None, append = None, refspwmap = None, gainthreshold = None, antenna = None, timerange = None, scan = None, incremental = None, fitorder = None, display = None), text_signature = "($self, tablein, reference=[], tableout='', transfer=[], listfile='', append=False, refspwmap=[-1], gainthreshold=-1.0, antenna='', timerange='', scan='', incremental=False, fitorder=1, display=False)")]
-    fn fluxscale(
-        &self,
-        tablein: &Bound<'_, PyAny>,
-        reference: Option<&Bound<'_, PyAny>>,
-        tableout: Option<&Bound<'_, PyAny>>,
-        transfer: Option<&Bound<'_, PyAny>>,
-        listfile: Option<&Bound<'_, PyAny>>,
-        append: Option<&Bound<'_, PyAny>>,
-        refspwmap: Option<&Bound<'_, PyAny>>,
-        gainthreshold: Option<&Bound<'_, PyAny>>,
-        antenna: Option<&Bound<'_, PyAny>>,
-        timerange: Option<&Bound<'_, PyAny>>,
-        scan: Option<&Bound<'_, PyAny>>,
-        incremental: Option<&Bound<'_, PyAny>>,
-        fitorder: Option<&Bound<'_, PyAny>>,
-        display: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "fluxscale", 1528)
-    }
-
     #[pyo3(signature = (modelimage), text_signature = "($self, modelimage)")]
     fn setmodel(&self, py: Python<'_>, modelimage: &str) -> PyResult<bool> {
         self.with_lifecycle(py, |state| {
