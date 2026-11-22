@@ -218,6 +218,65 @@ def test_cropped_windows(root, source, defaults, tasks):
             finally:
                 full.close()
     erase(paths)
+    if 'native' in tasks:
+        task = tasks['native']
+        for label, selector, indices in (
+            ('out-of-order', '370~372;20~22', [370, 371, 372, 20, 21, 22]),
+            ('overlap', '2~9^3;8~9', [2, 5, 8, 8, 9]),
+        ):
+            output = root / f'{label}-channels.ms'
+            assert task(str(source), outfile=str(output), spw='19', outputspw=f'19:{selector}',
+                        scan=str(scan)) is None
+            with opened(defaults['native']) as main, opened(output) as product, \
+                    opened(output / 'SPECTRAL_WINDOW') as spw, opened(source / 'SPECTRAL_WINDOW') as original:
+                full = main.query(f'DATA_DESC_ID == 19 and SCAN_NUMBER == {scan}')
+                try:
+                    np.testing.assert_array_equal(product.getcol('DATA'), full.getcol('DATA')[:, indices, :])
+                    np.testing.assert_array_equal(product.getcol('FLAG'), full.getcol('FLAG')[:, indices, :])
+                    np.testing.assert_array_equal(spw.getcell('CHAN_FREQ', 19), original.getcell('CHAN_FREQ', 19)[indices])
+                finally:
+                    full.close()
+            shutil.rmtree(output)
+
+
+def test_review_cases(root, source, tasks):
+    selectors = dict(spw='19', outputspw='19', scan='7')
+    antennas = pair(root, 'antenna-pair', source, tasks, antenna='0&1', **selectors)
+    for output in antennas.values():
+        with opened(output) as table:
+            assert table.nrows() == 232
+            np.testing.assert_array_equal(np.unique(table.getcol('ANTENNA1')), [1])
+    erase(antennas)
+    dry = pair(root, 'dry-sky', source, tasks, atmdetail=True, humidity=0., pwv='0mm', **selectors)
+    for path in dry.values():
+        with opened(path) as table:
+            assert np.isfinite(table.getcol('DATA')).all()
+    erase(dry)
+    zero_gain = root / 'zero-gain.cal'
+    casa.gencal(str(source), str(zero_gain), caltype='amp', spw='19', parameter=[0.])
+    if 'native' in tasks:
+        output = root / 'finite-output.ms'
+        native = tasks['native']
+        native(str(source), outfile=str(output), **selectors)
+        with opened(output) as table:
+            previous = table.getcol('DATA')
+        for factor in (str(zero_gain), 1e40):
+            try:
+                native(str(source), outfile=str(output), overwrite=True, gainfactor=factor, **selectors)
+            except RuntimeError as error:
+                assert 'finite' in str(error)
+            else:
+                raise AssertionError(f'Expected refusal of gainfactor={factor}')
+            with opened(output) as table:
+                np.testing.assert_array_equal(table.getcol('DATA'), previous)
+        shutil.rmtree(output)
+    for factor, label in ((str(zero_gain), 'zero'), (1e40, 'overflow')):
+        output = root / f'{label}-gain-casa.ms'
+        tasks['casa'](str(source), outfile=str(output), gainfactor=factor, **selectors)
+        with opened(output) as table:
+            assert np.any(~np.isfinite(table.getcol('DATA')) & ~table.getcol('FLAG'))
+        shutil.rmtree(output)
+    shutil.rmtree(zero_gain)
 
 
 def test_equal_elevation(root, source, tasks):
@@ -375,6 +434,7 @@ def main():
         test_data_columns(root, source, tasks)
         test_equal_elevation(root, source, tasks)
         test_cropped_windows(root, source, defaults, tasks)
+        test_review_cases(root, source, tasks)
         test_errors(root, source, tasks)
     print('ALMA atmospheric correction, selection and MeasurementSet interchange passed.', flush=True)
 

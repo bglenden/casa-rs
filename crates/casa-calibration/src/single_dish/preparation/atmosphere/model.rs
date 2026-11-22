@@ -82,6 +82,9 @@ impl WindowModel {
         if frequencies.is_empty() {
             return Err("Atmospheric correction requires a nonempty spectral window.".into());
         }
+        if !gain.is_finite() {
+            return Err("Atmospheric correction requires a finite gain factor.".into());
+        }
         let mut channels = frequencies.len();
         let mut reference = (channels - 1) / 2;
         let mut center = frequencies[reference];
@@ -179,6 +182,9 @@ impl WindowModel {
         };
         for value in &mut correction {
             *value *= self.gain;
+            if !value.is_finite() || value.abs() > f64::from(f32::MAX) {
+                return Err("Atmospheric correction is outside the finite Float32 range.".into());
+            }
         }
         self.correction = Some((time, correction));
         Ok(())

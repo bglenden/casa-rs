@@ -204,7 +204,13 @@ impl<C: AbsorptionChannel> AbsorptionProfile<C> {
         .validate(true)?;
         let column = &self.channels()[channel];
         let frequency_ghz = 1.0e-9 * column.frequency_hz();
-        let ratio = sky.water_column_m / self.ground_water_column_m();
+        // A dry line of sight has zero wet opacity even when the reference
+        // profile also has zero water.
+        let ratio = if sky.water_column_m == 0.0 {
+            0.0
+        } else {
+            sky.water_column_m / self.ground_water_column_m()
+        };
         let (opacity, occupations) = self
             .atmosphere()
             .layers()

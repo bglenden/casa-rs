@@ -45,6 +45,9 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
 
     let ms = MeasurementSet::open(input).map_err(execution)?;
+    let antenna = selector(task, "antenna")?
+        .map(|text| include_autocorrelations(&ms, text))
+        .transpose()?;
     let output_spw = task.required_text("outputspw")?;
     let rows = MainRows::read(&ms).map_err(execution)?;
     let config = configuration(task, &ms, &rows, &output_spw, atmosphere, humidity)?;
@@ -56,7 +59,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                 spw: Some(output_spw),
                 field: selector(task, "field")?,
                 scan: selector(task, "scan")?,
-                antenna: selector(task, "antenna")?,
+                antenna,
                 correlation: selector(task, "correlation")?,
                 timerange: selector(task, "timerange")?,
                 intent: selector(task, "intent")?,
@@ -81,6 +84,38 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         )
         .map_err(execution)?;
     TaskSuccess::new(CasaValue::None, &report)
+}
+
+fn include_autocorrelations(ms: &MeasurementSet, text: String) -> Result<String, TaskFailure> {
+    let has_auto = |expression: &str| {
+        let selected = ms.resolve_antenna_selector(expression).map_err(execution)?;
+        Ok::<_, TaskFailure>(
+            (0..selected.antenna_count()).any(|index| selected.holds(index, index)),
+        )
+    };
+    if text.is_empty() || has_auto(&text)? {
+        return Ok(text);
+    }
+    let rewritten = text
+        .split(';')
+        .flat_map(|clause| {
+            if clause.is_empty() || clause.ends_with("&&") {
+                return vec![clause.to_string()];
+            }
+            clause
+                .split('&')
+                .filter(|part| !part.is_empty())
+                .map(|part| format!("{part}&&&"))
+                .collect()
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    if !has_auto(&rewritten)? {
+        return Err(TaskFailure::execution(
+            "Cannot handle antenna selection properly. Abort.",
+        ));
+    }
+    Ok(rewritten)
 }
 
 fn check_paths<'a>(

@@ -9810,4 +9810,13 @@ corrections for original channels 0 through 18 from their data. The
 paired oracle recovers that exact offset from the uncropped CASA
 product. casa-rs uses the correction at each selected original
 channel. Its cropped spectra equal the same channel slice of its
-full-window correction.
+full-window correction, including reordered and overlapping ranges.
+
+## Atmospheric correction can publish unflagged nonfinite spectra
+
+With the recorded total-power fixture and CASA 6.7.6.14, a gain table
+with zero amplitude for window 19 produces an infinite reciprocal-square
+factor. A scalar factor of `1e40` also exceeds the Float32 range of the
+corrected spectra. Both inputs write unflagged nonfinite samples.
+casa-rs rejects either result before publishing the output, preserving
+an existing product on overwrite.

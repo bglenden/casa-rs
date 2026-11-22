@@ -239,14 +239,15 @@ impl SpectrumBaseline for Correction {
             elevations,
         )?;
         match data {
-            ArrayValue::Float32(data) => {
-                subtract(data, window.channels.as_deref(), correction, |v, c| {
-                    *v = (f64::from(*v) - c) as f32;
-                })?
-            }
+            ArrayValue::Float32(data) => subtract(
+                data,
+                window.channels.as_deref(),
+                correction,
+                subtract_sample,
+            )?,
             ArrayValue::Complex32(data) => {
                 subtract(data, window.channels.as_deref(), correction, |v, c| {
-                    v.re = (f64::from(v.re) - c) as f32;
+                    subtract_sample(&mut v.re, c)
                 })?
             }
             _ => return Err("Invalid atmospheric correction data cell.".into()),
@@ -259,7 +260,7 @@ fn subtract<T>(
     data: &mut ArrayD<T>,
     channels: Option<&[usize]>,
     correction: &[f64],
-    apply: impl Fn(&mut T, f64),
+    apply: impl Fn(&mut T, f64) -> Result<(), String>,
 ) -> Result<(), String> {
     for (channel, mut values) in data.axis_iter_mut(Axis(1)).enumerate() {
         let index = channels.map_or(Some(channel), |indices| indices.get(channel).copied());
@@ -268,9 +269,18 @@ fn subtract<T>(
             .copied()
             .ok_or("Atmospheric correction and selected channel axes disagree.")?;
         for sample in &mut values {
-            apply(sample, value);
+            apply(sample, value)?;
         }
     }
+    Ok(())
+}
+
+fn subtract_sample(sample: &mut f32, correction: f64) -> Result<(), String> {
+    let corrected = (f64::from(*sample) - correction) as f32;
+    if sample.is_finite() && !corrected.is_finite() {
+        return Err("Atmospheric correction overflows a Float32 spectrum.".into());
+    }
+    *sample = corrected;
     Ok(())
 }
 
@@ -320,7 +330,7 @@ fn prepare_windows(
                 weights,
                 config.threads,
             )?;
-            let channels = selection.channels_of(index).map_err(error_text)?;
+            let channels = selection.ordered_channels_of(index).map_err(error_text)?;
             windows.insert(window, SelectedWindow { model, channels });
         }
     }
