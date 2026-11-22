@@ -311,6 +311,20 @@ impl ImageHandle {
     }
 
     pub(super) fn set_coordinate_record(&mut self, mut record: RecordValue) -> PyResult<()> {
+        if let Self::Float(Storage::Temp {
+            image,
+            record: current,
+            ..
+        }) = self
+            && image.image_type_name() == "ComponentListImage"
+        {
+            let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
+            image
+                .set_component_coordinates(coordinates)
+                .map_err(raised)?;
+            *current = record;
+            return Ok(());
+        }
         with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised),
             Storage::Temp { image, record: current, .. } => {

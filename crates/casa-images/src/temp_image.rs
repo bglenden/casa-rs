@@ -261,7 +261,11 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Replaces the brightness unit string.
     pub fn set_units(&mut self, units: impl Into<String>) -> Result<(), ImageError> {
-        self.units = units.into();
+        let units = units.into();
+        if self.image_type_name() == "ComponentListImage" && units != "Jy/pixel" {
+            return Err(ImageError::CasaSelection("units must be Jy/pixel".into()));
+        }
+        self.units = units;
         Ok(())
     }
 
@@ -272,6 +276,7 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Replaces the image info.
     pub fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
+        self.check_beams(info)?;
         self.image_info = info.clone();
         self.image_info_record = None;
         Ok(())
@@ -287,8 +292,19 @@ impl<T: ImagePixel> TempImage<T> {
     /// # Errors
     /// Returns an error before changing the image if the record is invalid.
     pub fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
-        self.image_info = ImageInfo::from_record(&record)?;
+        let info = ImageInfo::from_record(&record)?;
+        self.check_beams(&info)?;
+        self.image_info = info;
         self.image_info_record = Some(record);
+        Ok(())
+    }
+
+    fn check_beams(&self, info: &ImageInfo) -> Result<(), ImageError> {
+        if self.image_type_name() == "ComponentListImage" && !info.beam_set.is_empty() {
+            return Err(ImageError::CasaSelection(
+                "A ComponentListImage may not have a beam(s)".into(),
+            ));
+        }
         Ok(())
     }
 

@@ -4,8 +4,9 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
-use casa_images::ImagePixelType;
+use casa_images::{ComponentListImage, ImagePixelType, TempImage};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{TableWriteLock, lexical_absolute};
 use casa_types::{RecordValue, Value};
@@ -765,6 +766,82 @@ impl PyImageTool {
 #[pymethods]
 #[allow(clippy::too_many_arguments)]
 impl PyImageTool {
+    #[pyo3(signature = (outfile = "", shape = None, cl = None, csys = None, overwrite = false, log = true, cache = true), text_signature = "($self, outfile='', shape=[], cl='', csys={}, overwrite=False, log=True, cache=True)")]
+    fn fromcomplist(
+        &self,
+        py: Python<'_>,
+        outfile: &str,
+        shape: Option<IntList>,
+        cl: Option<&Bound<'_, PyAny>>,
+        csys: Option<&Bound<'_, PyDict>>,
+        overwrite: bool,
+        log: bool,
+        cache: bool,
+    ) -> PyResult<bool> {
+        let components = component_list_input(py, cl);
+        let record = casa_record(py, csys)?;
+        let shape = shape.map_or_else(Vec::new, |shape| shape.0);
+        let message = py.detach(|| {
+            let mut state = self.state();
+            state.image = None;
+            let components = ComponentList::from_record(&components?).map_err(raised)?;
+            if !outfile.is_empty() {
+                return Err(raised(
+                    "Named component-list images are not implemented yet (#1691)",
+                ));
+            }
+            if !(2..=4).contains(&shape.len()) {
+                return Err(raised("ComponentListImages must have 2, 3, or 4 dimensions"));
+            }
+            if shape.iter().any(|&length| length <= 0) {
+                return Err(raised("TiledShape: shape has to be > 0"));
+            }
+            let shape: Vec<usize> = shape.into_iter().map(|length| length as usize).collect();
+            let geometry = Create {
+                method: "fromcomplist",
+                outfile,
+                shape: shape.clone(),
+                record,
+                linear: false,
+                overwrite,
+                log,
+                kind: "f".into(),
+            }
+            .geometry(None)?;
+            let message = format!("Created ComponentListImage {outfile} of shape {shape:?}.");
+            let source = ComponentListImage::new(shape.clone(), components, geometry.coordinates, cache)
+                .map_err(raised)?;
+            let image = TempImage::from_read_only_image(
+                source,
+                "ComponentListImage",
+                "ComponentListImage::doPutSlice: pixel values cannot be modified in a ComponentListImage",
+            )
+            .map_err(raised)?;
+            let mut image = ImageHandle::Float(Storage::Temp {
+                image: Box::new(image),
+                record: geometry.record,
+                fits: None,
+            });
+            image.append_history_at("ImageFactory::createComponentListImage", std::slice::from_ref(&message))?;
+            if state.history {
+                image.record_history(
+                    "fromcomplist",
+                    format!("ia.fromcomplist(outfile={outfile:?}, shape={shape:?}, cl={{...}}, csys={{...}}, overwrite={overwrite}, log={log}, cache={cache})"),
+                )?;
+            }
+            state.image = Some(AttachedImage::temporary(image));
+            Ok(message)
+        })?;
+        if log {
+            crate::tools::emit(
+                py,
+                "casars.tools.image",
+                &[crate::tools::LogLine::info(message)],
+            )?;
+        }
+        Ok(true)
+    }
+
     #[pyo3(signature = (outfile = "", shape = None, csys = None, linear = false, overwrite = false, log = true, r#type = "f"), text_signature = "($self, outfile='', shape=[0], csys={}, linear=False, overwrite=False, log=True, type='f')")]
     fn fromshape(
         &self,
@@ -871,6 +948,26 @@ impl PyImageTool {
             request,
             CreationInput::Pixels(Pixels::capture(py, pixels, true)),
         )
+    }
+}
+
+fn component_list_input(py: Python<'_>, input: Option<&Bound<'_, PyAny>>) -> PyResult<RecordValue> {
+    let Some(input) = input else {
+        return Err(raised(
+            "Exception: Component list table name cannot be empty.",
+        ));
+    };
+    if let Ok(record) = input.cast::<PyDict>() {
+        return casa_record(py, Some(record));
+    }
+    match input.extract::<String>() {
+        Ok(name) if name.is_empty() => Err(raised(
+            "Exception: Component list table name cannot be empty.",
+        )),
+        Ok(_) => Err(raised(
+            "Component-list table inputs are not implemented yet (#1691)",
+        )),
+        Err(_) => Err(raised("Unsupported type for parameter cl")),
     }
 }
 

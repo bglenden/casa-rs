@@ -16,7 +16,12 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else { return Ok(false) };
             let mut image = attachment.lock();
             let kind = image.image_type_name();
-            if !mask.is_empty() && matches!(kind, "FITSImage" | "ImageExpr" | "MIRIADImage") {
+            let kind = if kind == "ComponentListImage" && image.path().is_none() {
+                "Temporary ComponentListImage"
+            } else {
+                kind
+            };
+            if !mask.is_empty() && matches!(kind, "FITSImage" | "ImageExpr" | "MIRIADImage" | "Temporary ComponentListImage") {
                 return Err(raised(format!("Exception: Cannot make requested mask for this image type which is {kind}.")));
             }
             if mask.is_empty() {
