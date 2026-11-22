@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `Calibrater::fluxscale`, `write_history` and `writeResultsHistory` provenance.
 
+use std::path::Path;
+
 use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_tables::{Table, TableOptions};
 use casa_task_runtime::TaskInvocation;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
-use super::{FluxScaleReport, FluxScaleRequest};
+use super::{FluxScaleError, FluxScaleReport, FluxScaleRequest};
 
 /// History failure is a warning after publication, as in the CASA task.
 pub(crate) fn record(
@@ -30,13 +32,29 @@ fn append(
 
 pub(super) fn record_failure(request: &FluxScaleRequest, caltype: &str) {
     let _phase = crate::timing::Phase::start("fluxscale_history");
-    let message = format!(
-        "Table {} is of type: {caltype}",
-        request.input_table.display()
-    );
-    if let Err(error) = append_messages(request, vec![message], 1) {
+    if let Err(error) = append_messages(request, vec![type_message(request, caltype)], 1) {
         tracing::warn!("updating fluxscale HISTORY: {error}");
     }
+}
+
+pub(super) fn record_tool_type(
+    path: &Path,
+    request: &FluxScaleRequest,
+    caltype: &str,
+) -> Result<(), FluxScaleError> {
+    record_tool_message(path, type_message(request, caltype))
+}
+
+pub(super) fn record_tool_output(
+    path: &Path,
+    request: &FluxScaleRequest,
+) -> Result<(), FluxScaleError> {
+    record_tool_message(path, output_message(request))
+}
+
+fn record_tool_message(path: &Path, message: String) -> Result<(), FluxScaleError> {
+    let _phase = crate::timing::Phase::start("fluxscale_history");
+    append_to_path(path, vec![message], 1).map_err(|e| FluxScaleError::History(e.to_string()))
 }
 
 fn append_messages(
@@ -47,14 +65,21 @@ fn append_messages(
     let Some(vis) = &request.options.measurement_set else {
         return Ok(());
     };
-    let path = vis.join("HISTORY");
+    append_to_path(&vis.join("HISTORY"), messages, calibrater_count)
+}
+
+fn append_to_path(
+    path: &Path,
+    messages: Vec<String>,
+    calibrater_count: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     let mut table = Table::open_with_lock(
-        TableOptions::new(&path),
+        TableOptions::new(path),
         casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait),
     )?;
     #[cfg(not(unix))]
-    let mut table = Table::open(TableOptions::new(&path))?;
+    let mut table = Table::open(TableOptions::new(path))?;
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs_f64()
@@ -92,32 +117,40 @@ fn append_messages(
     Ok(())
 }
 
+fn tool_messages(request: &FluxScaleRequest) -> Vec<String> {
+    let caltype = Table::open(TableOptions::new(&request.input_table))
+        .ok()
+        .map(|table| table.info().sub_type.clone())
+        .unwrap_or_default();
+    vec![type_message(request, &caltype), output_message(request)]
+}
+
+fn type_message(request: &FluxScaleRequest, caltype: &str) -> String {
+    format!(
+        "Table {} is of type: {caltype}",
+        request.input_table.display()
+    )
+}
+
+fn output_message(request: &FluxScaleRequest) -> String {
+    let action = if request.append {
+        "Appending result to"
+    } else {
+        "Storing result in"
+    };
+    format!("{action} {}", request.output_table.display())
+}
+
 fn messages(
     task: &TaskInvocation<'_>,
     request: &FluxScaleRequest,
     report: &FluxScaleReport,
 ) -> Vec<String> {
-    let mut messages = vec![
-        format!(
-            "Table {} is of type: {}",
-            request.input_table.display(),
-            Table::open(TableOptions::new(&request.input_table))
-                .ok()
-                .map(|table| table.info().sub_type.clone())
-                .unwrap_or_default()
-        ),
-        format!(
-            "{} {}",
-            if request.append {
-                "Appending result to"
-            } else {
-                "Storing result in"
-            },
-            request.output_table.display()
-        ),
+    let mut messages = tool_messages(request);
+    messages.extend([
         "taskname=fluxscale".into(),
         format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
-    ];
+    ]);
     let mut bindings = task
         .session()
         .bundle()

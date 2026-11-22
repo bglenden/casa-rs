@@ -22,6 +22,13 @@ pub(super) fn validate(request: &FluxScaleRequest) -> Result<(), FluxScaleError>
         request.output_table.as_path(),
     ];
     products.extend(request.options.measurement_set.as_deref());
+    validate_products(path, products)
+}
+
+pub(super) fn validate_products<'a>(
+    path: &Path,
+    products: impl IntoIterator<Item = &'a Path>,
+) -> Result<(), FluxScaleError> {
     for product in products {
         if crate::paths::overlap(path, product).map_err(|error| failure(path, error))? {
             return Err(failure(path, "listfile overlaps a scientific product"));
