@@ -50,23 +50,30 @@ impl PyCalibrater {
         py: Python<'_>,
         operation: impl FnOnce(&mut CalibraterLifecycle) -> Result<(), CalibraterLifecycleError> + Send,
     ) -> PyResult<bool> {
+        self.attached_result(py, move |state| operation(state).map(|()| true))
+    }
+
+    fn attached_result(
+        &self,
+        py: Python<'_>,
+        operation: impl FnOnce(&mut CalibraterLifecycle) -> Result<bool, CalibraterLifecycleError>
+        + Send,
+    ) -> PyResult<bool> {
         let result = self.with_lifecycle(py, |state| {
             Ok(match operation(state) {
-                Err(CalibraterLifecycleError::Unattached) => false,
-                result => {
-                    result.map_err(runtime_error)?;
-                    true
-                }
+                Err(CalibraterLifecycleError::Unattached) => None,
+                result => Some(result.map_err(runtime_error)?),
             })
         })?;
-        if !result {
-            emit(
-                py,
-                LOGGER,
-                &[LogLine::error("Must first open a MeasurementSet.")],
-            )?;
+        if let Some(result) = result {
+            return Ok(result);
         }
-        Ok(result)
+        emit(
+            py,
+            LOGGER,
+            &[LogLine::error("Must first open a MeasurementSet.")],
+        )?;
+        Ok(false)
     }
 }
 

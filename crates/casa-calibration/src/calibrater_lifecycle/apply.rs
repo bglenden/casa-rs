@@ -8,10 +8,12 @@ use casa_provider_contracts::CasaValue;
 use casa_tables::{Table, TableOptions};
 use casa_types::RecordValue;
 
+use super::traditional_apply::{calibration_factory_type, non_calibration_table};
 use super::{CalibraterLifecycle, CalibraterLifecycleError, ConfiguredSolve};
 use crate::callib::{tool_library_specs, tool_table_record};
 use crate::casa_return::selectvis_record;
 use crate::constants::TABLE_INFO_TYPE;
+use crate::execute::{ToolCorrection, execute_tool_apply};
 use crate::plan::{
     ApplyInterpolationMode, ApplyMode, ApplyPlanRequest, plan_with_visibility_metadata,
 };
@@ -21,6 +23,51 @@ use crate::{
 };
 
 impl CalibraterLifecycle {
+    /// Apply the configured chain to the attached, selected visibilities.
+    /// Returns false if a selected spectral window has no calibration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without an attachment, or if calibration cannot be
+    /// applied. A failed apply clears the prior terms without replaying writes.
+    pub fn correct_visibilities(&mut self, mode: &str) -> Result<bool, CalibraterLifecycleError> {
+        let equation = self.equation_mut()?;
+        let mode = if mode.is_empty() {
+            String::from("CALFLAG")
+        } else {
+            mode.to_ascii_uppercase()
+        };
+        let trial = mode.contains("TRIAL") || mode.contains("FLAGONLY");
+        let apply_mode = match (mode.contains("CAL"), mode.contains("FLAG")) {
+            (true, true) => ApplyMode::CalFlag,
+            (true, false) => ApplyMode::CalOnly,
+            (false, true) => ApplyMode::FlagOnly,
+            (false, false) => ApplyMode::Trial,
+        };
+        let request = ApplyPlanRequest {
+            selection: equation.attachment.selection().clone(),
+            apply_mode,
+            parang: equation.apply.parang_terms > 0,
+            calibration_tables: equation.apply.tables.clone(),
+        };
+        let correction = ToolCorrection {
+            has_library_registration: !equation.apply.library_tables.is_empty(),
+            strict: mode.contains("STRICT"),
+            trial,
+            parang_terms: equation.apply.parang_terms,
+            parang_calwt: equation.apply.parang_calwt,
+        };
+        let result = equation.attachment.with_write(|ms, selected, lock| {
+            execute_tool_apply(ms, selected, lock, &request, correction)
+                .map_err(|error| casa_ms::MsError::InvalidInput(error.to_string()).into())
+        });
+        result.map_err(|error| {
+            equation.apply = super::ApplyTerms::default();
+            tracing::error!(%error, "could not correct selected visibilities");
+            CalibraterLifecycleError::ApplyConfiguration("Error in Calibrater::correct.".into())
+        })
+    }
+
     /// Append the tables in a calibration-library record to the attached
     /// equation. A missing table prevents registration of the library.
     /// Each successfully ingested table remains registered if a subsequent
@@ -50,10 +97,7 @@ impl CalibraterLifecycle {
         for (field, table) in library.fields().iter().zip(tables) {
             let info = table.info();
             if info.table_type != TABLE_INFO_TYPE {
-                return Err(failure(format!(
-                    "Table {} is not a valid Calibration table. (expected type = \"Calibration\"; type found = \"{}\")",
-                    field.name, info.table_type,
-                )));
+                return Err(non_calibration_table(&field.name, &info.table_type));
             }
             let slices = tool_table_record(field).map_err(failure)?;
             let invalid_library = |reason: String| {
@@ -64,7 +108,9 @@ impl CalibraterLifecycle {
                 );
                 failure("Error in Calibrater::callib2.".into())
             };
-            if !callibrary_type_supported(&info.sub_type) {
+            if !calibration_factory_type(&info.sub_type)
+                .is_some_and(|name| !matches!(name, "BPOLY" | "GSPLINE"))
+            {
                 return Err(invalid_library(format!(
                     "unsupported library type {}",
                     info.sub_type
@@ -117,7 +163,12 @@ impl CalibraterLifecycle {
             .iter()
             .map(|table| {
                 table.callibrary.as_ref().map_or_else(
-                    || table.path.display().to_string(),
+                    || {
+                        equation.apply.table_snapshots.get(&table.path).map_or_else(
+                            || table.path.display().to_string(),
+                            |snapshot| snapshot.name.clone(),
+                        )
+                    },
                     |library| library.table_name.clone(),
                 )
             })
@@ -167,99 +218,4 @@ impl CalibraterLifecycle {
             ("solve_tables", CasaValue::str_vector(output)),
         ]))
     }
-}
-
-fn callibrary_type_supported(subtype: &str) -> bool {
-    // CASA's metadata-aware VisCal factory. BPOLY and GSPLINE have factory
-    // entries but their setCallib implementation rejects library application.
-    let name = subtype.to_ascii_uppercase();
-    let prefix = name
-        .split_once('+')
-        .map_or(name.as_str(), |(prefix, _)| prefix);
-    matches!(
-        name.as_str(),
-        "B" | "B JONES"
-            | "G"
-            | "G JONES"
-            | "TF"
-            | "TF JONES"
-            | "TF NOISE"
-            | "T"
-            | "T JONES"
-            | "T NOISE"
-            | "D JONES"
-            | "DF JONES"
-            | "DLLS JONES"
-            | "DFLLS JONES"
-            | "DGEN JONES"
-            | "DFGEN JONES"
-            | "J"
-            | "J JONES"
-            | "JF"
-            | "JF JONES"
-            | "M"
-            | "M MUELLER"
-            | "A"
-            | "A MUELLER"
-            | "N"
-            | "A NOISE"
-            | "MF"
-            | "MF MUELLER"
-            | "X"
-            | "X MUELLER"
-            | "XJ"
-            | "X JONES"
-            | "XF"
-            | "XF JONES"
-            | "K"
-            | "K JONES"
-            | "KCROSS"
-            | "KCROSS JONES"
-            | "GLINXPH"
-            | "GLINXPH JONES"
-            | "XY+QU"
-            | "GLINXPHF"
-            | "GLINXPHF JONES"
-            | "XYF+QU"
-            | "XPARANG"
-            | "XPARANG JONES"
-            | "XPARANG+QU"
-            | "XFPARANG"
-            | "XFPARANG JONES"
-            | "XFPARANG+QU"
-            | "POSANG"
-            | "POSANG JONES"
-            | "KMBD"
-            | "KMBD JONES"
-            | "TFOPAC"
-            | "TOPAC"
-            | "P"
-            | "P JONES"
-    ) || matches!(
-        prefix,
-        "D" | "DLIN"
-            | "DF"
-            | "DFLIN"
-            | "DLLS"
-            | "DFLLS"
-            | "DGEN"
-            | "DGENERAL"
-            | "DFGEN"
-            | "DFGENERAL"
-    ) || [
-        "KANTPOS",
-        "TSYS",
-        "EVLASWP",
-        "GAINCURVE",
-        "POWERCURVE",
-        "TEC",
-        "F JONES",
-        "FRINGE",
-        "ACCOR",
-        "SDSKY_PS",
-        "SDSKY_RASTER",
-        "SDGAIN_OTFD",
-    ]
-    .iter()
-    .any(|family| name.contains(family))
 }

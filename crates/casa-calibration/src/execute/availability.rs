@@ -33,6 +33,8 @@ pub(super) fn execute(
     plan: ApplyPlan,
     observed_column: &str,
     tracer: Option<&mut CalibrationPerfTracer>,
+    mut lock: Option<&mut TableWriteLock>,
+    tool: Option<ToolCorrection>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let start = Instant::now();
     let unavailable = plan
@@ -42,7 +44,7 @@ pub(super) fn execute(
         .cloned()
         .collect::<Vec<_>>();
     if unavailable.is_empty() {
-        return execute_apply_available(ms, plan, observed_column, tracer);
+        return execute_apply_available(ms, plan, observed_column, tracer, lock, tool, None);
     }
     let mut usable = plan.clone();
     usable.selected_rows.retain(|row| available(row, &plan));
@@ -50,17 +52,26 @@ pub(super) fn execute(
     let usable_count = usable.selected_row_count;
     // An empty mutation still initializes a newly requested CORRECTED_DATA
     // from DATA, as CASA's open(addcorr=True) does before checking availability.
-    let (mut report, mut trace) = execute_apply_available(ms, usable, observed_column, None)?;
+    let (mut report, mut trace) = execute_apply_available(
+        ms,
+        usable,
+        observed_column,
+        None,
+        lock.as_deref_mut(),
+        tool,
+        None,
+    )?;
     let flag_start = Instant::now();
-    if plan.apply_mode.is_strict() {
-        let (samples, rows) = flag_unavailable(ms, &plan, &unavailable)?;
+    let strict = tool.is_some_and(|tool| tool.strict) || plan.apply_mode.is_strict();
+    if strict {
+        let (samples, rows) = flag_unavailable(ms, &plan, &unavailable, lock)?;
         report.flagged_sample_count += samples;
         report.flagged_row_count += rows;
         report.updated_row_count += unavailable.len();
     }
     let flag_ns = flag_start.elapsed().as_nanos() as u64;
     report.wrote_measurement_set =
-        report.created_corrected_data_column || usable_count > 0 || plan.apply_mode.is_strict();
+        report.created_corrected_data_column || usable_count > 0 || strict;
     report.timings.row_writeback_ns += flag_ns;
     trace.row_writeback_ns += flag_ns;
     let total = start.elapsed().as_nanos() as u64;
@@ -78,10 +89,65 @@ pub(super) fn execute(
     Ok((report, trace))
 }
 
+/// Publish earlier strict flags before a later group's correction can fail.
+/// Keep the same MAIN lock and resolved row identities for the whole run.
+pub(super) fn execute_strict_tool(
+    ms: &mut MeasurementSet,
+    mut plan: ApplyPlan,
+    observed_column: &str,
+    lock: &mut TableWriteLock,
+    tool: ToolCorrection,
+) -> Result<(), ApplyExecutionError> {
+    let mut chain = ApplyChain::load(ms, &plan, false)?;
+    chain.arrange_for_tool(&plan, tool.parang_terms);
+    let mut ordered = std::mem::take(&mut plan.selected_rows)
+        .into_iter()
+        .map(|row| {
+            let array = get_i32(ms.main_table(), row.row_index, "ARRAY_ID")?;
+            Ok((array, available(&row, &plan), row))
+        })
+        .collect::<Result<Vec<_>, ApplyExecutionError>>()?;
+    ordered.sort_by(|(array_a, _, a), (array_b, _, b)| {
+        (array_a, a.scan_number, a.field_id, a.data_desc_id)
+            .cmp(&(array_b, b.scan_number, b.field_id, b.data_desc_id))
+            .then_with(|| a.time_seconds.total_cmp(&b.time_seconds))
+            .then_with(|| a.row_index.cmp(&b.row_index))
+    });
+    for group in ordered.chunk_by(|first, next| first.1 == next.1) {
+        plan.selected_rows = group.iter().map(|(_, _, row)| row.clone()).collect();
+        plan.selected_row_count = group.len();
+        if !group[0].1 {
+            flag_unavailable(ms, &plan, &plan.selected_rows, Some(lock))?;
+        } else if plan.apply_mode == ApplyMode::Trial {
+            for_each_apply_row(
+                ms,
+                &plan,
+                observed_column,
+                false,
+                false,
+                PreviewWeightSource::UnitFactors,
+                |_, _| {},
+            )?;
+        } else {
+            execute_apply_available(
+                ms,
+                plan.clone(),
+                observed_column,
+                None,
+                Some(lock),
+                Some(tool),
+                Some(&chain),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn flag_unavailable(
     ms: &mut MeasurementSet,
     plan: &ApplyPlan,
     rows: &[ApplyRowPlan],
+    lock: Option<&mut TableWriteLock>,
 ) -> Result<(usize, usize), ApplyExecutionError> {
     let path = display_ms_path(ms);
     let table_error = |source| ApplyExecutionError::MutateMeasurementSet {
@@ -126,66 +192,72 @@ fn flag_unavailable(
     )
     .map_err(write_error)?;
     let batch_rows = write_plan.batch_rows();
-    let mut writer = MeasurementSetWriteSession::start_selected_row_mutation(ms, write_plan)
-        .map_err(write_error)?;
-    let (mut samples, mut fully_flagged) = (0, 0);
-    for batch in rows.chunks(batch_rows) {
-        let indices = batch.iter().map(|row| row.row_index).collect::<Vec<_>>();
-        let values = ms
-            .main_table()
-            .column_accessor("FLAG")
-            .and_then(|column| column.array_cells_owned(&indices))
-            .map_err(table_error)?;
-        let mut output = Vec::with_capacity(batch.len());
-        for (row, value) in batch.iter().zip(values) {
-            let value = required_prefetched_array(value, row.row_index, "FLAG", &path)?;
-            let ArrayValue::Bool(mut flags) = value else {
-                return Err(ApplyExecutionError::UnsupportedParameterShape {
-                    path: "<measurement-set FLAG>".into(),
-                    shape: value.shape().to_vec(),
-                });
-            };
-            let mut changed = 0;
-            if let Some(selection) = plan.channel_selections.get(&row.data_spw_id) {
-                for &channel in &selection.indices {
-                    if channel >= flags.shape()[1] {
+    let (counts, _) = MeasurementSetWriteSession::mutate_selected_rows(
+        ms,
+        write_plan,
+        lock,
+        write_error,
+        |writer, ms| {
+            let (mut samples, mut fully_flagged) = (0, 0);
+            for batch in rows.chunks(batch_rows) {
+                let indices = batch.iter().map(|row| row.row_index).collect::<Vec<_>>();
+                let values = ms
+                    .main_table()
+                    .column_accessor("FLAG")
+                    .and_then(|column| column.array_cells_owned(&indices))
+                    .map_err(table_error)?;
+                let mut output = Vec::with_capacity(batch.len());
+                for (row, value) in batch.iter().zip(values) {
+                    let value = required_prefetched_array(value, row.row_index, "FLAG", &path)?;
+                    let ArrayValue::Bool(mut flags) = value else {
                         return Err(ApplyExecutionError::UnsupportedParameterShape {
                             path: "<measurement-set FLAG>".into(),
-                            shape: flags.shape().to_vec(),
+                            shape: value.shape().to_vec(),
                         });
-                    }
-                    for flag in flags.index_axis_mut(ndarray::Axis(1), channel) {
-                        if !*flag {
-                            changed += 1;
+                    };
+                    let mut changed = 0;
+                    if let Some(selection) = plan.channel_selections.get(&row.data_spw_id) {
+                        for &channel in &selection.indices {
+                            if channel >= flags.shape()[1] {
+                                return Err(ApplyExecutionError::UnsupportedParameterShape {
+                                    path: "<measurement-set FLAG>".into(),
+                                    shape: flags.shape().to_vec(),
+                                });
+                            }
+                            for flag in flags.index_axis_mut(ndarray::Axis(1), channel) {
+                                if !*flag {
+                                    changed += 1;
+                                }
+                                *flag = true;
+                            }
                         }
-                        *flag = true;
+                    } else {
+                        for flag in &mut flags {
+                            if !*flag {
+                                changed += 1;
+                            }
+                            *flag = true;
+                        }
                     }
+                    samples += changed;
+                    fully_flagged += usize::from(changed > 0 && flags.iter().all(|flag| *flag));
+                    output.push(ArrayValue::Bool(flags));
                 }
-            } else {
-                for flag in &mut flags {
-                    if !*flag {
-                        changed += 1;
-                    }
-                    *flag = true;
-                }
+                writer
+                    .write_mutation_batch(
+                        ms,
+                        MeasurementSetMutationBatch {
+                            row_indices: indices,
+                            columns: vec![MeasurementSetMutationColumnBatch {
+                                name: "FLAG".into(),
+                                values: MeasurementSetMutationColumnValues::Arrays(output),
+                            }],
+                        },
+                    )
+                    .map_err(write_error)?;
             }
-            samples += changed;
-            fully_flagged += usize::from(changed > 0 && flags.iter().all(|flag| *flag));
-            output.push(ArrayValue::Bool(flags));
-        }
-        writer
-            .write_mutation_batch(
-                ms,
-                MeasurementSetMutationBatch {
-                    row_indices: indices,
-                    columns: vec![MeasurementSetMutationColumnBatch {
-                        name: "FLAG".into(),
-                        values: MeasurementSetMutationColumnValues::Arrays(output),
-                    }],
-                },
-            )
-            .map_err(write_error)?;
-    }
-    writer.finish_mutation().map_err(write_error)?;
-    Ok((samples, fully_flagged))
+            Ok((samples, fully_flagged))
+        },
+    )?;
+    Ok(counts)
 }

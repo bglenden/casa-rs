@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Attachment and visibility-equation state shared by calibrater operations.
 
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
 use casa_ms::{MeasurementSet, MsSelection, SubtableId};
@@ -24,6 +24,7 @@ mod apply;
 pub(crate) mod ep_cache;
 pub(crate) mod legacy_ep;
 mod table_tools;
+mod traditional_apply;
 mod weights;
 
 use legacy_ep::LegacyEpSolver;
@@ -50,8 +51,10 @@ enum ConfiguredSolve {
 #[derive(Default)]
 struct ApplyTerms {
     tables: Vec<ApplyCalibrationTableSpec>,
+    table_snapshots: BTreeMap<PathBuf, traditional_apply::TraditionalApplySnapshot>,
     library_tables: Vec<String>,
-    parang: bool,
+    parang_terms: usize,
+    parang_calwt: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -350,7 +353,9 @@ impl CalibraterLifecycle {
     ///
     /// Returns an error without an open dataset.
     pub fn set_parallactic_angle(&mut self, apply: bool) -> Result<(), CalibraterLifecycleError> {
-        self.equation_mut()?.apply.parang = apply;
+        let terms = &mut self.equation_mut()?.apply;
+        terms.parang_terms = usize::from(apply);
+        terms.parang_calwt = false;
         Ok(())
     }
 
@@ -593,14 +598,14 @@ impl CalibraterLifecycle {
                 gain.model_source = model_source;
                 gain.smodel = stokes;
                 gain.prior_calibration_tables = apply;
-                gain.parang = equation.apply.parang;
+                gain.parang = equation.apply.parang_terms > 0;
             }
             CalibrationSolveRequest::Bandpass(bandpass) => {
                 bandpass.selection = selection;
                 bandpass.model_source = model_source;
                 bandpass.smodel = stokes;
                 bandpass.prior_calibration_tables = apply;
-                bandpass.parang = equation.apply.parang;
+                bandpass.parang = equation.apply.parang_terms > 0;
             }
         }
         Ok(solve_calibration_with_output_mode(
