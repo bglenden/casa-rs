@@ -24,8 +24,8 @@ use super::time_projection::{TimeGroupRead, TimeProjection};
 use super::visibility_columns::VisibilityColumns;
 use super::{
     CompactSpectralMetadata, MsTransformError, MsTransformRequest, STANDARD_SPECTRA,
-    TransformChannelSelection, scalar_bool, scalar_f64, scalar_i32, select_channels,
-    transform_flag_category_channels,
+    TransformChannelSelection, TransformInputView, scalar_bool, scalar_f64, scalar_i32,
+    select_channels, transform_flag_category_channels,
 };
 
 pub(super) struct Grid {
@@ -453,6 +453,7 @@ pub(super) fn projected_times(
     channels: &BTreeMap<i32, TransformChannelSelection>,
     ddid_to_spw: &BTreeMap<i32, i32>,
     correlations: Option<&CorrelationSelection>,
+    input_view: Option<&dyn TransformInputView>,
 ) -> Result<Vec<f64>, MsTransformError> {
     let table_error = |source: TableError| MsTransformError::MutateMeasurementSet {
         path: input
@@ -481,9 +482,19 @@ pub(super) fn projected_times(
                 // selected sample unflagged, or the last input when all are flagged.
                 // Walk backwards so an ordinary group reads only one FLAG cell.
                 for member in group.rows.iter().rev() {
-                    let mut values = flags
-                        .array_cells_owned_uncached(&[member.physical])
+                    let indices = [member.physical];
+                    let mut computed = input_view
+                        .filter(|view| view.provides(table, "FLAG"))
+                        .map(|view| view.read(table, &indices, &["FLAG"]))
+                        .transpose()
                         .map_err(table_error)?;
+                    let mut values =
+                        match computed.as_mut().and_then(|values| values.remove("FLAG")) {
+                            Some(values) => values,
+                            None => flags
+                                .array_cells_owned_uncached(&indices)
+                                .map_err(table_error)?,
+                        };
                     let Some(ArrayValue::Bool(values)) = values.pop().flatten() else {
                         return Err(table_error(TableError::Schema(
                             "FLAG must hold Bool.".into(),
@@ -520,7 +531,7 @@ pub(super) fn read_batch(
         &BTreeMap<i32, i32>,
         Option<&CorrelationSelection>,
     ),
-    (columns, spectra): (&VisibilityColumns, &[&str]),
+    (columns, spectra, input_view): (&VisibilityColumns, &[&str], Option<&dyn TransformInputView>),
     time: Option<(&mut TimeProjection<'_>, &[TimeGroup])>,
 ) -> Result<Batch, MsTransformError> {
     let error = |source: TableError| MsTransformError::MutateMeasurementSet {
@@ -555,7 +566,8 @@ pub(super) fn read_batch(
     } else {
         let indices = sources.iter().map(|&index| rows[index]).collect::<Vec<_>>();
         let table = input.main_table();
-        let mut block = MainArrayBlock::read(table, &indices, columns, spectra).map_err(error)?;
+        let mut block =
+            MainArrayBlock::read(table, &indices, columns, spectra, input_view).map_err(error)?;
         let exposure = table
             .column_accessor("EXPOSURE")
             .and_then(|column| column.scalar_cells_owned_for_rows(&indices))

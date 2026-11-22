@@ -5,6 +5,7 @@ use casa_tables::{Table, TableError};
 use casa_types::ArrayValue;
 
 use super::visibility_columns::VisibilityColumns;
+use super::{TransformInputColumns, TransformInputView};
 
 pub(super) type ArrayCells = Vec<Option<ArrayValue>>;
 
@@ -36,8 +37,27 @@ impl MainArrayBlock {
         rows: &[usize],
         visibility: &VisibilityColumns,
         spectra: &[&str],
+        view: Option<&dyn TransformInputView>,
     ) -> Result<Self, TableError> {
-        let read = |name| {
+        let mut computed = if let Some(view) = view {
+            let mut columns = Vec::from(["FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"]);
+            columns.extend(spectra.iter().copied());
+            columns.extend(visibility.copies().iter().map(|copy| copy.source.name()));
+            view.read(table, rows, &columns)?
+        } else {
+            TransformInputColumns::new()
+        };
+        let mut read = |name| {
+            if let Some(cells) = computed.remove(name) {
+                if cells.len() != rows.len() {
+                    return Err(TableError::Schema(format!(
+                        "computed {name} supplied {} cells for {} rows",
+                        cells.len(),
+                        rows.len()
+                    )));
+                }
+                return Ok(cells);
+            }
             table
                 .column_accessor(name)?
                 .array_cells_owned_uncached(rows)

@@ -8,7 +8,7 @@ use casa_types::ArrayValue;
 use crate::model::{CalibrationParameterFamily, CalibrationTableSummary};
 
 use super::{ApplyExecutionError, GainGrid, correcting_gain, correlation_receptors, stokes_name};
-use ndarray::{ArrayD, Axis};
+use ndarray::{Array1, Array2, ArrayD, Axis};
 
 pub(super) fn supports_calwt(
     summary: &CalibrationTableSummary,
@@ -53,6 +53,85 @@ pub(super) fn from_sigma(
     };
     values.mapv_inplace(|sigma| if sigma > 0. { 1. / (sigma * sigma) } else { 0. });
     Ok(value)
+}
+
+fn broadcast_spectrum(
+    scalar: &ArrayValue,
+    shape: &[usize],
+) -> Result<ArrayValue, ApplyExecutionError> {
+    match (scalar, shape) {
+        (ArrayValue::Float32(values), [correlations, channels])
+            if values.shape() == [*correlations] =>
+        {
+            Ok(ArrayValue::Float32(
+                Array2::from_shape_fn((*correlations, *channels), |(correlation, _)| {
+                    values[[correlation]]
+                })
+                .into_dyn(),
+            ))
+        }
+        _ => Err(ApplyExecutionError::UnsupportedParameterShape {
+            path: "<measurement-set weight spectrum>".into(),
+            shape: shape.to_vec(),
+        }),
+    }
+}
+
+pub(super) fn transform_weight_spectrum(
+    table: &Table,
+    row: usize,
+    has_sigma_spectrum: bool,
+    scalar: &ArrayValue,
+    shape: &[usize],
+) -> Result<ArrayValue, ApplyExecutionError> {
+    let column = "SIGMA_SPECTRUM";
+    // The transform can visit a mixed-shape MS in any physical row
+    // order. Read spectral cells through the selected array reader.
+    let sigma = if has_sigma_spectrum {
+        table
+            .column_accessor(column)
+            .and_then(|accessor| accessor.array_cells_owned_uncached(&[row]))
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: table
+                    .path()
+                    .map_or_else(String::new, |path| path.display().to_string()),
+                source: MsError::from(source),
+            })?
+            .pop()
+            .flatten()
+    } else {
+        None
+    };
+    match sigma {
+        Some(sigma) => from_sigma(sigma, column),
+        None => broadcast_spectrum(scalar, shape),
+    }
+}
+
+pub(super) fn scalar_medians(
+    spectrum: &ArrayValue,
+    channels: Option<&[usize]>,
+) -> Option<ArrayValue> {
+    let ArrayValue::Float32(values) = spectrum else {
+        return None;
+    };
+    if values.ndim() != 2 {
+        return None;
+    }
+    let medians = values
+        .axis_iter(Axis(0))
+        .map(|row| {
+            let selected = match channels {
+                Some(channels) => channels
+                    .iter()
+                    .map(|&channel| row.get([channel]).copied())
+                    .collect::<Option<Vec<_>>>()?,
+                None => row.iter().copied().collect::<Vec<_>>(),
+            };
+            (!selected.is_empty()).then(|| lower_median(selected))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(ArrayValue::Float32(Array1::from_vec(medians).into_dyn()))
 }
 
 pub(super) fn has_spectrum(

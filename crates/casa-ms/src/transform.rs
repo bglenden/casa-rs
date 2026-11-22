@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use casa_tables::{
@@ -45,6 +46,7 @@ mod convolution;
 mod correlation_metadata;
 mod flag_commands;
 mod hanning;
+mod input_view;
 mod main_arrays;
 mod multi_ms;
 mod output_layout;
@@ -62,6 +64,7 @@ use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use convolution::{SpectralOperation, SpectrumOperator};
 pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
+pub use input_view::{TransformInputColumns, TransformInputView};
 use main_arrays::MainArrayBlock;
 use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
@@ -151,6 +154,8 @@ pub struct MsTransformTaskOptions {
     pub retained_scan_span: Option<f64>,
     /// Multi-MS dispatch for the public mstransform task.
     pub multi_ms: Option<MsTransformMultiMsOptions>,
+    /// Computed arrays to read in place of stored input values.
+    pub input_view: Option<Arc<dyn TransformInputView>>,
 }
 
 /// Partition allocation for a new Multi-MS product.
@@ -651,8 +656,13 @@ fn mstransform_staged(
                 selector: request.spw.clone(),
                 reason: source.to_string(),
             })?;
-    let visibility =
-        VisibilityColumns::resolve(input.main_table(), request.data_column, &request.input_ms)?;
+    let input_view = options.input_view.as_deref();
+    let visibility = VisibilityColumns::resolve(
+        input.main_table(),
+        request.data_column,
+        &request.input_ms,
+        input_view,
+    )?;
     let TransformSelection {
         selection,
         correlations,
@@ -897,6 +907,7 @@ fn mstransform_staged(
                         &channel_selection,
                         &ddid_to_spw,
                         correlations.as_ref(),
+                        input_view,
                     )
                 })
                 .transpose()?;
@@ -961,6 +972,7 @@ fn mstransform_staged(
             hanning,
         ),
         &visibility,
+        input_view,
     )
     .map_err(|source| MsTransformError::MutateMeasurementSet {
         path: request.input_ms.display().to_string(),
@@ -1172,7 +1184,11 @@ fn mstransform_staged(
         &ddid_to_spw,
         &channel_bins,
         (correlations.as_ref(), polarization.as_ref()),
-        (&visibility, &spectra),
+        (
+            &visibility,
+            &spectra,
+            input_view.map_or(0, TransformInputView::additional_bytes_per_sample),
+        ),
         write_resources,
     )?;
     let batch_rows = if writes_rows {
@@ -1253,51 +1269,56 @@ fn mstransform_staged(
             &spectra.source,
             &visibility,
             input_batch_rows,
+            input_view,
         )
     });
     for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &output_input_rows[batch_start..batch_end];
         let mut combined_scalars = Vec::new();
-        let (mut input_block, group_times) = if let (Some(grid), Some(groups)) =
-            (&combined_grid, &combination)
-        {
-            let result = combine::read_batch(
-                grid,
-                &groups[batch_start..batch_end],
-                &input,
-                (&selected_rows, &selected_ddids),
-                (&channel_selection, &ddid_to_spw, correlations.as_ref()),
-                (&visibility, &spectra.source),
-                time_projection.as_mut().zip(time_groups.as_deref()),
-            )?;
-            combined_scalars = result.exposure_flags;
-            (result.arrays, result.coordinates)
-        } else if let (Some(projection), Some(groups)) = (&mut time_projection, &time_groups) {
-            let plans = groups[batch_start..batch_end]
-                .iter()
-                .map(|group| {
-                    let description = group.first.description;
-                    let spw = ddid_to_spw[&description];
-                    TimeGroupRead {
-                        group,
-                        channels: &channel_selection[&spw].channels,
-                        axes: correlations
-                            .as_ref()
-                            .and_then(|plan| plan.axes(description)),
-                    }
-                })
-                .collect::<Vec<_>>();
-            projection.average_groups(&plans)?
-        } else {
-            let block =
-                MainArrayBlock::read(input.main_table(), input_rows, &visibility, &spectra.source)
-                    .map_err(|source| MsTransformError::MutateMeasurementSet {
-                        path: request.input_ms.display().to_string(),
-                        source: Box::new(source),
-                    })?;
-            (block, Vec::new())
-        };
+        let (mut input_block, group_times) =
+            if let (Some(grid), Some(groups)) = (&combined_grid, &combination) {
+                let result = combine::read_batch(
+                    grid,
+                    &groups[batch_start..batch_end],
+                    &input,
+                    (&selected_rows, &selected_ddids),
+                    (&channel_selection, &ddid_to_spw, correlations.as_ref()),
+                    (&visibility, &spectra.source, input_view),
+                    time_projection.as_mut().zip(time_groups.as_deref()),
+                )?;
+                combined_scalars = result.exposure_flags;
+                (result.arrays, result.coordinates)
+            } else if let (Some(projection), Some(groups)) = (&mut time_projection, &time_groups) {
+                let plans = groups[batch_start..batch_end]
+                    .iter()
+                    .map(|group| {
+                        let description = group.first.description;
+                        let spw = ddid_to_spw[&description];
+                        TimeGroupRead {
+                            group,
+                            channels: &channel_selection[&spw].channels,
+                            axes: correlations
+                                .as_ref()
+                                .and_then(|plan| plan.axes(description)),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                projection.average_groups(&plans)?
+            } else {
+                let block = MainArrayBlock::read(
+                    input.main_table(),
+                    input_rows,
+                    &visibility,
+                    &spectra.source,
+                    input_view,
+                )
+                .map_err(|source| MsTransformError::MutateMeasurementSet {
+                    path: request.input_ms.display().to_string(),
+                    source: Box::new(source),
+                })?;
+                (block, Vec::new())
+            };
         let descriptions = &output_input_ddids[batch_start..batch_end];
         let mut input_row_flags = if let Some(projection) = &polarization {
             let row_flags = input
@@ -2294,7 +2315,7 @@ fn transform_array_write_plan(
         Option<&CorrelationSelection>,
         Option<&PolarizationProjection>,
     ),
-    (visibility, spectra): (&VisibilityColumns, &SpectrumProjection),
+    (visibility, spectra, view_bytes): (&VisibilityColumns, &SpectrumProjection, usize),
     resources: MeasurementSetWriteResources,
 ) -> Result<(MeasurementSetWritePlan, usize), MsTransformError> {
     let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
@@ -2399,7 +2420,9 @@ fn transform_array_write_plan(
         resources,
         dimensions.values(),
         spectra.source.len(),
-        visibility.regular_bytes_per_sample(),
+        visibility
+            .regular_bytes_per_sample()
+            .saturating_add(view_bytes),
         largest_input_category.saturating_add(maximum_lag_bytes),
     )
     .map_err(io_error)?;
@@ -2510,11 +2533,14 @@ impl SpectrumProjection {
         force_spectra: bool,
         (channel_average, time_average, spectral_convolution, hanning): (bool, bool, bool, bool),
         visibility: &VisibilityColumns,
+        view: Option<&dyn TransformInputView>,
     ) -> Result<Self, TableError> {
+        let computed = |name| view.is_some_and(|view| view.provides(table, name));
         let exists = |name| {
-            table
-                .schema()
-                .is_some_and(|schema| schema.contains_column(name))
+            computed(name)
+                || table
+                    .schema()
+                    .is_some_and(|schema| schema.contains_column(name))
         };
         if grammar != RowGrammar::Transform {
             let source = MAIN_SPECTRA
@@ -2528,9 +2554,11 @@ impl SpectrumProjection {
                 fill_standard: false,
             });
         }
-        let defined = |row, name| -> Result<bool, TableError> {
-            Ok(exists(name) && table.array_shape_uncached(row, name)?.is_some())
-        };
+        let defined =
+            |row, name| -> Result<bool, TableError> {
+                Ok(computed(name)
+                    || (exists(name) && table.array_shape_uncached(row, name)?.is_some()))
+            };
         let propagate_weights = defined(selected_row, "WEIGHT_SPECTRUM")?;
         let fill_standard = force_spectra || propagate_weights;
         // The selected MS can supply spectra even if row zero of the physical

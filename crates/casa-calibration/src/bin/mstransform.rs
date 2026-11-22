@@ -3,8 +3,9 @@
 //! and `split` task provider, on the shared task front end. Its first word
 //! names the surface (`mstransform split ...`); `mstransform` runs otherwise.
 
-use std::{num::NonZeroUsize, process::ExitCode};
+use std::{io::ErrorKind, num::NonZeroUsize, path::Path, process::ExitCode};
 
+use casa_calibration::{CallibError, transform_callibrary};
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     MsPartitionAxis, MsRegridOptions, MsTransformError, MsTransformMultiMsOptions,
@@ -39,7 +40,10 @@ fn main() -> ExitCode {
 
 /// Run the shared transform and project the public task's return value.
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let (request, options) = transform_request(task)?;
+    let (request, mut options) = transform_request(task)?;
+    if request.input_ms != request.output_ms && !request.output_ms.exists() {
+        options.input_view = callibrary(task, &request)?;
+    }
     // The output the transform refuses before it starts is the argument's
     // fault; anything else failed the transform.
     let report = mstransform_task(&request, &options).map_err(|error| match error {
@@ -119,6 +123,32 @@ fn transform_request(
         ..MsTransformTaskOptions::default()
     };
     Ok((request, options))
+}
+
+fn callibrary(
+    task: &TaskInvocation<'_>,
+    request: &MsTransformRequest,
+) -> Result<Option<std::sync::Arc<dyn casa_ms::TransformInputView>>, TaskFailure> {
+    if task.surface() != "mstransform" || !task.flag("docallib")? {
+        return Ok(None);
+    }
+    let filename = task.text("callib")?.unwrap_or_default();
+    let mut selection = request.selection.clone();
+    if !request.spw.is_empty() {
+        selection.spw = Some(request.spw.clone());
+    }
+    transform_callibrary(Path::new(&filename), selection).map_err(|error| {
+        let reason = match &error {
+            CallibError::ReadFile { source, .. } if source.kind() == ErrorKind::NotFound => {
+                "No such file or directory".into()
+            }
+            CallibError::ParseLine { line, .. } => {
+                format!("Problem parsing cal library line (check for typos): {line}")
+            }
+            _ => error.to_string(),
+        };
+        TaskFailure::validation(reason).at("callib")
+    })
 }
 
 fn multi_ms_options(
