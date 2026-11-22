@@ -60,12 +60,16 @@ pub(super) struct CrossHandFit {
 impl CrossHandFit {
     pub(super) fn add(
         &mut self,
+        autocorrelation: bool,
         measurement: Measurement,
         data: [Complex32; 4],
         model: [Complex32; 4],
         weights: [f32; 4],
     ) {
         self.saw_samples = true;
+        if autocorrelation {
+            return;
+        }
         let cross_weight = 0.5 * (weights[1] + weights[2]);
         self.sum += match measurement {
             Measurement::Phase => {

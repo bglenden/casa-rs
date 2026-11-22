@@ -181,7 +181,7 @@ impl IntervalFits {
                         fits[channel].add_baseline(pair, data, model, weights)
                     }
                     Self::CrossHand(fits, measurement, _) => {
-                        fits[channel].add(*measurement, data, model, weights)
+                        fits[channel].add(pair[0] == pair[1], *measurement, data, model, weights)
                     }
                     Self::Parallactic(_) => unreachable!("time-segment accumulation"),
                     Self::Iterative {

@@ -234,12 +234,13 @@ pub(crate) fn solve_polarization_with_activity(
         request.prior_calibration_mode(),
     )
     .map_err(error)?;
+    let legacy_cross_hand = legacy && request.kind.cross_hand();
     let ordered = bucketed_rows(
         &context.rows,
         request.interval,
         request.combine,
-        false,
-        false,
+        request.kind.cross_hand() && !request.kind.parallactic(),
+        legacy_cross_hand,
         false,
     );
     let mut models = super::super::model::ModelInputs::new(ms, &context.rows, request.model_source)
@@ -249,7 +250,6 @@ pub(crate) fn solve_polarization_with_activity(
         .map_err(error)?;
     models.phase_times =
         weights::chunk_phase_times(&ordered, request.combine, models.dynamic_fields());
-    let legacy_cross_hand = legacy && request.kind.cross_hand();
     let spectral_weights = if legacy_cross_hand {
         SpectralWeights::default()
     } else {
@@ -565,8 +565,19 @@ impl LeakageInputs<'_> {
         } else {
             self.request.preaverage_seconds
         };
-        // For preavg=0 CASA averages throughout the enclosing solint.
-        let span = (requested > f64::from(f32::EPSILON)).then_some(0.999 * requested);
+        let span = if self.legacy_cross_hand {
+            // VisBuffAccumulator substitutes 0.1 seconds for a zero interval.
+            Some(
+                if requested < f64::EPSILON {
+                    0.1
+                } else {
+                    requested
+                } - f64::EPSILON,
+            )
+        } else {
+            // VI2 averages throughout the enclosing solint when preavg=0.
+            (requested > f64::from(f32::EPSILON)).then_some(0.999 * requested)
+        };
         let circular = kind.intensity_normalized()
             && correlation_types_for_ddid(self.ms, first.data_desc_id)?.contains(&5);
         let mut fits = IntervalFits::new(count, antennas, kind, circular, self.request.solve_mode);

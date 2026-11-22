@@ -8,11 +8,14 @@ from pathlib import Path
 
 import casatasks
 from casatools import calibrater as casa_calibrater
+from casatools import table as casa_table
 import numpy as np
 
+from applycal_oracle import copy_ms
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_solve_tool_oracle import compare_readers, compare_solutions
 from calibration_smoothcal_oracle import opened
+from gaincal_delay_oracle import duplicate_rows
 from polcal_cross_hand_oracle import plant_cross_hand
 from polcal_leakage_solve_oracle import plant, put_observations
 from polcal_position_angle_oracle import plant_angle
@@ -120,6 +123,10 @@ def legacy_weights(work, engines, vis, sky, phase):
     case(work, engines, vis, 'Xf-legacy-variable-model', 'Xf', None, old=True)
     case(work, engines, vis, 'Xf-legacy-variable-phase', 'Xf', None, old=True,
          options={'apmode': 'P'})
+    case(work, engines, vis, 'Xf-legacy-zero-preaverage', 'Xf', None, old=True,
+         options={'apmode': 'P', 'preavg': 0.})
+    case(work, engines, vis, 'Xf-legacy-short-intervals', 'Xf', None, old=True,
+         options={'t': '900s'})
     with opened(vis, True) as table:
         for column in ('WEIGHT_SPECTRUM', 'SIGMA_SPECTRUM'):
             if column in table.colnames():
@@ -135,6 +142,22 @@ def legacy_weights(work, engines, vis, sky, phase):
         assert table.putcol('SIGMA_SPECTRUM', sigmas.astype(np.float32))
         assert table.putcol('WEIGHT_SPECTRUM', np.ones(data.shape, np.float32))
     case(work, engines, vis, 'Xf-legacy-ignores-spectral-sigma', 'Xf', None, old=True)
+    compare_autocorrelations(work, engines, vis)
+
+
+def compare_autocorrelations(work, engines, vis):
+    mixed = work/'mixed-autocorrelations.ms'
+    copy_ms(vis, mixed)
+    rows = duplicate_rows(casa_table(), mixed)
+    with opened(mixed, True) as table:
+        antennas = table.getcol('ANTENNA1', rows, rows)
+        assert table.putcol('ANTENNA2', antennas, rows, rows)
+        data = table.getcol('DATA', rows, rows)
+        data[1] *= 50j
+        data[2] *= -50j
+        assert table.putcol('DATA', data, rows, rows)
+    for old in (False, True):
+        case(work, engines, mixed, f'Xf-autocorrelations-old{old}', 'Xf', None, old=old)
 
 
 def compare_basis(work, basis, engines):
