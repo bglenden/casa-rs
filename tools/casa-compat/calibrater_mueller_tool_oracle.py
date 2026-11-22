@@ -25,6 +25,12 @@ def solve_case(work, tools, vis, name, options, *, legacy=False, selection=None,
         assert tool.selectvis(**selection) and tool.setptmodel([1., 0., 0., 0.])
         assert tool.setcorrdepflags(corrdep)
         assert tool.setsolve(table=str(path), **options)
+        if name in ('mf-default', 'm-legacy'):
+            failure = result(tool.setsolve, table=str(path.with_suffix('.unused')),
+                             refant='MISSING', **options)
+            assert failure == (False, ('RuntimeError',
+                                       'Antenna Expression: No match found for token(s) "MISSING"  '))
+            assert list(tool.returndict()['solve_tables']) == [str(path)]
         solved = result(tool.solve)
         if outcome == 'error':
             assert solved == (False, ('RuntimeError', 'Error in Calibrater::solve.'))

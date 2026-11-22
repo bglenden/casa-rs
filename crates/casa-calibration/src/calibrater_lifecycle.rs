@@ -609,12 +609,13 @@ impl CalibraterLifecycle {
         )
     }
 
-    /// Bind the primary antenna used by the specialized polynomial solvers
-    /// before replacing the previous solve configuration.
+    /// Resolve the primary reference antenna before replacing the previous
+    /// solve configuration. Use this for families that consume at most one
+    /// reference antenna.
     ///
     /// # Errors
     /// Returns an error if the attached MS or antenna selection is invalid.
-    pub fn resolve_polynomial_refant(
+    pub fn resolve_primary_tool_refant(
         &self,
         reference: crate::RefAntSelector,
     ) -> Result<crate::RefAntSelector, CalibraterLifecycleError> {

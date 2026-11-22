@@ -223,6 +223,7 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
+        let baseline = matches!(family.as_str(), "M" | "M MUELLER" | "MF" | "MF MUELLER");
         let table = PathBuf::from(table.unwrap_or(""));
         if phase_only {
             emit(
@@ -235,6 +236,13 @@ impl super::PyCalibrater {
             )?;
         }
         self.with_lifecycle(py, move |state| {
+            let reference = if baseline {
+                state
+                    .resolve_primary_tool_refant(reference)
+                    .map_err(super::runtime_error)?
+            } else {
+                reference
+            };
             state.reset(false, true).map_err(super::runtime_error)?;
             if family == "EP" || family == "EP JONES" {
                 state
