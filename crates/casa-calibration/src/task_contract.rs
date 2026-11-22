@@ -20,8 +20,8 @@ use crate::{
     BandpassType, CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult,
     CalibrationStatsAxis, CalibrationStatsRequest, FluxScaleRequest, GainNormalization,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainType, GencalRequest, RefAntSelector, calibration_stats, plan_apply_from_path,
-    summarize_tables,
+    GainSplineControls, GainType, GencalRequest, RefAntSelector, calibration_stats,
+    plan_apply_from_path, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -30,10 +30,15 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 30] = [
+pub const CALIBRATION_SURFACES: [&str; 37] = [
     "calibrate",
     "applycal",
     "gaincal",
+    "fringefit",
+    "accor",
+    "blcal",
+    "pccor",
+    "appendantab",
     "bandpass",
     "fluxscale",
     "gencal",
@@ -61,6 +66,8 @@ pub const CALIBRATION_SURFACES: [&str; 30] = [
     "sdgaincal",
     "sdsmooth",
     "sdbaseline",
+    "sdfit",
+    "sdatmcor",
 ];
 
 /// Build the current shared calibration protocol descriptor.
@@ -349,6 +356,12 @@ pub struct SolveGainTaskRequest {
     pub append: bool,
     /// Gain family to solve.
     pub gain_type: GainType,
+    /// Explicit controls for gaincal's legacy spline solve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spline_controls: Option<GainSplineControls>,
+    /// Delay and rate search controls for the fringefit task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fringe_controls: Option<crate::FringeControls>,
     /// Solve mode.
     pub solve_mode: GainSolveMode,
     /// Solution interval.
@@ -464,6 +477,17 @@ pub enum CalibrationTaskRequest {
     ExportCorrectedData(ExportCorrectedDataTaskRequest),
     /// Solve antenna gains.
     SolveGain(SolveGainTaskRequest),
+    /// Normalize sampler amplitudes using antenna autocorrelations.
+    SolveAccor(SolveGainTaskRequest),
+    /// Solve a CASA baseline Mueller calibration.
+    SolveBaseline {
+        /// Shared visibility and calibration selections.
+        gain: SolveGainTaskRequest,
+        /// Keep a solution for each selected frequency bin.
+        frequency_dependent: bool,
+        /// Optional grouping of selected channels by count or bandwidth.
+        frequency_interval: Option<BandpassFrequencyInterval>,
+    },
     /// Solve bandpass terms.
     SolveBandpass(SolveBandpassTaskRequest),
     /// Bootstrap flux density scaling.
@@ -534,9 +558,10 @@ impl CalibrationTaskRequest {
                 .map(CalibrationTaskResult::ExportCorrectedData)
                 .map_err(|error| error.to_string())
             }
-            Self::SolveGain(request) => crate::solve_calibration_with_output_mode(
-                CalibrationDataset::path(&request.measurement_set),
-                CalibrationSolveRequest::Gain(GainSolveRequest {
+            Self::SolveGain(request)
+            | Self::SolveAccor(request)
+            | Self::SolveBaseline { gain: request, .. } => {
+                let gain = GainSolveRequest {
                     selection: request.selection.clone(),
                     output_table: request.output_table.clone(),
                     gain_type: request.gain_type,
@@ -555,15 +580,40 @@ impl CalibrationTaskRequest {
                     min_snr: request.min_snr,
                     min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,
-                }),
-                mode.unwrap_or(if request.append { Append } else { Replace }),
-            )
-            .map(|result| match result {
-                CalibrationSolveResult::Gain(report) => report,
-                CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
-            })
-            .map(CalibrationTaskResult::SolveGain)
-            .map_err(|error| error.to_string()),
+                };
+                let solve = match (self, request.spline_controls, request.fringe_controls) {
+                    (Self::SolveAccor(_), _, _) => CalibrationSolveRequest::Accor(gain),
+                    (
+                        Self::SolveBaseline {
+                            frequency_dependent,
+                            frequency_interval,
+                            ..
+                        },
+                        _,
+                        _,
+                    ) => CalibrationSolveRequest::Baseline {
+                        gain,
+                        frequency_dependent: *frequency_dependent,
+                        frequency_interval: *frequency_interval,
+                    },
+                    (_, _, Some(controls)) => CalibrationSolveRequest::Fringe { gain, controls },
+                    (_, Some(controls), _) => {
+                        CalibrationSolveRequest::GainSpline { gain, controls }
+                    }
+                    _ => CalibrationSolveRequest::Gain(gain),
+                };
+                crate::solve_calibration_with_output_mode(
+                    CalibrationDataset::path(&request.measurement_set),
+                    solve,
+                    mode.unwrap_or(if request.append { Append } else { Replace }),
+                )
+                .map(|result| match result {
+                    CalibrationSolveResult::Gain(report) => report,
+                    CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
+                })
+                .map(CalibrationTaskResult::SolveGain)
+                .map_err(|error| error.to_string())
+            }
             Self::SolveBandpass(request) => crate::solve_calibration_with_output_mode(
                 CalibrationDataset::path(&request.measurement_set),
                 CalibrationSolveRequest::Bandpass(BandpassSolveRequest {
@@ -777,6 +827,8 @@ mod tests {
                 "sdgaincal",
                 "sdsmooth",
                 "sdbaseline",
+                "sdfit",
+                "sdatmcor",
             ]
         );
         assert!(

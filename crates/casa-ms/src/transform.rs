@@ -46,18 +46,21 @@ mod flag_commands;
 mod main_arrays;
 mod multi_ms;
 mod selection_metadata;
+mod single_dish_polarization;
 mod spectral_metadata;
 mod task_history;
 mod time_average;
 mod time_projection;
 mod visibility_columns;
 
-pub use baseline::{SpectrumBaseline, SpectrumRow};
+pub use baseline::{SpectrumBaseline, SpectrumRow, SpectrumWeights};
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use convolution::{SpectralOperation, SpectrumOperator};
 pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
+use single_dish_polarization::PolarizationProjection;
+pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
 pub use task_history::{TransformTaskHistory, append_task_history};
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
@@ -119,6 +122,8 @@ pub struct MsTransformTaskOptions {
     pub channel_widths: Option<Vec<usize>>,
     /// Average visibilities along each baseline within this time bin.
     pub time_averaging: Option<TimeAverageOptions>,
+    /// Combine selected single-dish parallel hands when time averaging is absent.
+    pub single_dish_polarization: Option<SingleDishPolarizationAverage>,
     /// Provenance rows to append to the output's HISTORY table.
     pub history: Option<TransformTaskHistory>,
     /// Supplied bin widths used when rewriting saved FLAG_CMD selectors.
@@ -437,6 +442,9 @@ fn mstransform_staged(
 ) -> Result<MsTransformReport, MsTransformError> {
     let order = match operation.as_ref().map(|op| &op.kernel) {
         Some(SpectrumOperator::Convolution(_)) => selection_metadata::MainRowOrder::SingleDish,
+        Some(SpectrumOperator::Baseline(kernel)) if kernel.atmospheric_order() => {
+            selection_metadata::MainRowOrder::Atmosphere
+        }
         Some(SpectrumOperator::Baseline(_)) => selection_metadata::MainRowOrder::Baseline,
         None => selection_metadata::MainRowOrder::Transform,
     };
@@ -583,6 +591,7 @@ fn mstransform_staged(
             &ddid_to_spw,
             &channel_bins,
             correlations.as_ref(),
+            None,
         )?;
         let flag_rows = flag_filter_read_plan(selected_rows.len(), budget, dimensions.values())
             .map_err(selection_error)?;
@@ -615,7 +624,7 @@ fn mstransform_staged(
     let stage_started_at = Instant::now();
     let time_groups = options
         .time_averaging
-        .map(|options| time_average::plan(&input, &time_rows, options))
+        .map(|options| time_average::plan(&input, &time_rows, options, order))
         .transpose()?;
     let selection_metadata::OrderedMainRows {
         rows: selected_rows,
@@ -662,17 +671,41 @@ fn mstransform_staged(
             .prepare(&counts)
             .map_err(MsTransformError::Spectrum)?;
     }
-    let baseline_rows = matches!(order, selection_metadata::MainRowOrder::Baseline)
-        .then(|| {
-            baseline::spectrum_rows(
-                input.main_table(),
-                request,
-                &selected_rows,
-                selected_ddids.iter().map(|id| ddid_to_spw[id]),
-            )
-        })
-        .transpose()?;
+    let hands = match &operation {
+        Some(SpectralOperation {
+            kernel: SpectrumOperator::Baseline(kernel),
+            ..
+        }) if kernel.reads_parallel_hands() => {
+            correlation_metadata::parallel_hands(&input, correlations.as_ref(), &selected_ddids)
+                .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
+        }
+        _ => BTreeMap::new(),
+    };
+    let spectral_rows = matches!(
+        order,
+        selection_metadata::MainRowOrder::Baseline | selection_metadata::MainRowOrder::Atmosphere
+    )
+    .then(|| {
+        baseline::spectrum_rows(
+            input.main_table(),
+            request,
+            &selected_rows,
+            selected_ddids
+                .iter()
+                .map(|id| (ddid_to_spw[id], hands.get(id).copied())),
+        )
+    })
+    .transpose()?;
     let averaging_time = time_groups.is_some();
+    let polarization = options
+        .single_dish_polarization
+        .filter(|_| !averaging_time)
+        .map(|mode| {
+            PolarizationProjection::resolve(&input, correlations.as_ref(), &selected_ddids, mode)
+        })
+        .transpose()
+        .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
+        .flatten();
     let selected_field_ids_for_metadata =
         selected_field_ids_for_rows(input.main_table(), &selected_rows, &request.output_ms)?;
     maybe_log_transform_progress(
@@ -682,6 +715,12 @@ fn mstransform_staged(
     );
     let stage_started_at = Instant::now();
     let float_convolution = convolving && request.data_column == TransformDataColumn::FloatData;
+    let read_spectral_weights = polarization.is_some()
+        || matches!(
+            &operation,
+            Some(SpectralOperation { kernel: SpectrumOperator::Baseline(kernel), .. })
+                if kernel.reads_spectral_weights()
+        );
     let mut spectra = SpectrumProjection::resolve(
         input.main_table(),
         first_selected_row,
@@ -694,9 +733,19 @@ fn mstransform_staged(
         path: request.input_ms.display().to_string(),
         source: Box::new(source),
     })?;
-    if float_convolution {
+    if float_convolution && !averaging_time && polarization.is_none() {
         spectra.source.clear();
     }
+    if read_spectral_weights
+        && !spectra.source.contains(&"WEIGHT_SPECTRUM")
+        && input
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
+    {
+        spectra.source.push("WEIGHT_SPECTRUM");
+    }
+
     let mut writes_rows = true;
     if let Some(SpectralOperation {
         kernel: SpectrumOperator::Baseline(kernel),
@@ -705,7 +754,9 @@ fn mstransform_staged(
     {
         writes_rows = kernel.writes_rows();
         if kernel.updates_weight() || !writes_rows {
-            spectra.source.clear();
+            if !averaging_time && !read_spectral_weights {
+                spectra.source.clear();
+            }
             spectra.fill_standard = false;
             spectra.propagate_weights = false;
             if kernel.omit_spectral_weights() {
@@ -766,6 +817,9 @@ fn mstransform_staged(
     if let Some(correlations) = correlations.as_ref() {
         correlations.write_polarizations(request)?;
     }
+    if let Some(projection) = &polarization {
+        projection.write_metadata(request, &compact_metadata.ddid_map)?;
+    }
     let (field_id_map, row_id_maps) = if reindex {
         let field_id_map = selection_metadata::reindex_fields_and_sources(
             &input,
@@ -813,7 +867,7 @@ fn mstransform_staged(
         ),
         &ddid_to_spw,
         &channel_bins,
-        correlations.as_ref(),
+        (correlations.as_ref(), polarization.as_ref()),
         (&visibility, &spectra),
         write_resources,
     )?;
@@ -835,7 +889,7 @@ fn mstransform_staged(
         batch_rows,
         &mut write_session,
         &row_id_maps,
-        averaging_time,
+        (averaging_time, polarization.is_some()),
     )?;
     maybe_log_transform_progress(
         "load_main_column_overrides",
@@ -880,7 +934,7 @@ fn mstransform_staged(
     for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &selected_rows[batch_start..batch_end];
-        let (input_block, group_times) = if let (Some(projection), Some(groups)) =
+        let (mut input_block, group_times) = if let (Some(projection), Some(groups)) =
             (&mut time_projection, &time_groups)
         {
             let plans = groups[batch_start..batch_end]
@@ -907,6 +961,31 @@ fn mstransform_staged(
                     })?;
             (block, Vec::new())
         };
+        let descriptions = &selected_ddids[batch_start..batch_end];
+        let mut input_row_flags = if let Some(projection) = &polarization {
+            let row_flags = input
+                .main_table()
+                .column_accessor("FLAG_ROW")
+                .and_then(|column| column.scalar_cells_owned_for_rows(input_rows))
+                .map_err(|source| MsTransformError::MutateMeasurementSet {
+                    path: request.input_ms.display().to_string(),
+                    source: Box::new(source),
+                })?;
+            projection
+                .apply(
+                    &mut input_block,
+                    (descriptions, &row_flags),
+                    (&ddid_to_spw, &channel_selection),
+                    &spectra.source,
+                )
+                .map_err(|source| MsTransformError::MutateMeasurementSet {
+                    path: request.input_ms.display().to_string(),
+                    source: Box::new(source),
+                })?;
+            writes_rows.then(|| row_flags.into_iter())
+        } else {
+            None
+        };
         let mut data_values = visibility
             .copies()
             .iter()
@@ -923,20 +1002,20 @@ fn mstransform_staged(
         let mut weight_values = input_block.weights.into_iter();
         let mut sigma_values = input_block.sigmas.into_iter();
         let mut row_spectra = vec![None; spectrum_values.len()];
-        for (batch_offset, (flags, &ddid)) in flag_values
-            .into_iter()
-            .zip(&selected_ddids[batch_start..batch_end])
-            .enumerate()
+        for (batch_offset, (flags, &ddid)) in flag_values.into_iter().zip(descriptions).enumerate()
         {
             let row_index = batch_start + batch_offset;
-            let axes = if averaging_time {
+            let averaged_polarization = polarization
+                .as_ref()
+                .is_some_and(|projection| projection.contains(ddid));
+            let axes = if averaging_time || averaged_polarization {
                 None
             } else {
                 correlations
                     .as_ref()
                     .and_then(|selection| selection.axes(ddid))
             };
-            if let Some(coordinates) = group_times.get(batch_offset) {
+            if writes_rows && let Some(coordinates) = group_times.get(batch_offset) {
                 for (name, value) in TIME_OUTPUT_SCALARS
                     .into_iter()
                     .zip(coordinates.scalar_cells())
@@ -995,7 +1074,7 @@ fn mstransform_staged(
                 .zip(&mut spectrum_available)
             {
                 let cell = values.next().flatten();
-                if grammar == RowGrammar::Transform && !averaging_time {
+                if grammar == RowGrammar::Transform && !averaging_time && !read_spectral_weights {
                     if starts_visibility_buffer[row_index] {
                         // CASA checks the first cell of this visibility
                         // buffer before reading that buffer's spectra.
@@ -1026,6 +1105,22 @@ fn mstransform_staged(
                 sigma: source_spectrum("SIGMA_SPECTRUM")
                     .and_then(|index| row_spectra[index].as_ref()),
             };
+            let projected_weights = if read_spectral_weights && !averaging_time {
+                let channels = &channel_selection[&spw_id].channels;
+                spectra_cells
+                    .weight
+                    .filter(|weight| {
+                        weight
+                            .shape()
+                            .get(1)
+                            .is_none_or(|&count| !all_channels_selected(channels, count))
+                    })
+                    .map(|weight| select_channels(weight.clone(), channels))
+                    .transpose()
+                    .map_err(mutation_error)?
+            } else {
+                None
+            };
             let averages = if let (true, Some((weight, sigma))) = (task_average, &noise) {
                 Some(
                     ChannelAverages::new(
@@ -1047,6 +1142,20 @@ fn mstransform_staged(
             } else {
                 transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
             };
+            if let Some(original) = input_row_flags.as_mut().and_then(Iterator::next) {
+                let flag_row = match &transformed_flags {
+                    ArrayValue::Bool(flags) if averaged_polarization => {
+                        Some(ScalarValue::Bool(flags.iter().all(|&flag| flag)))
+                    }
+                    _ => original,
+                };
+                write_session
+                    .push_scalar_row("FLAG_ROW", flag_row)
+                    .map_err(|source| MsTransformError::WriteMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        reason: source.to_string(),
+                    })?;
+            }
             let mut baseline_weights = None;
             for (column, values) in &mut data_values {
                 let source = column.source.name();
@@ -1091,7 +1200,7 @@ fn mstransform_staged(
                                 .map_err(MsTransformError::Spectrum)?;
                         }
                         SpectrumOperator::Baseline(handler) => {
-                            let coordinates = baseline_rows
+                            let coordinates = spectral_rows
                                 .as_ref()
                                 .and_then(|rows| rows.get(row_index))
                                 .ok_or_else(|| {
@@ -1099,12 +1208,28 @@ fn mstransform_staged(
                                         "Missing original spectrum coordinates.".into(),
                                     )
                                 })?;
+                            let mut coordinates = *coordinates;
+                            if let Some(averaged) = group_times.get(batch_offset) {
+                                coordinates.time = averaged.time;
+                                coordinates.interval = averaged.interval;
+                            }
+                            if let Some(group) = time_groups
+                                .as_ref()
+                                .and_then(|groups| groups.get(row_index))
+                            {
+                                coordinates.selection_row = group.row_in_chunk;
+                            }
                             baseline_weights = handler
                                 .process(
-                                    coordinates,
+                                    &coordinates,
                                     &mut transformed,
                                     output_flags,
-                                    noise.as_ref().map(|(weight, _)| weight),
+                                    SpectrumWeights {
+                                        scalar: noise.as_ref().map(|(weight, _)| weight),
+                                        spectrum: projected_weights
+                                            .as_ref()
+                                            .or(spectra_cells.weight),
+                                    },
                                 )
                                 .map_err(MsTransformError::Spectrum)?;
                         }
@@ -1488,6 +1613,7 @@ fn transform_array_dimensions(
     ddid_to_spw: &BTreeMap<i32, i32>,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
     correlations: Option<&CorrelationSelection>,
+    polarization_projection: Option<&PolarizationProjection>,
 ) -> Result<BTreeMap<i32, TransformArrayDimensions>, MsTransformError> {
     let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
     let invalid = |reason| MsTransformError::SpectralMetadata {
@@ -1542,9 +1668,14 @@ fn transform_array_dimensions(
         entry.insert(TransformArrayDimensions {
             input_correlations,
             input_channels,
-            output_correlations: correlations
-                .and_then(|plan| plan.axes(ddid))
-                .map_or(input_correlations, <[usize]>::len),
+            output_correlations: if polarization_projection.is_some_and(|plan| plan.contains(ddid))
+            {
+                1
+            } else {
+                correlations
+                    .and_then(|plan| plan.axes(ddid))
+                    .map_or(input_correlations, <[usize]>::len)
+            },
             output_channels,
         });
     }
@@ -1561,7 +1692,10 @@ fn transform_array_write_plan(
     ),
     ddid_to_spw: &BTreeMap<i32, i32>,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
-    correlations: Option<&CorrelationSelection>,
+    (correlations, polarization): (
+        Option<&CorrelationSelection>,
+        Option<&PolarizationProjection>,
+    ),
     (visibility, spectra): (&VisibilityColumns, &SpectrumProjection),
     resources: MeasurementSetWriteResources,
 ) -> Result<(MeasurementSetWritePlan, usize), MsTransformError> {
@@ -1572,6 +1706,7 @@ fn transform_array_write_plan(
         ddid_to_spw,
         channel_bins,
         correlations,
+        polarization,
     )?;
     let mut shape_counts = BTreeMap::<Vec<usize>, usize>::new();
     let mut weight_shape_counts = BTreeMap::<Vec<usize>, usize>::new();
@@ -1615,7 +1750,7 @@ fn transform_array_write_plan(
         selected_rows,
         selected_ddids,
         &dimensions,
-        correlations.is_some(),
+        correlations.is_some() || polarization.is_some(),
         (groups, metadata_budget),
     )?;
     let io_error = |error: MsSelectionError| MsTransformError::WriteMeasurementSet {
@@ -2316,7 +2451,7 @@ fn gather_selected_main_column_overrides(
     batch_rows: usize,
     write_session: &mut MeasurementSetWriteSession,
     row_id_maps: &selection_metadata::RowIdMaps,
-    averaging_time: bool,
+    (averaging_time, averaging_polarization): (bool, bool),
 ) -> Result<ColumnOverrides, MsTransformError> {
     let schema = table
         .schema()
@@ -2333,7 +2468,9 @@ fn gather_selected_main_column_overrides(
         if is_deferred_visibility_column(name) {
             continue;
         }
-        if averaging_time && TIME_OUTPUT_SCALARS.contains(&name) {
+        if (averaging_time && TIME_OUTPUT_SCALARS.contains(&name))
+            || (averaging_polarization && name == "FLAG_ROW")
+        {
             continue;
         }
         match column.column_type() {

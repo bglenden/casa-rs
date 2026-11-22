@@ -1,0 +1,238 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Calibration-library records and on-the-fly apply methods.
+
+use std::io::ErrorKind;
+
+use casa_calibration::{
+    ApplyCalibrationTableSpec, CalibraterLifecycleError, CallibError, load_callibrary_record,
+    validate_callibrary_record,
+};
+use casa_provider_contracts::{
+    ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
+};
+use casa_types::{RecordValue, Value};
+use numpy::PyUntypedArray;
+use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
+use pyo3::{
+    prelude::*,
+    types::{PyComplex, PyDict, PyList, PyTuple},
+};
+
+use super::{
+    LOGGER, PyCalibrater,
+    arguments::{listing_selector, number, strict_bool, supplied, text, window_map_with_status},
+    runtime_error,
+};
+use crate::convert::double_vector_element;
+use crate::convert::reply_value::reply_value;
+use crate::parameters::parameter_value;
+use crate::tools::{LogLine, emit};
+
+#[pymethods]
+impl PyCalibrater {
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn activityrec(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let record = self.with_lifecycle(py, |state| Ok(state.activity_record()))?;
+        reply_value(py, &record)
+    }
+
+    #[pyo3(signature = (r#type = None, t = None, table = None, field = None, interp = None, select = None, calwt = None, spwmap = None, opacity = None), text_signature = "($self, type='', t=0.0, table='', field=[], interp='linear', select='', calwt=False, spwmap=[-1], opacity=[0.0])")]
+    #[allow(clippy::too_many_arguments)]
+    fn setapply(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] r#type: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] t: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] table: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] field: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] interp: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] select: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] calwt: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] spwmap: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] opacity: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let kind = text(r#type, "type", "")?;
+        let pending_time = number(t, "setapply", 3, 0.0).is_err();
+        let mut spec = ApplyCalibrationTableSpec::new(text(table, "table", "")?);
+        let field = listing_selector(field.as_ref())?;
+        let interpolation = text(interp, "interp", "linear")?;
+        // The tool wrapper forwards an empty SPW selector for traditional apply.
+        let _selection = text(select, "select", "")?;
+        if let Some(value) = calwt {
+            spec.calwt = strict_bool(&value, "setapply", 8)?;
+        }
+        let (windows, pending_windows) = window_map_with_status(spwmap, &[-1])?;
+        spec.spwmap = windows;
+        let pending_opacity = opacity.is_some_and(|value| {
+            let mut values = Vec::new();
+            value.is_instance_of::<PyTuple>()
+                || apply_opacity_values(&value, &mut values, 0).is_err()
+        });
+        let configured = self.attached(py, move |state| {
+            state.set_traditional_apply(spec, &kind, &field, &interpolation)
+        })?;
+        // CASA's SWIG numerics can set an exception and still call C++ with a
+        // fallback value. Registration is visible when Python reports it.
+        if pending_time || pending_windows || pending_opacity {
+            return Err(setapply_conversion_error());
+        }
+        Ok(configured)
+    }
+
+    #[pyo3(signature = (applymode = None), text_signature = "($self, applymode='')")]
+    fn correct(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] applymode: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let mode = text(applymode, "applymode", "")?;
+        self.attached_result(py, move |state| state.correct_visibilities(&mode))
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn corrupt(&self, py: Python<'_>) -> PyResult<bool> {
+        self.attached_result(py, |state| state.corrupt_model())
+    }
+
+    #[pyo3(signature = (filein), text_signature = "($self, filein)")]
+    fn parsecallibfile(&self, py: Python<'_>, filein: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let mut filename = text(Some(filein.clone()), "filein", "")?;
+        if let Some(end) = filename.find('\0') {
+            filename.truncate(end);
+        }
+        if filename.is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "Cal Library parser failed to open file",
+            ));
+        }
+        let record = py
+            .detach(|| load_callibrary_record(&filename))
+            .map_err(|error| {
+                PyRuntimeError::new_err(match error {
+                    CallibError::ReadFile { source, .. }
+                        if source.kind() == ErrorKind::NotFound =>
+                    {
+                        format!("Specified cal library file ('{filename}') does not exist!")
+                    }
+                    CallibError::ReadFile { .. } => "Cal Library parser failed to open file".into(),
+                    CallibError::ParseLine { line_number, .. } => {
+                        format!("Cal Library file: Parse error on line {line_number}: syntax error")
+                    }
+                    error => error.to_string(),
+                })
+            })?;
+        let value =
+            casacore_value_to_casa(&Value::Record(record)).map_err(PyRuntimeError::new_err)?;
+        reply_value(py, &value)
+    }
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn returndict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let record = self.with_lifecycle(py, |state| match state.configuration_record() {
+            Ok(record) => Ok(Some(record)),
+            Err(CalibraterLifecycleError::Unattached) => Ok(None),
+            Err(error) => Err(runtime_error(error)),
+        })?;
+        if let Some(record) = record {
+            return reply_value(py, &record);
+        }
+        emit(
+            py,
+            LOGGER,
+            &[LogLine::error("Must first open a MeasurementSet.")],
+        )?;
+        Ok(PyDict::new(py).into_any().unbind())
+    }
+
+    #[pyo3(signature = (callib = None), text_signature = "($self, callib={})")]
+    fn setcallib(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] callib: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let record = library_argument(callib.as_ref())?;
+        self.attached(py, move |state| state.set_callibrary(&record))
+    }
+
+    #[pyo3(signature = (callib = None), text_signature = "($self, callib={})")]
+    fn validatecallib(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] callib: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let record = library_argument(callib.as_ref())?;
+        let diagnostics = py
+            .detach(|| validate_callibrary_record(&record))
+            .map_err(PyRuntimeError::new_err)?;
+        let lines = diagnostics
+            .into_iter()
+            .map(LogLine::error)
+            .collect::<Vec<_>>();
+        emit(py, LOGGER, &lines)?;
+        Ok(true)
+    }
+}
+
+fn setapply_conversion_error() -> PyErr {
+    PySystemError::new_err(
+        "<built-in function calibrater_setapply> returned a result with an exception set",
+    )
+}
+
+fn apply_opacity_values(
+    value: &Bound<'_, PyAny>,
+    output: &mut Vec<f64>,
+    depth: usize,
+) -> PyResult<()> {
+    if depth > 32 {
+        return Err(setapply_conversion_error());
+    }
+    if value.is_instance_of::<PyUntypedArray>() {
+        let values = value
+            .call_method1("ravel", ("F",))?
+            .call_method0("tolist")?;
+        return apply_opacity_values(&values, output, depth + 1);
+    }
+    if value.is_instance_of::<PyList>() {
+        for item in value.try_iter()? {
+            apply_opacity_values(&item?, output, depth + 1)?;
+        }
+    } else if let Ok(complex) = value.cast::<PyComplex>() {
+        output.push(complex.real());
+    } else {
+        output.push(double_vector_element(value)?);
+    }
+    Ok(())
+}
+
+fn library_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<RecordValue> {
+    let Some(value) = value else {
+        return Ok(RecordValue::default());
+    };
+    let record = value
+        .cast::<PyDict>()
+        .map_err(|_| PyTypeError::new_err("_callib is not a dictionary"))?;
+    let converted = parameter_value_to_casacore(&library_parameters(record, 0)?)
+        .map_err(PyRuntimeError::new_err)?;
+    let Value::Record(record) = converted else {
+        unreachable!("library argument was converted as a record");
+    };
+    Ok(record)
+}
+
+fn library_parameters(record: &Bound<'_, PyDict>, depth: usize) -> PyResult<ParameterValue> {
+    if depth > 32 {
+        return Err(PyRuntimeError::new_err("record nesting is too deep"));
+    }
+    let fields = record
+        .iter()
+        .filter(|(_, value)| !value.is_none())
+        .map(|(key, value)| {
+            let value = match value.cast::<PyDict>() {
+                Ok(nested) => library_parameters(nested, depth + 1)?,
+                Err(_) => parameter_value(&value)?,
+            };
+            Ok((key.extract::<String>()?, value))
+        })
+        .collect::<PyResult<_>>()?;
+    Ok(ParameterValue::Table(fields))
+}

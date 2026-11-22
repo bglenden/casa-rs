@@ -163,7 +163,8 @@ ATM behaviours casa-rs does not follow:
 Calibration behaviours casa-rs follows:
 [a gain table's resolution and total bandwidth](#a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth).
 Calibration behaviours casa-rs does not follow:
-[a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero).
+[a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero),
+[GSPLINE append overwriting an earlier field](#gspline-append-overwrites-the-previous-fields-fit).
 `simutil` behaviours casa-rs does not follow:
 [the ALMA tiling's default beam](#calc_pointings2s-alma-tiling-reads-an-undefined-pbcoeff),
 [`noisetemp`'s receiver lookup](#noisetemp-reads-the-wrong-receiver-temperature-at-the-edges-of-its-tables),
@@ -8237,6 +8238,10 @@ can also move the replacement directory. casa-rs checks the image entry it
 originally opened, so the first pixel read and the rename report that the
 entry has changed. Both images stay at their existing names. A peer that has
 already read a pixel keeps its original stream after a rename, as in CASA.
+
+For moves across filesystems, casa-rs checks that it can remove the original
+tree before publishing the copy. A directory with readable contents whose
+permissions prevent removal causes a refusal with both public names preserved.
 See [#1955](https://github.com/bglenden/casa-rs/issues/1955).
 
 ## `calcmask` can crash on decisive Boolean validity
@@ -9767,3 +9772,282 @@ CASA's line finder can call its median helper with zero searchable bins.
 Its wing extension can also decrement an unsigned index at channel zero.
 Casa-rs stops an averaging level when it has fewer than two eligible bins
 and stops the wing at the start of the spectrum.
+
+## Single-dish line fitting can exceed its time bin on descending rows
+
+CASA 6.7.6.14 iterates `fit_line` by data description and the uncombined
+scan, state, and field keys. `SDMSManager::setIterationApproach` omits
+`TIME` from this sort. The averaging iterator compares later time
+stamps with its first buffer's time. With physical rows at 6, 4, 2, and
+0 seconds and `timebin='1s', timespan='scan'`, CASA combines the four
+spectra per hand into one. The same input in chronological order
+produces four spectra per hand. casa-rs sorts the integrations by time
+inside each grouping key so the requested interval holds for either row
+order. The paired oracle verifies both CASA results and the native
+chronological grouping.
+
+## Single-dish polarization averaging can abort for one selected hand
+
+In CASA 6.7.6.14, `PolAverageTVI::configurePolAverage` obtains its two
+hand indices from the full POLARIZATION table setup. With an XX/YY MS
+and `sdfit(pol='YY', polaverage='geometric', nfit=[1])`, CASA uses the
+original pair to slice an array with just one selected hand and aborts
+with `ArrayBase::operator()(b,e,i) - incorrectly specified`. casa-rs
+resolves the two hands after correlation selection. When there is no
+complete pair it uses the selected spectrum unchanged, as the
+iterator's own skip message describes. The value agrees with fitting
+the same selected hand without averaging.
+
+## Single-dish line fitting aborts for negative component counts
+
+CASA 6.7.6.14 uses `std::stoi` on the comma-separated list counts and
+stores them in an unsigned vector. In list mode, `nfit=[-1]` reaches a
+negative array shape and aborts outside the task exception handler.
+casa-rs reports the invalid component count before allocating a fit and
+keeps the auto-mode interpretation, where the line finder determines
+component counts.
+
+## A failed line fit can delete the previous report
+
+CASA 6.7.6.14 removes an existing `sdfit` report at the beginning of an
+overwrite. If a later selection or fit fails, the older report is
+lost. casa-rs stages the text report and replaces the existing file
+after successful processing.
+
+## An empty atmospheric correction window selection raises a record-type error
+
+CASA 6.7.6.14 resolves the windows to process separately from the windows
+to output. With `spw='19', outputspw='23'` on the upstream total-power
+fixture, the work list is empty. NumPy infers a floating-point array
+for the empty list, and the `atmcor` record conversion rejects
+`processspw` before it can write the requested data. casa-rs passes a
+typed empty list and writes window 23 with its spectra unchanged.
+
+## Atmospheric correction can index a cropped window from channel zero
+
+On `X320b_sel2.ms`, `sdatmcor(spw='19', outputspw='19:370~407^2',
+scan='7')` writes the requested channels. CASA 6.7.6.14 subtracts
+corrections for original channels 0 through 18 from their data. The
+paired oracle recovers that exact offset from the uncropped CASA
+product. casa-rs uses the correction at each selected original
+channel. Its cropped spectra equal the same channel slice of its
+full-window correction, including reordered and overlapping ranges.
+
+## Atmospheric correction can publish unflagged nonfinite spectra
+
+With the recorded total-power fixture and CASA 6.7.6.14, a gain table
+with zero amplitude for window 19 produces an infinite reciprocal-square
+factor. A scalar factor of `1e40` also exceeds the Float32 range of the
+corrected spectra. Both inputs write unflagged nonfinite samples.
+casa-rs rejects either result before publishing the output, preserving
+an existing product on overwrite.
+
+## ASAP import writes observation times in days to a seconds column
+
+CASA 6.7.6.14 copies the scan table's MJD day range into
+`OBSERVATION.TIME_RANGE`, whose unit is seconds. The same import converts
+the MAIN integration times to seconds. On the upstream ALMA ASAP test
+fixture, the observation range starts at `56839.91554` and the first
+integration is `4910968702.656` seconds from MJD zero. casa-rs converts
+both tables to MJD seconds and preserves the original observation bounds.
+
+## The single-dish filler can write inconsistent receptor metadata
+
+CASA 6.7.6.14 writes two receptor names to `FEED.POLARIZATION_TYPE` with
+`NUM_RECEPTORS=0`. It fills `POLARIZATION.CORR_PRODUCT` with zero pairs
+even for YY, LL and cross-hands. The imported spectra themselves are in
+the order indicated by `CORR_TYPE`. casa-rs writes the receptor count and
+maps directly measured linear and circular products to the corresponding
+ordered pairs. Derived Stokes products retain their placeholders.
+
+## NOSTAR import writes FEED rows only for the first beam
+
+On the upstream Orion KL NOSTAR file, CASA 6.7.6.14 writes MAIN spectra
+for antenna IDs 0 through 3, but FEED rows only for antenna ID 0. The
+other three beams reference feeds with no corresponding metadata.
+casa-rs writes one FEED row for each beam and spectral window referenced
+by MAIN.
+
+## NOSTAR import discards the imaginary part of cross-hand spectra
+
+In a four-plane NOSTAR integration, the third and fourth planes encode
+the real and imaginary components of the cross-hands. CASA 6.7.6.14
+always writes `FLOAT_DATA`. A test with the instrument planes
+`[XX=1, YY=2, XY=3, YX=4]` produces `[1, 3, 3, 2]`.
+casa-rs writes complex `DATA` with both components in the conjugate
+products `[1, 3+4i, 3-4i, 2]`.
+
+## Single-dish averaging can label two time-averaged hands as Stokes I
+
+After `fit_line(timebin='8s', timespan='scan', polaverage='geometric')`
+CASA 6.7.6.14 uses its time-averaging iterator for subsequent operations
+on the same attachment. Smoothing, baseline subtraction and atmospheric
+correction produce both XX and YY samples, but link the output data
+description to a one-correlation Stokes I setup. casa-rs preserves the
+XX/YY setup that describes the actual samples.
+
+## Applying a single-dish baseline can abort after polarization averaging
+
+On an XX/YY attachment, CASA 6.7.6.14 can save a one-correlation baseline
+table after `fit_line(polaverage='stokes')` or
+`fit_line(polaverage='geometric')`. Applying that table on the same
+attachment terminates the process with a casacore matrix row error.
+casa-rs applies the model to the projected correlation. The paired
+oracle reads both saved tables through casacore and applies both in
+casa-rs.
+
+## Single-dish polarization averaging can clear a rejected integration's row flag
+
+On an XX/YY spectrum with `FLAG_ROW=true` and clear per-channel `FLAG`
+cells, `fit_line(polaverage='geometric')` followed by `atmcor` in CASA
+6.7.6.14 produces a row with clear flags. casa-rs retains the rejection
+in the output row and channels. The baseline fitter also excludes that
+integration from its fit.
+
+## GSPLINE append overwrites the previous field's fit
+
+In CASA 6.7.6.14, `gaincal(gaintype='GSPLINE', field='FLUX')` stores the
+FLUX fit under every FIELD_ID, including unselected fields. Solving
+`field='PHASE', append=True` into that table then replaces the fit under
+each existing FIELD_ID. With disjoint field time ranges, applying the
+updated table to the original field loses its corrections.
+
+casa-rs publishes rows for selected fields and updates only those fields on
+append. Added fits can have different knot counts. The stored arrays share
+a shape so CASA can read them, and each row keeps its actual count. The
+[paired oracle](../tools/casa-compat/gspline_oracle.py) compares the original
+rows to a saved copy of the initial solve and the new rows to CASA. It then
+applies the combined table through both implementations.
+
+## GSPLINE fit logs give the RMS for the wrong baseline
+
+The `gaincal(gaintype='GSPLINE')` diagnostic log indexes residuals as if
+only cross-correlations occupied the array. The solver's storage includes
+autocorrelation slots. A noisy fit therefore displays a zero RMS for the
+first baseline, then assigns its residual to a different baseline.
+casa-rs reports the weighted fit RMS for the stated baseline. The paired
+oracle recomputes it from the visibility data and saved coefficients.
+
+## GSPLINE can abort when every channel has a rejected correlation
+
+CASA 6.7.6.14 uses common channel flags for the time-spline solve. An
+XX/YY input with all YY channels flagged therefore has no usable shared
+samples. CASA can terminate while attempting this fit. Casa-rs returns
+the insufficient-sampling result without publishing a calibration table.
+
+## GSPLINE can publish nonfinite phases for a disconnected antenna
+
+When all baselines to one antenna are flagged, CASA 6.7.6.14 attempts to
+fit that antenna along with the connected array. The singular fit can
+publish nonfinite coefficients, including for antennas that have data.
+Casa-rs fits the connected array and omits antennas without accepted data.
+Both legacy readers then flag visibilities with a missing antenna gain.
+
+## `fringefit` can abort with one selected channel per spectral window
+
+With `combine='spw'`, CASA 6.7.6.14 can abort if every selected window
+contributes only one channel. In a test with two windows 48 MHz apart and
+`spw='0:0,1:0'`, the concatenated FFT tried to address channel zero on an
+array with a zero-length frequency axis. CASA raised `ArrayError` and
+terminated before publishing the table. Casa-rs derives the grid spacing
+from the separation of the selected frequencies and checks the FFT memory
+requirement before allocating the grid. Its two-band regression exercises
+both search modes.
+
+## `accor` rejects TaQL selections because the wrapper uses the ANTENNA table name
+
+CASA 6.7.6.14 adds `ANTENNA==ANTENNA2` when the caller supplies a nonempty
+`msselect`. A valid predicate such as `ANTENNA1<3` fails because `ANTENNA`
+is a subtable. The default task path already uses `ANTENNA1==ANTENNA2`.
+Casa-rs intersects the caller's predicate with `ANTENNA1==ANTENNA2` in both
+cases. Its test compares the result to CASA selecting those same antennas
+through `antenna`.
+
+## `pccor` can fail after creating an empty calibration table
+
+Selecting no spectral windows in CASA 6.7.6.14, for example with
+`spw='!0'` on a one-window MeasurementSet, reaches the table constructor
+before the first attempt to index an empty set of solutions. The task
+raises `IndexError`. Casa-rs checks the selected windows before
+publication and returns the same exception.
+
+CASA can also raise `UnboundLocalError` when the first selected reference
+antenna has pulse data only outside the reference interval. Casa-rs
+reports the missing reference data with a `RuntimeError`. The paired
+PCCOR oracle covers both cases and checks destination preservation.
+
+## `appendantab` attaches new subtable links to the child tables
+
+CASA 6.7.6.14 creates `SYSCAL` and `GAIN_CURVE` under the copied
+MeasurementSet and writes each keyword on the corresponding child table.
+The embedded gain-curve consumer reads the `GAIN_CURVE` link on MAIN.
+Casa-rs attaches both links on MAIN. The paired oracle compares the
+subtable contents and gives the CASA reference copy the same MAIN links
+before checking its independent `gencal` consumer.
+
+With `overwrite=True` on a copy that has no gain rows, CASA also indexes
+the first receptor of an empty sensitivity array and raises `IndexError`.
+Casa-rs imports the gain records and publishes the completed copy. Its
+test compares the output with the default CASA import.
+
+CASA uses the position of an ANTAB gain record as a channel index when
+overwriting a gain row. This raises `IndexError` when the second antenna
+has a gain record for a one-channel window. Casa-rs tests the window's
+frequency coverage against the gain record's range. The oracle checks
+both antennas' replaced sensitivities.
+
+CASA assembles Tsys temperatures in spectral-window number order, then
+writes row identifiers in data-description order. The temperatures can
+follow the wrong SPW when those orders differ. Casa-rs assembles each row
+using its stated spectral-window identifier. It also ignores an unknown
+station's GAIN record while preserving the following GAIN header. CASA
+can consume that header while skipping to the next slash.
+
+## Baseline Mueller calibration assumes ordered antennas
+
+CASA 6.7.6.14 computes its `M Mueller` and `Mf Mueller` baseline index
+assuming the first antenna ID is at most the second. For five antennas,
+`(0,3)` uses slot 3, while `(3,0)` uses slot 9, the slot for `(2,2)`.
+This can select or update the wrong baseline response. Exchanging antennas
+also conjugates the parallel-hand visibilities. Casa-rs stores the response
+for the ordered pair and conjugates it when solving or applying a reversed
+row. The [paired BLCAL oracle](../tools/casa-compat/blcal_oracle.py) checks
+the reversed-input solve and apply against the known sky model.
+
+When cross-hands carry weight and both parallel hands have zero weight,
+CASA can attempt the interval and publish unflagged NaNs from a zero-weight
+division. Casa-rs retains the interval and flags the unavailable
+parallel-hand responses, with the same zero coefficients as other absent
+solutions. The oracle compares the attempt and checks the output flags.
+
+## Calibrater reports antenna IDs from the last visibility buffer
+
+CASA 6.7.6.14 collects field, observation and scan IDs throughout the
+`calibrater.returndict()` visibility iteration. It fetches the antennas
+after iteration, from the last buffer. With antennas 0 and 1 in the first
+selected scan and 2 and 3 in the second, the record lists both scans and
+only antennas 2 and 3. Casa-rs reports the four antennas in the selected
+rows. The [paired calibrater oracle](../tools/casa-compat/calibrater_apply_tool_oracle.py)
+checks both records on the disjoint baselines.
+
+## Calibrater can reuse inverse Jones terms when corrupting a model
+
+CASA 6.7.6.14 applies a constant antenna gain of 1.2 correctly in a
+fresh `calibrater.corrupt()`, multiplying the physical model by 1.44.
+After `correct('trial')` on the same tool and selection, it divides the
+model by 1.44 on each `corrupt()` call. `VisCal::corrupt2` requests forward
+application even in this sequence. Casa-rs evaluates the forward Jones
+terms on every model corruption. The [paired tool oracle](../tools/casa-compat/calibrater_apply_tool_oracle.py)
+checks both sequences against the constant-gain product law. Both engines
+retain the previous single-term activity counts across the corruption.
+
+## Calibrater's legacy iterator can crash during a gain solve
+
+With CASA 6.7.6.14, `setvi(True, True)` followed by a selected G Jones
+solution can terminate Python with a segmentation fault in `solve()`.
+The [direct solve oracle](../tools/casa-compat/calibrater_solve_tool_oracle.py)
+reproduces the crash with the legacy gain case. The same legacy fixture
+returns normally when `minblperant=99` blocks the fit. Casa-rs completes the
+fit using its shared solver and checks the resulting table and activity
+against the successful CASA modern-iterator solve. Legacy return records
+retain their original layout without `solvestats`.

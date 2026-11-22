@@ -5,6 +5,7 @@ mod inputs;
 pub(crate) mod leakage;
 pub(crate) mod polynomial;
 mod samples;
+mod spectra;
 mod time;
 mod visibility_models;
 mod weights;
@@ -21,7 +22,7 @@ use ndarray::{ArrayD, ArrayView2};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainType, RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
+    GainType, RefAntSelector, get_f64, get_i32,
 };
 use crate::ApplyCalibrationTableSpec;
 use crate::execute::{
@@ -33,10 +34,13 @@ use crate::session::{resolve_calibration_selection, resolve_casa_calibration_sel
 use crate::solve::kernel::{RobustSample, SolveGraph};
 pub(crate) use inputs::SolveInputBatch;
 use inputs::{input_cell, read_input_batch};
+pub(crate) use samples::median_with_even_mean;
 use samples::{
     SolveAccumulationKey, SolveEdgeAccumulation, SolveRowInputs, SolveRowLayout, SolveRowLayouts,
     two_dimensional,
 };
+pub(super) use spectra::DelaySpectrum;
+pub(crate) use time::SolveInputRows;
 use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
 pub(crate) use visibility_models::VisibilityModels;
 pub(super) use weights::VisibilityBuffer;
@@ -44,11 +48,16 @@ use weights::{SpectralWeights, solve_weights};
 
 pub(crate) enum PriorCalibrationMode {
     Data,
+    Baseline,
+    Accor {
+        share_input_flags: bool,
+    },
     Gain {
         scalar: bool,
         rotate_model: bool,
         share_input_flags: bool,
     },
+    GainSpline,
     Bandpass {
         share_input_flags: bool,
         rotate_model: bool,
@@ -97,6 +106,12 @@ pub(crate) fn load_preapplied_rows(
     }
     let preapplied = match mode {
         PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false).map(Into::into),
+        PriorCalibrationMode::Baseline => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Baseline, true)
+        }
+        PriorCalibrationMode::Accor { share_input_flags } => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Accor, share_input_flags)
+        }
         PriorCalibrationMode::Gain {
             scalar,
             share_input_flags,
@@ -112,6 +127,9 @@ pub(crate) fn load_preapplied_rows(
         PriorCalibrationMode::Bandpass {
             share_input_flags, ..
         } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Bandpass, share_input_flags),
+        PriorCalibrationMode::GainSpline => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::GainSpline, true)
+        }
         PriorCalibrationMode::Delay {
             share_input_flags, ..
         } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags),
@@ -141,35 +159,54 @@ pub(crate) fn build_solve_groups(
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
-    let seed_combined_g = options.gain_type == GainType::G
+    let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
+    let baseline_solve = options.input_rows == SolveInputRows::Baselines;
+    let fixed_autocorrelations = options.input_rows == SolveInputRows::GainTool;
+    let seed_combined_g = !baseline_solve
+        && !only_autocorrelations
+        && options.gain_type == GainType::G
         && !options.channelized
         && !options.robust_seed
         && (options.combine.spectral_windows
             || options.combine.fields
             || options.combine.observations);
-    let needs_first_buffer = matches!(options.gain_type, GainType::T | GainType::KCross)
+    let needs_first_buffer = only_autocorrelations
+        || matches!(options.gain_type, GainType::T | GainType::KCross)
         || options.robust_seed
         || seed_combined_g;
-    let include_autocorrelations =
-        needs_first_buffer || models.needs_buffers() || options.combine.scans;
+    let legacy_spline = options.gain_type == GainType::GSpline;
+    let include_autocorrelations = baseline_solve
+        || fixed_autocorrelations
+        || legacy_spline
+        || needs_first_buffer
+        || models.needs_buffers()
+        || options.combine.scans;
     let mut ordered = bucketed_rows(
         rows,
         options.solve_interval,
         options.combine,
         include_autocorrelations,
         options.polynomial_bandpass,
+        baseline_solve,
     );
-    let seed_buffers = if needs_first_buffer
-        || options.combine.observations
-        || options.combine.spectral_windows
-        || options.combine.scans
+    let seed_buffers = if !legacy_spline
+        && (needs_first_buffer
+            || options.combine.observations
+            || options.combine.spectral_windows
+            || options.combine.scans)
     {
         first_t_buffers(&ordered, options.preaverage_max_span)
     } else {
         BTreeMap::new()
     };
     models.bind_buffers(ms, &ordered, options.combine)?;
-    if include_autocorrelations {
+    if only_autocorrelations {
+        ordered.retain(|(row, _, _)| row.antenna1 == row.antenna2);
+    } else if include_autocorrelations
+        && !legacy_spline
+        && !baseline_solve
+        && !fixed_autocorrelations
+    {
         ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
     }
     models.phase_times =
@@ -182,7 +219,8 @@ pub(crate) fn build_solve_groups(
         channel_bin_widths,
     )?;
     layouts.forward_model = forward_model;
-    let spectral_weights = if options.polynomial_bandpass {
+    let spectral_weights = if options.polynomial_bandpass || options.gain_type == GainType::GSpline
+    {
         SpectralWeights::default()
     } else {
         SpectralWeights::new(ms, &ordered, options.combine)?
@@ -229,6 +267,7 @@ pub(crate) fn build_solve_groups(
                 );
                 group.first_t_buffer = buffer.copied();
                 group.first_g_graphs = seed_combined_g.then(Box::default);
+                group.direct_gain = fixed_autocorrelations.then(Default::default);
                 group
             });
             if options.combine.fields {
@@ -469,6 +508,7 @@ pub(crate) fn correlation_types_for_ddid(
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SolveGroupOptions {
+    pub(crate) input_rows: SolveInputRows,
     pub(crate) gain_type: GainType,
     pub(crate) model_source: GainSolveModelSource,
     pub(crate) point_stokes: [f32; 4],
@@ -558,6 +598,8 @@ struct SelectedChannels<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SolveBaseKey {
     pub(crate) array_id: i32,
+    /// Consecutive visits of one field in a baseline solve across scans.
+    pub(crate) field_visit: usize,
     pub(crate) field_id: i32,
     pub(crate) spw_id: i32,
     pub(crate) data_desc_id: i32,
@@ -569,6 +611,7 @@ impl SolveBaseKey {
     fn for_row(row: &SelectedSolveRow, combine: GainSolveCombine) -> Self {
         Self {
             array_id: row.array_id,
+            field_visit: 0,
             field_id: if combine.fields { 0 } else { row.field_id },
             spw_id: if combine.spectral_windows {
                 0
@@ -601,6 +644,7 @@ pub(crate) enum SolveBucketKey {
 /// correlation and solution channel, and the interval's metadata.
 #[derive(Debug, Clone)]
 pub(crate) struct SolveAccumulator {
+    pub(super) fringe_buffers: BTreeSet<(i32, i32, u64)>,
     pub(crate) field_id: i32,
     pub(crate) spw_id: i32,
     pub(crate) observation_id: i32,
@@ -617,6 +661,8 @@ pub(crate) struct SolveAccumulator {
     /// Data channels per solution: 1 when the selected channels solve
     /// together, else the row's channel count.
     pub(crate) solution_channels: usize,
+    /// Correlation counts of the buffers gathered for an M/Mf solution.
+    pub(super) baseline_correlation_counts: BTreeSet<usize>,
     /// A single parallel hand in channelized G solves occupies parameter zero.
     pub(crate) scalar_bandpass: bool,
     pub(crate) polynomial: Option<polynomial::PolynomialAccumulation>,
@@ -631,28 +677,11 @@ pub(crate) struct SolveAccumulator {
     pub(crate) attempted: bool,
     first_t_buffer: Option<FirstTBuffer>,
     pub(crate) first_g_graphs: Option<Box<[SolveGraph; 2]>>,
+    direct_gain: Option<samples::DirectGainGather>,
     parallel_hands: usize,
     baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
     preaverage_starts: HashMap<AveragedBaseline, f64>,
     receptor_accumulations: Vec<HashMap<SolveAccumulationKey, Vec<SolveEdgeAccumulation>>>,
-}
-
-/// One time-averaged baseline spectrum before the solver collapses it.
-pub(super) struct DelaySpectrum<'a> {
-    pub(super) antennas: (i32, i32),
-    pub(super) buffer: (i32, i32, u64),
-    pub(super) correlation: usize,
-    pub(super) parallel_hand: bool,
-    pub(super) receptor: usize,
-    values: &'a [SolveEdgeAccumulation],
-}
-
-impl DelaySpectrum<'_> {
-    pub(super) fn channels(&self) -> impl Iterator<Item = (Complex32, f32)> + '_ {
-        self.values
-            .iter()
-            .map(|value| (value.weighted_sum, value.weight))
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -673,26 +702,6 @@ impl SolveEdgeStats {
 }
 
 impl SolveAccumulator {
-    pub(super) fn delay_spectra(&self) -> impl Iterator<Item = DelaySpectrum<'_>> {
-        self.receptor_accumulations
-            .iter()
-            .enumerate()
-            .flat_map(|(receptor, baselines)| {
-                baselines.iter().map(move |(key, values)| DelaySpectrum {
-                    antennas: key.baseline.antennas,
-                    buffer: (
-                        key.baseline.data_desc_id,
-                        key.baseline.field_id,
-                        key.baseline.start_bits,
-                    ),
-                    correlation: key.correlation_index,
-                    parallel_hand: key.parallel_hand,
-                    receptor,
-                    values,
-                })
-            })
-    }
-
     pub(crate) fn scan_number(&self) -> i32 {
         self.first_t_buffer.map_or_else(
             || self.scan_numbers.first().copied().unwrap_or(0),
@@ -702,6 +711,7 @@ impl SolveAccumulator {
 
     pub(crate) fn new(field_id: i32, spw_id: i32, observation_id: i32) -> Self {
         Self {
+            fringe_buffers: BTreeSet::new(),
             field_id,
             spw_id,
             observation_id,
@@ -716,6 +726,7 @@ impl SolveAccumulator {
             antenna_ids: BTreeSet::new(),
             unique_time_bits: BTreeSet::new(),
             solution_channels: 1,
+            baseline_correlation_counts: BTreeSet::new(),
             scalar_bandpass: false,
             polynomial: None,
             channel_graphs: Vec::new(),
@@ -723,6 +734,7 @@ impl SolveAccumulator {
             attempted: false,
             first_t_buffer: None,
             first_g_graphs: None,
+            direct_gain: None,
             parallel_hands: 1,
             baseline_centroids: HashMap::new(),
             preaverage_starts: HashMap::new(),
@@ -763,6 +775,10 @@ impl SolveAccumulator {
         };
         if layout.channel_count != channel_count || layout.selection != row.channel_selection {
             layout.select_channels(row, channel_count, options.polynomial_bandpass)?;
+        }
+        if options.input_rows == SolveInputRows::Baselines {
+            self.baseline_correlation_counts
+                .insert(layout.correlations.len());
         }
         let raw_flags = if preapplied_row.is_some() && layouts.models.uses_fourier(row.field_id) {
             match input_cell(ms, row.row_index, batch, "FLAG")? {
@@ -905,16 +921,13 @@ impl SolveAccumulator {
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
         if options.polynomial_bandpass {
-            self.observe_metadata(row);
-            self.polynomial
-                .get_or_insert_with(Default::default)
-                .observe(
-                    row,
-                    samples,
-                    correlation_types,
-                    channels,
-                    options.point_stokes,
-                );
+            self.observe_polynomial(
+                row,
+                samples,
+                correlation_types,
+                channels,
+                options.point_stokes,
+            );
             return Ok(());
         }
         if options.channelized {
@@ -934,11 +947,14 @@ impl SolveAccumulator {
             self.solution_channels = self.solution_channels.max(channel_count);
         }
 
-        let scalar_bandpass =
-            options.channelized && options.gain_type == GainType::G && correlation_types.len() == 1;
+        let baseline_solve = options.input_rows == SolveInputRows::Baselines;
+        let scalar_bandpass = !baseline_solve
+            && options.channelized
+            && options.gain_type == GainType::G
+            && correlation_types.len() == 1;
         self.scalar_bandpass = scalar_bandpass && (self.sample_rows == 0 || self.scalar_bandpass);
         let graph_count = match options.gain_type {
-            GainType::G | GainType::K => 2,
+            GainType::G | GainType::K | GainType::GSpline => 2,
             GainType::T | GainType::KCross => {
                 self.parallel_hands = if matches!(correlation_types.len(), 2 | 4) {
                     2
@@ -952,18 +968,26 @@ impl SolveAccumulator {
             self.receptor_accumulations
                 .resize_with(graph_count, HashMap::new);
         }
-        self.observe_metadata(row);
-        let shared_flags =
-            (!options.correlation_dependent_flags).then(|| samples::channel_flags(samples));
-        let no_weighted_data = shared_flags
-            .as_ref()
-            .is_some_and(|flags| flags.iter().all(|flag| *flag))
-            || samples.weights.iter().all(|weight| *weight <= 0.0);
+        self.observe_metadata(row, options.input_rows == SolveInputRows::Fringe);
+        let legacy_spline = options.gain_type == GainType::GSpline;
+        let shared_flags = (legacy_spline || !options.correlation_dependent_flags)
+            .then(|| samples::channel_flags(samples));
+        let flagged = shared_flags.as_ref().is_some_and(|flags| {
+            flags.iter().all(|flag| *flag)
+                || legacy_spline && channels.indices.iter().all(|&channel| flags[channel])
+        });
+        let no_weighted_data = flagged || samples.weights.iter().all(|weight| *weight <= 0.0);
+        if let Some(gather) = &mut self.direct_gain {
+            gather.observe(row, samples, channels.indices, shared_flags.as_deref());
+        }
+        if legacy_spline && flagged {
+            return Ok(());
+        }
         // CASA gathers each field and data description in a separate buffer.
         // Keep their averages separate until enforcing the solve mode.
         let mut baseline = AveragedBaseline {
             antennas: (row.antenna1, row.antenna2),
-            field_id: if options.channelized && !options.gain_type.is_delay() {
+            field_id: if options.channelized && !baseline_solve && !options.gain_type.is_delay() {
                 0
             } else {
                 row.field_id
@@ -974,7 +998,7 @@ impl SolveAccumulator {
         let start_bits = options.preaverage_max_span.map_or(0, |max_span| {
             let start = self
                 .preaverage_starts
-                .entry(baseline)
+                .entry(baseline.time_bucket_key(legacy_spline))
                 .or_insert(row.time_seconds);
             if row.time_seconds - *start > max_span {
                 *start = row.time_seconds;
@@ -986,15 +1010,10 @@ impl SolveAccumulator {
         let delay = options.gain_type.is_delay();
         let mut row_weight = 0.0_f64;
         for (corr_index, &correlation_type) in correlation_types.iter().enumerate() {
-            let Some(receptors) = correlation_receptors(correlation_type) else {
-                return Err(GainSolveError::UnsupportedCorrelationLayout {
-                    data_desc_id: row.data_desc_id,
-                    correlation_types: correlation_types
-                        .iter()
-                        .map(|code| stokes_name(*code).to_string())
-                        .collect(),
-                });
-            };
+            let receptors =
+                options
+                    .input_rows
+                    .receptors(correlation_types, corr_index, row.data_desc_id)?;
             let parallel_hand = receptors.0 == receptors.1;
             if no_weighted_data {
                 continue;
@@ -1002,7 +1021,7 @@ impl SolveAccumulator {
             let graph_index = match options.gain_type {
                 GainType::K if correlation_types.len() == 1 => 0,
                 GainType::G if scalar_bandpass => 0,
-                GainType::G | GainType::K => receptors.0,
+                GainType::G | GainType::K | GainType::GSpline => receptors.0,
                 GainType::T | GainType::KCross => 0,
             };
             let point = if let Some(rotated) = samples.point_model {
@@ -1029,11 +1048,17 @@ impl SolveAccumulator {
                     true,
                 );
             }
-            if !parallel_hand && matches!(options.gain_type, GainType::G | GainType::K) {
+            if !parallel_hand
+                && !baseline_solve
+                && matches!(
+                    options.gain_type,
+                    GainType::G | GainType::K | GainType::GSpline
+                )
+            {
                 // CASA can use cross-hand weights for the averaged baseline's
                 // time even though only parallel hands enter these solves.
-                if !delay {
-                    row_weight += samples::centroid_weight(
+                if !delay && !legacy_spline {
+                    let weight = samples::centroid_weight(
                         samples,
                         corr_index,
                         channels,
@@ -1041,6 +1066,7 @@ impl SolveAccumulator {
                         normalization,
                         options.channelized,
                     );
+                    row_weight += self.cross_hand_centroid_weight(weight, options.input_rows);
                 }
                 continue;
             }
@@ -1053,48 +1079,53 @@ impl SolveAccumulator {
                     parallel_hand,
                 })
                 .or_insert_with(|| vec![SolveEdgeAccumulation::default(); solution_channels]);
-            let accumulated_weight = samples::SampleAccumulation {
-                values: accumulations,
-                attempted: &mut self.attempted,
-                channelized: options.channelized,
-                retain_zero_model: options.gain_type.is_delay()
-                    || options.gain_type == GainType::T
-                    || samples.model.is_some()
-                    || point.norm_sqr() == 0.0,
-            }
-            .observe(
-                samples,
-                corr_index,
-                shared_flags.as_deref(),
-                channels,
-                point,
-            );
+            let accumulated_weight = if legacy_spline {
+                let collapsed = samples::collapse_spline_channels(
+                    samples,
+                    corr_index,
+                    channels.indices,
+                    shared_flags.as_deref().expect("old iterator flags"),
+                    point,
+                );
+                accumulations[0].merge(collapsed);
+                f64::from(collapsed.weight)
+            } else {
+                samples::SampleAccumulation {
+                    values: accumulations,
+                    attempted: &mut self.attempted,
+                    channelized: options.channelized,
+                    keep_zero_data: baseline_solve
+                        || options.input_rows == SolveInputRows::Autocorrelations
+                        || self.direct_gain.is_some() && row.antenna1 == row.antenna2,
+                    retain_zero_model: options.gain_type.is_delay()
+                        || options.gain_type == GainType::T
+                        || samples.model.is_some()
+                        || point.norm_sqr() == 0.0,
+                }
+                .observe(
+                    samples,
+                    corr_index,
+                    shared_flags.as_deref(),
+                    channels,
+                    point,
+                )
+            };
             if !delay {
                 row_weight += accumulated_weight;
             }
         }
         if row_weight > 0.0 {
+            let time = if legacy_spline {
+                row.time_seconds
+            } else {
+                row.time_centroid_seconds
+            };
             self.baseline_centroids
-                .entry(baseline)
+                .entry(baseline.time_bucket_key(legacy_spline))
                 .or_default()
-                .observe(row.time_centroid_seconds, row_weight);
+                .observe(time, row_weight);
         }
         Ok(())
-    }
-
-    fn observe_metadata(&mut self, row: &SolveSampleRow) {
-        self.min_time = self.min_time.min(row.time_seconds);
-        self.max_time = self.max_time.max(row.time_seconds);
-        if self.unique_time_bits.insert(row.time_seconds.to_bits()) {
-            self.unique_time_sum += row.time_seconds;
-            self.unique_time_count += 1;
-        }
-        self.total_interval += row.interval_seconds;
-        self.sample_rows += 1;
-        self.field_ids.insert(row.field_id);
-        self.scan_numbers.insert(row.scan_number);
-        self.antenna_ids.insert(row.antenna1);
-        self.antenna_ids.insert(row.antenna2);
     }
 
     /// Collapse each baseline's samples per correlation and solution channel
@@ -1111,8 +1142,8 @@ impl SolveAccumulator {
         self.finalize(solve_mode, preserve_samples, false);
     }
 
-    pub(crate) fn finalize_bandpass(&mut self) {
-        self.finalize(GainSolveMode::AmplitudePhase, false, true);
+    pub(crate) fn finalize_bandpass(&mut self, solve_mode: GainSolveMode) {
+        self.finalize(solve_mode, false, true);
     }
 
     fn finalize(
@@ -1134,24 +1165,44 @@ impl SolveAccumulator {
                     }
                     let averaged =
                         accumulation.weighted_sum / Complex32::new(accumulation.weight, 0.0);
-                    let (sample, weight) = match solve_mode {
-                        GainSolveMode::Phase => {
-                            let amplitude = averaged.norm();
-                            if amplitude <= f32::EPSILON {
-                                continue;
-                            }
-                            (
-                                averaged / Complex32::new(amplitude, 0.0),
-                                accumulation.weight * amplitude * amplitude,
-                            )
-                        }
-                        GainSolveMode::Amplitude => {
-                            (Complex32::new(averaged.norm(), 0.0), accumulation.weight)
-                        }
-                        GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
+                    let fixed_auto = self.direct_gain.is_some()
+                        && key.baseline.antennas.0 == key.baseline.antennas.1;
+                    let Some((sample, weight)) = samples::transform_solve_sample(
+                        averaged,
+                        accumulation.weight,
+                        solve_mode,
+                        fixed_auto,
+                    ) else {
+                        continue;
                     };
                     let model = accumulation.model_weight / accumulation.weight;
                     let model_weight = weight * model;
+                    let in_first_buffer = self
+                        .first_t_buffer
+                        .is_some_and(|buffer| buffer.contains(key.baseline));
+                    let robust_sample = RobustSample {
+                        baseline: key.baseline.antennas,
+                        correlation: key.correlation_index,
+                        visibility: sample,
+                        weight,
+                        model,
+                        in_first_buffer,
+                    };
+                    if fixed_auto {
+                        // The CASA differentiator skips Jones terms and derivatives for
+                        // autocorrelations. The residual and its weight still enter chi-square.
+                        let graph = &mut self.channel_graphs[channel_index][receptor];
+                        let residual = robust_sample.fixed_residual_power();
+                        graph.add_fixed_residual(
+                            key.baseline.antennas.0,
+                            f64::from(residual) * f64::from(weight),
+                        );
+                        if preserve_samples {
+                            graph.robust_samples.push(robust_sample);
+                        }
+                        *baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
+                        continue;
+                    }
                     let edge_stats = SolveEdgeStats {
                         weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
                         raw_weighted_sample_power: accumulation.weighted_sample_power,
@@ -1164,9 +1215,6 @@ impl SolveAccumulator {
                         sample * model_weight,
                         edge_stats,
                     );
-                    let in_first_buffer = self
-                        .first_t_buffer
-                        .is_some_and(|buffer| buffer.contains(key.baseline));
                     if in_first_buffer && let Some(graphs) = self.first_g_graphs.as_mut() {
                         graphs[receptor].accumulate(
                             key.baseline.antennas,
@@ -1178,14 +1226,7 @@ impl SolveAccumulator {
                     if preserve_samples {
                         self.channel_graphs[channel_index][receptor]
                             .robust_samples
-                            .push(RobustSample {
-                                baseline: key.baseline.antennas,
-                                correlation: key.correlation_index,
-                                visibility: sample,
-                                weight,
-                                model,
-                                in_first_buffer,
-                            });
+                            .push(robust_sample);
                     }
                     *baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
                 }
@@ -1270,6 +1311,8 @@ impl SolveAccumulator {
         self.scan_numbers.extend(other.scan_numbers);
         self.antenna_ids.extend(other.antenna_ids);
         self.solution_channels = self.solution_channels.max(other.solution_channels);
+        self.baseline_correlation_counts
+            .extend(other.baseline_correlation_counts);
         self.attempted |= other.attempted;
         for (baseline, centroid) in other.baseline_centroids {
             self.baseline_centroids
@@ -1404,36 +1447,6 @@ fn unsupported_shape(column: &str, value: &ArrayValue) -> GainSolveError {
     GainSolveError::UnsupportedParameterShape {
         path: format!("<measurement-set {column}>"),
         shape: value.shape().to_vec(),
-    }
-}
-
-/// The median, the mean of the middle two for an even count, as casacore's
-/// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
-/// channel-independent weight.
-pub(super) fn median_with_even_mean(values: &mut [f32]) -> f32 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let middle = values.len() / 2;
-    let even = values.len().is_multiple_of(2);
-    let first = values[0];
-    if values
-        .iter()
-        .all(|value| value.to_bits() == first.to_bits())
-    {
-        return if even { (first + first) / 2.0 } else { first };
-    }
-    let (lower, upper, _) = values.select_nth_unstable_by(middle, f32::total_cmp);
-    let upper = *upper;
-    if even {
-        let lower = lower
-            .iter()
-            .copied()
-            .max_by(f32::total_cmp)
-            .expect("nonempty even lower half");
-        (lower + upper) / 2.0
-    } else {
-        upper
     }
 }
 

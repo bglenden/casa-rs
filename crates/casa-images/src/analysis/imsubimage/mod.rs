@@ -30,8 +30,9 @@ pub use fitcomponents::{
     fit_image_components,
 };
 pub use fitprofile::{
-    ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
-    ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
+    ChannelLineFit, ChannelLineShape, ImageProfileFit, ImageProfileFitResult, ProfileDivisor,
+    ProfileEstimates, ProfileFitOptions, ProfileOutputNames, ProfilePeaks, ProfileRegion,
+    ProfileSigma, fit_channel_lines,
 };
 pub use histogram::{HistogramOptions, HistogramPixel, image_histogram};
 mod fourier;

@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native single-dish spectral preparation shared by the task and tool.
 
+pub(crate) mod atmosphere;
 pub(crate) mod baseline;
+pub(crate) mod import;
+pub(crate) mod line_fit;
 mod smoothing;
 
 use std::path::{Path, PathBuf};
 
 use casa_ms::MsSelection;
 use casa_ms::transform::{
-    MsTransformReport, MsTransformRequest, MsTransformTaskOptions, TransformDataColumn,
-    TransformTaskHistory, convolve_spectra,
+    MsTransformReport, MsTransformRequest, TransformDataColumn, TransformTaskHistory,
+    convolve_spectra,
 };
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
@@ -23,6 +26,7 @@ pub struct SingleDishSession {
     name: Option<PathBuf>,
     selection: MsSelection,
     reindex: Option<bool>,
+    line_averaging: line_fit::LineAveraging,
 }
 
 /// Parameters of a selected single-dish convolution.
@@ -84,6 +88,8 @@ impl SingleDishSession {
         let input = self.name()?;
         let data_column = data_column(operation.datacolumn)?;
         let mut smoothing = Smoothing::new(operation.kernel, operation.width)?;
+        let mut options = self.line_averaging.operation_options()?;
+        options.history = operation.history;
         convolve_spectra(
             &MsTransformRequest {
                 input_ms: input.to_path_buf(),
@@ -94,10 +100,7 @@ impl SingleDishSession {
                 selection: self.selection.clone(),
                 keep_flags: true,
             },
-            &MsTransformTaskOptions {
-                history: operation.history,
-                ..MsTransformTaskOptions::default()
-            },
+            &options,
             self.reindex.unwrap_or(true),
             operation.overwrite,
             &mut smoothing,

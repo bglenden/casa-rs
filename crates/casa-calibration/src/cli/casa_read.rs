@@ -23,16 +23,15 @@ use std::path::{Path, PathBuf};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
-use casa_types::quanta::{Quantity, Unit};
 
 use super::read::{count, parse_gainfield_value, parse_interp_value};
 use crate::{
     ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassFrequencyInterval,
     BandpassSolveCombine, BandpassSolveCuts, BandpassType, CalibrationTaskRequest,
     ExecuteApplyTaskRequest, FluxScaleRequest, GainNormalization, GainSolveCombine,
-    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalRequest,
-    GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
-    load_apply_specs_from_callib,
+    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSplineControls, GainType,
+    GencalRequest, GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest,
+    SolveGainTaskRequest, load_apply_specs_from_callib,
 };
 
 /// The request a CASA-named surface makes.
@@ -42,6 +41,9 @@ pub(super) fn task_request(
     Ok(match task.surface() {
         "applycal" => CalibrationTaskRequest::ExecuteApply(applycal(task)?),
         "gaincal" => CalibrationTaskRequest::SolveGain(gaincal(task)?),
+        "fringefit" => CalibrationTaskRequest::SolveGain(fringefit(task)?),
+        "accor" => CalibrationTaskRequest::SolveAccor(accor(task)?),
+        "blcal" => blcal(task)?,
         "bandpass" => CalibrationTaskRequest::SolveBandpass(bandpass(task)?),
         "fluxscale" => CalibrationTaskRequest::FluxScale(fluxscale(task)?),
         "gencal" => CalibrationTaskRequest::Gencal(gencal(task)?),
@@ -77,11 +79,23 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
 }
 
 fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
+    let gain_type = gaintype(task)?;
+    let spline = gain_type == GainType::GSpline;
+    let spline_controls = if spline {
+        Some(GainSplineControls {
+            splinetime: task.number("splinetime")?,
+            npointaver: task.integer("npointaver")?,
+            phasewrap: task.number("phasewrap")?,
+        })
+    } else {
+        None
+    };
     let measurement_set = task.path("vis")?;
-    let min_snr = min_snr(task)?;
+    let min_snr = if spline { 0. } else { min_snr(task)? };
     let (model_source, smodel) = model(task, &measurement_set, true)?;
     let reference = task.required_text("refant")?;
     let strict = match task.required_text("refantmode")?.as_str() {
+        _ if spline => false,
         "flex" => false,
         "strict" => true,
         other => return Err(unknown("refantmode", other, "'flex' or 'strict'")),
@@ -90,12 +104,22 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
-        gain_type: gaintype(task)?,
+        gain_type,
+        spline_controls,
+        fringe_controls: None,
         solve_mode: calmode(task)?,
-        solve_interval: solint(task)?,
+        solve_interval: if spline {
+            GainSolveInterval::Infinite
+        } else {
+            solint(task)?
+        },
         preaverage_seconds: task.number("preavg")?,
         correlation_dependent_flags: task.flag("corrdepflags")?,
-        combine: combine(task)?,
+        combine: if spline {
+            GainSolveCombine::default()
+        } else {
+            combine(task)?
+        },
         refant: if reference.is_empty() {
             RefAntSelector::Unspecified
         } else {
@@ -113,11 +137,164 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
             "median" => GainNormalization::Median,
             other => return Err(unknown("normtype", other, "'mean' or 'median'")),
         },
-        robustness: robust_gain_solve(task)?,
+        robustness: if spline {
+            Default::default()
+        } else {
+            robust_gain_solve(task)?
+        },
         min_snr,
-        min_baselines_per_antenna: count(task, "minblperant")?,
+        min_baselines_per_antenna: if spline {
+            0
+        } else {
+            count(task, "minblperant")?
+        },
         smodel,
         measurement_set,
+    })
+}
+
+fn fringefit(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
+    let reference = task.required_text("refant")?;
+    let active_parameters = task.flags("paramactive")?;
+    let active_parameters = match active_parameters.as_slice() {
+        [] => [true, true, false],
+        [delay, rate, dispersion] => [*delay, *rate, *dispersion],
+        _ => {
+            return Err(TaskFailure::validation(
+                "paramactive vector must have exactly three entries",
+            ));
+        }
+    };
+    let search_window = |name| -> Result<[f64; 2], TaskFailure> {
+        Ok(task.numbers(name)?.try_into().unwrap_or([-1e6, 1e6]))
+    };
+    let iterations = usize::try_from(task.integer("niter")?).unwrap_or(usize::MAX);
+    let correlation_combination = match task.required_text("corrcomb")?.as_str() {
+        "none" => crate::FringeCorrelation::Separate,
+        "stokes" => crate::FringeCorrelation::Stokes,
+        "parallel" => crate::FringeCorrelation::Parallel,
+        other => return Err(unknown("corrcomb", other, "'none', 'stokes' or 'parallel'")),
+    };
+    Ok(SolveGainTaskRequest {
+        measurement_set: task.path("vis")?,
+        selection: selection(task)?,
+        output_table: PathBuf::from(task.required_text("caltable")?),
+        append: task.flag("append")?,
+        gain_type: GainType::K,
+        spline_controls: None,
+        fringe_controls: Some(crate::FringeControls {
+            delay_window: search_window("delaywindow")?,
+            rate_window: search_window("ratewindow")?,
+            global_solve: task.flag("globalsolve")?,
+            iterations,
+            active_parameters,
+            zero_rates: task.flag("zerorates")?,
+            correlation_combination,
+            concatenate_windows: task.flag("concatspws")?,
+        }),
+        solve_mode: GainSolveMode::Phase,
+        solve_interval: solint(task)?,
+        preaverage_seconds: 0.,
+        correlation_dependent_flags: task.flag("corrdepflags")?,
+        combine: combine(task)?,
+        refant: if reference.is_empty() {
+            RefAntSelector::Unspecified
+        } else {
+            RefAntSelector::Expression {
+                selection: reference,
+                strict: false,
+            }
+        },
+        prior_calibration_tables: chain(task, Chain::Solve)?,
+        parang: task.flag("parang")?,
+        model_source: GainSolveModelSource::FromMeasurementSet,
+        normalize_average_amplitude: false,
+        normalization_type: GainNormalization::Mean,
+        robustness: Default::default(),
+        min_snr: task.number("minsnr")? as f32,
+        min_baselines_per_antenna: 0,
+        smodel: [1., 0., 0., 0.],
+    })
+}
+
+fn accor(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
+    Ok(SolveGainTaskRequest {
+        measurement_set: task.path("vis")?,
+        selection: selection(task)?,
+        output_table: PathBuf::from(task.required_text("caltable")?),
+        append: task.flag("append")?,
+        gain_type: GainType::G,
+        spline_controls: None,
+        fringe_controls: None,
+        solve_mode: GainSolveMode::Amplitude,
+        solve_interval: solint(task)?,
+        preaverage_seconds: 0.,
+        correlation_dependent_flags: task.flag("corrdepflags")?,
+        combine: combine(task)?,
+        refant: RefAntSelector::Unspecified,
+        prior_calibration_tables: chain(task, Chain::Solve)?,
+        parang: false,
+        model_source: GainSolveModelSource::FromMeasurementSet,
+        normalize_average_amplitude: false,
+        normalization_type: GainNormalization::Mean,
+        robustness: Default::default(),
+        min_snr: 0.,
+        min_baselines_per_antenna: 0,
+        smodel: [1., 0., 0., 0.],
+    })
+}
+
+fn blcal(task: &TaskInvocation<'_>) -> Result<CalibrationTaskRequest, TaskFailure> {
+    if task.flag("selectdata")?
+        && let Some(ParameterValue::Bool(observation)) = task.value("observation")
+    {
+        let name = if *observation { "True" } else { "False" };
+        let first = name.chars().next().expect("boolean text");
+        return Err(TaskFailure::execution(format!(
+            "Error in data selection specification: Scan Expression: Parse error at or near '{first}'\n(near char. 1 in string \"{name}\")"
+        )));
+    }
+    let frequency_dependent = task.flag("freqdep")?;
+    let output_table = task.required_text("caltable")?;
+    if output_table.is_empty() {
+        return Err(TaskFailure::execution("Error in Calibrater::setsolve."));
+    }
+    let supplied_interval = selector_text(task.value("solint")).unwrap_or_default();
+    let (time, frequency) = supplied_interval
+        .split_once(',')
+        .unwrap_or((&supplied_interval, ""));
+    let frequency_interval = if frequency_dependent {
+        parse_frequency_solint(frequency)?
+    } else {
+        None
+    };
+    Ok(CalibrationTaskRequest::SolveBaseline {
+        frequency_dependent,
+        frequency_interval,
+        gain: SolveGainTaskRequest {
+            measurement_set: task.path("vis")?,
+            selection: selection(task)?,
+            output_table: PathBuf::from(output_table),
+            append: false,
+            gain_type: GainType::G,
+            spline_controls: None,
+            fringe_controls: None,
+            solve_mode: calmode(task)?,
+            solve_interval: parse_time_solint(time)?,
+            preaverage_seconds: 0.,
+            correlation_dependent_flags: false,
+            combine: combine(task)?,
+            refant: RefAntSelector::Unspecified,
+            prior_calibration_tables: traditional_chain(task, Chain::Solve)?.0,
+            parang: task.flag("parang")?,
+            model_source: GainSolveModelSource::FromMeasurementSet,
+            normalize_average_amplitude: task.flag("solnorm")?,
+            normalization_type: GainNormalization::Mean,
+            robustness: Default::default(),
+            min_snr: 0.,
+            min_baselines_per_antenna: 0,
+            smodel: [1., 0., 0., 0.],
+        },
     })
 }
 
@@ -713,6 +890,7 @@ fn gaintype(task: &TaskInvocation<'_>) -> Result<GainType, TaskFailure> {
         "T" => Ok(GainType::T),
         "K" => Ok(GainType::K),
         "KCROSS" => Ok(GainType::KCross),
+        "GSPLINE" => Ok(GainType::GSpline),
         other => Err(not_yet("gaintype", other)),
     }
 }
@@ -728,26 +906,13 @@ fn calmode(task: &TaskInvocation<'_>) -> Result<GainSolveMode, TaskFailure> {
 
 fn robust_gain_solve(task: &TaskInvocation<'_>) -> Result<crate::GainSolveRobustness, TaskFailure> {
     let mode = task.required_text("solmode")?;
-    let (l1, reject) = match mode.as_str() {
-        "" => (false, false),
-        "L1" => (true, false),
-        "R" => (false, true),
-        "L1R" => (true, true),
-        other => return Err(unknown("solmode", other, "'', 'L1', 'R' or 'L1R'")),
+    let thresholds = if matches!(mode.as_str(), "R" | "L1R") {
+        task.numbers("rmsthresh")?
+    } else {
+        Vec::new()
     };
-    let mut rms_thresholds = Vec::new();
-    if reject {
-        rms_thresholds = task
-            .numbers("rmsthresh")?
-            .into_iter()
-            .map(|value| value as f32)
-            .collect();
-        // GJones::setSolve and TJones::setSolve supply these for an empty list.
-        if rms_thresholds.is_empty() {
-            rms_thresholds.extend([7.0, 5.0, 4.0, 3.5, 3.0, 2.8, 2.6, 2.4, 2.2, 2.5]);
-        }
-    }
-    Ok(crate::GainSolveRobustness { l1, rms_thresholds })
+    crate::GainSolveRobustness::from_casa(&mode, thresholds)
+        .ok_or_else(|| unknown("solmode", &mode, "'', 'L1', 'R' or 'L1R'"))
 }
 
 /// CASA's `solint`, read as `SolvableVisCal::setSolve` reads it: empty
@@ -765,80 +930,25 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
 }
 
 fn parse_time_solint(text: &str) -> Result<GainSolveInterval, TaskFailure> {
-    let upper = text.to_ascii_uppercase();
-    if upper.is_empty() || upper.contains("INF") {
-        return Ok(GainSolveInterval::Infinite);
-    }
-    if upper.contains("INT") {
-        return Ok(GainSolveInterval::Integration);
-    }
-    let invalid = || unknown("solint", text, "'inf', 'int' or a time such as '60s'");
-    let quantity = text.parse::<Quantity>().map_err(|_| invalid())?;
-    let seconds = if quantity.unit().name().is_empty() {
-        quantity.value()
-    } else {
-        let second = Unit::new("s").map_err(|_| invalid())?;
-        quantity.get_value_in(&second).map_err(|_| invalid())?
-    };
-    if !seconds.is_finite() {
-        return Err(invalid());
-    }
-    Ok(if seconds > 0.0 {
-        GainSolveInterval::Seconds(seconds)
-    } else if seconds == 0.0 {
-        GainSolveInterval::Infinite
-    } else {
-        GainSolveInterval::Integration
-    })
+    GainSolveInterval::from_casa(text)
+        .ok_or_else(|| unknown("solint", text, "'inf', 'int' or a time such as '60s'"))
 }
 
 fn parse_frequency_solint(text: &str) -> Result<Option<BandpassFrequencyInterval>, TaskFailure> {
-    let upper = text.trim().to_ascii_uppercase();
-    if upper.is_empty() || upper.contains("NONE") {
-        return Ok(None);
-    }
-    let invalid = || {
+    BandpassFrequencyInterval::from_casa(text).ok_or_else(|| {
         unknown(
             "solint",
             text,
             "'none', a channel count, or a bandwidth such as '3MHz'",
         )
-    };
-    let channels = |count: f64| {
-        if !count.is_finite() {
-            return Err(invalid());
-        }
-        Ok((count > 1.0).then_some(BandpassFrequencyInterval::Channels(count)))
-    };
-    if let Some((count, _)) = upper.split_once("CH") {
-        return channels(count.trim().parse::<f64>().map_err(|_| invalid())?);
-    }
-    let quantity = text.trim().parse::<Quantity>().map_err(|_| invalid())?;
-    if quantity.unit().name().is_empty() {
-        return channels(quantity.value());
-    }
-    let hertz = Unit::new("Hz").map_err(|_| invalid())?;
-    let value = quantity.get_value_in(&hertz).map_err(|_| invalid())?;
-    if !value.is_finite() {
-        return Err(invalid());
-    }
-    Ok((value > 0.0).then_some(BandpassFrequencyInterval::Hertz(value)))
+    })
 }
 
 /// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
 /// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
 /// `'scan field'` both combine scans and fields).
 fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
-    let text = task.required_text("combine")?;
-    let upper = text.to_ascii_uppercase();
-    let spectral_windows = upper.contains("SPW");
-    let observations = upper.contains("OBS");
-    Ok(GainSolveCombine {
-        scans: upper.contains("SCAN"),
-        fields: upper.contains("FIELD"),
-        observations,
-        spectral_windows,
-    })
+    Ok(GainSolveCombine::from_casa(&task.required_text("combine")?))
 }
 
 fn bandpass_refant(text: &str) -> RefAntSelector {

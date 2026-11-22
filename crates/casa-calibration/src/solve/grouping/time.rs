@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Row order and time bins for gain solutions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveBaseKey,
-    SolveBucketKey,
+    BucketedRow, GainSolveCombine, GainSolveError, GainSolveInterval, SelectedSolveRow,
+    SolveAccumulator, SolveBaseKey, SolveBucketKey, SolveSampleRow,
 };
+use crate::solve::{correlation_receptors, stokes_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct AveragedBaseline {
@@ -14,6 +15,72 @@ pub(super) struct AveragedBaseline {
     pub(super) field_id: i32,
     pub(super) data_desc_id: i32,
     pub(super) start_bits: u64,
+}
+
+impl AveragedBaseline {
+    /// A common interval and centroid for all baselines in the old iterator.
+    pub(super) fn time_bucket_key(self, shared: bool) -> Self {
+        Self {
+            antennas: if shared { (-1, -1) } else { self.antennas },
+            ..self
+        }
+    }
+}
+
+/// The visibility input used by one solve family.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SolveInputRows {
+    /// Use cross-correlations after reading solver metadata.
+    #[default]
+    Interferometry,
+    /// Retain autocorrelations as fixed residuals in direct antenna solves.
+    GainTool,
+    /// Also retain the input buffer axes for a fringe FFT.
+    Fringe,
+    /// Keep the individual antennas' autocorrelations for normalization.
+    Autocorrelations,
+    /// Retain all antenna pairs for a baseline Mueller solve.
+    Baselines,
+}
+
+impl SolveInputRows {
+    pub(crate) fn gain(direct: bool) -> Self {
+        if direct {
+            Self::GainTool
+        } else {
+            Self::Interferometry
+        }
+    }
+
+    pub(super) fn receptors(
+        self,
+        correlations: &[i32],
+        index: usize,
+        data_desc_id: i32,
+    ) -> Result<(usize, usize), GainSolveError> {
+        if self == Self::Baselines && !(correlations.len() == 4 && matches!(index, 1 | 2)) {
+            let parameter = index % 2;
+            return Ok((parameter, parameter));
+        }
+        if !matches!(self, Self::Autocorrelations | Self::Baselines) {
+            return correlation_receptors(correlations[index]).ok_or_else(|| {
+                GainSolveError::UnsupportedCorrelationLayout {
+                    data_desc_id,
+                    correlation_types: correlations
+                        .iter()
+                        .map(|code| stokes_name(*code).to_string())
+                        .collect(),
+                }
+            });
+        }
+        // CASA reads the first and last elements of a four-correlation
+        // row and both elements of a two-correlation row in storage order.
+        Ok(match (correlations.len(), index) {
+            (_, 0) => (0, 0),
+            (2, 1) | (4, 3) => (1, 1),
+            _ => (0, 1),
+        })
+    }
 }
 
 /// A weighted mean of times.
@@ -59,6 +126,61 @@ impl WeightedTime {
     }
 }
 
+impl SolveAccumulator {
+    pub(super) fn cross_hand_centroid_weight(&mut self, weight: f64, input: SolveInputRows) -> f64 {
+        if input == SolveInputRows::Autocorrelations {
+            // CASA tests buffer viability before dropping cross-hand weights.
+            self.attempted |= weight > 0.;
+            return 0.;
+        }
+        weight
+    }
+
+    pub(in crate::solve) fn first_input_buffer(&self) -> Option<(i32, i32)> {
+        self.first_t_buffer
+            .map(|buffer| (buffer.field, buffer.data_desc_id))
+    }
+
+    pub(crate) fn direct_gain_data(&self) -> Option<([BTreeSet<i32>; 2], bool)> {
+        self.direct_gain
+            .as_ref()
+            .map(|gather| (gather.with_data.clone(), gather.attempted))
+    }
+
+    pub(crate) fn expects_cross_correlation(&self) -> bool {
+        self.direct_gain.is_none() || !self.antenna_ids.is_empty()
+    }
+
+    pub(super) fn observe_metadata(&mut self, row: &SolveSampleRow, retain_fringe_buffers: bool) {
+        if retain_fringe_buffers {
+            self.observe_fringe_buffer(row);
+        }
+        self.min_time = self.min_time.min(row.time_seconds);
+        self.max_time = self.max_time.max(row.time_seconds);
+        if self.unique_time_bits.insert(row.time_seconds.to_bits()) {
+            self.unique_time_sum += row.time_seconds;
+            self.unique_time_count += 1;
+        }
+        self.total_interval += row.interval_seconds;
+        self.sample_rows += 1;
+        self.field_ids.insert(row.field_id);
+        self.scan_numbers.insert(row.scan_number);
+        if self.direct_gain.is_none() || row.antenna1 != row.antenna2 {
+            self.antenna_ids.insert(row.antenna1);
+            self.antenna_ids.insert(row.antenna2);
+        }
+    }
+
+    pub(super) fn observe_fringe_buffer(&mut self, row: &super::SolveSampleRow) {
+        self.fringe_buffers
+            .insert((row.data_desc_id, row.field_id, row.time_seconds.to_bits()));
+    }
+
+    pub(in crate::solve) fn integration_times(&self) -> impl Iterator<Item = f64> + '_ {
+        self.unique_time_bits.iter().copied().map(f64::from_bits)
+    }
+}
+
 /// Each selected row of `rows`, in solve order, with the group and
 /// interval it is solved in.
 ///
@@ -71,12 +193,16 @@ pub(super) fn bucketed_rows(
     combine: GainSolveCombine,
     include_autocorrelations: bool,
     legacy_intervals: bool,
+    baseline_solve: bool,
 ) -> Vec<BucketedRow<'_>> {
     let mut keyed = rows
         .iter()
         .filter(|row| include_autocorrelations || row.antenna1 != row.antenna2)
         .map(|row| (row, SolveBaseKey::for_row(row, combine)))
         .collect::<Vec<_>>();
+    if baseline_solve && combine.scans && !combine.fields {
+        assign_field_visits(&mut keyed);
+    }
     keyed.sort_by(|(a, a_key), (b, b_key)| {
         a_key
             .cmp(b_key)
@@ -128,6 +254,43 @@ pub(super) fn bucketed_rows(
             (row, base_key, bucket_key)
         })
         .collect()
+}
+
+/// CASA's time-averaging iterator starts a new baseline solution when a
+/// scan-combined sequence changes field. The next visit to the same field
+/// starts its own time interval, even with `solint='inf'`.
+fn assign_field_visits(rows: &mut [(&SelectedSolveRow, SolveBaseKey)]) {
+    let Some((first, _)) = rows.first() else {
+        return;
+    };
+    if rows.iter().all(|(row, _)| row.field_id == first.field_id) {
+        return;
+    }
+    let scope = |key: &SolveBaseKey| {
+        (
+            key.array_id,
+            key.observation_id,
+            key.spw_id,
+            key.data_desc_id,
+        )
+    };
+    rows.sort_by(|(left, left_key), (right, right_key)| {
+        scope(left_key)
+            .cmp(&scope(right_key))
+            .then(left.time_seconds.total_cmp(&right.time_seconds))
+            .then(left.field_id.cmp(&right.field_id))
+            .then(left.row_index.cmp(&right.row_index))
+    });
+    let mut visit = 0;
+    let mut previous = None;
+    for (row, key) in rows {
+        let current = (scope(key), row.field_id);
+        if previous.is_some_and(|previous| previous != current) {
+            visit += 1;
+        }
+        key.field_visit = visit;
+        previous = Some(current);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

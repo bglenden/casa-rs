@@ -14960,8 +14960,7 @@
             "provider": {"field": "splinetime"},
             "python": {"name": "splinetime"},
             "presentation": {"label": "Spline Time", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
+          }
         },
         {
           "name": "npointaver",
@@ -14975,8 +14974,7 @@
             "provider": {"field": "npointaver"},
             "python": {"name": "npointaver"},
             "presentation": {"label": "Phase Points Averaged", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
+          }
         },
         {
           "name": "phasewrap",
@@ -14990,8 +14988,7 @@
             "provider": {"field": "phasewrap"},
             "python": {"name": "phasewrap"},
             "presentation": {"label": "Phase Wrap", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
+          }
         },
         {
           "name": "docallib",
@@ -15147,6 +15144,4371 @@
             "provider": {"field": "array", "adapter": "omit_none"},
             "python": {"name": "array", "keyword_only": true},
             "presentation": {"label": "Array IDs", "group": "Selection"}
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "accor",
+      "contract_version": 1,
+      "display_name": "ACCOR",
+      "category": "Calibration",
+      "summary": "Normalize sampler amplitudes using antenna autocorrelations.",
+      "provider_family": "calibration",
+      "casa_task": "accor",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "accor"
+        ],
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset",
+          "surface_note": "Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ],
+              "metavar": "MS"
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet Path",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable",
+                "--out"
+              ],
+              "metavar": "TABLE"
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Calibration Table",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "field_selection",
+          "surface_note": "Select fields by CASA field ID, name, or pattern.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "field",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "Field IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "spectral_window_selection",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "SPW IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "selectdata",
+          "concept": {
+            "id": "parameter.selectdata",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "Enables the detailed selection controls for this calibration workflow.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--selectdata"
+              ],
+              "false_flags": [
+                "--no-selectdata"
+              ]
+            },
+            "provider": {
+              "field": "selectdata",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "selectdata"
+            },
+            "presentation": {
+              "label": "Apply Selection",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "START:END"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "scan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "Scan Numbers",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "observation",
+          "concept": {
+            "id": "ms.selection.observation",
+            "semantic_revision": 4
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--observation"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "observation",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "observation",
+              "type_hint": "str | int"
+            },
+            "presentation": {
+              "label": "Observation IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "msselect",
+          "concept": {
+            "id": "ms.selection.msselect",
+            "semantic_revision": 2
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--msselect"
+              ],
+              "metavar": "EXPR"
+            },
+            "provider": {
+              "field": "msselect",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "msselect"
+            },
+            "presentation": {
+              "label": "MSSelect",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "solint",
+          "concept": {
+            "id": "parameter.solint",
+            "semantic_revision": 2
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "inf"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--solint"
+              ],
+              "metavar": "INTERVAL"
+            },
+            "provider": {
+              "field": "solint",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "solint",
+              "type_hint": "str | int | float"
+            },
+            "presentation": {
+              "label": "Solution Interval",
+              "group": "Solve Gain"
+            }
+          }
+        },
+        {
+          "name": "combine",
+          "concept": {
+            "id": "setsolve.combine",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--combine",
+                "--combine-gain"
+              ],
+              "metavar": "AXES"
+            },
+            "provider": {
+              "field": "combine",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "combine"
+            },
+            "presentation": {
+              "label": "Combine",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "corrdepflags",
+          "concept": {
+            "id": "setsolve.corrdepflags",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--corrdepflags"
+              ],
+              "false_flags": [
+                "--no-corrdepflags"
+              ]
+            },
+            "provider": {
+              "field": "corrdepflags"
+            },
+            "python": {
+              "name": "corrdepflags"
+            },
+            "presentation": {
+              "label": "Correlation-dependent Flags",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "append",
+          "concept": {
+            "id": "setsolve.append",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--append"
+              ],
+              "false_flags": [
+                "--no-append"
+              ]
+            },
+            "provider": {
+              "field": "append"
+            },
+            "python": {
+              "name": "append"
+            },
+            "presentation": {
+              "label": "Append",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "docallib",
+          "concept": {
+            "id": "mstransform.docallib",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--docallib"
+              ],
+              "false_flags": [
+                "--no-docallib"
+              ]
+            },
+            "provider": {
+              "field": "docallib"
+            },
+            "python": {
+              "name": "docallib"
+            },
+            "presentation": {
+              "label": "Use Cal Library",
+              "group": "Calibration"
+            }
+          }
+        },
+        {
+          "name": "callib",
+          "concept": {
+            "id": "parameter.callib",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--callib"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "callib",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "callib"
+            },
+            "presentation": {
+              "label": "Callibrary File",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "gaintable",
+          "concept": {
+            "id": "setapply.gaintable",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gaintable",
+                "--gaintables"
+              ],
+              "metavar": "TABLES"
+            },
+            "provider": {
+              "field": "gaintable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gaintable"
+            },
+            "presentation": {
+              "label": "Gain Tables",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "gainfield",
+          "concept": {
+            "id": "setapply.gainfield",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gainfield"
+              ],
+              "metavar": "TABLE_FIELDS"
+            },
+            "provider": {
+              "field": "gainfield",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gainfield"
+            },
+            "presentation": {
+              "label": "Gain Fields",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "interp",
+          "concept": {
+            "id": "setapply.interp",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interp"
+              ],
+              "metavar": "TABLE_INTERP"
+            },
+            "provider": {
+              "field": "interp",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "interp"
+            },
+            "presentation": {
+              "label": "Interpolation",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "spwmap",
+          "concept": {
+            "id": "setapply.spwmap",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spwmap"
+              ],
+              "metavar": "TABLE_SPWMAP"
+            },
+            "provider": {
+              "field": "spwmap",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spwmap"
+            },
+            "presentation": {
+              "label": "SPW Map",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "output",
+          "concept": {
+            "id": "calibration.report.output",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "output",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "output",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Path",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Overwrite Output",
+              "group": "Output",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "format",
+          "concept": {
+            "id": "parameter.format",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "text"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--format"
+              ],
+              "metavar": "FORMAT"
+            },
+            "provider": {
+              "field": "format",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "format",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Format",
+              "group": "Output",
+              "advanced": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "blcal",
+      "contract_version": 1,
+      "display_name": "BLCAL",
+      "category": "Calibration",
+      "summary": "Solve per-baseline complex visibility calibration.",
+      "provider_family": "calibration",
+      "casa_task": "blcal",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "blcal"
+        ],
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset",
+          "surface_note": "Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ],
+              "metavar": "MS"
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet Path",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable",
+                "--out"
+              ],
+              "metavar": "TABLE"
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Calibration Table",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "field_selection",
+          "surface_note": "Select fields by CASA field ID, name, or pattern.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "field",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "Field IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "spectral_window_selection",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "SPW IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "selectdata",
+          "concept": {
+            "id": "parameter.selectdata",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "Enables the detailed selection controls for this calibration workflow.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--selectdata"
+              ],
+              "false_flags": [
+                "--no-selectdata"
+              ]
+            },
+            "provider": {
+              "field": "selectdata",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "selectdata"
+            },
+            "presentation": {
+              "label": "Apply Selection",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "START:END"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "uvrange",
+          "concept": {
+            "id": "ms.selection.uvrange",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--uvrange"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "uvrange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "uvrange",
+              "type_hint": "str | int | float | list[str]"
+            },
+            "presentation": {
+              "label": "UV Range",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "scan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "Scan Numbers",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "observation",
+          "concept": {
+            "id": "ms.selection.observation",
+            "semantic_revision": 4
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--observation"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "observation",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "observation",
+              "type_hint": "str | int"
+            },
+            "presentation": {
+              "label": "Observation IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "msselect",
+          "concept": {
+            "id": "ms.selection.msselect",
+            "semantic_revision": 2
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--msselect"
+              ],
+              "metavar": "EXPR"
+            },
+            "provider": {
+              "field": "msselect",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "msselect"
+            },
+            "presentation": {
+              "label": "MSSelect",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "solint",
+          "concept": {
+            "id": "parameter.solint",
+            "semantic_revision": 2
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "inf"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--solint"
+              ],
+              "metavar": "INTERVAL"
+            },
+            "provider": {
+              "field": "solint",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "solint",
+              "type_hint": "str | int | float"
+            },
+            "presentation": {
+              "label": "Solution Interval",
+              "group": "Solve Gain"
+            }
+          },
+          "surface_note": "For frequency-dependent solves, an optional comma separates the time interval from a channel count or bandwidth."
+        },
+        {
+          "name": "combine",
+          "concept": {
+            "id": "setsolve.combine",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "scan"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--combine",
+                "--combine-gain"
+              ],
+              "metavar": "AXES"
+            },
+            "provider": {
+              "field": "combine",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "combine"
+            },
+            "presentation": {
+              "label": "Combine",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "freqdep",
+          "concept": {
+            "id": "setsolve.freqdep",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--freqdep"
+              ],
+              "false_flags": [
+                "--no-freqdep"
+              ]
+            },
+            "provider": {
+              "field": "freqdep"
+            },
+            "python": {
+              "name": "freqdep"
+            },
+            "presentation": {
+              "label": "Frequency-dependent Solutions",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "calmode",
+          "concept": {
+            "id": "setsolve.calmode",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "ap"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--calmode",
+                "--mode-gain"
+              ],
+              "metavar": "MODE"
+            },
+            "provider": {
+              "field": "calmode",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "calmode"
+            },
+            "presentation": {
+              "label": "Calibration Mode",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "solnorm",
+          "concept": {
+            "id": "parameter.solnorm",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--solnorm"
+              ],
+              "false_flags": [
+                "--no-solnorm"
+              ]
+            },
+            "provider": {
+              "field": "solnorm",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "solnorm"
+            },
+            "presentation": {
+              "label": "Normalize Amplitude",
+              "group": "Solve"
+            }
+          },
+          "surface_note": "Normalize the amplitude per window for M, or the amplitude and phase per baseline, hand and interval for Mf."
+        },
+        {
+          "name": "gaintable",
+          "concept": {
+            "id": "setapply.gaintable",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gaintable",
+                "--gaintables"
+              ],
+              "metavar": "TABLES"
+            },
+            "provider": {
+              "field": "gaintable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gaintable"
+            },
+            "presentation": {
+              "label": "Gain Tables",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "gainfield",
+          "concept": {
+            "id": "setapply.gainfield",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gainfield"
+              ],
+              "metavar": "TABLE_FIELDS"
+            },
+            "provider": {
+              "field": "gainfield",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gainfield"
+            },
+            "presentation": {
+              "label": "Gain Fields",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "interp",
+          "concept": {
+            "id": "setapply.interp",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interp"
+              ],
+              "metavar": "TABLE_INTERP"
+            },
+            "provider": {
+              "field": "interp",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "interp"
+            },
+            "presentation": {
+              "label": "Interpolation",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "spwmap",
+          "concept": {
+            "id": "setapply.spwmap",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spwmap"
+              ],
+              "metavar": "TABLE_SPWMAP"
+            },
+            "provider": {
+              "field": "spwmap",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spwmap"
+            },
+            "presentation": {
+              "label": "SPW Map",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "parang",
+          "concept": {
+            "id": "parameter.parang",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--parang"
+              ],
+              "false_flags": [
+                "--no-parang"
+              ]
+            },
+            "provider": {
+              "field": "parang"
+            },
+            "python": {
+              "name": "parang"
+            },
+            "presentation": {
+              "label": "Parallactic Angle",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "output",
+          "concept": {
+            "id": "calibration.report.output",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "output",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "output",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Path",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Overwrite Output",
+              "group": "Output",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "format",
+          "concept": {
+            "id": "parameter.format",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "text"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--format"
+              ],
+              "metavar": "FORMAT"
+            },
+            "provider": {
+              "field": "format",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "format",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Format",
+              "group": "Output",
+              "advanced": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "fringefit",
+      "contract_version": 1,
+      "display_name": "Fringe Fit",
+      "category": "Calibration",
+      "summary": "Fit antenna phases, delays and delay rates to VLBI visibilities.",
+      "provider_family": "calibration",
+      "casa_task": "fringefit",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "fringefit"
+        ],
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset",
+          "surface_note": "Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ],
+              "metavar": "MS"
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet Path",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable",
+                "--out"
+              ],
+              "metavar": "TABLE"
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Calibration Table",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "field_selection",
+          "surface_note": "Select fields by CASA field ID, name, or pattern.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "field",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "Field IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "spectral_window_selection",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "SPW IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "selectdata",
+          "concept": {
+            "id": "parameter.selectdata",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "Enables the detailed selection controls for this calibration workflow.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--selectdata"
+              ],
+              "false_flags": [
+                "--no-selectdata"
+              ]
+            },
+            "provider": {
+              "field": "selectdata",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "selectdata"
+            },
+            "presentation": {
+              "label": "Apply Selection",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "START:END"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "uvrange",
+          "concept": {
+            "id": "ms.selection.uvrange",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--uvrange"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "uvrange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "uvrange",
+              "type_hint": "str | int | float | list[str]"
+            },
+            "presentation": {
+              "label": "UV Range",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "scan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "Scan Numbers",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "observation",
+          "concept": {
+            "id": "ms.selection.observation",
+            "semantic_revision": 4
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--observation"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "observation",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "observation",
+              "type_hint": "str | int"
+            },
+            "presentation": {
+              "label": "Observation IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "msselect",
+          "concept": {
+            "id": "ms.selection.msselect",
+            "semantic_revision": 2
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--msselect"
+              ],
+              "metavar": "EXPR"
+            },
+            "provider": {
+              "field": "msselect",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "msselect"
+            },
+            "presentation": {
+              "label": "MSSelect",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "solint",
+          "concept": {
+            "id": "parameter.solint",
+            "semantic_revision": 2
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "inf"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--solint"
+              ],
+              "metavar": "INTERVAL"
+            },
+            "provider": {
+              "field": "solint",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "solint",
+              "type_hint": "str | int | float"
+            },
+            "presentation": {
+              "label": "Solution Interval",
+              "group": "Solve Gain"
+            }
+          }
+        },
+        {
+          "name": "combine",
+          "concept": {
+            "id": "setsolve.combine",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--combine",
+                "--combine-gain"
+              ],
+              "metavar": "AXES"
+            },
+            "provider": {
+              "field": "combine",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "combine"
+            },
+            "presentation": {
+              "label": "Combine",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "refant",
+          "concept": {
+            "id": "parameter.refant",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refant"
+              ],
+              "metavar": "ANTENNA"
+            },
+            "provider": {
+              "field": "refant",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refant"
+            },
+            "presentation": {
+              "label": "Reference Antenna",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "minsnr",
+          "concept": {
+            "id": "setsolve.minsnr",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 3.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minsnr"
+              ],
+              "metavar": "SNR"
+            },
+            "provider": {
+              "field": "minsnr",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minsnr"
+            },
+            "presentation": {
+              "label": "Min SNR",
+              "group": "Solve"
+            }
+          }
+        },
+        {
+          "name": "zerorates",
+          "concept": {
+            "id": "calibration.fringe.zerorates",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--zerorates"
+              ],
+              "false_flags": [
+                "--no-zerorates"
+              ]
+            },
+            "provider": {
+              "field": "zerorates",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "zerorates"
+            },
+            "presentation": {
+              "label": "Zero Rates",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "globalsolve",
+          "concept": {
+            "id": "calibration.fringe.globalsolve",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--globalsolve"
+              ],
+              "false_flags": [
+                "--no-globalsolve"
+              ]
+            },
+            "provider": {
+              "field": "globalsolve",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "globalsolve"
+            },
+            "presentation": {
+              "label": "Global Least Squares",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "niter",
+          "concept": {
+            "id": "setsolve.fringe.niter",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 100
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--niter"
+              ]
+            },
+            "provider": {
+              "field": "niter",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "niter"
+            },
+            "presentation": {
+              "label": "Global Iterations",
+              "group": "Solve",
+              "advanced": true
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Fringefit counts iterations of the phase, delay and rate fit. Imaging niter counts CLEAN iterations."
+          }
+        },
+        {
+          "name": "delaywindow",
+          "concept": {
+            "id": "calibration.fringe.delaywindow",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--delaywindow"
+              ]
+            },
+            "provider": {
+              "field": "delaywindow",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "delaywindow"
+            },
+            "presentation": {
+              "label": "Delay Search Window",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "ratewindow",
+          "concept": {
+            "id": "calibration.fringe.ratewindow",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--ratewindow"
+              ]
+            },
+            "provider": {
+              "field": "ratewindow",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "ratewindow"
+            },
+            "presentation": {
+              "label": "Rate Search Window",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "append",
+          "concept": {
+            "id": "setsolve.append",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--append"
+              ],
+              "false_flags": [
+                "--no-append"
+              ]
+            },
+            "provider": {
+              "field": "append"
+            },
+            "python": {
+              "name": "append"
+            },
+            "presentation": {
+              "label": "Append",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "corrdepflags",
+          "concept": {
+            "id": "setsolve.corrdepflags",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--corrdepflags"
+              ],
+              "false_flags": [
+                "--no-corrdepflags"
+              ]
+            },
+            "provider": {
+              "field": "corrdepflags"
+            },
+            "python": {
+              "name": "corrdepflags"
+            },
+            "presentation": {
+              "label": "Correlation-dependent Flags",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "corrcomb",
+          "concept": {
+            "id": "calibration.fringe.corrcomb",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--corrcomb"
+              ]
+            },
+            "provider": {
+              "field": "corrcomb",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "corrcomb"
+            },
+            "presentation": {
+              "label": "Correlation Combination",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "docallib",
+          "concept": {
+            "id": "mstransform.docallib",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--docallib"
+              ],
+              "false_flags": [
+                "--no-docallib"
+              ]
+            },
+            "provider": {
+              "field": "docallib"
+            },
+            "python": {
+              "name": "docallib"
+            },
+            "presentation": {
+              "label": "Use Cal Library",
+              "group": "Calibration"
+            }
+          }
+        },
+        {
+          "name": "callib",
+          "concept": {
+            "id": "parameter.callib",
+            "semantic_revision": 1
+          },
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--callib"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "callib",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "callib"
+            },
+            "presentation": {
+              "label": "Callibrary File",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "gaintable",
+          "concept": {
+            "id": "setapply.gaintable",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gaintable",
+                "--gaintables"
+              ],
+              "metavar": "TABLES"
+            },
+            "provider": {
+              "field": "gaintable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gaintable"
+            },
+            "presentation": {
+              "label": "Gain Tables",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "gainfield",
+          "concept": {
+            "id": "setapply.gainfield",
+            "semantic_revision": 1
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gainfield"
+              ],
+              "metavar": "TABLE_FIELDS"
+            },
+            "provider": {
+              "field": "gainfield",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gainfield"
+            },
+            "presentation": {
+              "label": "Gain Fields",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "interp",
+          "concept": {
+            "id": "setapply.interp",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interp"
+              ],
+              "metavar": "TABLE_INTERP"
+            },
+            "provider": {
+              "field": "interp",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "interp"
+            },
+            "presentation": {
+              "label": "Interpolation",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "spwmap",
+          "concept": {
+            "id": "setapply.spwmap",
+            "semantic_revision": 1
+          },
+          "order": 29,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spwmap"
+              ],
+              "metavar": "TABLE_SPWMAP"
+            },
+            "provider": {
+              "field": "spwmap",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spwmap"
+            },
+            "presentation": {
+              "label": "SPW Map",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "paramactive",
+          "concept": {
+            "id": "calibration.fringe.paramactive",
+            "semantic_revision": 1
+          },
+          "order": 30,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--paramactive"
+              ]
+            },
+            "provider": {
+              "field": "paramactive",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "paramactive"
+            },
+            "presentation": {
+              "label": "Active Parameters",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "concatspws",
+          "concept": {
+            "id": "calibration.fringe.concatspws",
+            "semantic_revision": 1
+          },
+          "order": 31,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--concatspws"
+              ],
+              "false_flags": [
+                "--no-concatspws"
+              ]
+            },
+            "provider": {
+              "field": "concatspws",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "concatspws"
+            },
+            "presentation": {
+              "label": "Concatenate Spectral Windows",
+              "group": "Solve",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "parang",
+          "concept": {
+            "id": "parameter.parang",
+            "semantic_revision": 1
+          },
+          "order": 32,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--parang"
+              ],
+              "false_flags": [
+                "--no-parang"
+              ]
+            },
+            "provider": {
+              "field": "parang"
+            },
+            "python": {
+              "name": "parang"
+            },
+            "presentation": {
+              "label": "Parallactic Angle",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "output",
+          "concept": {
+            "id": "calibration.report.output",
+            "semantic_revision": 1
+          },
+          "order": 33,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "output",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "output",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Path",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 34,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Overwrite Output",
+              "group": "Output",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "format",
+          "concept": {
+            "id": "parameter.format",
+            "semantic_revision": 1
+          },
+          "order": 35,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "text"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--format"
+              ],
+              "metavar": "FORMAT"
+            },
+            "provider": {
+              "field": "format",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "format",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Format",
+              "group": "Output",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "array",
+          "concept": {
+            "id": "ms.selection.array",
+            "semantic_revision": 1
+          },
+          "order": 36,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "selectdata",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--array"
+              ],
+              "metavar": "IDS"
+            },
+            "provider": {
+              "field": "array",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "array",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Array IDs",
+              "group": "Selection"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "pccor",
+      "contract_version": 1,
+      "display_name": "Pulse Calibration",
+      "category": "Calibration",
+      "summary": "Align VLBI pulse and cable calibration to a reference fringe solution.",
+      "provider_family": "calibration",
+      "casa_task": "pccor",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "pccor"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "pccor_caltable",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "pccor_caltable"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "pccor_caltable",
+          "concept": {
+            "id": "calibration.pccor.pccor_caltable",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pccor-caltable"
+              ]
+            },
+            "provider": {
+              "field": "pccor_caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pccor_caltable",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Output Calibration Table",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "refant",
+          "concept": {
+            "id": "parameter.refant",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refant"
+              ]
+            },
+            "provider": {
+              "field": "refant",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refant"
+            },
+            "presentation": {
+              "label": "Reference Antenna",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 4
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ]
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "Reference Time Range",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "Reference Scan",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "Spectral Windows",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ]
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "Antennas",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "cablecal_correction",
+          "concept": {
+            "id": "calibration.pccor.cablecal_correction",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--cablecal-correction"
+              ],
+              "false_flags": [
+                "--no-cablecal-correction"
+              ]
+            },
+            "provider": {
+              "field": "cablecal_correction",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "cablecal_correction"
+            },
+            "presentation": {
+              "label": "Cable Delay",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "ff_table",
+          "concept": {
+            "id": "calibration.pccor.ff_table",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--ff-table"
+              ]
+            },
+            "provider": {
+              "field": "ff_table",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "ff_table"
+            },
+            "presentation": {
+              "label": "Fringe Table",
+              "group": "Pulse Calibration"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "appendantab",
+      "contract_version": 1,
+      "display_name": "Append ANTAB",
+      "category": "Calibration",
+      "summary": "Import ANTAB temperatures and gain curves into a copied MeasurementSet.",
+      "provider_family": "calibration",
+      "casa_task": "appendantab",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "appendantab"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outvis"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "outvis",
+          "concept": {
+            "id": "calibration.antab.outvis",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outvis"
+              ]
+            },
+            "provider": {
+              "field": "outvis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outvis",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Output MeasurementSet",
+              "group": "ANTAB"
+            }
+          }
+        },
+        {
+          "name": "antab",
+          "concept": {
+            "id": "calibration.antab.antab",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antab"
+              ]
+            },
+            "provider": {
+              "field": "antab",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antab",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "ANTAB File",
+              "group": "ANTAB"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ],
+              "false_flags": [
+                "--no-overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "Overwrite Matching Rows",
+              "group": "ANTAB"
+            }
+          }
+        },
+        {
+          "name": "append_tsys",
+          "concept": {
+            "id": "calibration.antab.append_tsys",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--append-tsys"
+              ],
+              "false_flags": [
+                "--no-append-tsys"
+              ]
+            },
+            "provider": {
+              "field": "append_tsys",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "append_tsys"
+            },
+            "presentation": {
+              "label": "Import System Temperatures",
+              "group": "ANTAB"
+            }
+          }
+        },
+        {
+          "name": "append_gc",
+          "concept": {
+            "id": "calibration.antab.append_gc",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--append-gc"
+              ],
+              "false_flags": [
+                "--no-append-gc"
+              ]
+            },
+            "provider": {
+              "field": "append_gc",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "append_gc"
+            },
+            "presentation": {
+              "label": "Import Gain Curves",
+              "group": "ANTAB"
+            }
           }
         }
       ]
@@ -47151,6 +51513,2083 @@
             "presentation": {
               "label": "Overwrite output",
               "group": "Output"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "sdfit",
+      "contract_version": 1,
+      "display_name": "Single-Dish Line Fitting",
+      "category": "Calibration",
+      "summary": "Fit Gaussian or Lorentzian lines to selected single-dish spectra.",
+      "provider_family": "calibration",
+      "casa_task": "sdfit",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "sdfit"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "infile",
+          "concept": {
+            "id": "single_dish.sky.infile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infile"
+              ]
+            },
+            "provider": {
+              "field": "infile"
+            },
+            "python": {
+              "name": "infile"
+            },
+            "presentation": {
+              "label": "Input MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "datacolumn",
+          "concept": {
+            "id": "parameter.datacolumn",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "data"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--datacolumn"
+              ],
+              "metavar": "COLUMN"
+            },
+            "provider": {
+              "field": "datacolumn",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "datacolumn",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Data Column",
+              "group": "Data"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Spectral window",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 5
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "START~END"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "timerange",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "pol",
+          "concept": {
+            "id": "specifycal.pol",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pol"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "pol"
+            },
+            "python": {
+              "name": "pol",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Correlation",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "timebin",
+          "concept": {
+            "id": "parameter.timebin",
+            "semantic_revision": 2
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timebin"
+              ],
+              "metavar": "QUANTITY"
+            },
+            "provider": {
+              "field": "timebin"
+            },
+            "python": {
+              "name": "timebin"
+            },
+            "presentation": {
+              "label": "Time Bin",
+              "group": "Time",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "timespan",
+          "concept": {
+            "id": "single_dish.line_fit.timespan",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timespan"
+              ]
+            },
+            "provider": {
+              "field": "timespan"
+            },
+            "python": {
+              "name": "timespan"
+            },
+            "presentation": {
+              "label": "Time Span",
+              "group": "Line Fitting"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1532",
+            "reason": "Scan, state and field boundaries allowed within an averaging interval."
+          }
+        },
+        {
+          "name": "polaverage",
+          "concept": {
+            "id": "single_dish.line_fit.polaverage",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--polaverage"
+              ]
+            },
+            "provider": {
+              "field": "polaverage"
+            },
+            "python": {
+              "name": "polaverage"
+            },
+            "presentation": {
+              "label": "Polarization Average",
+              "group": "Line Fitting"
+            }
+          }
+        },
+        {
+          "name": "fitfunc",
+          "concept": {
+            "id": "single_dish.line_fit.fitfunc",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "gaussian"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fitfunc"
+              ]
+            },
+            "provider": {
+              "field": "fitfunc"
+            },
+            "python": {
+              "name": "fitfunc"
+            },
+            "presentation": {
+              "label": "Line Profile",
+              "group": "Line Fitting"
+            }
+          }
+        },
+        {
+          "name": "fitmode",
+          "concept": {
+            "id": "single_dish.line_fit.fitmode",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "list"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fitmode"
+              ]
+            },
+            "provider": {
+              "field": "fitmode"
+            },
+            "python": {
+              "name": "fitmode"
+            },
+            "presentation": {
+              "label": "Fit Mode",
+              "group": "Line Fitting"
+            }
+          }
+        },
+        {
+          "name": "nfit",
+          "concept": {
+            "id": "single_dish.line_fit.nfit",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": 0
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--nfit"
+              ]
+            },
+            "provider": {
+              "field": "nfit"
+            },
+            "python": {
+              "name": "nfit",
+              "type_hint": "int | list[int]"
+            },
+            "presentation": {
+              "label": "Line Components",
+              "group": "Line Fitting"
+            }
+          }
+        },
+        {
+          "name": "thresh",
+          "concept": {
+            "id": "single_dish.baseline.thresh",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 5.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--thresh"
+              ]
+            },
+            "provider": {
+              "field": "thresh",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "thresh",
+              "type_hint": "float"
+            },
+            "presentation": {
+              "label": "thresh",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "avg_limit",
+          "concept": {
+            "id": "single_dish.baseline.avg_limit",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--avg_limit"
+              ]
+            },
+            "provider": {
+              "field": "avg_limit",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "avg_limit",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "avg_limit",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "minwidth",
+          "concept": {
+            "id": "single_dish.baseline.minwidth",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minwidth"
+              ]
+            },
+            "provider": {
+              "field": "minwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minwidth",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "minwidth",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "edge",
+          "concept": {
+            "id": "single_dish.baseline.edge",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": 0
+                },
+                {
+                  "kind": "integer",
+                  "value": 0
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--edge"
+              ]
+            },
+            "provider": {
+              "field": "edge",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "edge",
+              "type_hint": "list[int]"
+            },
+            "presentation": {
+              "label": "edge",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "single_dish.line_fit.outfile",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "Line Fit Report",
+              "group": "Line Fitting"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1532",
+            "reason": "Optional tab-separated report of fitted line components."
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "Overwrite output",
+              "group": "Output"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "sdatmcor",
+      "contract_version": 1,
+      "display_name": "Single-Dish Atmospheric Correction",
+      "category": "Calibration",
+      "summary": "Correct calibrated single-dish spectra for differential atmospheric emission.",
+      "provider_family": "calibration",
+      "casa_task": "sdatmcor",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "sdatmcor"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "infile",
+          "concept": {
+            "id": "single_dish.sky.infile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infile"
+              ]
+            },
+            "provider": {
+              "field": "infile"
+            },
+            "python": {
+              "name": "infile"
+            },
+            "presentation": {
+              "label": "Input MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "datacolumn",
+          "concept": {
+            "id": "parameter.datacolumn",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "data"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--datacolumn"
+              ],
+              "metavar": "COLUMN"
+            },
+            "provider": {
+              "field": "datacolumn",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "datacolumn",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Data Column",
+              "group": "Data"
+            }
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "single_dish.smoothing.outfile",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile",
+              "type_hint": "StrPath"
+            },
+            "presentation": {
+              "label": "Output MeasurementSet",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "Overwrite output",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Spectral window",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "correlation",
+          "concept": {
+            "id": "ms.selection.correlation",
+            "semantic_revision": 2
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--correlation"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "correlation"
+            },
+            "python": {
+              "name": "correlation",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Correlation",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 5
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "START~END"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "timerange",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "observation",
+          "concept": {
+            "id": "ms.selection.observation",
+            "semantic_revision": 4
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--observation"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "observation"
+            },
+            "python": {
+              "name": "observation",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Observation",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "feed",
+          "concept": {
+            "id": "ms.selection.feed",
+            "semantic_revision": 2
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--feed"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "feed"
+            },
+            "python": {
+              "name": "feed",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Feed",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "msselect",
+          "concept": {
+            "id": "ms.selection.msselect",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "reviewed_homonym": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--msselect"
+              ],
+              "false_flags": [],
+              "metavar": "EXPR"
+            },
+            "provider": {
+              "field": "msselect",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "msselect",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "MSSelect",
+              "group": "Selection",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "outputspw",
+          "concept": {
+            "id": "single_dish.atmosphere.outputspw",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outputspw"
+              ]
+            },
+            "provider": {
+              "field": "outputspw"
+            },
+            "python": {
+              "name": "outputspw"
+            },
+            "presentation": {
+              "label": "Output Spectral Windows",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "gainfactor",
+          "concept": {
+            "id": "single_dish.atmosphere.gainfactor",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gainfactor"
+              ]
+            },
+            "provider": {
+              "field": "gainfactor"
+            },
+            "python": {
+              "name": "gainfactor",
+              "type_hint": "float | dict[str | int, float] | str"
+            },
+            "presentation": {
+              "label": "Gain Factor",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "dtem_dh",
+          "concept": {
+            "id": "single_dish.atmosphere.dtem_dh",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dtem_dh"
+              ]
+            },
+            "provider": {
+              "field": "dtem_dh"
+            },
+            "python": {
+              "name": "dtem_dh",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Temperature Lapse Rate",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "h0",
+          "concept": {
+            "id": "single_dish.atmosphere.h0",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--h0"
+              ]
+            },
+            "provider": {
+              "field": "h0"
+            },
+            "python": {
+              "name": "h0",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Water Scale Height",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "atmtype",
+          "concept": {
+            "id": "single_dish.atmosphere.atmtype",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--atmtype"
+              ]
+            },
+            "provider": {
+              "field": "atmtype"
+            },
+            "python": {
+              "name": "atmtype"
+            },
+            "presentation": {
+              "label": "Reference Atmosphere",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "atmdetail",
+          "concept": {
+            "id": "single_dish.atmosphere.atmdetail",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--atmdetail"
+              ]
+            },
+            "provider": {
+              "field": "atmdetail"
+            },
+            "python": {
+              "name": "atmdetail"
+            },
+            "presentation": {
+              "label": "Use User Atmosphere Inputs",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "altitude",
+          "concept": {
+            "id": "single_dish.atmosphere.altitude",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--altitude"
+              ]
+            },
+            "provider": {
+              "field": "altitude"
+            },
+            "python": {
+              "name": "altitude",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Site Altitude",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "temperature",
+          "concept": {
+            "id": "single_dish.atmosphere.temperature",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--temperature"
+              ]
+            },
+            "provider": {
+              "field": "temperature"
+            },
+            "python": {
+              "name": "temperature",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Ground Temperature",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "pressure",
+          "concept": {
+            "id": "single_dish.atmosphere.pressure",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pressure"
+              ]
+            },
+            "provider": {
+              "field": "pressure"
+            },
+            "python": {
+              "name": "pressure",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Ground Pressure",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "humidity",
+          "concept": {
+            "id": "single_dish.atmosphere.humidity",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": -1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--humidity"
+              ]
+            },
+            "provider": {
+              "field": "humidity"
+            },
+            "python": {
+              "name": "humidity"
+            },
+            "presentation": {
+              "label": "Relative Humidity",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "pwv",
+          "concept": {
+            "id": "single_dish.atmosphere.pwv",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pwv"
+              ]
+            },
+            "provider": {
+              "field": "pwv"
+            },
+            "python": {
+              "name": "pwv",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Precipitable Water Vapour",
+              "group": "Atmosphere"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1532",
+            "reason": "The observed atmospheric water column override also accepts a quantity string."
+          }
+        },
+        {
+          "name": "dp",
+          "concept": {
+            "id": "single_dish.atmosphere.dp",
+            "semantic_revision": 1
+          },
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dp"
+              ]
+            },
+            "provider": {
+              "field": "dp"
+            },
+            "python": {
+              "name": "dp",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Pressure Step",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "dpm",
+          "concept": {
+            "id": "single_dish.atmosphere.dpm",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": -1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dpm"
+              ]
+            },
+            "provider": {
+              "field": "dpm"
+            },
+            "python": {
+              "name": "dpm"
+            },
+            "presentation": {
+              "label": "Pressure Step Factor",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "layerboundaries",
+          "concept": {
+            "id": "single_dish.atmosphere.layerboundaries",
+            "semantic_revision": 1
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--layerboundaries"
+              ]
+            },
+            "provider": {
+              "field": "layerboundaries"
+            },
+            "python": {
+              "name": "layerboundaries",
+              "type_hint": "str | list[str] | list[float]"
+            },
+            "presentation": {
+              "label": "Temperature Profile Altitudes",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "layertemperature",
+          "concept": {
+            "id": "single_dish.atmosphere.layertemperature",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--layertemperature"
+              ]
+            },
+            "provider": {
+              "field": "layertemperature"
+            },
+            "python": {
+              "name": "layertemperature",
+              "type_hint": "str | list[str] | list[float]"
+            },
+            "presentation": {
+              "label": "Temperature Profile Temperatures",
+              "group": "Atmosphere"
             }
           }
         }

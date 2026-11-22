@@ -4,7 +4,8 @@
 use std::path::Path;
 
 use casa_tables::{Table, TableOptions};
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::CalibrationTableWriteError;
 
@@ -80,8 +81,15 @@ pub(crate) fn validate_identity(
     new: &Table,
     path: &Path,
 ) -> Result<(), CalibrationTableWriteError> {
-    if old.info().sub_type == "BPOLY" && new.info().sub_type == "BPOLY" {
-        return Ok(());
+    if matches!(new.info().sub_type.as_str(), "BPOLY" | "GSPLINE") {
+        return if old.info().sub_type == new.info().sub_type {
+            Ok(())
+        } else {
+            Err(invalid(
+                path,
+                "incompatible legacy calibration subtype; prior product is unchanged",
+            ))
+        };
     }
     for key in ["VisCal", "ParType", "MSName"] {
         if old.keywords().get(key) != new.keywords().get(key) {
@@ -94,8 +102,8 @@ pub(crate) fn validate_identity(
     Ok(())
 }
 
-/// BJonesPoly::updateCalTable reuses a CAL_DESC row for the same window,
-/// or adds one, and appends MAIN in solution order (no modern NCT sorting).
+/// Legacy polynomial tables reuse a CAL_DESC row for the same window
+/// and append MAIN in solution order.
 pub(crate) fn append_legacy(
     old: &mut Table,
     new: &mut Table,
@@ -137,11 +145,88 @@ pub(crate) fn append_legacy(
             .and_then(|mut c| c.set(Value::Scalar(ScalarValue::Int32(mapped))))
             .map_err(|e| invalid(stage, e.to_string()))?;
     }
+    if new.info().sub_type == "GSPLINE" {
+        // There is one fit per antenna and field. Keep unrelated fields and
+        // replace existing fits for the fields solved by this call.
+        let fields = |table: &Table| {
+            (0..table.row_count())
+                .map(|row| {
+                    match table
+                        .cell_accessor(row, "FIELD_ID")
+                        .and_then(|cell| cell.scalar())
+                    {
+                        Ok(ScalarValue::Int32(id)) => Ok(*id),
+                        _ => Err(invalid(source, "invalid GSPLINE FIELD_ID")),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()
+        };
+        let incoming_fields = fields(new)?
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let replaced = fields(old)?
+            .iter()
+            .enumerate()
+            .filter_map(|(row, field)| incoming_fields.contains(field).then_some(row))
+            .collect::<Vec<_>>();
+        old.remove_rows(&replaced)
+            .map_err(|error| invalid(source, error.to_string()))?;
+    }
     append(old, new, source)?;
+    if new.info().sub_type == "GSPLINE" {
+        pad_spline_columns(old, source)?;
+    }
     preserve_subtables(source, stage)?;
     descriptors
         .save(TableOptions::new(stage.join("CAL_DESC")))
         .map_err(|e| invalid(stage, e.to_string()))
+}
+
+fn pad_spline_columns(table: &mut Table, path: &Path) -> Result<(), CalibrationTableWriteError> {
+    // CASA loads each legacy column as a whole array, then reads the logical
+    // knot/coefficient count in each row. Make the storage shape uniform.
+    for name in [
+        "SPLINE_KNOTS_AMP",
+        "SPLINE_KNOTS_PHASE",
+        "POLY_COEFF_AMP",
+        "POLY_COEFF_PHASE",
+    ] {
+        let len = |row| {
+            let cell = table
+                .cell_accessor(row, name)
+                .and_then(|cell| cell.array())
+                .map_err(|error| invalid(path, error.to_string()))?;
+            match cell.shape() {
+                [1, 1, 1, len] => Ok(*len),
+                _ => Err(invalid(path, format!("invalid GSPLINE {name} cell shape"))),
+            }
+        };
+        let lengths = (0..table.row_count())
+            .map(len)
+            .collect::<Result<Vec<_>, _>>()?;
+        let largest = lengths.iter().copied().max().unwrap_or(0);
+        for (row, size) in lengths.into_iter().enumerate() {
+            if size == largest {
+                continue;
+            }
+            let ArrayValue::Float64(values) = table
+                .cell_accessor(row, name)
+                .and_then(|cell| cell.array())
+                .map_err(|error| invalid(path, error.to_string()))?
+            else {
+                return Err(invalid(path, format!("invalid GSPLINE {name} cell type")));
+            };
+            let mut padded: Vec<_> = values.iter().copied().collect();
+            padded.resize(largest, 0.);
+            let array = ArrayD::from_shape_vec(IxDyn(&[1, 1, 1, largest]).f(), padded)
+                .map_err(|error| invalid(path, error.to_string()))?;
+            table
+                .cell_accessor_mut(row, name)
+                .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Float64(array))))
+                .map_err(|error| invalid(path, error.to_string()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Append incoming rows to the original schema (CASA's optional ARRAY_ID and

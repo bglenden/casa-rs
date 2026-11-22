@@ -39,8 +39,12 @@ pub struct MiriadImage {
     coordinates: CoordinateSystem,
     units: String,
     info: ImageInfo,
-    pixel_identity: Metadata,
-    pixels: Mutex<Option<File>>,
+    pixels: Mutex<PixelFile>,
+}
+
+struct PixelFile {
+    file: File,
+    active: bool,
 }
 
 impl MiriadImage {
@@ -136,8 +140,10 @@ impl MiriadImage {
             coordinates,
             units,
             info,
-            pixel_identity,
-            pixels: Mutex::new(None),
+            pixels: Mutex::new(PixelFile {
+                file: pixels,
+                active: false,
+            }),
         })
     }
 
@@ -183,7 +189,7 @@ impl MiriadImage {
             .pixels
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if stream.is_none() {
+        if !stream.active {
             let path = self.path.join("image");
             let open_error =
                 |error| ImageError::Io(format!("{} could not be opened: {error}", path.display()));
@@ -193,16 +199,18 @@ impl MiriadImage {
                     path.display()
                 ))
             };
-            if !same_pixel_file(&self.pixel_identity, &path.metadata().map_err(open_error)?) {
+            let identity = stream.file.metadata().map_err(io_error)?;
+            if !same_pixel_file(&identity, &path.metadata().map_err(open_error)?) {
                 return Err(changed());
             }
             let file = File::open(&path).map_err(open_error)?;
-            if !same_pixel_file(&self.pixel_identity, &file.metadata().map_err(io_error)?) {
+            if !same_pixel_file(&identity, &file.metadata().map_err(io_error)?) {
                 return Err(changed());
             }
-            *stream = Some(file);
+            stream.file = file;
+            stream.active = true;
         }
-        let reader = stream.as_mut().expect("MIRIAD pixel stream is open");
+        let reader = &mut stream.file;
         let row_count = size / count[0];
         let mut packed = [0; 16 * 1024];
         for row in 0..row_count {

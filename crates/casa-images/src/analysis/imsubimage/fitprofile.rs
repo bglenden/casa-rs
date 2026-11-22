@@ -3,6 +3,8 @@
 //! Fits one-dimensional spectral models along an image pixel axis.
 
 mod axis;
+mod channel_lines;
+pub use channel_lines::{ChannelLineFit, ChannelLineShape, fit_channel_lines};
 mod curve;
 mod estimates;
 mod models;

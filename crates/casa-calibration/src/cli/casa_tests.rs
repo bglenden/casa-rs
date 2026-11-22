@@ -280,6 +280,8 @@ fn gaincal_reads_casas_values() {
             },
             output_table: PathBuf::from("phase.gcal"),
             gain_type: GainType::T,
+            spline_controls: None,
+            fringe_controls: None,
             solve_mode: GainSolveMode::Amplitude,
             solve_interval: GainSolveInterval::Seconds(30.0),
             combine: GainSolveCombine {
@@ -314,7 +316,19 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         values[name] = value;
         casa("gaincal", values)
     };
-    assert!(refused(with("gaintype", json!("GSPLINE")), "gaintype").contains("#979"));
+    let spline = gain(json!({
+        "vis": "d.ms", "caltable": "spline.gcal", "gaintype": "GSPLINE",
+        "splinetime": 60.0, "npointaver": 5, "phasewrap": 150.0, "smodel": [1, 0, 0, 0],
+    }));
+    assert_eq!(spline.gain_type, GainType::GSpline);
+    assert_eq!(
+        spline.spline_controls,
+        Some(crate::GainSplineControls {
+            splinetime: 60.,
+            npointaver: 5,
+            phasewrap: 150.
+        })
+    );
     for solint in ["nan", "1Jy", "soon"] {
         let message = refused(with("solint", json!(solint)), "solint");
         assert!(message.contains("not valid"), "{solint}: {message}");

@@ -24,15 +24,21 @@ const METHODS: &[Method] = &[
             S::Implemented,
         )
     },
-    method("activityrec", &[], R::Any, S::NotYetImplemented),
+    method("activityrec", &[], R::Any, S::Partial),
     method("close", &[], R::Bool, S::Implemented),
-    method(
-        "correct",
-        &[param("applymode", K::Text, D::Text(""))],
-        R::Any,
-        S::NotYetImplemented,
-    ),
-    method("corrupt", &[], R::Any, S::NotYetImplemented),
+    Method {
+        mutating: true,
+        ..method(
+            "correct",
+            &[param("applymode", K::Text, D::Text(""))],
+            R::Bool,
+            S::Partial,
+        )
+    },
+    Method {
+        mutating: true,
+        ..method("corrupt", &[], R::Bool, S::Partial)
+    },
     Method {
         mutating: true,
         ..method(
@@ -115,8 +121,8 @@ const METHODS: &[Method] = &[
             param("tableout", K::Text, D::Text("")),
             param("fields", K::Any, D::Empty),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Implemented,
     ),
     method(
         "listcal",
@@ -164,7 +170,7 @@ const METHODS: &[Method] = &[
         "parsecallibfile",
         &[param("filein", K::Text, D::Required)],
         R::Any,
-        S::NotYetImplemented,
+        S::Implemented,
     ),
     method(
         "plotcal",
@@ -190,8 +196,8 @@ const METHODS: &[Method] = &[
             param("tablein", K::Any, D::Required),
             param("tableout", K::Text, D::Text("")),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Partial,
     ),
     Method {
         mutating: true,
@@ -216,7 +222,7 @@ const METHODS: &[Method] = &[
         R::Bool,
         S::Implemented,
     ),
-    method("returndict", &[], R::Any, S::NotYetImplemented),
+    method("returndict", &[], R::Any, S::Partial),
     method(
         "selectvis",
         &[
@@ -252,20 +258,20 @@ const METHODS: &[Method] = &[
             param("spwmap", K::Ints, D::Ints(&[-1])),
             param("opacity", K::Floats, D::Floats(&[0.0])),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Partial,
     ),
     method(
         "setcallib",
         &[param("callib", K::Record, D::EmptyRecord)],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Partial,
     ),
     method(
         "setcorrdepflags",
-        &[param("corrdepflags", K::Any, D::Required)],
-        R::Any,
-        S::NotYetImplemented,
+        &[param("corrdepflags", K::Bool, D::Required)],
+        R::Bool,
+        S::Implemented,
     ),
     method(
         "setmodel",
@@ -376,7 +382,10 @@ const METHODS: &[Method] = &[
             S::Implemented,
         )
     },
-    method("solve", &[], R::Any, S::NotYetImplemented),
+    Method {
+        mutating: true,
+        ..method("solve", &[], R::Bool, S::Partial)
+    },
     method(
         "specifycal",
         &[
@@ -406,8 +415,8 @@ const METHODS: &[Method] = &[
     method(
         "validatecallib",
         &[param("callib", K::Record, D::EmptyRecord)],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Implemented,
     ),
 ];
 

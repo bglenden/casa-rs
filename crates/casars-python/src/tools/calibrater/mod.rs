@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Python access to the shared calibrater attachment and visibility equation.
 
+mod apply;
 mod arguments;
+mod solve;
 mod stubs;
 pub(crate) mod surface;
 mod table_tools;
@@ -49,23 +51,30 @@ impl PyCalibrater {
         py: Python<'_>,
         operation: impl FnOnce(&mut CalibraterLifecycle) -> Result<(), CalibraterLifecycleError> + Send,
     ) -> PyResult<bool> {
+        self.attached_result(py, move |state| operation(state).map(|()| true))
+    }
+
+    fn attached_result(
+        &self,
+        py: Python<'_>,
+        operation: impl FnOnce(&mut CalibraterLifecycle) -> Result<bool, CalibraterLifecycleError>
+        + Send,
+    ) -> PyResult<bool> {
         let result = self.with_lifecycle(py, |state| {
             Ok(match operation(state) {
-                Err(CalibraterLifecycleError::Unattached) => false,
-                result => {
-                    result.map_err(runtime_error)?;
-                    true
-                }
+                Err(CalibraterLifecycleError::Unattached) => None,
+                result => Some(result.map_err(runtime_error)?),
             })
         })?;
-        if !result {
-            emit(
-                py,
-                LOGGER,
-                &[LogLine::error("Must first open a MeasurementSet.")],
-            )?;
+        if let Some(result) = result {
+            return Ok(result);
         }
-        Ok(result)
+        emit(
+            py,
+            LOGGER,
+            &[LogLine::error("Must first open a MeasurementSet.")],
+        )?;
+        Ok(false)
     }
 }
 

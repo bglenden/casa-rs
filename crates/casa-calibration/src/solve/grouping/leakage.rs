@@ -202,6 +202,7 @@ pub(crate) fn solve_polarization(
         request.combine,
         false,
         false,
+        false,
     );
     let mut models = super::super::model::ModelInputs::new(ms, &context.rows, request.model_source)
         .map_err(error)?;
@@ -548,6 +549,8 @@ impl LeakageInputs<'_> {
             stats.interval(&IntervalStages {
                 spw_id: spectral_window,
                 antennas: &expected,
+                expected_window: true,
+                attempted_interval: None,
                 with_data: vec![data.antennas.clone(), data.antennas],
                 constrained: BTreeSet::new(),
             });

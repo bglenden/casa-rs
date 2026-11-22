@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "task": "gaincal",
+  "mode": "GSPLINE",
+  "casa_version": "6.7.6.14",
+  "issue": 1536,
+  "pull_request": 1992,
+  "scientific": {
+    "command": "CASARS_CALIBRATE_BIN=<calibrate> PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/gspline_oracle.py <new-directory> --edge-cases",
+    "scope": [
+      "Amplitude, phase and combined splines, reference-antenna gauge and nonpositive or insufficient knot spacing",
+      "Wrapped and noisy tracks, weighted gaps, common channel masks, non-default phase wrap and window controls, finite preaverage",
+      "Physical model-column and virtual point-source inputs, channel selection and frequency scaling, prior calibration and single-hand correlations",
+      "Legacy array, subtable and return-record checks, preserved field fits on append and CASA-readable mixed knot counts",
+      "Four CASA and casa-rs producer/consumer paths with casacore readback, analytic visibility reconstruction and weighted RMS diagnostics",
+      "Same-type amplitude priors change fit weights, including with finite preaverage",
+      "Separate gains for simultaneous fields, rejected first integrations, deterministic subsecond bins and missing antenna gains",
+      "Core phase-wrap median test for both sides of 100 samples"
+    ],
+    "result": "passed",
+    "revision": "44c35d09677d927258e1ee509c9ab2a6639e59e8",
+    "normalized_visibility_rms_max": 1.2e-07,
+    "reviewed_revision": "d245350d63870f3a40d202833bc1851d109f801f",
+    "simulator_matching_rows": 1152
+  },
+  "performance": {
+    "revision": "44c35d09677d927258e1ee509c9ab2a6639e59e8",
+    "command": "CASARS_CALIBRATE_BIN=<calibrate> PYTHONPATH=crates/casars-python/python RAYON_NUM_THREADS=2 casa-python tools/casa-compat/gspline_oracle.py <new-directory> --benchmark",
+    "scope": "Identical 32000-row, 2048000-sample input and matched saved solutions on a cloud Linux debug build using local memory-backed scratch",
+    "casa_wall_seconds": [
+      0.9441,
+      0.9289,
+      0.9456
+    ],
+    "native_wall_seconds": [
+      1.3639,
+      1.312,
+      1.4702
+    ],
+    "casa_rows_per_second": [
+      33894,
+      34448,
+      33839
+    ],
+    "native_rows_per_second": [
+      23461,
+      24390,
+      21765
+    ],
+    "native_process_peak_rss_kib": [
+      119656,
+      120316,
+      120360
+    ],
+    "native_workers": 2,
+    "native_select_average_seconds": [
+      1.00334,
+      1.01748,
+      1.18282
+    ],
+    "native_read_decode_seconds": [
+      0.35831,
+      0.42485,
+      0.52946
+    ],
+    "native_accumulate_seconds": [
+      0.5811,
+      0.58652,
+      0.72395
+    ],
+    "native_fit_seconds": [
+      0.15678,
+      0.15303,
+      0.16317
+    ],
+    "native_write_seconds": [
+      0.0335,
+      0.03358,
+      0.03854
+    ],
+    "release_qualification": "Tracked under the final calibration performance pass in #979",
+    "casa_python_peak_rss_kib": [
+      439396,
+      439396,
+      439396
+    ],
+    "casa_cpu_seconds": [
+      0.9442,
+      0.929,
+      0.9457
+    ],
+    "native_cpu_seconds": [
+      1.7184,
+      1.737,
+      2.0001
+    ],
+    "casa_python_rss_scope": "Peak of the Python oracle process includes fixture generation and validation."
+  },
+  "execution_date_utc": "2026-11-22",
+  "revision": "44c35d09677d927258e1ee509c9ab2a6639e59e8"
+}

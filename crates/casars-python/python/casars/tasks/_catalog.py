@@ -613,10 +613,152 @@ def gaincal(
     """Solve antenna gain calibration for a MeasurementSet.
 
     CASA's ``gaincal``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #979:
-    ``splinetime``, ``npointaver``, ``phasewrap``.
     """
     return _call_casa(gaincal, locals())
+
+def accor(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    caltable: StrPath = '',
+    field: str = '',
+    spw: str = '',
+    intent: str = '',
+    selectdata: bool = True,
+    timerange: str = '',
+    antenna: str = '',
+    scan: str = '',
+    observation: str | int = '',
+    msselect: str = '',
+    solint: str | int | float = 'inf',
+    combine: str = '',
+    corrdepflags: bool = False,
+    append: bool = False,
+    docallib: bool = False,
+    callib: StrPath = '',
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    gainfield: str | list[str] | tuple[str, ...] = [],
+    interp: str | list[str] | tuple[str, ...] = [],
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = [],
+    *,
+    output: StrPath = '',
+    overwrite: bool = False,
+    format: Literal['json', 'text'] = 'text',
+) -> Any:
+    """Normalize sampler amplitudes using antenna autocorrelations.
+
+    CASA's ``accor``: its parameters, defaults and return value.
+    """
+    return _call_casa(accor, locals())
+
+def blcal(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    caltable: StrPath = '',
+    field: str = '',
+    spw: str = '',
+    intent: str = '',
+    selectdata: bool = True,
+    timerange: str = '',
+    uvrange: str | int | float | list[str] = '',
+    antenna: str = '',
+    scan: str = '',
+    observation: str | int = '',
+    msselect: str = '',
+    solint: str | int | float = 'inf',
+    combine: str = 'scan',
+    freqdep: bool = False,
+    calmode: Literal['a', 'ap', 'p'] = 'ap',
+    solnorm: bool = False,
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    gainfield: str | list[str] | tuple[str, ...] = [],
+    interp: str | list[str] | tuple[str, ...] = [],
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = [],
+    parang: bool = False,
+    *,
+    output: StrPath = '',
+    overwrite: bool = False,
+    format: Literal['json', 'text'] = 'text',
+) -> Any:
+    """Solve per-baseline complex visibility calibration.
+
+    CASA's ``blcal``: its parameters, defaults and return value.
+    """
+    return _call_casa(blcal, locals())
+
+def fringefit(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    caltable: StrPath = '',
+    field: str = '',
+    spw: str = '',
+    intent: str = '',
+    selectdata: bool = True,
+    timerange: str = '',
+    uvrange: str | int | float | list[str] = '',
+    antenna: str = '',
+    scan: str = '',
+    observation: str | int = '',
+    msselect: str = '',
+    solint: str | int | float = 'inf',
+    combine: str = '',
+    refant: str = '',
+    minsnr: float = 3.0,
+    zerorates: bool = False,
+    globalsolve: bool = True,
+    niter: int = 100,
+    delaywindow: float | list[float] | tuple[float, ...] = [],
+    ratewindow: float | list[float] | tuple[float, ...] = [],
+    append: bool = False,
+    corrdepflags: bool = False,
+    corrcomb: Literal['none', 'stokes', 'parallel'] = 'none',
+    docallib: bool = False,
+    callib: StrPath = '',
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    gainfield: str | list[str] | tuple[str, ...] = [],
+    interp: str | list[str] | tuple[str, ...] = [],
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = [],
+    paramactive: bool | list[bool] | tuple[bool, ...] = [],
+    concatspws: bool = True,
+    parang: bool = False,
+    *,
+    output: StrPath = '',
+    overwrite: bool = False,
+    format: Literal['json', 'text'] = 'text',
+    array: str = '',
+) -> Any:
+    """Fit antenna phases, delays and delay rates to VLBI visibilities.
+
+    CASA's ``fringefit``: its parameters, defaults and return value.
+    """
+    return _call_casa(fringefit, locals())
+
+def pccor(
+    vis: str = '',
+    pccor_caltable: str = '',
+    refant: str = '',
+    timerange: str = 'none',
+    scan: str = 'none',
+    spw: str = 'none',
+    antenna: str = 'none',
+    cablecal_correction: bool = False,
+    ff_table: str = 'none',
+) -> Any:
+    """Align VLBI pulse and cable calibration to a reference fringe solution.
+
+    CASA's ``pccor``: its parameters, defaults and return value.
+    """
+    return _call_casa(pccor, locals())
+
+def appendantab(
+    vis: str = '',
+    outvis: str = '',
+    antab: str = '',
+    overwrite: bool = False,
+    append_tsys: bool = True,
+    append_gc: bool = True,
+) -> Any:
+    """Import ANTAB temperatures and gain curves into a copied MeasurementSet.
+
+    CASA's ``appendantab``: its parameters, defaults and return value.
+    """
+    return _call_casa(appendantab, locals())
 
 def bandpass(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
@@ -1787,6 +1929,72 @@ def sdbaseline(
     """
     return _call_casa(sdbaseline, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline')
+def sdfit(
+    infile: StrPath = '',
+    datacolumn: str = 'data',
+    antenna: str = '',
+    field: str = '',
+    spw: str = '',
+    timerange: str = '',
+    scan: str = '',
+    pol: str = '',
+    intent: str = '',
+    timebin: str = '',
+    timespan: str = '',
+    polaverage: Literal['', 'stokes', 'geometric'] = '',
+    fitfunc: Literal['gaussian', 'lorentzian'] = 'gaussian',
+    fitmode: Literal['list', 'auto'] = 'list',
+    nfit: int | list[int] = [0],
+    thresh: float = 5.0,
+    avg_limit: int = 4,
+    minwidth: int = 4,
+    edge: list[int] = [0, 0],
+    outfile: str = '',
+    overwrite: bool = False,
+) -> Any:
+    """Fit Gaussian or Lorentzian lines to selected single-dish spectra.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline']
+    CASA's ``sdfit``: its parameters, defaults and return value.
+    """
+    return _call_casa(sdfit, locals())
+
+def sdatmcor(
+    infile: StrPath = '',
+    datacolumn: str = 'data',
+    outfile: StrPath = '',
+    overwrite: bool = False,
+    field: str = '',
+    spw: str = '',
+    scan: str = '',
+    antenna: str = '',
+    correlation: str = '',
+    timerange: str = '',
+    intent: str = '',
+    observation: str = '',
+    feed: str = '',
+    msselect: str = '',
+    outputspw: str = '',
+    gainfactor: float | dict[str | int, float] | str = 1.0,
+    dtem_dh: str | float = '',
+    h0: str | float = '',
+    atmtype: int = 2,
+    atmdetail: bool = False,
+    altitude: str | float = '',
+    temperature: str | float = '',
+    pressure: str | float = '',
+    humidity: float = -1.0,
+    pwv: str | float = '',
+    dp: str | float = '',
+    dpm: float = -1.0,
+    layerboundaries: str | list[str] | list[float] = '',
+    layertemperature: str | list[str] | list[float] = '',
+) -> Any:
+    """Correct calibrated single-dish spectra for differential atmospheric emission.
+
+    CASA's ``sdatmcor``: its parameters, defaults and return value.
+    """
+    return _call_casa(sdatmcor, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'blcal', 'fringefit', 'pccor', 'appendantab', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'blcal', 'fringefit', 'pccor', 'appendantab', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor']

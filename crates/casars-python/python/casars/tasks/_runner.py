@@ -267,6 +267,12 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_applycal(values)
     if name == "polfromgain":
         return _call_polfromgain(values, arguments)
+    if name == "pccor":
+        return _call_pccor(values, arguments)
+    if name == "appendantab":
+        return _call_appendantab(values, arguments)
+    if name == "blcal":
+        return _call_blcal(values, arguments)
     if name == "polcal":
         _validate_required_path(values, "vis", arguments["vis"], search_data=True)
         try:
@@ -344,6 +350,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if message.endswith(" exists."):
                 raise ValueError(message) from error
             raise RuntimeError(message) from error
+    if name == "sdatmcor":
+        return _call_sdatmcor(values)
+    if name == "sdfit":
+        return _call_sdfit(values, arguments)
     if name == "sdbaseline":
         _validate_required_path(values, "infile", arguments["infile"], search_data=True)
         choices = {
@@ -1261,6 +1271,85 @@ def _present_listcal(report: Mapping[str, Any]) -> None:
     print(f"\nListed {solutions} antenna solutions.\n")
 
 
+def _call_sdatmcor(values: dict[str, Any]) -> None:
+    if "datacolumn" in values:
+        column = values["datacolumn"]
+        if column is None:
+            messages = ["unallowed value None", "null value not allowed"]
+        elif not isinstance(column, str):
+            messages = ["must be of cStr type"]
+        elif column not in ("data", "float_data", "corrected"):
+            messages = [f"unallowed value {column}"]
+        else:
+            messages = []
+        if messages:
+            raise AssertionError(str({"datacolumn": messages}))
+    if isinstance(values.get("gainfactor"), dict):
+        values["gainfactor"] = {str(key): item for key, item in values["gainfactor"].items()}
+    try:
+        return run("sdatmcor", **values).value
+    except TaskExecutionError as error:
+        message = error.completion.message or ""
+        name = error.completion.parameter
+        if name == "gainfactor" and message.endswith(" should exist."):
+            raise FileNotFoundError(message) from error
+        if name in ("infile", "outfile", "atmtype", "humidity", "datacolumn"):
+            raise Exception(message) from error
+        if name in ("dtem_dh", "h0", "altitude", "temperature", "pressure", "pwv",
+                    "dp", "layerboundaries", "layertemperature"):
+            raise ValueError(message) from error
+        raise RuntimeError(message) from error
+
+
+def _call_sdfit(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    import numpy as np
+
+    _validate_required_path(values, "infile", arguments["infile"], search_data=True)
+    for name, allowed in (
+        ("fitfunc", ("gaussian", "lorentzian")),
+        ("fitmode", ("list", "auto")),
+        ("polaverage", ("", "stokes", "geometric")),
+    ):
+        value = arguments[name]
+        if isinstance(value, str) and value not in allowed:
+            raise AssertionError(str({name: [f"unallowed value {value}"]}))
+    for name in ("edge", "nfit"):
+        if name not in values:
+            continue
+        value = values[name]
+        if isinstance(value, (int, np.integer)):
+            value = [value]
+        if value is None:
+            raise AssertionError(str({name: ["null value not allowed"]}))
+        try:
+            items = list(value)
+        except TypeError:
+            items = None
+        if (isinstance(value, (str, bytes)) or items is None
+                or not all(isinstance(item, (int, np.integer)) for item in items)):
+            raise AssertionError(str({name: ["must be of cIntVec type"]}))
+        values[name] = [int(item) for item in items]
+    for name in ("thresh", "minwidth", "avg_limit"):
+        if type(values.get(name)) is bool:
+            values[name] = int(values[name])
+    try:
+        result = run("sdfit", **values).value
+        nfit = arguments["nfit"]
+        if arguments["fitmode"] == "list" and isinstance(nfit, np.ndarray) and len(nfit):
+            count = sum(nfit)
+            result["nfit"] = [count] * len(result["nfit"])
+        return result
+    except TaskExecutionError as error:
+        message = error.completion.message or ""
+        if message == "Invalid line component result.":
+            raise AssertionError() from error
+        if message.endswith(" exists.") or message.startswith("fitmode="):
+            raise ValueError(message) from error
+        raise RuntimeError(message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+
+
 def _call_initweights(values: dict[str, Any]) -> Any:
     import numpy as np
 
@@ -1601,6 +1690,64 @@ def _resolve_relative_data_path(path: str) -> str:
     return path
 
 
+def _call_appendantab(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    for key in ("vis", "antab"):
+        value = arguments[key]
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise AssertionError(
+                f"the {key} parameter must be a path that exists ('{value}' does not exist)")
+        _validate_required_path(values, key, value, search_data=True)
+    errors = {}
+    for key, value in arguments.items():
+        if value is None:
+            errors[key] = ["null value not allowed"]
+        elif key == "outvis" and not isinstance(value, str):
+            errors[key] = ["must be of cStr type"]
+        elif key in ("overwrite", "append_tsys", "append_gc") and not isinstance(value, bool):
+            from numpy import bool_
+            if not isinstance(value, bool_):
+                errors[key] = ["must be of cBool type"]
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
+    try:
+        return run("appendantab", **values).value
+    except TaskExecutionError as error:
+        if error.completion.parameter == "antab_header":
+            raise KeyError(error.completion.message) from error
+        raise RuntimeError(error.completion.message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+
+
+def _call_pccor(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    errors = {}
+    for key, value in arguments.items():
+        if value is None:
+            errors[key] = ["null value not allowed"]
+        elif key == "vis" and not isinstance(value, str):
+            errors[key] = [f"the vis parameter must be a path that exists ('{value}' does not exist)"]
+        elif key != "cablecal_correction" and not isinstance(value, str):
+            errors[key] = ["must be of cStr type"]
+    if errors:
+        if list(errors) == ["vis"] and arguments["vis"] is not None:
+            raise AssertionError(errors["vis"][0])
+        raise AssertionError(str(errors))
+    _validate_required_path(values, "vis", arguments["vis"], search_data=True)
+    try:
+        return run("pccor", **values).value
+    except TaskExecutionError as error:
+        kind = {
+            "selection": ValueError,
+            "ff_table": Exception,
+            "pccor_index": IndexError,
+        }.get(error.completion.parameter, RuntimeError)
+        raise kind(error.completion.message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+
+
 def _call_polfromgain(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
     import numpy as np
 
@@ -1631,6 +1778,43 @@ def _call_polfromgain(values: dict[str, Any], arguments: Mapping[str, Any]) -> A
         raise
 
 
+def _call_blcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    errors = {key: ["null value not allowed"] for key, value in arguments.items() if value is None}
+    if "calmode" in errors:
+        errors["calmode"].insert(0, "unallowed value None")
+    if "observation" in errors:
+        errors["observation"] *= 3
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
+    _validate_required_path(values, "vis", arguments["vis"], search_data=True)
+    _check_applycal_selectors(values, variants=("uvrange", "spwmap", "solint"))
+    mode = arguments["calmode"]
+    mapping = arguments["spwmap"]
+    has_mapping = len(mapping) > 0
+    if has_mapping and isinstance(mapping, dict):
+        raise KeyError(0)
+    if not has_mapping:
+        values.pop("spwmap", None)
+    if isinstance(mode, str) and mode not in ("a", "p", "ap"):
+        raise AssertionError(str({"calmode": [f"unallowed value {mode}"]}))
+    try:
+        return run("blcal", **values).value
+    except TaskParameterError as error:
+        completion = error.completion
+        if completion.parameter == "solint":
+            raise RuntimeError("Error in Calibrater::setsolve.") from error
+        if completion.parameter == "spwmap":
+            if isinstance(values.get("spwmap"), dict):
+                raise KeyError(0) from error
+            raise TypeError(completion.message) from error
+        raise
+    except TaskExecutionError as error:
+        message = error.completion.message or str(error)
+        raise RuntimeError(message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+
+
 def _call_applycal(values: dict[str, Any]) -> Any:
     _check_applycal_selectors(values)
     try:
@@ -1649,12 +1833,12 @@ def _call_applycal(values: dict[str, Any]) -> Any:
 
 
 
-def _check_applycal_selectors(values: Mapping[str, Any]) -> None:
+def _check_applycal_selectors(values: Mapping[str, Any], variants=("uvrange", "spwmap")) -> None:
     observation = values.get("observation", "")
-    variants = {key: values[key] for key in ("uvrange", "spwmap") if key in values}
+    supplied = {key: values[key] for key in variants if key in values}
     ordinary_variant = (str, int, float, list, dict)
     if isinstance(observation, (str, int)) and all(
-        isinstance(value, ordinary_variant) for value in variants.values()
+        isinstance(value, ordinary_variant) for value in supplied.values()
     ):
         return
     import numpy as np
@@ -1662,7 +1846,7 @@ def _check_applycal_selectors(values: Mapping[str, Any]) -> None:
     if not isinstance(observation, (str, int, np.int32, np.int64)):
         raise AssertionError("{'observation': ['must be of cStr type', 'must be of cInt type']}")
     accepted_variant = (*ordinary_variant, np.int32, np.int64, np.float32, np.float64, np.ndarray)
-    for key, value in variants.items():
+    for key, value in supplied.items():
         if not isinstance(value, accepted_variant):
             raise AssertionError(str({key: ["must be of cVariant type"]}))
 

@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 
 use casa_types::Complex32;
 
-use super::BandpassSolutionRow;
-use crate::solve::phase_only;
+use super::{BandpassSolutionRow, BandpassSolveControls, BandpassSolveRequest};
+use crate::solve::{GainNormalization, GainSolveMode, grouping::median_with_even_mean, phase_only};
 use crate::solve_stats::SolveStatsBuilder;
 
 /// Apply CASA's flex reference phase to the [receptor, channel] grid. A
@@ -107,19 +107,48 @@ fn channel_phase(row: &BandpassSolutionRow, index: usize) -> Complex32 {
     }
 }
 
-pub(super) fn normalize_bandpass_rows(rows: &mut [BandpassSolutionRow], channel_count: usize) {
+pub(super) fn finish_bandpass_rows(
+    rows: &mut [BandpassSolutionRow],
+    request: &BandpassSolveRequest,
+    controls: BandpassSolveControls,
+) {
     for row in rows {
-        normalize_bandpass_row(row, channel_count);
+        if controls.solve_mode != GainSolveMode::AmplitudePhase {
+            for (gain, flagged) in row.gains.iter_mut().zip(&row.flags) {
+                if *flagged {
+                    *gain = Complex32::new(1.0, 0.0);
+                } else if controls.solve_mode == GainSolveMode::Amplitude {
+                    *gain = Complex32::new(gain.norm(), 0.0);
+                }
+            }
+        }
+        if request.normalize_average_amplitude {
+            normalize_bandpass_row(row, row.channel_count, controls.normalization);
+        }
+        if let Some(cuts) = request.cuts.filter(|cuts| cuts.fill_gaps > 0) {
+            fill_bandpass_gaps(row, cuts.fill_gaps);
+        }
     }
 }
 
-pub(super) fn normalize_bandpass_row(row: &mut BandpassSolutionRow, channel_count: usize) {
+pub(super) fn normalize_bandpass_rows(rows: &mut [BandpassSolutionRow], channel_count: usize) {
+    for row in rows {
+        normalize_bandpass_row(row, channel_count, GainNormalization::Mean);
+    }
+}
+
+fn normalize_bandpass_row(
+    row: &mut BandpassSolutionRow,
+    channel_count: usize,
+    normalization: GainNormalization,
+) {
     if channel_count == 0 {
         return;
     }
     for receptor in 0..2 {
         let mut coherent_sum = Complex32::new(0.0, 0.0);
         let mut power_sum = 0.0_f32;
+        let mut powers = Vec::new();
         let mut good_count = 0usize;
         for channel in 0..channel_count {
             let index = receptor + 2 * channel;
@@ -132,13 +161,20 @@ pub(super) fn normalize_bandpass_row(row: &mut BandpassSolutionRow, channel_coun
                 continue;
             }
             coherent_sum += gain / Complex32::new(amplitude, 0.0);
-            power_sum += amplitude * amplitude;
+            let power = amplitude * amplitude;
+            match normalization {
+                GainNormalization::Mean => power_sum += power,
+                GainNormalization::Median => powers.push(power),
+            }
             good_count += 1;
         }
         if good_count <= 1 {
             continue;
         }
-        let amplitude_factor = (power_sum / good_count as f32).sqrt();
+        let amplitude_factor = match normalization {
+            GainNormalization::Mean => (power_sum / good_count as f32).sqrt(),
+            GainNormalization::Median => median_with_even_mean(&mut powers).sqrt(),
+        };
         if amplitude_factor <= f32::EPSILON {
             continue;
         }

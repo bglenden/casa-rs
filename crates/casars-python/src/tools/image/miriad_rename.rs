@@ -10,7 +10,7 @@ use casa_tables::publication::check_write_access;
 use pyo3::prelude::*;
 
 use super::attachment::{
-    AttachedImage, conflicting_images, lock_table_ancestors, lock_table_tree,
+    AttachedImage, conflicting_images, containing_tables, lock_table_ancestors, lock_table_tree,
     lock_table_tree_for_read_only_move, registry,
 };
 use super::handle::{ImageHandle, raised, same_file_identity};
@@ -27,7 +27,8 @@ impl MiriadDirectory {
     pub(super) fn open(path: &Path) -> PyResult<Self> {
         let physical_path = path.canonicalize().map_err(raised)?;
         #[cfg(unix)]
-        let directory = fs::File::open(&physical_path).map_err(raised)?;
+        let directory =
+            casa_tables::publication::open_directory_identity(&physical_path).map_err(raised)?;
         #[cfg(unix)]
         let identity = directory.metadata().map_err(raised)?;
         #[cfg(not(unix))]
@@ -93,6 +94,8 @@ impl MiriadDirectory {
             .is_some_and(|entry| entry.is_symlink());
         if conflicting_images(&images, source, 0)
             || conflicting_images(&images, &destination, 0)
+            || containing_tables(source).any(crate::tools::table::path_is_in_use)
+            || containing_tables(&destination).any(crate::tools::table::path_is_in_use)
             || crate::tools::table::path_is_in_use(source)
             || (!replace_alias && crate::tools::table::path_is_in_use(&destination))
         {
@@ -123,9 +126,9 @@ impl MiriadDirectory {
             |staged| ImageHandle::open_miriad(staged).map(drop).map_err(raised),
         )?;
         let reopen = || {
-            moved.check_moved_directory(&self.identity, &destination)?;
+            moved.check_target(&destination)?;
             let attachment = AttachedImage::open_miriad(&destination)?;
-            moved.check_moved_directory(&self.identity, &destination)?;
+            moved.check_target(&destination)?;
             if history {
                 attachment.lock().append_history_at(
                     "::image::rename",

@@ -44,12 +44,27 @@ impl SelectedData {
         ms: &MeasurementSet,
         rows: &[SelectedSolveRow],
     ) -> Result<Self, GainSolveError> {
+        Self::of_rows(ms, rows.iter().filter(|row| row.antenna1 != row.antenna2))
+    }
+
+    /// The autocorrelation rows selected for sampler calibration.
+    pub(crate) fn of_autocorrelations(
+        ms: &MeasurementSet,
+        rows: &[SelectedSolveRow],
+    ) -> Result<Self, GainSolveError> {
+        Self::of_rows(ms, rows.iter().filter(|row| row.antenna1 == row.antenna2))
+    }
+
+    pub(crate) fn of_rows<'a>(
+        ms: &MeasurementSet,
+        rows: impl Iterator<Item = &'a SelectedSolveRow>,
+    ) -> Result<Self, GainSolveError> {
         let mut antennas = BTreeSet::new();
         let mut fields = BTreeSet::new();
         let mut observations = BTreeSet::new();
         let mut scans = BTreeSet::new();
         let mut spectral_windows = BTreeSet::new();
-        for row in rows.iter().filter(|row| row.antenna1 != row.antenna2) {
+        for row in rows {
             antennas.extend([row.antenna1, row.antenna2]);
             fields.insert(row.field_id);
             observations.insert(row.observation_id);

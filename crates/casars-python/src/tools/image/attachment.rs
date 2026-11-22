@@ -737,7 +737,7 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     Ok(())
 }
 
-fn containing_tables(path: &Path) -> impl Iterator<Item = &Path> {
+pub(super) fn containing_tables(path: &Path) -> impl Iterator<Item = &Path> {
     path.parent()
         .into_iter()
         .flat_map(Path::ancestors)

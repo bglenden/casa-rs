@@ -33,6 +33,7 @@ ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "m
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["wvr"] = {"gcal"}
 IMPLEMENTED["singledishms"] = {
+    "importasap", "importnro", "atmcor", "fit_line",
     "open", "close", "done", "name", "set_selection", "smooth",
     "subtract_baseline", "subtract_baseline_cspline", "subtract_baseline_sinusoid",
     "subtract_baseline_variable", "apply_baseline_table",
@@ -48,9 +49,11 @@ IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit", "initweights",
     "accumulate", "createcaltable", "updatecaltable", "smooth", "rerefant", "listcal", "plotcal",
+    "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags",
 }
 PARTIAL = {
-    "calibrater": {"setmodel", "setsolve"},
+    "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
+                   "correct", "corrupt", "activityrec", "solve"},
     "image": {
         "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },
@@ -171,8 +174,12 @@ def test_calibrater_method_returns_before_open() -> None:
     assert instance.setvi(old=True, quiet=True) is True
     assert instance.selectvis() is False
     assert instance.reset() is False
+    assert instance.setcorrdepflags(True) is True
+    assert instance.solve() is False
     assert instance.initcalset() is False
     assert instance.delmod() is False
+    assert instance.linpolcor() is False
+    assert instance.posangcal([12.0], "unused.cal") is False
     with pytest.raises(RuntimeError, match=r"Error in Calibrater::setModel: no VisEquation\."):
         instance.setptmodel()
 

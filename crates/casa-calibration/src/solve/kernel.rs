@@ -12,7 +12,7 @@
 //! collapsed to their weighted sum, which leaves the chi-square unchanged up
 //! to a constant because the gains are constant over the solution.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use casa_types::Complex32;
 use num_complex::Complex64;
@@ -54,6 +54,7 @@ pub(crate) struct SolveGraph {
     pub(crate) weights: HashMap<(i32, i32), f32>,
     pub(crate) stats: HashMap<(i32, i32), SolveEdgeStats>,
     pub(crate) robust_samples: Vec<RobustSample>,
+    fixed_residuals: BTreeMap<i32, (f64, usize)>,
 }
 
 /// One unflagged, mode-transformed sample of a gathered buffer.
@@ -69,6 +70,20 @@ pub(crate) struct RobustSample {
 }
 
 impl SolveGraph {
+    pub(crate) fn add_fixed_residual(&mut self, antenna: i32, chi_square: f64) {
+        let (sum, count) = self.fixed_residuals.entry(antenna).or_default();
+        *sum += chi_square;
+        *count += 1;
+    }
+
+    fn fixed_chi_square(&self) -> f64 {
+        self.fixed_residuals.values().map(|&(sum, _)| sum).sum()
+    }
+
+    fn fixed_sample_count(&self) -> usize {
+        self.fixed_residuals.values().map(|&(_, count)| count).sum()
+    }
+
     /// Add one collapsed sample of baseline `(antenna1, antenna2)`: its
     /// weight, its weighted visibility and its statistics.
     pub(crate) fn accumulate(
@@ -118,6 +133,12 @@ impl SolveGraph {
                 .iter()
                 .filter(|(baseline, _)| keep(baseline))
                 .map(|(baseline, value)| (*baseline, *value))
+                .collect(),
+            fixed_residuals: self
+                .fixed_residuals
+                .iter()
+                .filter(|(antenna, _)| antennas.contains(antenna))
+                .map(|(&antenna, &value)| (antenna, value))
                 .collect(),
             robust_samples: self
                 .robust_samples
@@ -247,7 +268,7 @@ pub(crate) fn solve_group(
         antenna_ids.insert(refant_id);
     }
     let receptors = match gain_type {
-        GainType::G | GainType::K | GainType::KCross => &solved.receptors[..],
+        GainType::G | GainType::K | GainType::KCross | GainType::GSpline => &solved.receptors[..],
         GainType::T => &solved.receptors[..1],
     };
     Some(
@@ -619,7 +640,9 @@ fn first_guess(
                         amplitude_sum += amplitude;
                         amplitude_count += 1;
                         let guess = match gain_type {
-                            GainType::G | GainType::K | GainType::KCross => mean.conj(),
+                            GainType::G | GainType::K | GainType::KCross | GainType::GSpline => {
+                                mean.conj()
+                            }
                             GainType::T => mean.conj() / amplitude,
                         };
                         (antenna_id, guess)
@@ -800,7 +823,7 @@ fn finish_receptor(
 
     let hessian = hessian(graph, &error_gains, &solved);
     let good_count = solved.len();
-    let sample_count = undirected_collapsed_count(&graph.stats);
+    let sample_count = undirected_collapsed_count(&graph.stats) + graph.fixed_sample_count();
     let degrees_of_freedom = (2 * sample_count.saturating_sub(good_count)).max(1);
     let param_error = param_errors(&hessian, error_chi_square / degrees_of_freedom as f64);
     let snr = snrs(&gains, &solved, &param_error, &snr_amplitude);
@@ -972,7 +995,7 @@ fn chi_square_complex64(graph: &SolveGraph, gains: &HashMap<i32, Complex64>) -> 
     if !graph.robust_samples.is_empty() {
         return robust::chi_square(graph, gains);
     }
-    let mut total = 0.0_f64;
+    let mut total = graph.fixed_chi_square();
     for (&(antenna1, antenna2), stat) in &graph.stats {
         if antenna1 > antenna2 {
             continue;
@@ -1112,7 +1135,7 @@ fn hessian(
 }
 
 fn chi_square_for_errors(graph: &SolveGraph, gains: &HashMap<i32, Complex32>) -> f64 {
-    let mut total = 0.0_f64;
+    let mut total = graph.fixed_chi_square();
     for (&(antenna1, antenna2), stat) in &graph.stats {
         if antenna1 > antenna2 {
             continue;

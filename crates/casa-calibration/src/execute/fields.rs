@@ -17,6 +17,9 @@ pub(crate) fn load(
     // matrix. Antenna positions, opacity and gain-curve coefficients share
     // the same real time operator as delays.
     let mut table = load_parameters(plan, engine, family.is_some(), Some(ms))?;
+    if table.spline.is_some() {
+        return Ok(table);
+    }
     table.time_parameter_family = family;
     table.callibrary = plan.spec.callibrary.clone();
     if !plan.resolved_gainfields.is_empty() {
@@ -109,12 +112,14 @@ pub(crate) fn load(
         for (field, solutions) in groups {
             let selected = LoadedCalibrationTable {
                 path: table.path.clone(),
+                baseline: table.baseline,
                 interp: table.interp,
                 supports_calwt: false,
                 engine: None,
                 antpos_tropo: None,
                 ionosphere: None,
                 sky_exposures: None,
+                spline: None,
                 solutions,
                 callibrary: None,
                 time_plans: HashMap::new(),
@@ -142,20 +147,8 @@ pub(super) struct GridAtTime {
     pub interpolated: bool,
 }
 
-pub(super) fn lookup(
-    table: &LoadedCalibrationTable,
-    field: i32,
-    window: i32,
-    antenna: i32,
-    row: &ApplyRowPlan,
-    data_window: &crate::plan::SpectralWindowPlan,
-    calibration_frequency_hz: f64,
-) -> Result<Option<GridAtTime>, ApplyExecutionError> {
-    let pinned = |grid| GridAtTime {
-        grid,
-        interpolated: false,
-    };
-    let antenna = table
+pub(super) fn mapped_antenna(table: &LoadedCalibrationTable, antenna: i32) -> i32 {
+    table
         .callibrary
         .as_ref()
         .and_then(|library| {
@@ -166,7 +159,39 @@ pub(super) fn lookup(
         })
         .copied()
         .filter(|id| *id >= 0)
-        .unwrap_or(antenna);
+        .unwrap_or(antenna)
+}
+
+pub(super) fn lookup(
+    table: &LoadedCalibrationTable,
+    field: i32,
+    window: i32,
+    antenna: i32,
+    row: &ApplyRowPlan,
+    data_window: &crate::plan::SpectralWindowPlan,
+    evaluation_frequency_hz: f64,
+) -> Result<Option<GridAtTime>, ApplyExecutionError> {
+    let pinned = |grid| GridAtTime {
+        grid,
+        interpolated: false,
+    };
+    if let Some(spline) = &table.spline {
+        return Ok(gspline::grid(
+            spline,
+            field,
+            antenna,
+            row.time_seconds,
+            evaluation_frequency_hz
+                .is_finite()
+                .then_some(evaluation_frequency_hz),
+        )
+        .map(pinned));
+    }
+    let antenna = if table.baseline {
+        antenna
+    } else {
+        mapped_antenna(table, antenna)
+    };
     let Some(plan) = table.time_plans.get(&field) else {
         if !table.time_plans.is_empty() {
             return Ok(table.missing_grids.get(&window).cloned().map(pinned));
@@ -211,7 +236,7 @@ pub(super) fn lookup(
         table.time_parameter_family,
         Some(TimeParameterFamily::Fringe)
     ) {
-        plan.fringe_solution(&table.path, query, calibration_frequency_hz)?
+        plan.fringe_solution(&table.path, query, evaluation_frequency_hz)?
     } else {
         plan.solution(&table.path, query)?
     };

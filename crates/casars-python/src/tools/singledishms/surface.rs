@@ -32,7 +32,7 @@ const METHODS: &[Method] = &[
                 param("outfile", K::Text, D::Text("")),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
     method("close", &[], R::Bool, S::Implemented),
@@ -59,7 +59,7 @@ const METHODS: &[Method] = &[
                 param("tempoutfile", K::Text, D::Text("")),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
     Method {
@@ -72,7 +72,7 @@ const METHODS: &[Method] = &[
                 param("parallel", K::Bool, D::Bool(false)),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
     Method {
@@ -85,7 +85,7 @@ const METHODS: &[Method] = &[
                 param("parallel", K::Bool, D::Bool(false)),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
     method("name", &[], R::Text, S::Implemented),

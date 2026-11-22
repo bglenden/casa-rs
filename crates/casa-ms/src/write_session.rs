@@ -1821,9 +1821,31 @@ impl MeasurementSetWriteSession {
         lock: &mut TableWriteLock,
         mutate: impl FnOnce(&mut Self, &mut MeasurementSet) -> Result<(), MeasurementSetWriteError>,
     ) -> Result<MeasurementSetWriteTelemetry, MeasurementSetWriteError> {
-        let mut session = Self::start_mutation(measurement_set, plan, None, Some(lock))?;
-        mutate(&mut session, measurement_set)?;
-        session.complete_mutation().map(|(telemetry, _)| telemetry)
+        Self::mutate_selected_rows(measurement_set, plan, Some(lock), |error| error, mutate)
+            .map(|((), telemetry)| telemetry)
+    }
+
+    /// Write selected rows with a retained MAIN lock or acquire the lock for
+    /// this session. The caller's lock remains held even if a batch fails.
+    #[doc(hidden)]
+    pub fn mutate_selected_rows<T, E>(
+        measurement_set: &mut MeasurementSet,
+        plan: MeasurementSetWritePlan,
+        lock: Option<&mut TableWriteLock>,
+        write_error: impl Fn(MeasurementSetWriteError) -> E,
+        mutate: impl FnOnce(&mut Self, &mut MeasurementSet) -> Result<T, E>,
+    ) -> Result<(T, MeasurementSetWriteTelemetry), E> {
+        let retained = lock.is_some();
+        let mut session =
+            Self::start_mutation(measurement_set, plan, None, lock).map_err(&write_error)?;
+        let output = mutate(&mut session, measurement_set)?;
+        let telemetry = if retained {
+            session.complete_mutation().map(|(telemetry, _)| telemetry)
+        } else {
+            session.finish_mutation()
+        }
+        .map_err(write_error)?;
+        Ok((output, telemetry))
     }
 
     fn start_mutation(

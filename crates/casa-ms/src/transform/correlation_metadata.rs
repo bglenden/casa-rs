@@ -169,6 +169,40 @@ impl CorrelationSelection {
     }
 }
 
+pub(super) fn parallel_hands(
+    ms: &MeasurementSet,
+    selection: Option<&CorrelationSelection>,
+    descriptions: &[i32],
+) -> MsResult<BTreeMap<i32, [usize; 2]>> {
+    let pol = ms.polarization()?;
+    let dd = ms.data_description()?;
+    let descriptions = descriptions.iter().copied().collect::<BTreeSet<_>>();
+    let mut hands = BTreeMap::new();
+    for id in descriptions {
+        let codes = pol.corr_type(dd.polarization_id(id as usize)? as usize)?;
+        let selected = selection.and_then(|selection| selection.axes(id));
+        let codes = if let Some(axes) = selected {
+            axes.iter()
+                .filter_map(|&axis| codes.get(axis).copied())
+                .collect()
+        } else {
+            codes
+        };
+        let position = |linear: Correlation, circular: Correlation| {
+            codes.iter().rposition(|&code| {
+                code == linear.casacore_code() || code == circular.casacore_code()
+            })
+        };
+        if let (Some(first), Some(second)) = (
+            position(Correlation::XX, Correlation::RR),
+            position(Correlation::YY, Correlation::LL),
+        ) {
+            hands.insert(id, [first, second]);
+        }
+    }
+    Ok(hands)
+}
+
 fn no_match(labels: &str) -> MsError {
     MsError::InvalidInput(format!(
         "Poln. expression error: No match for polarization ID(s) (named {labels})"

@@ -74,14 +74,21 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    if task.surface() == "sdcal" {
-        return crate::single_dish::sdcal(task);
-    }
-    if task.surface() == "sdgaincal" {
-        return crate::single_dish::gain::run(task);
+    match task.surface() {
+        "appendantab" => return crate::appendantab::run(task),
+        "pccor" => return crate::pccor::run(task),
+        "sdcal" => return crate::single_dish::sdcal(task),
+        "sdgaincal" => return crate::single_dish::gain::run(task),
+        _ => {}
     }
     if task.surface() == "sdsmooth" {
         return crate::single_dish::preparation::run_sdsmooth(task);
+    }
+    if task.surface() == "sdatmcor" {
+        return crate::single_dish::preparation::atmosphere::task::run(task);
+    }
+    if task.surface() == "sdfit" {
+        return crate::single_dish::preparation::line_fit::task::run(task);
     }
     if task.surface() == "sdbaseline" {
         return crate::single_dish::preparation::baseline::task::run(task);
@@ -160,7 +167,11 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         return Err(TaskFailure::validation(format!("fluxtable {} exists. Please specify a different name. Or set append=True, to append the results to the table.",scale.output_table.display())).at("fluxtable"));
     }
     let applied = match &request {
-        CalibrationTaskRequest::SolveGain(solve) => solve.prior_calibration_tables.clone(),
+        CalibrationTaskRequest::SolveGain(solve)
+        | CalibrationTaskRequest::SolveAccor(solve)
+        | CalibrationTaskRequest::SolveBaseline { gain: solve, .. } => {
+            solve.prior_calibration_tables.clone()
+        }
         CalibrationTaskRequest::SolveBandpass(solve) => solve.prior_calibration_tables.clone(),
         _ => Vec::new(),
     };
@@ -346,7 +357,9 @@ fn scientific_paths(
     request: &CalibrationTaskRequest,
 ) -> Result<Vec<std::path::PathBuf>, TaskFailure> {
     let (mut paths, chain) = match request {
-        CalibrationTaskRequest::SolveGain(r) => (
+        CalibrationTaskRequest::SolveGain(r)
+        | CalibrationTaskRequest::SolveAccor(r)
+        | CalibrationTaskRequest::SolveBaseline { gain: r, .. } => (
             vec![r.measurement_set.clone(), r.output_table.clone()],
             r.prior_calibration_tables.as_slice(),
         ),
@@ -396,6 +409,15 @@ fn casa_value(
     result: &CalibrationTaskResult,
 ) -> CasaValue {
     match (surface, result) {
+        ("gaincal", CalibrationTaskResult::SolveGain(report))
+            if report.gain_type == crate::GainType::GSpline =>
+        {
+            crate::casa_return::polynomial_solve_record(
+                applied,
+                &report.selected_data,
+                &report.output_table,
+            )
+        }
         ("gaincal", CalibrationTaskResult::SolveGain(report)) => solve_record(
             applied,
             &report.selected_data,

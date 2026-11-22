@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::selection::MsSelection;
+use casa_ms::selection::{MsSelection, ResolvedMsSelection};
 use casa_ms::{MsError, MsSpectralWindow};
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, ScalarValue};
@@ -36,6 +36,10 @@ pub(crate) use fields::resolve_gainfield;
 
 #[path = "plan_callibrary.rs"]
 mod library;
+
+#[path = "plan_rows.rs"]
+mod rows;
+use rows::{build_selected_rows, load_i32_column_rows, value_at_i32};
 
 #[path = "plan_spw.rs"]
 mod windows;
@@ -545,6 +549,22 @@ pub(crate) fn plan_with_visibility_metadata(
     request: &ApplyPlanRequest,
     preparation_error: Option<ApplyPreparationError<'_>>,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
+    plan_with_selection(ms, request, preparation_error, None)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RegisteredApplySelection<'a> {
+    pub(crate) selected: &'a ResolvedMsSelection,
+    pub(crate) has_library_registration: bool,
+    pub(crate) legacy_corruption: bool,
+}
+
+pub(crate) fn plan_with_selection(
+    ms: &MeasurementSet,
+    request: &ApplyPlanRequest,
+    preparation_error: Option<ApplyPreparationError<'_>>,
+    registered: Option<RegisteredApplySelection<'_>>,
+) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
     let requires_corrected_data_column = request.apply_mode.writes_corrected_data()
         && match ms.data_column(VisibilityDataColumn::CorrectedData) {
             Ok(_) => false,
@@ -553,8 +573,11 @@ pub(crate) fn plan_with_visibility_metadata(
         };
 
     let selection_started_at = Instant::now();
-    let resolved_selection =
-        resolve_casa_calibration_selection(ms, &request.selection).map_err(|error| {
+    let resolved;
+    let resolved_selection = if let Some(registration) = registered {
+        registration.selected
+    } else {
+        resolved = resolve_casa_calibration_selection(ms, &request.selection).map_err(|error| {
             ApplyPlanError::Selection {
                 source: match error {
                     casa_ms::MsSelectionError::Domain(source) => source,
@@ -562,6 +585,8 @@ pub(crate) fn plan_with_visibility_metadata(
                 },
             }
         })?;
+        &resolved
+    };
     let requested_channels = resolved_selection.channel_selections.clone();
     let selected_row_indices = resolved_selection.row_indices().collect::<Vec<_>>();
     if selected_row_indices.is_empty() {
@@ -623,15 +648,29 @@ pub(crate) fn plan_with_visibility_metadata(
     let calibration_tables = request
         .calibration_tables
         .iter()
-        .map(|spec| build_table_plan(ms, spec, &selected_rows))
+        .map(|spec| {
+            build_table_plan(
+                ms,
+                spec,
+                &selected_rows,
+                registered.is_some_and(|registration| registration.legacy_corruption),
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(ApplyPreparationError::Argument(error)) = preparation_error {
         return Err(ApplyPlanError::Argument(error.clone()));
     }
-    if calibration_tables.is_empty() && !request.parang {
+    if calibration_tables.is_empty()
+        && !request.parang
+        && !registered.is_some_and(|registration| registration.has_library_registration)
+    {
         return Err(ApplyPlanError::MissingCalibrationTables);
     }
-    library::validate_overlaps(&calibration_tables)?;
+    // The direct tool checks overlaps within each newly registered library.
+    // Separate registrations of the same table are separate chain terms.
+    if registered.is_none() {
+        library::validate_overlaps(&calibration_tables)?;
+    }
     let calibration_tables = calibration_tables
         .into_iter()
         .map(|(table, _)| table)
@@ -662,155 +701,6 @@ pub(crate) fn plan_with_visibility_metadata(
     ))
 }
 
-fn build_selected_rows(
-    ms: &MeasurementSet,
-    row_indices: &[usize],
-) -> Result<Vec<ApplyRowPlan>, ApplyPlanError> {
-    let dd = ms
-        .data_description()
-        .map_err(|source| ApplyPlanError::Selection { source })?;
-    let table = ms.main_table();
-    let data_desc_ids = load_i32_column_rows(table, "DATA_DESC_ID", row_indices)?;
-    let field_ids = load_i32_column_rows(table, "FIELD_ID", row_indices)?;
-    let observation_ids = load_i32_column_rows(table, "OBSERVATION_ID", row_indices)?;
-    let scan_numbers = load_i32_column_rows(table, "SCAN_NUMBER", row_indices)?;
-    let antenna1s = load_i32_column_rows(table, "ANTENNA1", row_indices)?;
-    let antenna2s = load_i32_column_rows(table, "ANTENNA2", row_indices)?;
-    let feed1s = load_i32_column_rows(table, "FEED1", row_indices)?;
-    let feed2s = load_i32_column_rows(table, "FEED2", row_indices)?;
-    let times = load_f64_column_rows(table, "TIME", row_indices)?;
-    let intervals = load_f64_column_rows(table, "INTERVAL", row_indices)?;
-
-    let mut rows = row_indices
-        .iter()
-        .enumerate()
-        .map(|(selected_idx, &row_index)| {
-            let data_desc_id = value_at_i32(&data_desc_ids, selected_idx, "DATA_DESC_ID")?;
-            let ddid_index = usize::try_from(data_desc_id).map_err(|_| {
-                ApplyPlanError::MissingDataDescription {
-                    row_index,
-                    data_desc_id,
-                }
-            })?;
-            if ddid_index >= dd.row_count() {
-                return Err(ApplyPlanError::MissingDataDescription {
-                    row_index,
-                    data_desc_id,
-                });
-            }
-
-            Ok(ApplyRowPlan {
-                row_index,
-                field_id: value_at_i32(&field_ids, selected_idx, "FIELD_ID")?,
-                observation_id: value_at_i32(&observation_ids, selected_idx, "OBSERVATION_ID")?,
-                calibration_observation_id: value_at_i32(
-                    &observation_ids,
-                    selected_idx,
-                    "OBSERVATION_ID",
-                )?,
-                scan_number: value_at_i32(&scan_numbers, selected_idx, "SCAN_NUMBER")?,
-                data_desc_id,
-                data_spw_id: dd
-                    .spectral_window_id(ddid_index)
-                    .map_err(|source| ApplyPlanError::Selection { source })?,
-                polarization_id: dd
-                    .polarization_id(ddid_index)
-                    .map_err(|source| ApplyPlanError::Selection { source })?,
-                antenna1: value_at_i32(&antenna1s, selected_idx, "ANTENNA1")?,
-                antenna2: value_at_i32(&antenna2s, selected_idx, "ANTENNA2")?,
-                feed1: value_at_i32(&feed1s, selected_idx, "FEED1")?,
-                feed2: value_at_i32(&feed2s, selected_idx, "FEED2")?,
-                time_seconds: value_at_f64(&times, selected_idx, "TIME")?,
-                interval_seconds: value_at_f64(&intervals, selected_idx, "INTERVAL")?,
-            })
-        })
-        .collect::<Result<Vec<_>, ApplyPlanError>>()?;
-    library::buffer_observations(ms, &mut rows)?;
-    Ok(rows)
-}
-
-fn load_i32_column_rows(
-    table: &Table,
-    column: &str,
-    row_indices: &[usize],
-) -> Result<Vec<Option<i32>>, ApplyPlanError> {
-    table
-        .column_accessor(column)
-        .and_then(|column| column.scalar_cells_owned_for_rows(row_indices))
-        .map_err(|source| ApplyPlanError::Selection {
-            source: MsError::from(source),
-        })?
-        .into_iter()
-        .enumerate()
-        .map(|(selected_idx, value)| match value {
-            Some(casa_types::ScalarValue::Int32(v)) => Ok(Some(v)),
-            Some(other) => Err(ApplyPlanError::ScalarTypeMismatch {
-                context: format!("{column} selected row {selected_idx}"),
-                expected: "Int32",
-                found: scalar_kind(&other),
-            }),
-            None => Ok(None),
-        })
-        .collect()
-}
-
-fn load_f64_column_rows(
-    table: &Table,
-    column: &str,
-    row_indices: &[usize],
-) -> Result<Vec<Option<f64>>, ApplyPlanError> {
-    table
-        .column_accessor(column)
-        .and_then(|column| column.scalar_cells_owned_for_rows(row_indices))
-        .map_err(|source| ApplyPlanError::Selection {
-            source: MsError::from(source),
-        })?
-        .into_iter()
-        .enumerate()
-        .map(|(selected_idx, value)| match value {
-            Some(casa_types::ScalarValue::Float64(v)) => Ok(Some(v)),
-            Some(other) => Err(ApplyPlanError::ScalarTypeMismatch {
-                context: format!("{column} selected row {selected_idx}"),
-                expected: "Float64",
-                found: scalar_kind(&other),
-            }),
-            None => Ok(None),
-        })
-        .collect()
-}
-
-fn value_at_i32(
-    values: &[Option<i32>],
-    row_index: usize,
-    column: &str,
-) -> Result<i32, ApplyPlanError> {
-    values
-        .get(row_index)
-        .and_then(|value| *value)
-        .ok_or_else(|| ApplyPlanError::Selection {
-            source: MsError::MissingColumn {
-                column: column.to_string(),
-                table: format!("MAIN row {row_index}"),
-            },
-        })
-}
-
-fn value_at_f64(
-    values: &[Option<f64>],
-    row_index: usize,
-    column: &str,
-) -> Result<f64, ApplyPlanError> {
-    values
-        .get(row_index)
-        .and_then(|value| *value)
-        .ok_or_else(|| ApplyPlanError::Selection {
-            source: MsError::MissingColumn {
-                column: column.to_string(),
-                table: format!("MAIN row {row_index}"),
-            },
-        })
-}
-
 fn load_ms_spectral_windows(
     ms: &MeasurementSet,
     spw_ids: &[i32],
@@ -828,24 +718,27 @@ fn build_table_plan(
     ms: &MeasurementSet,
     spec: &ApplyCalibrationTableSpec,
     selected_rows: &[ApplyRowPlan],
+    legacy_corruption: bool,
 ) -> Result<library::PlannedTable, ApplyPlanError> {
-    if spec.interp == ApplyInterpolationMode::Invalid && spec.callibrary.is_none() {
-        return Err(ApplyPlanError::UnsupportedCalibrationTable {
-            path: spec.path.display().to_string(),
-            reason: "unknown or deprecated CASA interpolation type".to_string(),
-        });
-    }
     let summary = summarize_table(&spec.path).map_err(|source| {
         ApplyPlanError::SummarizeCalibrationTable {
             path: spec.path.display().to_string(),
             source: Box::new(source),
         }
     })?;
+    let is_bpoly = summary.table_subtype == "BPOLY";
+    let is_gspline = summary.table_subtype == "GSPLINE";
+    if !is_gspline && spec.interp == ApplyInterpolationMode::Invalid && spec.callibrary.is_none() {
+        return Err(ApplyPlanError::UnsupportedCalibrationTable {
+            path: spec.path.display().to_string(),
+            reason: "unknown or deprecated CASA interpolation type".to_string(),
+        });
+    }
     let windows = ms
         .spectral_window()
         .map_err(|source| ApplyPlanError::Selection { source })?
         .row_count();
-    if spec.spwmap.len() > windows && spec.callibrary.is_none() {
+    if !is_gspline && spec.spwmap.len() > windows && spec.callibrary.is_none() {
         return Err(ApplyPlanError::UnsupportedCalibrationTable {
             path: spec.path.display().to_string(),
             reason: format!(
@@ -867,7 +760,8 @@ fn build_table_plan(
         });
     }
 
-    let applicable_row_indices = library::selected_rows(ms, spec, selected_rows)?;
+    let applicable_row_indices =
+        library::selected_rows(ms, spec, selected_rows, legacy_corruption)?;
     let applicable_rows = selected_rows
         .iter()
         .filter(|row| {
@@ -886,7 +780,8 @@ fn build_table_plan(
                     .is_none_or(|indices| indices.binary_search(&row.row_index).is_ok())
         })
         .collect::<Vec<_>>();
-    if !applicable_rows.is_empty() && spec.interp == ApplyInterpolationMode::Invalid {
+    if !is_gspline && !applicable_rows.is_empty() && spec.interp == ApplyInterpolationMode::Invalid
+    {
         return Err(ApplyPlanError::Callibrary {
             message: "unknown library time interpolation".into(),
         });
@@ -894,13 +789,16 @@ fn build_table_plan(
     let applicable_field_ids = unique_i32(applicable_rows.iter().map(|row| row.field_id));
     let applicable_data_spw_ids = unique_i32(applicable_rows.iter().map(|row| row.data_spw_id));
 
-    let is_bpoly = summary.table_subtype == "BPOLY";
-    let (resolved_gainfields, resolved_nearest_gainfields) = if is_bpoly {
-        // BJonesPoly::loadMemCalTable ignores field selections and emits a
-        // modern B table with wildcard FIELD_ID=-1 for every sampled row.
+    let legacy_polynomial = is_bpoly || is_gspline;
+    let (resolved_gainfields, resolved_nearest_gainfields) = if legacy_polynomial {
+        // BPOLY is sampled with wildcard FIELD_ID=-1. GSPLINE matches the
+        // data field directly. Neither uses the caller's field mapping.
         if spec.callibrary.is_some() {
             return Err(ApplyPlanError::Callibrary {
-                message: "BPOLY is not supported for application by cal library in CASA".into(),
+                message: format!(
+                    "{} is not supported for application by cal library in CASA",
+                    summary.table_subtype
+                ),
             });
         }
         (Vec::new(), Vec::new())
@@ -920,29 +818,42 @@ fn build_table_plan(
         };
         resolve_gainfield(ms, spec, &summary, fields)?
     };
-    let available_calibration_spw_ids = if is_bpoly {
+    let available_calibration_spw_ids = if is_gspline {
+        applicable_data_spw_ids.clone()
+    } else if is_bpoly {
         load_bpoly_spectral_window_ids(&summary.path)?
     } else {
         fields::selected_spectral_windows(&summary, &resolved_gainfields)?
     };
-    let calibration_window_count = if is_bpoly {
+    let calibration_window_count = if legacy_polynomial {
         windows
     } else {
         open_summary_subtable(&summary, "SPECTRAL_WINDOW")?.row_count()
     };
-    let spw_mapping = windows::resolve_calibration_spw_mapping(
-        spec,
-        &summary.table_subtype,
-        &available_calibration_spw_ids,
-        calibration_window_count,
-        &applicable_data_spw_ids,
-    )?;
+    let spw_mapping = if is_gspline {
+        // The legacy solver evaluates at the current data window frequency.
+        applicable_data_spw_ids
+            .iter()
+            .map(|&id| ApplySpwMapping {
+                data_spw_id: id,
+                calibration_spw_id: id,
+            })
+            .collect()
+    } else {
+        windows::resolve_calibration_spw_mapping(
+            spec,
+            &summary.table_subtype,
+            &available_calibration_spw_ids,
+            calibration_window_count,
+            &applicable_data_spw_ids,
+        )?
+    };
     let available_mappings = spw_mapping
         .iter()
         .filter(|mapping| available_calibration_spw_ids.contains(&mapping.calibration_spw_id))
         .cloned()
         .collect::<Vec<_>>();
-    let calibration_spectral_windows = if is_bpoly {
+    let calibration_spectral_windows = if legacy_polynomial {
         let mapped_cal_spw_ids = unique_i32(
             available_mappings
                 .iter()

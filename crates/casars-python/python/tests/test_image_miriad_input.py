@@ -513,20 +513,71 @@ def test_rename_miriad_between_filesystems(tmp_path, backend, overwrite):
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX directory permissions")
 @pytest.mark.parametrize("backend", ["casa", "casars"])
-def test_rename_miriad_can_move_a_read_only_directory(tmp_path, backend):
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_rename_miriad_can_move_a_read_only_directory(tmp_path, backend, overwrite):
     source = tmp_path / "read-only.mir"
     target = tmp_path / "renamed.mir"
     pixels = _sky(source)
+    if overwrite:
+        target.mkdir()
+        (target / "previous-output").touch()
     source.chmod(0o555)
     image = _backend(backend).image()
     try:
         assert image.open(str(source))
-        assert image.rename(str(target))
+        assert image.rename(str(target), overwrite=overwrite)
         assert not source.exists()
+        assert not (target / "previous-output").exists()
         np.testing.assert_array_equal(image.getchunk(), pixels)
     finally:
         image.done()
         (target if target.exists() else source).chmod(0o755)
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="requires unprivileged POSIX directory permissions")
+def test_miriad_cross_device_refusal_restores_read_only_source_and_previous_output(tmp_path):
+    target_root = Path(__file__).resolve().parents[4] / "target"
+    if not target_root.is_dir() or target_root.stat().st_dev == tmp_path.stat().st_dev:
+        pytest.skip("the build directory and temporary files share a filesystem")
+    source = tmp_path / "source.mir"
+    pixels = _sky(source)
+    source.chmod(0o555)
+    with tempfile.TemporaryDirectory(dir=target_root) as directory:
+        target = Path(directory) / "destination.mir"
+        _sky(target)
+        marker = target / "old-output"
+        marker.write_bytes(b"keep the prior output")
+        image = tools.image()
+        try:
+            assert image.open(str(source))
+            with pytest.raises(RuntimeError, match="Cannot move MIRIAD image .* across filesystems"):
+                image.rename(str(target), overwrite=True)
+            assert not image.isopen()
+            assert source.stat().st_mode & 0o777 == 0o555
+            assert marker.read_bytes() == b"keep the prior output"
+            assert image.open(str(source))
+            np.testing.assert_array_equal(image.getchunk(), pixels)
+        finally:
+            image.done()
+            if source.exists():
+                source.chmod(0o755)
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="requires unprivileged POSIX directory permissions")
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_open_only_needs_search_permission_on_directory(tmp_path, backend):
+    source = tmp_path / "source.mir"
+    pixels = _sky(source)
+    source.chmod(0o111)
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        image.done()
+        source.chmod(0o755)
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
@@ -658,6 +709,33 @@ def test_miriad_rename_and_read_do_not_follow_replaced_source(tmp_path):
         assert writer.getchunk(blc=[2, 1], trc=[2, 1]).item() == 998.
     finally:
         reader.done()
+        writer.done()
+
+
+@pytest.mark.parametrize("inside_parent", ["source", "destination"])
+def test_miriad_rename_preserves_child_entries_of_an_open_table(tmp_path, inside_parent):
+    parent = tmp_path / "parent.im"
+    source = (parent if inside_parent == "source" else tmp_path) / "source.mir"
+    destination = (parent if inside_parent == "destination" else tmp_path) / "destination.mir"
+    referent = tmp_path / "referent.mir"
+    writer, mover, guard = tools.image(), tools.image(), tools.table()
+    try:
+        assert writer.fromshape(str(parent), [3, 4])
+        assert writer.done()
+        pixels = _sky(source)
+        _sky(referent)
+        destination.symlink_to(referent, target_is_directory=True)
+        assert guard.open(str(parent))
+        guard.unlock()
+        assert mover.open(str(source))
+        with pytest.raises(RuntimeError, match="table in either path is open"):
+            mover.rename(str(destination), overwrite=True)
+        assert destination.is_symlink() and destination.readlink() == referent
+        assert mover.open(str(source))
+        np.testing.assert_array_equal(mover.getchunk(), pixels)
+    finally:
+        guard.done()
+        mover.done()
         writer.done()
 
 

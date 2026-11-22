@@ -58,20 +58,7 @@ fn calibration_solve_record(
         .collect::<Vec<_>>();
     apply_tables.sort();
     apply_tables.dedup();
-    let ids = |ids: &[i32]| CasaValue::int64_vector(ids.iter().map(|&id| i64::from(id)));
-    let selection = selected.map_or_else(
-        || CasaValue::dict(std::iter::empty::<(&str, CasaValue)>()),
-        |selected| {
-            CasaValue::dict([
-                ("antennas", ids(&selected.antennas)),
-                ("field", ids(&selected.fields)),
-                ("intents", CasaValue::str_vector(selected.intents.clone())),
-                ("observation", ids(&selected.observations)),
-                ("scan", ids(&selected.scans)),
-                ("spw", ids(&selected.spectral_windows)),
-            ])
-        },
-    );
+    let selection = selectvis_record(selected);
     let mut result = vec![
         ("apply_tables", CasaValue::str_vector(apply_tables)),
         ("selectvis", selection),
@@ -86,10 +73,27 @@ fn calibration_solve_record(
     CasaValue::dict(result)
 }
 
+pub(crate) fn selectvis_record(selected: Option<&SelectedData>) -> CasaValue {
+    let ids = |ids: &[i32]| CasaValue::int64_vector(ids.iter().map(|&id| i64::from(id)));
+    selected.map_or_else(
+        || CasaValue::dict(std::iter::empty::<(&str, CasaValue)>()),
+        |selected| {
+            CasaValue::dict([
+                ("antennas", ids(&selected.antennas)),
+                ("field", ids(&selected.fields)),
+                ("intents", CasaValue::str_vector(selected.intents.clone())),
+                ("observation", ids(&selected.observations)),
+                ("scan", ids(&selected.scans)),
+                ("spw", ids(&selected.spectral_windows)),
+            ])
+        },
+    )
+}
+
 /// CASA's `solvestats`: the counts summed over the windows, then each
 /// window's as `spw<id>`, each with its antennas' as `ant<id>`. CASA sorts
 /// every dictionary's keys as text, so `ant10` comes before `ant2`.
-fn solvestats(stats: &SolveStats) -> CasaValue {
+pub(crate) fn solvestats(stats: &SolveStats) -> CasaValue {
     let windows = stats.windows.iter().map(|window| {
         let antennas = window.antennas.iter().map(|antenna| {
             let mut entries = counts(&antenna.counts);

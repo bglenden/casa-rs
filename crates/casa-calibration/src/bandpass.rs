@@ -5,7 +5,7 @@
 //! should be CASA-compatible on disk and should yield corrected visibilities
 //! close to CASA's own `bandpass` when applied after the same prior gains.
 
-mod bpoly;
+pub(crate) mod bpoly;
 mod metadata;
 pub(crate) use metadata::{
     bin_widths as solution_frequency_bin_widths, write as write_solution_spectral_windows,
@@ -34,18 +34,20 @@ use crate::constants::{
 use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
 use crate::solve::grouping::{
-    SelectedSolveRow, SolveAccumulator, SolveGroupOptions, build_solve_groups,
+    SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows, build_solve_groups,
 };
 use crate::solve::kernel::{SolveGraphOptions, SolveStart, SolvedGraphs, solve_graphs};
 use crate::solve::spectral_window_ids;
 use crate::solve::{
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType,
-    RefAntSelector,
+    GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
+    GainType, RefAntSelector,
 };
-use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
+use crate::solve_stats::{
+    AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity,
+};
 use crate::writer::{CalibrationTableDescriptor, CalibrationTableWriter};
 use bpoly::write_bpoly_caltable;
-use postprocess::{fill_bandpass_gaps, normalize_bandpass_rows, reference_bandpass_rows};
+use postprocess::{normalize_bandpass_rows, reference_bandpass_rows};
 
 /// Supported `bandpass` table families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -63,6 +65,36 @@ pub enum BandpassFrequencyInterval {
     Channels(f64),
     /// Bandwidth divided by the first input channel's absolute width in each SPW.
     Hertz(f64),
+}
+
+impl BandpassFrequencyInterval {
+    /// Read the frequency component of CASA's `solint`. The outer option
+    /// denotes valid input, and the inner one denotes frequency binning.
+    #[must_use]
+    pub fn from_casa(text: &str) -> Option<Option<Self>> {
+        use casa_types::quanta::{Quantity, Unit};
+        let text = text.trim();
+        let upper = text.to_ascii_uppercase();
+        if upper.is_empty() || upper.contains("NONE") {
+            return Some(None);
+        }
+        let channels = |count: f64| {
+            count
+                .is_finite()
+                .then(|| (count > 1.0).then_some(Self::Channels(count)))
+        };
+        if let Some((count, _)) = upper.split_once("CH") {
+            return channels(count.trim().parse().ok()?);
+        }
+        let quantity = text.parse::<Quantity>().ok()?;
+        if quantity.unit().name().is_empty() {
+            return channels(quantity.value());
+        }
+        let hertz = quantity.get_value_in(&Unit::new("Hz").ok()?).ok()?;
+        hertz
+            .is_finite()
+            .then(|| (hertz > 0.).then_some(Self::Hertz(hertz)))
+    }
 }
 
 /// Supported `bandpass(..., combine=...)` axes.
@@ -326,11 +358,31 @@ pub enum BandpassSolveError {
     },
 }
 
+/// Additional controls used by the direct calibrater's `setsolve(B)`.
+#[derive(Clone, Copy)]
+pub(crate) struct BandpassSolveControls {
+    pub(crate) solve_mode: GainSolveMode,
+    pub(crate) normalization: GainNormalization,
+    pub(crate) preaverage_seconds: f64,
+}
+
+impl Default for BandpassSolveControls {
+    fn default() -> Self {
+        Self {
+            solve_mode: GainSolveMode::AmplitudePhase,
+            normalization: GainNormalization::Mean,
+            preaverage_seconds: -1.,
+        }
+    }
+}
+
 /// Solve a limited `bandpass` request from an already-open MeasurementSet.
 pub(crate) fn solve_bandpass(
     ms: &MeasurementSet,
     request: &BandpassSolveRequest,
     mode: crate::CalibrationOutputMode,
+    activity: Option<&mut ToolSolveActivity>,
+    controls: BandpassSolveControls,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
     let use_casa_solve = request.band_type == BandpassType::B || request.cuts.is_some();
@@ -376,6 +428,9 @@ pub(crate) fn solve_bandpass(
         context.preapplied_rows.as_ref(),
         &channel_bin_widths,
         SolveGroupOptions {
+            input_rows: SolveInputRows::gain(
+                activity.is_some() && request.band_type == BandpassType::B,
+            ),
             gain_type: GainType::G,
             model_source: request.model_source,
             point_stokes: request.smodel,
@@ -389,10 +444,10 @@ pub(crate) fn solve_bandpass(
             },
             channelized: true,
             polynomial_bandpass,
-            preaverage_max_span: match request.solve_interval {
-                GainSolveInterval::Seconds(seconds) => Some(f64::from(seconds as f32) * 0.999),
-                _ => None,
-            },
+            preaverage_max_span: crate::solve::preaverage_span(
+                request.solve_interval,
+                controls.preaverage_seconds,
+            ),
             robust_seed: false,
             correlation_dependent_flags,
         },
@@ -425,7 +480,7 @@ pub(crate) fn solve_bandpass(
     );
     for mut group in groups.into_values() {
         match request.band_type {
-            BandpassType::B => group.finalize_bandpass(),
+            BandpassType::B => group.finalize_bandpass(controls.solve_mode),
             BandpassType::BPoly => group.finalize_for_solve(GainSolveMode::AmplitudePhase, false),
         }
         let mut stages = IntervalStages::of(
@@ -442,9 +497,8 @@ pub(crate) fn solve_bandpass(
             &group,
             &context.available_antennas,
             context.refant_id,
-            request.combine,
-            request.cuts,
-            request.band_type,
+            request,
+            controls.solve_mode,
             (
                 correlation_dependent_flags,
                 request.correlation_dependent_flags,
@@ -469,9 +523,11 @@ pub(crate) fn solve_bandpass(
                 }
             }
         }
+        solve_stats.record_success(group.spw_id, !rows.is_empty());
         solve_stats.solutions(group.spw_id, solutions);
         solution_rows.extend(rows);
     }
+    solve_stats.track_activity(activity);
     drop(kernel_phase);
     let _write_phase = crate::timing::Phase::start("bandpass_write");
     if solution_rows.is_empty() {
@@ -504,16 +560,7 @@ pub(crate) fn solve_bandpass(
                     &mut solve_stats,
                 );
             }
-            if request.normalize_average_amplitude {
-                for row in &mut solution_rows {
-                    postprocess::normalize_bandpass_row(row, row.channel_count);
-                }
-            }
-            if let Some(cuts) = request.cuts.filter(|cuts| cuts.fill_gaps > 0) {
-                for row in &mut solution_rows {
-                    fill_bandpass_gaps(row, cuts.fill_gaps);
-                }
-            }
+            postprocess::finish_bandpass_rows(&mut solution_rows, request, controls);
             write_bandpass_caltable(
                 ms,
                 request,
@@ -675,11 +722,16 @@ fn solve_bandpass_group(
     group: &SolveAccumulator,
     available_antennas: &BTreeSet<i32>,
     refant_id: i32,
-    combine: BandpassSolveCombine,
-    cuts: Option<BandpassSolveCuts>,
-    band_type: BandpassType,
+    request: &BandpassSolveRequest,
+    solve_mode: GainSolveMode,
     (correlation_dependent_flags, independent_input_flags): (bool, bool),
 ) -> (Vec<BandpassSolutionRow>, BTreeSet<i32>) {
+    let BandpassSolveRequest {
+        combine,
+        cuts,
+        band_type,
+        ..
+    } = *request;
     let channel_count = group.solution_channels;
     // CASA solves the last channel first and starts each channel from the
     // last solution found (`Calibrater::genericGatherAndSolve`).
@@ -689,7 +741,7 @@ fn solve_bandpass_group(
         let solved = solve_graphs(
             graphs,
             GainType::G,
-            GainSolveMode::AmplitudePhase,
+            solve_mode,
             SolveGraphOptions {
                 refant_id,
                 min_baselines_per_antenna: cuts.map_or(0, |cuts| cuts.min_baselines_per_antenna),

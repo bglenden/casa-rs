@@ -552,6 +552,130 @@ def gaincal(
 ) -> Any:
     ...
 
+def accor(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    caltable: StrPath = ...,
+    field: str = ...,
+    spw: str = ...,
+    intent: str = ...,
+    selectdata: bool = ...,
+    timerange: str = ...,
+    antenna: str = ...,
+    scan: str = ...,
+    observation: str | int = ...,
+    msselect: str = ...,
+    solint: str | int | float = ...,
+    combine: str = ...,
+    corrdepflags: bool = ...,
+    append: bool = ...,
+    docallib: bool = ...,
+    callib: StrPath = ...,
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    gainfield: str | list[str] | tuple[str, ...] = ...,
+    interp: str | list[str] | tuple[str, ...] = ...,
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = ...,
+    *,
+    output: StrPath = ...,
+    overwrite: bool = ...,
+    format: Literal['json', 'text'] = ...,
+) -> Any:
+    ...
+
+def blcal(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    caltable: StrPath = ...,
+    field: str = ...,
+    spw: str = ...,
+    intent: str = ...,
+    selectdata: bool = ...,
+    timerange: str = ...,
+    uvrange: str | int | float | list[str] = ...,
+    antenna: str = ...,
+    scan: str = ...,
+    observation: str | int = ...,
+    msselect: str = ...,
+    solint: str | int | float = ...,
+    combine: str = ...,
+    freqdep: bool = ...,
+    calmode: Literal['a', 'ap', 'p'] = ...,
+    solnorm: bool = ...,
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    gainfield: str | list[str] | tuple[str, ...] = ...,
+    interp: str | list[str] | tuple[str, ...] = ...,
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = ...,
+    parang: bool = ...,
+    *,
+    output: StrPath = ...,
+    overwrite: bool = ...,
+    format: Literal['json', 'text'] = ...,
+) -> Any:
+    ...
+
+def fringefit(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    caltable: StrPath = ...,
+    field: str = ...,
+    spw: str = ...,
+    intent: str = ...,
+    selectdata: bool = ...,
+    timerange: str = ...,
+    uvrange: str | int | float | list[str] = ...,
+    antenna: str = ...,
+    scan: str = ...,
+    observation: str | int = ...,
+    msselect: str = ...,
+    solint: str | int | float = ...,
+    combine: str = ...,
+    refant: str = ...,
+    minsnr: float = ...,
+    zerorates: bool = ...,
+    globalsolve: bool = ...,
+    niter: int = ...,
+    delaywindow: float | list[float] | tuple[float, ...] = ...,
+    ratewindow: float | list[float] | tuple[float, ...] = ...,
+    append: bool = ...,
+    corrdepflags: bool = ...,
+    corrcomb: Literal['none', 'stokes', 'parallel'] = ...,
+    docallib: bool = ...,
+    callib: StrPath = ...,
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    gainfield: str | list[str] | tuple[str, ...] = ...,
+    interp: str | list[str] | tuple[str, ...] = ...,
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = ...,
+    paramactive: bool | list[bool] | tuple[bool, ...] = ...,
+    concatspws: bool = ...,
+    parang: bool = ...,
+    *,
+    output: StrPath = ...,
+    overwrite: bool = ...,
+    format: Literal['json', 'text'] = ...,
+    array: str = ...,
+) -> Any:
+    ...
+
+def pccor(
+    vis: str = ...,
+    pccor_caltable: str = ...,
+    refant: str = ...,
+    timerange: str = ...,
+    scan: str = ...,
+    spw: str = ...,
+    antenna: str = ...,
+    cablecal_correction: bool = ...,
+    ff_table: str = ...,
+) -> Any:
+    ...
+
+def appendantab(
+    vis: str = ...,
+    outvis: str = ...,
+    antab: str = ...,
+    overwrite: bool = ...,
+    append_tsys: bool = ...,
+    append_gc: bool = ...,
+) -> Any:
+    ...
+
 def bandpass(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     caltable: StrPath = ...,
@@ -1540,6 +1664,64 @@ def sdbaseline(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline')
+def sdfit(
+    infile: StrPath = ...,
+    datacolumn: str = ...,
+    antenna: str = ...,
+    field: str = ...,
+    spw: str = ...,
+    timerange: str = ...,
+    scan: str = ...,
+    pol: str = ...,
+    intent: str = ...,
+    timebin: str = ...,
+    timespan: str = ...,
+    polaverage: Literal['', 'stokes', 'geometric'] = ...,
+    fitfunc: Literal['gaussian', 'lorentzian'] = ...,
+    fitmode: Literal['list', 'auto'] = ...,
+    nfit: int | list[int] = ...,
+    thresh: float = ...,
+    avg_limit: int = ...,
+    minwidth: int = ...,
+    edge: list[int] = ...,
+    outfile: str = ...,
+    overwrite: bool = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline']
+def sdatmcor(
+    infile: StrPath = ...,
+    datacolumn: str = ...,
+    outfile: StrPath = ...,
+    overwrite: bool = ...,
+    field: str = ...,
+    spw: str = ...,
+    scan: str = ...,
+    antenna: str = ...,
+    correlation: str = ...,
+    timerange: str = ...,
+    intent: str = ...,
+    observation: str = ...,
+    feed: str = ...,
+    msselect: str = ...,
+    outputspw: str = ...,
+    gainfactor: float | dict[str | int, float] | str = ...,
+    dtem_dh: str | float = ...,
+    h0: str | float = ...,
+    atmtype: int = ...,
+    atmdetail: bool = ...,
+    altitude: str | float = ...,
+    temperature: str | float = ...,
+    pressure: str | float = ...,
+    humidity: float = ...,
+    pwv: str | float = ...,
+    dp: str | float = ...,
+    dpm: float = ...,
+    layerboundaries: str | list[str] | list[float] = ...,
+    layertemperature: str | list[str] | list[float] = ...,
+) -> Any:
+    ...
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'blcal', 'fringefit', 'pccor', 'appendantab', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'blcal', 'fringefit', 'pccor', 'appendantab', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor']

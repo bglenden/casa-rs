@@ -14,7 +14,8 @@ use thiserror::Error;
 
 use crate::ApplyCalibrationTableSpec;
 use crate::bandpass::{
-    BandpassSolveError, BandpassSolveReport, BandpassSolveRequest, solve_bandpass,
+    BandpassSolveControls, BandpassSolveError, BandpassSolveReport, BandpassSolveRequest,
+    solve_bandpass,
 };
 use crate::execute::PreappliedRows;
 use crate::selected_data::SelectedData;
@@ -22,7 +23,10 @@ use crate::solve::grouping::{
     PriorCalibrationMode, SelectedSolveRow, all_antenna_ids, collect_selected_rows,
     load_preapplied_rows, resolve_refants,
 };
-use crate::solve::{GainSolveError, GainSolveReport, GainSolveRequest, RefAntSelector, solve_gain};
+use crate::solve::{
+    GainSolveError, GainSolveReport, GainSolveRequest, GainSplineControls, GainType,
+    RefAntSelector, accor, fringe, gspline, solve_gain,
+};
 
 /// Input ownership for one calibration solve.
 pub enum CalibrationDataset<'a> {
@@ -49,6 +53,31 @@ impl CalibrationDataset<'_> {
 pub enum CalibrationSolveRequest {
     /// Solve gain calibration.
     Gain(GainSolveRequest),
+    /// Solve legacy time-domain spline gains with explicit controls.
+    GainSpline {
+        /// Shared gain-selection, model and output parameters.
+        gain: GainSolveRequest,
+        /// Spline knot spacing and phase-wrap controls.
+        controls: GainSplineControls,
+    },
+    /// Solve VLBI delay, rate and phase over selected visibility data.
+    Fringe {
+        /// Shared selection, prior and output settings.
+        gain: GainSolveRequest,
+        /// Fringe search and global refinement controls.
+        controls: fringe::FringeControls,
+    },
+    /// Normalize the sampler response from antenna autocorrelations.
+    Accor(GainSolveRequest),
+    /// Solve one multiplicative response per baseline and parallel hand.
+    Baseline {
+        /// Shared selection, prior, model and output parameters.
+        gain: GainSolveRequest,
+        /// Keep a solution for each selected frequency bin.
+        frequency_dependent: bool,
+        /// Optional channel or bandwidth interval for frequency-dependent fits.
+        frequency_interval: Option<crate::BandpassFrequencyInterval>,
+    },
     /// Solve channelized or polynomial bandpass calibration.
     Bandpass(BandpassSolveRequest),
 }
@@ -110,6 +139,30 @@ pub fn solve_calibration_with_output_mode(
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
+    solve_calibration_with_activity(
+        dataset,
+        request,
+        mode,
+        None,
+        BandpassSolveControls::default(),
+    )
+}
+
+pub(crate) fn solve_calibration_with_activity(
+    dataset: CalibrationDataset<'_>,
+    request: CalibrationSolveRequest,
+    mode: crate::CalibrationOutputMode,
+    activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
+    bandpass: BandpassSolveControls,
+) -> Result<CalibrationSolveResult, CalibrationError> {
+    if let CalibrationSolveRequest::Fringe { gain, .. } = &request
+        && gain.gain_type != GainType::K
+    {
+        return Err(GainSolveError::Delay(
+            "fringe controls require the real delay parameter schema".into(),
+        )
+        .into());
+    }
     match dataset {
         CalibrationDataset::Path(path) => {
             let open_phase = crate::timing::Phase::start("open_ms");
@@ -120,10 +173,10 @@ pub fn solve_calibration_with_output_mode(
                 }
             })?;
             drop(open_phase);
-            solve_open_dataset(&measurement_set, request, mode)
+            solve_open_dataset(&measurement_set, request, mode, activity, bandpass)
         }
         CalibrationDataset::Open(measurement_set) => {
-            solve_open_dataset(measurement_set, request, mode)
+            solve_open_dataset(measurement_set, request, mode, activity, bandpass)
         }
     }
 }
@@ -132,13 +185,43 @@ fn solve_open_dataset(
     measurement_set: &MeasurementSet,
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
+    activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
+    bandpass: BandpassSolveControls,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     match request {
-        CalibrationSolveRequest::Gain(request) => solve_gain(measurement_set, &request, mode)
+        CalibrationSolveRequest::Gain(request) => {
+            solve_gain(measurement_set, &request, mode, activity)
+                .map(CalibrationSolveResult::Gain)
+                .map_err(CalibrationError::from)
+        }
+        CalibrationSolveRequest::GainSpline { gain, controls } => {
+            gspline::solve(measurement_set, &gain, controls, mode)
+                .map(CalibrationSolveResult::Gain)
+                .map_err(CalibrationError::from)
+        }
+        CalibrationSolveRequest::Fringe { gain, controls } => {
+            fringe::solve(measurement_set, &gain, controls, mode)
+                .map(CalibrationSolveResult::Gain)
+                .map_err(CalibrationError::from)
+        }
+        CalibrationSolveRequest::Accor(gain) => accor::solve(measurement_set, &gain, mode)
             .map(CalibrationSolveResult::Gain)
             .map_err(CalibrationError::from),
+        CalibrationSolveRequest::Baseline {
+            gain,
+            frequency_dependent,
+            frequency_interval,
+        } => crate::solve::baseline::solve(
+            measurement_set,
+            &gain,
+            frequency_dependent,
+            frequency_interval,
+            mode,
+        )
+        .map(CalibrationSolveResult::Gain)
+        .map_err(|error| CalibrationError::Gain(Box::new(error))),
         CalibrationSolveRequest::Bandpass(request) => {
-            solve_bandpass(measurement_set, &request, mode)
+            solve_bandpass(measurement_set, &request, mode, activity, bandpass)
                 .map(CalibrationSolveResult::Bandpass)
                 .map_err(CalibrationError::from)
         }

@@ -13,12 +13,17 @@
 //! should be CASA-compatible on disk and should yield corrected visibilities
 //! close to CASA's own `gaincal` when applied.
 
+pub(crate) mod accor;
+pub(crate) mod baseline;
 #[cfg(test)]
 mod batch_trial;
 mod delay;
+pub(crate) mod fringe;
 pub(crate) mod grouping;
+pub(crate) mod gspline;
 pub(crate) mod kernel;
 mod model;
+mod normal;
 mod trace;
 pub(crate) mod writer;
 
@@ -36,7 +41,9 @@ use thiserror::Error;
 
 use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
-use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
+use crate::solve_stats::{
+    AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity,
+};
 use crate::{ApplyExecutionError, ApplyPlanError};
 use grouping::{SolveGroupOptions, build_solve_groups};
 use kernel::solve_group;
@@ -54,6 +61,9 @@ pub enum GainType {
     /// Shared cross-hand delay in nanoseconds.
     #[serde(rename = "KCROSS")]
     KCross,
+    /// Time-domain cubic-spline gains per receptor.
+    #[serde(rename = "GSPLINE")]
+    GSpline,
 }
 
 impl GainType {
@@ -63,6 +73,7 @@ impl GainType {
             Self::T => "T Jones",
             Self::K => "K Jones",
             Self::KCross => "Kcross Jones",
+            Self::GSpline => "GSPLINE",
         }
     }
 
@@ -70,13 +81,34 @@ impl GainType {
     /// for both for T.
     pub(crate) fn polarizations(self) -> usize {
         match self {
-            Self::G | Self::K | Self::KCross => 2,
+            Self::G | Self::K | Self::KCross | Self::GSpline => 2,
             Self::T => 1,
         }
     }
 
     fn is_delay(self) -> bool {
         matches!(self, Self::K | Self::KCross)
+    }
+}
+
+/// Controls for the GSPLINE mode of gaincal.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GainSplineControls {
+    /// Requested interval between spline knots, in seconds.
+    pub splinetime: f64,
+    /// Number of points in each phase-unwrapping median.
+    pub npointaver: i64,
+    /// Phase difference that identifies a wrap, in degrees.
+    pub phasewrap: f64,
+}
+
+impl Default for GainSplineControls {
+    fn default() -> Self {
+        Self {
+            splinetime: 3600.,
+            npointaver: 3,
+            phasewrap: 180.,
+        }
     }
 }
 
@@ -111,6 +143,26 @@ pub struct GainSolveRobustness {
 }
 
 impl GainSolveRobustness {
+    /// Parse CASA's documented `solmode` and optional `rmsthresh` sequence.
+    #[must_use]
+    pub fn from_casa(mode: &str, thresholds: Vec<f64>) -> Option<Self> {
+        let (l1, reject) = match mode {
+            "" => (false, false),
+            "L1" => (true, false),
+            "R" => (false, true),
+            "L1R" => (true, true),
+            _ => return None,
+        };
+        let rms_thresholds = if !reject {
+            Vec::new()
+        } else if thresholds.is_empty() {
+            vec![7.0, 5.0, 4.0, 3.5, 3.0, 2.8, 2.6, 2.4, 2.2, 2.5]
+        } else {
+            thresholds.into_iter().map(|value| value as f32).collect()
+        };
+        Some(Self { l1, rms_thresholds })
+    }
+
     pub(crate) fn enabled(&self) -> bool {
         self.l1 || !self.rms_thresholds.is_empty()
     }
@@ -148,6 +200,37 @@ pub enum GainSolveInterval {
     Seconds(f64),
 }
 
+impl GainSolveInterval {
+    /// Read CASA's time component of `solint`, accepting quanta and seconds.
+    #[must_use]
+    pub fn from_casa(text: &str) -> Option<Self> {
+        use casa_types::quanta::{Quantity, Unit};
+        let upper = text.to_ascii_uppercase();
+        if upper.is_empty() || upper.contains("INF") {
+            return Some(Self::Infinite);
+        }
+        if upper.contains("INT") {
+            return Some(Self::Integration);
+        }
+        let quantity = text.parse::<Quantity>().ok()?;
+        let seconds = if quantity.unit().name().is_empty() {
+            quantity.value()
+        } else {
+            quantity.get_value_in(&Unit::new("s").ok()?).ok()?
+        };
+        if !seconds.is_finite() {
+            return None;
+        }
+        Some(if seconds > 0.0 {
+            Self::Seconds(seconds)
+        } else if seconds == 0.0 {
+            Self::Infinite
+        } else {
+            Self::Integration
+        })
+    }
+}
+
 /// Data axes omitted as boundaries when forming `gaincal` solution intervals.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GainSolveCombine {
@@ -161,6 +244,20 @@ pub struct GainSolveCombine {
     /// Solve jointly across selected spectral windows.
     #[serde(default)]
     pub spectral_windows: bool,
+}
+
+impl GainSolveCombine {
+    /// Match combine axes by CASA's case-insensitive axis names.
+    #[must_use]
+    pub fn from_casa(value: &str) -> Self {
+        let upper = value.to_ascii_uppercase();
+        Self {
+            scans: upper.contains("SCAN"),
+            fields: upper.contains("FIELD"),
+            observations: upper.contains("OBS"),
+            spectral_windows: upper.contains("SPW"),
+        }
+    }
 }
 
 /// Reference antenna selector for solve requests.
@@ -322,6 +419,10 @@ pub enum GainSolveError {
     #[error("GlinXphJones needs multiple SDBs")]
     InsufficientGainPhaseSegments,
 
+    /// Baseline calibration could not be prepared or persisted.
+    #[error("{0}")]
+    Baseline(String),
+
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]
     ResolveRefAnt {
@@ -418,8 +519,12 @@ pub(crate) fn solve_gain(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     mode: crate::CalibrationOutputMode,
+    activity: Option<&mut ToolSolveActivity>,
 ) -> Result<GainSolveReport, GainSolveError> {
-    let solved = solve_gain_rows(ms, request)?;
+    if request.gain_type == GainType::GSpline {
+        return gspline::solve(ms, request, GainSplineControls::default(), mode);
+    }
+    let solved = solve_gain_rows(ms, request, activity)?;
     write_gain_caltable(ms, request, &solved, mode)
 }
 
@@ -445,9 +550,10 @@ pub(crate) struct SolvedGains {
 pub(crate) fn solve_gain_rows(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
+    activity: Option<&mut ToolSolveActivity>,
 ) -> Result<SolvedGains, GainSolveError> {
     if request.gain_type.is_delay() {
-        return delay::solve(ms, request);
+        return delay::solve(ms, request, activity);
     }
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel, true)?;
@@ -485,23 +591,14 @@ pub(crate) fn solve_gain_rows(
             share_input_flags: !request.correlation_dependent_flags,
         },
     )?;
-    let requested_preaverage = request.preaverage_seconds as f32;
-    let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
-        .then_some(requested_preaverage);
-    let averaging_interval = match request.solve_interval {
-        GainSolveInterval::Infinite => preaverage,
-        GainSolveInterval::Integration => None,
-        GainSolveInterval::Seconds(seconds) => {
-            let solint = seconds as f32;
-            Some(preaverage.map_or(solint, |preavg| preavg.min(solint)))
-        }
-    };
+    let direct_gain = activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T);
     let groups = build_solve_groups(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
+            input_rows: grouping::SolveInputRows::gain(direct_gain),
             gain_type: request.gain_type,
             model_source: request.model_source,
             point_stokes,
@@ -509,7 +606,10 @@ pub(crate) fn solve_gain_rows(
             solve_interval: request.solve_interval,
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.
-            preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * 0.999),
+            preaverage_max_span: preaverage_span(
+                request.solve_interval,
+                request.preaverage_seconds,
+            ),
             // Polarized preapply combines raw flags before applying priors.
             // A newly flagged cross-hand must not invalidate parallel hands.
             correlation_dependent_flags: request.correlation_dependent_flags
@@ -555,6 +655,7 @@ pub(crate) fn solve_gain_rows(
         ) else {
             continue;
         };
+        solve_stats.record_success(spw_id, true);
         solve_stats.solutions(
             spw_id,
             group_rows.iter().map(|row| AntennaSolution {
@@ -620,6 +721,7 @@ pub(crate) fn solve_gain_rows(
                 .or_insert_with(|| channels.clone());
         }
     }
+    solve_stats.track_activity(activity);
     Ok(SolvedGains {
         rows: solution_rows,
         refant_id: context.refant_id,
@@ -628,6 +730,21 @@ pub(crate) fn solve_gain_rows(
         selected_data: context.selected_data,
         solve_stats: solve_stats.finish(),
     })
+}
+
+/// Gather at the shorter positive user preaverage or solution interval.
+pub(crate) fn preaverage_span(interval: GainSolveInterval, requested: f64) -> Option<f64> {
+    let requested = requested as f32;
+    let preaverage = (requested > f32::EPSILON && requested.is_finite()).then_some(requested);
+    let seconds = match interval {
+        GainSolveInterval::Infinite => preaverage,
+        GainSolveInterval::Integration => None,
+        GainSolveInterval::Seconds(seconds) => {
+            let solint = seconds as f32;
+            Some(preaverage.map_or(solint, |preavg| preavg.min(solint)))
+        }
+    };
+    seconds.map(|seconds| f64::from(seconds) * 0.999)
 }
 
 /// Every spectral window of `ms`, by id.

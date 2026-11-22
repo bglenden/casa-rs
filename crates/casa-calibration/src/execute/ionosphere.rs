@@ -120,7 +120,7 @@ impl Ionosphere {
             .then(|| polarization::coherency_order(row.data_desc_id, output.correlation_types))
             .transpose()?;
         let sign = if forward { 1. } else { -1. };
-        let write_flags = output.apply_mode.writes_flags();
+        let write_flags = output.propagate_flags;
         for (channel, &frequency) in context
             .data_channels
             .frequencies_hz

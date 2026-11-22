@@ -14,7 +14,7 @@ use crate::solve::model::ModelInputs;
 
 use super::{
     AveragedBaseline, GainSolveError, GainSolveMode, SelectedChannels, SelectedSolveRow,
-    SolveAccumulator, SolveSamples, get_i32, median_with_even_mean,
+    SolveAccumulator, SolveSamples, get_i32,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,6 +22,33 @@ pub(super) struct SolveAccumulationKey {
     pub(super) baseline: AveragedBaseline,
     pub(super) correlation_index: usize,
     pub(super) parallel_hand: bool,
+}
+
+/// Apply the requested amplitude/phase mode to one collapsed visibility.
+pub(super) fn transform_solve_sample(
+    visibility: Complex32,
+    weight: f32,
+    mode: GainSolveMode,
+    fixed_auto: bool,
+) -> Option<(Complex32, f32)> {
+    Some(match mode {
+        GainSolveMode::Phase => {
+            let amplitude = visibility.norm();
+            if fixed_auto && amplitude == 0.0 {
+                // CASA leaves the nominal weight and zero DATA in the residual.
+                return Some((visibility, weight));
+            }
+            if !fixed_auto && amplitude <= f32::EPSILON {
+                return None;
+            }
+            (
+                visibility / Complex32::new(amplitude, 0.0),
+                weight * amplitude * amplitude,
+            )
+        }
+        GainSolveMode::Amplitude => (Complex32::new(visibility.norm(), 0.0), weight),
+        GainSolveMode::AmplitudePhase => (visibility, weight),
+    })
 }
 
 /// One MAIN row's checked two-dimensional solve arrays. Scalar SIGMA weights
@@ -141,8 +168,12 @@ impl SolveAccumulator {
         let samples = self.receptor_accumulations.first()?;
         let first = samples.iter().filter_map(|(key, channels)| {
             let baseline = key.baseline;
+            let (first, second) = baseline.antennas;
             let data = channels.first()?;
-            (key.parallel_hand && buffer.contains(baseline) && data.weight > f32::EPSILON)
+            (first != second
+                && key.parallel_hand
+                && buffer.contains(baseline)
+                && data.weight > f32::EPSILON)
                 .then(|| (baseline.antennas, data.weighted_sum / data.weight))
         });
         let guess_antenna = first
@@ -276,6 +307,36 @@ pub(super) fn rotate_model(
     Ok(Some(point.into_raw_vec_and_offset().0))
 }
 
+/// The median, the mean of the middle two for an even count, as casacore's
+/// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
+/// channel-independent weight.
+pub(crate) fn median_with_even_mean(values: &mut [f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let middle = values.len() / 2;
+    let even = values.len().is_multiple_of(2);
+    let first = values[0];
+    if values
+        .iter()
+        .all(|value| value.to_bits() == first.to_bits())
+    {
+        return if even { (first + first) / 2.0 } else { first };
+    }
+    let (lower, upper, _) = values.select_nth_unstable_by(middle, f32::total_cmp);
+    let upper = *upper;
+    if even {
+        let lower = lower
+            .iter()
+            .copied()
+            .max_by(f32::total_cmp)
+            .expect("nonempty even lower half");
+        (lower + upper) / 2.0
+    } else {
+        upper
+    }
+}
+
 /// The time averager sees all correlations before G restricts the fit.
 pub(super) fn centroid_weight(
     samples: &SolveSamples<'_>,
@@ -318,6 +379,44 @@ pub(super) fn centroid_weight(
 }
 
 /// CASA's correlation-independent flags are shared by every receptor.
+/// Direct antenna solve counts include correlations that are later excluded
+/// from the fit. The first and last input positions define the two counters.
+#[derive(Debug, Clone, Default)]
+pub(super) struct DirectGainGather {
+    pub(super) with_data: [BTreeSet<i32>; 2],
+    pub(super) attempted: bool,
+}
+
+impl DirectGainGather {
+    pub(super) fn observe(
+        &mut self,
+        row: &super::SolveSampleRow,
+        samples: &SolveSamples<'_>,
+        channels: &[usize],
+        shared_flags: Option<&[bool]>,
+    ) {
+        let positive = |correlation| {
+            channels.iter().any(|&channel| {
+                !shared_flags.is_some_and(|flags| flags[channel])
+                    && !samples.flags[[correlation, channel]]
+                    && samples.weights[[correlation, channel]] > 0.0
+            })
+        };
+        let Some(last) = samples.data.nrows().checked_sub(1) else {
+            return;
+        };
+        for (hand, correlation) in [0, last].into_iter().enumerate() {
+            if positive(correlation) {
+                self.with_data[hand].extend([row.antenna1, row.antenna2]);
+                self.attempted = true;
+            }
+        }
+        if !self.attempted {
+            self.attempted = (1..last).any(positive);
+        }
+    }
+}
+
 pub(super) fn channel_flags(samples: &SolveSamples<'_>) -> Vec<bool> {
     let correlations = samples.flags.shape()[0];
     if correlations > 0
@@ -341,6 +440,7 @@ pub(super) struct SampleAccumulation<'a> {
     pub(super) values: &'a mut [SolveEdgeAccumulation],
     pub(super) attempted: &'a mut bool,
     pub(super) channelized: bool,
+    pub(super) keep_zero_data: bool,
     pub(super) retain_zero_model: bool,
 }
 
@@ -387,6 +487,14 @@ impl SampleAccumulation<'_> {
                     unflagged.then_some(average.weight)
                 });
             return mean_weights(weights);
+        }
+        if self.keep_zero_data {
+            let selected = channels.indices.iter().map(selected);
+            return if self.channelized {
+                self.add_ordered::<true, false, true>(selected)
+            } else {
+                self.add_scalar_row::<false, true>(selected)
+            };
         }
         let correlations = samples.data.nrows();
         if channels.all_channels
@@ -441,9 +549,9 @@ impl SampleAccumulation<'_> {
 
     fn add<const POINT: bool>(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
         if self.channelized {
-            self.add_ordered::<true, POINT>(samples)
+            self.add_ordered::<true, POINT, false>(samples)
         } else {
-            self.add_ordered::<false, POINT>(samples)
+            self.add_ordered::<false, POINT, false>(samples)
         }
     }
 
@@ -475,12 +583,12 @@ impl SampleAccumulation<'_> {
         }
     }
 
-    fn add_ordered<const CHANNELIZED: bool, const POINT: bool>(
+    fn add_ordered<const CHANNELIZED: bool, const POINT: bool, const KEEP_ZERO_DATA: bool>(
         &mut self,
         samples: impl Iterator<Item = Sample>,
     ) -> f64 {
         if !CHANNELIZED && self.retain_zero_model {
-            return self.add_scalar_row::<POINT>(samples);
+            return self.add_scalar_row::<POINT, KEEP_ZERO_DATA>(samples);
         }
         let mut weights = Vec::new();
         if CHANNELIZED {
@@ -489,7 +597,7 @@ impl SampleAccumulation<'_> {
         let mut summed_weight = 0.0_f64;
         for (channel, sample) in samples.enumerate() {
             let output = if CHANNELIZED { channel } else { 0 };
-            let weight = self.values[output].add_sample::<POINT, false>(
+            let weight = self.values[output].add_sample::<POINT, KEEP_ZERO_DATA>(
                 self.attempted,
                 sample,
                 self.retain_zero_model,
@@ -507,8 +615,11 @@ impl SampleAccumulation<'_> {
         }
     }
 
-    fn add_scalar_row<const POINT: bool>(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
-        let (average, _) = average_channels::<POINT, false>(self.attempted, samples);
+    fn add_scalar_row<const POINT: bool, const KEEP_ZERO_DATA: bool>(
+        &mut self,
+        samples: impl Iterator<Item = Sample>,
+    ) -> f64 {
+        let (average, _) = average_channels::<POINT, KEEP_ZERO_DATA>(self.attempted, samples);
         self.values[0].merge(average);
         f64::from(average.weight)
     }
@@ -534,6 +645,65 @@ fn average_channels<const POINT: bool, const KEEP_ZERO_DATA: bool>(
         average.model_weight = average.weight * model_channels as f32 / channel_count as f32;
     }
     (average, channel_count > 0)
+}
+
+/// The old GSPLINE iterator divides by the model before frequency averaging.
+/// The row weight uses the squared mean model amplitude over accepted channels.
+pub(super) fn collapse_spline_channels(
+    samples: &SolveSamples<'_>,
+    correlation: usize,
+    channels: &[usize],
+    flags: &[bool],
+    point: Complex32,
+) -> SolveEdgeAccumulation {
+    let mut data = Complex32::default();
+    let mut amplitude = 0.;
+    let mut modeled_channels = 0;
+    let mut count = 0;
+    let promote =
+        |value: Complex32| num_complex::Complex64::new(f64::from(value.re), f64::from(value.im));
+    for &channel in channels {
+        if !flags[channel] {
+            count += 1;
+            let sample = samples.data[[correlation, channel]];
+            if let Some(model) = &samples.model {
+                let model = model[[correlation, channel]];
+                let scale = model.norm();
+                if scale > 0. {
+                    let normalized = promote(sample) / promote(model);
+                    data += Complex32::new(normalized.re as f32, normalized.im as f32);
+                    amplitude += scale;
+                    modeled_channels += 1;
+                }
+            } else {
+                data += sample;
+            }
+        }
+    }
+    if count == 0 {
+        return SolveEdgeAccumulation::default();
+    }
+    let scale = (count as f32).recip();
+    let (normalized, model_power) = if samples.model.is_some() {
+        (
+            data * scale,
+            (amplitude / modeled_channels.max(1) as f32).powi(2),
+        )
+    } else if point.norm_sqr() > 0. {
+        let normalized = promote(data * scale) / promote(point);
+        (
+            Complex32::new(normalized.re as f32, normalized.im as f32),
+            point.norm_sqr(),
+        )
+    } else {
+        return SolveEdgeAccumulation::default();
+    };
+    let weight = samples.weights[[correlation, channels[0]]] * model_power;
+    SolveEdgeAccumulation {
+        weighted_sum: normalized * weight,
+        weight,
+        ..SolveEdgeAccumulation::default()
+    }
 }
 
 /// After frequency averaging, FreqAxisTVI uses the mean of the weights of
@@ -635,6 +805,7 @@ mod tests {
                 values: &mut values,
                 attempted: &mut attempted,
                 channelized: true,
+                keep_zero_data: false,
                 retain_zero_model: false,
             }
             .add_uniform(

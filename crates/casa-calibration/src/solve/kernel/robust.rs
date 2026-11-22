@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use num_complex::Complex64;
+use num_complex::{Complex32, Complex64};
 
 use super::{
     GainSolveRobustness, RobustSample, SolveEdgeStats, SolveGraph, SolveIteration, solve_lm,
@@ -150,7 +150,14 @@ fn reject_outliers(
 }
 
 impl RobustSample {
+    pub(crate) fn fixed_residual_power(self) -> f32 {
+        (self.visibility - Complex32::new(self.model, 0.0)).norm_sqr()
+    }
+
     fn residual_power(self, gains: &HashMap<i32, Complex64>) -> Option<f32> {
+        if self.baseline.0 == self.baseline.1 {
+            return Some(self.fixed_residual_power());
+        }
         let model = gains.get(&self.baseline.0)?
             * gains.get(&self.baseline.1)?.conj()
             * f64::from(self.model);
@@ -159,6 +166,13 @@ impl RobustSample {
     }
 
     fn accumulate(self, graph: &mut SolveGraph, weight: f32) {
+        if self.baseline.0 == self.baseline.1 {
+            graph.add_fixed_residual(
+                self.baseline.0,
+                f64::from(weight) * f64::from(self.fixed_residual_power()),
+            );
+            return;
+        }
         let model_weight = weight * self.model;
         graph.accumulate(
             self.baseline,

@@ -22,6 +22,7 @@
 
 mod accumulate;
 mod antpos_vla;
+mod appendantab;
 mod attachment;
 mod bandpass;
 mod calibrater_lifecycle;
@@ -40,6 +41,7 @@ mod gencal;
 mod imaging_memory_test;
 mod initweights;
 mod interpolation;
+mod legacy_spline;
 mod listing;
 mod lookup;
 mod lookup_frequency;
@@ -49,6 +51,7 @@ mod model_columns;
 mod output;
 mod output_merge;
 mod paths;
+mod pccor;
 mod plan;
 mod plotbandpass;
 #[doc(hidden)]
@@ -60,10 +63,13 @@ mod selected_data;
 mod session;
 mod simulated;
 mod single_dish;
+pub use single_dish::preparation::atmosphere::SingleDishAtmosphere;
 pub use single_dish::preparation::baseline::{
     SingleDishBaseline, SingleDishBaselineBasis, SingleDishBaselineDiagnostics,
     SingleDishBaselineMode, SingleDishLineFinder, SingleDishSinusoid,
 };
+pub use single_dish::preparation::import::{import_asap, import_nro};
+pub use single_dish::preparation::line_fit::SingleDishLineFit;
 pub use single_dish::preparation::{SingleDishSession, SingleDishSmoothing};
 mod smooth;
 mod solution_edit;
@@ -125,7 +131,7 @@ pub use bandpass::{
 };
 pub use callib::{
     CallibError, CallibraryContextMap, CallibraryOptions, load_apply_specs_from_callib,
-    save_apply_specs_to_callib,
+    load_callibrary_record, save_apply_specs_to_callib, validate_callibrary_record,
 };
 pub use casa_return::{fluxscale_record, solve_record};
 pub use cli::{CALIBRATION_SURFACES, task_front_end};
@@ -142,6 +148,7 @@ pub use fluxscale::{
     FluxScaleSpwResult, fluxscale,
 };
 pub use gencal::{AntposInputError, GencalError, GencalReport, GencalRequest, GencalType, gencal};
+pub use legacy_spline::LegacySplineTable;
 pub use lookup::{
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection,
     LOOKUP_KEPT_ROW_BYTES, LOOKUP_LOADING_ROW_BYTES, TimeInterpolation, TimeInterpolationOptions,
@@ -178,10 +185,11 @@ pub use simulated::{
     SimulatedSolution, SimulatedTableMetadata, SolutionValues, check_simulated_table_destination,
     simulated_table_bytes, write_simulated_jones_table, write_simulated_noise_table,
 };
+pub use solve::fringe::{FringeControls, FringeCorrelation};
 pub use solve::{
     GainNormalization, GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode,
-    GainSolveModelSource, GainSolveReport, GainSolveRequest, GainSolveRobustness, GainType,
-    RefAntSelector, point_model_stokes,
+    GainSolveModelSource, GainSolveReport, GainSolveRequest, GainSolveRobustness,
+    GainSplineControls, GainType, RefAntSelector, point_model_stokes,
 };
 pub use solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
 pub use stats::{

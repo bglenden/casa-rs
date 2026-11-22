@@ -16,8 +16,11 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 
 | Surface | CASA task | CASA's signature | CASA parameters | Shared | CASA's casa-rs lacks | Default only | casa-rs's CASA lacks | Defaults differ |
 |---|---|---|---:|---:|---:|---:|---:|---:|
+| accor | accor | yes | 21 | 21 | 0 | 0 | 3 | 0 |
+| appendantab | appendantab | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
+| blcal | blcal | yes | 22 | 22 | 0 | 0 | 3 | 0 |
 | calstat | calstat | yes | 3 | 3 | 0 | 0 | 0 | 0 |
 | clearcal | clearcal | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
@@ -27,8 +30,9 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | flagdata | flagdata | yes | 76 | 76 | 0 | 0 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
+| fringefit | fringefit | yes | 33 | 33 | 0 | 0 | 4 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
-| gaincal | gaincal | yes | 38 | 38 | 0 | 3 | 4 | 0 |
+| gaincal | gaincal | yes | 38 | 38 | 0 | 0 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 0 | 4 | 0 |
 | getantposalma | getantposalma | yes | 10 | 10 | 0 | 0 | 0 | 0 |
 | getcalmodvla | getcalmodvla | yes | 8 | 8 | 0 | 0 | 0 | 0 |
@@ -46,6 +50,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 32 | 0 | 0 |
+| pccor | pccor | yes | 9 | 9 | 0 | 0 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | yes | 102 | 102 | 0 | 12 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
@@ -53,8 +58,10 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | polfromgain | polfromgain | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
+| sdatmcor | sdatmcor | yes | 29 | 29 | 0 | 0 | 0 | 0 |
 | sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdfit | sdfit | yes | 21 | 21 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
@@ -71,6 +78,31 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | wvrgcal | wvrgcal | yes | 24 | 24 | 0 | 0 | 0 | 0 |
 
 ## Tasks
+
+### accor
+
+- CASA source: `casatasks/accor.py`, 21 parameters
+- Implementation: `casatasks/private/task_accor.py`, `accor` (line 8): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
+- Shared parameters: 21, in CASA's order: yes
+- Defaults that differ: none
+
+### appendantab
+
+- CASA source: `casatasks/appendantab.py`, 6 parameters
+- Implementation: `casatasks/private/task_appendantab.py`, `appendantab` (line 150): 3 return statements, 0 raise statements
+  - returns at line 156: `None`
+  - returns at line 161: `None`
+  - returns at line 180: `None`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 6, in CASA's order: yes
+- Defaults that differ: none
 
 ### applycal
 
@@ -275,6 +307,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 35, in CASA's order: yes
+- Defaults that differ: none
+
+### blcal
+
+- CASA source: `casatasks/blcal.py`, 22 parameters
+- Implementation: `casatasks/private/task_blcal.py`, `blcal` (line 7): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
+- Shared parameters: 22, in CASA's order: yes
 - Defaults that differ: none
 
 ### calstat
@@ -730,6 +773,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Command: `python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>`.
 - Receipt: `resources/casa-compat/evidence/fluxscale-performance-20261117.json`.
 
+### fringefit
+
+- CASA source: `casatasks/fringefit.py`, 33 parameters
+- Implementation: `casatasks/private/task_fringefit.py`, `fringefit` (line 8): 0 return statements, 2 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
+- Shared parameters: 33, in CASA's order: yes
+- Defaults that differ: none
+
 ### ft
 
 - CASA source: `casatasks/ft.py`, 15 parameters
@@ -821,7 +875,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `splinetime`, `npointaver`, `phasewrap`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 38, in CASA's order: yes
 - Defaults that differ: none
@@ -1563,6 +1616,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `realmodelcol`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
+- Defaults that differ: none
+
+### pccor
+
+- CASA source: `casatasks/pccor.py`, 9 parameters
+- Implementation: `casatasks/private/task_pccor.py`, `pccor` (line 1115): 1 return statements, 0 raise statements
+  - returns at line 1145: `output_dict`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 9, in CASA's order: yes
 - Defaults that differ: none
 
 ### plotbandpass
@@ -2371,6 +2436,162 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
 
+### sdatmcor
+
+- CASA source: `casatasks/sdatmcor.py`, 29 parameters
+- Implementation: `casatasks/private/task_sdatmcor.py`, `sdatmcor` (line 607): 0 return statements, 9 raise statements
+- Called with its defaults in an empty directory, CASA raises `Exception`: infile MUST BE specified.
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 29, in CASA's order: yes
+- Defaults that differ: none
+
+#### sdatmcor parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `c79ffdb24ad34d102117217f110217ae0f6581c3`. Status counts: Default only: 0, Implemented: 29, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `infile` | `''` | `''`; `infile` → `infile` | Implemented | name of input MS. [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `path` (measurement_set) | [paired](#sdatmcor-evidence-paired) |
+| `datacolumn` | `'data'` | `'data'`; `datacolumn` → `datacolumn` | Implemented | name of data column to be used ["data", "float_data", or "corrected"] [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | name of output MS. [output](#sdatmcor-behavior-output)<br>Catalog domain: `path` (measurement_set) | [paired](#sdatmcor-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | allow to overwrite the output file if already exists. [output](#sdatmcor-behavior-output)<br>Catalog domain: `bool` | [paired](#sdatmcor-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Select fields. Use field id(s) or name(s). [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Select spectral windows [windows](#sdatmcor-behavior-windows)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Scan number range [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Select data based on antenna/baseline [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `correlation` | `''` | `''`; `correlation` → `correlation` | Implemented | Correlation (polarization) types or expression [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Range of time to select from data [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Scan Intent(s) [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `observation` | `''` | `''`; `observation` → `observation` | Implemented | Observation ID range [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `feed` | `''` | `''`; `feed` → `feed` | Implemented | feed selection [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `msselect` | `''` | `''`; `msselect` → `msselect` | Implemented | Complicated data selection using TaQL [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `outputspw` | `''` | `''`; `outputspw` → `outputspw` | Implemented | select spws to output, same syntax of spw.("" = all) [windows](#sdatmcor-behavior-windows)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `gainfactor` | `1.0` | `1.0`; `gainfactor` → `gainfactor` | Implemented | Gain factor to multiply correction term. [gain](#sdatmcor-behavior-gain)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `dtem_dh` | `''` | `''`; `dtem_dh` → `dtem_dh` | Implemented | temperature gradient [K/km], e.g. -5.6. ("" = Tool default) [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `h0` | `''` | `''`; `h0` → `h0` | Implemented | scale height for water [km], e.g. 2.0. ("" = Tool default) [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `atmtype` | `2` | `2`; `atmtype` → `atmtype` | Implemented | Atmospheric type. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `integer` | [paired](#sdatmcor-evidence-paired) |
+| `atmdetail` | `False` | `False`; `atmdetail` → `atmdetail` | Implemented | Expose parameters for detailed configuration of ATM model if True. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `bool` | [paired](#sdatmcor-evidence-paired) |
+| `altitude` | `''` | `''`; `altitude` → `altitude` | Implemented | Site altitude [m]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `temperature` | `''` | `''`; `temperature` → `temperature` | Implemented | Ambient temperature [K]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `pressure` | `''` | `''`; `pressure` → `pressure` | Implemented | Ambient pressure [mbar]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `humidity` | `-1.0` | `-1.0`; `humidity` → `humidity` | Implemented | Relative humidity [percent]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `float` | [paired](#sdatmcor-evidence-paired) |
+| `pwv` | `''` | `''`; `pwv` → `pwv` | Implemented | Zenith water vapor [mm]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `dp` | `''` | `''`; `dp` → `dp` | Implemented | Initial pressure step. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `dpm` | `-1.0` | `-1.0`; `dpm` → `dpm` | Implemented | Pressure multiplicative factor for steps. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `float` | [paired](#sdatmcor-evidence-paired) |
+| `layerboundaries` | `''` | `''`; `layerboundaries` → `layerboundaries` | Implemented | Altitude of user-defined temperature profile. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `layertemperature` | `''` | `''`; `layertemperature` → `layertemperature` | Implemented | User-defined temperature profile [K]. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+
+#### sdatmcor interacting modes and task behavior
+
+<a id="sdatmcor-behavior-inputs"></a>
+##### Open and select a total-power MeasurementSet
+
+**Implemented** — Resolve selected autocorrelation rows and polarization and read the requested data plane. Apply correction to eligible on-source integrations.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-windows"></a>
+##### Resolve independent processing and output windows
+
+**Implemented** — Correct the intersection of processing and output windows. Preserve other output windows and map each output spectrum to its original channels.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-gain"></a>
+##### Apply calibration-derived gain
+
+**Implemented** — Accept the scalar, per-window mapping, or a calibration table. Apply the window gain to the additive atmospheric correction.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-atmosphere"></a>
+##### Use measured weather, pointing, and the atmospheric profile
+
+**Implemented** — Use recorded ambient conditions by default and allow explicit site and atmospheric overrides. Interpolate pointing, link target and reference elevations, and use the native atmospheric model and measured band response.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-layers"></a>
+##### Configure detailed ATM layers
+
+**Implemented** — Accept profile and layer quantities, default values and unit strings. The pinned layer model accepts a pressure factor but computes with a fixed factor of 1.075.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-output"></a>
+##### Publish an interoperable corrected MeasurementSet
+
+**Implemented** — Write the selected MeasurementSet, including unchanged imaginary components, flags and weights. Stage the replacement until processing succeeds.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+#### sdatmcor deviations and unfinished work
+
+##### empty-processing-intersection: Previously agreed
+
+- Record: [An empty atmospheric correction window selection raises a record-type error](https://github.com/bglenden/casa-rs/blob/c79ffdb24ad34d102117217f110217ae0f6581c3/docs/CASA%20%28C%2B%2B%29%20bugs.md#an-empty-atmospheric-correction-window-selection-raises-a-record-type-error)
+- Inputs: Use spw='19', outputspw='23' on X320b_sel2.ms.
+- CASA: The empty NumPy record list is inferred as floating point and rejected.
+- casa-rs: Use a typed empty window list and write the selected spectra unchanged.
+- Rationale: There are zero eligible windows for correction.
+- User impact: Disjoint processing and output selections produce the selected data.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdatmcor-evidence-paired).
+
+##### cropped-channel-coordinates: Previously agreed
+
+- Record: [Atmospheric correction can index a cropped window from channel zero](https://github.com/bglenden/casa-rs/blob/c79ffdb24ad34d102117217f110217ae0f6581c3/docs/CASA%20%28C%2B%2B%29%20bugs.md#atmospheric-correction-can-index-a-cropped-window-from-channel-zero)
+- Inputs: Use outputspw='19:370~407^2' on X320b_sel2.ms.
+- CASA: Subtracts corrections computed for channels 0 through 18 from the selected output channels.
+- casa-rs: Subtract the correction at each original selected channel.
+- Rationale: Original frequency determines the atmospheric signature; the corrected output matches the same channels of a full-window correction.
+- User impact: Cropped spectra agree with the requested ordered projection of the full corrected product.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdatmcor-evidence-paired).
+
+##### nonfinite-correction: Previously agreed
+
+- Record: [Atmospheric correction can publish unflagged nonfinite spectra](https://github.com/bglenden/casa-rs/blob/c79ffdb24ad34d102117217f110217ae0f6581c3/docs/CASA%20%28C%2B%2B%29%20bugs.md#atmospheric-correction-can-publish-unflagged-nonfinite-spectra)
+- Inputs: Use a calibration table with zero amplitude or a scalar factor of 1e40 for SPW 19.
+- CASA: The corrected MeasurementSet contains unflagged nonfinite samples.
+- casa-rs: Refuse nonfinite gains and corrections outside the Float32 range before publication.
+- Rationale: A gain factor cannot make a finite input spectrum invalid without an error.
+- User impact: A failed overwrite preserves an existing finite product.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdatmcor-evidence-paired).
+
+#### sdatmcor evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="sdatmcor-evidence-paired"></a>
+##### paired
+
+**ALMA total-power atmospheric correction, spectrum invariants, and MeasurementSet interchange — passed.** On the pinned X320b_sel2.ms fixture, measured correction normalized RMS across 1,648 spectra is 2.82e-4. Gain, channel and equal-elevation laws pass, alongside a dry atmosphere, antenna-pair selection and transactional publication. All 29 task arguments and three direct atmcor arguments, including original, corrected and floating-point spectra, independent window queries, worked quantities and profile overrides, weather and pointing, combined selectors, gain factors, flags and weights, and reads in both table implementations.
+
+- [tools/casa-compat/sdatmcor_oracle.py](https://github.com/bglenden/casa-rs/blob/c79ffdb24ad34d102117217f110217ae0f6581c3/tools/casa-compat/sdatmcor_oracle.py)
+- Revision: `c79ffdb24ad34d102117217f110217ae0f6581c3`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> OMP_NUM_THREADS=2 casa-python tools/casa-compat/sdatmcor_oracle.py <X320b_sel2.ms> <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1988`.
+
 ### sdbaseline
 
 - CASA source: `casatasks/sdbaseline.py`, 38 parameters
@@ -2796,6 +3017,157 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1974`.
+
+### sdfit
+
+- CASA source: `casatasks/sdfit.py`, 21 parameters
+- Implementation: `casatasks/private/task_sdfit.py`, `sdfit` (line 17): 1 return statements, 5 raise statements
+  - returns at line 73: `_get_results(tempfile, fitfunc, nfit, outfile)`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 21, in CASA's order: yes
+- Defaults that differ: none
+
+#### sdfit parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `f8253b17601ac8d8bf538c516ea05b19a6129891`. Status counts: Default only: 0, Implemented: 21, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `infile` | `''` | `''`; `infile` → `infile` | Implemented | name of input SD dataset [selection](#sdfit-behavior-selection)<br>Catalog domain: `path` (measurement_set) | [paired](#sdfit-evidence-paired) |
+| `datacolumn` | `'data'` | `'data'`; `datacolumn` → `datacolumn` | Implemented | Read FLOAT_DATA or the real part of DATA or CORRECTED_DATA through the data, float_data and corrected selectors. [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | select data by antenna name or ID, e.g. "PM03" [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | select data by field IDs and names, e.g. "3C2*" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | select data by IF IDs (spectral windows), e.g. "3,5,7" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | select data by time range, e.g. "09:14:0~09:54:0" (""=all) (see examples in help) [selection](#sdfit-behavior-selection)<br>Catalog domain: `variant` | [paired](#sdfit-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | select data by scan numbers, e.g. "21~23" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `pol` | `''` | `''`; `pol` → `pol` | Implemented | select data by polarization IDs, e.g. "XX,YY" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | select data by observational intent, e.g. "*ON_SOURCE*" (""=all) [selection](#sdfit-behavior-selection)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `timebin` | `''` | `''`; `timebin` → `timebin` | Implemented | bin width for time averaging [averaging](#sdfit-behavior-averaging)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `timespan` | `''` | `''`; `timespan` → `timespan` | Implemented | span the timebin across "scan", "state", "field", or a combination of them (e.g., "scan,state") [averaging](#sdfit-behavior-averaging)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `polaverage` | `''` | `''`; `polaverage` → `polaverage` | Implemented | polarization averaging mode ("", "stokes" or "geometric"). [averaging](#sdfit-behavior-averaging)<br>Catalog domain: ``, `stokes`, `geometric` | [paired](#sdfit-evidence-paired) |
+| `fitfunc` | `'gaussian'` | `'gaussian'`; `fitfunc` → `fitfunc` | Implemented | function for fitting [fitting](#sdfit-behavior-fitting)<br>Catalog domain: `gaussian`, `lorentzian` | [paired](#sdfit-evidence-paired) |
+| `fitmode` | `'list'` | `'list'`; `fitmode` → `fitmode` | Implemented | Use explicit component counts and channel ranges or detect lines automatically. [fitting](#sdfit-behavior-fitting)<br>Catalog domain: `list`, `auto` | [paired](#sdfit-evidence-paired) |
+| `nfit` | `[0]` | `[0]`; `nfit` → `nfit` | Implemented | list of number of lines to fit in maskline region. [fitting](#sdfit-behavior-fitting)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [paired](#sdfit-evidence-paired) |
+| `thresh` | `5.0` | `5.0`; `thresh` → `thresh` | Implemented | S/N threshold for linefinder [detection](#sdfit-behavior-detection)<br>Catalog domain: `float` | [paired](#sdfit-evidence-paired) |
+| `avg_limit` | `4` | `4`; `avg_limit` → `avg_limit` | Implemented | channel averaging for broad lines [detection](#sdfit-behavior-detection)<br>Catalog domain: `integer` | [paired](#sdfit-evidence-paired) |
+| `minwidth` | `4` | `4`; `minwidth` → `minwidth` | Implemented | the minimum channel width to detect as a line [detection](#sdfit-behavior-detection)<br>Catalog domain: `integer` | [paired](#sdfit-evidence-paired) |
+| `edge` | `[0, 0]` | `[0, 0]`; `edge` → `edge` | Implemented | channels to drop at beginning and end of spectrum [detection](#sdfit-behavior-detection)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [paired](#sdfit-evidence-paired) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | name of output file [products](#sdfit-behavior-products)<br>Catalog domain: `string` | [paired](#sdfit-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | overwrite the output file if already exists [products](#sdfit-behavior-products)<br>Catalog domain: `bool` | [paired](#sdfit-evidence-paired) |
+
+#### sdfit interacting modes and task behavior
+
+<a id="sdfit-behavior-selection"></a>
+##### Select single-dish spectra
+
+**Implemented** — Apply CASA autocorrelation, field, time, scan, correlation, intent and spectral-window selection. Use channel ranges as masks on the original spectra.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+<a id="sdfit-behavior-fitting"></a>
+##### Fit and report spectral lines
+
+**Implemented** — Fit Gaussian and Lorentzian emission and absorption components. Return channel centers, peaks, widths and residual covariance errors as nested Python lists.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+<a id="sdfit-behavior-averaging"></a>
+##### Average selected integrations and hands
+
+**Implemented** — Combine selected integrations and time-span axes or average parallel hands, using channel weights when present. An attached fit_line retains its averaging settings until reopened or closed.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+<a id="sdfit-behavior-detection"></a>
+##### Detect line ranges
+
+**Implemented** — Use the CASA clipped-MAD line finder to choose fit ranges. Omit spectra with no detected line in automatic mode.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+<a id="sdfit-behavior-products"></a>
+##### Publish interoperable fit products
+
+**Implemented** — Write the optional tab-separated fit report and the direct tool text and empty selected MeasurementSet. Switch to Stokes I metadata when requested by the attached tool.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdfit-evidence-paired).
+
+#### sdfit deviations and unfinished work
+
+##### chronological-time-bins: Previously agreed
+
+- Record: [Single-dish line fitting can exceed its time bin on descending rows](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-line-fitting-can-exceed-its-time-bin-on-descending-rows)
+- Inputs: A one-second fit bin on four integrations provided in descending physical order.
+- CASA: The iterator fits one combined spectrum per hand.
+- casa-rs: Chronological ordering yields four fitted spectra per hand in either physical row order.
+- Rationale: The bin duration applies to integration times. Fit products agree with CASA on the chronological input.
+- User impact: A reordered MeasurementSet gives the same fitted time bins.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdfit-evidence-paired).
+
+##### single-hand-average: Previously agreed
+
+- Record: [Single-dish polarization averaging can abort for one selected hand](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-polarization-averaging-can-abort-for-one-selected-hand)
+- Inputs: Select YY on an XX/YY setup and request geometric averaging.
+- CASA: The iterator can abort while indexing the original pair.
+- casa-rs: With no selected pair, fit the selected hand unchanged.
+- Rationale: The selected correlation is the only available eligible spectrum.
+- User impact: The call returns the equivalent fit of the selected hand.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdfit-evidence-paired).
+
+##### negative-fit-count: Previously agreed
+
+- Record: [Single-dish line fitting aborts for negative component counts](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-line-fitting-aborts-for-negative-component-counts)
+- Inputs: Use nfit=[-1] in list mode.
+- CASA: An unsigned component allocation can abort the process.
+- casa-rs: Raise a runtime error before allocating a fit.
+- Rationale: A component count cannot be negative.
+- User impact: The caller can correct the list without losing the session.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdfit-evidence-paired).
+
+##### fit-report-overwrite: Previously agreed
+
+- Record: [A failed line fit can delete the previous report](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-failed-line-fit-can-delete-the-previous-report)
+- Inputs: Enable overwrite for an existing fit report and supply a mismatched component count.
+- CASA: The earlier report is removed before the error.
+- casa-rs: Keep the report until the replacement has been fitted and written.
+- Rationale: An incomplete fit cannot replace an existing product.
+- User impact: The caller keeps the earlier report after a failed fit.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdfit-evidence-paired).
+
+#### sdfit evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="sdfit-evidence-paired"></a>
+##### paired
+
+**Public task and tool spectral fits, uncertainties and MeasurementSet interchange — passed.** The paired and analytic comparisons pass for selected noisy single and joint components, including the reviewed direct-channel weights, count separators, symlink report and contended publication retry. All 21 task arguments, all 15 fit_line arguments, independent profile and covariance fits, averaging, CSV and tabular results, and the empty direct-tool MS opened in both readers.
+
+- [tools/casa-compat/sdfit_oracle.py](https://github.com/bglenden/casa-rs/blob/f8253b17601ac8d8bf538c516ea05b19a6129891/tools/casa-compat/sdfit_oracle.py)
+- Revision: `f8253b17601ac8d8bf538c516ea05b19a6129891`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdfit_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1987`.
 
 ### sdgaincal
 
