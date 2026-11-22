@@ -8183,8 +8183,8 @@ CASA 6.7.6.14 can publish a fictitious 0 Hz channel after
 `mstransform(regridms=True, mode='channel_b', start=7, nchan=3, width=1)`
 on a nine-channel ascending input. Its upper-bound check admits index
 nine even though the last channel is index eight. The native task clips
-the bounds to the available channels. The oracle checks the two real
-channels and confirms that CASA flags the spurious third one (#1618).
+the bounds to the available channels. The oracle checks the native
+result against a CASA request for the two valid channels (#1618).
 
 ## Splitting a regridded spectrum can write oversized noise spectra
 

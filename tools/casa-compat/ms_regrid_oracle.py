@@ -20,11 +20,13 @@ from ms_selection_tasks_oracle import MAIN, SUBTABLES
 
 
 def paired(root, source, case, *, datacolumn="data", usewtspectrum=True, deviations=None,
-           **options):
+           casa_options=None, **options):
     reference, native = (root / f"{case}-{side}.ms" for side in ("casa", "native"))
-    for engine, path in ((casatasks, reference), (tasks, native)):
+    for engine, path, parameters in (
+        (casatasks, reference, options | (casa_options or {})), (tasks, native, options)
+    ):
         assert engine.mstransform(vis=str(source), outputvis=str(path), datacolumn=datacolumn,
-                                 regridms=True, usewtspectrum=usewtspectrum, **options) is None
+                                 regridms=True, usewtspectrum=usewtspectrum, **parameters) is None
     with table(str(reference), ack=False) as expected, table(str(native), ack=False) as actual:
         extras = NOISE | {"CORRECTED_DATA", "MODEL_DATA", "FLOAT_DATA"}
         present = extras & set(expected.colnames())
@@ -139,33 +141,11 @@ def partial_hanning_bin(root, source):
 
 
 def terminal_channel_bounds(root, source):
-    options = dict(regridms=True, datacolumn="data", usewtspectrum=True,
-                   mode="channel_b", start=7, nchan=3, width=1)
-    expected, native = (root / f"channel-bounds-terminal-{side}.ms" for side in ("casa", "native"))
-    for engine, output in ((casatasks, expected), (tasks, native)):
-        engine.mstransform(vis=str(source), outputvis=str(output), **options)
-    with table(str(expected / "SPECTRAL_WINDOW"), ack=False) as casa, table(
-        str(native / "SPECTRAL_WINDOW"), ack=False
-    ) as ours:
-        np.testing.assert_array_equal(casa.getcell("CHAN_FREQ", 0), [100007e6, 100008e6, 0])
-        np.testing.assert_array_equal(ours.getcell("CHAN_FREQ", 0), [100007e6, 100008e6])
-        np.testing.assert_array_equal(ours.getcell("CHAN_WIDTH", 0), [1e6, 1e6])
+    # Ask CASA for the two real channels. Requesting a third can read past
+    # the input array, so that invocation is unsuitable as a test oracle.
+    paired(root, source, "terminal-channel-bounds", mode="channel_b", start=7,
+           width=1, nchan=3, casa_options={"nchan": 2})
 
-    def real_channels(name):
-        def compare(row, got, ref):
-            values = ref.getcell(name, row)
-            assert values.shape[0] == 3 and got.shape[0] == 2
-            if name == "FLAG":
-                assert np.all(values[2])
-                np.testing.assert_array_equal(got, values[:2])
-            else:
-                np.testing.assert_allclose(got, values[:2], rtol=3e-6, atol=5e-7)
-        return compare
-
-    spectral = {"DATA", "FLAG", "WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"}
-    compare_table(expected, native, spectral, "terminal-channel-bounds",
-                  {name: real_channels(name) for name in spectral})
-    print("passed terminal-channel-bounds", flush=True)
 
 def float_visibilities(root, source):
     with table(str(source), ack=False) as ms:
