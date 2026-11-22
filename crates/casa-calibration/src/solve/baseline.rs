@@ -27,10 +27,14 @@ pub(crate) fn solve(
     frequency_interval: Option<BandpassFrequencyInterval>,
     mode: CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
+    legacy_iterator: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
     super::validate_solve_interval(request.solve_interval)?;
     let direct = activity.is_some();
-    let corrdepflags = direct && request.correlation_dependent_flags;
+    // The legacy self-gather does not use the modern per-hand flag controls
+    // or publish the generic solve activity.
+    let track_gather = direct && !legacy_iterator;
+    let corrdepflags = track_gather && request.correlation_dependent_flags;
     let input = crate::timing::Phase::start("blcal_select_read");
     let context = prepare_calibration_solve(
         ms,
@@ -52,7 +56,7 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &bin_widths,
         SolveGroupOptions {
-            input_rows: SolveInputRows::baseline(direct),
+            input_rows: SolveInputRows::baseline(track_gather),
             gain_type: GainType::G,
             model_source: request.model_source,
             point_stokes: request.smodel,
@@ -86,7 +90,7 @@ pub(crate) fn solve(
         selected_data: SelectedData::of_rows(ms, context.rows.iter())?,
         solve_stats: Default::default(),
     };
-    let mut stats = if direct {
+    let mut stats = if track_gather {
         Some(SolveStatsBuilder::new(
             2,
             super::spectral_window_ids(ms)?,
@@ -94,6 +98,11 @@ pub(crate) fn solve(
         ))
     } else {
         None
+    };
+    let missing_value = if direct && legacy_iterator {
+        Complex32::new(1., 0.)
+    } else {
+        Complex32::ZERO
     };
     for group in groups.into_values() {
         let attempted = if let Some(stats) = &mut stats {
@@ -115,6 +124,7 @@ pub(crate) fn solve(
             &group,
             &context.available_antennas,
             request.solve_mode,
+            missing_value,
         ));
         if let Some(stats) = &mut stats {
             stats.record_success(group.spw_id, true);
@@ -163,6 +173,7 @@ fn solve_group(
     group: &SolveAccumulator,
     antennas: &BTreeSet<i32>,
     mode: GainSolveMode,
+    missing_value: Complex32,
 ) -> Vec<SolutionRow> {
     let cells = group.solution_channels * 2;
     let mut baseline = BTreeMap::<(i32, i32), Vec<Response>>::new();
@@ -227,7 +238,7 @@ fn solve_group(
                     if response.weight > 0. {
                         (response.sum / response.weight, false)
                     } else {
-                        (Complex32::ZERO, true)
+                        (missing_value, true)
                     }
                 })
                 .unzip();

@@ -146,6 +146,7 @@ pub fn solve_calibration_with_output_mode(
         None,
         BandpassSolveControls::default(),
         None,
+        false,
     )
 }
 
@@ -156,6 +157,7 @@ pub(crate) fn solve_calibration_with_activity(
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     bandpass: BandpassSolveControls,
     spline_mode: Option<&str>,
+    legacy_iterator: bool,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     if let CalibrationSolveRequest::Fringe { gain, .. } = &request
         && gain.gain_type != GainType::K
@@ -182,6 +184,7 @@ pub(crate) fn solve_calibration_with_activity(
                 activity,
                 bandpass,
                 spline_mode,
+                legacy_iterator,
             )
         }
         CalibrationDataset::Open(measurement_set) => solve_open_dataset(
@@ -191,6 +194,7 @@ pub(crate) fn solve_calibration_with_activity(
             activity,
             bandpass,
             spline_mode,
+            legacy_iterator,
         ),
     }
 }
@@ -202,6 +206,7 @@ fn solve_open_dataset(
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     bandpass: BandpassSolveControls,
     spline_mode: Option<&str>,
+    legacy_iterator: bool,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     match request {
         CalibrationSolveRequest::Gain(request) => {
@@ -233,6 +238,7 @@ fn solve_open_dataset(
             frequency_interval,
             mode,
             activity,
+            legacy_iterator,
         )
         .map(CalibrationSolveResult::Gain)
         .map_err(|error| CalibrationError::Gain(Box::new(error))),

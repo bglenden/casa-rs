@@ -805,15 +805,6 @@ impl CalibraterLifecycle {
                 bandpass.parang = equation.apply.parang_terms > 0;
             }
         }
-        // The legacy baseline solver gathers its own data without updating
-        // the generic solve activity or per-antenna statistics.
-        let activity = if self.legacy_iterator
-            && matches!(&request, CalibrationSolveRequest::Baseline { .. })
-        {
-            None
-        } else {
-            activity
-        };
         Ok(crate::session::solve_calibration_with_activity(
             CalibrationDataset::path(equation.attachment.path()),
             request,
@@ -821,6 +812,7 @@ impl CalibraterLifecycle {
             activity,
             bandpass,
             spline_mode,
+            self.legacy_iterator,
         )?)
     }
 
