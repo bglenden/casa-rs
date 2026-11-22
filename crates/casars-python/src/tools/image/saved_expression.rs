@@ -20,7 +20,7 @@ mod rename;
 pub(super) use manifest::SavedExpressionDirectory;
 
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
-    let (image, inputs) = compile_at(path, AttachedImage::open)?;
+    let (image, inputs) = compile_at(path, AttachedImage::open, false)?;
     let mut attachment = AttachedImage::with_saved_expression(image, inputs.directory);
     attachment.retain_expression_inputs(inputs.retained, inputs.paths);
     Ok(attachment)
@@ -43,18 +43,22 @@ pub(super) fn open_for_concatenation(
 ) -> PyResult<(ImageHandle, SavedExpressionInputs)> {
     // Final publication already holds the image registry. Source leases can
     // still be opened directly without consulting or registering in it.
-    compile_at(path, AttachedImage::open_concat_expression_operand)
+    compile_at(path, AttachedImage::open_concat_expression_operand, true)
 }
 
 fn compile_at(
     path: &Path,
     open_source: fn(&Path) -> PyResult<AttachedImage>,
+    include_manifest_paths: bool,
 ) -> PyResult<(ImageHandle, SavedExpressionInputs)> {
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
     let (captured, manifest) = SavedExpressionDirectory::open(path, root.clone())?;
     let initial = PendingExpression::from_manifest(root, manifest, &directory)?;
-    let mut graph = CapturedGraph::default();
+    let mut graph = CapturedGraph {
+        include_manifest_paths,
+        ..CapturedGraph::default()
+    };
     graph.retain_manifest(&captured)?;
     let (pixels, single_precision, misc) = graph.compile(initial, &directory, open_source)?;
     captured.check_name(path)?;
@@ -101,6 +105,7 @@ struct CapturedGraph {
     seen_paths: HashSet<PathBuf>,
     links: HashSet<PathBuf>,
     retained: Vec<AttachedImage>,
+    include_manifest_paths: bool,
 }
 
 impl CapturedGraph {
@@ -161,7 +166,9 @@ impl CapturedGraph {
     }
 
     fn retain_manifest(&mut self, directory: &SavedExpressionDirectory) -> PyResult<()> {
-        if let Some((entry, referent)) = directory.linked_manifest_paths() {
+        if self.include_manifest_paths
+            && let Some((entry, referent)) = directory.linked_manifest_paths()
+        {
             self.retain_operand_aliases(&entry)?;
             self.paths.push(referent.to_owned());
         }
