@@ -23,7 +23,10 @@ fn resample(
         (input, output)
     };
     let solution = crate::ComplexSolution::of(grid);
-    if matches!(parameter_family, Some(TimeParameterFamily::Sky)) {
+    if matches!(
+        parameter_family,
+        Some(TimeParameterFamily::Sky | TimeParameterFamily::SpectralOpacity)
+    ) {
         return solution
             .resample_real_array_frequency(input, output, mode)
             .map(crate::ComplexSolution::into_gain_grid);
@@ -66,8 +69,10 @@ pub(super) fn prepare(
 ) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
     let interpolation = table.interp;
     let path = &table.path;
-    let CalibrationGrid::Complex(gain) = grid.as_ref() else {
-        return Ok(grid);
+    let (gain, opacity) = match grid.as_ref() {
+        CalibrationGrid::Complex(gain) => (gain, false),
+        CalibrationGrid::SpectralOpacity(gain) => (gain, true),
+        _ => return Ok(grid),
     };
     if input.len() != gain.channel_count {
         return Err(ApplyExecutionError::UnsupportedParameterShape {
@@ -91,7 +96,7 @@ pub(super) fn prepare(
     if let Some(prepared) = cache.as_ref().and_then(|grids| grids.get(&key)) {
         return Ok(prepared.clone());
     }
-    let prepared = Arc::new(CalibrationGrid::Complex(resample(
+    let prepared = resample(
         gain,
         input,
         &output.channel_frequencies_hz,
@@ -107,8 +112,17 @@ pub(super) fn prepare(
                 ..
             }
         ),
-        table.time_parameter_family,
-    )?));
+        if opacity {
+            Some(TimeParameterFamily::SpectralOpacity)
+        } else {
+            table.time_parameter_family
+        },
+    )?;
+    let prepared = Arc::new(if opacity {
+        CalibrationGrid::SpectralOpacity(prepared)
+    } else {
+        CalibrationGrid::Complex(prepared)
+    });
     if let Some(cache) = cache {
         cache.insert(key, prepared.clone());
     }

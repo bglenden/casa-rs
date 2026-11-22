@@ -286,6 +286,9 @@ fn physical_grid(
     if matches!(family, TimeParameterFamily::Fringe) {
         return Ok(Arc::new(CalibrationGrid::Fringe(grid.clone())));
     }
+    if matches!(family, TimeParameterFamily::SpectralOpacity) {
+        return Ok(Arc::new(CalibrationGrid::SpectralOpacity(grid.clone())));
+    }
     let values = ArrayValue::Float32(grid.values.mapv(|value| value.re));
     let flags = ArrayValue::Bool(grid.flags.clone());
     Ok(Arc::new(match family {
@@ -305,7 +308,8 @@ fn physical_grid(
         | TimeParameterFamily::Sky
         | TimeParameterFamily::PositionAngle
         | TimeParameterFamily::Tec
-        | TimeParameterFamily::Fringe => {
+        | TimeParameterFamily::Fringe
+        | TimeParameterFamily::SpectralOpacity => {
             unreachable!("coefficient uses the raw interpolated value")
         }
         TimeParameterFamily::SwitchedPower => CalibrationGrid::SwitchedPower(
@@ -318,7 +322,9 @@ fn physical_grid(
 pub(super) fn flagged(grid: &CalibrationGrid) -> Arc<CalibrationGrid> {
     let mut grid = grid.clone();
     match &mut grid {
-        CalibrationGrid::Complex(grid) | CalibrationGrid::Fringe(grid) => grid.flags.fill(true),
+        CalibrationGrid::Complex(grid)
+        | CalibrationGrid::Fringe(grid)
+        | CalibrationGrid::SpectralOpacity(grid) => grid.flags.fill(true),
         CalibrationGrid::Delay(grid) => grid.flags.fill(true),
         CalibrationGrid::Antpos(grid) => grid.flagged = true,
         CalibrationGrid::GainCurve(grid) => grid.flags.fill(true),

@@ -241,16 +241,20 @@ pub(crate) fn evaluate_solve_priors(
         .calibration_tables
         .iter()
         .any(|table| super::baseline::is_subtype(&table.summary.table_subtype));
+    let spectral_opacity = plan
+        .calibration_tables
+        .iter()
+        .any(|table| table.summary.table_subtype == "TfOpac");
     let type_ordered = polarized
         || baseline
+        || spectral_opacity
         || matches!(
             boundary,
             PriorSolveBoundary::Accor
                 | PriorSolveBoundary::Baseline
                 | PriorSolveBoundary::GainSpline
         );
-    if !polarized
-        && !baseline
+    if !type_ordered
         && matches!(
             boundary,
             PriorSolveBoundary::Gain | PriorSolveBoundary::ScalarGain
@@ -259,8 +263,8 @@ pub(crate) fn evaluate_solve_priors(
         return evaluate_apply_rows(ms, &plan, false).map(Into::into);
     }
     // The measurement equation corrects DATA with earlier terms and corrupts
-    // MODEL_DATA with the remaining terms. Old spline normalization also
-    // uses the corrupted model amplitude in the scalar solve weights.
+    // MODEL_DATA with the remaining terms. The channel-dependent opacity
+    // then enters the solve weights through the model normalization.
     let (data_tables, mut model_tables): (Vec<_>, Vec<_>) =
         std::mem::take(&mut plan.calibration_tables)
             .into_iter()
