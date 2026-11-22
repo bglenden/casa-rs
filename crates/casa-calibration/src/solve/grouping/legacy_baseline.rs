@@ -12,7 +12,7 @@ use super::{
 };
 use crate::solve::{GainSolveError, GainSolveMode, kernel::SolutionRow};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct LegacyMuellerGather {
     pairs: BTreeMap<(i32, i32), LegacyBaseline>,
     shape: Option<(usize, usize)>,
@@ -20,7 +20,7 @@ pub(super) struct LegacyMuellerGather {
     time: WeightedTime,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct LegacyBaseline {
     sums: Vec<Complex32>,
     flagged: Vec<bool>,
