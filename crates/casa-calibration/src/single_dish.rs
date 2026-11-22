@@ -86,10 +86,15 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
     } else {
         None
     };
+    let output_mode = if overwrite {
+        CalibrationOutputMode::Replace
+    } else {
+        CalibrationOutputMode::Create
+    };
     let count = match mode.as_str() {
-        "ps" => generate_position_switch(task, &ms, selected, Path::new(&outfile), overwrite)?,
-        "otfraster" | "otf" => generate_edges(task, &ms, selected, Path::new(&outfile), overwrite)?,
-        "tsys" => tsys(infile, PathBuf::from(&outfile), overwrite)?,
+        "ps" => generate_position_switch(task, &ms, selected, output_path, output_mode)?,
+        "otfraster" | "otf" => generate_edges(task, &ms, selected, output_path, output_mode)?,
+        "tsys" => tsys(infile, PathBuf::from(&outfile), output_mode)?,
         _ => {
             return Err(TaskFailure::validation(format!(
                 "sdcal mode {mode:?} is pending in #1530"
@@ -111,11 +116,11 @@ fn generate_position_switch(
     ms: &MeasurementSet,
     selected: ResolvedMsSelection,
     output: &Path,
-    overwrite: bool,
+    mode: CalibrationOutputMode,
 ) -> Result<usize, TaskFailure> {
     check_fraction(task)?;
     let rows = selected.row_indices().collect::<Vec<_>>();
-    position_switch::generate(ms, &rows, output, overwrite).map_err(|error| {
+    position_switch::generate(ms, &rows, output, mode).map_err(|error| {
         tracing::error!(%error, "Single-dish sky solve failed");
         TaskFailure::execution("Error in Calibrater::solve.")
     })
@@ -126,7 +131,7 @@ fn generate_edges(
     ms: &MeasurementSet,
     selected: ResolvedMsSelection,
     output: &Path,
-    overwrite: bool,
+    mode: CalibrationOutputMode,
 ) -> Result<usize, TaskFailure> {
     let fraction = check_fraction(task)?;
     let selection = if task.required_text("calmode")?.starts_with("otfraster") {
@@ -138,7 +143,7 @@ fn generate_edges(
         edges::Selection::Otf { fraction }
     };
     let rows = selected.row_indices().collect::<Vec<_>>();
-    edges::generate(ms, &rows, output, overwrite, selection).map_err(|error| {
+    edges::generate(ms, &rows, output, mode, selection).map_err(|error| {
         tracing::error!(%error, "Single-dish map sky solve failed");
         TaskFailure::execution("Error in Calibrater::solve.")
     })
@@ -149,12 +154,11 @@ fn selector(task: &TaskInvocation<'_>, key: &str) -> Result<Option<String>, Task
         .map(|selector| selector.filter(|text| !text.is_empty()))
 }
 
-fn tsys(infile: PathBuf, outfile: PathBuf, overwrite: bool) -> Result<usize, TaskFailure> {
-    let output = if overwrite {
-        CalibrationOutputMode::Replace
-    } else {
-        CalibrationOutputMode::Create
-    };
+fn tsys(
+    infile: PathBuf,
+    outfile: PathBuf,
+    mode: CalibrationOutputMode,
+) -> Result<usize, TaskFailure> {
     let request = GencalRequest {
         measurement_set: infile,
         output_table: outfile,
@@ -164,7 +168,7 @@ fn tsys(infile: PathBuf, outfile: PathBuf, overwrite: bool) -> Result<usize, Tas
         parameter: Vec::new(),
         gaincurve_table: None,
     };
-    gencal_with_output_mode(&request, "", None, None, true, output)
+    gencal_with_output_mode(&request, "", None, None, true, mode)
         .map(|report| report.row_count)
         .map_err(|error| TaskFailure::execution(error.to_string()))
 }

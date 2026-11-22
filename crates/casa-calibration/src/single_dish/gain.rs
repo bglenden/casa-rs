@@ -32,6 +32,12 @@ use normalization::GainSample;
 
 const SUBTYPE: &str = "SDGAIN_OTFD";
 
+#[derive(Clone, Copy)]
+pub(super) struct Controls {
+    pub(super) radius: Option<f64>,
+    pub(super) smooth: bool,
+}
+
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let outfile = task.text("outfile")?.unwrap_or_default();
     let overwrite = task.flag("overwrite")?;
@@ -76,8 +82,10 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                 .map_err(|_| options::setapply_error("applytable"))?,
         )
     };
-    let radius = options::radius(task)?;
-    let smooth = task.flag("smooth")?;
+    let controls = Controls {
+        radius: options::radius(task)?,
+        smooth: task.flag("smooth")?,
+    };
     if overlaps_measurement_set(&ms, output).map_err(TaskFailure::execution)? {
         return Err(TaskFailure::execution(
             "The MeasurementSet and output calibration table overlap.",
@@ -92,20 +100,44 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     } else {
         None
     };
-    let integrations = selected_integrations(&ms, &selected).map_err(solve_failure)?;
-    let references = footprint::select(&ms, &integrations, radius).map_err(solve_failure)?;
-    let channels = spectral::channels(&ms, &selected, &references)
-        .map_err(|message| TaskFailure::execution(message).at("spw"))?;
-    let samples = solve(&ms, references, priors.as_ref(), radius, smooth, &channels)
-        .map_err(solve_failure)?;
-    let count = samples
-        .map(|samples| write(&ms, output, overwrite, samples, &channels))
-        .transpose()
-        .map_err(solve_failure)?;
+    let mode = if overwrite {
+        CalibrationOutputMode::Replace
+    } else {
+        CalibrationOutputMode::Create
+    };
+    let count = generate(&ms, &selected, priors.as_ref(), output, mode, controls)?;
     TaskSuccess::new(
         CasaValue::None,
         &serde_json::json!({"caltable": outfile, "row_count": count}),
     )
+}
+
+pub(super) fn generate(
+    ms: &MeasurementSet,
+    selection: &ResolvedMsSelection,
+    priors: Option<&SolvePriorApply>,
+    output: &Path,
+    mode: CalibrationOutputMode,
+    controls: Controls,
+) -> Result<Option<usize>, TaskFailure> {
+    let integrations = selected_integrations(ms, selection).map_err(solve_failure)?;
+    let references =
+        footprint::select(ms, &integrations, controls.radius).map_err(solve_failure)?;
+    let channels = spectral::channels(ms, selection, &references)
+        .map_err(|message| TaskFailure::execution(message).at("spw"))?;
+    let samples = solve(
+        ms,
+        references,
+        priors,
+        controls.radius,
+        controls.smooth,
+        &channels,
+    )
+    .map_err(solve_failure)?;
+    samples
+        .map(|samples| write(ms, output, mode, samples, &channels))
+        .transpose()
+        .map_err(solve_failure)
 }
 
 fn selected_integrations(
@@ -253,15 +285,10 @@ fn read_sample<'a>(
 fn write(
     ms: &MeasurementSet,
     output: &Path,
-    overwrite: bool,
+    mode: CalibrationOutputMode,
     samples: Vec<GainSample<'_>>,
     channels: &BTreeMap<usize, usize>,
 ) -> Result<usize, String> {
-    let mode = if overwrite {
-        CalibrationOutputMode::Replace
-    } else {
-        CalibrationOutputMode::Create
-    };
     let count = samples.len();
     let mut writer = CalibrationTableWriter::with_mode(
         ms,
