@@ -9855,3 +9855,22 @@ always writes `FLOAT_DATA`. A test with the instrument planes
 `[XX=1, YY=2, XY=3, YX=4]` produces `[1, 3, 3, 2]`.
 casa-rs writes complex `DATA` with both components in the conjugate
 products `[1, 3+4i, 3-4i, 2]`.
+
+## Single-dish averaging can label two time-averaged hands as Stokes I
+
+After `fit_line(timebin='8s', timespan='scan', polaverage='geometric')`
+CASA 6.7.6.14 uses its time-averaging iterator for subsequent operations
+on the same attachment. Smoothing, baseline subtraction and atmospheric
+correction produce both XX and YY samples, but link the output data
+description to a one-correlation Stokes I setup. casa-rs preserves the
+XX/YY setup that describes the actual samples.
+
+## Applying a single-dish baseline can abort after polarization averaging
+
+On an XX/YY attachment, CASA 6.7.6.14 can save a one-correlation baseline
+table after `fit_line(polaverage='stokes')` or
+`fit_line(polaverage='geometric')`. Applying that table on the same
+attachment terminates the process with a casacore matrix row error.
+casa-rs applies the model to the projected correlation. The paired
+oracle reads both saved tables through casacore and applies both in
+casa-rs.

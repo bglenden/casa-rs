@@ -187,6 +187,26 @@ impl SingleDishSession {
 }
 
 impl LineAveraging {
+    pub(super) fn operation_options(&self) -> Result<MsTransformTaskOptions, String> {
+        use casa_ms::transform::SingleDishPolarizationAverage;
+
+        let time_averaging = self.time_options()?;
+        let single_dish_polarization = if time_averaging.is_some() {
+            None
+        } else {
+            match self.polarization()? {
+                Polarization::Selected => None,
+                Polarization::Stokes => Some(SingleDishPolarizationAverage::Stokes),
+                Polarization::Geometric => Some(SingleDishPolarizationAverage::Geometric),
+            }
+        };
+        Ok(MsTransformTaskOptions {
+            time_averaging,
+            single_dish_polarization,
+            ..MsTransformTaskOptions::default()
+        })
+    }
+
     fn time_options(&self) -> Result<Option<TimeAverageOptions>, String> {
         self.time
             .as_ref()
