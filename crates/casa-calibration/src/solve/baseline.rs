@@ -8,7 +8,7 @@ use casa_types::Complex32;
 
 use super::grouping::{
     PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows,
-    build_solve_groups, median_with_even_mean, selected_channels,
+    build_solve_groups, median_with_even_mean, polynomial,
 };
 use super::kernel::SolutionRow;
 use super::writer::{GainChannelGrid, write_baseline_caltable};
@@ -56,6 +56,14 @@ pub(crate) fn solve(
     } else {
         BTreeSet::new()
     };
+    let preaverage = if direct && legacy_iterator {
+        let requested = request.preaverage_seconds;
+        (requested.is_finite() && requested > 0.).then_some(requested)
+    } else if direct {
+        super::preaverage_span(request.solve_interval, request.preaverage_seconds)
+    } else {
+        None
+    };
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -69,9 +77,7 @@ pub(crate) fn solve(
             rotate_model: false,
             solve_interval: request.solve_interval,
             combine: request.combine,
-            preaverage_max_span: direct
-                .then(|| super::preaverage_span(request.solve_interval, request.preaverage_seconds))
-                .flatten(),
+            preaverage_max_span: preaverage,
             correlation_dependent_flags: corrdepflags,
             robust_seed: false,
             channelized: frequency_dependent,
@@ -105,11 +111,6 @@ pub(crate) fn solve(
     } else {
         None
     };
-    let missing_value = if direct && legacy_iterator {
-        Complex32::new(1., 0.)
-    } else {
-        Complex32::ZERO
-    };
     for group in groups.into_values() {
         let attempted = if let Some(stats) = &mut stats {
             stats.interval(&IntervalStages::of(&group, 0));
@@ -131,12 +132,12 @@ pub(crate) fn solve(
             ));
         }
         solved.attempted_spw_ids.insert(group.spw_id);
-        solved.rows.extend(solve_group(
-            &group,
-            &context.available_antennas,
-            request.solve_mode,
-            missing_value,
-        ));
+        let antennas = &context.available_antennas;
+        let mode = request.solve_mode;
+        let rows = group
+            .legacy_baseline_solutions(antennas, mode)
+            .unwrap_or_else(|| solve_group(&group, antennas, mode));
+        solved.rows.extend(rows);
         if let Some(stats) = &mut stats {
             stats.record_success(group.spw_id, true);
         }
@@ -188,7 +189,11 @@ fn legacy_binned_windows(
             let count = spectral
                 .num_chan(window as usize)
                 .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
-            if selected_channels(selection, count as usize)?.len() > 1 {
+            if polynomial::channel_selection(selection, count as usize)?
+                .0
+                .len()
+                > 1
+            {
                 incompatible.insert(window);
             }
         }
@@ -224,7 +229,6 @@ fn solve_group(
     group: &SolveAccumulator,
     antennas: &BTreeSet<i32>,
     mode: GainSolveMode,
-    missing_value: Complex32,
 ) -> Vec<SolutionRow> {
     let cells = group.solution_channels * 2;
     let mut baseline = BTreeMap::<(i32, i32), Vec<Response>>::new();
@@ -289,7 +293,7 @@ fn solve_group(
                     if response.weight > 0. {
                         (response.sum / response.weight, false)
                     } else {
-                        (missing_value, true)
+                        (Complex32::ZERO, true)
                     }
                 })
                 .unzip();

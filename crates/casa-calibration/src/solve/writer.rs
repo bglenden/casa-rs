@@ -336,7 +336,10 @@ fn write_legacy_mueller_channels(path: &Path, solved: &SolvedGains) -> Result<()
         let mut cells = vec![("FLAG_ROW", Value::Scalar(ScalarValue::Bool(!attempted)))];
         let widths = get_f64_array(&table, row, "CHAN_WIDTH")?;
         if !widths.is_empty() {
-            let selected = selected_channels(solved.channel_selections.get(&window), widths.len())?;
+            let (selected, _) = crate::solve::grouping::polynomial::channel_selection(
+                solved.channel_selections.get(&window),
+                widths.len(),
+            )?;
             let total_bandwidth = selected
                 .iter()
                 .map(|&channel| widths[channel])

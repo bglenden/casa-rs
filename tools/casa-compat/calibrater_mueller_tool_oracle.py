@@ -7,6 +7,7 @@ from pathlib import Path
 
 import casatasks
 from casatools import calibrater as casa_calibrater
+import numpy as np
 
 from blcal_oracle import compare_tables, copy_ms, opened, source, weighted_windows
 from calibrater_apply_tool_oracle import result, same_record
@@ -103,6 +104,30 @@ def main():
                selection={'spw': '0:1~12'})
     solve_case(work, tools, vis, 'mf-legacy', {'type': 'MF'}, legacy=True,
                selection={'spw': '0:1~12'})
+    solve_case(work, tools, vis, 'mf-legacy-gap', {}, legacy=True,
+               selection={'spw': '0:1~2;5~6'})
+    solve_case(work, tools, vis, 'mf-legacy-stride', {}, legacy=True,
+               selection={'spw': '0:1~9^2'})
+    changing_flags = work/'changing-flags.ms'
+    copy_ms(vis, changing_flags)
+    with opened(changing_flags, True) as table:
+        values = table.getcol('DATA')
+        flags = np.zeros_like(table.getcol('FLAG'))
+        times = table.getcol('TIME')
+        field = table.getcol('FIELD_ID') == 0
+        integrations = np.unique(times[field])
+        flags[:, 7, field & (times >= integrations[len(integrations)//2])] = True
+        for column, array in [('DATA', np.ones_like(values)), ('FLAG', flags),
+                              ('FLAG_ROW', np.zeros_like(field))]:
+            assert table.putcol(column, array)
+    solve_case(work, tools, changing_flags, 'mf-legacy-changing-flags', {}, legacy=True)
+    for engine in tools:
+        with opened(work/f'mf-legacy-changing-flags-{engine}.cal') as table:
+            np.testing.assert_allclose(table.getcol('CPARAM')[:, 7, :], 0.5, rtol=1e-6, atol=0)
+            assert not table.getcol('FLAG')[:, 7, :].any()
+    for family in ('M', 'MF'):
+        solve_case(work, tools, vis, f'{family.lower()}-legacy-preavg',
+                   {'type': family, 'preavg': 8.}, legacy=True, outcome='error')
     solve_case(work, tools, flagged, 'mf-legacy-flagged', {}, legacy=True, outcome='empty')
     solve_case(work, tools, vis, 'mf-legacy-binned', {'t': 'inf,2ch'}, legacy=True,
                selection={'spw': '0:1~12'}, outcome='error')

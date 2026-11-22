@@ -152,6 +152,21 @@ impl WeightedTime {
 }
 
 impl SolveAccumulator {
+    pub(super) fn apply_bucket_identity(
+        &mut self,
+        row: &super::SelectedSolveRow,
+        options: &super::SolveGroupOptions,
+    ) {
+        if options.combine.fields {
+            // SDBList::aggregateFld uses the smallest field in a combined interval.
+            self.field_id = self.field_id.min(row.field_id);
+        }
+        if options.input_rows == SolveInputRows::LegacyBaseline {
+            // The old averaged VisBuffer reports the ending observation.
+            self.observation_id = row.observation_id;
+        }
+    }
+
     pub(super) fn cross_hand_centroid_weight(&mut self, weight: f64, input: SolveInputRows) -> f64 {
         if input == SolveInputRows::Autocorrelations {
             // CASA tests buffer viability before dropping cross-hand weights.
@@ -209,6 +224,12 @@ impl SolveAccumulator {
 
     pub(in crate::solve) fn integration_times(&self) -> impl Iterator<Item = f64> + '_ {
         self.unique_time_bits.iter().copied().map(f64::from_bits)
+    }
+}
+
+impl super::SolveGroupOptions {
+    pub(super) fn legacy_chan_selection(&self) -> bool {
+        self.polynomial_bandpass || self.input_rows == SolveInputRows::LegacyBaseline
     }
 }
 

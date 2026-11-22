@@ -3,6 +3,7 @@
 
 mod inputs;
 pub(crate) mod leakage;
+mod legacy_baseline;
 pub(crate) mod polynomial;
 mod samples;
 mod spectra;
@@ -188,7 +189,7 @@ pub(crate) fn build_solve_groups(
         options.solve_interval,
         options.combine,
         include_autocorrelations,
-        options.polynomial_bandpass,
+        options.legacy_chan_selection(),
         baseline_solve,
     );
     let seed_buffers = if !legacy_spline
@@ -221,12 +222,12 @@ pub(crate) fn build_solve_groups(
         channel_bin_widths,
     )?;
     layouts.forward_model = forward_model;
-    let spectral_weights = if options.polynomial_bandpass || options.gain_type == GainType::GSpline
-    {
-        SpectralWeights::default()
-    } else {
-        SpectralWeights::new(ms, &ordered, options.combine)?
-    };
+    let spectral_weights =
+        if options.legacy_chan_selection() || options.gain_type == GainType::GSpline {
+            SpectralWeights::default()
+        } else {
+            SpectralWeights::new(ms, &ordered, options.combine)?
+        };
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
         eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
@@ -272,14 +273,7 @@ pub(crate) fn build_solve_groups(
                 group.direct_gain = options.input_rows.tracks_gather().then(Default::default);
                 group
             });
-            if options.combine.fields {
-                // CalSolVi2Organizer orders the buffers of a grouped time
-                // interval by FIELD_ID. SDBList::aggregateFld uses the first.
-                group.field_id = group.field_id.min(row.field_id);
-            }
-            if options.input_rows == SolveInputRows::LegacyBaseline {
-                group.observation_id = row.observation_id;
-            }
+            group.apply_bucket_identity(row, &options);
             let preapplied = preapplied_rows.and_then(|rows| rows.data.get(&row.row_index));
             group.observe(
                 ms,
@@ -683,6 +677,7 @@ pub(crate) struct SolveAccumulator {
     first_t_buffer: Option<FirstTBuffer>,
     pub(crate) first_g_graphs: Option<Box<[SolveGraph; 2]>>,
     direct_gain: Option<samples::DirectGainGather>,
+    legacy_baselines: Option<legacy_baseline::LegacyMuellerGather>,
     parallel_hands: usize,
     baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
     preaverage_starts: HashMap<AveragedBaseline, f64>,
@@ -740,6 +735,7 @@ impl SolveAccumulator {
             first_t_buffer: None,
             first_g_graphs: None,
             direct_gain: None,
+            legacy_baselines: None,
             parallel_hands: 1,
             baseline_centroids: HashMap::new(),
             preaverage_starts: HashMap::new(),
@@ -779,7 +775,7 @@ impl SolveAccumulator {
             }),
         };
         if layout.channel_count != channel_count || layout.selection != row.channel_selection {
-            layout.select_channels(row, channel_count, options.polynomial_bandpass)?;
+            layout.select_channels(row, channel_count, options.legacy_chan_selection())?;
         }
         if options.input_rows.is_baseline() {
             self.baseline_correlation_counts
@@ -925,6 +921,15 @@ impl SolveAccumulator {
         channels: SelectedChannels<'_>,
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
+        if options.input_rows == SolveInputRows::LegacyBaseline {
+            return self.observe_legacy_baseline(
+                row,
+                samples,
+                correlation_types,
+                channels,
+                options,
+            );
+        }
         if options.polynomial_bandpass {
             self.observe_polynomial(
                 row,
