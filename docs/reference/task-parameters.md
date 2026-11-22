@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 967
-- Surfaces: 62 (62 task, 0 session)
-- Surface bindings: 1410
+- Concepts: 968
+- Surfaces: 63 (63 task, 0 session)
+- Surface bindings: 1435
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -30,6 +30,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Applycal](#surface-applycal)<br><code>applycal</code> | task | 7 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [ACCOR](#surface-accor)<br><code>accor</code> | task | 1 | <code>calibration</code> | 24 | Normalize sampler amplitudes using antenna autocorrelations. |
+| [BLCAL](#surface-blcal)<br><code>blcal</code> | task | 1 | <code>calibration</code> | 25 | Solve per-baseline complex visibility calibration. |
 | [Fringe Fit](#surface-fringefit)<br><code>fringefit</code> | task | 1 | <code>calibration</code> | 37 | Fit antenna phases, delays and delay rates to VLBI visibilities. |
 | [Pulse Calibration](#surface-pccor)<br><code>pccor</code> | task | 1 | <code>calibration</code> | 9 | Align VLBI pulse and cable calibration to a reference fringe solution. |
 | [Append ANTAB](#surface-appendantab)<br><code>appendantab</code> | task | 1 | <code>calibration</code> | 6 | Import ANTAB temperatures and gain curves into a copied MeasurementSet. |
@@ -756,6 +757,44 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>gainfield</code> | <code>setapply.gainfield@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Field selection of the solutions to apply from each gain table; empty for all. |
 | <code>interp</code> | <code>setapply.interp@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Interpolation in time (and frequency) for each gain table; empty for 'linear'. |
 | <code>spwmap</code> | <code>setapply.spwmap@r1</code> | <code>array&lt;array&lt;integer&gt;&gt;</code> | <code>[]</code>; optional | Apply | Spectral-window map for each gain table: the window whose solutions each data window takes. |
+| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
+
+<a id="surface-blcal"></a>
+
+## BLCAL (<code>blcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Solve per-baseline complex visibility calibration.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
+| <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Solve | Calibration table the task writes. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field.<br><em>Surface:</em> Select fields by CASA field ID, name, or pattern. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
+| <code>timerange</code> | <code>ms.selection.timerange@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA time selection passed to the MeasurementSet parser as literal text. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
+| <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal antenna selector text. |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal scan selector text. |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
+| <code>msselect</code> | <code>ms.selection.msselect@r2</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal msselect selector text. |
+| <code>solint</code> | <code>parameter.solint@r2</code> | <code>variant</code> | <code>"inf"</code>; optional | Solve Gain | Gain solution interval specified as inf, int, a time such as 30s, or seconds as a number.<br><em>Surface:</em> For frequency-dependent solves, an optional comma separates the time interval from a channel count or bandwidth. |
+| <code>combine</code> | <code>setsolve.combine@r1</code> | <code>string</code> | <code>"scan"</code>; optional | Solve | Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none. |
+| <code>freqdep</code> | <code>setsolve.freqdep@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Fit separate baseline responses in each selected frequency bin. |
+| <code>calmode</code> | <code>setsolve.calmode@r1</code> | <code>choice (3 values)</code> | <code>"ap"</code>; optional | Solve | Solve for amplitude 'a', phase 'p' or both 'ap'. |
+| <code>solnorm</code> | <code>parameter.solnorm@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Normalize solved amplitudes to unity average amplitude<br><em>Surface:</em> Normalize the amplitude per window for M, or the amplitude and phase per baseline, hand and interval for Mf. |
+| <code>gaintable</code> | <code>setapply.gaintable@r1</code> | <code>array&lt;path (calibration_table)&gt;</code> | <code>[]</code>; optional | Input | Calibration tables to apply. |
+| <code>gainfield</code> | <code>setapply.gainfield@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Field selection of the solutions to apply from each gain table; empty for all. |
+| <code>interp</code> | <code>setapply.interp@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Interpolation in time (and frequency) for each gain table; empty for 'linear'. |
+| <code>spwmap</code> | <code>setapply.spwmap@r1</code> | <code>array&lt;array&lt;integer&gt;&gt;</code> | <code>[]</code>; optional | Apply | Spectral-window map for each gain table: the window whose solutions each data window takes. |
+| <code>parang</code> | <code>parameter.parang@r1</code> | <code>bool</code> | <code>false</code>; optional | Apply | Apply the parallactic-angle P Jones term during calibration |
 | <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |

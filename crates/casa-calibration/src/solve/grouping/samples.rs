@@ -406,9 +406,6 @@ impl SampleAccumulation<'_> {
             weight: weights[channel],
             flagged: flags[channel],
         };
-        if self.keep_zero_data {
-            return self.add_scalar_row::<false, true>(channels.indices.iter().map(selected));
-        }
         if let Some(width) = channels.bin_width {
             let weights = self
                 .values
@@ -421,6 +418,14 @@ impl SampleAccumulation<'_> {
                     unflagged.then_some(average.weight)
                 });
             return mean_weights(weights);
+        }
+        if self.keep_zero_data {
+            let selected = channels.indices.iter().map(selected);
+            return if self.channelized {
+                self.add_ordered::<true, false, true>(selected)
+            } else {
+                self.add_scalar_row::<false, true>(selected)
+            };
         }
         let correlations = samples.data.nrows();
         if channels.all_channels
@@ -475,9 +480,9 @@ impl SampleAccumulation<'_> {
 
     fn add<const POINT: bool>(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
         if self.channelized {
-            self.add_ordered::<true, POINT>(samples)
+            self.add_ordered::<true, POINT, false>(samples)
         } else {
-            self.add_ordered::<false, POINT>(samples)
+            self.add_ordered::<false, POINT, false>(samples)
         }
     }
 
@@ -509,12 +514,12 @@ impl SampleAccumulation<'_> {
         }
     }
 
-    fn add_ordered<const CHANNELIZED: bool, const POINT: bool>(
+    fn add_ordered<const CHANNELIZED: bool, const POINT: bool, const KEEP_ZERO_DATA: bool>(
         &mut self,
         samples: impl Iterator<Item = Sample>,
     ) -> f64 {
         if !CHANNELIZED && self.retain_zero_model {
-            return self.add_scalar_row::<POINT, false>(samples);
+            return self.add_scalar_row::<POINT, KEEP_ZERO_DATA>(samples);
         }
         let mut weights = Vec::new();
         if CHANNELIZED {
@@ -523,7 +528,7 @@ impl SampleAccumulation<'_> {
         let mut summed_weight = 0.0_f64;
         for (channel, sample) in samples.enumerate() {
             let output = if CHANNELIZED { channel } else { 0 };
-            let weight = self.values[output].add_sample::<POINT, false>(
+            let weight = self.values[output].add_sample::<POINT, KEEP_ZERO_DATA>(
                 self.attempted,
                 sample,
                 self.retain_zero_model,

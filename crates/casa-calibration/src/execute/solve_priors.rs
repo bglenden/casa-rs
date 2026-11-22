@@ -15,6 +15,7 @@ use super::{
 #[derive(Clone, Copy)]
 pub(crate) enum PriorSolveBoundary {
     Accor,
+    Baseline,
     Bandpass,
     Delay,
     Gain,
@@ -28,6 +29,7 @@ pub(crate) enum PriorSolveBoundary {
 impl PriorSolveBoundary {
     fn viscal_order(self) -> u8 {
         viscal_order(match self {
+            Self::Baseline => "M Mueller",
             Self::Bandpass => "B Jones",
             Self::Delay => "K Jones",
             Self::Accor | Self::Gain | Self::GainSpline => "G Jones",
@@ -216,12 +218,20 @@ pub(crate) fn evaluate_solve_priors(
             | PriorSolveBoundary::PositionAngle
     );
     let polarized = deferred_data || has_polarization_matrix(&plan);
+    let baseline = plan
+        .calibration_tables
+        .iter()
+        .any(|table| super::baseline::is_subtype(&table.summary.table_subtype));
     let type_ordered = polarized
+        || baseline
         || matches!(
             boundary,
-            PriorSolveBoundary::Accor | PriorSolveBoundary::GainSpline
+            PriorSolveBoundary::Accor
+                | PriorSolveBoundary::Baseline
+                | PriorSolveBoundary::GainSpline
         );
     if !polarized
+        && !baseline
         && matches!(
             boundary,
             PriorSolveBoundary::Gain | PriorSolveBoundary::ScalarGain

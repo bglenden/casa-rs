@@ -48,9 +48,9 @@ use thiserror::Error;
 
 use crate::antpos_vla::{TROPO_KEYWORD, TropoDelay, only_vla_observations};
 use crate::constants::{
-    COL_ANTENNA1, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM, COL_N_POLY_AMP,
-    COL_N_POLY_PHASE, COL_PHASE_UNITS, COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR,
-    COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_VALID_DOMAIN, LEGACY_CAL_DESC_KEYWORD,
+    COL_ANTENNA1, COL_ANTENNA2, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM,
+    COL_N_POLY_AMP, COL_N_POLY_PHASE, COL_PHASE_UNITS, COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE,
+    COL_SCALE_FACTOR, COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_VALID_DOMAIN, LEGACY_CAL_DESC_KEYWORD,
 };
 use crate::lookup::interpolate_time_linear;
 use crate::model::CalibrationParameterFamily;
@@ -71,6 +71,7 @@ mod gain_validity;
 mod initialization;
 use gain_validity::correcting_gain;
 mod bandpass;
+pub(crate) mod baseline;
 mod chain;
 mod channels;
 pub(crate) mod parang;
@@ -2239,7 +2240,8 @@ fn apply_row_all_channels(
         let channelized_polarization = polarization::Leakage::is_channelized(subtype)
             || matches!(subtype, "Xf Jones" | "Xfparang Jones" | "GlinXphf Jones")
             || position_angle;
-        let bounded_frequency_cache = is_tsys || is_sky || channelized_polarization || is_spline;
+        let bounded_frequency_cache =
+            is_tsys || is_sky || channelized_polarization || is_spline || subtype == "Mf Mueller";
         let evaluation_frequency_hz = if is_spline {
             let frequencies = data_channels.frequencies_hz;
             frequencies.iter().sum::<f64>() / frequencies.len() as f64
@@ -2279,6 +2281,40 @@ fn apply_row_all_channels(
                 calculate()
             }
         };
+        if loaded_table.baseline {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            let antenna1 = fields::mapped_antenna(loaded_table, row.antenna1);
+            let antenna2 = fields::mapped_antenna(loaded_table, row.antenna2);
+            let solution = match baseline::index(antenna1, antenna2) {
+                Some(index) => lookup(index, geometry_cache.as_deref_mut())?,
+                None => None,
+            };
+            if let Some(profile) = compute_profile.as_deref_mut() {
+                ApplyRowComputeProfile::add_elapsed(
+                    &mut profile.table_lookup_ns,
+                    lookup_started_at,
+                );
+            }
+            let grid = baseline::prepare(
+                solution,
+                &cal_spw.channel_frequencies_hz,
+                data_spw,
+                geometry_cache.as_deref_mut(),
+                loaded_table,
+            )?;
+            baseline::apply(
+                grid.as_deref(),
+                &loaded_table.path,
+                antenna1 > antenna2,
+                forward_model,
+                &mut output,
+            )?;
+            continue;
+        }
         let ant1 = lookup(row.antenna1, geometry_cache.as_deref_mut())?;
         let ant2 = if is_sky {
             ant1.clone()
@@ -3729,6 +3765,7 @@ fn pol_id_of_ddid(ddid_row: usize) -> i32 {
 
 pub(crate) struct LoadedCalibrationTable {
     pub(crate) path: PathBuf,
+    pub(crate) baseline: bool,
     callibrary: Option<crate::CallibraryOptions>,
     time_plans: HashMap<i32, crate::lookup::TimePlan>,
     missing_grids: HashMap<i32, Arc<CalibrationGrid>>,
@@ -4604,11 +4641,19 @@ fn load_parameters(
         _ => None,
     };
 
+    let baseline = ms.is_some() && baseline::is_subtype(&table_plan.summary.table_subtype);
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
     for row_index in 0..table.row_count() {
         let field_id = get_i32(&table, row_index, COL_FIELD_ID)?;
         let spw_id = get_i32(&table, row_index, COL_SPECTRAL_WINDOW_ID)?;
-        let antenna_id = get_i32(&table, row_index, COL_ANTENNA1)?;
+        let antenna1 = get_i32(&table, row_index, COL_ANTENNA1)?;
+        let (antenna_id, reversed) = if baseline {
+            let antenna2 = get_i32(&table, row_index, COL_ANTENNA2)?;
+            let index = baseline::require_index(antenna1, antenna2, &table_plan.spec.path)?;
+            (index, antenna1 > antenna2)
+        } else {
+            (antenna1, false)
+        };
         let time_seconds = get_f64(&table, row_index, COL_TIME)?;
         let flags = table
             .cell_accessor(row_index, COL_FLAG)
@@ -4618,31 +4663,19 @@ fn load_parameters(
                 source: MsError::from(source),
             })?;
         let grid = match table_plan.summary.parameter_family {
-            CalibrationParameterFamily::Complex => {
-                let gains = table
-                    .cell_accessor(row_index, COL_CPARAM)
-                    .and_then(|cell| cell.array())
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: table_plan.spec.path.display().to_string(),
-                        source: MsError::from(source),
-                    })?;
-                if leakage.is_some() && gains.shape().first() != Some(&2) {
-                    return Err(ApplyExecutionError::UnsupportedCalibrationTable {
-                        path: table_plan.spec.path.display().to_string(),
-                        reason: format!(
-                            "leakage requires two CPARAM receptors, found shape {:?} at row {row_index}",
-                            gains.shape()
-                        ),
-                    });
-                }
-                let path = &table_plan.spec.path;
-                let grid = GainGrid::from_arrays(path, gains, flags)?;
-                CalibrationGrid::Complex(if cross_hand_phase {
-                    grid.cross_hand_diagonal(path)?
+            CalibrationParameterFamily::Complex => load_complex_parameters(
+                &table,
+                row_index,
+                &table_plan.spec.path,
+                flags,
+                if baseline {
+                    Some("baseline calibration")
                 } else {
-                    grid
-                })
-            }
+                    leakage.map(|_| "leakage")
+                },
+                cross_hand_phase,
+                reversed,
+            )?,
             CalibrationParameterFamily::Float
                 if real_parameters || table_plan.summary.table_subtype == "G EVLASWPOW" =>
             {
@@ -4760,6 +4793,7 @@ fn load_parameters(
 
     Ok(LoadedCalibrationTable {
         path: table_plan.spec.path.clone(),
+        baseline,
         interp: table_plan.interp,
         supports_calwt,
         engine: geometry_engine.cloned(),
@@ -4774,6 +4808,43 @@ fn load_parameters(
         time_parameter_family: None,
         phase_delay: false,
     })
+}
+
+fn load_complex_parameters(
+    table: &Table,
+    row_index: usize,
+    path: &Path,
+    flags: &ArrayValue,
+    two_receptor_family: Option<&str>,
+    cross_hand_phase: bool,
+    reversed: bool,
+) -> Result<CalibrationGrid, ApplyExecutionError> {
+    let gains = table
+        .cell_accessor(row_index, COL_CPARAM)
+        .and_then(|cell| cell.array())
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+            path: path.display().to_string(),
+            source: MsError::from(source),
+        })?;
+    if let Some(family) = two_receptor_family
+        && gains.shape().first() != Some(&2)
+    {
+        return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+            path: path.display().to_string(),
+            reason: format!(
+                "{family} requires two CPARAM receptors, found shape {:?} at row {row_index}",
+                gains.shape()
+            ),
+        });
+    }
+    let mut grid = GainGrid::from_arrays(path, gains, flags)?;
+    if reversed {
+        grid.values.mapv_inplace(|value| value.conj());
+    }
+    if cross_hand_phase {
+        grid = grid.cross_hand_diagonal(path)?;
+    }
+    Ok(CalibrationGrid::Complex(grid))
 }
 
 fn load_antpos_tropo(
@@ -4886,6 +4957,7 @@ fn load_bpoly_calibration_table(
 
     Ok(LoadedCalibrationTable {
         path: table_plan.spec.path.clone(),
+        baseline: false,
         interp: table_plan.interp,
         supports_calwt: false,
         engine: None,

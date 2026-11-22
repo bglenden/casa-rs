@@ -20,6 +20,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | appendantab | appendantab | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
+| blcal | blcal | yes | 22 | 22 | 0 | 0 | 3 | 0 |
 | calstat | calstat | yes | 3 | 3 | 0 | 0 | 0 | 0 |
 | clearcal | clearcal | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
@@ -306,6 +307,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 35, in CASA's order: yes
+- Defaults that differ: none
+
+### blcal
+
+- CASA source: `casatasks/blcal.py`, 22 parameters
+- Implementation: `casatasks/private/task_blcal.py`, `blcal` (line 7): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
+- Shared parameters: 22, in CASA's order: yes
 - Defaults that differ: none
 
 ### calstat

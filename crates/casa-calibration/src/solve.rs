@@ -14,6 +14,7 @@
 //! close to CASA's own `gaincal` when applied.
 
 pub(crate) mod accor;
+pub(crate) mod baseline;
 #[cfg(test)]
 mod batch_trial;
 mod delay;
@@ -350,6 +351,10 @@ pub enum GainSolveError {
     InsufficientParallacticCoverage { required: usize },
     #[error("GlinXphJones needs multiple SDBs")]
     InsufficientGainPhaseSegments,
+
+    /// Baseline calibration could not be prepared or persisted.
+    #[error("{0}")]
+    Baseline(String),
 
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]

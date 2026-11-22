@@ -5,6 +5,7 @@ mod inputs;
 pub(crate) mod leakage;
 pub(crate) mod polynomial;
 mod samples;
+mod spectra;
 mod time;
 mod visibility_models;
 mod weights;
@@ -38,6 +39,7 @@ use samples::{
     SolveAccumulationKey, SolveEdgeAccumulation, SolveRowInputs, SolveRowLayout, SolveRowLayouts,
     two_dimensional,
 };
+pub(super) use spectra::DelaySpectrum;
 pub(crate) use time::SolveInputRows;
 use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
 pub(crate) use visibility_models::VisibilityModels;
@@ -46,6 +48,7 @@ use weights::{SpectralWeights, solve_weights};
 
 pub(crate) enum PriorCalibrationMode {
     Data,
+    Baseline,
     Accor {
         share_input_flags: bool,
     },
@@ -103,6 +106,9 @@ pub(crate) fn load_preapplied_rows(
     }
     let preapplied = match mode {
         PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false).map(Into::into),
+        PriorCalibrationMode::Baseline => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Baseline, true)
+        }
         PriorCalibrationMode::Accor { share_input_flags } => {
             evaluate_solve_priors(ms, plan, PriorSolveBoundary::Accor, share_input_flags)
         }
@@ -154,7 +160,9 @@ pub(crate) fn build_solve_groups(
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
-    let seed_combined_g = !only_autocorrelations
+    let baseline_solve = options.input_rows == SolveInputRows::Baselines;
+    let seed_combined_g = !baseline_solve
+        && !only_autocorrelations
         && options.gain_type == GainType::G
         && !options.channelized
         && !options.robust_seed
@@ -166,8 +174,11 @@ pub(crate) fn build_solve_groups(
         || options.robust_seed
         || seed_combined_g;
     let legacy_spline = options.gain_type == GainType::GSpline;
-    let include_autocorrelations =
-        legacy_spline || needs_first_buffer || models.needs_buffers() || options.combine.scans;
+    let include_autocorrelations = baseline_solve
+        || legacy_spline
+        || needs_first_buffer
+        || models.needs_buffers()
+        || options.combine.scans;
     let mut ordered = bucketed_rows(
         rows,
         options.solve_interval,
@@ -188,7 +199,7 @@ pub(crate) fn build_solve_groups(
     models.bind_buffers(ms, &ordered, options.combine)?;
     if only_autocorrelations {
         ordered.retain(|(row, _, _)| row.antenna1 == row.antenna2);
-    } else if include_autocorrelations && !legacy_spline {
+    } else if include_autocorrelations && !legacy_spline && !baseline_solve {
         ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
     }
     models.phase_times =
@@ -659,25 +670,6 @@ pub(crate) struct SolveAccumulator {
     receptor_accumulations: Vec<HashMap<SolveAccumulationKey, Vec<SolveEdgeAccumulation>>>,
 }
 
-/// One time-averaged baseline spectrum before the solver collapses it.
-pub(super) struct DelaySpectrum<'a> {
-    pub(super) antennas: (i32, i32),
-    pub(super) buffer: (i32, i32, u64),
-    pub(super) correlation: usize,
-    pub(super) parallel_hand: bool,
-    pub(super) receptor: usize,
-    pub(super) time_seconds: f64,
-    values: &'a [SolveEdgeAccumulation],
-}
-
-impl DelaySpectrum<'_> {
-    pub(super) fn channels(&self) -> impl Iterator<Item = (Complex32, f32)> + '_ {
-        self.values
-            .iter()
-            .map(|value| (value.weighted_sum, value.weight))
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct SolveEdgeStats {
     pub(crate) weighted_sample_power: f64,
@@ -696,35 +688,6 @@ impl SolveEdgeStats {
 }
 
 impl SolveAccumulator {
-    pub(super) fn delay_spectra(&self) -> impl Iterator<Item = DelaySpectrum<'_>> {
-        self.receptor_accumulations
-            .iter()
-            .enumerate()
-            .flat_map(move |(receptor, baselines)| {
-                baselines.iter().map(move |(key, values)| DelaySpectrum {
-                    antennas: key.baseline.antennas,
-                    buffer: (
-                        key.baseline.data_desc_id,
-                        key.baseline.field_id,
-                        key.baseline.start_bits,
-                    ),
-                    correlation: key.correlation_index,
-                    parallel_hand: key.parallel_hand,
-                    receptor,
-                    time_seconds: self
-                        .baseline_centroids
-                        .get(&key.baseline)
-                        .or_else(|| {
-                            self.baseline_centroids
-                                .get(&key.baseline.time_bucket_key(true))
-                        })
-                        .and_then(|centroid| centroid.mean())
-                        .unwrap_or(self.min_time),
-                    values,
-                })
-            })
-    }
-
     pub(crate) fn scan_number(&self) -> i32 {
         self.first_t_buffer.map_or_else(
             || self.scan_numbers.first().copied().unwrap_or(0),
@@ -967,8 +930,11 @@ impl SolveAccumulator {
             self.solution_channels = self.solution_channels.max(channel_count);
         }
 
-        let scalar_bandpass =
-            options.channelized && options.gain_type == GainType::G && correlation_types.len() == 1;
+        let baseline_solve = options.input_rows == SolveInputRows::Baselines;
+        let scalar_bandpass = !baseline_solve
+            && options.channelized
+            && options.gain_type == GainType::G
+            && correlation_types.len() == 1;
         self.scalar_bandpass = scalar_bandpass && (self.sample_rows == 0 || self.scalar_bandpass);
         let graph_count = match options.gain_type {
             GainType::G | GainType::K | GainType::GSpline => 2,
@@ -1001,7 +967,7 @@ impl SolveAccumulator {
         // Keep their averages separate until enforcing the solve mode.
         let mut baseline = AveragedBaseline {
             antennas: (row.antenna1, row.antenna2),
-            field_id: if options.channelized && !options.gain_type.is_delay() {
+            field_id: if options.channelized && !baseline_solve && !options.gain_type.is_delay() {
                 0
             } else {
                 row.field_id
@@ -1107,7 +1073,8 @@ impl SolveAccumulator {
                     values: accumulations,
                     attempted: &mut self.attempted,
                     channelized: options.channelized,
-                    keep_zero_data: options.input_rows == SolveInputRows::Autocorrelations,
+                    keep_zero_data: baseline_solve
+                        || options.input_rows == SolveInputRows::Autocorrelations,
                     retain_zero_model: options.gain_type.is_delay()
                         || options.gain_type == GainType::T
                         || samples.model.is_some()

@@ -346,7 +346,7 @@ impl TimePlan {
         real: bool,
     ) -> Result<Self, ApplyExecutionError> {
         let rows = if options.per_observation || options.per_scan {
-            let mut rows = headers(&lookup.path)?;
+            let mut rows = headers(&lookup.path, false)?;
             lookup.baseline_headers(&mut rows)?;
             Some(rows)
         } else {
@@ -367,7 +367,7 @@ impl TimePlan {
         options: TimeInterpolationOptions,
     ) -> Result<ApplyTimeContext, ApplyExecutionError> {
         let rows = if options.per_observation || options.per_scan {
-            let mut rows = headers(&table.path)?;
+            let mut rows = headers(&table.path, table.baseline)?;
             rows.retain(|row| table.solutions.contains_key(&(row[0], row[1], row[2])));
             Some(rows)
         } else {
@@ -524,7 +524,8 @@ fn selected_scope(
 }
 
 /// Read only scalar headers from plain calibration tables.
-fn headers(path: &Path) -> Result<Vec<[i32; 5]>, ApplyExecutionError> {
+fn headers(path: &Path, baseline: bool) -> Result<Vec<[i32; 5]>, ApplyExecutionError> {
+    use crate::execute::baseline::require_index;
     let table = Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
     if table
         .is_reference_table()
@@ -532,6 +533,16 @@ fn headers(path: &Path) -> Result<Vec<[i32; 5]>, ApplyExecutionError> {
     {
         return (0..table.row_count())
             .map(|row| {
+                let integer = |column| {
+                    let cell = table
+                        .cell_accessor(row, column)
+                        .and_then(|cell| cell.scalar())
+                        .map_err(|error| invalid(path, &error.to_string()))?;
+                    let casa_types::ScalarValue::Int32(cell) = cell else {
+                        return Err(invalid(path, "invalid calibration context scalar"));
+                    };
+                    Ok(*cell)
+                };
                 let mut values = [0; 5];
                 for (value, column) in values.iter_mut().zip([
                     "FIELD_ID",
@@ -540,14 +551,10 @@ fn headers(path: &Path) -> Result<Vec<[i32; 5]>, ApplyExecutionError> {
                     "OBSERVATION_ID",
                     "SCAN_NUMBER",
                 ]) {
-                    let cell = table
-                        .cell_accessor(row, column)
-                        .and_then(|cell| cell.scalar())
-                        .map_err(|error| invalid(path, &error.to_string()))?;
-                    let casa_types::ScalarValue::Int32(cell) = cell else {
-                        return Err(invalid(path, "invalid calibration context scalar"));
-                    };
-                    *value = *cell;
+                    *value = integer(column)?;
+                }
+                if baseline {
+                    values[2] = require_index(values[2], integer("ANTENNA2")?, path)?;
                 }
                 Ok(values)
             })
@@ -561,6 +568,7 @@ fn headers(path: &Path) -> Result<Vec<[i32; 5]>, ApplyExecutionError> {
         mut observations,
         mut scans,
     ] = std::array::from_fn(|_| Vec::new());
+    let mut second_antennas = Vec::new();
     for first in (0..table.row_count()).step_by(512) {
         for values in [
             &mut fields,
@@ -572,26 +580,26 @@ fn headers(path: &Path) -> Result<Vec<[i32; 5]>, ApplyExecutionError> {
             values.clear();
         }
         let indices = (first..table.row_count().min(first + 512)).collect::<Vec<_>>();
+        second_antennas.clear();
+        let mut destinations = [
+            Destination::new("FIELD_ID", Values::Int32(&mut fields)),
+            Destination::new("SPECTRAL_WINDOW_ID", Values::Int32(&mut windows)),
+            Destination::new("ANTENNA1", Values::Int32(&mut antennas)),
+            Destination::new("OBSERVATION_ID", Values::Int32(&mut observations)),
+            Destination::new("SCAN_NUMBER", Values::Int32(&mut scans)),
+            Destination::new("ANTENNA2", Values::Int32(&mut second_antennas)),
+        ];
+        let count = if baseline { 6 } else { 5 };
         table
-            .required_scalar_columns_for_rows_into(
-                &indices,
-                &mut [
-                    Destination::new("FIELD_ID", Values::Int32(&mut fields)),
-                    Destination::new("SPECTRAL_WINDOW_ID", Values::Int32(&mut windows)),
-                    Destination::new("ANTENNA1", Values::Int32(&mut antennas)),
-                    Destination::new("OBSERVATION_ID", Values::Int32(&mut observations)),
-                    Destination::new("SCAN_NUMBER", Values::Int32(&mut scans)),
-                ],
-            )
+            .required_scalar_columns_for_rows_into(&indices, &mut destinations[..count])
             .map_err(|e| invalid(path, &e.to_string()))?;
         for i in 0..indices.len() {
-            rows.push([
-                fields[i],
-                windows[i],
-                antennas[i],
-                observations[i],
-                scans[i],
-            ]);
+            let antenna = if baseline {
+                require_index(antennas[i], second_antennas[i], path)?
+            } else {
+                antennas[i]
+            };
+            rows.push([fields[i], windows[i], antenna, observations[i], scans[i]]);
         }
     }
     Ok(rows)

@@ -271,6 +271,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_pccor(values, arguments)
     if name == "appendantab":
         return _call_appendantab(values, arguments)
+    if name == "blcal":
+        return _call_blcal(values, arguments)
     if name == "polcal":
         _validate_required_path(values, "vis", arguments["vis"], search_data=True)
         try:
@@ -1776,6 +1778,43 @@ def _call_polfromgain(values: dict[str, Any], arguments: Mapping[str, Any]) -> A
         raise
 
 
+def _call_blcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    errors = {key: ["null value not allowed"] for key, value in arguments.items() if value is None}
+    if "calmode" in errors:
+        errors["calmode"].insert(0, "unallowed value None")
+    if "observation" in errors:
+        errors["observation"] *= 3
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
+    _validate_required_path(values, "vis", arguments["vis"], search_data=True)
+    _check_applycal_selectors(values, variants=("uvrange", "spwmap", "solint"))
+    mode = arguments["calmode"]
+    mapping = arguments["spwmap"]
+    has_mapping = len(mapping) > 0
+    if has_mapping and isinstance(mapping, dict):
+        raise KeyError(0)
+    if not has_mapping:
+        values.pop("spwmap", None)
+    if isinstance(mode, str) and mode not in ("a", "p", "ap"):
+        raise AssertionError(str({"calmode": [f"unallowed value {mode}"]}))
+    try:
+        return run("blcal", **values).value
+    except TaskParameterError as error:
+        completion = error.completion
+        if completion.parameter == "solint":
+            raise RuntimeError("Error in Calibrater::setsolve.") from error
+        if completion.parameter == "spwmap":
+            if isinstance(values.get("spwmap"), dict):
+                raise KeyError(0) from error
+            raise TypeError(completion.message) from error
+        raise
+    except TaskExecutionError as error:
+        message = error.completion.message or str(error)
+        raise RuntimeError(message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+
+
 def _call_applycal(values: dict[str, Any]) -> Any:
     _check_applycal_selectors(values)
     try:
@@ -1794,12 +1833,12 @@ def _call_applycal(values: dict[str, Any]) -> Any:
 
 
 
-def _check_applycal_selectors(values: Mapping[str, Any]) -> None:
+def _check_applycal_selectors(values: Mapping[str, Any], variants=("uvrange", "spwmap")) -> None:
     observation = values.get("observation", "")
-    variants = {key: values[key] for key in ("uvrange", "spwmap") if key in values}
+    supplied = {key: values[key] for key in variants if key in values}
     ordinary_variant = (str, int, float, list, dict)
     if isinstance(observation, (str, int)) and all(
-        isinstance(value, ordinary_variant) for value in variants.values()
+        isinstance(value, ordinary_variant) for value in supplied.values()
     ):
         return
     import numpy as np
@@ -1807,7 +1846,7 @@ def _check_applycal_selectors(values: Mapping[str, Any]) -> None:
     if not isinstance(observation, (str, int, np.int32, np.int64)):
         raise AssertionError("{'observation': ['must be of cStr type', 'must be of cInt type']}")
     accepted_variant = (*ordinary_variant, np.int32, np.int64, np.float32, np.float64, np.ndarray)
-    for key, value in variants.items():
+    for key, value in supplied.items():
         if not isinstance(value, accepted_variant):
             raise AssertionError(str({key: ["must be of cVariant type"]}))
 

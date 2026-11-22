@@ -37,6 +37,8 @@ pub(crate) enum SolveInputRows {
     Fringe,
     /// Keep the individual antennas' autocorrelations for normalization.
     Autocorrelations,
+    /// Retain all antenna pairs for a baseline Mueller solve.
+    Baselines,
 }
 
 impl SolveInputRows {
@@ -46,7 +48,11 @@ impl SolveInputRows {
         index: usize,
         data_desc_id: i32,
     ) -> Result<(usize, usize), GainSolveError> {
-        if self != Self::Autocorrelations {
+        if self == Self::Baselines && !(correlations.len() == 4 && matches!(index, 1 | 2)) {
+            let parameter = index % 2;
+            return Ok((parameter, parameter));
+        }
+        if !matches!(self, Self::Autocorrelations | Self::Baselines) {
             return correlation_receptors(correlations[index]).ok_or_else(|| {
                 GainSolveError::UnsupportedCorrelationLayout {
                     data_desc_id,
@@ -57,7 +63,7 @@ impl SolveInputRows {
                 }
             });
         }
-        // AccorJones reads the first and last elements of a four-correlation
+        // CASA reads the first and last elements of a four-correlation
         // row and both elements of a two-correlation row in storage order.
         Ok(match (correlations.len(), index) {
             (_, 0) => (0, 0),

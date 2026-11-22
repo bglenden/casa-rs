@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! On-disk caltable writing for limited `gaincal`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_ms::MsError;
@@ -18,7 +18,7 @@ use crate::constants::{
     COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_TIME_EXTRA_PREC, COL_WEIGHT,
 };
 use crate::solve::SolvedGains;
-use crate::solve::grouping::selected_channels;
+use crate::solve::grouping::{SelectedSolveRow, selected_channels};
 use crate::writer::{CalibrationTableDescriptor, CalibrationTableWriter};
 
 pub(crate) fn write_gain_caltable(
@@ -51,6 +51,7 @@ pub(crate) fn write_gain_caltable_named(
         solved,
         mode,
         request.gain_type.vis_cal(),
+        None,
     )
 }
 
@@ -65,7 +66,31 @@ pub(super) fn write_new_style_gain_caltable(
         || "<in-memory>".to_owned(),
         |path| path.display().to_string(),
     );
-    write_gain_table(ms, name, request, solved, mode, subtype)
+    write_gain_table(ms, name, request, solved, mode, subtype, None)
+}
+
+pub(super) struct GainChannelGrid<'a> {
+    pub(super) bin_widths: &'a BTreeMap<i32, usize>,
+    pub(super) selected_rows: &'a [SelectedSolveRow],
+}
+
+pub(super) fn write_baseline_caltable(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    solved: &SolvedGains,
+    mode: crate::CalibrationOutputMode,
+    channels: Option<GainChannelGrid<'_>>,
+) -> Result<GainSolveReport, GainSolveError> {
+    let name = ms.path().map_or_else(
+        || "<in-memory>".to_owned(),
+        |path| path.display().to_string(),
+    );
+    let subtype = if channels.is_some() {
+        "Mf Mueller"
+    } else {
+        "M Mueller"
+    };
+    write_gain_table(ms, name, request, solved, mode, subtype, channels)
 }
 
 fn write_gain_table(
@@ -75,6 +100,7 @@ fn write_gain_table(
     solved: &SolvedGains,
     mode: crate::CalibrationOutputMode,
     subtype: &'static str,
+    channels: Option<GainChannelGrid<'_>>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let _write_phase = crate::timing::Phase::start("gain_write");
     let rows = &solved.rows;
@@ -82,7 +108,8 @@ fn write_gain_table(
         return Ok(gain_report(request, solved));
     }
     let delay = request.gain_type.is_delay();
-    let legacy_gain_metadata = !delay && subtype != "Accor Jones";
+    let legacy_gain_metadata =
+        !delay && !matches!(subtype, "Accor Jones" | "M Mueller" | "Mf Mueller");
     let (parameter_column, parameter_type) = if delay {
         (COL_FPARAM, casa_types::PrimitiveType::Float32)
     } else {
@@ -127,15 +154,22 @@ fn write_gain_table(
     )?;
 
     for row in rows {
-        let shape = IxDyn(&[row.gains.len(), 1]).f();
+        let shape = if channels.is_some() {
+            IxDyn(&[2, row.gains.len() / 2]).f()
+        } else {
+            IxDyn(&[row.gains.len(), 1]).f()
+        };
         let parameters = if delay {
             ArrayValue::Float32(
-                ArrayD::from_shape_vec(shape, row.gains.iter().map(|gain| gain.re).collect())
-                    .expect("delay vector should reshape to receptor x channel"),
+                ArrayD::from_shape_vec(
+                    shape.clone(),
+                    row.gains.iter().map(|gain| gain.re).collect(),
+                )
+                .expect("delay vector should reshape to receptor x channel"),
             )
         } else {
             ArrayValue::Complex32(
-                ArrayD::from_shape_vec(shape, row.gains.clone())
+                ArrayD::from_shape_vec(shape.clone(), row.gains.clone())
                     .expect("gain vector should reshape to receptor x channel"),
             )
         };
@@ -174,24 +208,21 @@ fn write_gain_table(
             RecordField::new(
                 COL_PARAMERR,
                 Value::Array(ArrayValue::Float32(
-                    ArrayD::from_shape_vec(
-                        IxDyn(&[row.gains.len(), 1]).f(),
-                        row.param_errors.clone(),
-                    )
-                    .expect("paramerr vector should reshape to receptor x channel"),
+                    ArrayD::from_shape_vec(shape.clone(), row.param_errors.clone())
+                        .expect("paramerr vector should reshape to receptor x channel"),
                 )),
             ),
             RecordField::new(
                 COL_FLAG,
                 Value::Array(ArrayValue::Bool(
-                    ArrayD::from_shape_vec(IxDyn(&[row.flags.len(), 1]).f(), row.flags.clone())
+                    ArrayD::from_shape_vec(shape.clone(), row.flags.clone())
                         .expect("flag vector should reshape to receptor x channel"),
                 )),
             ),
             RecordField::new(
                 COL_SNR,
                 Value::Array(ArrayValue::Float32(
-                    ArrayD::from_shape_vec(IxDyn(&[row.gains.len(), 1]).f(), row.snrs.clone())
+                    ArrayD::from_shape_vec(shape, row.snrs.clone())
                         .expect("snr vector should reshape to receptor x channel"),
                 )),
             ),
@@ -222,12 +253,24 @@ fn write_gain_table(
         (SubtableId::Field, "FIELD"),
         (SubtableId::History, "HISTORY"),
     ])?;
-    write_gain_spectral_window_subtable(
-        ms,
-        writer.output_path(),
-        solved,
-        request.combine.spectral_windows,
-    )?;
+    if let Some(channels) = channels {
+        writer.copy_subtables(&[(SubtableId::SpectralWindow, "SPECTRAL_WINDOW")])?;
+        crate::bandpass::write_solution_spectral_windows(
+            &writer.output_path().join("SPECTRAL_WINDOW"),
+            &solved.attempted_spw_ids,
+            channels.bin_widths,
+            channels.selected_rows,
+            request.combine.spectral_windows,
+        )
+        .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+    } else {
+        write_gain_spectral_window_subtable(
+            ms,
+            writer.output_path(),
+            solved,
+            request.combine.spectral_windows,
+        )?;
+    }
     writer.save_main()?;
 
     Ok(gain_report(request, solved))

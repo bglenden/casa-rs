@@ -13,6 +13,7 @@ pub(super) fn load(
     plan: &ApplyCalibrationTablePlan,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
     Ok(LoadedCalibrationTable {
+        baseline: false,
         path: plan.spec.path.clone(),
         interp: plan.interp,
         supports_calwt: false,

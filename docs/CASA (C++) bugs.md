@@ -9982,3 +9982,14 @@ follow the wrong SPW when those orders differ. Casa-rs assembles each row
 using its stated spectral-window identifier. It also ignores an unknown
 station's GAIN record while preserving the following GAIN header. CASA
 can consume that header while skipping to the next slash.
+
+## Baseline Mueller application uses the forward orientation on reversed rows
+
+CASA 6.7.6.14 writes one `M Mueller` or `Mf Mueller` response for each
+unordered pair of antennas. On a row with the two antennas exchanged, it
+looks up the same response and applies the same complex phase. Exchanging
+the antennas conjugates the parallel-hand visibilities, so the correction
+must be conjugated too. Casa-rs applies the response in the row's
+orientation. The [BLCAL oracle](../tools/casa-compat/blcal_oracle.py)
+compares both table formats and both consumers for ordinary rows, and
+compares the reversed-row correction to the known sky model.
