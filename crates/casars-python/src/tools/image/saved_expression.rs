@@ -7,20 +7,26 @@ use std::path::{Path, PathBuf};
 use casa_images::analysis::{ImageToolExpressionInputs, ImageToolPixelExpression};
 use casa_images::concat_file::is_image_concat;
 use casa_images::expr_file::{ToolExpressionManifest, is_image_expr};
-use casa_images::{ImageExpression, TempImage, image_expr::ImageExprValue};
+use casa_images::miriad_read::MiriadImage;
+use casa_images::{
+    ImageError, ImageExprBuilder, ImageExpression, ImageInterface, TempImage,
+    image_expr::ImageExprValue,
+};
+use casa_lattices::Lattice;
 use casa_tables::lexical_absolute;
-use casa_types::{Complex32, RecordValue};
+use casa_types::{Complex32, Complex64, RecordValue};
 use pyo3::prelude::*;
 
 use super::attachment::AttachedImage;
-use super::handle::{ImageHandle, Storage, raised};
+use super::concatenate::virtual_image;
+use super::handle::{ImageHandle, Storage, raised, with_storage};
 
 mod manifest;
 mod rename;
 pub(super) use manifest::SavedExpressionDirectory;
 
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
-    let (image, inputs) = compile_at(path, AttachedImage::open, false)?;
+    let (image, inputs) = compile_at(path, AttachedImage::open, false, &mut HashSet::new())?;
     let mut attachment = AttachedImage::with_saved_expression(image, inputs.directory);
     attachment.retain_expression_inputs(inputs.retained, inputs.paths);
     Ok(attachment)
@@ -40,16 +46,23 @@ impl SavedExpressionInputs {
 
 pub(super) fn open_for_concatenation(
     path: &Path,
+    active: &mut HashSet<PathBuf>,
 ) -> PyResult<(ImageHandle, SavedExpressionInputs)> {
     // Final publication already holds the image registry. Source leases can
     // still be opened directly without consulting or registering in it.
-    compile_at(path, AttachedImage::open_concat_expression_operand, true)
+    compile_at(
+        path,
+        AttachedImage::open_concat_expression_operand,
+        true,
+        active,
+    )
 }
 
 fn compile_at(
     path: &Path,
     open_source: fn(&Path) -> PyResult<AttachedImage>,
     include_manifest_paths: bool,
+    active: &mut HashSet<PathBuf>,
 ) -> PyResult<(ImageHandle, SavedExpressionInputs)> {
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
@@ -60,7 +73,8 @@ fn compile_at(
         ..CapturedGraph::default()
     };
     graph.retain_manifest(&captured)?;
-    let (pixels, single_precision, misc) = graph.compile(initial, &directory, open_source)?;
+    let (pixels, single_precision, misc) =
+        graph.compile(initial, &directory, open_source, active)?;
     captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
@@ -114,17 +128,17 @@ impl CapturedGraph {
         root: PendingExpression,
         directory: &Path,
         open_source: fn(&Path) -> PyResult<AttachedImage>,
+        active: &mut HashSet<PathBuf>,
     ) -> PyResult<(ImageToolPixelExpression, bool, Option<RecordValue>)> {
-        let mut active = HashSet::from([root.path.clone()]);
+        if !active.insert(root.path.clone()) {
+            return Err(expression_cycle(&root.path));
+        }
         let mut pending = vec![root];
         let mut compiled = HashMap::new();
         while let Some(frame) = pending.last_mut() {
             if let Some((path, entry)) = frame.next_path() {
                 if active.contains(path) {
-                    return Err(raised(format!(
-                        "Cycle in saved image expression at {}",
-                        path.display()
-                    )));
+                    return Err(expression_cycle(path));
                 }
                 if entry != path {
                     self.retain_operand_aliases(entry)?;
@@ -134,9 +148,15 @@ impl CapturedGraph {
                 }
                 self.paths.push(path.to_path_buf());
                 if is_image_concat(path) {
-                    return Err(raised(
-                        "A virtual concatenation cannot yet be used inside a saved image expression (#1625)",
-                    ));
+                    let image = virtual_image::open_expression_leaf(path, active)?;
+                    self.paths.extend(image.concat_expression_operands());
+                    for operand in image.concat_operands() {
+                        self.retain_operand_aliases(&operand)?;
+                        self.retain_miriad_files(&operand)?;
+                    }
+                    let source = AttachedImage::temporary(image);
+                    compiled.insert(path.to_path_buf(), bound_pixels(&source).map_err(raised)?);
+                    self.retained.push(source);
                 } else if is_image_expr(path) {
                     let path = path.to_path_buf();
                     active.insert(path.clone());
@@ -145,12 +165,14 @@ impl CapturedGraph {
                     let nested = PendingExpression::from_manifest(path, manifest, directory)?;
                     pending.push(nested);
                 } else if !path.is_file() {
+                    self.retain_miriad_files(path)?;
                     self.retained.push(open_source(path)?);
                 }
             } else {
                 let frame = pending.pop().expect("checked for an expression frame");
                 let (pixels, single) = frame.compile(&compiled)?;
                 let misc = frame.manifest.misc_info().map_err(raised)?;
+                active.remove(&frame.path);
                 if pending.is_empty() {
                     return Ok((pixels, single, misc));
                 }
@@ -158,7 +180,6 @@ impl CapturedGraph {
                     Some(misc) => replace_misc_info(pixels, misc),
                     None => pixels,
                 };
-                active.remove(&frame.path);
                 compiled.insert(frame.path, (pixels, single));
             }
         }
@@ -171,6 +192,16 @@ impl CapturedGraph {
         {
             self.retain_operand_aliases(&entry)?;
             self.paths.push(referent.to_owned());
+        }
+        Ok(())
+    }
+
+    fn retain_miriad_files(&mut self, path: &Path) -> PyResult<()> {
+        if ImageHandle::recognizes_miriad(path, path) {
+            for entry in MiriadImage::linked_input_files(path) {
+                self.retain_operand_aliases(&entry)?;
+                self.paths.push(entry.canonicalize().map_err(raised)?);
+            }
         }
         Ok(())
     }
@@ -199,6 +230,85 @@ impl CapturedGraph {
         }
         Ok(())
     }
+}
+
+fn expression_cycle(path: &Path) -> PyErr {
+    raised(format!(
+        "Cycle in saved image expression at {}",
+        path.display()
+    ))
+}
+
+fn bound_pixels(source: &AttachedImage) -> Result<(ImageToolPixelExpression, bool), ImageError> {
+    let handle = source.lock();
+    macro_rules! bind {
+        ($variant:ident, $storage:ident) => {
+            bound_image(source, $storage, |handle| {
+                let ImageHandle::$variant(storage) = handle else {
+                    unreachable!("a retained source keeps its pixel type");
+                };
+                storage
+            })?
+        };
+    }
+    Ok(match &*handle {
+        ImageHandle::Float(storage) => (
+            ImageToolPixelExpression::Real(bind!(Float, storage).convert_pixels(f64::from)?),
+            true,
+        ),
+        ImageHandle::Double(storage) => (
+            ImageToolPixelExpression::Real(bind!(Double, storage)),
+            false,
+        ),
+        ImageHandle::Complex(storage) => (
+            ImageToolPixelExpression::Complex(bind!(Complex, storage).convert_pixels(|pixel| {
+                Complex64::new(f64::from(pixel.re), f64::from(pixel.im))
+            })?),
+            true,
+        ),
+        ImageHandle::DComplex(storage) => (
+            ImageToolPixelExpression::Complex(bind!(DComplex, storage)),
+            false,
+        ),
+    })
+}
+
+fn bound_image<T: ImageExprValue>(
+    source: &AttachedImage,
+    storage: &Storage<T>,
+    select: fn(&ImageHandle) -> &Storage<T>,
+) -> Result<ImageExpression<T>, ImageError> {
+    let pixels = source.share_image();
+    let mask = source.share_image();
+    let coordinate_record = match storage {
+        Storage::Temp { record, .. } => Some(record),
+        Storage::Paged(_) => None,
+    };
+    with_storage!(storage, image => ImageExprBuilder::from_image_sections(
+        image.as_ref(),
+        coordinate_record,
+        move |start, count, stride| {
+            let handle = pixels.lock();
+            let storage = select(&handle);
+            if let Storage::Temp { image, .. } = storage
+                && let Some(concat) = image.concat_source()
+            {
+                concat.check_directory()?;
+            }
+            Ok(with_storage!(storage, image => Lattice::get_slice(image.as_ref(), start, count, stride))?)
+        },
+        move |start, count, stride| {
+            let handle = mask.lock();
+            let storage = select(&handle);
+            if let Storage::Temp { image, .. } = storage
+                && let Some(concat) = image.concat_source()
+            {
+                concat.check_directory()?;
+            }
+            with_storage!(storage, image => image.get_mask_slice(start, count, stride))
+        },
+    ))?
+    .compile()
 }
 
 struct PendingExpression {

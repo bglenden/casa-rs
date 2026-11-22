@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Paged image concatenation, including temporary returned images.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -124,7 +125,8 @@ impl InputRevision {
         let file = fs::metadata(path).map_err(raised)?;
         #[cfg(unix)]
         let generation = with_pixels!(image, storage => match storage {
-            Storage::Paged(image) => Some(image.table().locked_modify_counter().map_err(raised)?),
+            Storage::Paged(image) if !image.uses_advisory_locks() => Some(image.table().locked_modify_counter().map_err(raised)?),
+            Storage::Paged(_) => None,
             Storage::Temp { .. } => None,
         });
         #[cfg(not(unix))]
@@ -159,19 +161,25 @@ struct Input<'a> {
     opened: Option<ImageHandle>,
     expression: Option<SavedExpressionInputs>,
     expression_operands: Vec<PathBuf>,
+    nested_operands: Vec<PathBuf>,
     revision: Option<InputRevision>,
 }
 
 impl<'a> Input<'a> {
     fn open(path: &'a Path, tempclose: bool) -> PyResult<Self> {
-        Self::open_resolved(path, path, tempclose)
+        Self::open_resolved(path, path, tempclose, &mut HashSet::new())
     }
 
-    fn open_resolved(path: &'a Path, resolved: &Path, tempclose: bool) -> PyResult<Self> {
+    fn open_resolved(
+        path: &'a Path,
+        resolved: &Path,
+        tempclose: bool,
+        active: &mut HashSet<PathBuf>,
+    ) -> PyResult<Self> {
         if !casa_images::concat_file::is_image_concat(resolved)
             && casa_images::expr_file::is_image_expr(resolved)
         {
-            let (image, inputs) = saved_expression::open_for_concatenation(resolved)?;
+            let (image, inputs) = saved_expression::open_for_concatenation(resolved, active)?;
             return Self::from_image(path, image, tempclose, Some(inputs));
         }
         let image = ImageHandle::open_for_concatenation(resolved).map_err(raised)?;
@@ -200,7 +208,8 @@ impl<'a> Input<'a> {
             .then(|| InputRevision::read(&resolved_path, &image))
             .transpose()?;
         let writable = with_pixels!(&image, storage => match storage {
-            Storage::Paged(_) => casa_tables::publication::check_write_access(&resolved_path.join("table.dat")).is_ok(),
+            Storage::Paged(image) => image.is_writable()
+                && casa_tables::publication::check_write_access(&resolved_path.join("table.dat")).is_ok(),
             Storage::Temp { image, fits, .. } => fits.is_none() && image.is_writable(),
         });
         let writable_mask = with_pixels!(&image, storage => match storage {
@@ -224,6 +233,10 @@ impl<'a> Input<'a> {
             Some(expression) => std::mem::take(&mut expression.paths),
             None => image.concat_expression_operands(),
         };
+        let mut nested_operands = image.concat_operands();
+        if path != resolved_path {
+            nested_operands.push(casa_tables::lexical_absolute(path));
+        }
         Ok(Self {
             path,
             resolved_path,
@@ -243,6 +256,7 @@ impl<'a> Input<'a> {
             opened: (!tempclose || !expression_operands.is_empty()).then_some(image),
             expression,
             expression_operands,
+            nested_operands,
             revision,
         })
     }

@@ -28,6 +28,7 @@ use crate::image_expr::{
     ImageExprMeta, ImageExprValue, MaskExpression, bounded_read_cursor, validate_slice_request,
 };
 use crate::image_expr_lel::broadcast_array;
+use crate::miriad_read::MiriadImage;
 use crate::{
     AnyPagedImage, ComponentListImage, ImageError, ImageExprBuilder, ImageExpression,
     ImageInterface, ImagePixel, PagedImage,
@@ -779,6 +780,28 @@ fn open_path_with_mask_name(
             )));
         }
         let expression = open_fits_expression(path, !ignore_default)?;
+        return Ok(Operand::Real(
+            MaskSource::Sections(Box::new(expression)),
+            true,
+        ));
+    }
+    if MiriadImage::recognizes_input(path, path) {
+        if mask_name.is_some() && !ignore_default {
+            return Err(ImageError::CasaSelection(format!(
+                "MIRIADImage {} has no named masks",
+                path.display(),
+            )));
+        }
+        let source = Arc::new(MiriadImage::open(path)?);
+        let meta = ImageExprMeta::from_image(source.as_ref())?;
+        let expression = ImageExprBuilder::from_section_readers(
+            meta,
+            Arc::new(move |start, count, stride| {
+                Ok(source.get_slice(start, count, stride)?.mapv(f64::from))
+            }),
+            None,
+        )
+        .compile()?;
         return Ok(Operand::Real(
             MaskSource::Sections(Box::new(expression)),
             true,
