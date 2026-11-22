@@ -789,6 +789,7 @@ impl CalibraterLifecycle {
             CalibrationSolveRequest::Gain(gain)
             | CalibrationSolveRequest::GainSpline { gain, .. }
             | CalibrationSolveRequest::Fringe { gain, .. }
+            | CalibrationSolveRequest::FringeTool { gain, .. }
             | CalibrationSolveRequest::Accor(gain)
             | CalibrationSolveRequest::Baseline { gain, .. } => {
                 gain.selection = selection;

@@ -75,7 +75,10 @@ impl SavedExpressionDirectory {
 
         let images = registry();
         self.check_name(&old_name)?;
-        self.persisted_misc(source)?;
+        let bound = self.lock_manifest();
+        self.read_bound_manifest(bound.as_deref())?
+            .misc_info()
+            .map_err(raised)?;
         if conflicting_images(&images, source, 0)
             || conflicting_images(&images, &destination, 0)
             || containing_tables(source).any(crate::tools::table::path_is_in_use)
@@ -100,6 +103,7 @@ impl SavedExpressionDirectory {
             lock_table_ancestors(&destination, &mut leases)?;
         }
         self.check_name(&old_name)?;
+        self.read_bound_manifest(bound.as_deref())?;
         let moved = move_read_only_directory(
             source,
             &self.identity,
@@ -107,12 +111,15 @@ impl SavedExpressionDirectory {
             target_snapshot.as_ref(),
             |staged| self.persisted_misc(staged).map(drop),
         )?;
+        drop(bound);
         let reopen = || {
             moved.check_target(&destination)?;
-            let misc = self.persisted_misc(&destination)?;
+            let (directory, manifest) = Self::open(&destination, destination.clone())?;
+            if manifest.expression != self.expression {
+                return Err(raised("Saved image expression manifest has changed"));
+            }
+            let misc = manifest.misc_info().map_err(raised)?;
             let image = reopen_captured(&original.lock(), &destination, misc)?;
-            let directory =
-                Self::capture(&destination, destination.clone(), self.expression.clone())?;
             let attachment = AttachedImage::with_saved_expression(image, directory);
             moved.check_target(&destination)?;
             if history {

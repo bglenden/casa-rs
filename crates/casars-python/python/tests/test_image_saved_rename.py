@@ -75,7 +75,7 @@ def test_saved_remove_refuses_and_detaches(tmp_path, monkeypatch, backend, done)
         image.done()
 
 
-@pytest.mark.parametrize("remote_change", ["cwd", "replacement"])
+@pytest.mark.parametrize("remote_change", ["cwd", "replacement", "manifest_replacement"])
 def test_saved_rename_stays_bound_to_the_captured_directory(tmp_path, monkeypatch, remote_change):
     api = _backend("casars")
     source = _fixture(tmp_path, api)
@@ -105,7 +105,7 @@ def test_saved_rename_stays_bound_to_the_captured_directory(tmp_path, monkeypatc
             monkeypatch.chdir(tmp_path)
             assert image.done() and image.open(str(target))
             np.testing.assert_array_equal(image.getchunk(), PIXELS * 2)
-        else:
+        elif remote_change == "replacement":
             original_path = tmp_path / "externally-moved.im"
             source.rename(original_path)
             source.mkdir()
@@ -116,6 +116,18 @@ def test_saved_rename_stays_bound_to_the_captured_directory(tmp_path, monkeypatc
             assert not target.exists()
             assert (source / "imageexpr.json").read_text(encoding="utf-8") == decoy_contents
             assert (original_path / "imageexpr.json").read_bytes() == original
+        else:
+            manifest = source / "imageexpr.json"
+            body = json.loads(manifest.read_text(encoding="utf-8"))
+            body["MiscInfo"] = {"replacement": True}
+            replacement = source / "temporary.json"
+            replacement.write_text(json.dumps(body), encoding="utf-8")
+            replacement.replace(manifest)
+            with pytest.raises(RuntimeError, match="Saved image expression manifest has changed"):
+                image.rename(str(target))
+            assert not image.isopen()
+            assert not target.exists()
+            assert json.loads(manifest.read_text(encoding="utf-8")) == body
     finally:
         image.done()
 

@@ -468,7 +468,23 @@ impl ToolExpressionManifest {
 /// # Errors
 /// Returns an error for invalid JSON or missing LEL text.
 pub fn read_tool_manifest(path: &Path) -> Result<ToolExpressionManifest, ImageError> {
-    let mut json = read_manifest(path)?;
+    tool_manifest(read_manifest(path)?)
+}
+
+/// Read saved-expression metadata from an already opened manifest.
+///
+/// # Errors
+/// Returns an error for invalid JSON or missing LEL text.
+pub fn read_tool_manifest_from_reader(
+    reader: impl std::io::Read,
+) -> Result<ToolExpressionManifest, ImageError> {
+    let json = serde_json::from_reader(reader).map_err(|error| {
+        ImageError::InvalidMetadata(format!("cannot parse imageexpr.json: {error}"))
+    })?;
+    tool_manifest(json)
+}
+
+fn tool_manifest(mut json: Json) -> Result<ToolExpressionManifest, ImageError> {
     let expression = manifest_expression(&json)?.to_owned();
     let misc_info = json
         .as_object_mut()
@@ -496,9 +512,15 @@ pub fn encode_tool_manifest(
         "ImageExpr": expression,
         "MiscInfo": tool_metadata::encode(misc)?,
     });
-    serde_json::to_vec_pretty(&json).map_err(|error| {
+    let encoded = serde_json::to_vec_pretty(&json).map_err(|error| {
         ImageError::InvalidMetadata(format!("cannot encode imageexpr.json: {error}"))
-    })
+    })?;
+    serde_json::from_slice::<Json>(&encoded).map_err(|error| {
+        ImageError::InvalidMetadata(format!(
+            "Saved image expression MiscInfo cannot be reopened: {error}"
+        ))
+    })?;
+    Ok(encoded)
 }
 
 fn read_manifest(path: &Path) -> Result<serde_json::Value, ImageError> {

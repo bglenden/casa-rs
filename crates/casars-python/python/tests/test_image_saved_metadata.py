@@ -130,7 +130,7 @@ def test_saved_miscinfo_refuses_a_record_casa_cannot_read_back(tmp_path, monkeyp
         image.done()
 
 
-@pytest.mark.parametrize("changed", ["directory", "manifest", "cwd"])
+@pytest.mark.parametrize("changed", ["directory", "manifest", "file_replacement", "cwd"])
 def test_saved_miscinfo_only_writes_the_captured_image(tmp_path, monkeypatch, changed):
     api = _backend("casars")
     source = _fixture(tmp_path, api)
@@ -156,13 +156,78 @@ def test_saved_miscinfo_only_writes_the_captured_image(tmp_path, monkeypatch, ch
                 moved = tmp_path / "moved.im"
                 source.rename(moved)
                 source.mkdir()
-            path.write_text(decoy, encoding="utf-8")
+            if changed == "file_replacement":
+                decoy = json.dumps({"ImageExpr": EXPRESSION, "MiscInfo": {"untouched": True}})
+                replacement = source / "replacement.json"
+                replacement.write_text(decoy, encoding="utf-8")
+                replacement.replace(path)
+            else:
+                path.write_text(decoy, encoding="utf-8")
             with pytest.raises(RuntimeError, match="Saved image expression.*has changed"):
                 image.setmiscinfo({"must": "not be written"})
             assert image.miscinfo() == {"original": "keep on errors"}
+            assert image.history() == []
             assert path.read_text(encoding="utf-8") == decoy
             if changed == "directory":
                 assert (moved / path.name).read_bytes() == original
         np.testing.assert_array_equal(image.getchunk(), PIXELS * 2)
+    finally:
+        image.done()
+
+
+def test_saved_metadata_peers_can_publish_successive_updates(tmp_path, monkeypatch):
+    api = _backend("casars")
+    source = _fixture(tmp_path, api)
+    monkeypatch.chdir(tmp_path)
+    first, second, reopened = api.image(), api.image(), api.image()
+    try:
+        assert first.open("expression.im")
+        assert second.open(str(source))
+        assert first.setmiscinfo({"message": "first writer"})
+        assert second.setmiscinfo({"message": "second writer"})
+        assert first.miscinfo() == {"message": "first writer"}
+        assert second.miscinfo() == {"message": "second writer"}
+        assert reopened.open("expression.im")
+        assert reopened.miscinfo() == {"message": "second writer"}
+    finally:
+        reopened.done()
+        second.done()
+        first.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_saved_miscinfo_promotes_a_mixed_complex_vector(tmp_path, monkeypatch, backend):
+    api = _backend(backend)
+    source = _fixture(tmp_path, api)
+    monkeypatch.chdir(tmp_path)
+    path = source / "imageexpr.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["MiscInfo"] = {"mixed": [2, {"r": 3, "i": 4}]}
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    image = api.image()
+    try:
+        assert image.open("expression.im")
+        np.testing.assert_array_equal(image.miscinfo()["mixed"], [2 + 0j, 3 + 4j])
+    finally:
+        image.done()
+
+
+def test_saved_miscinfo_refuses_a_record_beyond_the_reader_depth(tmp_path, monkeypatch):
+    api = _backend("casars")
+    source = _fixture(tmp_path, api)
+    monkeypatch.chdir(tmp_path)
+    path = source / "imageexpr.json"
+    original = path.read_bytes()
+    record = {"value": 1}
+    for _ in range(130):
+        record = {"nested": record}
+    image = api.image()
+    try:
+        assert image.open("expression.im")
+        with pytest.raises(RuntimeError, match="MiscInfo cannot be reopened"):
+            image.setmiscinfo(record)
+        assert path.read_bytes() == original
+        assert image.miscinfo() == {"original": "keep on errors"}
+        assert image.history() == []
     finally:
         image.done()
