@@ -37,6 +37,8 @@ pub(crate) enum SolveInputRows {
     GainTool,
     /// Also retain the input buffer axes for a fringe FFT.
     Fringe,
+    /// Retain input axes and raw gather records for a direct fringe solve.
+    FringeTool { legacy: bool },
     /// Keep the individual antennas' autocorrelations for normalization.
     Autocorrelations,
     /// Gather every selected row before fitting antenna autocorrelations.
@@ -80,8 +82,16 @@ impl SolveInputRows {
     pub(super) fn tracks_gather(self) -> bool {
         matches!(
             self,
-            Self::GainTool | Self::BaselineTool | Self::AccorTool | Self::LegacyAccor
+            Self::GainTool
+                | Self::BaselineTool
+                | Self::AccorTool
+                | Self::LegacyAccor
+                | Self::FringeTool { .. }
         )
+    }
+
+    pub(super) fn is_fringe(self) -> bool {
+        matches!(self, Self::Fringe | Self::FringeTool { .. })
     }
 
     pub(super) fn is_accor(self) -> bool {
@@ -257,7 +267,11 @@ impl super::SolveGroupOptions {
     }
 
     pub(super) fn legacy_chan_selection(&self) -> bool {
-        self.polynomial_bandpass || self.input_rows == SolveInputRows::LegacyBaseline
+        self.polynomial_bandpass
+            || matches!(
+                self.input_rows,
+                SolveInputRows::LegacyBaseline | SolveInputRows::FringeTool { legacy: true }
+            )
     }
 }
 
