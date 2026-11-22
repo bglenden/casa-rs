@@ -105,6 +105,33 @@ def test_saved_region_products_preserve_masks_and_coordinates(casa, tmp_path, sa
                 reopened.done()
 
 
+def test_fft_rejects_saved_compound_regions_with_mixed_precision_mask(casa, tmp_path, saved_region):
+    data, region, _, _, _, _ = saved_region
+    primary, secondary = (tmp_path / name for name in ("single.im", "double.im"))
+    writer = casa.image()
+    try:
+        assert writer.fromarray(str(primary), data)
+        assert writer.done()
+        weights = np.indices(data.shape).sum(axis=0).astype(np.float64) * 0.5
+        assert writer.fromarray(str(secondary), weights, type="d")
+        assert writer.done()
+    finally:
+        writer.done()
+    expression = f'("{primary}" + "{secondary}") > 650'
+    for backend in (casa, tools):
+        image = backend.image()
+        output = tmp_path / f"{backend.__name__}-fourier.im"
+        try:
+            assert image.open(str(primary))
+            with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
+                image.fft(axes=[0, 1], region=region, mask=expression, complex=str(output))
+            assert image.isopen()
+            assert not output.exists()
+            np.testing.assert_array_equal(image.getchunk(), data)
+        finally:
+            image.done()
+
+
 @pytest.mark.parametrize("method", ["set", "addnoise", "insert", "modify", "replacemaskedpixels"])
 def test_saved_region_edits_honor_membership_bounds_or_rejection(casa, tmp_path, saved_region, method):
     data, region, window, selection, _, direction = saved_region
