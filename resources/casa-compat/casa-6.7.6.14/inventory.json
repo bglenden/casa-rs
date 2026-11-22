@@ -33,6 +33,7 @@
     "initweights",
     "listcal",
     "mstransform",
+    "pccor",
     "plotbandpass",
     "plotms",
     "plotweather",

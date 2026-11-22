@@ -24,6 +24,7 @@
   "imsubimage": "imagename",
   "initweights": "vis",
   "mstransform": "vis",
+  "pccor": "vis",
   "plotbandpass": "caltable",
   "plotweather": "vis",
   "polcal": "vis",

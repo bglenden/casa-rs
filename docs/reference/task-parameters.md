@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 960
-- Surfaces: 60 (60 task, 0 session)
-- Surface bindings: 1395
+- Concepts: 963
+- Surfaces: 61 (61 task, 0 session)
+- Surface bindings: 1404
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -31,6 +31,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [ACCOR](#surface-accor)<br><code>accor</code> | task | 1 | <code>calibration</code> | 24 | Normalize sampler amplitudes using antenna autocorrelations. |
 | [Fringe Fit](#surface-fringefit)<br><code>fringefit</code> | task | 1 | <code>calibration</code> | 37 | Fit antenna phases, delays and delay rates to VLBI visibilities. |
+| [Pulse Calibration](#surface-pccor)<br><code>pccor</code> | task | 1 | <code>calibration</code> | 9 | Align VLBI pulse and cable calibration to a reference fringe solution. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
 | [Subtract Visibility Model](#surface-uvsub)<br><code>uvsub</code> | task | 1 | <code>calibration</code> | 2 | Subtract or restore the current visibility model in corrected data. |
@@ -807,6 +808,28 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
+
+<a id="surface-pccor"></a>
+
+## Pulse Calibration (<code>pccor</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Align VLBI pulse and cable calibration to a reference fringe solution.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>pccor_caltable</code> | <code>calibration.pccor.pccor_caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Pulse Calibration | Name of the pulse calibration table. |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; optional | Pulse Calibration | Reference antenna name or id for solve workflows |
+| <code>timerange</code> | <code>ms.selection.timerange@r4</code> | <code>string</code> | <code>"none"</code>; optional | Pulse Calibration | CASA time selection passed to the MeasurementSet parser as literal text. |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>"none"</code>; optional | Pulse Calibration | Applycal scan selector text. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>"none"</code>; optional | Pulse Calibration | Applycal spw selector text. |
+| <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>"none"</code>; optional | Pulse Calibration | Applycal antenna selector text. |
+| <code>cablecal_correction</code> | <code>calibration.pccor.cablecal_correction@r1</code> | <code>bool</code> | <code>false</code>; optional | Pulse Calibration | Add the measured cable delay to pulse calibration. |
+| <code>ff_table</code> | <code>calibration.pccor.ff_table@r1</code> | <code>string</code> | <code>"none"</code>; optional | Pulse Calibration | Precomputed reference fringe table, or none to run fringefit. |
 
 <a id="surface-bandpass"></a>
 

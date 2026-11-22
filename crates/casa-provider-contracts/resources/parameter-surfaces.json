@@ -17762,6 +17762,396 @@
     },
     {
       "kind": "task",
+      "id": "pccor",
+      "contract_version": 1,
+      "display_name": "Pulse Calibration",
+      "category": "Calibration",
+      "summary": "Align VLBI pulse and cable calibration to a reference fringe solution.",
+      "provider_family": "calibration",
+      "casa_task": "pccor",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "pccor"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "pccor_caltable",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "pccor_caltable"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "pccor_caltable",
+          "concept": {
+            "id": "calibration.pccor.pccor_caltable",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pccor-caltable"
+              ]
+            },
+            "provider": {
+              "field": "pccor_caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pccor_caltable"
+            },
+            "presentation": {
+              "label": "Output Calibration Table",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "refant",
+          "concept": {
+            "id": "parameter.refant",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refant"
+              ]
+            },
+            "provider": {
+              "field": "refant",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refant"
+            },
+            "presentation": {
+              "label": "Reference Antenna",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 4
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ]
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "Reference Time Range",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "Reference Scan",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "Spectral Windows",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ]
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "Antennas",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "cablecal_correction",
+          "concept": {
+            "id": "calibration.pccor.cablecal_correction",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--cablecal-correction"
+              ],
+              "false_flags": [
+                "--no-cablecal-correction"
+              ]
+            },
+            "provider": {
+              "field": "cablecal_correction",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "cablecal_correction"
+            },
+            "presentation": {
+              "label": "Cable Delay",
+              "group": "Pulse Calibration"
+            }
+          }
+        },
+        {
+          "name": "ff_table",
+          "concept": {
+            "id": "calibration.pccor.ff_table",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--ff-table"
+              ]
+            },
+            "provider": {
+              "field": "ff_table",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "ff_table"
+            },
+            "presentation": {
+              "label": "Fringe Table",
+              "group": "Pulse Calibration"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "bandpass",
       "contract_version": 6,
       "display_name": "Bandpass",

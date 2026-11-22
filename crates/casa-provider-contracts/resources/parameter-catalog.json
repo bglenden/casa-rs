@@ -6517,6 +6517,67 @@
       "persistence_class": "profile"
     },
     {
+      "id": "calibration.pccor.pccor_caltable",
+      "semantic_revision": 1,
+      "casa_name": "pccor_caltable",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Name of the pulse calibration table.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.pccor.cablecal_correction",
+      "semantic_revision": 1,
+      "casa_name": "cablecal_correction",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Add the measured cable delay to pulse calibration.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.pccor.ff_table",
+      "semantic_revision": 1,
+      "casa_name": "ff_table",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Precomputed reference fringe table, or none to run fringefit.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.selectdata",
       "semantic_revision": 1,
       "casa_name": "selectdata",

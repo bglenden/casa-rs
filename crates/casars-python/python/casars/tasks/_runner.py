@@ -267,6 +267,22 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_applycal(values)
     if name == "polfromgain":
         return _call_polfromgain(values, arguments)
+    if name == "pccor":
+        _validate_required_path(values, "vis", arguments["vis"], search_data=True)
+        nulls = {key: ["null value not allowed"] for key, value in arguments.items()
+                 if value is None}
+        if nulls:
+            raise AssertionError(str(nulls))
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            if error.completion.parameter == "selection":
+                raise ValueError(error.completion.message) from error
+            if error.completion.parameter == "ff_table":
+                raise Exception(error.completion.message) from error
+            raise RuntimeError(error.completion.message) from error
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
     if name == "polcal":
         _validate_required_path(values, "vis", arguments["vis"], search_data=True)
         try:
