@@ -5,15 +5,18 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::ops::{Add, Div, Mul};
+use std::path::Path;
 
-use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{ArrayValue, Correlation};
+use casa_tables::{ArrayShapeContract, ColumnType, Table, TableError, TableOptions};
+use casa_types::{ArrayValue, Correlation, ScalarValue};
 use ndarray::{Array1, Array2, Array3, ArrayD, Ix2, Ix3};
 
-use super::channel_average::sigma_from_weight;
 use super::correlation_metadata::{CorrelationSelection, parallel_hands};
 use super::main_arrays::MainArrayBlock;
-use super::{MsTransformError, MsTransformRequest, TransformChannelSelection};
+use super::{
+    MsTransformError, MsTransformRequest, TransformChannelSelection,
+    rewrite_table_rows_with_variable_arrays,
+};
 use crate::subtable_rows::{b, i, i32_array, row_from_defs};
 use crate::{MeasurementSet, MsDataDescriptionMut, MsPolarization, MsResult, SubtableId, schema};
 
@@ -41,6 +44,7 @@ struct Projection<'a> {
     spectral_weight: Option<ndarray::ArrayView2<'a, f32>>,
     weight: [f32; 2],
     mode: SingleDishPolarizationAverage,
+    flag_row: bool,
 }
 
 impl Projection<'_> {
@@ -70,7 +74,7 @@ impl Projection<'_> {
             let mut weight = 0.;
             for hand in 0..2 {
                 let coordinate = [self.hands[hand], channel];
-                if !self.flags[coordinate] {
+                if !self.flag_row && !self.flags[coordinate] {
                     let w = self.weight_for(hand, channel);
                     summed = summed + input[coordinate] * w;
                     weight += w;
@@ -83,7 +87,8 @@ impl Projection<'_> {
 
     fn flags(&self) -> ArrayD<bool> {
         Array2::from_shape_fn((1, self.flags.ncols()), |(_, channel)| {
-            self.flags[[self.hands[0], channel]] && self.flags[[self.hands[1], channel]]
+            self.flag_row
+                || (self.flags[[self.hands[0], channel]] && self.flags[[self.hands[1], channel]])
         })
         .into_dyn()
     }
@@ -135,21 +140,7 @@ impl PolarizationProjection {
             path: path.display().to_string(),
             reason,
         };
-        let mut pol = Table::open(TableOptions::new(&polarization))
-            .map_err(|source| error(&polarization, source.to_string()))?;
-        let original_count = pol.row_count();
-        let stokes =
-            stokes_i_row(&mut pol).map_err(|source| error(&polarization, source.to_string()))?;
-        if stokes == original_count {
-            pol.save(TableOptions::new(&polarization))
-                .map_err(|source| error(&polarization, source.to_string()))?;
-            drop(pol);
-            if let Err(source) = fs::remove_file(polarization.join("table.lock"))
-                && source.kind() != ErrorKind::NotFound
-            {
-                return Err(error(&polarization, source.to_string()));
-            }
-        }
+        let stokes = ensure_stokes_i_polarization(&polarization)?;
         let mut dd = Table::open(TableOptions::new(&description))
             .map_err(|source| error(&description, source.to_string()))?;
         let mut metadata = MsDataDescriptionMut::new(&mut dd);
@@ -172,7 +163,7 @@ impl PolarizationProjection {
     pub(super) fn apply(
         &self,
         block: &mut MainArrayBlock,
-        rows: &[i32],
+        (rows, row_flags): (&[i32], &[Option<ScalarValue>]),
         channel_sources: (
             &BTreeMap<i32, i32>,
             &BTreeMap<i32, TransformChannelSelection>,
@@ -221,6 +212,7 @@ impl PolarizationProjection {
                 spectral_weight,
                 weight: hands.map(|i| weight[i]),
                 mode: self.mode,
+                flag_row: matches!(row_flags[index], Some(ScalarValue::Bool(true))),
             };
             for column in &mut block.visibility {
                 column[index] = column[index]
@@ -286,25 +278,92 @@ impl PolarizationProjection {
     }
 }
 
-fn stokes_i_row(table: &mut Table) -> MsResult<usize> {
-    let rows = MsPolarization::new(table);
+/// Return the first Stokes I row in a private staged POLARIZATION table,
+/// appending one if needed. Preserve existing rows and widen fixed shapes.
+///
+/// # Errors
+/// Returns a metadata error if the staged table cannot be read or replaced.
+pub fn ensure_stokes_i_polarization(path: &Path) -> Result<usize, MsTransformError> {
+    const COLUMNS: [&str; 2] = ["CORR_TYPE", "CORR_PRODUCT"];
+    let error = |reason: String| MsTransformError::SpectralMetadata {
+        path: path.display().to_string(),
+        reason,
+    };
+    let mut table =
+        Table::open(TableOptions::new(path)).map_err(|source| error(source.to_string()))?;
+    let rows = MsPolarization::new(&table);
     let stokes = Correlation::I.casacore_code();
     for row in 0..rows.row_count() {
-        if !rows.flag_row(row)? && rows.corr_type(row)? == [stokes] {
+        if !rows
+            .flag_row(row)
+            .map_err(|source| error(source.to_string()))?
+            && rows
+                .corr_type(row)
+                .map_err(|source| error(source.to_string()))?
+                == [stokes]
+        {
             return Ok(row);
         }
     }
     let row = table.row_count();
-    table.add_row(row_from_defs(
-        schema::polarization::REQUIRED_COLUMNS,
-        &[
-            ("NUM_CORR", i(1)),
-            ("CORR_TYPE", i32_array(&[stokes], vec![1])),
-            ("CORR_PRODUCT", i32_array(&[0, 0], vec![2, 1])),
-            ("FLAG_ROW", b(false)),
-        ],
-    ))?;
+    let fixed = COLUMNS.iter().any(|name| {
+        table
+            .schema()
+            .and_then(|schema| schema.column(name))
+            .is_some_and(|column| {
+                matches!(
+                    column.column_type(),
+                    ColumnType::Array(ArrayShapeContract::Fixed { .. })
+                )
+            })
+    });
+    let temporary = fixed
+        .then(|| tempfile::tempdir_in(path.parent().unwrap_or_else(|| Path::new("."))))
+        .transpose()
+        .map_err(|source| error(source.to_string()))?;
+    let widened = temporary
+        .as_ref()
+        .map(|directory| directory.path().join("polarization"));
+    let write_to = widened.as_deref().unwrap_or(path);
+    if fixed {
+        let indices = (0..row).collect::<Vec<_>>();
+        rewrite_table_rows_with_variable_arrays(path, write_to, &indices, &COLUMNS, |_, row| {
+            Ok(row)
+        })?;
+        table =
+            Table::open(TableOptions::new(write_to)).map_err(|source| error(source.to_string()))?;
+    }
+    table
+        .add_row(row_from_defs(
+            schema::polarization::REQUIRED_COLUMNS,
+            &[
+                ("NUM_CORR", i(1)),
+                ("CORR_TYPE", i32_array(&[stokes], vec![1])),
+                ("CORR_PRODUCT", i32_array(&[0, 0], vec![2, 1])),
+                ("FLAG_ROW", b(false)),
+            ],
+        ))
+        .map_err(|source| error(source.to_string()))?;
+    table
+        .save(TableOptions::new(write_to))
+        .map_err(|source| error(source.to_string()))?;
+    drop(table);
+    if let Some(widened) = widened {
+        fs::remove_dir_all(path)
+            .and_then(|()| fs::rename(widened, path))
+            .map_err(|source| error(source.to_string()))?;
+    }
+    // A copied casacore lock still describes the table before it gained a row.
+    if let Err(source) = fs::remove_file(path.join("table.lock"))
+        && source.kind() != ErrorKind::NotFound
+    {
+        return Err(error(source.to_string()));
+    }
     Ok(row)
+}
+
+fn sigma_from_weight(weight: f32) -> f32 {
+    weight.sqrt().recip()
 }
 
 fn spectrum_statistics(
@@ -312,11 +371,12 @@ fn spectrum_statistics(
     flags: &ArrayD<bool>,
     channels: &[usize],
 ) -> (f32, f32) {
+    let all_flagged = channels.iter().all(|&channel| flags[[0, channel]]);
     let mut count = 0;
     let mut weight = 0.;
     let mut sigma = 0.;
     for &channel in channels {
-        if !flags[[0, channel]] {
+        if all_flagged || !flags[[0, channel]] {
             let value = weights[[0, channel]];
             count += 1;
             weight += value;

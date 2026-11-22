@@ -10,12 +10,13 @@ use casa_types::ArrayValue;
 use crate::MeasurementSet;
 use crate::selection::ResolvedMsSelectionRow;
 
+use super::selection_metadata::MainRowOrder;
 use super::{MsTransformError, TimeAverageOptions, scalar_i32};
 
 /// The columns used by the visibility iterator to establish a chunk.
 /// A dimension selected by `timespan` is zeroed before building this key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct TimeChunk(pub(super) [i32; 6]);
+pub(super) struct TimeChunk([i32; 8]);
 
 /// Row metadata needed to decide the averaging group before reading visibility arrays.
 #[derive(Clone, Copy, Debug)]
@@ -39,6 +40,7 @@ pub(super) struct TimeInputRow {
 pub(super) struct TimeGroup {
     pub(super) first: TimeSample,
     pub(super) rows: Vec<TimeInputRow>,
+    pub(super) row_in_chunk: usize,
 }
 
 impl TimeGroup {
@@ -46,6 +48,7 @@ impl TimeGroup {
         Self {
             first,
             rows: vec![row],
+            row_in_chunk: 0,
         }
     }
 
@@ -71,7 +74,7 @@ pub(super) fn plan(
     input: &MeasurementSet,
     selected: &[ResolvedMsSelectionRow],
     options: TimeAverageOptions,
-    single_dish: bool,
+    order: MainRowOrder,
 ) -> Result<Vec<TimeGroup>, MsTransformError> {
     let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
     let table_error = |source| MsTransformError::MutateMeasurementSet {
@@ -86,12 +89,16 @@ pub(super) fn plan(
                 .and_then(|obs| obs.string(0, "TELESCOPE_NAME").ok())
                 .is_some_and(|name| name.contains("ALMA")));
     let rows = selected.iter().map(|row| row.row_index).collect::<Vec<_>>();
+    let baseline = matches!(order, MainRowOrder::Baseline);
+    let beam_order = matches!(order, MainRowOrder::SingleDish | MainRowOrder::Atmosphere);
     let mut samples = selected
         .iter()
         .map(|row| TimeSample {
             row: row.row_index,
             description: row.data_desc_id,
             chunk: TimeChunk([
+                0,
+                0,
                 0,
                 0,
                 0,
@@ -106,8 +113,10 @@ pub(super) fn plan(
         .collect::<Vec<_>>();
     let table = input.main_table();
     let keys = [
-        ("OBSERVATION_ID", !single_dish),
-        ("ARRAY_ID", !single_dish),
+        ("OBSERVATION_ID", !baseline),
+        ("ARRAY_ID", !baseline),
+        ("ANTENNA1", matches!(order, MainRowOrder::SingleDish)),
+        ("FEED1", beam_order),
         ("SCAN_NUMBER", !options.span_scans),
         ("STATE_ID", !span_states),
     ];
@@ -123,7 +132,7 @@ pub(super) fn plan(
             sample.chunk.0[slot] = scalar_i32(cell.as_ref(), name, sample.row)?;
         }
     }
-    if single_dish {
+    if baseline {
         // Single-dish line fitting puts DATA_DESC_ID before scan, state and field.
         for sample in &mut samples {
             sample.chunk.0.rotate_right(1);
@@ -211,6 +220,16 @@ pub(super) fn group_baselines(
         }
     }
     finished.append(&mut active);
+    let mut previous = None;
+    let mut row = 0;
+    for group in &mut finished {
+        if previous != Some(group.first.chunk) {
+            previous = Some(group.first.chunk);
+            row = 0;
+        }
+        group.row_in_chunk = row;
+        row += 1;
+    }
     finished
 }
 

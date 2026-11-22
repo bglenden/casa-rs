@@ -9874,3 +9874,11 @@ attachment terminates the process with a casacore matrix row error.
 casa-rs applies the model to the projected correlation. The paired
 oracle reads both saved tables through casacore and applies both in
 casa-rs.
+
+## Single-dish polarization averaging can clear a rejected integration's row flag
+
+On an XX/YY spectrum with `FLAG_ROW=true` and clear per-channel `FLAG`
+cells, `fit_line(polaverage='geometric')` followed by `atmcor` in CASA
+6.7.6.14 produces a row with clear flags. casa-rs retains the rejection
+in the output row and channels. The baseline fitter also excludes that
+integration from its fit.

@@ -60,7 +60,7 @@ pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
 use single_dish_polarization::PolarizationProjection;
-pub use single_dish_polarization::SingleDishPolarizationAverage;
+pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
 pub use task_history::{TransformTaskHistory, append_task_history};
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
@@ -622,10 +622,9 @@ fn mstransform_staged(
         .min()
         .expect("nonempty row selection");
     let stage_started_at = Instant::now();
-    let baseline_order = matches!(order, selection_metadata::MainRowOrder::Baseline);
     let time_groups = options
         .time_averaging
-        .map(|options| time_average::plan(&input, &time_rows, options, baseline_order))
+        .map(|options| time_average::plan(&input, &time_rows, options, order))
         .transpose()?;
     let selection_metadata::OrderedMainRows {
         rows: selected_rows,
@@ -734,7 +733,7 @@ fn mstransform_staged(
         path: request.input_ms.display().to_string(),
         source: Box::new(source),
     })?;
-    if float_convolution && polarization.is_none() {
+    if float_convolution && !averaging_time && polarization.is_none() {
         spectra.source.clear();
     }
     if read_spectral_weights
@@ -964,10 +963,18 @@ fn mstransform_staged(
         };
         let descriptions = &selected_ddids[batch_start..batch_end];
         let mut input_row_flags = if let Some(projection) = &polarization {
+            let row_flags = input
+                .main_table()
+                .column_accessor("FLAG_ROW")
+                .and_then(|column| column.scalar_cells_owned_for_rows(input_rows))
+                .map_err(|source| MsTransformError::MutateMeasurementSet {
+                    path: request.input_ms.display().to_string(),
+                    source: Box::new(source),
+                })?;
             projection
                 .apply(
                     &mut input_block,
-                    descriptions,
+                    (descriptions, &row_flags),
                     (&ddid_to_spw, &channel_selection),
                     &spectra.source,
                 )
@@ -975,21 +982,7 @@ fn mstransform_staged(
                     path: request.input_ms.display().to_string(),
                     source: Box::new(source),
                 })?;
-            if writes_rows {
-                Some(
-                    input
-                        .main_table()
-                        .column_accessor("FLAG_ROW")
-                        .and_then(|column| column.scalar_cells_owned_for_rows(input_rows))
-                        .map_err(|source| MsTransformError::MutateMeasurementSet {
-                            path: request.input_ms.display().to_string(),
-                            source: Box::new(source),
-                        })?
-                        .into_iter(),
-                )
-            } else {
-                None
-            }
+            writes_rows.then(|| row_flags.into_iter())
         } else {
             None
         };
@@ -1219,6 +1212,12 @@ fn mstransform_staged(
                             if let Some(averaged) = group_times.get(batch_offset) {
                                 coordinates.time = averaged.time;
                                 coordinates.interval = averaged.interval;
+                            }
+                            if let Some(group) = time_groups
+                                .as_ref()
+                                .and_then(|groups| groups.get(row_index))
+                            {
+                                coordinates.selection_row = group.row_in_chunk;
                             }
                             baseline_weights = handler
                                 .process(
