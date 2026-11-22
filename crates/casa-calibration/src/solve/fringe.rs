@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
 use casa_ms::MeasurementSet;
-use casa_types::Complex32;
+use casa_types::{Complex32, Complex64};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -446,8 +446,13 @@ fn enforce_visibility_mode(hands: &mut [Vec<FringeBaseline>; 2], mode: GainSolve
         if mode == GainSolveMode::Phase && amplitude > 0. {
             sample.visibility /= amplitude;
             sample.weight *= amplitude.powi(2);
-        } else if mode == GainSolveMode::Amplitude {
-            sample.visibility = Complex32::new(amplitude, 0.);
+        } else if mode == GainSolveMode::Amplitude && amplitude > 0. {
+            // CASA divides by the rounded single-precision phasor using a
+            // widened complex division. The remaining phase enters its SNR.
+            let phase = sample.visibility / amplitude;
+            let widen = |value: Complex32| Complex64::new(f64::from(value.re), f64::from(value.im));
+            let corrected = widen(sample.visibility) / widen(phase);
+            sample.visibility = Complex32::new(corrected.re as f32, corrected.im as f32);
         }
     }
 }
