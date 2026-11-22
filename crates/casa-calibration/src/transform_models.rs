@@ -58,13 +58,25 @@ impl TransformInputView for ModelView {
         let available = stored || self.materializes(input);
         let fields = scratch_columns::virtual_model_fields(input);
         let models = if available && rows.iter().any(|row| fields.contains(&row.field_id)) {
-            Some(VisibilityModels::new(input, rows).map_err(model_error)?)
+            Some(VisibilityModels::for_transform(input, rows).map_err(model_error)?)
         } else {
             None
         };
         let rows = if available && (!stored || models.is_some()) {
             rows.iter()
-                .map(|row| (row.row_index, row.polarization_id))
+                .map(|row| {
+                    let reads_column = stored
+                        && models
+                            .as_ref()
+                            .is_none_or(|models| models.reads_column(row.field_id));
+                    (
+                        row.row_index,
+                        ModelRow {
+                            polarization: row.polarization_id,
+                            reads_column,
+                        },
+                    )
+                })
                 .collect()
         } else {
             BTreeMap::new()
@@ -72,7 +84,11 @@ impl TransformInputView for ModelView {
         let mut correlations = BTreeMap::new();
         if !rows.is_empty() {
             let polarization = input.polarization().map_err(model_error)?;
-            for &id in rows.values() {
+            for id in rows
+                .values()
+                .filter(|row| !row.reads_column)
+                .map(|row| row.polarization)
+            {
                 if let std::collections::btree_map::Entry::Vacant(entry) = correlations.entry(id) {
                     entry.insert(polarization.corr_type(id as usize).map_err(model_error)?);
                 }
@@ -82,7 +98,6 @@ impl TransformInputView for ModelView {
             calibration,
             input,
             models,
-            stored,
             rows,
             correlations,
         }))
@@ -108,9 +123,13 @@ struct PreparedModelView<'a> {
     calibration: Option<Box<dyn PreparedTransformInputView + 'a>>,
     input: &'a MeasurementSet,
     models: Option<VisibilityModels>,
-    stored: bool,
-    rows: BTreeMap<usize, i32>,
+    rows: BTreeMap<usize, ModelRow>,
     correlations: BTreeMap<i32, Vec<i32>>,
+}
+
+struct ModelRow {
+    polarization: i32,
+    reads_column: bool,
 }
 
 impl PreparedTransformInputView for PreparedModelView<'_> {
@@ -139,34 +158,46 @@ impl PreparedModelView<'_> {
         input: &Table,
         rows: &[usize],
     ) -> Result<Vec<Option<ArrayValue>>, TableError> {
-        let read = |name| {
+        let read = |name, rows: &[usize]| {
             input
                 .column_accessor(name)?
                 .array_cells_owned_uncached(rows)
         };
-        let flags = read("FLAG")?;
-        let mut stored = if self.stored {
-            read("MODEL_DATA")?
+        let (physical, computed): (Vec<_>, Vec<_>) = rows
+            .iter()
+            .copied()
+            .partition(|row| self.rows[row].reads_column);
+        let mut flags = read("FLAG", &computed)?.into_iter();
+        let mut stored = if physical.is_empty() {
+            Vec::new()
         } else {
-            vec![None; rows.len()]
-        };
-        for ((&row, flags), value) in rows.iter().zip(flags).zip(&mut stored) {
-            let Some(ArrayValue::Bool(flags)) = flags else {
-                return Err(TableError::Schema(format!(
-                    "model visibility input row {row} has no boolean FLAG"
-                )));
-            };
-            let layout = &self.correlations[&self.rows[&row]];
-            let predicted = self
-                .models
-                .as_ref()
-                .map(|model| model.predict(self.input, row, layout, &flags))
-                .transpose()
-                .map_err(model_error)?
-                .flatten();
-            if let Some(model) = predicted {
-                *value = Some(ArrayValue::Complex32(model));
-            } else if !self.stored {
+            read("MODEL_DATA", &physical)?
+        }
+        .into_iter();
+        rows.iter()
+            .map(|&row| {
+                let plan = &self.rows[&row];
+                if plan.reads_column {
+                    return Ok(stored.next().flatten());
+                }
+                let Some(ArrayValue::Bool(flags)) = flags.next().flatten() else {
+                    return Err(TableError::Schema(format!(
+                        "model visibility input row {row} has no boolean FLAG"
+                    )));
+                };
+                let layout = &self.correlations[&plan.polarization];
+                let predicted = self
+                    .models
+                    .as_ref()
+                    .map(|model| model.predict(self.input, row, layout, &flags))
+                    .transpose()
+                    .map_err(model_error)?
+                    .flatten();
+                if let Some(model) = predicted {
+                    return Ok(Some(ArrayValue::Complex32(model)));
+                }
+                // A defined virtual field without a recipe matching this window
+                // has the unit model, even when a physical model also exists.
                 let [correlations, channels] = *flags.shape() else {
                     return Err(TableError::Schema(format!(
                         "model visibility input row {row} has invalid FLAG shape"
@@ -177,15 +208,14 @@ impl PreparedModelView<'_> {
                         "model visibility input row {row} has invalid correlation layout"
                     )));
                 }
-                *value = Some(ArrayValue::Complex32(
+                Ok(Some(ArrayValue::Complex32(
                     Array2::from_shape_fn((correlations, channels).f(), |(correlation, _)| {
                         initial_model_visibility(layout[correlation])
                     })
                     .into_dyn(),
-                ));
-            }
-        }
-        Ok(stored)
+                )))
+            })
+            .collect()
     }
 }
 

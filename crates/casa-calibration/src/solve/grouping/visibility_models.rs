@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use casa_ms::{MeasurementSet, ResolvedMsSelectionRow, VirtualModelEntry, scratch_columns};
-use casa_types::Complex32;
+use casa_types::{Complex32, ScalarValue};
 use ndarray::ArrayD;
 
 use crate::ft::PreparedVoltagePattern;
@@ -31,6 +31,16 @@ impl VisibilityModels {
         rows: &[ResolvedMsSelectionRow],
     ) -> Result<Self, GainSolveError> {
         Self::from_ms(ms, rows, LEGACY_COMBINE, false)
+    }
+
+    pub(crate) fn for_transform(
+        ms: &MeasurementSet,
+        rows: &[ResolvedMsSelectionRow],
+    ) -> Result<Self, GainSolveError> {
+        let fields = scratch_columns::virtual_model_fields(ms);
+        let (rows, states) = transform_model_rows(ms, rows, &fields)?;
+        let models = ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?;
+        Self::with_models(ms, rows, models, GainSolveCombine::default(), Some(&states))
     }
 
     pub(crate) fn for_uvsub(
@@ -64,7 +74,7 @@ impl VisibilityModels {
         } else {
             ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?
         };
-        Self::with_models(ms, rows, models, combine)
+        Self::with_models(ms, rows, models, combine, None)
     }
 
     pub(crate) fn from_entries(
@@ -77,7 +87,7 @@ impl VisibilityModels {
             .map(|row| selected_solve_row(ms, row, None))
             .collect::<Result<Vec<_>, _>>()?;
         let models = ModelInputs::from_entries(ms, &rows, entries)?;
-        Self::with_models(ms, rows, models, LEGACY_COMBINE)
+        Self::with_models(ms, rows, models, LEGACY_COMBINE, None)
     }
 
     pub(crate) fn with_component_voltage(mut self, voltage: PreparedVoltagePattern) -> Self {
@@ -107,6 +117,7 @@ impl VisibilityModels {
         rows: Vec<SelectedSolveRow>,
         mut models: ModelInputs,
         combine: GainSolveCombine,
+        states: Option<&BTreeMap<usize, i32>>,
     ) -> Result<Self, GainSolveError> {
         // VisBuffer chooses the first physical row at a timestamp. Solves
         // order tied timestamps by interval, which can choose a different state.
@@ -121,7 +132,11 @@ impl VisibilityModels {
             })
             .collect();
         ordered.sort_unstable_by_key(|(row, _, _)| row.row_index);
-        models.bind_buffers(ms, &ordered, combine)?;
+        if let Some(states) = states {
+            models.bind_transform_buffers(ms, &ordered, states)?;
+        } else {
+            models.bind_buffers(ms, &ordered, combine)?;
+        }
         models.phase_times = weights::chunk_phase_times(&ordered, combine, models.dynamic_fields());
         Ok(Self {
             rows: rows.into_iter().map(|row| (row.row_index, row)).collect(),
@@ -173,4 +188,61 @@ impl VisibilityModels {
             None => Ok(None),
         }
     }
+}
+
+fn transform_model_rows(
+    ms: &MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+    fields: &std::collections::BTreeSet<i32>,
+) -> Result<(Vec<SelectedSolveRow>, BTreeMap<usize, i32>), GainSolveError> {
+    let rows = rows
+        .iter()
+        .filter(|row| fields.contains(&row.field_id))
+        .collect::<Vec<_>>();
+    let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+    let read = |name| {
+        ms.main_table()
+            .column_accessor(name)
+            .and_then(|column| column.scalar_cells_owned_for_rows(&indices))
+            .map_err(|source| GainSolveError::VirtualModel(source.to_string()))
+    };
+    let arrays = read("ARRAY_ID")?;
+    let observations = read("OBSERVATION_ID")?;
+    let scans = read("SCAN_NUMBER")?;
+    let states = read("STATE_ID")?;
+    let centroids = read("TIME_CENTROID")?;
+    let intervals = read("INTERVAL")?;
+    let mut selected = Vec::with_capacity(rows.len());
+    let mut state_ids = BTreeMap::new();
+    for (slot, row) in rows.into_iter().enumerate() {
+        let error = |name| {
+            GainSolveError::VirtualModel(format!("invalid {name} in MAIN row {}", row.row_index))
+        };
+        let integer = |column: &[Option<ScalarValue>], name| match &column[slot] {
+            Some(ScalarValue::Int32(value)) => Ok(*value),
+            _ => Err(error(name)),
+        };
+        let double = |column: &[Option<ScalarValue>], name| match &column[slot] {
+            Some(ScalarValue::Float64(value)) => Ok(*value),
+            _ => Err(error(name)),
+        };
+        state_ids.insert(row.row_index, integer(&states, "STATE_ID")?);
+        selected.push(SelectedSolveRow {
+            row_index: row.row_index,
+            array_id: integer(&arrays, "ARRAY_ID")?,
+            field_id: row.field_id,
+            observation_id: integer(&observations, "OBSERVATION_ID")?,
+            data_desc_id: row.data_desc_id,
+            data_spw_id: row.spectral_window_id,
+            channel_selection: None,
+            antenna1: row.antenna1_id,
+            antenna2: row.antenna2_id,
+            time_seconds: row.time_mjd_seconds,
+            time_centroid_seconds: double(&centroids, "TIME_CENTROID")?,
+            interval_seconds: double(&intervals, "INTERVAL")?,
+            scan_number: integer(&scans, "SCAN_NUMBER")?,
+            flag_row: row.flag_row,
+        });
+    }
+    Ok((selected, state_ids))
 }

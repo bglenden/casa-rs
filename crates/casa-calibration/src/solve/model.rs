@@ -5,6 +5,7 @@ mod fourier;
 mod mosaic_pointing;
 mod single_dish;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -33,6 +34,7 @@ use single_dish::{PointingQuery, SingleDishModel};
 
 pub(super) struct ModelInputs {
     read_column: bool,
+    uncached_main_reads: bool,
     virtual_models: BTreeMap<i32, Arc<[Entry]>>,
     virtual_refusals: BTreeMap<i32, String>,
     frequencies: BTreeMap<i32, (Vec<f64>, FrequencyRef)>,
@@ -180,6 +182,7 @@ impl ModelInputs {
     fn empty(read_column: bool) -> Self {
         Self {
             read_column,
+            uncached_main_reads: false,
             virtual_models: BTreeMap::new(),
             virtual_refusals: BTreeMap::new(),
             frequencies: BTreeMap::new(),
@@ -301,16 +304,40 @@ impl ModelInputs {
         rows: &[BucketedRow<'_>],
         combine: GainSolveCombine,
     ) -> Result<(), GainSolveError> {
+        self.bind_model_buffers(ms, rows, combine, None)
+    }
+
+    pub(super) fn bind_transform_buffers(
+        &mut self,
+        ms: &MeasurementSet,
+        rows: &[BucketedRow<'_>],
+        states: &BTreeMap<usize, i32>,
+    ) -> Result<(), GainSolveError> {
+        self.uncached_main_reads = true;
+        self.bind_model_buffers(ms, rows, GainSolveCombine::default(), Some(states))
+    }
+
+    fn bind_model_buffers(
+        &mut self,
+        ms: &MeasurementSet,
+        rows: &[BucketedRow<'_>],
+        combine: GainSolveCombine,
+        states: Option<&BTreeMap<usize, i32>>,
+    ) -> Result<(), GainSolveError> {
         if !self.needs_buffers() {
             return Ok(());
         }
-        let mut buffers = BTreeMap::<VisibilityBuffer, Vec<&SelectedSolveRow>>::new();
+        let mut buffers =
+            BTreeMap::<(VisibilityBuffer, Option<i32>), Vec<&SelectedSolveRow>>::new();
         for row in rows
             .iter()
             .filter(|(row, _, _)| self.virtual_models.contains_key(&row.field_id))
         {
             buffers
-                .entry(VisibilityBuffer::new(row, combine))
+                .entry((
+                    VisibilityBuffer::new(row, combine),
+                    states.map(|states| states[&row.0.row_index]),
+                ))
                 .or_default()
                 .push(row.0);
         }
@@ -348,9 +375,10 @@ impl ModelInputs {
         } else {
             FeedOffsets::load(ms).map_err(|source| read_error(ms, source))?
         };
-        for rows in buffers.into_values() {
+        for ((_, state), rows) in buffers {
             let first = rows[0];
-            let state = get_i32(ms.main_table(), first.row_index, "STATE_ID")?;
+            let state =
+                state.map_or_else(|| get_i32(ms.main_table(), first.row_index, "STATE_ID"), Ok)?;
             let selection = [first.field_id, first.data_spw_id, first.scan_number, state];
             let focus_rows = if self.finite_fields.contains(&first.field_id) {
                 rows.iter()
@@ -518,7 +546,7 @@ impl ModelInputs {
                 .with_position(engine.observatory_position().clone())
                 .with_direction(field.clone())
         };
-        let uvw = uvw(ms, row.row_index)?;
+        let uvw = uvw(ms, row.row_index, self.uncached_main_reads)?;
         let (frequencies, frequency_ref) = &self.frequencies[&row.data_spw_id];
         let shape = [correlations.len(), frequencies.len()];
         let mut model = match previous {
@@ -552,6 +580,7 @@ impl ModelInputs {
                 phase_time,
                 frame: &frame,
                 uvw,
+                uncached_main_reads: self.uncached_main_reads,
                 focus_rows: &buffer.focus_rows,
                 legacy_mosaic_pointing: buffer.legacy_mosaic_pointing.as_ref(),
                 scratch_channels: entry
@@ -706,11 +735,12 @@ impl ModelInputs {
 
 fn component_basis(correlations: &[i32]) -> Result<(Polarisation, i32), GainSolveError> {
     let (basis, offset) = match correlations.first().copied() {
+        Some(1..=4) => (Polarisation::Stokes, 1),
         Some(5..=8) => (Polarisation::Circular, 5),
         Some(9..=12) => (Polarisation::Linear, 9),
         _ => {
             return Err(model_error(
-                "virtual component prediction requires linear or circular correlations",
+                "virtual component prediction requires Stokes, linear, or circular correlations",
             ));
         }
     };
@@ -850,13 +880,27 @@ fn field_direction(
     ))
 }
 
-fn uvw(ms: &MeasurementSet, row: usize) -> Result<[f64; 3], GainSolveError> {
-    let values = ms
-        .main_table()
-        .cell_accessor(row, "UVW")
-        .and_then(|cell| cell.array())
-        .map_err(|source| read_error(ms, source.into()))?;
-    if let ArrayValue::Float64(values) = values
+fn uvw(ms: &MeasurementSet, row: usize, uncached: bool) -> Result<[f64; 3], GainSolveError> {
+    let error = |source: casa_tables::TableError| read_error(ms, source.into());
+    let table = ms.main_table();
+    let values = if uncached {
+        let value = table
+            .column_accessor("UVW")
+            .and_then(|column| column.array_cells_owned_uncached(&[row]))
+            .map_err(error)?
+            .pop()
+            .flatten()
+            .ok_or_else(|| model_error("UVW must contain three real coordinates"))?;
+        Cow::Owned(value)
+    } else {
+        Cow::Borrowed(
+            table
+                .cell_accessor(row, "UVW")
+                .and_then(|cell| cell.array())
+                .map_err(error)?,
+        )
+    };
+    if let ArrayValue::Float64(values) = values.as_ref()
         && let Some(values) = values.as_slice()
         && let Ok(values) = values.try_into()
     {

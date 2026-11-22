@@ -20,18 +20,25 @@ from ms_transform_callib_oracle import library, snapshot
 from ms_transform_mms_oracle import member_paths, referenced_members
 
 
-def install_model(root, source):
+def install_model(root, source, *, spw="", name="point", polarized=False):
     with table(str(source / "FIELD"), ack=False) as fields:
         ra, dec = np.asarray(fields.getcell("PHASE_DIR", 0)).ravel()
-    path = root / "point.cl"
+    path = root / f"{name}.cl"
+    flux = 2.0
+    spectrum = {}
+    if polarized:
+        ra, dec = ra + 0.0001, dec + 0.0001
+        flux = [2.0, 0.2, 0.1, 0.01]
+        # CASA's vector sampler reads past a scalar spectral-index array.
+        spectrum = dict(spectrumtype="spectral index", index=[-1.1, 0, 0, 0])
     component = componentlist()
     try:
-        component.addcomponent(flux=2.0, fluxunit="Jy", shape="point",
-                               dir=f"J2000 {ra}rad {dec}rad", freq="100GHz")
+        component.addcomponent(flux=flux, fluxunit="Jy", shape="point",
+                               dir=f"J2000 {ra}rad {dec}rad", freq="100GHz", **spectrum)
         component.rename(str(path))
     finally:
         component.done()
-    assert casatasks.ft(vis=str(source), field="0", complist=str(path), usescratch=False) is None
+    assert casatasks.ft(vis=str(source), field="0", spw=spw, complist=str(path), usescratch=False) is None
 
 
 def compare_products(expected, actual, case, *, metadata=True):
@@ -119,6 +126,42 @@ def main(cases):
         if selected("callibrary"):
             gain = library(root, source, "gain")
             paired(root, source, "callibrary", datacolumn="all", docallib=True, callib=str(gain))
+        if selected("partial-recipe"):
+            partial = make_pair(root, "partial-model", 7, counts=(7, 7), spectra=True)
+            install_model(root, partial, spw="0", name="partial")
+            _, actual = paired(root, partial, "partial-recipe", field="0", realmodelcol=False)
+            with table(str(actual), ack=False) as ms:
+                descriptions, model = (ms.getcol(name) for name in ("DATA_DESC_ID", "DATA"))
+                assert set(descriptions) == {0, 1}
+                np.testing.assert_array_equal(model[descriptions == 0], 2)
+                np.testing.assert_array_equal(model[descriptions == 1], 1)
+        if selected("stokes"):
+            stokes = make_pair(root, "stokes-model", 7, counts=(7, 7), spectra=True)
+            install_model(root, stokes, spw="0", name="stokes", polarized=True)
+            with table(str(stokes / "POLARIZATION"), readonly=False, ack=False) as pol:
+                for row in range(pol.nrows()):
+                    pol.putcell("CORR_TYPE", row, np.array([1, 2], dtype=np.int32))
+            _, actual = paired(root, stokes, "stokes", field="0", spw="0:2~5")
+            with table(str(actual), ack=False) as ms:
+                model = ms.getcell("DATA", 0)
+                np.testing.assert_allclose(model[:, 1], model[:, 0] * 0.1, atol=1e-7)
+        if selected("separate-state"):
+            alternating = make_pair(root, "alternating-state", 7, counts=(7, 7), spectra=True)
+            install_model(root, alternating, spw="0", name="one-state")
+            with table(str(alternating / "STATE"), readonly=False, ack=False) as states:
+                different = states.nrows()
+                states.addrows(1)
+                for name in states.colnames():
+                    states.putcell(name, different, states.getcell(name, 0))
+            with table(str(alternating), readonly=False, ack=False) as ms:
+                assert ms.getcell("TIME", 1) == ms.getcell("TIME", 0)
+                ms.putcell("STATE_ID", 1, different)
+            _, actual = paired(root, alternating, "separate-state", field="0", spw="0")
+            with table(str(actual), ack=False) as ms:
+                states, model = (ms.getcol(name) for name in ("STATE_ID", "DATA"))
+                assert len(np.unique(states)) == 2
+                np.testing.assert_array_equal(model[states == states.min()], 2)
+                np.testing.assert_array_equal(model[states == states.max()], 1)
         with table(str(source), ack=False, readonly=False) as ms:
             ms.removecols("MODEL_DATA")
         for case, options in (
