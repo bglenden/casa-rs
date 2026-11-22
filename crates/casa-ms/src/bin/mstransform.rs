@@ -7,9 +7,9 @@ use std::process::ExitCode;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MsTransformError, MsTransformRequest, MsTransformTaskOptions, TimeAverageOptions,
-    TransformDataColumn, TransformTaskHistory, ms_task_success, mstransform_task,
-    mstransform_task_schema_bundle, task_selection_text,
+    MsRegridOptions, MsTransformError, MsTransformRequest, MsTransformTaskOptions,
+    TimeAverageOptions, TransformDataColumn, TransformTaskHistory, ms_task_success,
+    mstransform_task, mstransform_task_schema_bundle, task_selection_text,
 };
 use casa_provider_contracts::{
     CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr,
@@ -49,6 +49,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         MsTransformError::MissingDataColumn { path, column } => TaskFailure::execution(format!(
             "Desired column ({column}) not found in the input MS ({path})."
         )),
+        MsTransformError::RegridParameter { parameter, reason } => {
+            TaskFailure::validation(reason).at(parameter)
+        }
         MsTransformError::ChannelWidthCount => {
             let parameter = channel_parameter(task);
             TaskFailure::validation(format!(
@@ -93,6 +96,7 @@ fn transform_request(
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
         hanning: task.surface() == "mstransform" && task.flag("hanning")?,
         combine_spws: task.surface() == "mstransform" && task.flag("combinespws")?,
+        regrid: regrid_options(task)?,
         channel_widths,
         time_averaging: time_average_options(task)?,
         history: Some(task_history(task)),
@@ -102,6 +106,40 @@ fn transform_request(
         ..MsTransformTaskOptions::default()
     };
     Ok((request, options))
+}
+
+fn regrid_options(task: &TaskInvocation<'_>) -> Result<Option<MsRegridOptions>, TaskFailure> {
+    if task.surface() != "mstransform" || !task.flag("regridms")? {
+        return Ok(None);
+    }
+    let integer = |name| {
+        task.value(name)
+            .and_then(channel_integer)
+            .ok_or_else(|| TaskFailure::validation("expected an integer").at(name))
+    };
+    let variant = |name| {
+        task.value(name)
+            .and_then(variant_selector_text)
+            .unwrap_or_default()
+    };
+    Ok(Some(MsRegridOptions {
+        mode: task.required_text("mode")?,
+        nchan: integer("nchan")?,
+        start: variant("start"),
+        width: variant("width"),
+        nspw: usize::try_from(integer("nspw")?)
+            .ok()
+            .filter(|&count| count > 0)
+            .ok_or_else(|| {
+                TaskFailure::validation("expected a positive number of windows").at("nspw")
+            })?,
+        interpolation: task.required_text("interpolation")?,
+        phasecenter: variant("phasecenter"),
+        restfreq: task.required_text("restfreq")?,
+        outframe: task.required_text("outframe")?,
+        veltype: task.required_text("veltype")?,
+        preaverage: task.flag("preaverage")?,
+    }))
 }
 
 fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {

@@ -2,6 +2,7 @@
 //! An [`MFrequency`] conversion prepared once for many frequencies.
 
 use super::MeasFrame;
+use super::direction::DirectionRef;
 use super::error::MeasureError;
 use super::frequency::{FrequencyRef, MFrequency, find_freq_path};
 
@@ -42,9 +43,11 @@ impl PreparedFrequencyConversion {
         source_frame: Option<&MeasFrame>,
         target_frame: Option<&MeasFrame>,
     ) -> Result<Self, MeasureError> {
-        let mut factors = [1.0; MOST_HOPS];
         if source == target {
-            return Ok(Self { factors, hops: 0 });
+            return Ok(Self {
+                factors: [1.; MOST_HOPS],
+                hops: 0,
+            });
         }
         let source_frame = source_frame.ok_or(MeasureError::MissingFrameData {
             what: "source frame of a cross-frame frequency conversion",
@@ -52,15 +55,77 @@ impl PreparedFrequencyConversion {
         let target_frame = target_frame.ok_or(MeasureError::MissingFrameData {
             what: "target frame of a cross-frame frequency conversion",
         })?;
-        let path = find_freq_path(source, target)?;
-        let mut current = source;
-        for (hop, next) in path.iter().copied().enumerate() {
-            let frame = if uses_target_frame(current, next) {
+        Self::with_hops(source, &find_freq_path(source, target)?, |from, to| {
+            let frame = if uses_target_frame(from, to) {
                 target_frame
             } else {
                 source_frame
             };
-            factors[hop] = MFrequency::new(1.0, current).convert_to(next, frame)?.hz();
+            MFrequency::new(1., from)
+                .convert_to(to, frame)
+                .map(|measure| measure.hz())
+        })
+    }
+
+    /// Prepare a conversion between explicit casacore measure references.
+    ///
+    /// Each hop uses the epoch, position, and direction of the reference that
+    /// supplies them in casacore's MCFrequency rules. Distinct reference
+    /// frames go through the default LSRK reference even if the shorter
+    /// direct route would produce the same result for one frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Measure error if either reference lacks the context the route
+    /// requires, or if a hop cannot convert the selected frequencies.
+    pub fn from_measure_references(
+        source: FrequencyRef,
+        target: FrequencyRef,
+        input: &MeasFrame,
+        output: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        use FrequencyRef::*;
+        let mut route = find_freq_path(source, LSRK)?;
+        route.extend(find_freq_path(LSRK, target)?);
+        Self::with_hops(source, &route, |from, to| {
+            let mixed;
+            let frame = match (from, to) {
+                (GEO, BARY) | (TOPO, GEO) => {
+                    let refer = if from == TOPO {
+                        DirectionRef::APP
+                    } else {
+                        DirectionRef::J2000
+                    };
+                    let direction = output
+                        .direction()
+                        .ok_or(MeasureError::MissingFrameData {
+                            what: "output direction of a cross-frame frequency conversion",
+                        })?
+                        .convert_to(refer, output)?;
+                    mixed = input.clone().with_direction(direction);
+                    &mixed
+                }
+                (LSRD | LSRK | LGROUP | CMB, BARY)
+                | (GALACTO, LSRD)
+                | (BARY, GEO)
+                | (GEO, TOPO) => output,
+                _ => input,
+            };
+            MFrequency::new(1., from)
+                .convert_to(to, frame)
+                .map(|measure| measure.hz())
+        })
+    }
+
+    fn with_hops(
+        source: FrequencyRef,
+        path: &[FrequencyRef],
+        hop: impl Fn(FrequencyRef, FrequencyRef) -> Result<f64, MeasureError>,
+    ) -> Result<Self, MeasureError> {
+        let mut factors = [1.; MOST_HOPS];
+        let mut current = source;
+        for (index, next) in path.iter().copied().enumerate() {
+            factors[index] = hop(current, next)?;
             current = next;
         }
         Ok(Self {

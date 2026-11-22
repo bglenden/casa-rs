@@ -115,7 +115,7 @@ pub(super) fn casa_channel_frequencies(
     frequencies_hz: &[f64],
     widths_hz: &[f64],
 ) -> MsResult<CasaChannelFrequencies> {
-    let mut axis = casa_data_channel_frequencies(request, frequencies_hz, widths_hz)?;
+    let mut axis = casa_data_channel_frequencies(request, frequencies_hz, widths_hz, usize::MAX)?;
     // `getImFreq` reverses `chanFreq` when the order it wants differs from
     // the order the regridder returned, and negates `chanFreqStep`.
     let descending_out = axis.centres_hz.first() > axis.centres_hz.last();
@@ -133,8 +133,9 @@ pub(crate) fn casa_data_channel_frequencies(
     request: &RegridRequest,
     frequencies_hz: &[f64],
     widths_hz: &[f64],
+    maximum_channels: usize,
 ) -> MsResult<CasaChannelFrequencies> {
-    let bounds = regrid_chan_bounds(request, frequencies_hz, widths_hz)?;
+    let bounds = regrid_chan_bounds(request, frequencies_hz, widths_hz, maximum_channels)?;
     let centres_hz = bounds
         .iter()
         .map(|(low_hz, high_hz)| (low_hz + high_hz) / 2.0)
@@ -216,6 +217,7 @@ fn regrid_chan_bounds(
     request: &RegridRequest,
     frequencies_hz: &[f64],
     widths_hz: &[f64],
+    maximum_channels: usize,
 ) -> MsResult<Vec<(f64, f64)>> {
     let (band, descending) = ascending_band(frequencies_hz, widths_hz)?;
     if request.nchan == Some(0) {
@@ -248,13 +250,21 @@ fn regrid_chan_bounds(
         central_width_hz,
     };
     let (up, down) = match request.quantity {
-        RegridQuantity::Frequency => frequency_bounds(&span),
-        RegridQuantity::RadioVelocity => {
-            velocity_bounds(&span, velocity_width, &RADIO_VELOCITY, rest_hz)?
-        }
-        RegridQuantity::OpticalVelocity => {
-            velocity_bounds(&span, velocity_width, &OPTICAL_VELOCITY, rest_hz)?
-        }
+        RegridQuantity::Frequency => frequency_bounds(&span, maximum_channels)?,
+        RegridQuantity::RadioVelocity => velocity_bounds(
+            &span,
+            velocity_width,
+            &RADIO_VELOCITY,
+            rest_hz,
+            maximum_channels,
+        )?,
+        RegridQuantity::OpticalVelocity => velocity_bounds(
+            &span,
+            velocity_width,
+            &OPTICAL_VELOCITY,
+            rest_hz,
+            maximum_channels,
+        )?,
     };
     // The central channel opens both lists.
     let mut bounds = down
@@ -692,7 +702,7 @@ impl Span {
 type SteppedBounds = (Vec<(f64, f64)>, Vec<(f64, f64)>);
 
 /// The `"freq"` bounds: contiguous channels of the central width.
-fn frequency_bounds(span: &Span) -> SteppedBounds {
+fn frequency_bounds(span: &Span, maximum_channels: usize) -> MsResult<SteppedBounds> {
     let width_hz = span.central_width_hz;
     let tolerance_hz = span.tolerance_hz();
     let upper_end_hz = span.upper_end_hz();
@@ -706,6 +716,11 @@ fn frequency_bounds(span: &Span) -> SteppedBounds {
         if next_hz > upper_end_hz + tolerance_hz {
             break;
         }
+        validate_step(
+            up.len() + down.len() - 1,
+            maximum_channels,
+            next_hz > high_hz,
+        )?;
         up.push((high_hz, next_hz));
         high_hz = next_hz;
     }
@@ -715,10 +730,15 @@ fn frequency_bounds(span: &Span) -> SteppedBounds {
         if next_hz < lower_end_hz - tolerance_hz {
             break;
         }
+        validate_step(
+            up.len() + down.len() - 1,
+            maximum_channels,
+            next_hz < low_hz,
+        )?;
         down.push((next_hz, low_hz));
         low_hz = next_hz;
     }
-    (up, down)
+    Ok((up, down))
 }
 
 /// A velocity convention's `regridChanBounds` stepping: its conversions
@@ -760,6 +780,7 @@ fn velocity_bounds(
     velocity_width: f64,
     stepping: &VelocityStepping,
     rest_hz: f64,
+    maximum_channels: usize,
 ) -> MsResult<SteppedBounds> {
     let velocity = |frequency_hz| (stepping.to_velocity)(frequency_hz, rest_hz);
     let frequency = |velocity| (stepping.to_frequency)(velocity, rest_hz);
@@ -783,6 +804,7 @@ fn velocity_bounds(
     // Velocity falls as frequency rises. CASA's `else if` branch after
     // each test repeats it negated and never runs.
     let mut up = vec![central];
+    let mut down = vec![central];
     let mut high_velocity = velocity(central.1) - width;
     while (stepping.continue_up)(upper_end_velocity, high_velocity, width) {
         let high_hz = frequency(high_velocity);
@@ -790,10 +812,14 @@ fn velocity_bounds(
             break;
         }
         let low_hz = up.last().expect("the central channel opens the list").1;
+        validate_step(
+            up.len() + down.len() - 1,
+            maximum_channels,
+            high_hz > low_hz,
+        )?;
         up.push((low_hz, high_hz));
         high_velocity = velocity(high_hz) - width;
     }
-    let mut down = vec![central];
     let mut low_velocity = velocity(central.0) + width;
     while (stepping.continue_down)(lower_end_velocity, low_velocity, width) {
         let low_hz = frequency(low_velocity);
@@ -801,10 +827,29 @@ fn velocity_bounds(
             break;
         }
         let high_hz = down.last().expect("the central channel opens the list").0;
+        validate_step(
+            up.len() + down.len() - 1,
+            maximum_channels,
+            low_hz < high_hz,
+        )?;
         down.push((low_hz, high_hz));
         low_velocity = velocity(low_hz) + width;
     }
     Ok((up, down))
+}
+
+fn validate_step(count: usize, limit: usize, advances: bool) -> MsResult<()> {
+    if count >= limit {
+        Err(MsError::InvalidInput(format!(
+            "Regridded channels exceed the grid limit ({limit})."
+        )))
+    } else if !advances {
+        Err(MsError::InvalidInput(
+            "Channel width is below floating-point resolution at the requested frequency.".into(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// `MSTransformRegridder::vrad`.

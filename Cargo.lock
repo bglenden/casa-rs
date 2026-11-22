@@ -560,6 +560,7 @@ dependencies = [
  "casa-atmosphere",
  "casa-components",
  "casa-coordinates",
+ "casa-fft",
  "casa-logging",
  "casa-measures-data",
  "casa-numerics",

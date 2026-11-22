@@ -18,7 +18,7 @@ use casa_types::{ScalarValue, Value};
 use thiserror::Error;
 
 use crate::subtables::SubTable;
-use crate::{MeasurementSet, MsError};
+use crate::{MeasurementSet, MsError, MsResult};
 
 /// The bytes a phase-centre ephemeris may hold once read: what the run
 /// admitted for it.
@@ -295,6 +295,39 @@ pub(crate) enum AttachedFieldEphemeris {
 }
 
 impl AttachedFieldEphemeris {
+    pub(crate) fn radial_velocity(
+        &self,
+        mjd: f64,
+    ) -> MsResult<casa_types::measures::radial_velocity::MRadialVelocity> {
+        use casa_types::measures::radial_velocity::MRadialVelocity;
+        match self {
+            Self::Inertial(series) => {
+                let sample = evaluate(series, mjd)
+                    .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+                Ok(MRadialVelocity::new(
+                    sample.radial_velocity_m_per_s,
+                    sample.velocity_reference,
+                ))
+            }
+            Self::Apparent(series) => {
+                let velocity = series
+                    .radial_velocity_m_s(mjd)
+                    .map_err(|error| MsError::InvalidInput(error.to_string()))?
+                    .ok_or_else(|| {
+                        MsError::InvalidInput(format!(
+                            "MJD {mjd} is outside the apparent ephemeris interpolation range"
+                        ))
+                    })?;
+                let reference = if series.topocentre_m().is_some() {
+                    RadialVelocityRef::TOPO
+                } else {
+                    RadialVelocityRef::GEO
+                };
+                Ok(MRadialVelocity::new(velocity, reference))
+            }
+        }
+    }
+
     pub(crate) fn reference_direction(
         &self,
         mjd: f64,

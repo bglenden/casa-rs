@@ -5676,17 +5676,13 @@
       "id": "parameter.phasecenter",
       "semantic_revision": 1,
       "casa_name": "phasecenter",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Explicit CASA-style J2000 phase center",
+        "summary": "FIELD row number or CASA direction measure for the output spectral frame.",
         "details": null,
         "examples": []
       },
@@ -10467,24 +10463,24 @@
       "id": "regridms.start",
       "semantic_revision": 1,
       "casa_name": "start",
-      "value_domain": {"kind": "integer"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "First channel of the regridded spectral axis.", "details": null, "examples": ["0"]},
+      "documentation": {"summary": "First channel number, frequency, or velocity of the regridded spectral axis.", "details": null, "examples": ["0"]},
       "persistence_class": "profile"
     },
     {
       "id": "regridms.width",
       "semantic_revision": 1,
       "casa_name": "width",
-      "value_domain": {"kind": "integer"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Channel width of the regridded spectral axis.", "details": null, "examples": ["1"]},
+      "documentation": {"summary": "Channel width in input channels, frequency, or velocity units.", "details": null, "examples": ["1"]},
       "persistence_class": "profile"
     },
     {

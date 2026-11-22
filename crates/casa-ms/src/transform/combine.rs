@@ -126,6 +126,7 @@ impl Grid {
             },
             &centres,
             &widths,
+            grid_budget / (std::mem::size_of::<LinearSample>() + 5 * std::mem::size_of::<f64>()),
         )
         .map_err(|source| error(source.to_string()))?
         .centres_hz;
@@ -1086,7 +1087,10 @@ pub(super) fn finish_noise(
     })
 }
 
-fn mean_noise(data: &ArrayValue, masks: ArrayView2<'_, bool>) -> Result<ArrayValue, TableError> {
+pub(super) fn mean_noise(
+    data: &ArrayValue,
+    masks: ArrayView2<'_, bool>,
+) -> Result<ArrayValue, TableError> {
     let ArrayValue::Float32(data) = data else {
         return Err(TableError::Schema(
             "Noise spectra must have Float32 cells.".into(),

@@ -10181,3 +10181,27 @@ In CASA 6.7.6.14, use the [direct FRINGE fixture](../tools/casa-compat/calibrate
 ## Direct specifycal aborts for literal wildcard selectors
 
 With CASA 6.7.6.14, call `calibrater.specifycal(caltable='gain.cal', caltype='amp', parameter=[1.5], antenna='*')` on the [direct fixture](../tools/casa-compat/calibrater_specifycal_tool_oracle.py). CASA passes antenna index `-1` into a parameter-array slice and aborts. A literal `spw='*'` likewise reaches an invalid spectral-window index. Casa-rs broadcasts over the requested wildcard axes and verifies the resulting table against CASA's empty-selector form, which expresses the same prescription. [#2015](https://github.com/bglenden/casa-rs/pull/2015)
+
+## Regridding can read beyond a final partial averaging bin
+
+In CASA 6.7.6.14, an odd channel count with `chanaverage=True`, a
+two-channel bin and `regridms=True` leaves a one-sample bin before
+interpolation. `MSTransformManager::average` iterates over all output bins
+using the full bin width, reaching past the input on the final bin.
+With Hanning enabled, this can change the neighbouring channel's
+visibility and noise. The native task averages only samples present in
+the final bin. The paired regridding oracle also checks that result
+against independent inverse-variance averaging, smoothing and linear
+interpolation (#1618).
+
+## Splitting a regridded spectrum can write oversized noise spectra
+
+With nine channels and `mstransform(regridms=True, nspw=2)`, CASA
+6.7.6.14 writes SPWs of five and four channels. The noise spectra in the
+shorter window are padded to five with weight zero and sigma −1. When
+all samples in that window are flagged, the padding also enters the
+scalar statistic. The native task writes four values for every
+channel-indexed column and computes statistics from those four values.
+It rejects partitions that would leave an empty final window before
+creating output. CASA can abort when attempting that final slice
+(#1618).

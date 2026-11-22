@@ -570,11 +570,11 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>regridms</code> | <code>mstransform.regridms@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Regrid the spectral axis. |
 | <code>mode</code> | <code>regridms.mode@r1</code> | <code>string</code> | <code>"channel"</code>; optional | Spectral | How the regridded spectral axis is given: 'channel', 'velocity', 'frequency' or 'channel_b'. |
 | <code>nchan</code> | <code>regridms.nchan@r1</code> | <code>integer</code> | <code>-1</code>; optional | Spectral | Number of channels of the regridded spectral axis; -1 for all. |
-| <code>start</code> | <code>regridms.start@r1</code> | <code>integer</code> | <code>0</code>; optional | Spectral | First channel of the regridded spectral axis. |
-| <code>width</code> | <code>regridms.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Spectral | Channel width of the regridded spectral axis. |
+| <code>start</code> | <code>regridms.start@r1</code> | <code>variant</code> | <code>0</code>; optional | Spectral | First channel number, frequency, or velocity of the regridded spectral axis. |
+| <code>width</code> | <code>regridms.width@r1</code> | <code>variant</code> | <code>1</code>; optional | Spectral | Channel width in input channels, frequency, or velocity units. |
 | <code>nspw</code> | <code>regridms.nspw@r1</code> | <code>integer</code> | <code>1</code>; optional | Spectral | Number of spectral windows the regridded axis is split into. |
 | <code>interpolation</code> | <code>regridms.interpolation@r1</code> | <code>string</code> | <code>"linear"</code>; optional | Spectral | Interpolation the spectral regridding uses. |
-| <code>phasecenter</code> | <code>parameter.phasecenter@r1</code> | <code>string</code> | <code>""</code>; optional | Spectral | Explicit CASA-style J2000 phase center |
+| <code>phasecenter</code> | <code>parameter.phasecenter@r1</code> | <code>variant</code> | <code>""</code>; optional | Spectral | FIELD row number or CASA direction measure for the output spectral frame. |
 | <code>restfreq</code> | <code>parameter.restfreq@r1</code> | <code>string</code> | <code>""</code>; optional | Spectral | Rest frequency used for velocity-style cube axes |
 | <code>outframe</code> | <code>regridms.outframe@r1</code> | <code>string</code> | <code>""</code>; optional | Spectral | Reference frame of the regridded spectral axis; empty keeps the input's. |
 | <code>veltype</code> | <code>regridms.veltype@r1</code> | <code>string</code> | <code>"radio"</code>; optional | Spectral | Velocity definition: 'radio' or 'optical'. |
