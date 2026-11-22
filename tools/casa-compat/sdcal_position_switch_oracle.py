@@ -266,7 +266,7 @@ def check_busy_replacement(root, seed, temperatures, native):
 import sys
 from casatools import table
 tool = table()
-assert tool.open(sys.argv[1], nomodify=False, lockoptions='user')
+assert tool.open(sys.argv[1], nomodify=False, lockoptions={'option': 'user'})
 tool.lock(write=True, nattempts=1)
 assert tool.haslock(write=True)
 print('locked', flush=True)
