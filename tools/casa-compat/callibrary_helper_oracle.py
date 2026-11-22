@@ -132,7 +132,11 @@ def files(work, tools):
     assert all(helper.cld == {} and previous != {} for helper, previous in zip(reread, old, strict=True))
     compare_calls(reread, 'write', '')
     compare_calls(reread, 'write', str(work/'empty.callib'))
-    compare_calls(reread, 'read', ["caltable='bad.cal' calwt='x' unexpected=2"])
+    for bad in ("caltable='bad.cal' calwt='x' unexpected=2", "caltable='bad.cal' spwmap=[",
+                "caltable='bad.cal' calwt=True calwt=False", "caltable='bad.cal' spwmap=[unknown]"):
+        compare_calls(reread, 'add', 'seed.cal')
+        assert compare_calls(reread, 'read', [bad])[0][0] == 'error'
+        assert all(not tool.cld for tool in reread)
     print('lexical slice order, exact overwrite and append, read variants and failure state passed', flush=True)
 
 
@@ -164,6 +168,12 @@ def mutated_records(work):
     tools = [casa_callibrary(), native_callibrary()]
     error, _ = compare_calls(tools, 'addrec', ['orphan.cal'], True)
     assert error[1] == 'AttributeError' and all(not tool.cld for tool in tools)
+    for tool in tools:
+        weight = np.array([True, False])
+        assert tool.add('array-weight.cal', calwt=weight) is None
+        assert list(tool.cld['array-weight.cal']) == ['calwt', '0']
+        assert tool.cld['array-weight.cal']['calwt'] is weight
+        tool.clear()
     compare_calls(tools, 'add', 'mutated.cal', field='0')
     for tool in tools:
         del tool.cld['mutated.cal']['0']['intent']
@@ -189,6 +199,10 @@ def interoperability(work):
     vis, gains = work/'original.ms', work/'solutions.cal'
     make_cal_ms(str(vis))
     casatasks.gaincal(str(vis), str(gains), refant='A0', solint='inf')
+    with opened(gains, True) as table:
+        column = table.getcol('CPARAM')
+        assert table.putcol('CPARAM', np.full_like(column, 2.))
+        assert table.putcol('FLAG', np.zeros_like(table.getcol('FLAG')))
     signatures = []
     applied = []
     for writer, helper in [('casa', casa_callibrary), ('native', native_callibrary)]:
@@ -211,8 +225,15 @@ def interoperability(work):
                 select = fields == 0
                 assert select.any() and (~select).any()
                 columns = {name: table.getcol(name) for name in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
+                data = table.getcol('DATA')
                 np.testing.assert_array_equal(columns['CORRECTED_DATA'][..., ~select],
-                                              table.getcol('DATA')[..., ~select])
+                                              data[..., ~select])
+                if writer == reader == 'casa':
+                    valid = ~columns['FLAG'][..., select]
+                    corrected = columns['CORRECTED_DATA'][..., select][valid]
+                    observed = data[..., select][valid]
+                    assert valid.any() and np.linalg.norm(observed) > 0.0
+                    np.testing.assert_allclose(corrected, observed / 4., rtol=1e-6, atol=1e-7)
                 applied.append(columns)
     for signature in signatures[1:]:
         same_record(signature, signatures[0])

@@ -23,6 +23,16 @@ def _quoted(name, value):
     return f"{name}='{value}'"
 
 
+def _literal_value(node):
+    try:
+        return ast.literal_eval(node)
+    except ValueError:
+        for item in ast.walk(node):
+            if isinstance(item, ast.Name):
+                raise NameError(f"name '{item.id}' is not defined") from None
+        raise ValueError('calibration library values must be Python literals') from None
+
+
 def _record_literal(line):
     # The historical helper preprocesses whitespace before parsing the line.
     text = ' '.join(line.split()).replace(' =', '=').replace('= ', '=')
@@ -31,19 +41,18 @@ def _record_literal(line):
     for short, value in [('T', 'True'), ('F', 'False')]:
         expression = expression.replace(f'calwt={short},', f'calwt={value},')
         expression = expression.replace(f'calwt={short})', f'calwt={value})')
-    node = ast.parse(expression, mode='eval').body
+    node = ast.parse(expression, filename='<string>', mode='eval').body
     if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name) or node.func.id != 'record':
         raise SyntaxError('invalid calibration library expression')
-    args = [ast.literal_eval(argument) for argument in node.args]
+    args = [_literal_value(argument) for argument in node.args]
     fields = {}
     for argument in node.keywords:
         if argument.arg is None:
             raise SyntaxError('expected a named calibration library field')
         if argument.arg in fields:
-            raise SyntaxError(f'keyword argument repeated: {argument.arg}')
-        if isinstance(argument.value, ast.Name):
-            raise NameError(f"name '{argument.value.id}' is not defined")
-        fields[argument.arg] = ast.literal_eval(argument.value)
+            raise SyntaxError(f'keyword argument repeated: {argument.arg}',
+                              ('<string>', 1, argument.col_offset + 1, expression))
+        fields[argument.arg] = _literal_value(argument.value)
     return args, fields
 
 
@@ -124,10 +133,14 @@ class callibrary:
     def addrec(self, crec, calwt):
         """Keep the supplied record live and append it to its first table."""
         name = list(crec.keys())[0]
-        table = self.cld.setdefault(name, {'calwt': calwt})
-        initial = table['calwt']
-        if calwt != initial:
-            print("WARNING: For caltable='" + name + f"' using already-set calwt={initial}.")
+        if name in self.cld:
+            table = self.cld[name]
+            initial = table['calwt']
+            if calwt != initial:
+                print("WARNING: For caltable='" + name + f"' using already-set calwt={initial}.")
+        else:
+            table = {'calwt': calwt}
+            self.cld[name] = table
         table[str(len(table) - 1)] = crec[name]
 
     def list(self):
