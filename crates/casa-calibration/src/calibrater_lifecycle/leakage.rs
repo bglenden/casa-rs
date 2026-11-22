@@ -133,10 +133,13 @@ impl CalibraterLifecycle {
                 request.kind,
                 LeakageSolveKind::Xparang | LeakageSolveKind::Xfparang
             ) {
-                entries.push(CasaEntry {
-                    key: CasaKey::String("fStokes".into()),
-                    value: fractional_stokes_record(outcome.source),
-                });
+                entries.insert(
+                    0,
+                    CasaEntry {
+                        key: CasaKey::String("fStokes".into()),
+                        value: fractional_stokes_record(outcome.source),
+                    },
+                );
             }
             self.last_activity = Some(CasaValue::Dict { entries });
         }

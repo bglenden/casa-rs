@@ -44,7 +44,7 @@ def solve(factory, vis, product, kind, stokes, *, old=False, prior=(), options=N
         assert tool.reset(False, True)
         assert list(tool.returndict()['solve_tables']) == []
         if prior:
-            assert list(tool.returndict()['apply_tables']) == list(map(str, prior))
+            assert list(tool.returndict()['apply_tables']) == sorted(map(str, prior))
         return activity, record.get('solvestats')
     finally:
         assert tool.close()
@@ -79,6 +79,11 @@ def case(work, engines, vis, label, kind, stokes, *, no_product=False, **control
     if not no_product:
         compare_solutions(tables)
         compare_readers(tables)
+        with opened(tables['casa']) as expected, opened(tables['native']) as actual:
+            np.testing.assert_array_equal(actual.getcol('ANTENNA2'), expected.getcol('ANTENNA2'))
+            if 'fStokes' in results['casa'][0]:
+                np.testing.assert_allclose(actual.getkeyword('QU')['QU'],
+                                           expected.getkeyword('QU')['QU'], atol=8e-5, rtol=0.)
     print(work.name, label, 'matched', flush=True)
     return tables
 

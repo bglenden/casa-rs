@@ -445,6 +445,7 @@ pub(crate) fn fractional_stokes_record(
             })
             .collect::<Vec<_>>();
         average /= windows.len() as f32;
+        entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
         entries.push(("SpwAve".into(), vector(average)));
         (field, CasaValue::dict(entries))
     }))
