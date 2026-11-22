@@ -57,7 +57,7 @@ impl PyCalibrater {
                 return Ok(false);
             }
             let reference = state
-                .resolve_polynomial_refant(reference)
+                .resolve_primary_tool_refant(reference)
                 .map_err(super::runtime_error)?;
             state.reset(false, true).map_err(super::runtime_error)?;
             configure(state, reference)?;

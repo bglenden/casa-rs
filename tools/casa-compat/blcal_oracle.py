@@ -47,7 +47,7 @@ def nrms(actual, expected):
     return np.linalg.norm(actual - expected) / power if power else np.linalg.norm(actual)
 
 
-def compare_tables(reference, actual):
+def compare_tables(reference, actual, *, flagged_rtol=0.):
     with opened(reference) as expected, opened(actual) as candidate:
         assert expected.info() == candidate.info(), (expected.info(), candidate.info())
         assert expected.colnames() == candidate.colnames()
@@ -69,7 +69,7 @@ def compare_tables(reference, actual):
                       for table, order in ((expected, left), (candidate, right))]
         error = nrms(fit[~flag], known[~flag])
         assert error < 2e-6, (actual.name, error)
-        np.testing.assert_array_equal(fit[flag], known[flag])
+        np.testing.assert_allclose(fit[flag], known[flag], rtol=flagged_rtol, atol=0.)
     for name in ('ANTENNA', 'FIELD', 'OBSERVATION', 'HISTORY', 'SPECTRAL_WINDOW'):
         with opened(reference/name) as expected, opened(actual/name) as candidate:
             assert expected.nrows() == candidate.nrows(), name

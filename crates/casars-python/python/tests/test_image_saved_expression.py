@@ -63,6 +63,8 @@ def test_open_saved_float_expression_keeps_its_original_operand(tmp_path, monkey
         assert opened.history() == []
 
         monkeypatch.chdir(elsewhere)
+        reported_name = elsewhere / path.relative_to(tmp_path) if backend == "casa" else path
+        assert opened.name() == str(reported_name)
         validity = opened.getchunk(getmask=True)
         np.testing.assert_array_equal(validity, pixels > 4)
         np.testing.assert_array_equal(opened.getchunk()[validity], (pixels * 3)[validity])

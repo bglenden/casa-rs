@@ -156,6 +156,27 @@ impl SolveRowLayout {
 }
 
 impl SolveAccumulator {
+    pub(super) fn update_solution_channels(
+        &mut self,
+        channels: SelectedChannels<'_>,
+        gain_type: super::GainType,
+        data_shape: &[usize],
+    ) -> Result<(), GainSolveError> {
+        let channel_count = channels
+            .indices
+            .len()
+            .div_ceil(channels.bin_width.unwrap_or(1));
+        if !gain_type.is_delay() && self.sample_rows > 0 && self.solution_channels != channel_count
+        {
+            return Err(GainSolveError::UnsupportedParameterShape {
+                path: "<measurement-set DATA>".to_string(),
+                shape: data_shape.to_vec(),
+            });
+        }
+        self.solution_channels = self.solution_channels.max(channel_count);
+        Ok(())
+    }
+
     /// Scalar gains start from the parallel-hand phasors in the first
     /// gathered buffer (`TJones::guessPar`). Later buffers enter the solve.
     pub(in crate::solve) fn scalar_initial_gains(
