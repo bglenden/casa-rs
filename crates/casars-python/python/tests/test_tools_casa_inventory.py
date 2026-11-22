@@ -50,7 +50,7 @@ IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit", "initweights",
     "accumulate", "createcaltable", "updatecaltable", "smooth", "rerefant", "listcal", "plotcal",
-    "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags",
+    "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags", "fluxscale", "specifycal", "state",
 }
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
@@ -175,6 +175,7 @@ def test_calibrater_method_returns_before_open() -> None:
     assert instance.setvi(old=True, quiet=True) is True
     assert instance.selectvis() is False
     assert instance.reset() is False
+    assert instance.state() is False
     assert instance.setcorrdepflags(True) is True
     assert instance.solve() is False
     assert instance.setsolvebandpoly() is False

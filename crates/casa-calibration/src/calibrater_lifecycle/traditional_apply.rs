@@ -14,6 +14,8 @@ use crate::summarize_table;
 
 pub(super) struct RegisteredApplySnapshot {
     pub(super) name: String,
+    pub(super) subtype: String,
+    pub(super) description: String,
     _directory: tempfile::TempDir,
 }
 
@@ -102,10 +104,18 @@ impl CalibraterLifecycle {
                     .map_err(|_| generic_error())?;
             }
         }
-        let (snapshot_path, snapshot) = snapshot_table(&spec.path, &table).map_err(|error| {
+        let (snapshot_path, mut snapshot) = snapshot_table(&spec.path, &table).map_err(|error| {
             tracing::error!(%error, table = %spec.path.display(), "could not retain registered calibration table");
             generic_error()
         })?;
+        snapshot.subtype = subtype.into();
+        snapshot.description = super::state::traditional_apply_description(
+            subtype,
+            &snapshot.name,
+            interpolation,
+            &spec.spwmap,
+            spec.calwt,
+        );
         spec.path = snapshot_path.clone();
         equation
             .apply
@@ -174,6 +184,8 @@ pub(super) fn snapshot_table(
         destination,
         RegisteredApplySnapshot {
             name: source.display().to_string(),
+            subtype: table.info().sub_type.to_string(),
+            description: String::new(),
             _directory: directory,
         },
     ))
