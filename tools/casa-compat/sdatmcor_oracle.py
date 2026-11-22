@@ -220,9 +220,9 @@ def test_cropped_windows(root, source, defaults, tasks):
     erase(paths)
     if 'native' in tasks:
         task = tasks['native']
-        for label, selector, indices in (
-            ('out-of-order', '370~372;20~22', [370, 371, 372, 20, 21, 22]),
-            ('overlap', '2~9^3;8~9', [2, 5, 8, 8, 9]),
+        for label, selector, indices, widths in (
+            ('out-of-order', '370~372;20~22', [370, 371, 372, 20, 21, 22], [1] * 6),
+            ('overlap', '2~9^3;8~9', [2, 5, 8, 8, 9], [3, 3, 2, 1, 1]),
         ):
             output = root / f'{label}-channels.ms'
             assert task(str(source), outfile=str(output), spw='19', outputspw=f'19:{selector}',
@@ -233,7 +233,11 @@ def test_cropped_windows(root, source, defaults, tasks):
                 try:
                     np.testing.assert_array_equal(product.getcol('DATA'), full.getcol('DATA')[:, indices, :])
                     np.testing.assert_array_equal(product.getcol('FLAG'), full.getcol('FLAG')[:, indices, :])
-                    np.testing.assert_array_equal(spw.getcell('CHAN_FREQ', 19), original.getcell('CHAN_FREQ', 19)[indices])
+                    # The MS writer centers a strided selection's channel
+                    # metadata over the represented interval.
+                    frequencies = original.getcell('CHAN_FREQ', 19)
+                    centers = [np.mean(frequencies[i:i + w]) for i, w in zip(indices, widths)]
+                    np.testing.assert_allclose(spw.getcell('CHAN_FREQ', 19), centers, rtol=0., atol=1e-4)
                 finally:
                     full.close()
             shutil.rmtree(output)
