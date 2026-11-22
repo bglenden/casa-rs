@@ -57,7 +57,10 @@ pub(super) fn apply(
             "Cannot create agent Antint: The antenna requested ({name}) could not be found in the input dataset"
         );
         tracing::error!("There is no agent to run in list");
-        return Ok(ChangeSet::default());
+        return Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        });
     };
     if selected.is_empty() || antenna_count < 2 {
         return Ok(ChangeSet::default());

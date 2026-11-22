@@ -267,40 +267,62 @@ fn flagdata_returns_an_empty_dictionary_in_its_other_modes() {
 }
 
 #[test]
-fn casa_values_not_implemented_yet_are_refused_naming_978() {
+fn flagdata_list_and_rflag_return_casa_shapes() {
     let workspace = tempfile::tempdir().unwrap();
     let vis = create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
-    for (binary, surface, values, parameter) in [
-        (FLAGDATA, "flagdata", json!({"mode": "list"}), "mode"),
-        // Routine previews now run. RFlag's calculated thresholds still
-        // need their CASA return and output behavior.
-        (
-            FLAGDATA,
-            "flagdata",
-            json!({"mode": "rflag", "action": "calculate"}),
-            "action",
-        ),
-        // Automatic RFlag channel averaging is still tracked by #1616.
-        (
-            FLAGDATA,
-            "flagdata",
-            json!({"mode": "rflag", "channelavg": true}),
-            "channelavg",
-        ),
-    ] {
-        let mut values = values;
-        values["vis"] = json!(vis);
-        let TaskReply::Failed {
-            message,
-            parameter: named,
-            ..
-        } = json_run(binary, surface, values, workspace.path())
-        else {
-            panic!("{surface} {parameter}: not refused");
-        };
-        assert_eq!(named.as_deref(), Some(parameter), "{message}");
-        assert!(message.contains("#978"), "{message}");
-    }
+    let empty = returned(
+        FLAGDATA,
+        "flagdata",
+        json!({
+            "vis": vis,
+            "mode": "list",
+            "action": "calculate",
+            "inpfile": ["mode='manual' antenna='0'"],
+            "flagbackup": false,
+        }),
+        workspace.path(),
+    );
+    assert_eq!(describe(&empty), casa("flagdata manual"));
+
+    let summary = returned(
+        FLAGDATA,
+        "flagdata",
+        json!({
+            "vis": vis,
+            "mode": "list",
+            "action": "calculate",
+            "inpfile": ["mode='manual' antenna='0'", "mode='summary'"],
+            "flagbackup": false,
+        }),
+        workspace.path(),
+    );
+    let direct_summary = returned(
+        FLAGDATA,
+        "flagdata",
+        json!({"vis": vis, "mode": "summary"}),
+        workspace.path(),
+    );
+    assert_eq!(describe(&summary), describe(&direct_summary));
+    assert_eq!(
+        entry(&summary, "flagged"),
+        &CasaValue::float((4 * NUM_CORR * NUM_CHAN) as f64)
+    );
+
+    let rflag = returned(
+        FLAGDATA,
+        "flagdata",
+        json!({
+            "vis": vis,
+            "mode": "rflag",
+            "action": "calculate",
+            "channelavg": true,
+            "chanbin": 2,
+            "flagbackup": false,
+        }),
+        workspace.path(),
+    );
+    assert_eq!(entry(&rflag, "type"), &CasaValue::string("list"));
+    assert_eq!(entry(&rflag, "nreport"), &CasaValue::Int { value: 1 });
 }
 
 #[test]

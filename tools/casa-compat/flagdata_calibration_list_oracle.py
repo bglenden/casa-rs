@@ -308,12 +308,18 @@ def check_cli(root, binary):
         assert summaries == [10, 6]
         assert_flags(path, original)
         vis = root / 'source.ms'
-        rejected = subprocess.run([
-            str(binary), '--vis', str(vis), *settings, '--flagbackup', '--savepars',
-            '--outfile', 'refused.txt',
-        ], capture_output=True, text=True)
-        assert rejected.returncode != 0 and '#978' in rejected.stderr
-        assert not Path('refused.txt').exists()
+        ms_before = flags(vis)
+        with opened(vis) as table:
+            ms_row_before = table.getcol('FLAG_ROW')
+        ms_run = subprocess.run([
+            str(binary), '--vis', str(vis), *settings, '--action', 'calculate', '--no-flagbackup',
+        ], capture_output=True, text=True, check=True)
+        ms_summaries = [row['flagged_samples'] for row in json.loads(ms_run.stdout)
+                        if row['mode'] == 'summary']
+        assert len(ms_summaries) == 2 and ms_summaries[0] > ms_summaries[1]
+        np.testing.assert_array_equal(flags(vis), ms_before)
+        with opened(vis) as table:
+            np.testing.assert_array_equal(table.getcol('FLAG_ROW'), ms_row_before)
         assert not (root / 'source.ms.flagversions').exists()
 
 

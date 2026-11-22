@@ -54,7 +54,13 @@ pub(super) fn apply(
     correlations: Option<&CorrelationSelection>,
     path: &str,
 ) -> Result<ChangeSet, FlaggingError> {
-    if selected.is_empty() || !options.enabled {
+    if !options.enabled {
+        return Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        });
+    }
+    if selected.is_empty() {
         return Ok(ChangeSet::default());
     }
     let affected = shadowed_rows(ms, selected, options, path)?;
