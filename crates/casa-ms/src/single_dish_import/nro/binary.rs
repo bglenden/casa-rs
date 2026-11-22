@@ -88,7 +88,7 @@ impl<'a> Record<'a> {
         let values = &self.bytes[SCAN_HEADER_BYTES..];
         let scaled = |code: u16| ((f64::from(code) * scale + offset) * array_scale) as f32;
         let mut samples = Vec::with_capacity(count);
-        for bytes in values.chunks_exact(3).take(count / 2) {
+        for bytes in values.as_chunks::<3>().0.iter().take(count / 2) {
             samples.push(scaled(u16::from_be_bytes([bytes[0], bytes[1]]) >> 4));
             samples.push(scaled(u16::from_be_bytes([bytes[1], bytes[2]]) & 0xfff));
         }
