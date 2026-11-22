@@ -235,11 +235,13 @@ pub(crate) fn solve_polarization_with_activity(
     )
     .map_err(error)?;
     let legacy_cross_hand = legacy && request.kind.cross_hand();
+    let include_autocorrelations = request.kind.cross_hand()
+        && (!request.kind.parallactic() || (activity.is_some() && request.kind.gain_phase()));
     let ordered = bucketed_rows(
         &context.rows,
         request.interval,
         request.combine,
-        request.kind.cross_hand() && !request.kind.parallactic(),
+        include_autocorrelations,
         legacy_cross_hand,
         false,
     );
@@ -483,6 +485,13 @@ struct BaselineAverages {
     segment: BaselineSegment,
     bins: Vec<CoherencyMean>,
     centroid: WeightedTime,
+    legacy_xy_weights: Option<[f32; 4]>,
+}
+
+struct RowAveragingWeights {
+    spectrum: f64,
+    scalar: Option<f64>,
+    legacy_xy: Option<[f32; 4]>,
 }
 
 #[derive(Default)]
@@ -542,6 +551,27 @@ impl GainIntervalData {
 }
 
 impl BaselineAverages {
+    fn observe_legacy_xy_weights(&mut self, row: Option<[f32; 4]>) {
+        if let Some(row) = row {
+            let total = self.legacy_xy_weights.get_or_insert([0.0; 4]);
+            for (sum, weight) in total.iter_mut().zip(row) {
+                *sum += weight;
+            }
+        }
+    }
+
+    fn finish_legacy_xy_weights(&mut self) {
+        if let Some(weights) = self.legacy_xy_weights.take() {
+            for bin in &mut self.bins {
+                if bin.unflagged != 0 {
+                    // VisBuffAccumulator uses the scalar total even if some
+                    // contributing time samples had this channel flagged.
+                    bin.weights = weights;
+                }
+            }
+        }
+    }
+
     fn finish_time(&mut self, solution_time: &mut WeightedTime, mode: GainSolveMode) {
         // SDBList reduces each baseline's Float weight spectrum before
         // converting its aggregate weight to Double.
@@ -681,6 +711,7 @@ impl LeakageInputs<'_> {
                         },
                         bins: vec![CoherencyMean::default(); count],
                         centroid: WeightedTime::default(),
+                        legacy_xy_weights: None,
                     });
                 let flush = if legacy.is_some() {
                     start > active.segment.start
@@ -688,6 +719,7 @@ impl LeakageInputs<'_> {
                     span.is_some_and(|span| row.time_seconds - active.segment.start > span)
                 };
                 if flush {
+                    active.finish_legacy_xy_weights();
                     if let Some(data) = &mut gain_data {
                         data.observe(pair, &active.bins);
                     }
@@ -712,12 +744,13 @@ impl LeakageInputs<'_> {
                     active.segment.start = start;
                 }
                 active.segment.end = row.time_seconds;
-                let (spectral_weight, scalar_weight) = self.average_row(
+                let weights = self.average_row(
                     row,
                     (&input, index),
                     &self.windows[&row.data_spw_id],
                     &mut active.bins,
                 )?;
+                active.observe_legacy_xy_weights(weights.legacy_xy);
                 if let Some(legacy) = &mut legacy
                     && active.bins.iter().any(|bin| bin.unflagged != 0)
                     && !legacy.observe(active.segment)
@@ -726,21 +759,28 @@ impl LeakageInputs<'_> {
                     return Err(GainSolveError::LegacyGainPhaseMultipleBuffers);
                 }
                 if self.legacy_cross_hand {
-                    time.observe(row.time_seconds, scalar_weight.unwrap_or_default());
-                } else if let Some(scalar_weight) = scalar_weight {
+                    let weight = weights.scalar.unwrap_or_default();
+                    time.observe(row.time_seconds, weight);
+                    if let Some(legacy) = &mut legacy
+                        && kind.gain_phase()
+                    {
+                        legacy.observe_time(active.segment, row.time_seconds, weight);
+                    }
+                } else if let Some(scalar_weight) = weights.scalar {
                     active
                         .centroid
                         .observe(row.time_centroid_seconds, scalar_weight);
                 } else if segment_centroid {
                     active
                         .centroid
-                        .observe(row.time_centroid_seconds, spectral_weight);
+                        .observe(row.time_centroid_seconds, weights.spectrum);
                 } else {
-                    time.observe(row.time_centroid_seconds, spectral_weight);
+                    time.observe(row.time_centroid_seconds, weights.spectrum);
                 }
             }
         }
         for ((_, _, pair), mut active) in averages {
+            active.finish_legacy_xy_weights();
             if let Some(data) = &mut gain_data {
                 data.observe(pair, &active.bins);
             }
@@ -772,6 +812,7 @@ impl LeakageInputs<'_> {
                 self.request,
                 (first.field_id, spectral_window),
                 self.parallactic_angles,
+                legacy.as_ref(),
                 stages.as_mut(),
             )?
         } else {
@@ -809,7 +850,7 @@ impl LeakageInputs<'_> {
         batch: (&SolveInputBatch, usize),
         window: &WindowChannels,
         bins: &mut [CoherencyMean],
-    ) -> Result<(f64, Option<f64>), GainSolveError> {
+    ) -> Result<RowAveragingWeights, GainSolveError> {
         let correlations = correlation_types_for_ddid(self.ms, row.data_desc_id)?;
         let order = coherency_order(row.data_desc_id, &correlations).map_err(prior_error)?;
         let prior = self
@@ -879,9 +920,27 @@ impl LeakageInputs<'_> {
         let stokes_i = |channel| (model[[order[0], channel]] + model[[order[3], channel]]) * 0.5;
         // The X solve time combines baseline centroids using spectral
         // weights, while time averaging each baseline uses scalar weights.
-        let legacy_weights = self.legacy_cross_hand.then(|| {
+        let mut legacy_weights = self.legacy_cross_hand.then(|| {
             cross_hand::legacy_row_weights(&samples, flags, &model, order, &window.channels)
         });
+        let legacy_xy = self.legacy_cross_hand && self.request.kind.gain_phase();
+        let legacy_bin_counts =
+            if legacy_xy && self.request.kind.channelized() && window.bin_width > 1 {
+                if let Some((weights, _)) = &mut legacy_weights {
+                    // All output channels use the nominal channel averaging factor.
+                    weights
+                        .iter_mut()
+                        .for_each(|weight| *weight *= window.bin_width as f32);
+                }
+                Some(cross_hand::legacy_bin_counts(
+                    flags,
+                    order,
+                    &window.channels,
+                    window.bin_width,
+                ))
+            } else {
+                None
+            };
         let scalar_weight = if let Some((weights, _)) = legacy_weights {
             Some(f64::from((weights[0] + weights[3]) * 0.5))
         } else if self.request.kind.cross_hand() {
@@ -948,7 +1007,9 @@ impl LeakageInputs<'_> {
                     // it contributes its scalar weight to the time average.
                     weights.map(|weight| weight / channels as f32)
                 }
-                Some((weights, _)) => weights,
+                Some((weights, _)) => legacy_bin_counts.as_ref().map_or(weights, |counts| {
+                    weights.map(|weight| weight / counts[slot] as f32)
+                }),
                 None => order.map(|corr| {
                     if flags[[corr, channel]] {
                         0.0
@@ -1000,7 +1061,13 @@ impl LeakageInputs<'_> {
                 .map(f64::from)
                 .sum::<f64>();
         }
-        Ok((total, scalar_weight))
+        Ok(RowAveragingWeights {
+            spectrum: total,
+            scalar: scalar_weight,
+            legacy_xy: legacy_weights
+                .filter(|_| legacy_xy)
+                .map(|(weights, _)| weights),
+        })
     }
 }
 

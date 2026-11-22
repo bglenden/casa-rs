@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::execute::ParallacticAngleState;
 
 use super::channel_samples::{ChannelSamples, ScratchSample};
+use super::cross_hand::LegacyCrossHandAveraging;
 use super::parallactic_fit::{Segment, SegmentChannel, solve, solve_sample};
 use super::{CoherencyMean, Complex32, GainSolveError, GainSolveMode, prior_error};
 
@@ -65,9 +66,14 @@ impl ParallacticAverages {
         channels: &mut [CoherencyMean],
     ) -> Result<(), GainSolveError> {
         let id = self.segments.len();
+        let key_time = if self.legacy && self.gain_phase {
+            context.start
+        } else {
+            context.emission
+        };
         let segment = self
             .segments
-            .entry((context.emission.to_bits(), context.field, context.data_desc))
+            .entry((key_time.to_bits(), context.field, context.data_desc))
             .or_insert_with(|| SegmentRows {
                 id,
                 context,
@@ -120,6 +126,7 @@ impl ParallacticAverages {
     pub(super) fn finish(
         mut self,
         angles: &ParallacticAngleState,
+        legacy_times: Option<&LegacyCrossHandAveraging>,
     ) -> Result<(Vec<Option<Complex32>>, Complex32), GainSolveError> {
         let channels = self.rows.len();
         let mut positions = vec![None; self.segments.len()];
@@ -147,17 +154,14 @@ impl ParallacticAverages {
                 }
             }
             let context = segment.context;
+            let time = legacy_times
+                .and_then(|clock| clock.time(context))
+                .unwrap_or_else(|| context.start + 0.5 * (context.end - context.start));
             let angle = if self.circular {
                 0.0
             } else {
                 angles
-                    .feed_parallactic_angle(
-                        context.start + 0.5 * (context.end - context.start),
-                        context.field,
-                        0,
-                        0,
-                        context.spectral_window,
-                    )
+                    .feed_parallactic_angle(time, context.field, 0, 0, context.spectral_window)
                     .map_err(prior_error)? as f32
             };
             samples.push(Segment {

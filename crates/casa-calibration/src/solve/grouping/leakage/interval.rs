@@ -8,7 +8,7 @@ use num_complex::Complex32;
 use crate::GainNormalization;
 
 use super::channel_samples::ChannelSamples;
-use super::cross_hand::{CrossHandFit, Measurement};
+use super::cross_hand::{CrossHandFit, LegacyCrossHandAveraging, Measurement};
 use super::fit::LeakageFit;
 use super::joint::{SourceFit, SourceFitMode};
 use super::parallactic::{BaselineSegment, ParallacticAverages};
@@ -237,6 +237,7 @@ impl IntervalFits {
         request: &LeakageSolveRequest,
         location: (i32, i32),
         angles: Option<&ParallacticAngleState>,
+        legacy_times: Option<&LegacyCrossHandAveraging>,
         stages: Option<&mut LeakageFitStages>,
     ) -> Result<Option<IntervalEstimates>, GainSolveError> {
         match self {
@@ -252,7 +253,7 @@ impl IntervalFits {
             }
             Self::Parallactic(average) => {
                 let angles = angles.expect("parallactic angle geometry");
-                let (phases, source) = average.finish(angles)?;
+                let (phases, source) = average.finish(angles, legacy_times)?;
                 SourceFitMode::Polarization.report(source, location);
                 let gain_phase = request.kind.gain_phase();
                 let values = phases
