@@ -173,14 +173,30 @@ pub(crate) fn solve(
     let fitting = crate::timing::Phase::start("fringe_fit");
     for group in groups.into_values() {
         if let Some(stats) = &mut stats {
-            stats.interval(&IntervalStages::of(&group, 0));
-            if !group.gather_attempted() {
+            let legacy = tool.as_ref().is_some_and(|tool| tool.legacy_iterator);
+            let mut stages = IntervalStages::of(&group, 0);
+            let parallel_data = stages.with_data.iter().any(|antennas| !antennas.is_empty());
+            if !legacy && controls.correlation_combination != FringeCorrelation::Separate {
+                // Both statistic slots describe the original parallel-hand
+                // coverage after the correlation layer changes the weights.
+                if let [first, second] = stages.with_data.as_mut_slice() {
+                    first.append(second);
+                    second.clone_from(first);
+                }
+                stages.attempted_interval = Some(match controls.correlation_combination {
+                    FringeCorrelation::Stokes => correlations::has_stokes_data(&group, &windows),
+                    _ => parallel_data,
+                });
+            }
+            let attempted = stages.attempted_interval.unwrap_or(false);
+            stats.interval(&stages);
+            if !attempted {
                 continue;
             }
-            if tool.as_ref().is_some_and(|tool| tool.legacy_iterator) {
+            if legacy {
                 return Err(error("Attempt to call un-implemented selfSolveOne()"));
             }
-            if context.refant_id < 0 {
+            if context.refant_id < 0 || !parallel_data {
                 return Err(error("No valid reference antenna supplied"));
             }
             if controls.global_solve
@@ -213,6 +229,10 @@ pub(crate) fn solve(
         &mut solved.rows,
         context.available_antennas.len(),
         references,
+        matches!(
+            request.refant,
+            super::RefAntSelector::Expression { strict: true, .. }
+        ),
     )?;
     if let Some(stats) = stats {
         stats.track_activity(tool.and_then(|tool| tool.activity));
@@ -393,7 +413,11 @@ fn solve_group(
             ],
             iterations: controls.iterations,
         };
-        if controls.global_solve && fit::refine(baselines, estimates, &options).is_none() {
+        // CASA only transcribes a global fit when phase occupies a slot.
+        if controls.global_solve
+            && active_phase
+            && fit::refine(baselines, estimates, &options).is_none()
+        {
             for (antenna, estimate) in estimates.iter_mut().enumerate() {
                 if antenna != reference
                     && let Some(estimate) = estimate
@@ -420,16 +444,7 @@ fn solve_group(
     }
     Ok(antennas
         .iter()
-        .map(|&antenna| {
-            make_row(
-                antenna,
-                reference,
-                group,
-                &estimates,
-                reference_time,
-                controls,
-            )
-        })
+        .map(|&antenna| make_row(antenna, reference, group, &estimates, reference_time, fit))
         .collect())
 }
 
@@ -642,8 +657,9 @@ fn make_row(
     group: &SolveAccumulator,
     estimates: &[Vec<Option<FringePeak>>; 2],
     time_seconds: f64,
-    controls: FringeControls,
+    fit: GroupFit,
 ) -> SolutionRow {
+    let controls = fit.controls;
     let mut row = SolutionRow {
         time_seconds,
         field_id: group.field_id,
@@ -676,6 +692,7 @@ fn make_row(
         ];
         row.snrs.extend(active.map(|active| {
             if !controls.global_solve
+                || !fit.active_phase
                 || active
                 || antenna as usize == reference
                 || peak.is_some_and(|peak| !peak.active)

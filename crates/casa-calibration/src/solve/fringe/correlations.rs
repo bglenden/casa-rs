@@ -1,9 +1,36 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Form the combined parallel-hand visibility before the fringe search.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use super::{FringeBaseline, FringeCorrelation, FringeSample};
+use super::{FringeBaseline, FringeCorrelation, FringeSample, SolveAccumulator, Window};
+
+pub(super) fn has_stokes_data(group: &SolveAccumulator, windows: &BTreeMap<i32, Window>) -> bool {
+    let mut first = HashMap::new();
+    for spectrum in group
+        .delay_spectra()
+        .filter(|spectrum| spectrum.parallel_hand)
+    {
+        if windows[&spectrum.buffer.0].single_hand {
+            if spectrum.channels().any(|(_, weight)| weight > 0.) {
+                return true;
+            }
+            continue;
+        }
+        let key = (spectrum.buffer, spectrum.antennas);
+        if spectrum.receptor == 0 {
+            first.insert(key, spectrum);
+        } else if first.get(&key).is_some_and(|other| {
+            spectrum
+                .channels()
+                .zip(other.channels())
+                .any(|((_, a), (_, b))| a > 0. && b > 0.)
+        }) {
+            return true;
+        }
+    }
+    false
+}
 
 pub(super) fn combine(
     hands: [Vec<FringeBaseline>; 2],

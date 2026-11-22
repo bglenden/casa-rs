@@ -263,15 +263,15 @@ impl SolveAccumulator {
 
 impl super::SolveGroupOptions {
     pub(super) fn legacy_intervals(&self) -> bool {
-        self.legacy_chan_selection()
-            || matches!(
-                self.input_rows,
-                SolveInputRows::LegacyAccor | SolveInputRows::FringeTool { legacy: true }
-            )
+        self.legacy_chan_selection() || self.input_rows == SolveInputRows::LegacyAccor
     }
 
     pub(super) fn legacy_chan_selection(&self) -> bool {
-        self.polynomial_bandpass || self.input_rows == SolveInputRows::LegacyBaseline
+        self.polynomial_bandpass
+            || matches!(
+                self.input_rows,
+                SolveInputRows::LegacyBaseline | SolveInputRows::FringeTool { legacy: true }
+            )
     }
 }
 

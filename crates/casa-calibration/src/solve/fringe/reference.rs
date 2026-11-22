@@ -14,6 +14,7 @@ pub(super) fn connect_intervals(
     rows: &mut [SolutionRow],
     antenna_count: usize,
     preferences: impl Iterator<Item = i32>,
+    strict: bool,
 ) -> Result<(), GainSolveError> {
     if rows.is_empty() {
         return Ok(());
@@ -21,24 +22,28 @@ pub(super) fn connect_intervals(
     let mut candidates = preferences.collect::<Vec<_>>();
     let primary = candidates[0];
     let mut previous_reference = primary;
-    let antenna = ms.antenna().map_err(error)?;
-    let anchor = antenna
-        .position(candidates[candidates.len() - 1] as usize)
-        .map_err(error)?;
-    let mut nearby = (0..antenna_count as i32)
-        .filter(|id| !candidates.contains(id))
-        .map(|id| {
-            let position = antenna.position(id as usize).map_err(error)?;
-            let distance = position
-                .into_iter()
-                .zip(anchor)
-                .map(|(a, b)| (a - b).powi(2))
-                .sum::<f64>();
-            Ok((id, distance))
-        })
-        .collect::<Result<Vec<_>, GainSolveError>>()?;
-    nearby.sort_by(|a, b| a.1.total_cmp(&b.1));
-    candidates.extend(nearby.into_iter().map(|(id, _)| id));
+    if strict {
+        candidates.truncate(1);
+    } else {
+        let antenna = ms.antenna().map_err(error)?;
+        let anchor = antenna
+            .position(candidates[candidates.len() - 1] as usize)
+            .map_err(error)?;
+        let mut nearby = (0..antenna_count as i32)
+            .filter(|id| !candidates.contains(id))
+            .map(|id| {
+                let position = antenna.position(id as usize).map_err(error)?;
+                let distance = position
+                    .into_iter()
+                    .zip(anchor)
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f64>();
+                Ok((id, distance))
+            })
+            .collect::<Result<Vec<_>, GainSolveError>>()?;
+        nearby.sort_by(|a, b| a.1.total_cmp(&b.1));
+        candidates.extend(nearby.into_iter().map(|(id, _)| id));
+    }
 
     let mut previous = None::<(i32, Vec<Reference>)>;
     let mut intervals = rows.chunks_mut(antenna_count).collect::<Vec<_>>();

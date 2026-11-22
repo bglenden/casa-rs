@@ -9,10 +9,12 @@ import casatasks
 from casatools import calibrater as casa_calibrater
 import numpy as np
 
-from blcal_oracle import copy_ms, opened
+from blcal_oracle import copy_ms, opened, source as baseline_source
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_solve_tool_oracle import compare_readers
-from fringefit_oracle import check_global, compare_tables, duplicate_spectral_window, source
+from fringefit_oracle import (
+    change_reference_fixture, check_global, compare_tables, duplicate_spectral_window, source,
+)
 
 
 def solve_case(work, engines, vis, name, *, options=None, selection=None,
@@ -89,8 +91,11 @@ def main():
         ('no-refinement-iterations', {'niter': 0}),
         ('rate-disabled', {'paramactive': [True, True, False, False]}),
         ('phase-only-mask', {'paramactive': [True]}),
+        ('delay-only-mask', {'paramactive': [False, True, False, False]}),
         ('signed-delay-window', {'delaywindow': [1., 110.], 'globalsolve': False}),
+        ('extra-delay-window-value', {'delaywindow': [1., 110., 999.], 'globalsolve': False}),
         ('signed-rate-window', {'ratewindow': [2e-13, 1.2e-12], 'globalsolve': False}),
+        ('extra-rate-window-value', {'ratewindow': [2e-13, 1.2e-12, 999.], 'globalsolve': False}),
         ('threshold', {'minsnr': 1e8}),
         ('alias', {'type': 'Fringe Jones'}),
     ]:
@@ -104,13 +109,46 @@ def main():
             with opened(path) as table:
                 values = table.getcol('FPARAM')
                 np.testing.assert_array_equal(values[:4], values[4:])
+    one_hand = work/'one-hand-flagged.ms'
+    copy_ms(vis, one_hand)
+    with opened(one_hand, True) as table:
+        flags = table.getcol('FLAG')
+        flags[1, ...] = True
+        assert table.putcol('FLAG', flags)
+    solve_case(work, engines, one_hand, 'stokes-no-pair', corrdep=True, outcome='empty',
+               options={'corrcomb': 'stokes', 'paramactive': []})
+    solve_case(work, engines, one_hand, 'parallel-one-hand', corrdep=True,
+               options={'corrcomb': 'parallel'})
+    cross_hands = baseline_source(work, 'RR RL LR LL', label='cross-hands')
+    with opened(cross_hands, True) as table:
+        flags = np.zeros_like(table.getcol('FLAG'))
+        flags[[0, 3], ...] = True
+        assert table.putcol('FLAG', flags)
+        assert table.putcol('FLAG_ROW', flags.all(axis=(0, 1)))
+    solve_case(work, engines, cross_hands, 'cross-hands-only', corrdep=True, outcome='error')
     solve_case(work, engines, vis, 'finite', options={'t': '47s'}, selection={'spw': '0:2~28'})
+    switched = change_reference_fixture(work, vis)
+    for mode in ('flex', 'strict'):
+        paths = solve_case(work, engines, switched, f'reference-{mode}', corrdep=True,
+                           options={'t': '47s', 'refant': 'A0,A1', 'refantmode': mode})
+        for path in paths.values():
+            with opened(path) as table:
+                assert table.getcol('FLAG')[..., 5:15].all() == (mode == 'strict')
     solve_case(work, engines, vis, 'append', append=True)
     windows = duplicate_spectral_window(work, vis, law[1])
     for concat in (False, True):
         solve_case(work, engines, windows, f'windows-{concat}',
                    options={'combine': 'spw', 'concatspws': concat}, selection={'spw': '0,1'})
     solve_case(work, engines, vis, 'legacy-fit', legacy=True, outcome='error')
+    spectral_weights = work/'zero-spectral-weights.ms'
+    copy_ms(vis, spectral_weights)
+    with opened(spectral_weights, True) as table:
+        shape = table.getcol('FLAG').shape
+        for key, value in [('SIGMA_SPECTRUM', np.inf), ('WEIGHT_SPECTRUM', 0.)]:
+            if key not in table.colnames():
+                assert table.addcols({key: {'valueType': 'float', 'ndim': 2}})
+            assert table.putcol(key, np.full(shape, value, dtype=np.float32))
+    solve_case(work, engines, spectral_weights, 'legacy-row-weights', legacy=True, outcome='error')
     for name, options in [('no-reference', {'refant': ''}), ('empty-mask', {'paramactive': []}),
                           ('single-integration', {'t': 'int'})]:
         solve_case(work, engines, vis, name, options=options, outcome='error')

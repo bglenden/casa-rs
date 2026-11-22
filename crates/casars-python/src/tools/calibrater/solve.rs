@@ -118,7 +118,10 @@ fn fringe_window(value: Option<&Bound<'_, PyAny>>) -> PyResult<[f64; 2]> {
         .map(|value| value.extract::<crate::convert::DoubleList>())
         .transpose()?
         .map_or_else(Vec::new, |values| values.0);
-    Ok(window.try_into().unwrap_or([-1e6, 1e6]))
+    Ok(match window.as_slice() {
+        [lower, upper, ..] => [*lower, *upper],
+        _ => [-1e6, 1e6],
+    })
 }
 
 impl StandardSolver {
