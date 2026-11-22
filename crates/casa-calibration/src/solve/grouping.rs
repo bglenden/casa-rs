@@ -46,6 +46,9 @@ use weights::{SpectralWeights, solve_weights};
 
 pub(crate) enum PriorCalibrationMode {
     Data,
+    Accor {
+        share_input_flags: bool,
+    },
     Gain {
         scalar: bool,
         rotate_model: bool,
@@ -100,6 +103,9 @@ pub(crate) fn load_preapplied_rows(
     }
     let preapplied = match mode {
         PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false).map(Into::into),
+        PriorCalibrationMode::Accor { share_input_flags } => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Accor, share_input_flags)
+        }
         PriorCalibrationMode::Gain {
             scalar,
             share_input_flags,
@@ -1018,7 +1024,11 @@ impl SolveAccumulator {
         let delay = options.gain_type.is_delay();
         let mut row_weight = 0.0_f64;
         for (corr_index, &correlation_type) in correlation_types.iter().enumerate() {
-            let Some(receptors) = correlation_receptors(correlation_type) else {
+            let Some(receptors) =
+                options
+                    .input_rows
+                    .receptors(correlation_type, corr_index, correlation_types.len())
+            else {
                 return Err(GainSolveError::UnsupportedCorrelationLayout {
                     data_desc_id: row.data_desc_id,
                     correlation_types: correlation_types
@@ -1070,7 +1080,7 @@ impl SolveAccumulator {
                 // CASA can use cross-hand weights for the averaged baseline's
                 // time even though only parallel hands enter these solves.
                 if !delay && !legacy_spline {
-                    row_weight += samples::centroid_weight(
+                    let weight = samples::centroid_weight(
                         samples,
                         corr_index,
                         channels,
@@ -1078,6 +1088,7 @@ impl SolveAccumulator {
                         normalization,
                         options.channelized,
                     );
+                    row_weight += self.cross_hand_centroid_weight(weight, options.input_rows);
                 }
                 continue;
             }
@@ -1105,6 +1116,7 @@ impl SolveAccumulator {
                     values: accumulations,
                     attempted: &mut self.attempted,
                     channelized: options.channelized,
+                    keep_zero_data: options.input_rows == SolveInputRows::Autocorrelations,
                     retain_zero_model: options.gain_type.is_delay()
                         || options.gain_type == GainType::T
                         || samples.model.is_some()

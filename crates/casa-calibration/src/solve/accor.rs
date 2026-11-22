@@ -36,7 +36,9 @@ pub(crate) fn solve(
         &request.prior_calibration_tables,
         request.parang,
         true,
-        PriorCalibrationMode::Data,
+        PriorCalibrationMode::Accor {
+            share_input_flags: !request.correlation_dependent_flags,
+        },
     )?;
     let groups = build_solve_groups(
         ms,
@@ -98,15 +100,10 @@ fn solve_group(
 ) -> Result<Vec<SolutionRow>, GainSolveError> {
     // CASA channel- and time-averages the samples, then uses the first
     // buffer when more than one field or spectral window is combined.
-    let Some(first) = group
-        .delay_spectra()
-        .filter(|spectrum| spectrum.parallel_hand)
-        .map(|spectrum| (spectrum.buffer.1, spectrum.buffer.0, spectrum.buffer.2))
-        .min()
-    else {
+    let Some(first) = group.first_input_buffer() else {
         return Ok(Vec::new());
     };
-    let single_hand = correlation_types_for_ddid(ms, first.1)?.len() == 1;
+    let correlation_count = correlation_types_for_ddid(ms, first.1)?.len();
     let origin = group.min_time;
     let (offset, total) = group
         .delay_spectra()
@@ -120,13 +117,17 @@ fn solve_group(
                 total + weight,
             )
         });
-    if total <= 0. {
+    if !group.attempted {
         return Ok(Vec::new());
     }
-    let time = origin + offset / total;
+    let time = if total > 0. {
+        origin + offset / total
+    } else {
+        group.aggregate_time()
+    };
     let mut gains = BTreeMap::<i32, [Option<f32>; 2]>::new();
     for spectrum in group.delay_spectra().filter(|spectrum| {
-        spectrum.parallel_hand && (spectrum.buffer.1, spectrum.buffer.0, spectrum.buffer.2) == first
+        spectrum.parallel_hand && (spectrum.buffer.1, spectrum.buffer.0) == first
     }) {
         let Some((sum, weight)) = spectrum.channels().next() else {
             continue;
@@ -134,23 +135,25 @@ fn solve_group(
         if weight > 0. {
             let amplitude = (sum / weight).norm();
             if amplitude.is_finite() && amplitude > 0. {
-                let hand = if single_hand { 0 } else { spectrum.receptor };
-                gains.entry(spectrum.antennas.0).or_default()[hand] = Some(amplitude.sqrt());
+                gains.entry(spectrum.antennas.0).or_default()[spectrum.receptor] =
+                    Some(amplitude.sqrt());
             }
         }
     }
     Ok(antennas
         .iter()
         .map(|&antenna| {
-            let [first, second] = gains.get(&antenna).copied().unwrap_or_default();
-            let values = [
-                first.unwrap_or(1.),
-                if single_hand {
-                    0.
-                } else {
-                    second.unwrap_or(1.)
-                },
-            ];
+            let [first, last] = gains.get(&antenna).copied().unwrap_or_default();
+            let second = match correlation_count {
+                2 | 4 => last,
+                _ => first,
+            };
+            let second_value = if correlation_count == 1 {
+                0.
+            } else {
+                second.unwrap_or(1.)
+            };
+            let values = [first.unwrap_or(1.), second_value];
             SolutionRow {
                 time_seconds: time,
                 field_id: group.field_id,
@@ -160,14 +163,7 @@ fn solve_group(
                 observation_id: group.observation_id,
                 refant_id: -1,
                 gains: values.map(|value| Complex32::new(value, 0.)).to_vec(),
-                flags: vec![
-                    first.is_none(),
-                    if single_hand {
-                        first.is_none()
-                    } else {
-                        second.is_none()
-                    },
-                ],
+                flags: vec![first.is_none(), second.is_none()],
                 param_errors: vec![0.; 2],
                 snrs: vec![0.; 2],
                 weights: Vec::new(),

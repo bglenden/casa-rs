@@ -14,6 +14,7 @@ use super::{
 
 #[derive(Clone, Copy)]
 pub(crate) enum PriorSolveBoundary {
+    Accor,
     Bandpass,
     Delay,
     Gain,
@@ -29,7 +30,7 @@ impl PriorSolveBoundary {
         viscal_order(match self {
             Self::Bandpass => "B Jones",
             Self::Delay => "K Jones",
-            Self::Gain | Self::GainSpline => "G Jones",
+            Self::Accor | Self::Gain | Self::GainSpline => "G Jones",
             Self::ScalarGain => "T Jones",
             Self::Leakage => "D Jones",
             Self::CrossHand => "X Jones",
@@ -215,7 +216,11 @@ pub(crate) fn evaluate_solve_priors(
             | PriorSolveBoundary::PositionAngle
     );
     let polarized = deferred_data || has_polarization_matrix(&plan);
-    let legacy_spline = matches!(boundary, PriorSolveBoundary::GainSpline);
+    let type_ordered = polarized
+        || matches!(
+            boundary,
+            PriorSolveBoundary::Accor | PriorSolveBoundary::GainSpline
+        );
     if !polarized
         && matches!(
             boundary,
@@ -232,7 +237,7 @@ pub(crate) fn evaluate_solve_priors(
             .into_iter()
             .partition(|table| {
                 let subtype = table.summary.table_subtype.as_str();
-                if legacy_spline || polarized {
+                if type_ordered {
                     return viscal_order(subtype) < boundary.viscal_order();
                 }
                 match subtype {
@@ -241,9 +246,8 @@ pub(crate) fn evaluate_solve_priors(
                     _ => false,
                 }
             });
-    let forward_parang = (legacy_spline || polarized)
-        && plan.parang
-        && viscal_order("P Jones") >= boundary.viscal_order();
+    let forward_parang =
+        type_ordered && plan.parang && viscal_order("P Jones") >= boundary.viscal_order();
     plan.parang &= !forward_parang;
     plan.calibration_tables = data_tables;
     let data_prior = (deferred_data && (!plan.calibration_tables.is_empty() || plan.parang))

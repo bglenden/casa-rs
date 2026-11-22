@@ -22,7 +22,8 @@ GAIN = np.array([[1.1, 1.2, 1.3, 1.4, 1.5], [1.9, 1.8, 1.7, 1.6, 1.5]])
 
 
 def source(root, stokes='RR LL'):
-    path = root / ('autocorrelations.ms' if stokes == 'RR LL' else 'one-hand.ms')
+    products = stokes.split()
+    path = root / {1: 'one-hand.ms', 2: 'autocorrelations.ms', 4: 'four-hands.ms'}[len(products)]
     make_cal_ms(str(path), channels=32, scan_seconds=160, integration_seconds=2,
                 stokes=stokes, frequency='8.4GHz', autocorrelation_weight=1.)
     with opened(path / 'STATE', True) as table:
@@ -35,8 +36,9 @@ def source(root, stokes='RR LL'):
         first, second, timestamps = (table.getcol(name) for name in ('ANTENNA1', 'ANTENNA2', 'TIME'))
         channel_factor = 1. + .01 * np.arange(32)
         temporal_factor = np.where(timestamps - timestamps.min() < 60., 1., 1.6)
-        gains = GAIN[:1] if stokes == 'RR' else GAIN
-        power = gains[:, first] * gains[:, second] * temporal_factor
+        hand = {'R': 0, 'L': 1}
+        power = np.array([GAIN[hand[corr[0]], first] * GAIN[hand[corr[1]], second]
+                          for corr in products]) * temporal_factor
         values = (channel_factor[None, :, None] * power[:, None, :]).astype(np.complex64)
         for name in ('DATA', 'CORRECTED_DATA'):
             table.putcol(name, values)
@@ -151,9 +153,84 @@ def two_windows(root, vis):
     return output
 
 
+def constant_spectra(vis, output, powers, correlation_codes=None):
+    shutil.copytree(vis, output)
+    if correlation_codes is not None:
+        with opened(output / 'POLARIZATION', True) as table:
+            table.putcell('CORR_TYPE', 0, np.array(correlation_codes, dtype=np.int32))
+            table.putcell('CORR_PRODUCT', 0, np.array([[1, 0], [1, 0]], dtype=np.int32)
+                          if len(correlation_codes) == 2 else np.zeros((2, 1), dtype=np.int32))
+    with opened(output, True) as table:
+        values = np.broadcast_to(np.array(powers, dtype=np.complex64)[:, None, None],
+                                 table.getcol('DATA').shape).copy()
+        for name in ('DATA', 'CORRECTED_DATA'):
+            table.putcol(name, values)
+        table.putcol('FLAG', np.zeros(values.shape, dtype=bool))
+        table.putcol('FLAG_ROW', np.zeros(values.shape[-1], dtype=bool))
+    return output
+
+
+def varying_prior(root, vis, solvers):
+    varied = root / 'varying-prior.ms'
+    with opened(vis) as table:
+        times = table.getcol('TIME')
+        earliest = times.min()
+    copy_selected_rows(vis, varied, (times == earliest) | (times == earliest + 10.))
+    with opened(varied, True) as table:
+        data = np.full_like(table.getcol('DATA'), 4.)
+        for name in ('DATA', 'CORRECTED_DATA'):
+            table.putcol(name, data)
+        table.putcol('FLAG', np.zeros(data.shape, dtype=bool))
+        table.putcol('FLAG_ROW', np.zeros(data.shape[-1], dtype=bool))
+    prior = solve(root, varied, solvers['casa'], 'varying-input', solint='int')
+    with opened(prior, True) as table:
+        gains = table.getcol('CPARAM')
+        gains[:] = np.where(table.getcol('TIME') == earliest, .5, 2.)
+        table.putcol('CPARAM', gains)
+    for calwt in (False, True):
+        library = root / f'varying-{calwt}.callib'
+        library.write_text(f"caltable='{prior}' tinterp='nearest' calwt={calwt}\n")
+        outputs = {key: solve(root, varied, task, f'varying-{calwt}-{key}',
+                              docallib=True, callib=str(library))
+                   for key, task in solvers.items()}
+        for output in outputs.values():
+            with opened(output) as table:
+                np.testing.assert_allclose(table.getcol('CPARAM'), np.sqrt(17. / 16.0625),
+                                           atol=3e-6, rtol=0.)
+                np.testing.assert_allclose(table.getcol('TIME') - earliest, 160. / 16.0625,
+                                           atol=1e-5, rtol=0.)
+        if 'native' in outputs:
+            compare(outputs['casa'], outputs['native'])
+
+
 def controls(root, vis, solvers):
     selected = two_windows(root, vis)
+    first_flagged = root / 'flagged-first-window.ms'
+    shutil.copytree(selected, first_flagged)
+    with opened(first_flagged, True) as table:
+        flag = table.getcol('FLAG')
+        flag[..., table.getcol('DATA_DESC_ID') == 0] = True
+        table.putcol('FLAG', flag)
+        table.putcol('FLAG_ROW', flag.all(axis=(0, 1)))
     scalar = source(root, 'RR')
+    stokes_i = constant_spectra(scalar, root / 'stokes-i.ms', [4.], [1])
+    reversed_hands = constant_spectra(vis, root / 'reversed-hands.ms', [4., 16.], [8, 5])
+    tiny = constant_spectra(vis, root / 'small-power.ms', [1e-8, 1e-8])
+    cross_hand = source(root, 'RR RL LR LL')
+    with opened(cross_hand, True) as table:
+        flag = table.getcol('FLAG')
+        flag[[0, 3]] = True
+        table.putcol('FLAG', flag)
+        table.putcol('FLAG_ROW', flag.all(axis=(0, 1)))
+    zeros = root / 'zero-power.ms'
+    shutil.copytree(vis, zeros)
+    with opened(zeros, True) as table:
+        first, second = (table.getcol(name) for name in ('ANTENNA1', 'ANTENNA2'))
+        data = table.getcol('DATA')
+        data[:, :4, (first == 0) & (second == 0)] = np.array([0., 0., 4., 4.])[None, :, None]
+        data[:, :4, (first == 1) & (second == 1)] = 0.
+        table.putcol('DATA', data)
+        table.putcol('CORRECTED_DATA', data)
     model = root / 'nonunity-model.ms'
     shutil.copytree(vis, model)
     with opened(model, True) as table:
@@ -163,11 +240,17 @@ def controls(root, vis, solvers):
     library.write_text(f"caltable='{prior}' tinterp='nearest' calwt=True spwmap=[0,0]\n")
     cases = (
         ('spw-combined', selected, dict(combine='spw')),
+        ('flagged-first-window', first_flagged, dict(combine='spw')),
         ('fields-combined', vis, dict(field='', combine='field,scan')),
         ('mapped-prior', selected, dict(spw='1', gaintable=[str(prior)], gainfield=['0'],
                                        interp=['nearest'], spwmap=[0, 0])),
         ('mapped-library', selected, dict(spw='1', docallib=True, callib=str(library))),
         ('single-hand', scalar, {}),
+        ('stokes-i', stokes_i, {}),
+        ('reversed-hands', reversed_hands, {}),
+        ('small-power', tiny, {}),
+        ('zero-power', zeros, dict(spw='0:0~3')),
+        ('cross-hand-only', cross_hand, dict(corrdepflags=True)),
         ('nonunity-model', model, {}),
     )
     for label, source_ms, options in cases:
@@ -185,6 +268,23 @@ def controls(root, vis, solvers):
                 with opened(output) as table:
                     np.testing.assert_allclose(table.getcol('CPARAM')[:, 0, :4], expected,
                                                atol=3e-6, rtol=0.)
+        if label in ('flagged-first-window', 'cross-hand-only'):
+            with opened(outputs['casa']) as table:
+                assert table.getcol('FLAG').all()
+                np.testing.assert_array_equal(table.getcol('CPARAM'), 1.)
+        if label == 'zero-power':
+            with opened(outputs['casa']) as table:
+                np.testing.assert_allclose(table.getcol('CPARAM')[:, 0, 0], np.sqrt(2.))
+                assert table.getcol('FLAG')[:, 0, 1].all()
+        expected = {'stokes-i': [2., 0.], 'reversed-hands': [2., 4.],
+                    'small-power': [1e-4, 1e-4]}.get(label)
+        if expected is not None:
+            for output in outputs.values():
+                with opened(output) as table:
+                    values = table.getcol('CPARAM')
+                    assert not table.getcol('FLAG').any()
+                    np.testing.assert_allclose(values, np.broadcast_to(np.array(expected)[:, None, None],
+                                                                       values.shape), rtol=2e-6)
         if 'native' in outputs:
             compare(outputs['casa'], outputs['native'])
     appended = {key: solve(root, vis, task, f'append-{key}', field='PHASE')
@@ -196,6 +296,7 @@ def controls(root, vis, solvers):
             np.testing.assert_array_equal(np.sort(table.getcol('FIELD_ID')), np.repeat([0, 1], 5))
     if 'native' in appended:
         compare(appended['casa'], appended['native'])
+    varying_prior(root, vis, solvers)
 
     # The CASA wrapper misspells ANTENNA1 when a TaQL selection is supplied.
     # Its antenna selector provides an independent reference for the intended intersection.

@@ -371,6 +371,7 @@ pub(super) struct SampleAccumulation<'a> {
     pub(super) values: &'a mut [SolveEdgeAccumulation],
     pub(super) attempted: &'a mut bool,
     pub(super) channelized: bool,
+    pub(super) keep_zero_data: bool,
     pub(super) retain_zero_model: bool,
 }
 
@@ -405,6 +406,9 @@ impl SampleAccumulation<'_> {
             weight: weights[channel],
             flagged: flags[channel],
         };
+        if self.keep_zero_data {
+            return self.add_scalar_row::<false, true>(channels.indices.iter().map(selected));
+        }
         if let Some(width) = channels.bin_width {
             let weights = self
                 .values
@@ -510,7 +514,7 @@ impl SampleAccumulation<'_> {
         samples: impl Iterator<Item = Sample>,
     ) -> f64 {
         if !CHANNELIZED && self.retain_zero_model {
-            return self.add_scalar_row::<POINT>(samples);
+            return self.add_scalar_row::<POINT, false>(samples);
         }
         let mut weights = Vec::new();
         if CHANNELIZED {
@@ -537,8 +541,11 @@ impl SampleAccumulation<'_> {
         }
     }
 
-    fn add_scalar_row<const POINT: bool>(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
-        let (average, _) = average_channels::<POINT, false>(self.attempted, samples);
+    fn add_scalar_row<const POINT: bool, const KEEP_ZERO_DATA: bool>(
+        &mut self,
+        samples: impl Iterator<Item = Sample>,
+    ) -> f64 {
+        let (average, _) = average_channels::<POINT, KEEP_ZERO_DATA>(self.attempted, samples);
         self.values[0].merge(average);
         f64::from(average.weight)
     }
@@ -724,6 +731,7 @@ mod tests {
                 values: &mut values,
                 attempted: &mut attempted,
                 channelized: true,
+                keep_zero_data: false,
                 retain_zero_model: false,
             }
             .add_uniform(

@@ -38,6 +38,26 @@ pub(crate) enum SolveInputRows {
     Autocorrelations,
 }
 
+impl SolveInputRows {
+    pub(super) fn receptors(
+        self,
+        correlation_type: i32,
+        index: usize,
+        count: usize,
+    ) -> Option<(usize, usize)> {
+        if self != Self::Autocorrelations {
+            return super::correlation_receptors(correlation_type);
+        }
+        // AccorJones reads the first and last elements of a four-correlation
+        // row and both elements of a two-correlation row in storage order.
+        Some(match (count, index) {
+            (_, 0) => (0, 0),
+            (2, 1) | (4, 3) => (1, 1),
+            _ => (0, 1),
+        })
+    }
+}
+
 /// A weighted mean of times.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct WeightedTime {
@@ -82,6 +102,20 @@ impl WeightedTime {
 }
 
 impl SolveAccumulator {
+    pub(super) fn cross_hand_centroid_weight(&mut self, weight: f64, input: SolveInputRows) -> f64 {
+        if input == SolveInputRows::Autocorrelations {
+            // CASA tests buffer viability before dropping cross-hand weights.
+            self.attempted |= weight > 0.;
+            return 0.;
+        }
+        weight
+    }
+
+    pub(in crate::solve) fn first_input_buffer(&self) -> Option<(i32, i32)> {
+        self.first_t_buffer
+            .map(|buffer| (buffer.field, buffer.data_desc_id))
+    }
+
     pub(super) fn observe_metadata(&mut self, row: &SolveSampleRow, retain_fringe_buffers: bool) {
         if retain_fringe_buffers {
             self.observe_fringe_buffer(row);
