@@ -99,6 +99,17 @@ def changed_first_baseline(work, original):
     return product
 
 
+def compare_scans(work, engines, vis, stokes):
+    data = work/'two-scans.ms'
+    copy_ms(vis, data)
+    with opened(data, True) as table:
+        times, scans = (table.getcol(name) for name in ('TIME', 'SCAN_NUMBER'))
+        field = table.getcol('FIELD_ID') == 0
+        scans[field & (times > np.median(times[field]))] = scans.max() + 3
+        assert table.putcol('SCAN_NUMBER', scans)
+    solve(work, engines, data, 'legacy-scans', stokes)
+
+
 def compare_basis(work, basis, engines, solutions_only):
     work.mkdir()
     vis, _, _, stokes, sky = plant(work, basis)
@@ -117,6 +128,7 @@ def compare_basis(work, basis, engines, solutions_only):
     flagged = solve(work, engines, vis, 'legacy-unpolarized', [1.6, 0., 0., 0.])
     with opened(flagged['native']) as table:
         assert table.getcol('FLAG').all()
+    compare_scans(work, engines, vis, stokes)
     if not solutions_only:
         correct(work, engines, vis, positive, 'correct-positive')
         correct(work, engines, vis, flagged, 'correct-flagged')

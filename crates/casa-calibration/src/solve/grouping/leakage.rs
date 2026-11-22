@@ -318,14 +318,7 @@ pub(crate) fn solve_polarization_with_activity(
         tool: activity.is_some(),
         legacy_cross_hand,
     };
-    let mut intervals = ordered
-        .chunk_by(|a, b| a.1 == b.1 && a.2 == b.2)
-        .collect::<Vec<_>>();
-    intervals.sort_by(|a, b| {
-        interval_window(a)
-            .cmp(&interval_window(b))
-            .then_with(|| a[0].0.time_seconds.total_cmp(&b[0].0.time_seconds))
-    });
+    let intervals = polarization_intervals(&ordered, request.kind);
     let mut references = Vec::new();
     if context.refant_id >= 0 && !request.kind.cross_hand() {
         references.extend([context.refant_id, context.refant_id]);
@@ -359,13 +352,14 @@ pub(crate) fn solve_polarization_with_activity(
     };
     drop(preparation);
     let fitting = crate::timing::Phase::start("polarization_gather_and_fit");
-    for rows in intervals {
+    for (rows, scan) in intervals {
         let previous_interval = previous
             .and_then(|index| solutions.get(index))
             .filter(|solution| solution.spectral_window == interval_window(rows));
         if let Some(solution) = setup
             .solve_interval(
                 rows,
+                scan,
                 context.available_antennas.len(),
                 &references,
                 previous_interval,
@@ -421,6 +415,33 @@ pub(crate) fn solve_polarization_with_activity(
             .map(|interval| interval.spectral_window)
             .collect(),
     })
+}
+
+fn polarization_intervals<'a>(
+    ordered: &'a [BucketedRow<'a>],
+    kind: LeakageSolveKind,
+) -> Vec<(&'a [BucketedRow<'a>], i32)> {
+    let mut groups = ordered.chunk_by(|a, b| a.1 == b.1 && a.2 == b.2).peekable();
+    let mut intervals = Vec::new();
+    while let Some(rows) = groups.next() {
+        let scan = if kind == LeakageSolveKind::XMueller {
+            // The self-gather reads the legacy buffer's scan after advancing
+            // the iterator. Its final interval retains the last chunk's scan.
+            groups.peek().map_or_else(
+                || rows.last().expect("nonempty solve interval").0.scan_number,
+                |next| next[0].0.scan_number,
+            )
+        } else {
+            rows[0].0.scan_number
+        };
+        intervals.push((rows, scan));
+    }
+    intervals.sort_by(|(a, _), (b, _)| {
+        interval_window(a)
+            .cmp(&interval_window(b))
+            .then_with(|| a[0].0.time_seconds.total_cmp(&b[0].0.time_seconds))
+    });
+    intervals
 }
 
 fn source_polarization(
@@ -653,6 +674,7 @@ impl LeakageInputs<'_> {
     fn solve_interval(
         &self,
         rows: &[BucketedRow<'_>],
+        scan: i32,
         antennas: usize,
         references: &[i32],
         previous: Option<&LeakageSolution>,
@@ -850,7 +872,7 @@ impl LeakageInputs<'_> {
                     .and_then(|legacy| legacy.field())
                     .unwrap_or(first.field_id),
                 observation: first.observation_id,
-                scan: first.scan_number,
+                scan,
                 time: time.mean().unwrap_or(first.time_seconds),
                 reference,
                 values,
