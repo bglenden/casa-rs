@@ -255,6 +255,86 @@ def test_owned_virtual_concat_handles_absolute_symlink_member(tmp_path, backend,
         tool.done()
 
 
+@pytest.mark.parametrize("mode", ["copy", "move"])
+def test_owned_concat_rejects_changed_binding_of_nested_manifest(tmp_path, mode):
+    api = _backend("casars")
+    tool, inner = api.image(), None
+    original, replacements = tmp_path / "first", tmp_path / "second"
+    original.mkdir()
+    replacements.mkdir()
+    path, output = original / "inner.im", tmp_path / "join.im"
+    originals = [original / f"{name}.im" for name in ("a", "b")]
+    others = [replacements / item.name for item in originals]
+    try:
+        for value, member in enumerate([*originals, *others], 1):
+            assert tool.fromarray(str(member), np.full((2, 2), value), linear=True)
+            assert tool.done()
+        inner = tool.imageconcat(str(path), list(map(str, originals)), axis=0, mode="nomove", relax=True)
+        assert inner.done()
+        before = {member: member.stat() for member in [path, *originals, *others]}
+        with pytest.raises(RuntimeError, match="operand .* would resolve to.*different image"):
+            tool.imageconcat(str(output), [str(path), *map(str, others)], axis=0, mode=mode, relax=True)
+        assert not output.exists()
+        assert all(os.path.samestat(stat, member.stat()) for member, stat in before.items())
+        assert tool.open(str(path))
+        np.testing.assert_array_equal(tool.getchunk()[:, 0], [1, 1, 2, 2])
+    finally:
+        if inner is not None:
+            inner.done()
+        tool.done()
+
+
+def test_owned_concat_move_preserves_a_relative_symlink_chain(tmp_path):
+    api = _backend("casars")
+    tool, joined = api.image(), None
+    real, first, second, output = [tmp_path / f"{n}.im" for n in ("real", "first", "second", "join")]
+    try:
+        assert tool.fromarray(str(real), np.full((2, 2), 6.), linear=True)
+        assert tool.done()
+        first.symlink_to(real.name, target_is_directory=True)
+        second.symlink_to(first.name, target_is_directory=True)
+        members = [first, real, second]
+        joined = tool.imageconcat(str(output), list(map(str, members)), axis=0, mode="move", relax=True)
+        assert not any(member.exists() or member.is_symlink() for member in members)
+        assert str((output / first.name).readlink()) == real.name
+        assert str((output / second.name).readlink()) == first.name
+        assert joined.done()
+        assert tool.open(str(output))
+        np.testing.assert_array_equal(tool.getchunk(), np.full((6, 2), 6.))
+    finally:
+        if joined is not None:
+            joined.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("mode", ["copy", "move"])
+def test_owned_concat_overwrite_respects_unlocked_table_tool(tmp_path, mode):
+    api = _backend("casars")
+    tool, table, joined = api.image(), api.table(), None
+    first, second, output = [tmp_path / f"{n}.im" for n in ("first", "second", "join")]
+    try:
+        for path, value in [(first, 1.), (second, 2.)]:
+            assert tool.fromarray(str(path), np.full((2, 2), value), linear=True)
+            assert tool.done()
+        original = tool.imageconcat(str(output), [str(first), str(second)], axis=0, mode="copy", relax=True)
+        assert original.done()
+        old_member = output / first.name
+        original_identity = old_member.stat()
+        assert table.open(str(old_member))
+        table.unlock()
+        with pytest.raises(RuntimeError, match="already opened"):
+            joined = tool.imageconcat(str(output), [str(first), str(second)], axis=0, mode=mode,
+                                       overwrite=True, relax=True)
+        assert first.exists() and second.exists()
+        assert os.path.samestat(original_identity, old_member.stat())
+        assert table.nrows() == 1
+    finally:
+        if joined is not None:
+            joined.done()
+        table.done()
+        tool.done()
+
+
 @pytest.mark.parametrize("backend", ["casa", "casars"])
 def test_native_virtual_manifest_resolution_and_missing_miscinfo(tmp_path, monkeypatch, backend):
     api = _backend(backend)
@@ -394,7 +474,7 @@ def test_virtual_shape_admission_preserves_named_output_and_inputs(tmp_path, mod
 
 
 @pytest.mark.parametrize("existing_output", [False, True])
-def test_virtual_move_failed_final_open_restores_sources(tmp_path, existing_output):
+def test_virtual_move_rejects_broken_link_preserving_sources(tmp_path, existing_output):
     api = _backend("casars")
     source, referent, alias, output = [
         tmp_path / f"{name}.im" for name in ("a", "referent", "alias", "join")
@@ -410,7 +490,7 @@ def test_virtual_move_failed_final_open_restores_sources(tmp_path, existing_outp
         alias.symlink_to(referent.name, target_is_directory=True)
         before = {path: path.lstat() for path in [source, referent, alias, *([output] if existing_output else [])]}
         contents = set(tmp_path.iterdir())
-        with pytest.raises(RuntimeError, match="No such file"):
+        with pytest.raises(RuntimeError, match="operand .* would resolve to .*(not found|No such file)"):
             tool.imageconcat(str(output), [str(source), str(alias)], axis=0, relax=True,
                              mode="move", overwrite=existing_output)
         assert set(tmp_path.iterdir()) == contents
@@ -507,6 +587,33 @@ def test_virtual_nomove_rename_cannot_use_unrelated_siblings(tmp_path):
         tool.done()
 
 
+def test_virtual_owned_rename_cannot_redirect_a_relative_symlink(tmp_path):
+    api = _backend("casars")
+    tool = api.image()
+    before, after = tmp_path / "before", tmp_path / "after"
+    before.mkdir()
+    after.mkdir()
+    original, target = before / "join.im", after / "join.im"
+    original.mkdir()
+    try:
+        for member, value in [(before / "ref.im", 1.), (after / "ref.im", 9.), (original / "rest.im", 2.)]:
+            assert tool.fromarray(str(member), np.full((2, 2), value), linear=True)
+            assert tool.done()
+        (original / "link.im").symlink_to("../ref.im", target_is_directory=True)
+        (original / "imageconcat.json").write_text(json.dumps({
+            "Version": 1, "DataType": "float", "Axis": 0, "TempClose": True,
+            "Images": ["././link.im", "././rest.im"],
+        }))
+        assert tool.open(str(original))
+        with pytest.raises(RuntimeError, match="operand .* would resolve to.*different image"):
+            tool.rename(str(target))
+        assert not target.exists()
+        assert tool.open(str(original))
+        np.testing.assert_array_equal(tool.getchunk()[:, 0], [1, 1, 2, 2])
+    finally:
+        tool.done()
+
+
 @pytest.mark.parametrize("writer", ["casa", "casars"])
 @pytest.mark.parametrize("reader", ["casa", "casars"])
 def test_virtual_owned_move_across_filesystems(tmp_path, other_filesystem, writer, reader):
@@ -537,6 +644,39 @@ def test_virtual_owned_move_across_filesystems(tmp_path, other_filesystem, write
         if joined is not None:
             joined.done()
         sensor.done()
+        tool.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX directory permissions")
+def test_virtual_owned_move_across_filesystems_checks_original_removal_access(tmp_path, other_filesystem):
+    api = _backend("casars")
+    tool = api.image()
+    originals = [tmp_path / name for name in ("left.im", "right.im")]
+    output = other_filesystem / "join.im"
+    extra = originals[1] / "extra"
+    try:
+        paths = [*originals, output]
+        for number, path in enumerate(paths, 1):
+            assert tool.fromarray(str(path), np.full((2, 2), number), linear=True)
+            assert tool.done()
+        extra.mkdir()
+        (extra / "data").write_text("retained original")
+        extra.chmod(0o577)
+        if os.access(extra, os.W_OK):
+            pytest.skip("requires a process without write access to the source directory")
+        identities = [path.stat() for path in paths]
+        with pytest.raises(RuntimeError, match="Cannot move native image .* across filesystems"):
+            tool.imageconcat(str(output), list(map(str, originals)), axis=0,
+                             mode="move", overwrite=True, relax=True)
+        for number, (path, identity) in enumerate(zip(paths, identities), 1):
+            assert os.path.samestat(identity, path.stat())
+            assert tool.open(str(path))
+            np.testing.assert_array_equal(tool.getchunk(), np.full((2, 2), number))
+            assert tool.done()
+        assert (extra / "data").read_text() == "retained original"
+    finally:
+        if extra.exists():
+            extra.chmod(0o755)
         tool.done()
 
 

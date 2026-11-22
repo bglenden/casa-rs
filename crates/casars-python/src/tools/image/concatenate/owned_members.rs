@@ -181,16 +181,29 @@ impl OwnedOperands {
     }
 
     pub(in crate::tools::image) fn stage(
-        mut self,
+        self,
+        owner: &Path,
         product: &Path,
         registry: &OpenImages,
         moved: &mut MemberMoves,
     ) -> PyResult<()> {
-        if self.moving {
-            // A relative link can point to another member of this exact
-            // batch. Validate and move link entries before their referents.
+        super::relocation::check_owned(
+            &entry_path(owner)?,
             self.members
-                .sort_by_key(|member| !member.metadata.is_symlink());
+                .iter()
+                .map(|member| (member.filename.as_os_str(), member.source.as_path())),
+            self.moving,
+        )?;
+        #[cfg(unix)]
+        if self.moving {
+            // Validate each full link chain before transferring any entries.
+            for member in self
+                .members
+                .iter()
+                .filter(|member| member.metadata.is_symlink())
+            {
+                lock_referent_for_read(member)?;
+            }
         }
         for (index, member) in self.members.into_iter().enumerate() {
             let destination = product.join(&member.filename);
@@ -321,7 +334,7 @@ impl MemberMoves {
         (error, restored)
     }
 
-    pub(in crate::tools::image) fn finish(self, output: &Path) -> PyResult<()> {
+    pub(in crate::tools::image) fn finish(self, output: &Path) -> Vec<String> {
         let mut failures = Vec::new();
         for moved in self.0 {
             if let Err(error) = moved
@@ -331,11 +344,7 @@ impl MemberMoves {
                 failures.push(error.to_string());
             }
         }
-        if failures.is_empty() {
-            Ok(())
-        } else {
-            Err(raised(failures.join(". ")))
-        }
+        failures
     }
 
     pub(in crate::tools::image) fn verify_links(&self, output: &Path) -> PyResult<()> {
@@ -376,7 +385,7 @@ fn claim(member: &OwnedMember, holding: &Path, registry: &OpenImages) -> PyResul
     if member.metadata.is_symlink() {
         #[cfg(unix)]
         {
-            let _locks = lock_referent_for_read(member)?;
+            member.check_source()?;
             return crate::tools::image::native_rename::move_symlink(
                 &member.source,
                 &member.metadata,

@@ -454,10 +454,14 @@ fn copy_claimed_directory(
                 source.display()
             )));
         }
-        if matches!(kind, CopyKind::ReadOnlyDirectory) {
+        if matches!(kind, CopyKind::ReadOnlyDirectory | CopyKind::NativeTable) {
             check_tree_removal_access(&claimed).map_err(|error| {
+                let description = match kind {
+                    CopyKind::ReadOnlyDirectory => "MIRIAD image",
+                    _ => "native image",
+                };
                 raised(format!(
-                    "Cannot move MIRIAD image {} across filesystems: {error}",
+                    "Cannot move {description} {} across filesystems: {error}",
                     source.display()
                 ))
             })?;

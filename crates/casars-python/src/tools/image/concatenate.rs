@@ -25,6 +25,7 @@ use super::handle::{ImageHandle, Storage, raised, same_file_snapshot, with_pixel
 use super::lifecycle::resolve_image_path;
 
 pub(super) mod owned_members;
+mod relocation;
 pub(super) mod virtual_image;
 
 fn filename_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Variant> {
@@ -566,7 +567,7 @@ impl PyImageTool {
                         },
                     )
                 } else {
-                    publish_owned_virtual_concat(
+                    let (attached, cleanup_warnings) = publish_owned_virtual_concat(
                         outfile,
                         expanded.as_ref(),
                         overwrite,
@@ -580,7 +581,9 @@ impl PyImageTool {
                                 &mut logs,
                             )
                         },
-                    )
+                    )?;
+                    logs.extend(cleanup_warnings.into_iter().map(LogLine::warning));
+                    Ok(attached)
                 }?;
                 if request.history {
                     request.history_for(&mut attached.lock())?;

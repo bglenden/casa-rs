@@ -353,6 +353,7 @@ impl StagedImage {
             Ok(_) => {
                 let key = attachment::key(path)?;
                 if attachment::conflicting_images(registry, &key, 0)
+                    || crate::tools::table::path_is_in_use(&key)
                     || key
                         .ancestors()
                         .filter(|parent| parent.join("table.dat").is_file())
@@ -392,6 +393,7 @@ impl StagedImage {
 
     fn publish(&self, existed: bool) -> PyResult<ImagePublication> {
         self.check_alias()?;
+        let virtual_concat = casa_images::concat_file::is_image_concat(&self.product);
         #[cfg(unix)]
         let directory = std::fs::File::open(&self.product).map_err(raised)?;
         if existed {
@@ -401,6 +403,7 @@ impl StagedImage {
         }
         Ok(ImagePublication {
             existed,
+            virtual_concat,
             #[cfg(unix)]
             directory,
         })
@@ -445,6 +448,7 @@ struct InstalledImage {
 
 struct ImagePublication {
     existed: bool,
+    virtual_concat: bool,
     #[cfg(unix)]
     directory: std::fs::File,
 }
@@ -468,15 +472,16 @@ impl ImagePublication {
         stage: &StagedImage,
         registry: &mut attachment::OpenImages,
     ) -> PyResult<AttachedImage> {
-        if casa_images::concat_file::is_image_concat(&stage.target) {
+        if self.virtual_concat {
             stage.check_alias()?;
+            if !self.still_at_destination(&stage.target) {
+                return Err(changed_virtual_output());
+            }
             let name = stage.alias.as_deref().unwrap_or(&stage.target);
             let image =
                 super::concatenate::virtual_image::open_handle(&stage.target).map_err(raised)?;
             if !self.still_at_destination(&stage.target) {
-                return Err(raised(
-                    "The published virtual concatenation changed during creation",
-                ));
+                return Err(changed_virtual_output());
             }
             return AttachedImage::with_virtual_concat(image, name, registry);
         }
@@ -525,6 +530,10 @@ impl ImagePublication {
     }
 }
 
+fn changed_virtual_output() -> PyErr {
+    raised("The published virtual concatenation changed during creation")
+}
+
 fn report_publication_recovery(
     stage: StagedImage,
     original: PyErr,
@@ -569,7 +578,7 @@ pub(super) fn publish_owned_virtual_concat(
     expanded: &str,
     overwrite: bool,
     prepare: impl FnOnce(&Path, &Path) -> PyResult<OwnedOperands>,
-) -> PyResult<AttachedImage> {
+) -> PyResult<(AttachedImage, Vec<String>)> {
     let stage = StagedImage::allocate_creation(outfile, expanded, overwrite)?
         .ok_or_else(|| raised("Virtual concatenation requires an output image"))?;
     let members = prepare(&stage.target, &stage.product)?;
@@ -585,7 +594,7 @@ fn install_owned_virtual_concat(
         &StagedImage,
         &mut attachment::OpenImages,
     ) -> PyResult<AttachedImage>,
-) -> PyResult<AttachedImage> {
+) -> PyResult<(AttachedImage, Vec<String>)> {
     let mut registry = attachment::registry();
     let mut locks = BTreeMap::new();
     let existed = stage.check(overwrite, &registry, &mut locks)?;
@@ -598,7 +607,7 @@ fn install_owned_virtual_concat(
     let mut moves = MemberMoves::default();
     let mut recoverable_stage = true;
     let result = (|| {
-        members.stage(&stage.product, &registry, &mut moves)?;
+        members.stage(&stage.target, &stage.product, &registry, &mut moves)?;
         let publication = stage.publish(existed)?;
         let opened = if previous.as_ref().is_some_and(|previous| {
             !stage
@@ -632,8 +641,7 @@ fn install_owned_virtual_concat(
     match result {
         Ok(opened) => {
             stage.directory.disable_cleanup(false);
-            moves.finish(&stage.target)?;
-            Ok(opened)
+            Ok((opened, moves.finish(&stage.target)))
         }
         Err(error) => {
             let (error, restored) = moves.rollback(error);
@@ -1205,6 +1213,65 @@ mod publication_tests {
             assert!(same_file_identity(
                 &identity,
                 &source.symlink_metadata().unwrap()
+            ));
+        }
+    }
+
+    #[test]
+    fn owned_virtual_move_restores_existing_output_after_reopen_failure() {
+        Python::initialize();
+        let root = tempfile::tempdir().unwrap();
+        let (stage, members, sources, snapshots) = owned_move_fixture(root.path());
+        let target = stage.target.clone();
+        test_image(Some(&target), 7).unwrap();
+        let previous = target.symlink_metadata().unwrap();
+        let Err(error) = install_owned_virtual_concat(stage, true, members, |_, _, _| {
+            Err(raised("injected reopen failure"))
+        }) else {
+            panic!("the injected failure succeeded");
+        };
+        assert!(error.to_string().contains("injected reopen failure"));
+        assert!(same_file_identity(
+            &previous,
+            &target.symlink_metadata().unwrap()
+        ));
+        assert_eq!(ImageHandle::open(&target).unwrap().shape(), &[7]);
+        for (source, identity) in sources.iter().zip(snapshots) {
+            assert!(same_file_identity(
+                &identity,
+                &source.symlink_metadata().unwrap()
+            ));
+        }
+    }
+
+    #[test]
+    fn owned_virtual_publication_cannot_open_an_unrelated_replacement() {
+        Python::initialize();
+        let root = tempfile::tempdir().unwrap();
+        let (stage, members, sources, snapshots) = owned_move_fixture(root.path());
+        let target = stage.target.clone();
+        let displaced = root.path().join("displaced.im");
+        std::fs::write(stage.product.join("imageconcat.json"), "{}").unwrap();
+        let Err(error) =
+            install_owned_virtual_concat(stage, false, members, |publication, stage, registry| {
+                std::fs::rename(&stage.target, &displaced).map_err(raised)?;
+                test_image(Some(&stage.target), 7)?;
+                publication.open(stage, registry)
+            })
+        else {
+            panic!("opening the competing replacement succeeded");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("published virtual concatenation changed")
+        );
+        assert_eq!(ImageHandle::open(&target).unwrap().shape(), &[7]);
+        for (source, identity) in sources.iter().zip(snapshots) {
+            let retained = displaced.join(source.file_name().unwrap());
+            assert!(same_file_identity(
+                &identity,
+                &retained.symlink_metadata().unwrap()
             ));
         }
     }

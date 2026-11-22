@@ -35,27 +35,7 @@ pub(in crate::tools::image) fn open_handle(path: &Path) -> Result<ImageHandle, I
 }
 
 pub(in crate::tools::image) fn check_relocation(source: &Path, target: &Path) -> PyResult<()> {
-    let manifest = ConcatManifest::open(source).map_err(raised)?;
-    for (original, relocated) in manifest
-        .paths(source)
-        .into_iter()
-        .zip(manifest.paths(target))
-    {
-        let expected = original
-            .strip_prefix(source)
-            .map_or_else(|_| original.clone(), |suffix| target.join(suffix));
-        if relocated != expected
-            && !matches!((relocated.canonicalize(), expected.canonicalize()),
-                (Ok(left), Ok(right)) if left == right)
-        {
-            return Err(raised(format!(
-                "Cannot relocate virtual concatenation: operand {} would resolve to {}",
-                original.display(),
-                relocated.display(),
-            )));
-        }
-    }
-    Ok(())
+    super::relocation::check_rename(source, target)
 }
 
 fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {

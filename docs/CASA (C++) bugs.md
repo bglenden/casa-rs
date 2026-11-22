@@ -8584,6 +8584,13 @@ basename. CASA's copy can replace the first copy and bind both sections
 to the second operand. Move can remove both originals and retain only the
 second. casa-rs refuses the conflict before transferring either image.
 
+An input can itself be a virtual image whose manifest refers to sibling
+images. Copying or moving it together with other images of those same
+basenames can silently substitute the other images in the nested product.
+casa-rs checks the manifest graph and symbolic links in the proposed
+directory layout before transferring the inputs. A chain of relative symlinks
+can move together when it continues to resolve to the same image.
+
 See [#1749](https://github.com/bglenden/casa-rs/issues/1749).
 
 ## Renaming a sibling-relative virtual image can displace a readable image
@@ -8592,8 +8599,9 @@ Create a `nomove` concatenation of two sibling images in CASA 6.7.6.14
 and rename it into a new parent directory. The operands remain in the old
 parent, so reopen fails after CASA moves the virtual directory. casa-rs
 checks operand resolution before rename and refuses a destination that
-changes the bindings. Renaming an owned tree preserves its nested member
-paths across parent directories.
+changes the bindings, including an owned member linked to an external
+relative target. Renaming a self-contained tree preserves its nested
+member paths across parent directories.
 
 See [#1749](https://github.com/bglenden/casa-rs/issues/1749).
 
