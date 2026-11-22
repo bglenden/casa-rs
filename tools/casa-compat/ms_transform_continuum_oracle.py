@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import casatasks
 from casatasks.private import task_mstransform as implementation
-from casacore.tables import table
+from casacore.tables import makearrcoldesc, maketabdesc, table
 import numpy as np
 
 from casars import tasks
@@ -193,6 +193,30 @@ def multi_ms(root, source):
     print("passed multi-ms", flush=True)
 
 
+def sparse_noise(root):
+    source = make_pair(root, "sparse-input", 7, counts=(7, 7), spectra=True)
+    with table(str(source), readonly=False, ack=False) as ms:
+        initial_time = ms.getcell("TIME", 0)
+        original = ms.getcol("SIGMA_SPECTRUM")
+        ms.removecols("SIGMA_SPECTRUM")
+        ms.addcols(maketabdesc(makearrcoldesc("SIGMA_SPECTRUM", 0, ndim=2, valuetype="float")))
+        ms.putcol("SIGMA_SPECTRUM", original[1:], startrow=1)
+    paired(root, source, "sparse-noise", spw="0", fitspw="0:1~4", fitorder=1,
+           taql=f"TIME == {initial_time:.17g}")
+
+
+def tiny_weights(root):
+    source = make_pair(root, "tiny-weight-input", 7, counts=(7, 7), spectra=True)
+    with table(str(source), readonly=False, ack=False) as ms:
+        shape = ms.getcol("DATA").shape
+        ms.putcol("DATA", np.full(shape, 3 + 2j, dtype=np.complex64))
+        ms.putcol("FLAG", np.zeros(shape, dtype=bool))
+        ms.putcol("SIGMA_SPECTRUM", np.full(shape, 1e14, dtype=np.float32))
+    _, actual = paired(root, source, "tiny-weights", fitorder=0)
+    with table(str(actual), ack=False) as ms:
+        np.testing.assert_allclose(ms.getcol("DATA"), 0, atol=1e-6)
+
+
 def main(cases):
     assert casatasks.version() == [6, 7, 6, 14]
     selected = lambda name: not cases or name in cases
@@ -219,6 +243,8 @@ def main(cases):
             ("time-average", dict(fitorder=1, timeaverage=True, timebin="24s")),
             ("combine", dict(fitorder=1, combinespws=True)),
             ("regrid", dict(fitorder=1, regridms=True, start=1, nchan=4)),
+            ("split-regrid", dict(fitorder=1, spw="0", fitspw="0:1~4",
+                                  regridms=True, nspw=2, nchan=6)),
         ):
             if selected(case):
                 expected, actual = paired(root, source, case, **options)
@@ -245,6 +271,10 @@ def main(cases):
             selected_channels(root, source)
         if selected("multi-ms"):
             multi_ms(root, source)
+        if selected("sparse-noise"):
+            sparse_noise(root)
+        if selected("tiny-weights"):
+            tiny_weights(root)
         if selected("wrapper"):
             wrapper_bug(root, source)
         if selected("retry"):

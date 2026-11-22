@@ -370,6 +370,12 @@ fn polynomial_fit(
     if terms == 0 || iterations == 0 {
         return Vec::new();
     }
+    // A common weight scale leaves the fit unchanged. Normalize before
+    // applying the shared solver's absolute singular-value cutoff.
+    let weight_scale = admitted
+        .iter()
+        .map(|&(_, weight)| weight)
+        .fold(0.0, f64::max);
     let mut rows = admitted
         .iter()
         .map(|&(position, weight)| {
@@ -377,7 +383,7 @@ fn polynomial_fit(
             let basis = std::iter::successors(Some(1.0), move |power| Some(power * coordinate))
                 .take(terms)
                 .collect::<Vec<_>>();
-            (basis, value(position), weight)
+            (basis, value(position), weight / weight_scale)
         })
         .collect::<Vec<_>>();
     let scale = rows

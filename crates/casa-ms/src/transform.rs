@@ -1363,6 +1363,19 @@ fn mstransform_staged(
                 (block, Vec::new())
             };
         let descriptions = &output_input_ddids[batch_start..batch_end];
+        if grammar == RowGrammar::Transform
+            && !averaging_time
+            && !read_spectral_weights
+            && combination.is_none()
+        {
+            input_block.resolve_buffer_spectra(
+                row_spectrum_names,
+                &mut spectrum_available,
+                &starts_visibility_buffer[batch_start..batch_end],
+                input_rows,
+                &request.input_ms,
+            )?;
+        }
         if let Some(fit) = &continuum
             && combination.is_none()
         {
@@ -1498,9 +1511,11 @@ fn mstransform_staged(
             if writes_rows && continuum.is_some() && !averaging_time && combination.is_none() {
                 let flagged =
                     continuum::row_flag(Some(&flags), Some(&channel_selection[&spw_id].channels));
-                write_session
-                    .push_scalar_row("FLAG_ROW", Some(ScalarValue::Bool(flagged)))
-                    .map_err(write_error)?;
+                for _ in 0..copies_per_row {
+                    write_session
+                        .push_scalar_row("FLAG_ROW", Some(ScalarValue::Bool(flagged)))
+                        .map_err(write_error)?;
+                }
             }
             let regrid = regrid
                 .as_mut()
@@ -1525,35 +1540,10 @@ fn mstransform_staged(
                         select_correlations(sigma, "SIGMA")?,
                     ))
                 };
-            for (((name, values), output), available) in spectrum_values
-                .iter_mut()
-                .zip(&mut row_spectra)
-                .zip(&mut spectrum_available)
-            {
-                let cell = values.next().flatten();
-                if grammar == RowGrammar::Transform
-                    && !averaging_time
-                    && !read_spectral_weights
-                    && combination.is_none()
-                {
-                    if starts_visibility_buffer[row_index] {
-                        // CASA checks the first cell of this visibility
-                        // buffer before reading that buffer's spectra.
-                        *available = cell.is_some();
-                    }
-                    if !*available {
-                        *output = None;
-                        continue;
-                    }
-                    if cell.is_none() {
-                        return Err(MsTransformError::MissingSpectrumCell {
-                            path: request.input_ms.display().to_string(),
-                            row: selected_rows[row_index],
-                            column: name,
-                        });
-                    }
-                }
-                *output = cell
+            for ((name, values), output) in spectrum_values.iter_mut().zip(&mut row_spectra) {
+                *output = values
+                    .next()
+                    .flatten()
                     .filter(|value| !value.is_empty())
                     .map(|value| select_correlations(value, name))
                     .transpose()?;
