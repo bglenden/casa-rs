@@ -62,7 +62,12 @@ def test_nomove_manifest_and_write_through(tmp_path, kind, dtype, precision, sto
         assert reader_tool.putchunk(values, blc=[1, 0], inc=[2, 1])
         expected[1:6:2, 0] = 9 * factor
         np.testing.assert_array_equal(reader_tool.getchunk(), expected)
+        if kind in {"float", "complex"}:
+            assert reader_tool.unlock()
+            np.testing.assert_array_equal(reader_tool.haslock(), [False, False])
         assert reader_tool.setmiscinfo({"intent": "write-through"})
+        if kind in {"float", "complex"}:
+            np.testing.assert_array_equal(reader_tool.haslock(), [True, False])
         assert reader_tool.done()
         assert json.loads((output / "imageconcat.json").read_text())["MiscInfo"] == {
             "intent": "write-through",
@@ -299,7 +304,9 @@ def test_virtual_concat_metadata_and_mask_handler_state(tmp_path, backend):
         out = source.imageconcat(str(output), list(map(str, paths)), axis=0,
                                  mode="nomove", relax=True)
         assert out.brightnessunit() == "Jy"
+        np.testing.assert_array_equal(out.haslock(), [False, False])
         assert out.setbrightnessunit("K")
+        np.testing.assert_array_equal(out.haslock(), [False, False])
         assert out.brightnessunit() == "K"
         with pytest.raises(RuntimeError, match="Cannot make requested mask.*ImageConcat"):
             out.calcmask("F", "unsupported")
