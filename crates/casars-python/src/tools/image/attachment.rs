@@ -172,12 +172,10 @@ impl AttachedImage {
         if path != probe && (!probe.is_dir() || !path.is_dir()) {
             return Err(unrecognized());
         }
+        if casa_images::concat_file::is_image_concat(probe) {
+            return super::concatenate::virtual_image::open(path);
+        }
         if casa_images::expr_file::is_image_expr(probe) {
-            if probe.join("imageconcat.json").is_file() {
-                return Err(raised(
-                    "Opening a virtual concatenated image is not implemented yet (#1749)",
-                ));
-            }
             return super::saved_expression::open(path);
         }
         let key = key(path)?;
@@ -257,6 +255,18 @@ impl AttachedImage {
         }
         opened.register(registry);
         Ok(opened)
+    }
+
+    pub(super) fn with_virtual_concat(
+        image: ImageHandle,
+        name: &Path,
+        registry: &mut OpenImages,
+    ) -> PyResult<Self> {
+        let mut attached = Self::temporary(image);
+        attached.key = Some(key(name)?);
+        attached.native_name = Some(std::path::absolute(name).map_err(raised)?);
+        attached.register(registry);
+        Ok(attached)
     }
 
     fn shared(registry: &OpenImages, key: &Path, name: &Path) -> Option<Self> {
@@ -696,6 +706,18 @@ impl AttachedImage {
     }
 
     pub(super) fn remove(&self) -> PyResult<String> {
+        {
+            let image = self.lock();
+            if image.image_type_name() == "ImageConcat" {
+                let name = self
+                    .name_path(&image)
+                    .expect("persistent concatenation name");
+                return Err(raised(format!(
+                    "Cannot delete file {} because table is not writable",
+                    name.display()
+                )));
+            }
+        }
         let Some(key) = &self.key else {
             if let Some(path) = self.lock().path() {
                 return Err(raised(format!(

@@ -366,6 +366,8 @@ impl StagedImage {
                     .read_dir()
                     .is_ok_and(|mut entries| entries.next().is_none());
                 if !empty
+                    && !(casa_images::concat_file::is_image_concat(&self.product)
+                        && casa_images::concat_file::ConcatManifest::open(path).is_ok())
                     && casa_tables::Table::open_metadata_only(casa_tables::TableOptions::new(path))
                         .is_err()
                 {
@@ -438,6 +440,17 @@ struct InstalledImage {
 impl InstalledImage {
     fn open(&self, registry: &mut attachment::OpenImages) -> PyResult<AttachedImage> {
         let stage = &self.stage;
+        if casa_images::concat_file::is_image_concat(&stage.target) {
+            stage.check_alias()?;
+            let name = stage.alias.as_deref().unwrap_or(&stage.target);
+            let image = super::concatenate::virtual_image::open_handle(name).map_err(raised)?;
+            if !self.still_at_destination() {
+                return Err(raised(
+                    "The published virtual concatenation changed during creation",
+                ));
+            }
+            return AttachedImage::with_virtual_concat(image, name, registry);
+        }
         let Some(alias) = &stage.alias else {
             return AttachedImage::open_created(registry, &stage.target);
         };
@@ -500,6 +513,23 @@ pub(super) fn publish_image(
 ) -> PyResult<AttachedImage> {
     publish_image_pair(outfile, "", overwrite, |target, _| {
         Ok((build(target)?, None))
+    })
+}
+
+pub(super) fn publish_virtual_concat(
+    outfile: &str,
+    expanded: &str,
+    overwrite: bool,
+    build: impl FnOnce(&Path, &Path) -> PyResult<ImageHandle>,
+) -> PyResult<AttachedImage> {
+    let stage = StagedImage::allocate_creation(outfile, expanded, overwrite)?
+        .ok_or_else(|| raised("Virtual concatenation requires an output image"))?;
+    let final_path = stage.target.clone();
+    publish_staged_pair(Some(stage), None, overwrite, |path, _| {
+        Ok((
+            build(&final_path, path.expect("virtual output stage"))?,
+            None,
+        ))
     })
 }
 

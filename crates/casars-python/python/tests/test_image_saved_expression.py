@@ -240,7 +240,7 @@ def test_saved_expression_factory_discriminator_precedence(tmp_path, monkeypatch
     image = api.image()
     try:
         if backing == "concat":
-            message = "Json parse error" if backend == "casa" else "#1749"
+            message = "Json parse error" if backend == "casa" else "imageconcat.json"
             with pytest.raises(RuntimeError, match=message):
                 image.open(str(path))
             assert not image.isopen()

@@ -8535,6 +8535,17 @@ in the same attachment reads the mask from its new path when the
 rename succeeds.
 See [#1691](https://github.com/bglenden/casa-rs/issues/1691).
 
+## A strided write to a virtual concatenation can abort at a skipped member
+
+In CASA 6.7.6.14, concatenate three `[3, 4]` Float members along
+axis zero with `mode="nomove"` and `relax=True`, with the first
+member repeated in the third position. A `[2, 1]` write from
+`blc=[0, 0]` with `inc=[6, 1]` aborts Python. The middle member
+intersects the bounding interval but has no selected samples.
+Casa-rs skips members with no requested samples and writes the two
+samples in order to the single physical member.
+See [#1749](https://github.com/bglenden/casa-rs/issues/1749).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

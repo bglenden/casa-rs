@@ -49,6 +49,7 @@ use crate::image::{
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
+use crate::virtual_concat::ConcatImage;
 
 mod history;
 mod mask;
@@ -129,7 +130,10 @@ impl<T: ImagePixel> TempImage<T> {
     /// Returns the source-specific write error for a read-only image.
     pub fn require_writable_pixels(&self) -> Result<(), LatticeError> {
         match &self.read_only {
-            Some(image) => Err(LatticeError::Table(image.write_error.into())),
+            Some(image) if !self.is_writable() => {
+                Err(LatticeError::Table(image.write_error.into()))
+            }
+            Some(_) => Ok(()),
             None => Ok(()),
         }
     }
@@ -174,7 +178,12 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Reports whether this image's pixels are writable.
     pub fn is_writable(&self) -> bool {
-        self.read_only.is_none()
+        self.read_only.is_none() || self.concat_source().is_some_and(Lattice::is_writable)
+    }
+
+    /// Return the virtual concatenation supplying this attachment's pixels.
+    pub fn concat_source(&self) -> Option<&ConcatImage<T>> {
+        self.read_only.as_ref()?.source.as_any()?.downcast_ref()
     }
 
     /// Returns the casacore-style class name.
@@ -225,20 +234,17 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Writes a rectangular slice at the given origin.
     pub fn put_slice(&mut self, data: &ArrayD<T>, start: &[usize]) -> Result<(), ImageError> {
-        self.require_writable_pixels()?;
-        Ok(self.lattice.put_slice(data, start)?)
+        Ok(<Self as LatticeMut<T>>::put_slice(self, data, start)?)
     }
 
     /// Writes a single pixel.
     pub fn put_at(&mut self, value: T, pos: &[usize]) -> Result<(), ImageError> {
-        self.require_writable_pixels()?;
-        Ok(self.lattice.put_at(value, pos)?)
+        Ok(<Self as LatticeMut<T>>::put_at(self, value, pos)?)
     }
 
     /// Sets all pixels to the same value.
     pub fn set(&mut self, value: T) -> Result<(), ImageError> {
-        self.require_writable_pixels()?;
-        Ok(self.lattice.set(value)?)
+        Ok(<Self as LatticeMut<T>>::set(self, value)?)
     }
 }
 
@@ -350,6 +356,9 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Replaces the misc-info record.
     pub fn set_misc_info(&mut self, rec: RecordValue) -> Result<(), ImageError> {
+        if let Some(source) = self.concat_source() {
+            source.write_misc_info(&rec)?;
+        }
         if let Some(path) = self.component_table_path() {
             crate::component_list_image::write_component_keyword(
                 path,
@@ -629,16 +638,26 @@ impl<T: ImagePixel> LatticeMut<T> for TempImage<T> {
     }
 
     fn put_at(&mut self, value: T, position: &[usize]) -> Result<(), LatticeError> {
+        if let Some(source) = self.concat_source() {
+            let data = ArrayD::from_elem(IxDyn(&vec![1; self.ndim()]), value);
+            return source.write_slice(&data, position);
+        }
         self.require_writable_pixels()?;
         self.lattice.put_at(value, position)
     }
 
     fn put_slice(&mut self, data: &ArrayD<T>, start: &[usize]) -> Result<(), LatticeError> {
+        if let Some(source) = self.concat_source() {
+            return source.write_slice(data, start);
+        }
         self.require_writable_pixels()?;
         self.lattice.put_slice(data, start)
     }
 
     fn set(&mut self, value: T) -> Result<(), LatticeError> {
+        if let Some(source) = self.concat_source() {
+            return source.fill(value);
+        }
         self.require_writable_pixels()?;
         self.lattice.set(value)
     }

@@ -1,0 +1,501 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use casa_images::concat_file::{ConcatManifest, is_image_concat};
+use casa_images::concatenate::ConcatenationPlan;
+use casa_images::virtual_concat::{ConcatImage, ConcatMember};
+use casa_images::{ImageError, ImageInterface, ImagePixel, ImagePixelType, TempImage};
+use casa_lattices::Lattice;
+use casa_tables::LockType;
+use casa_types::RecordValue;
+use ndarray::ArrayD;
+use num_complex::{Complex32, Complex64};
+use pyo3::prelude::*;
+
+use super::{Input, Request, beam_records, coordinate_record, merge_misc};
+use crate::tools::LogLine;
+use crate::tools::image::attachment::{AttachedImage, registry};
+use crate::tools::image::handle::{ImageHandle, Storage, raised, same_file_identity, with_storage};
+
+pub(in crate::tools::image) fn open(path: &Path) -> PyResult<AttachedImage> {
+    let image = load(path, &mut HashSet::new())?;
+    AttachedImage::with_virtual_concat(image, path, &mut registry())
+}
+
+pub(in crate::tools::image) fn open_handle(path: &Path) -> Result<ImageHandle, ImageError> {
+    load(path, &mut HashSet::new()).map_err(|error| ImageError::CasaSelection(error.to_string()))
+}
+
+fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
+    let root = path.canonicalize().map_err(raised)?;
+    if !active.insert(root.clone()) {
+        return Err(raised(format!(
+            "Cycle in virtual image concatenation at {}",
+            root.display()
+        )));
+    }
+    let manifest = ConcatManifest::open(&root).map_err(raised)?;
+    let paths = manifest.paths(&root);
+    let inputs = open_members(&paths, active)?;
+    let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
+    let kind = manifest.pixel_type().map_err(raised)?;
+    validate_types(&inputs, kind)?;
+    let axis = i64::try_from(manifest.axis()).map_err(raised)?;
+    let plan = ConcatenationPlan::new(&geometry, axis, true, false).map_err(raised)?;
+    let output = assemble(
+        &root,
+        inputs,
+        plan,
+        manifest.misc_info(),
+        manifest.temp_close(),
+        kind,
+    )?;
+    active.remove(&root);
+    Ok(output)
+}
+
+pub(super) fn stage_nomove(
+    request: &Request<'_>,
+    paths: &[PathBuf],
+    final_path: &Path,
+    stage: &Path,
+    logs: &mut Vec<LogLine>,
+) -> PyResult<ImageHandle> {
+    let output_key = final_path
+        .canonicalize()
+        .or_else(|_| -> std::io::Result<PathBuf> {
+            let parent = final_path.parent().expect("named virtual output parent");
+            Ok(parent.canonicalize()?.join(final_path.file_name().unwrap()))
+        })
+        .map_err(raised)?;
+    for path in paths {
+        if path
+            .canonicalize()
+            .map_err(raised)?
+            .starts_with(&output_key)
+        {
+            return Err(raised(
+                "The concatenation output contains one of its input images",
+            ));
+        }
+    }
+    let inputs = open_members(paths, &mut HashSet::new())?;
+    let kind = inputs[0].kind;
+    validate_types(&inputs, kind)?;
+    let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
+    let plan = ConcatenationPlan::new(&geometry, request.axis, request.relax, request.reorder)
+        .map_err(raised)?;
+    logs.extend(plan.warnings.iter().cloned().map(LogLine::warning));
+
+    let mut misc = RecordValue::default();
+    for &index in &plan.order {
+        merge_misc(&mut misc, &inputs[index].misc);
+    }
+    let manifest = ConcatManifest::new(
+        final_path,
+        kind,
+        plan.axis,
+        request.tempclose,
+        plan.order
+            .iter()
+            .map(|&index| inputs[index].path.to_path_buf()),
+        &misc,
+    );
+    fs::create_dir(stage).map_err(raised)?;
+    manifest.write(stage).map_err(raised)?;
+    assemble(
+        final_path,
+        inputs,
+        plan,
+        Some(misc),
+        request.tempclose,
+        kind,
+    )
+}
+
+fn open_members<'a>(
+    paths: &'a [PathBuf],
+    active: &mut HashSet<PathBuf>,
+) -> PyResult<Vec<Input<'a>>> {
+    paths
+        .iter()
+        .map(|path| {
+            let image = if is_image_concat(path) {
+                load(path, active)?
+            } else {
+                ImageHandle::open_for_concatenation(path).map_err(raised)?
+            };
+            Input::from_image(path, image, false)
+        })
+        .collect()
+}
+
+fn validate_types(inputs: &[Input<'_>], kind: ImagePixelType) -> PyResult<()> {
+    if inputs.iter().any(|input| input.kind != kind) {
+        return Err(raised(
+            "Concatenation of images of different data types is not supported",
+        ));
+    }
+    Ok(())
+}
+
+fn assemble(
+    path: &Path,
+    inputs: Vec<Input<'_>>,
+    plan: ConcatenationPlan,
+    misc: Option<RecordValue>,
+    tempclose: bool,
+    kind: ImagePixelType,
+) -> PyResult<ImageHandle> {
+    let first = &inputs[plan.order[0]];
+    let coords = coordinate_record(first, &plan)?;
+    let beams = beam_records(&plan, &inputs)?;
+    let units = first.units.clone();
+    let misc = misc.unwrap_or_else(|| {
+        let mut misc = RecordValue::default();
+        for &index in &plan.order {
+            merge_misc(&mut misc, &inputs[index].misc);
+        }
+        misc
+    });
+    let mut ordered: Vec<_> = inputs.into_iter().map(Some).collect();
+    let inputs: Vec<_> = plan
+        .order
+        .iter()
+        .map(|&index| ordered[index].take().unwrap())
+        .collect();
+    match kind {
+        ImagePixelType::Float32 => {
+            typed(path, inputs, plan, misc, units, coords, beams, tempclose).map(ImageHandle::Float)
+        }
+        ImagePixelType::Float64 => typed(path, inputs, plan, misc, units, coords, beams, tempclose)
+            .map(ImageHandle::Double),
+        ImagePixelType::Complex32 => {
+            typed(path, inputs, plan, misc, units, coords, beams, tempclose)
+                .map(ImageHandle::Complex)
+        }
+        ImagePixelType::Complex64 => {
+            typed(path, inputs, plan, misc, units, coords, beams, tempclose)
+                .map(ImageHandle::DComplex)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn typed<T: MemberPixel>(
+    path: &Path,
+    inputs: Vec<Input<'_>>,
+    plan: ConcatenationPlan,
+    misc: RecordValue,
+    units: String,
+    coords: RecordValue,
+    beams: RecordValue,
+    tempclose: bool,
+) -> PyResult<Storage<T>> {
+    let mut members: Vec<Arc<dyn ConcatMember<T>>> = Vec::with_capacity(inputs.len());
+    let mut by_path: HashMap<_, Arc<dyn ConcatMember<T>>> = HashMap::new();
+    let mut history = Vec::new();
+    for mut input in inputs {
+        history.append(&mut input.history);
+        let path = input.path.canonicalize().map_err(raised)?;
+        if let Some(member) = by_path.get(&path) {
+            members.push(Arc::clone(member));
+            continue;
+        }
+        let expected = fs::metadata(&path).map_err(raised)?;
+        let mut storage = T::unpack(input.opened.take().unwrap()).map_err(raised)?;
+        let writable = match &storage {
+            Storage::Paged(_) => {
+                casa_tables::publication::check_write_access(&path.join("table.dat")).is_ok()
+            }
+            Storage::Temp { image, fits, .. } => fits.is_none() && image.is_writable(),
+        };
+        let storage = if tempclose {
+            unlock(&mut storage).map_err(raised)?;
+            None
+        } else {
+            Some(storage)
+        };
+        let member: Arc<dyn ConcatMember<T>> = Arc::new(Member::<T> {
+            path: path.clone(),
+            expected,
+            shape: input.shape,
+            masked: input.has_mask,
+            writable,
+            tempclose,
+            storage: Mutex::new(storage),
+        });
+        by_path.insert(path, Arc::clone(&member));
+        members.push(member);
+    }
+    let joined =
+        ConcatImage::new(path.to_path_buf(), plan, members, misc, units).map_err(raised)?;
+    let mut image = TempImage::from_read_only_image(
+        joined,
+        "ImageConcat",
+        "Some of the underlying lattices are not writable",
+    )
+    .map_err(raised)?;
+    image.set_image_info_record(beams).map_err(raised)?;
+    image.append_history_entries(&history).map_err(raised)?;
+    Ok(Storage::Temp {
+        image: Box::new(image),
+        record: coords,
+        fits: None,
+    })
+}
+
+struct Member<T: MemberPixel> {
+    path: PathBuf,
+    expected: fs::Metadata,
+    shape: Vec<usize>,
+    masked: bool,
+    writable: bool,
+    tempclose: bool,
+    storage: Mutex<Option<Storage<T>>>,
+}
+
+impl<T: MemberPixel> Member<T> {
+    fn slot(&self) -> MutexGuard<'_, Option<Storage<T>>> {
+        self.storage.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn check_path(&self) -> Result<(), ImageError> {
+        if fs::metadata(&self.path)
+            .is_ok_and(|current| same_file_identity(&self.expected, &current))
+        {
+            return Ok(());
+        }
+        Err(ImageError::Io(format!(
+            "Concatenation member {} changed",
+            self.path.display()
+        )))
+    }
+
+    fn reopen(&self) -> Result<Storage<T>, ImageError> {
+        self.check_path()?;
+        let image = ImageHandle::open_for_concatenation(&self.path)?;
+        if image.shape() != self.shape {
+            return Err(ImageError::Io(format!(
+                "Concatenation member {} changed shape",
+                self.path.display(),
+            )));
+        }
+        self.check_path()?;
+        T::unpack(image)
+    }
+
+    fn use_storage<R>(
+        &self,
+        operation: impl FnOnce(&mut Storage<T>) -> Result<R, ImageError>,
+    ) -> Result<R, ImageError> {
+        self.check_path()?;
+        let mut storage = self.slot();
+        match storage.as_mut() {
+            Some(storage) => operation(storage),
+            None => operation(&mut self.reopen()?),
+        }
+    }
+}
+
+impl<T: MemberPixel> ConcatMember<T> for Member<T> {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+    fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+    fn has_mask(&self) -> bool {
+        self.masked
+    }
+    fn is_writable(&self) -> bool {
+        self.writable
+    }
+
+    fn read(
+        &self,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<T>, ImageError> {
+        self.use_storage(|storage| {
+            require(storage, LockType::Read)?;
+            T::read(storage, start, count, stride)
+        })
+    }
+
+    fn read_mask(
+        &self,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        self.use_storage(|storage| {
+            require(storage, LockType::Read)?;
+            T::read_mask(storage, start, count, stride)
+        })
+    }
+
+    fn write(&self, values: &ArrayD<T>, start: &[usize]) -> Result<(), ImageError> {
+        self.use_storage(|storage| {
+            require(storage, LockType::Write)?;
+            with_storage!(storage, image => image.put_slice(values, start))?;
+            storage.save()
+        })
+    }
+
+    fn lock(&self, kind: LockType, attempts: u32) -> Result<bool, ImageError> {
+        self.check_path()?;
+        let mut slot = self.slot();
+        if let Some(storage) = slot.as_mut() {
+            return lock(storage, kind, attempts);
+        }
+        let mut storage = self.reopen()?;
+        if lock(&mut storage, kind, attempts)? {
+            *slot = Some(storage);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn has_lock(&self, kind: LockType) -> bool {
+        self.slot()
+            .as_ref()
+            .is_some_and(|storage| has_lock(storage, kind))
+    }
+
+    fn unlock(&self) -> Result<(), ImageError> {
+        let mut storage = self.slot();
+        if let Some(storage) = storage.as_mut() {
+            unlock(storage)?;
+        }
+        if self.tempclose {
+            *storage = None;
+        }
+        Ok(())
+    }
+}
+
+fn require<T: ImagePixel>(storage: &mut Storage<T>, kind: LockType) -> Result<(), ImageError> {
+    if lock(storage, kind, 0)? {
+        Ok(())
+    } else {
+        Err(ImageError::CasaSelection(format!(
+            "Could not acquire the image {kind:?} lock"
+        )))
+    }
+}
+
+fn lock<T: ImagePixel>(
+    storage: &mut Storage<T>,
+    kind: LockType,
+    attempts: u32,
+) -> Result<bool, ImageError> {
+    match storage {
+        #[cfg(unix)]
+        Storage::Paged(image) => image.lock(kind, attempts),
+        Storage::Temp { image, .. } => image
+            .concat_source()
+            .map_or(Ok(true), |source| source.lock(kind, attempts)),
+        #[cfg(not(unix))]
+        Storage::Paged(_) => Ok(true),
+    }
+}
+
+fn has_lock<T: ImagePixel>(storage: &Storage<T>, kind: LockType) -> bool {
+    match storage {
+        #[cfg(unix)]
+        Storage::Paged(image) => image.has_lock(kind),
+        Storage::Temp { image, .. } => image
+            .concat_source()
+            .is_none_or(|source| source.has_lock(kind)),
+        #[cfg(not(unix))]
+        Storage::Paged(_) => true,
+    }
+}
+
+fn unlock<T: ImagePixel>(storage: &mut Storage<T>) -> Result<(), ImageError> {
+    match storage {
+        #[cfg(unix)]
+        Storage::Paged(image) => image.unlock(),
+        Storage::Temp { image, .. } => image.concat_source().map_or(Ok(()), ConcatImage::unlock),
+        #[cfg(not(unix))]
+        Storage::Paged(_) => Ok(()),
+    }
+}
+
+trait MemberPixel: ImagePixel {
+    fn unpack(image: ImageHandle) -> Result<Storage<Self>, ImageError>;
+
+    fn read(
+        storage: &Storage<Self>,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<Self>, ImageError> {
+        with_storage!(storage, image => Lattice::get_slice(image.as_ref(), start, count, stride))
+            .map_err(Into::into)
+    }
+
+    fn read_mask(
+        storage: &Storage<Self>,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        with_storage!(storage, image => image.get_mask_slice(start, count, stride))
+    }
+}
+
+fn changed_type() -> ImageError {
+    ImageError::CasaSelection("The concatenation member's pixel type changed".into())
+}
+
+impl MemberPixel for f32 {
+    fn unpack(image: ImageHandle) -> Result<Storage<Self>, ImageError> {
+        match image {
+            ImageHandle::Float(storage) => Ok(storage),
+            _ => Err(changed_type()),
+        }
+    }
+
+    fn read(
+        storage: &Storage<Self>,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<Self>, ImageError> {
+        storage
+            .with_float_view(|view| view.get_slice(start, count, stride))
+            .map_err(Into::into)
+    }
+
+    fn read_mask(
+        storage: &Storage<Self>,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        storage.with_float_view(|view| view.get_mask_slice(start, count, stride))
+    }
+}
+
+macro_rules! native_members {
+    ($($pixel:ty => $kind:ident),* $(,)?) => {
+        $(impl MemberPixel for $pixel {
+            fn unpack(image: ImageHandle) -> Result<Storage<Self>, ImageError> {
+                match image {
+                    ImageHandle::$kind(storage) => Ok(storage),
+                    _ => Err(changed_type()),
+                }
+            }
+        })*
+    };
+}
+
+native_members!(f64 => Double, Complex32 => Complex, Complex64 => DComplex);

@@ -300,7 +300,7 @@ where
 // MiscInfo JSON conversion (simple scalars only)
 // ---------------------------------------------------------------------------
 
-fn misc_info_to_json(record: &RecordValue) -> serde_json::Value {
+pub(crate) fn misc_info_to_json(record: &RecordValue) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for field in record.fields() {
         let val = match &field.value {
@@ -321,7 +321,7 @@ fn misc_info_to_json(record: &RecordValue) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-fn json_to_misc_info(val: &serde_json::Value) -> RecordValue {
+pub(crate) fn json_to_misc_info(val: &serde_json::Value) -> RecordValue {
     let mut record = RecordValue::default();
     if let Some(obj) = val.as_object() {
         for (key, v) in obj {

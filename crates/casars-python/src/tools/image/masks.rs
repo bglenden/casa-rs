@@ -91,6 +91,8 @@ fn apply_mask_operation(
 ) -> PyResult<Vec<String>> {
     let current =
         with_pixels!(&*image, storage => with_storage!(storage, image => image.mask_names()));
+    let no_region_handler =
+        image.read_only_file_type().is_some() || image.image_type_name() == "ImageConcat";
     match operation {
         MaskOperation::Get => {
             return Ok(if current.is_empty() {
@@ -104,7 +106,7 @@ fn apply_mask_operation(
             return Ok(vec![default.unwrap_or_default()]);
         }
         MaskOperation::Set => {
-            if image.read_only_file_type().is_some() {
+            if no_region_handler {
                 return Err(raised(
                     "RegionHandler::setDefaultMask cannot be used for this image type",
                 ));
@@ -143,7 +145,7 @@ fn apply_mask_operation(
                     names.len()
                 )));
             };
-            if image.read_only_file_type().is_some() {
+            if no_region_handler {
                 return Err(raised(
                     "RegionHandler::renameRegion cannot be used for this image type",
                 ));
@@ -160,7 +162,7 @@ fn apply_mask_operation(
             let [from, to, ..] = names else {
                 return Err(raised("Exception: Supply the original and new mask names."));
             };
-            if image.read_only_file_type().is_some() {
+            if no_region_handler {
                 return Err(raised(
                     "RegionHandler::makeMask - cannot create mask for virtual image",
                 ));
@@ -200,7 +202,11 @@ impl PyImageTool {
             } else {
                 casa_tables::LockType::Read
             };
-            attachment.require_lock(&mut image, kind)?;
+            if image.image_type_name() == "ImageConcat" {
+                attachment.check_bound_name(&image)?;
+            } else {
+                attachment.require_lock(&mut image, kind)?;
+            }
             let result = apply_mask_operation(&mut image, operation, &names)?;
             if writes {
                 if state.history

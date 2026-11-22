@@ -20,8 +20,11 @@ use crate::tools::{LogLine, emit, not_yet_implemented_in};
 use super::PyImageTool;
 use super::attachment;
 use super::beams::{image_info, image_info_record, plane_axes, stored_beam_record};
-use super::create::publish_image;
+use super::create::{publish_image, publish_virtual_concat};
 use super::handle::{ImageHandle, Storage, raised, same_file_snapshot, with_pixels, with_storage};
+use super::lifecycle::resolve_image_path;
+
+pub(super) mod virtual_image;
 
 fn filename_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Variant> {
     let Some(value) = value else {
@@ -153,12 +156,16 @@ struct Input<'a> {
 impl<'a> Input<'a> {
     fn open(path: &'a Path, tempclose: bool) -> PyResult<Self> {
         let image = ImageHandle::open_for_concatenation(path).map_err(raised)?;
+        Self::from_image(path, image, tempclose)
+    }
+
+    fn from_image(path: &'a Path, image: ImageHandle, tempclose: bool) -> PyResult<Self> {
         let coordinate_record = image.coordinate_record();
         let coordinates = CoordinateSystem::from_record(&coordinate_record).map_err(raised)?;
         let (units, misc, has_mask) = with_pixels!(&image, storage => with_storage!(storage, image => (
             image.units().to_string(),
             image.misc_info(),
-            image.default_mask_name().is_some(),
+            image.has_pixel_mask(),
         )));
         let history = with_pixels!(&image, storage => match storage {
             Storage::Paged(_) => image_history_rows(path).map_err(raised)?,
@@ -479,20 +486,27 @@ impl PyImageTool {
                 "Exception: {outfile} exists and overwrite is false."
             )));
         }
-        match mode.as_bytes().first().map(u8::to_ascii_lowercase) {
+        let mode_letter = mode.as_bytes().first().map(u8::to_ascii_lowercase);
+        match mode_letter {
             Some(b'p') => {}
             Some(b'n' | b'c' | b'm') if outfile.is_empty() => {
                 return Err(raised(
                     "Exception: An empty outname can be used only if mode == PAGED.",
                 ));
             }
-            Some(b'n' | b'c' | b'm') => {
+            Some(b'n') => {}
+            Some(b'c' | b'm') => {
                 return not_yet_implemented_in("image", "imageconcat virtual mode", 1749);
             }
             _ => return Err(raised(format!("Unsupported mode {mode}"))),
         }
-        if !outfile.is_empty() {
-            let destination = Path::new(outfile);
+        let expanded = if mode_letter == Some(b'n') {
+            resolve_image_path(py, outfile)?
+        } else {
+            std::borrow::Cow::Borrowed(outfile)
+        };
+        if !expanded.is_empty() {
+            let destination = Path::new(expanded.as_ref());
             let existing = destination
                 .exists()
                 .then(|| attachment::key(destination))
@@ -522,9 +536,24 @@ impl PyImageTool {
                 mode,
                 history: self.state().history,
             };
-            publish_image(outfile, overwrite, |path| {
-                request.build(&paths, path, &mut logs)
-            })
+            if mode_letter == Some(b'n') {
+                let attached = publish_virtual_concat(
+                    outfile,
+                    expanded.as_ref(),
+                    overwrite,
+                    |final_path, stage| {
+                        virtual_image::stage_nomove(&request, &paths, final_path, stage, &mut logs)
+                    },
+                )?;
+                if request.history {
+                    request.history_for(&mut attached.lock())?;
+                }
+                Ok(attached)
+            } else {
+                publish_image(outfile, overwrite, |path| {
+                    request.build(&paths, path, &mut logs)
+                })
+            }
         });
         emit(py, "casars.tools.image", &logs)?;
         Py::new(py, Self::attached(result?))

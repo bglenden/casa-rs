@@ -26,7 +26,7 @@ impl ImageHandle {
         #[cfg(unix)]
         return with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.lock(kind, attempts).map_err(raised),
-            Storage::Temp { .. } => Ok(true),
+            Storage::Temp { image, .. } => image.concat_source().map_or(Ok(true), |source| source.lock(kind, attempts).map_err(raised)),
         });
         #[cfg(not(unix))]
         {
@@ -39,7 +39,7 @@ impl ImageHandle {
         #[cfg(unix)]
         return with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.has_lock(kind),
-            Storage::Temp { .. } => true,
+            Storage::Temp { image, .. } => image.concat_source().is_none_or(|source| source.has_lock(kind)),
         });
         #[cfg(not(unix))]
         {
@@ -52,7 +52,7 @@ impl ImageHandle {
         #[cfg(unix)]
         return with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.unlock().map_err(raised),
-            Storage::Temp { .. } => Ok(()),
+            Storage::Temp { image, .. } => image.concat_source().map_or(Ok(()), |source| source.unlock().map_err(raised)),
         });
         #[cfg(not(unix))]
         Ok(())
@@ -62,7 +62,7 @@ impl ImageHandle {
         #[cfg(unix)]
         return with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.release_requested_lock().map_err(raised),
-            Storage::Temp { .. } => Ok(()),
+            Storage::Temp { image, .. } => image.concat_source().map_or(Ok(()), |source| source.unlock().map_err(raised)),
         });
         #[cfg(not(unix))]
         Ok(())
@@ -89,6 +89,9 @@ impl AttachedImage {
 
     pub(super) fn require_lock(&self, handle: &mut ImageHandle, kind: LockType) -> PyResult<()> {
         self.check_bound_name(handle)?;
+        if kind == LockType::Read && handle.image_type_name() == "ImageConcat" {
+            return Ok(());
+        }
         if handle.lock_storage(kind, 0)? {
             Ok(())
         } else {
@@ -97,6 +100,9 @@ impl AttachedImage {
     }
 
     pub(super) fn require_pixel_read_lock(&self, handle: &mut ImageHandle) -> PyResult<()> {
+        if handle.image_type_name() == "ImageConcat" {
+            return self.check_bound_name(handle);
+        }
         if self.lock_with_inputs(handle, LockType::Read, 0)? {
             Ok(())
         } else {
