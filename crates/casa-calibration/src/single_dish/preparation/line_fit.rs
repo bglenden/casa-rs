@@ -5,6 +5,7 @@ mod product;
 pub(crate) mod task;
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::{BufWriter, Write};
 use std::ops::RangeInclusive;
 use std::path::Path;
@@ -124,17 +125,19 @@ impl SingleDishSession {
             .map(|scratch| scratch.path().join("fit.ms"));
         let output = hidden_output.as_deref().unwrap_or(request.tempoutfile);
         let ms = CalibrationOutput::prepare_measurement_set(output, false).map_err(error_text)?;
-        // CASA can fit into an unnamed temporary MS, or discard the fit text.
-        let mut results = if request.tempfile.as_os_str().is_empty() {
-            None
-        } else {
-            let parent = request
-                .tempfile
-                .parent()
-                .filter(|directory| !directory.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            Some(tempfile::NamedTempFile::new_in(parent).map_err(error_text)?)
-        };
+        // An empty filename discards the fit text. A dangling symlink
+        // names its future target, just as for an ordinary file write.
+        let report_path = (!request.tempfile.as_os_str().is_empty())
+            .then(|| crate::paths::normalized(request.tempfile))
+            .transpose()
+            .map_err(error_text)?;
+        let mut results = report_path
+            .as_deref()
+            .map(|path| {
+                tempfile::NamedTempFile::new_in(path.parent().unwrap_or_else(|| Path::new(".")))
+            })
+            .transpose()
+            .map_err(error_text)?;
         let mut fit = FitStream {
             windows,
             mode,
@@ -168,11 +171,16 @@ impl SingleDishSession {
         if !self.line_averaging.polarization.is_empty() {
             product::write_polarization(&ms.staging)?;
         }
-        ms.commit().map_err(error_text)?;
-        if let Some(results) = results {
-            results
-                .persist_noclobber(request.tempfile)
-                .map_err(error_text)?;
+        if let (Some(results), Some(report)) = (results, report_path.as_ref()) {
+            results.persist_noclobber(report).map_err(error_text)?;
+        }
+        if let Err(error) = ms.commit() {
+            if let Some(report) = report_path {
+                fs::remove_file(&report).map_err(|rollback| {
+                    format!("{error}. Could not remove {}: {rollback}", report.display())
+                })?;
+            }
+            return Err(error_text(error));
         }
         Ok(())
     }
@@ -253,6 +261,7 @@ fn parse_components(input: &str) -> Result<Vec<usize>, String> {
     }
     input
         .split(',')
+        .filter(|count| !count.is_empty())
         .map(|count| {
             let count = count.trim_start();
             let unsigned = count.strip_prefix(['-', '+']).unwrap_or(count);

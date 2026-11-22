@@ -3,6 +3,7 @@
 """Pair single-dish line fits, uncertainties, and tool products with CASA 6.7.6.14."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import time
@@ -315,6 +316,59 @@ def check_tools(root, source, tools):
                 assert reader.close()
 
 
+def check_direct_channel_weights(root, source, tools):
+    values = {}
+    for name, factory in tools.items():
+        tool = factory()
+        raw = root / f'stride-weights-{name}.csv'
+        product = root / f'stride-weights-{name}.ms'
+        try:
+            assert tool.open(str(source))
+            assert tool.set_selection(spw='1:15~85', scan='1')
+            assert tool.fit_line(spw='1:1~26', nfit=',,1,,', polaverage='geometric',
+                                 tempfile=str(raw), tempoutfile=str(product))
+        finally:
+            assert tool.close()
+        rows = [row.split(',') for row in raw.read_text().splitlines()]
+        assert rows
+        values[name] = np.asarray([row[6:] for row in rows], dtype=float)
+    if 'native' in values:
+        np.testing.assert_allclose(values['native'], values['casa'], rtol=4e-4, atol=5e-5)
+
+
+
+def check_direct_publication(root, source, tools):
+    def write(factory, report, output):
+        tool = factory()
+        try:
+            assert tool.open(str(source))
+            return tool.fit_line(spw='1', nfit='1', tempfile=str(report), tempoutfile=str(output))
+        finally:
+            assert tool.close()
+
+    for name, factory in tools.items():
+        target = root / f'fit-report-target-{name}.csv'
+        report = root / f'fit-report-link-{name}.csv'
+        output = root / f'fit-report-link-{name}.ms'
+        report.symlink_to(target.name)
+        assert write(factory, report, output)
+        assert report.is_symlink() and target.read_text()
+        with opened(output) as table:
+            assert table.nrows() == 0
+
+    if 'native' in tools:
+        report = root / 'contested-fit.csv'
+        products = [root / f'contested-fit-{index}.ms' for index in range(2)]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            attempts = [pool.submit(write, tools['native'], report, output) for output in products]
+        assert sum(attempt.exception() is None for attempt in attempts) == 1
+        assert sum(output.exists() for output in products) == 1
+        assert report.read_text()
+        retry = next(output for output in products if not output.exists())
+        assert write(tools['native'], root / 'contested-fit-retry.csv', retry)
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -336,6 +390,8 @@ def main():
     spectra = check_averaging(root, source, tasks)
     check_reports(root, source, tasks)
     check_tools(root, spectra, tools)
+    check_direct_channel_weights(root, source, tools)
+    check_direct_publication(root, spectra, tools)
     print('Single-dish fit values, errors, averaging, selection and output products passed.', flush=True)
 
 

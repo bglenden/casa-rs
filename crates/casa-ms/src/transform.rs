@@ -1056,6 +1056,22 @@ fn mstransform_staged(
                 sigma: source_spectrum("SIGMA_SPECTRUM")
                     .and_then(|index| row_spectra[index].as_ref()),
             };
+            let projected_weights = if read_spectral_weights && !averaging_time {
+                let channels = &channel_selection[&spw_id].channels;
+                spectra_cells
+                    .weight
+                    .filter(|weight| {
+                        weight
+                            .shape()
+                            .get(1)
+                            .is_none_or(|&count| !all_channels_selected(channels, count))
+                    })
+                    .map(|weight| select_channels(weight.clone(), channels))
+                    .transpose()
+                    .map_err(mutation_error)?
+            } else {
+                None
+            };
             let averages = if let (true, Some((weight, sigma))) = (task_average, &noise) {
                 Some(
                     ChannelAverages::new(
@@ -1141,7 +1157,9 @@ fn mstransform_staged(
                                     output_flags,
                                     SpectrumWeights {
                                         scalar: noise.as_ref().map(|(weight, _)| weight),
-                                        spectrum: spectra_cells.weight,
+                                        spectrum: projected_weights
+                                            .as_ref()
+                                            .or(spectra_cells.weight),
                                     },
                                 )
                                 .map_err(MsTransformError::Spectrum)?;
