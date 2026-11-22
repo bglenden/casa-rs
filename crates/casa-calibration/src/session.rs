@@ -67,6 +67,15 @@ pub enum CalibrationSolveRequest {
         /// Fringe search and global refinement controls.
         controls: fringe::FringeControls,
     },
+    /// Direct CASA fringe solve with an explicit phase/delay/rate/dispersion mask.
+    FringeTool {
+        /// Shared selection, prior and output settings.
+        gain: GainSolveRequest,
+        /// Fringe search controls and the delay, rate and dispersion masks.
+        controls: fringe::FringeControls,
+        /// Whether to include phase in the global refinement.
+        active_phase: bool,
+    },
     /// Normalize the sampler response from antenna autocorrelations.
     Accor(GainSolveRequest),
     /// Solve one multiplicative response per baseline and parallel hand.
@@ -157,7 +166,8 @@ pub(crate) fn solve_calibration_with_activity(
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     options: ToolSolveOptions<'_>,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
-    if let CalibrationSolveRequest::Fringe { gain, .. } = &request
+    if let CalibrationSolveRequest::Fringe { gain, .. }
+    | CalibrationSolveRequest::FringeTool { gain, .. } = &request
         && gain.gain_type != GainType::K
     {
         return Err(GainSolveError::Delay(
@@ -208,10 +218,27 @@ fn solve_open_dataset(
                 .map_err(CalibrationError::from)
         }
         CalibrationSolveRequest::Fringe { gain, controls } => {
-            fringe::solve(measurement_set, &gain, controls, mode)
+            fringe::solve(measurement_set, &gain, controls, mode, None)
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }
+        CalibrationSolveRequest::FringeTool {
+            gain,
+            controls,
+            active_phase,
+        } => fringe::solve(
+            measurement_set,
+            &gain,
+            controls,
+            mode,
+            Some(fringe::ToolOptions {
+                active_phase,
+                legacy_iterator,
+                activity,
+            }),
+        )
+        .map(CalibrationSolveResult::Gain)
+        .map_err(CalibrationError::from),
         CalibrationSolveRequest::Accor(gain) => accor::solve(
             measurement_set,
             &gain,

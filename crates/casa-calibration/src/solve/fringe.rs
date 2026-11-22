@@ -19,16 +19,18 @@ use self::fit::FitOptions;
 use self::multiband::MultibandSearch;
 use self::search::{FringePeak, FringeSearch, GridSpec};
 use super::grouping::{
-    PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions,
+    PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows,
     build_solve_groups, correlation_types_for_ddid, selected_channels,
 };
 use super::kernel::SolutionRow;
 use super::writer::{combined_window_frequency, write_new_style_gain_caltable};
 use super::{
-    GainSolveError, GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType, SolvedGains,
+    GainSolveError, GainSolveMode, GainSolveModelSource, GainSolveReport, GainSolveRequest,
+    GainType, SolvedGains,
 };
 use crate::CalibrationOutputMode;
 use crate::session::prepare_calibration_solve;
+use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 
 /// Search and refinement controls for the VLBI fringe solver.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -62,11 +64,25 @@ pub enum FringeCorrelation {
     Parallel,
 }
 
+pub(crate) struct ToolOptions<'a> {
+    pub(crate) active_phase: bool,
+    pub(crate) legacy_iterator: bool,
+    pub(crate) activity: Option<&'a mut ToolSolveActivity>,
+}
+
+#[derive(Clone, Copy)]
+struct GroupFit {
+    controls: FringeControls,
+    solve_mode: GainSolveMode,
+    active_phase: bool,
+}
+
 pub(crate) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     controls: FringeControls,
     mode: CalibrationOutputMode,
+    tool: Option<ToolOptions<'_>>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let input = crate::timing::Phase::start("fringe_select_read");
     super::validate_solve_interval(request.solve_interval)?;
@@ -88,7 +104,11 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            input_rows: super::grouping::SolveInputRows::Fringe,
+            input_rows: tool.as_ref().map_or(SolveInputRows::Fringe, |tool| {
+                SolveInputRows::FringeTool {
+                    legacy: tool.legacy_iterator,
+                }
+            }),
             gain_type: GainType::K,
             model_source: request.model_source,
             point_stokes: if request.model_source == GainSolveModelSource::PointSource {
@@ -126,9 +146,25 @@ pub(crate) fn solve(
     };
     let references =
         std::iter::once(context.refant_id).chain(context.refant_alternates.iter().copied());
-    if context.refant_id < 0 {
+    if tool.is_none() && context.refant_id < 0 {
         return Err(error("No valid reference antenna supplied"));
     }
+    let mut stats = if tool.is_some() {
+        Some(SolveStatsBuilder::new(
+            8,
+            super::spectral_window_ids(ms)?,
+            &context.available_antennas,
+        ))
+    } else {
+        None
+    };
+    let fit = GroupFit {
+        controls,
+        solve_mode: tool
+            .as_ref()
+            .map_or(GainSolveMode::AmplitudePhase, |_| request.solve_mode),
+        active_phase: tool.as_ref().is_none_or(|tool| tool.active_phase),
+    };
     let combined_frequency = (request.combine.spectral_windows
         && solved.selected_data.spectral_windows.len() > 1)
         .then(|| combined_window_frequency(ms, &solved))
@@ -136,6 +172,24 @@ pub(crate) fn solve(
     drop(input);
     let fitting = crate::timing::Phase::start("fringe_fit");
     for group in groups.into_values() {
+        if let Some(stats) = &mut stats {
+            stats.interval(&IntervalStages::of(&group, 0));
+            if !group.gather_attempted() {
+                continue;
+            }
+            if tool.as_ref().is_some_and(|tool| tool.legacy_iterator) {
+                return Err(error("Attempt to call un-implemented selfSolveOne()"));
+            }
+            if context.refant_id < 0 {
+                return Err(error("No valid reference antenna supplied"));
+            }
+            if controls.global_solve
+                && !fit.active_phase
+                && !controls.active_parameters.contains(&true)
+            {
+                return Err(error("No parameters specified!"));
+            }
+        }
         let antennas = &context.available_antennas;
         let rows = solve_group(
             &group,
@@ -144,11 +198,14 @@ pub(crate) fn solve(
             references.clone(),
             combined_frequency,
             request.min_snr,
-            controls,
+            fit,
         )?;
         if !rows.is_empty() {
             solved.attempted_spw_ids.insert(group.spw_id);
             solved.rows.extend(rows);
+            if let Some(stats) = &mut stats {
+                stats.record_success(group.spw_id, true);
+            }
         }
     }
     reference::connect_intervals(
@@ -157,6 +214,10 @@ pub(crate) fn solve(
         context.available_antennas.len(),
         references,
     )?;
+    if let Some(stats) = stats {
+        stats.track_activity(tool.and_then(|tool| tool.activity));
+        solved.solve_stats = stats.finish();
+    }
     drop(fitting);
     write_new_style_gain_caltable(ms, request, &solved, mode, "Fringe Jones")
 }
@@ -232,8 +293,13 @@ fn solve_group(
     mut references: impl Iterator<Item = i32>,
     combined_frequency: Option<f64>,
     min_snr: f32,
-    controls: FringeControls,
+    fit: GroupFit,
 ) -> Result<Vec<SolutionRow>, GainSolveError> {
+    let GroupFit {
+        controls,
+        solve_mode,
+        active_phase,
+    } = fit;
     if !group.delay_spectra().any(|spectrum| {
         spectrum.parallel_hand && spectrum.channels().any(|(_, weight)| weight > 0.)
     }) {
@@ -256,6 +322,7 @@ fn solve_group(
             Vec::new(),
         ];
     }
+    enforce_visibility_mode(&mut hands, solve_mode);
     if hands.iter().all(Vec::is_empty) {
         return Ok(Vec::new());
     }
@@ -319,7 +386,7 @@ fn solve_group(
             first_time_seconds: axis.first_time,
             first_frequency_hz: axis.first_frequency,
             active_parameters: [
-                true,
+                active_phase,
                 controls.active_parameters[0],
                 controls.active_parameters[1],
                 controls.active_parameters[2],
@@ -364,6 +431,25 @@ fn solve_group(
             )
         })
         .collect())
+}
+
+fn enforce_visibility_mode(hands: &mut [Vec<FringeBaseline>; 2], mode: GainSolveMode) {
+    if mode == GainSolveMode::AmplitudePhase {
+        return;
+    }
+    for sample in hands
+        .iter_mut()
+        .flatten()
+        .flat_map(|baseline| &mut baseline.samples)
+    {
+        let amplitude = sample.visibility.norm();
+        if mode == GainSolveMode::Phase && amplitude > 0. {
+            sample.visibility /= amplitude;
+            sample.weight *= amplitude.powi(2);
+        } else if mode == GainSolveMode::Amplitude {
+            sample.visibility = Complex32::new(amplitude, 0.);
+        }
+    }
 }
 
 enum GroupSearch {

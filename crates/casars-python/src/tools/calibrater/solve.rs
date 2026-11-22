@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use casa_calibration::{
     BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
-    BandpassType, CalibrationSolveRequest, GainNormalization, GainSolveCombine, GainSolveInterval,
-    GainSolveMode, GainSolveModelSource, GainSolveRequest, GainSolveRobustness, GainType,
-    RefAntSelector,
+    BandpassType, CalibrationSolveRequest, FringeControls, FringeCorrelation, GainNormalization,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
+    GainSolveRobustness, GainType, RefAntSelector,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -98,16 +98,27 @@ fn setsolve_integer(
     position: u8,
     default: usize,
 ) -> PyResult<usize> {
+    setsolve_long(value, position, default as i64).map(|value| usize::try_from(value).unwrap_or(0))
+}
+
+fn setsolve_long(value: Option<&Bound<'_, PyAny>>, position: u8, default: i64) -> PyResult<i64> {
     use pyo3::exceptions::PyTypeError;
     let Some(value) = value else {
         return Ok(default);
     };
-    let value = value.extract::<i64>().map_err(|_| {
+    value.extract::<i64>().map_err(|_| {
         PyTypeError::new_err(format!(
             "in method 'calibrater_setsolve', argument {position} of type 'long'"
         ))
-    })?;
-    Ok(usize::try_from(value).unwrap_or(0))
+    })
+}
+
+fn fringe_window(value: Option<&Bound<'_, PyAny>>) -> PyResult<[f64; 2]> {
+    let window = value
+        .map(|value| value.extract::<crate::convert::DoubleList>())
+        .transpose()?
+        .map_or_else(Vec::new, |values| values.0);
+    Ok(window.try_into().unwrap_or([-1e6, 1e6]))
 }
 
 impl StandardSolver {
@@ -225,6 +236,38 @@ impl super::PyCalibrater {
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
         let baseline = matches!(family.as_str(), "M" | "M MUELLER" | "MF" | "MF MUELLER");
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
+        let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
+            let active = paramactive
+                .map(|value| value.extract::<Vec<bool>>())
+                .transpose()?
+                .unwrap_or_default();
+            let [active_phase, delay, rate, dispersion] =
+                std::array::from_fn(|index| active.get(index).copied().unwrap_or(false));
+            let correlation = setsolve_text(corrcomb, "corrcomb", "none")?;
+            let correlation_combination = if correlation.contains("stokes") {
+                FringeCorrelation::Stokes
+            } else if correlation.contains("parallel") {
+                FringeCorrelation::Parallel
+            } else {
+                FringeCorrelation::Separate
+            };
+            Some((
+                FringeControls {
+                    delay_window: fringe_window(delaywindow)?,
+                    rate_window: fringe_window(ratewindow)?,
+                    global_solve: setsolve_bool(globalsolve, 25, true)?,
+                    iterations: usize::try_from(setsolve_long(niter, 26, 100)?)
+                        .unwrap_or(usize::MAX),
+                    active_parameters: [delay, rate, dispersion],
+                    zero_rates: setsolve_bool(zerorates, 24, false)?,
+                    correlation_combination,
+                    concatenate_windows: setsolve_bool(concatspws, 31, true)?,
+                },
+                active_phase,
+            ))
+        } else {
+            None
+        };
         let table = PathBuf::from(table.unwrap_or(""));
         if phase_only {
             emit(
@@ -237,7 +280,7 @@ impl super::PyCalibrater {
             )?;
         }
         self.with_lifecycle(py, move |state| {
-            if accor {
+            if accor || fringe.is_some() {
                 state
                     .resolve_primary_tool_refant(reference.clone())
                     .map_err(super::runtime_error)?;
@@ -328,6 +371,14 @@ impl super::PyCalibrater {
                 "ACCOR" | "ACCOR JONES" => {
                     CalibrationSolveRequest::Accor(standard.gain(GainType::G))
                 }
+                "FRINGE" | "FRINGE JONES" => {
+                    let (controls, active_phase) = fringe.expect("parsed fringe controls");
+                    CalibrationSolveRequest::FringeTool {
+                        gain: standard.gain(GainType::K),
+                        controls,
+                        active_phase,
+                    }
+                }
                 _ if casa_calibration::CalibraterLifecycle::recognizes_calibration_type(
                     &family,
                 ) =>
@@ -340,7 +391,7 @@ impl super::PyCalibrater {
                 .set_tool_solve(
                     request,
                     mode,
-                    (!invalid_mode).then_some(solve_mode_value),
+                    (!invalid_mode || fringe.is_some()).then_some(solve_mode_value),
                     normalization,
                     preavg,
                 )
