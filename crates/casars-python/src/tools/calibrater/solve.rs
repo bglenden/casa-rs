@@ -419,6 +419,20 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
+            if matches!(family.as_str(), "TOPAC" | "TFOPAC") {
+                let channelized = family == "TFOPAC";
+                if channelized {
+                    casa_calibration::BandpassFrequencyInterval::from_casa(
+                        frequency.unwrap_or_default(),
+                    )
+                    .ok_or_else(setup_error)?;
+                }
+                state
+                    .set_tool_opacity_solve(standard.gain(GainType::T), mode, channelized)
+                    .map_err(|_| setup_error())?;
+                state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
+                return Ok(true);
+            }
             let request = standard_request(&family, standard, frequency, fill_gaps, fringe)?;
             state
                 .set_tool_solve(

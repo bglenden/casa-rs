@@ -88,6 +88,11 @@ enum ConfiguredSolve {
         tf: Option<crate::solve::TfSolveSettings>,
     },
     LegacyEp(Box<LegacyEpSolver>),
+    Opacity {
+        request: Box<crate::GainSolveRequest>,
+        mode: CalibrationOutputMode,
+        channelized: bool,
+    },
     Polarization {
         request: Box<crate::solve::grouping::leakage::LeakageSolveRequest>,
         invalid_mode: bool,
@@ -142,6 +147,9 @@ pub enum CalibraterLifecycleError {
     /// The EP solver uses the original visibility iterator.
     #[error("Error in Calibrater::setsolve.")]
     EpNeedsLegacyIterator,
+    /// The pinned opacity types configure but cannot produce a solve product.
+    #[error("The configured opacity type cannot solve a calibration table.")]
+    OpacityCannotSolve,
     /// The polarization solve could not be configured or completed.
     #[error("{0}")]
     LeakageSolve(String),
@@ -833,7 +841,11 @@ impl CalibraterLifecycle {
             Some(ConfiguredSolve::LegacyEp(solver)) => {
                 solver.set_model(&equation.attachment, path)?
             }
-            Some(ConfiguredSolve::Task { .. } | ConfiguredSolve::Polarization { .. }) => {
+            Some(
+                ConfiguredSolve::Task { .. }
+                | ConfiguredSolve::Polarization { .. }
+                | ConfiguredSolve::Opacity { .. },
+            ) => {
                 return Err(CalibraterLifecycleError::ImageNeedsEp);
             }
             None => return Err(CalibraterLifecycleError::ImageNeedsSolver),
@@ -867,6 +879,26 @@ impl CalibraterLifecycle {
     /// when the solve fails.
     pub fn solve(&self) -> Result<CalibrationSolveResult, CalibraterLifecycleError> {
         self.solve_configured(None)
+    }
+
+    /// Retain the direct scalar or spectral opacity solve configuration.
+    ///
+    /// # Errors
+    /// Returns an error without an attached MeasurementSet.
+    pub fn set_tool_opacity_solve(
+        &mut self,
+        request: crate::GainSolveRequest,
+        mode: CalibrationOutputMode,
+        channelized: bool,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation_mut()?;
+        equation.solve = Some(ConfiguredSolve::Opacity {
+            request: Box::new(request),
+            mode,
+            channelized,
+        });
+        equation.solve_description = None;
+        Ok(())
     }
 
     fn solve_configured(
@@ -908,6 +940,11 @@ impl CalibraterLifecycle {
                         output_table: solver.output_path().to_owned(),
                         solution_row_count,
                     });
+                }
+                Some(ConfiguredSolve::Opacity { .. }) => {
+                    // Both real opacity classes reach the pinned complex
+                    // Jones solver, which terminates without a product.
+                    return Err(CalibraterLifecycleError::OpacityCannotSolve);
                 }
                 Some(ConfiguredSolve::Polarization { .. }) => {
                     return Err(CalibraterLifecycleError::LeakageSolve(
