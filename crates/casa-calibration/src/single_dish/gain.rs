@@ -23,6 +23,7 @@ use super::{
 use crate::constants::*;
 use crate::execute::SolvePriorApply;
 use crate::session::resolve_casa_calibration_selection;
+use crate::solve_stats::{IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity};
 use crate::table_maintenance::{overlaps_measurement_set, write_standard_calibration_subtables};
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, new_calibration_table_schema,
@@ -105,7 +106,15 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     } else {
         CalibrationOutputMode::Create
     };
-    let count = generate(&ms, &selected, priors.as_ref(), output, mode, controls)?;
+    let (count, _) = generate(
+        &ms,
+        &selected,
+        priors.as_ref(),
+        output,
+        mode,
+        controls,
+        None,
+    )?;
     TaskSuccess::new(
         CasaValue::None,
         &serde_json::json!({"caltable": outfile, "row_count": count}),
@@ -119,25 +128,32 @@ pub(super) fn generate(
     output: &Path,
     mode: CalibrationOutputMode,
     controls: Controls,
-) -> Result<Option<usize>, TaskFailure> {
+    activity: Option<&mut ToolSolveActivity>,
+) -> Result<(Option<usize>, Option<SolveStats>), TaskFailure> {
     let integrations = selected_integrations(ms, selection).map_err(solve_failure)?;
     let references =
         footprint::select(ms, &integrations, controls.radius).map_err(solve_failure)?;
     let channels = spectral::channels(ms, selection, &references)
         .map_err(|message| TaskFailure::execution(message).at("spw"))?;
+    let mut intervals = activity.as_ref().map(|_| GainIntervals::default());
     let samples = solve(
         ms,
         references,
         priors,
-        controls.radius,
-        controls.smooth,
+        controls,
         &channels,
+        intervals.as_mut(),
     )
     .map_err(solve_failure)?;
-    samples
+    let stats = intervals
+        .map(|intervals| intervals.finish(ms, activity))
+        .transpose()
+        .map_err(solve_failure)?;
+    let count = samples
         .map(|samples| write(ms, output, mode, samples, &channels))
         .transpose()
-        .map_err(solve_failure)
+        .map_err(solve_failure)?;
+    Ok((count, stats))
 }
 
 fn selected_integrations(
@@ -157,9 +173,9 @@ fn solve<'a>(
     ms: &MeasurementSet,
     references: Vec<&'a Integration>,
     priors: Option<&SolvePriorApply>,
-    radius: Option<f64>,
-    smooth: bool,
+    controls: Controls,
     channels: &BTreeMap<usize, usize>,
+    mut intervals: Option<&mut GainIntervals>,
 ) -> Result<Option<Vec<GainSample<'a>>>, String> {
     let mut groups = BTreeMap::<_, Vec<_>>::new();
     for row in references {
@@ -187,21 +203,25 @@ fn solve<'a>(
         let channel = channels[&window];
         let frequency = spectral.chan_freq(window).map_err(error_text)?[channel];
         let radius = normalization::radius(
-            radius,
+            controls.radius,
             &[frequency],
             antennas
                 .dish_diameter(antenna as usize)
                 .map_err(error_text)?,
         )?;
-        let mut samples = group
-            .into_iter()
-            .filter_map(|row| read_sample(ms, row, priors, &correlations, channel).transpose())
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut samples = Vec::new();
+        for row in group {
+            let sample = read_sample(ms, row, priors, &correlations, channel)?;
+            if let Some(intervals) = intervals.as_deref_mut() {
+                intervals.observe(row, sample.as_ref());
+            }
+            samples.extend(sample);
+        }
         has_solving_data |= !samples.is_empty();
         if samples.len() < 100 {
             continue;
         }
-        normalization::normalize(&mut samples, radius, smooth)?;
+        normalization::normalize(&mut samples, radius, controls.smooth)?;
         results.extend(samples);
     }
     results.sort_by(|first, second| {
@@ -214,6 +234,54 @@ fn solve<'a>(
             .then_with(|| left.field.cmp(&right.field))
     });
     Ok(has_solving_data.then_some(results))
+}
+
+type IntegrationKey = (i32, i32, i32, i32, u64);
+
+#[derive(Default)]
+struct GainIntervals(BTreeMap<IntegrationKey, [BTreeSet<i32>; 2]>);
+
+impl GainIntervals {
+    fn observe(&mut self, row: &Integration, sample: Option<&GainSample<'_>>) {
+        let key = (
+            row.window as i32,
+            row.observation,
+            row.scan,
+            row.field,
+            row.time.to_bits(),
+        );
+        let hands = self.0.entry(key).or_default();
+        if let Some(sample) = sample {
+            for hand in hands.iter_mut().take(sample.data.shape()[0]) {
+                hand.insert(row.antenna);
+            }
+        }
+    }
+
+    fn finish(
+        self,
+        ms: &MeasurementSet,
+        activity: Option<&mut ToolSolveActivity>,
+    ) -> Result<SolveStats, String> {
+        let antenna_count = ms.antenna().map_err(error_text)?.row_count() as i32;
+        let window_count = ms.spectral_window().map_err(error_text)?.row_count() as i32;
+        let mut stats = SolveStatsBuilder::new(2, 0..window_count, &(0..antenna_count).collect());
+        let no_cross_correlations = BTreeSet::new();
+        for ((spw_id, _, _, _, _), hands) in self.0 {
+            let attempted = hands.iter().any(|hand| !hand.is_empty());
+            stats.interval(&IntervalStages {
+                spw_id,
+                antennas: &no_cross_correlations,
+                expected_window: false,
+                attempted_interval: Some(attempted),
+                with_data: hands.into(),
+                constrained: BTreeSet::new(),
+            });
+            stats.record_success(spw_id, attempted);
+        }
+        stats.track_activity(activity);
+        Ok(stats.finish())
+    }
 }
 
 fn read_sample<'a>(

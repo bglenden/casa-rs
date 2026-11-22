@@ -8,6 +8,7 @@ mod map_geometry;
 mod position_switch;
 pub(crate) mod preparation;
 mod spectrum;
+pub(crate) mod tool;
 
 use std::path::{Path, PathBuf};
 

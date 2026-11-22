@@ -19,6 +19,7 @@ mod mask;
 mod otf;
 mod raster;
 
+#[derive(Clone, Copy)]
 pub(super) enum Selection {
     Otf { fraction: f64 },
     Raster { fraction: f64, noff: i64 },

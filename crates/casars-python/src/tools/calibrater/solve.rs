@@ -7,7 +7,7 @@ use casa_calibration::{
     BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
     BandpassType, CalibrationSolveRequest, FringeControls, FringeCorrelation, GainNormalization,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainSolveRobustness, GainType, RefAntSelector,
+    GainSolveRobustness, GainType, RefAntSelector, SingleDishSolveControls,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -280,6 +280,28 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
+        let radius_text;
+        let single_dish = if matches!(
+            family.as_str(),
+            "SDSKY_PS" | "SDSKY_OTF" | "SDSKY_RASTER" | "SDGAIN_OTFD"
+        ) {
+            radius_text = radius
+                .map(|value| {
+                    value.extract::<String>().map_err(|_| {
+                        pyo3::exceptions::PyTypeError::new_err("argument _radius must be a string")
+                    })
+                })
+                .transpose()?
+                .unwrap_or_default();
+            Some(SingleDishSolveControls {
+                fraction: number(fraction.cloned(), "setsolve", 20, 0.1)? as f32,
+                numedge: setsolve_long(numedge, 21, -1)?,
+                radius: &radius_text,
+                smooth: setsolve_bool(smooth, 23, true)?,
+            })
+        } else {
+            None
+        };
         let polarization =
             casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);
         let baseline = matches!(family.as_str(), "M" | "M MUELLER" | "MF" | "MF MUELLER");
@@ -393,6 +415,13 @@ impl super::PyCalibrater {
                 robustness: GainSolveRobustness::from_casa(robust_mode(&solve_mode), thresholds)
                     .expect("recognized CASA robust mode"),
             };
+            if let Some(controls) = single_dish {
+                state
+                    .set_tool_single_dish_solve(&family, standard.gain(GainType::G), mode, controls)
+                    .map_err(|_| setup_error())?;
+                state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
+                return Ok(true);
+            }
             if polarization {
                 state
                     .set_tool_polarization(
