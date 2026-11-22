@@ -1,4 +1,4 @@
-"""Pinned behavior of the public image tool on a saved Float expression."""
+"""Pinned behavior of the public image tool on a saved expression."""
 
 import json
 
@@ -237,3 +237,87 @@ def test_saved_expression_infers_float_function_results(tmp_path, backend, opera
         np.testing.assert_array_equal(writer.getchunk(), np.full(shape, 2.))
     finally:
         writer.done()
+
+
+def _typed_operand(api, path, pixeltype):
+    dtype = {"float": np.float32, "double": np.float64,
+             "complex": np.complex64, "dcomplex": np.complex128}[pixeltype]
+    values = np.arange(12.).reshape(3, 4)
+    if pixeltype.startswith("d"):
+        values += 2. ** -37
+    if "complex" in pixeltype:
+        values = values + 2j * (values + 1.)
+    values = values.astype(dtype)
+    source = api.image()
+    try:
+        assert source.fromarray(outfile=str(path), pixels=values,
+                                type="d" if pixeltype.startswith("d") else "f")
+        assert source.pixeltype() == pixeltype
+    finally:
+        source.done()
+    return values
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("pixeltype", ["float", "double", "complex", "dcomplex"])
+@pytest.mark.parametrize("factory", ["open", "newimage", "newimagefromfile"])
+def test_saved_expression_direct_factories_infer_all_pixel_types(tmp_path, backend, pixeltype, factory):
+    api = _backend(backend)
+    source = tmp_path / "operand.im"
+    pixels = _typed_operand(api, source, pixeltype)
+    expression = tmp_path / "manifest.im"
+    _manifest(expression, ImageExpr=f'"{source}" * 3', DataType="unknown")
+    image = api.image()
+    opened = image
+    try:
+        result = getattr(image, factory)(str(expression))
+        if factory == "open":
+            assert result is True
+        else:
+            opened = result
+        assert opened.isopen()
+        if pixeltype.startswith("d"):
+            with pytest.raises(RuntimeError, match="ispersistent does not support images"):
+                opened.ispersistent()
+            with pytest.raises(RuntimeError, match="name does not support images"):
+                opened.name()
+        else:
+            assert opened.ispersistent() and opened.name() == str(expression)
+        assert opened.pixeltype() == pixeltype
+        values = opened.getchunk()
+        assert values.dtype == (np.complex128 if "complex" in pixeltype else np.float64)
+        np.testing.assert_array_equal(values, pixels * 3.)
+    finally:
+        opened.done()
+        if opened is not image:
+            image.done()
+
+
+@pytest.mark.parametrize("writer_backend", ["casa", "casars"])
+@pytest.mark.parametrize("reader_backend", ["casa", "casars"])
+@pytest.mark.parametrize("pixeltype", ["float", "double", "complex", "dcomplex"])
+@pytest.mark.parametrize("factory", ["fromimage", "newimagefromimage"])
+def test_saved_expression_creates_interoperable_native_copies(tmp_path, writer_backend, reader_backend, pixeltype, factory):
+    writer_api, reader_api = _backend(writer_backend), _backend(reader_backend)
+    source = tmp_path / "operand.im"
+    expected = _typed_operand(writer_api, source, pixeltype) * 3.
+    expression = tmp_path / "manifest.im"
+    _manifest(expression, ImageExpr=f'"{source}" * 3', DataType="unknown")
+    output = tmp_path / "copied.im"
+    writer, reader = writer_api.image(), reader_api.image()
+    result = writer
+    try:
+        created = getattr(writer, factory)(infile=str(expression), outfile=str(output))
+        if factory == "fromimage":
+            assert created is True
+        else:
+            result = created
+        assert result.done()
+        assert reader.open(str(output))
+        assert reader.pixeltype() == pixeltype
+        np.testing.assert_array_equal(reader.getchunk(), expected)
+    finally:
+        reader.done()
+        result.done()
+        if result is not writer:
+            writer.done()

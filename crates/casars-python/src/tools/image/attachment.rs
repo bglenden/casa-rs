@@ -396,8 +396,12 @@ impl AttachedImage {
         &self.operand_paths
     }
 
-    pub(super) fn is_persistent(&self) -> bool {
-        self.key.is_some() || self.lock().path().is_some()
+    pub(super) fn is_persistent(&self) -> PyResult<bool> {
+        let image = self.lock();
+        if image.is_saved_expression() {
+            image.check_single_precision("ispersistent")?;
+        }
+        Ok(self.key.is_some() || image.path().is_some())
     }
 
     pub(super) fn check_directory(&self) -> PyResult<()> {
