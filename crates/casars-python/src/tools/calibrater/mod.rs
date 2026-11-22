@@ -3,6 +3,7 @@
 
 mod apply;
 mod arguments;
+mod polynomial;
 mod solve;
 mod stubs;
 pub(crate) mod surface;

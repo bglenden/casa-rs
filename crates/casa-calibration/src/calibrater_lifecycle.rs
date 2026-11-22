@@ -56,6 +56,7 @@ enum ConfiguredSolve {
         mode: CalibrationOutputMode,
         invalid_mode: bool,
         bandpass: BandpassSolveControls,
+        spline_mode: Option<String>,
     },
     LegacyEp(Box<LegacyEpSolver>),
 }
@@ -89,6 +90,12 @@ pub enum CalibraterLifecycleError {
     /// The requested amplitude/phase solve mode is rejected during execution.
     #[error("unrecognized amplitude/phase solve mode")]
     InvalidSolveMode,
+    /// The installed CASA tool executes the spline solver via VI1.
+    #[error("gain spline solves require the legacy visibility iterator")]
+    SplineNeedsLegacyIterator,
+    /// The specialized setter could not parse a reference antenna selection.
+    #[error("{0}")]
+    ReferenceAntennaSelection(String),
     /// Delay solving requires an explicit reference antenna.
     #[error("specify a reference antenna explicitly")]
     DelayNeedsReference,
@@ -535,6 +542,7 @@ impl CalibraterLifecycle {
             Some(GainSolveMode::AmplitudePhase),
             GainNormalization::Mean,
             -1.,
+            None,
         )
     }
 
@@ -575,7 +583,67 @@ impl CalibraterLifecycle {
             visibility_mode,
             normalization,
             preaverage_seconds,
+            None,
         )
+    }
+
+    /// Configure the dedicated legacy gain spline solver and its literal mode.
+    /// The mode selects fitted components and is preserved in the table.
+    ///
+    /// # Errors
+    /// Returns an error when no MeasurementSet is open.
+    pub fn set_tool_spline(
+        &mut self,
+        gain: crate::GainSolveRequest,
+        controls: crate::GainSplineControls,
+        mode: CalibrationOutputMode,
+        spline_mode: String,
+    ) -> Result<(), CalibraterLifecycleError> {
+        self.configure_solve(
+            CalibrationSolveRequest::GainSpline { gain, controls },
+            mode,
+            Some(GainSolveMode::AmplitudePhase),
+            GainNormalization::Mean,
+            -1.,
+            Some(spline_mode),
+        )
+    }
+
+    /// Bind the primary antenna used by the specialized polynomial solvers
+    /// before replacing the previous solve configuration.
+    ///
+    /// # Errors
+    /// Returns an error if the attached MS or antenna selection is invalid.
+    pub fn resolve_polynomial_refant(
+        &self,
+        reference: crate::RefAntSelector,
+    ) -> Result<crate::RefAntSelector, CalibraterLifecycleError> {
+        use crate::RefAntSelector;
+
+        let RefAntSelector::Expression { selection, .. } = reference else {
+            return Ok(reference);
+        };
+        let ms = MeasurementSet::open(self.equation()?.attachment.path())
+            .map_err(AttachmentError::from)?;
+        let antennas = ms.resolve_reference_antennas(&selection).map_err(|error| {
+            let casa_ms::MsError::InvalidInput(detail) = error else {
+                return CalibraterLifecycleError::ReferenceAntennaSelection(error.to_string());
+            };
+            let detail = detail
+                .strip_prefix(&format!("antenna selection {selection:?}: "))
+                .unwrap_or(&detail);
+            let message = if detail.starts_with("Antenna Expression: No match found") {
+                format!("{detail}  ")
+            } else if detail.starts_with("No match found for the antenna specificion") {
+                format!("{detail} ")
+            } else {
+                detail.replacen(" (near char.", "\n(near char.", 1)
+            };
+            CalibraterLifecycleError::ReferenceAntennaSelection(message)
+        })?;
+        Ok(antennas.first().map_or(RefAntSelector::Unspecified, |&id| {
+            RefAntSelector::AntennaId(id as i32)
+        }))
     }
 
     fn configure_solve(
@@ -585,6 +653,7 @@ impl CalibraterLifecycle {
         visibility_mode: Option<GainSolveMode>,
         normalization: GainNormalization,
         preaverage_seconds: f64,
+        spline_mode: Option<String>,
     ) -> Result<(), CalibraterLifecycleError> {
         self.equation_mut()?.solve = Some(ConfiguredSolve::Task {
             request: Box::new(request),
@@ -594,7 +663,9 @@ impl CalibraterLifecycle {
                 solve_mode: visibility_mode.unwrap_or(GainSolveMode::AmplitudePhase),
                 normalization,
                 preaverage_seconds,
+                modern_polynomial: false,
             },
+            spline_mode,
         });
         Ok(())
     }
@@ -671,23 +742,35 @@ impl CalibraterLifecycle {
         activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     ) -> Result<CalibrationSolveResult, CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let (mut request, mode, bandpass) = match equation.solve.as_ref() {
+        let (mut request, mode, mut bandpass, spline_mode) = match equation.solve.as_ref() {
             Some(ConfiguredSolve::Task {
                 request,
                 mode,
                 invalid_mode,
                 bandpass,
+                spline_mode,
             }) => {
                 if *invalid_mode {
                     return Err(CalibraterLifecycleError::InvalidSolveMode);
                 }
-                ((**request).clone(), *mode, *bandpass)
+                (
+                    (**request).clone(),
+                    *mode,
+                    *bandpass,
+                    spline_mode.as_deref(),
+                )
             }
             Some(ConfiguredSolve::LegacyEp(_)) => {
                 return Err(CalibraterLifecycleError::EpSolvePending);
             }
             None => return Err(CalibraterLifecycleError::NoSolver),
         };
+        if activity.is_some() && !self.legacy_iterator {
+            if matches!(&request, CalibrationSolveRequest::GainSpline { .. }) {
+                return Err(CalibraterLifecycleError::SplineNeedsLegacyIterator);
+            }
+            bandpass.modern_polynomial = true;
+        }
         let (model_source, stokes) = match equation.model {
             CalibraterModel::FromMeasurementSet => {
                 (GainSolveModelSource::FromMeasurementSet, [1., 0., 0., 0.])
@@ -728,6 +811,7 @@ impl CalibraterLifecycle {
             mode,
             activity,
             bandpass,
+            spline_mode,
         )?)
     }
 

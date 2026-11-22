@@ -6387,6 +6387,13 @@ later intervals still produce valid solutions. Output creation and
 replacement use the shared calibration table lifecycle. The pinned BPOLY
 oracle checks the CASA product, the native return, and retained intervals.
 
+The direct polynomial setter rejects degrees below -1. CASA 6.7.6.14 can
+abort in `solve` while constructing a negative-sized coefficient array.
+
+Configuring an existing BPOLY output with `append=False` deletes it
+immediately in CASA 6.7.6.14. If the subsequent fit raises, the earlier
+table is gone. Casa-rs keeps that table until a new solution replaces it.
+
 ## BPOLY reads a second channel from a singleton selection
 
 - Date noted: 2026-11-18
@@ -9898,6 +9905,10 @@ a shape so CASA can read them, and each row keeps its actual count. The
 [paired oracle](../tools/casa-compat/gspline_oracle.py) compares the original
 rows to a saved copy of the initial solve and the new rows to CASA. It then
 applies the combined table through both implementations.
+
+The direct `calibrater.setsolvegainspline` and `solve` workflow uses the same
+selected-field publication policy. Its paired oracle checks the new field's
+coefficients against CASA and verifies that append preserves the prior field.
 
 ## GSPLINE fit logs give the RMS for the wrong baseline
 

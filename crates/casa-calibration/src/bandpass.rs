@@ -364,6 +364,8 @@ pub(crate) struct BandpassSolveControls {
     pub(crate) solve_mode: GainSolveMode,
     pub(crate) normalization: GainNormalization,
     pub(crate) preaverage_seconds: f64,
+    /// VI2 reports the gather but cannot perform a BPOLY interval fit.
+    pub(crate) modern_polynomial: bool,
 }
 
 impl Default for BandpassSolveControls {
@@ -372,6 +374,7 @@ impl Default for BandpassSolveControls {
             solve_mode: GainSolveMode::AmplitudePhase,
             normalization: GainNormalization::Mean,
             preaverage_seconds: -1.,
+            modern_polynomial: false,
         }
     }
 }
@@ -386,7 +389,9 @@ pub(crate) fn solve_bandpass(
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
     let use_casa_solve = request.band_type == BandpassType::B || request.cuts.is_some();
-    let polynomial_bandpass = request.band_type == BandpassType::BPoly && request.cuts.is_some();
+    let polynomial_bandpass = request.band_type == BandpassType::BPoly
+        && request.cuts.is_some()
+        && !controls.modern_polynomial;
     let rotate_model = request.parang && use_casa_solve;
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
     let context = prepare_calibration_solve(
@@ -429,7 +434,8 @@ pub(crate) fn solve_bandpass(
         &channel_bin_widths,
         SolveGroupOptions {
             input_rows: SolveInputRows::gain(
-                activity.is_some() && request.band_type == BandpassType::B,
+                activity.is_some()
+                    && (request.band_type == BandpassType::B || controls.modern_polynomial),
             ),
             gain_type: GainType::G,
             model_source: request.model_source,
@@ -458,16 +464,19 @@ pub(crate) fn solve_bandpass(
     }
 
     drop(input_phase);
-    if request.band_type == BandpassType::BPoly
-        && let Some(cuts) = request.cuts
-    {
+    if request.band_type == BandpassType::BPoly && request.cuts.is_some() {
+        if controls.modern_polynomial
+            && let Some(activity) = activity
+        {
+            return bpoly::modern_gather(ms, request, context, groups.into_values(), activity);
+        }
         return bpoly::solve_polynomial(
             ms,
             request,
             context,
             groups.into_values(),
             &channel_bin_widths,
-            cuts,
+            activity,
             mode,
         );
     }
