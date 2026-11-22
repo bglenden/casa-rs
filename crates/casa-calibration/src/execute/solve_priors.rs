@@ -187,6 +187,7 @@ impl SolvePriorApply {
                 channel_grid: None,
                 forward_model: self.forward,
                 trial: false,
+                parang_calwt: false,
             },
             &self.plan,
             &self.chain,

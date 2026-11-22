@@ -759,6 +759,7 @@ fn for_each_apply_row(
                 channel_grid: None,
                 forward_model,
                 trial: false,
+                parang_calwt: false,
             },
             plan,
             &chain,
@@ -958,8 +959,7 @@ fn execute_apply_from_path_inner(
             observed_column,
             Some(&mut perf_tracer),
             None,
-            false,
-            false,
+            None,
         )?;
         report.flag_backup_version = flag_backup_version;
         report.timings.planning_ns = planning_ns;
@@ -1070,8 +1070,7 @@ pub fn execute_apply(
         observed_column,
         Some(&mut perf_tracer),
         None,
-        false,
-        false,
+        None,
     )?;
     report.timings.planning_ns = planning_ns;
     report.timings.planning_selection_ns = plan_timings.selection_ns;
@@ -1084,10 +1083,13 @@ pub fn execute_apply(
     Ok(report)
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct ToolCorrection {
     pub(crate) has_library_registration: bool,
     pub(crate) strict: bool,
     pub(crate) trial: bool,
+    pub(crate) parang_terms: usize,
+    pub(crate) parang_calwt: bool,
 }
 
 /// Correct the selection resolved under the same lock used for row writes.
@@ -1108,6 +1110,10 @@ pub(crate) fn execute_tool_apply(
         .iter()
         .all(|row| availability::available(row, &plan));
     let observed_column = apply_observed_column(ms, false);
+    if correction.strict && !all_calibrated {
+        availability::execute_strict_tool(ms, plan, observed_column, lock, correction)?;
+        return Ok(false);
+    }
     if plan.apply_mode == ApplyMode::Trial {
         for_each_apply_row(
             ms,
@@ -1118,15 +1124,6 @@ pub(crate) fn execute_tool_apply(
             PreviewWeightSource::UnitFactors,
             |_, _| {},
         )?;
-        if correction.strict && !all_calibrated {
-            let unavailable = plan
-                .selected_rows
-                .iter()
-                .filter(|row| !availability::available(row, &plan))
-                .cloned()
-                .collect::<Vec<_>>();
-            availability::flag_unavailable(ms, &plan, &unavailable, Some(lock))?;
-        }
     } else {
         execute_apply_plan(
             ms,
@@ -1134,8 +1131,7 @@ pub(crate) fn execute_tool_apply(
             observed_column,
             None,
             Some(lock),
-            correction.strict,
-            correction.trial,
+            Some(correction),
         )?;
     }
     Ok(all_calibrated)
@@ -1151,12 +1147,24 @@ fn execute_apply_available(
     observed_column: &str,
     perf_tracer: Option<&mut CalibrationPerfTracer>,
     lock: Option<&mut TableWriteLock>,
-    trial: bool,
+    tool: Option<ToolCorrection>,
+    retained_chain: Option<&ApplyChain>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
     let execute_apply_plan_started_at = Instant::now();
     let calibration_load_started_at = Instant::now();
-    let chain = ApplyChain::load(ms, &plan, false)?;
+    let loaded;
+    let chain = if let Some(chain) = retained_chain {
+        chain
+    } else {
+        let mut chain = ApplyChain::load(ms, &plan, false)?;
+        if let Some(tool) = tool {
+            chain.arrange_for_tool(&plan, tool.parang_terms);
+        }
+        loaded = chain;
+        &loaded
+    };
+    let trial = tool.is_some_and(|tool| tool.trial);
     let calibration_load_ns = calibration_load_started_at.elapsed().as_nanos() as u64;
     let ensure_corrected_data_started_at = Instant::now();
     if lock.is_some() && plan.requires_corrected_data_column && !plan.selected_rows.is_empty() {
@@ -1186,6 +1194,13 @@ fn execute_apply_available(
         }
     })?;
     let correlation_lookup_ns = correlation_lookup_started_at.elapsed().as_nanos() as u64;
+    let parang_calwt = tool.is_some_and(|tool| tool.parang_calwt)
+        && plan.selected_rows.iter().all(|row| {
+            correlation_types_by_ddid
+                .get(&row.data_desc_id)
+                .and_then(|types| types.first())
+                == Some(&5)
+        });
     let mut updated_row_count = 0;
     let mut flagged_row_count = 0;
     let mut flagged_sample_count = 0;
@@ -1194,11 +1209,12 @@ fn execute_apply_available(
     let mut row_compute_ns = 0_u64;
     let mut row_writeback_ns = 0_u64;
     let any_calwt = plan.apply_mode.writes_corrected_data()
-        && plan
-            .calibration_tables
-            .iter()
-            .zip(&chain.tables)
-            .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
+        && (parang_calwt
+            || plan
+                .calibration_tables
+                .iter()
+                .zip(&chain.tables)
+                .any(|(table, loaded)| table.calwt && loaded.supports_calwt));
     let first_row = plan.selected_rows.first().map(|row| row.row_index);
     let has_weight_spectrum =
         any_calwt && weights::has_spectrum(ms.main_table(), first_row, "WEIGHT_SPECTRUM")?;
@@ -1434,6 +1450,7 @@ fn execute_apply_available(
                     };
                     let prefetched = PrefetchedExecutionRowInputs {
                         trial,
+                        parang_calwt,
                         preserved_corrected_data: preserved_corrected_values
                             .as_mut()
                             .and_then(|values| values.next().flatten()),
@@ -1494,7 +1511,7 @@ fn execute_apply_available(
                         &prefetched,
                         any_calwt && has_weight_spectrum,
                         &plan,
-                        &chain,
+                        chain,
                         Some(&mut geometry_cache),
                         row_compute_profile.as_mut(),
                     )?;
@@ -1702,10 +1719,12 @@ struct ExecutionRowInputs<'a> {
     channel_grid: Option<DataChannelGrid<'a>>,
     forward_model: bool,
     trial: bool,
+    parang_calwt: bool,
 }
 
 struct PrefetchedExecutionRowInputs {
     trial: bool,
+    parang_calwt: bool,
     data: ArrayValue,
     original_flags: Option<ArrayValue>,
     original_weight: Option<ArrayValue>,
@@ -2138,6 +2157,7 @@ fn apply_row_all_channels(
         channel_grid,
         forward_model,
         trial,
+        parang_calwt,
         ..
     } = inputs;
     let ArrayValue::Complex32(data) = data else {
@@ -2191,11 +2211,12 @@ fn apply_row_all_channels(
     };
     let mut newly_flagged_samples = 0;
     let any_calwt = plan.apply_mode.writes_corrected_data()
-        && plan
-            .calibration_tables
-            .iter()
-            .zip(&chain.tables)
-            .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
+        && (parang_calwt
+            || plan
+                .calibration_tables
+                .iter()
+                .zip(&chain.tables)
+                .any(|(table, loaded)| table.calwt && loaded.supports_calwt));
     let mut weight = match original_weight {
         Some(ArrayValue::Float32(weight)) => Some(weight.clone()),
         Some(other) => {
@@ -3518,6 +3539,7 @@ fn apply_row_prefetched(
             channel_grid: None,
             forward_model: false,
             trial: inputs.trial,
+            parang_calwt: inputs.parang_calwt,
         },
         plan,
         chain,

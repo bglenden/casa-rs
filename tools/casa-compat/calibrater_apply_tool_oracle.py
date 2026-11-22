@@ -374,6 +374,34 @@ def uncovered_spectral_window(work, tools):
         assert compare_calls(tools, 'close') == (True, True)
         compare_correction_products(paths, mode)
         print('uncovered spectral window', mode, 'matched', flush=True)
+    if 'native' in tools:
+        strict_prefix_before_error(work, source, tools['native'])
+
+
+def strict_prefix_before_error(work, source, tool):
+    from blcal_oracle import copy_ms, opened
+
+    path = work/'missing-corrected.ms'
+    copy_ms(source, path)
+    with opened(path, True) as table:
+        fields = table.getcol('FIELD_ID')
+        table.putcol('DATA_DESC_ID', 1-fields)
+        table.removecols(['CORRECTED_DATA'])
+        before = table.getcol('FLAG')
+    assert tool.open(str(path), addcorr=False)
+    assert tool.selectvis(spw='0:2~8,1:2~8')
+    assert tool.setapply(table=str(work/'prior-current.cal'))
+    for _ in range(2):
+        ok, error = result(tool.correct, 'calflagstrict')
+        assert not ok and error == ('RuntimeError', 'Error in Calibrater::correct.')
+        assert tool.returndict()['apply_tables'].size == 0
+    assert tool.close()
+    with opened(path) as table:
+        expected = before.copy()
+        expected[:, 2:9, fields == 0] = True
+        np.testing.assert_array_equal(table.getcol('FLAG'), expected)
+        assert 'CORRECTED_DATA' not in table.colnames()
+    print('Strict correction preserved earlier flags across a later missing-output error', flush=True)
 
 
 def traditional_apply(work, tools):
@@ -410,6 +438,95 @@ def traditional_apply(work, tools):
         print('traditional setapply', 'VI1' if legacy else 'VI2', 'matched', flush=True)
 
 
+def traditional_registration_retains_values(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    first, second = work/'register-first', work/'register-second'
+    first.mkdir()
+    second.mkdir()
+    relative = 'gain.cal'
+    first_table, second_table = first/relative, second/relative
+    for path in (first_table, second_table):
+        copytree(work/'prior-current.cal', path)
+    with opened(second_table, True) as table:
+        table.putcol('CPARAM', 2*table.getcol('CPARAM'))
+
+    paths = {}
+    for engine, tool in tools.items():
+        paths[engine] = work/f'snapshot-{engine}.ms'
+        copy_ms(work/'baseline-2.ms', paths[engine])
+        assert tool.setvi(False, True)
+        assert tool.open(str(paths[engine]))
+    with chdir(first):
+        assert compare_calls(tools, 'setapply', table=relative) == (True, True)
+    with opened(first_table, True) as table:
+        table.putcol('CPARAM', 3*table.getcol('CPARAM'))
+    with chdir(second):
+        configured = compare_calls(tools, 'returndict')[1]['apply_tables']
+        np.testing.assert_array_equal(configured, [relative])
+        assert compare_calls(tools, 'correct') == (True, True)
+        assert compare_calls(tools, 'close') == (True, True)
+    compare_correction_products(paths, 'registered relative table')
+
+
+def repeated_parallactic_angle(work, tools):
+    from blcal_oracle import copy_ms, opened, source
+
+    vis = source(work, 'RR RL LR LL', 'circular')
+    reference_outputs = []
+    for registrations in (1, 2):
+        paths = {}
+        for engine, tool in tools.items():
+            paths[engine] = work/f'parallactic-{engine}-{registrations}.ms'
+            copy_ms(vis, paths[engine])
+            with opened(paths[engine], True) as table:
+                table.putcol('WEIGHT', 12*np.ones_like(table.getcol('WEIGHT')))
+            assert tool.setvi(False, True)
+            assert tool.open(str(paths[engine]))
+        for _ in range(registrations):
+            assert compare_calls(tools, 'setapply', type='P', calwt=True) == (True, True)
+        assert compare_calls(tools, 'correct') == (True, True)
+        assert compare_calls(tools, 'close') == (True, True)
+        compare_correction_products(paths, f'{registrations} P Jones terms')
+        with opened(paths['casa']) as reference:
+            reference_outputs.append(reference.getcol('CORRECTED_DATA')[1])
+            np.testing.assert_allclose(reference.getcol('WEIGHT'), 1.0, rtol=1e-6)
+    assert np.max(np.abs(reference_outputs[0] - reference_outputs[1])) > 1e-2
+
+
+def noncommuting_tool_terms(work, tools):
+    from blcal_oracle import copy_ms, opened
+    from record_casa_returns import make_cal_ms
+
+    source, curve = work/'linear-vla.ms', work/'linear-curve.cal'
+    make_cal_ms(str(source), channels=8, stokes='XX XY YX YY', telescope='VLA',
+                frequency='1.5GHz', antenna_names=[f'ea0{n}' for n in range(1, 6)],
+                autocorrelation_weight=1.)
+    casatasks.gencal(vis=str(source), caltable=str(curve), caltype='gc')
+    with opened(curve, True) as table:
+        coefficients = np.zeros_like(table.getcol('FPARAM'))
+        assert coefficients.shape[0] == 8
+        coefficients[0] = 1.4
+        coefficients[4] = 0.7
+        table.putcol('FPARAM', coefficients)
+    outputs = []
+    terms = ({'table': str(curve)}, {'type': 'P'})
+    for index, sequence in enumerate((terms, terms[::-1])):
+        paths = {}
+        for engine, tool in tools.items():
+            paths[engine] = work/f'ordered-{engine}-{index}.ms'
+            copy_ms(source, paths[engine])
+            assert tool.open(str(paths[engine]))
+        for arguments in sequence:
+            assert compare_calls(tools, 'setapply', **arguments) == (True, True)
+        assert compare_calls(tools, 'correct') == (True, True)
+        assert compare_calls(tools, 'close') == (True, True)
+        compare_correction_products(paths, 'P and EGainCurve order')
+        with opened(paths['casa']) as table:
+            outputs.append(table.getcol('CORRECTED_DATA'))
+    np.testing.assert_array_equal(*outputs)
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('work', type=Path)
@@ -430,6 +547,9 @@ def main():
         selected_antenna_record(work, tools)
         correct_selected_data(work, tools)
         traditional_apply(work, tools)
+        traditional_registration_retains_values(work, tools)
+        repeated_parallactic_angle(work, tools)
+        noncommuting_tool_terms(work, tools)
         uncovered_spectral_window(work, tools)
         if 'native' in tools:
             retained_main_lock(work)

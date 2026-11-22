@@ -34,8 +34,7 @@ pub(super) fn execute(
     observed_column: &str,
     tracer: Option<&mut CalibrationPerfTracer>,
     mut lock: Option<&mut TableWriteLock>,
-    force_strict: bool,
-    trial: bool,
+    tool: Option<ToolCorrection>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let start = Instant::now();
     let unavailable = plan
@@ -45,7 +44,7 @@ pub(super) fn execute(
         .cloned()
         .collect::<Vec<_>>();
     if unavailable.is_empty() {
-        return execute_apply_available(ms, plan, observed_column, tracer, lock, trial);
+        return execute_apply_available(ms, plan, observed_column, tracer, lock, tool, None);
     }
     let mut usable = plan.clone();
     usable.selected_rows.retain(|row| available(row, &plan));
@@ -59,10 +58,11 @@ pub(super) fn execute(
         observed_column,
         None,
         lock.as_deref_mut(),
-        trial,
+        tool,
+        None,
     )?;
     let flag_start = Instant::now();
-    let strict = force_strict || plan.apply_mode.is_strict();
+    let strict = tool.is_some_and(|tool| tool.strict) || plan.apply_mode.is_strict();
     if strict {
         let (samples, rows) = flag_unavailable(ms, &plan, &unavailable, lock)?;
         report.flagged_sample_count += samples;
@@ -89,7 +89,61 @@ pub(super) fn execute(
     Ok((report, trace))
 }
 
-pub(super) fn flag_unavailable(
+/// Publish earlier strict flags before a later group's correction can fail.
+/// Keep the same MAIN lock and resolved row identities for the whole run.
+pub(super) fn execute_strict_tool(
+    ms: &mut MeasurementSet,
+    mut plan: ApplyPlan,
+    observed_column: &str,
+    lock: &mut TableWriteLock,
+    tool: ToolCorrection,
+) -> Result<(), ApplyExecutionError> {
+    let mut chain = ApplyChain::load(ms, &plan, false)?;
+    chain.arrange_for_tool(&plan, tool.parang_terms);
+    let mut ordered = std::mem::take(&mut plan.selected_rows)
+        .into_iter()
+        .map(|row| {
+            let array = get_i32(ms.main_table(), row.row_index, "ARRAY_ID")?;
+            Ok((array, available(&row, &plan), row))
+        })
+        .collect::<Result<Vec<_>, ApplyExecutionError>>()?;
+    ordered.sort_by(|(array_a, _, a), (array_b, _, b)| {
+        (array_a, a.scan_number, a.field_id, a.data_desc_id)
+            .cmp(&(array_b, b.scan_number, b.field_id, b.data_desc_id))
+            .then_with(|| a.time_seconds.total_cmp(&b.time_seconds))
+            .then_with(|| a.row_index.cmp(&b.row_index))
+    });
+    for group in ordered.chunk_by(|first, next| first.1 == next.1) {
+        plan.selected_rows = group.iter().map(|(_, _, row)| row.clone()).collect();
+        plan.selected_row_count = group.len();
+        if !group[0].1 {
+            flag_unavailable(ms, &plan, &plan.selected_rows, Some(lock))?;
+        } else if plan.apply_mode == ApplyMode::Trial {
+            for_each_apply_row(
+                ms,
+                &plan,
+                observed_column,
+                false,
+                false,
+                PreviewWeightSource::UnitFactors,
+                |_, _| {},
+            )?;
+        } else {
+            execute_apply_available(
+                ms,
+                plan.clone(),
+                observed_column,
+                None,
+                Some(lock),
+                Some(tool),
+                Some(&chain),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn flag_unavailable(
     ms: &mut MeasurementSet,
     plan: &ApplyPlan,
     rows: &[ApplyRowPlan],

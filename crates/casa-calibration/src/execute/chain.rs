@@ -77,6 +77,23 @@ impl ApplyChain {
             parang,
         })
     }
+
+    /// The stateful tool sorts every configured term and allows repeated
+    /// registration of the table-free parallactic-angle term.
+    pub(super) fn arrange_for_tool(&mut self, plan: &ApplyPlan, parang_terms: usize) {
+        if self.parang.is_some() {
+            self.steps.extend(std::iter::repeat_n(
+                ApplyStep::ParallacticAngle,
+                parang_terms.saturating_sub(1),
+            ));
+        }
+        self.steps.sort_by_key(|step| match step {
+            ApplyStep::Table(index) => {
+                viscal_order(&plan.calibration_tables[*index].summary.table_subtype)
+            }
+            ApplyStep::ParallacticAngle => viscal_order("P Jones"),
+        });
+    }
 }
 
 pub(crate) fn has_polarization_matrix(plan: &ApplyPlan) -> bool {

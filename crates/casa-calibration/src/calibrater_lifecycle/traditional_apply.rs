@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Direct tool registration of traditional calibration tables.
 
+use std::path::{Path, PathBuf};
+
 use casa_ms::MeasurementSet;
-use casa_tables::{Table, TableOptions};
+use casa_tables::{Table, TableOptions, add_directory, strip_directory};
+use casa_types::Value;
 
 use super::{CalibraterLifecycle, CalibraterLifecycleError};
-use crate::constants::TABLE_INFO_TYPE;
+use crate::constants::{STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE};
 use crate::plan::{ApplyCalibrationTableSpec, ApplyInterpolationMode, GainFieldSelector};
 use crate::summarize_table;
+
+pub(super) struct TraditionalApplySnapshot {
+    pub(super) name: String,
+    _directory: tempfile::TempDir,
+}
 
 impl CalibraterLifecycle {
     /// Configure a traditional calibration table or the parallactic-angle
@@ -27,12 +35,22 @@ impl CalibraterLifecycle {
             CalibraterLifecycleError::ApplyConfiguration("Error in Calibrater::setapply.".into())
         };
         if calibration_factory_type(kind) == Some("P Jones") {
-            equation.apply.parang = true;
+            equation.apply.parang_terms += 1;
+            equation.apply.parang_calwt |= spec.calwt;
             return Ok(());
         }
         let path = spec.path.display();
         let inferred = kind.is_empty();
-        let table = Table::open(TableOptions::new(&spec.path)).map_err(|_| {
+        let options = TableOptions::new(&spec.path);
+        #[cfg(unix)]
+        let opened = Table::open_with_lock(
+            options,
+            casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait)
+                .read_only(true),
+        );
+        #[cfg(not(unix))]
+        let opened = Table::open(options);
+        let table = opened.map_err(|_| {
             if inferred {
                 CalibraterLifecycleError::ApplyConfiguration(format!(
                     "Table {path} does not exist."
@@ -55,7 +73,8 @@ impl CalibraterLifecycle {
             return Err(generic_error());
         }
         if subtype == "P Jones" {
-            equation.apply.parang = true;
+            equation.apply.parang_terms += 1;
+            equation.apply.parang_calwt |= spec.calwt;
             return Ok(());
         }
 
@@ -92,9 +111,70 @@ impl CalibraterLifecycle {
                     .map_err(|_| generic_error())?;
             }
         }
+        let (snapshot_path, snapshot) = snapshot_table(&spec.path, &table).map_err(|error| {
+            tracing::error!(%error, table = %spec.path.display(), "could not retain registered calibration table");
+            generic_error()
+        })?;
+        spec.path = snapshot_path.clone();
+        equation
+            .apply
+            .table_snapshots
+            .insert(snapshot_path, snapshot);
         equation.apply.tables.push(spec);
         Ok(())
     }
+}
+
+fn snapshot_table(
+    source: &Path,
+    table: &Table,
+) -> Result<(PathBuf, TraditionalApplySnapshot), Box<dyn std::error::Error>> {
+    let directory = tempfile::Builder::new().prefix("calibrater-").tempdir()?;
+    let destination = directory.path().canonicalize()?.join("caltable");
+    // Copy the on-disk managers by value. Materialize a selected reference
+    // table so future writes to its plain parent cannot change its solutions.
+    if table.is_reference_table()? {
+        table.to_memory()?.save(TableOptions::new(&destination))?;
+    } else {
+        crate::paths::copy_editable_table_tree(source, &destination)?;
+    }
+    let owner = crate::paths::subtable_owner(table, source)?;
+    let mut external = Vec::new();
+    for name in STANDARD_SUBTABLE_KEYWORDS {
+        let Some(stored) = table.keywords().get(name).and_then(Value::as_table_ref) else {
+            continue;
+        };
+        let candidate = add_directory(stored, &destination);
+        if candidate
+            .canonicalize()
+            .is_ok_and(|path| path.starts_with(&destination))
+        {
+            continue;
+        }
+        let original = add_directory(stored, &owner);
+        if original.is_dir() {
+            let copied = destination.join("linked").join(name);
+            crate::paths::copy_editable_table_tree(&original, &copied)?;
+            external.push((
+                *name,
+                Value::table_ref(strip_directory(&copied, &destination)),
+            ));
+        }
+    }
+    if !external.is_empty() {
+        let mut copied = Table::open_metadata_only(TableOptions::new(&destination))?;
+        for (name, reference) in external {
+            copied.keywords_mut().upsert(name, reference);
+        }
+        copied.save_metadata_only(TableOptions::new(&destination))?;
+    }
+    Ok((
+        destination,
+        TraditionalApplySnapshot {
+            name: source.display().to_string(),
+            _directory: directory,
+        },
+    ))
 }
 
 pub(super) fn non_calibration_table(name: &str, kind: &str) -> CalibraterLifecycleError {

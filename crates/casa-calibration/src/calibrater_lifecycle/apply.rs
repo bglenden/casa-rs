@@ -47,13 +47,15 @@ impl CalibraterLifecycle {
         let request = ApplyPlanRequest {
             selection: equation.attachment.selection().clone(),
             apply_mode,
-            parang: equation.apply.parang,
+            parang: equation.apply.parang_terms > 0,
             calibration_tables: equation.apply.tables.clone(),
         };
         let correction = ToolCorrection {
             has_library_registration: !equation.apply.library_tables.is_empty(),
             strict: mode.contains("STRICT"),
             trial,
+            parang_terms: equation.apply.parang_terms,
+            parang_calwt: equation.apply.parang_calwt,
         };
         let result = equation.attachment.with_write(|ms, selected, lock| {
             execute_tool_apply(ms, selected, lock, &request, correction)
@@ -161,7 +163,12 @@ impl CalibraterLifecycle {
             .iter()
             .map(|table| {
                 table.callibrary.as_ref().map_or_else(
-                    || table.path.display().to_string(),
+                    || {
+                        equation.apply.table_snapshots.get(&table.path).map_or_else(
+                            || table.path.display().to_string(),
+                            |snapshot| snapshot.name.clone(),
+                        )
+                    },
                     |library| library.table_name.clone(),
                 )
             })
