@@ -1445,6 +1445,7 @@ where
                         position: pos,
                     });
                 }
+                let single = arg1.single_precision() && arg2.single_precision();
                 let lhs = arg1.into_numeric(pos)?;
                 let rhs = arg2.into_numeric(pos)?;
                 lhs.spectral_index_with_metadata(rhs, !self.casa_scalar_literals)
@@ -1452,7 +1453,7 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::numeric(r, false))
+                    .map(|r| ExprNode::numeric(r, single))
             }
             "pa" => {
                 if T::is_complex() {
@@ -1507,6 +1508,7 @@ where
                 Ok(ExprNode::Mask(MaskExprBuilder::index_in(axis, indices)))
             }
             "rebin" => {
+                let single = arg1.single_precision();
                 let expr = arg1.into_numeric(pos)?;
                 let raw_factors = match arg2 {
                     ExprNode::IntArray(vals) => vals,
@@ -1539,7 +1541,7 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::numeric(r, false))
+                    .map(|r| ExprNode::numeric(r, single))
             }
             _ => Err(ExprParseError {
                 message: format!("unknown 2-argument function: {name}"),
@@ -2075,7 +2077,7 @@ pub(crate) fn compile_image_tool_pixels<'a, R>(
     real: &R,
     complex: &dyn ImageResolver<'a, Complex64>,
     single_precision: &dyn Fn(&str) -> bool,
-) -> Result<ImageToolPixelExpression, ImageError>
+) -> Result<(ImageToolPixelExpression, bool), ImageError>
 where
     R: ImageResolver<'a, f64>,
 {
@@ -2087,7 +2089,8 @@ where
         CasaExpressionMode::Fill,
     )
     .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
-    match parsed {
+    let single_precision = parsed.single_precision();
+    let expression = match parsed {
         ExprNode::Scalar(scalar) => ImageExprBuilder::scalar(scalar.value)
             .compile()
             .map(ImageToolPixelExpression::Real),
@@ -2099,7 +2102,8 @@ where
                 .map(ImageToolPixelExpression::Real)
         }
         ExprNode::Mask(mask) => Ok(ImageToolPixelExpression::Boolean(mask.shape().to_vec())),
-    }
+    }?;
+    Ok((expression, single_precision))
 }
 
 pub(crate) enum ReplacementPixels {

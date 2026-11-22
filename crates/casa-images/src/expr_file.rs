@@ -49,7 +49,8 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_lattices::{Lattice, LatticeError};
-use casa_types::{ArrayD, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use serde_json::Value as Json;
 
 use crate::error::ImageError;
 use crate::expr_parser::{self, ExprValueConvert, HashMapResolver};
@@ -415,12 +416,7 @@ pub struct ExprFileInfo {
 
 /// Reads and parses the `imageexpr.json` from an expression image directory.
 pub fn read_info(path: impl AsRef<Path>) -> Result<ExprFileInfo, ImageError> {
-    let json_path = path.as_ref().join("imageexpr.json");
-    let content = fs::read_to_string(&json_path)
-        .map_err(|e| ImageError::InvalidMetadata(format!("cannot read {json_path:?}: {e}")))?;
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| ImageError::InvalidMetadata(format!("invalid JSON in {json_path:?}: {e}")))?;
-
+    let json = read_manifest(path.as_ref())?;
     let version = json.get("Version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
 
     let data_type_s = json
@@ -429,11 +425,7 @@ pub fn read_info(path: impl AsRef<Path>) -> Result<ExprFileInfo, ImageError> {
         .ok_or_else(|| ImageError::InvalidMetadata("missing DataType in imageexpr.json".into()))?;
     let data_type = parse_data_type(data_type_s)?;
 
-    let expr_string = json
-        .get("ImageExpr")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| ImageError::InvalidMetadata("missing ImageExpr in imageexpr.json".into()))?
-        .to_string();
+    let expr_string = manifest_expression(&json)?.to_owned();
 
     let misc_info = json
         .get("MiscInfo")
@@ -446,6 +438,121 @@ pub fn read_info(path: impl AsRef<Path>) -> Result<ExprFileInfo, ImageError> {
         expr_string,
         misc_info,
     })
+}
+
+/// Saved expression metadata for the public image tool. LEL infers its type
+/// from the resolved operands. The optional record preserves an absent field.
+pub struct ToolExpressionManifest {
+    /// Original LEL text stored in the manifest.
+    pub expression: String,
+    misc_info: Option<Json>,
+}
+
+impl ToolExpressionManifest {
+    /// Decode the optional record that overrides inherited metadata.
+    ///
+    /// # Errors
+    /// Returns an error when the metadata is not a usable record.
+    pub fn misc_info(&self) -> Result<Option<RecordValue>, ImageError> {
+        self.misc_info
+            .as_ref()
+            .map(tool_metadata_record)
+            .transpose()
+    }
+}
+
+/// Read a saved expression for public image-tool attachment.
+///
+/// # Errors
+/// Returns an error for invalid JSON or missing LEL text.
+pub fn read_tool_manifest(path: &Path) -> Result<ToolExpressionManifest, ImageError> {
+    let mut json = read_manifest(path)?;
+    let expression = manifest_expression(&json)?.to_owned();
+    let misc_info = json
+        .as_object_mut()
+        .and_then(|record| record.remove("MiscInfo"));
+    Ok(ToolExpressionManifest {
+        expression,
+        misc_info,
+    })
+}
+
+fn tool_metadata_record(value: &Json) -> Result<RecordValue, ImageError> {
+    let object = value.as_object().ok_or_else(|| {
+        ImageError::CasaSelection("Json error: JsonValue::getValueMap - invalid data type".into())
+    })?;
+    let fields = object
+        .iter()
+        .map(|(name, value)| Ok(RecordField::new(name, tool_metadata_value(value)?)))
+        .collect::<Result<Vec<_>, ImageError>>()?;
+    Ok(RecordValue::new(fields))
+}
+
+fn tool_metadata_value(value: &Json) -> Result<Value, ImageError> {
+    let scalar = match value {
+        Json::Bool(value) => ScalarValue::Bool(*value),
+        Json::Number(value) => match value.as_i64() {
+            Some(integer) => ScalarValue::Int64(integer),
+            None => ScalarValue::Float64(value.as_f64().expect("JSON number")),
+        },
+        Json::String(value) => ScalarValue::String(value.clone()),
+        Json::Object(_) => return tool_metadata_record(value).map(Value::Record),
+        Json::Array(values) => return tool_metadata_vector(values).map(Value::Array),
+        Json::Null => {
+            return Err(ImageError::CasaSelection(
+                "Json error: JsonValue::getValueHolder - invalid data type".into(),
+            ));
+        }
+    };
+    Ok(Value::Scalar(scalar))
+}
+
+fn tool_metadata_vector(values: &[Json]) -> Result<ArrayValue, ImageError> {
+    use ndarray::Array1;
+
+    if values.is_empty() {
+        return Err(ImageError::CasaSelection(
+            "Json error: empty vector in MiscInfo".into(),
+        ));
+    }
+    if values.iter().any(Json::is_array) {
+        return Err(ImageError::CasaSelection(
+            "Json error: JsonValue::getDouble - invalid data type".into(),
+        ));
+    }
+    if let Some(items) = values.iter().map(Json::as_bool).collect::<Option<Vec<_>>>() {
+        return Ok(ArrayValue::Bool(Array1::from_vec(items).into_dyn()));
+    }
+    if let Some(items) = values.iter().map(Json::as_i64).collect::<Option<Vec<_>>>() {
+        return Ok(ArrayValue::Int64(Array1::from_vec(items).into_dyn()));
+    }
+    if let Some(items) = values.iter().map(Json::as_f64).collect::<Option<Vec<_>>>() {
+        return Ok(ArrayValue::Float64(Array1::from_vec(items).into_dyn()));
+    }
+    if let Some(items) = values
+        .iter()
+        .map(|item| item.as_str().map(str::to_owned))
+        .collect::<Option<Vec<_>>>()
+    {
+        return Ok(ArrayValue::String(Array1::from_vec(items).into_dyn()));
+    }
+    Err(ImageError::CasaSelection(
+        "Json error: JsonValue::getValueHolder - vector of mixed data types".into(),
+    ))
+}
+
+fn read_manifest(path: &Path) -> Result<serde_json::Value, ImageError> {
+    let json_path = path.join("imageexpr.json");
+    let content = fs::read_to_string(&json_path)
+        .map_err(|e| ImageError::InvalidMetadata(format!("cannot read {json_path:?}: {e}")))?;
+    serde_json::from_str(&content)
+        .map_err(|e| ImageError::InvalidMetadata(format!("invalid JSON in {json_path:?}: {e}")))
+}
+
+fn manifest_expression(json: &serde_json::Value) -> Result<&str, ImageError> {
+    json.get("ImageExpr")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| ImageError::InvalidMetadata("missing ImageExpr in imageexpr.json".into()))
 }
 
 // ---------------------------------------------------------------------------

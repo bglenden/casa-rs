@@ -232,7 +232,11 @@ impl ImageHandle {
 
     pub(super) fn read_only_file_type(&self) -> Option<&'static str> {
         let kind = self.image_type_name();
-        matches!(kind, "FITSImage" | "MIRIADImage").then_some(kind)
+        (matches!(kind, "FITSImage" | "MIRIADImage") || self.is_saved_expression()).then_some(kind)
+    }
+
+    pub(super) fn is_saved_expression(&self) -> bool {
+        self.image_type_name() == "ImageExpr" && self.path().is_some()
     }
 
     pub(super) fn kind(&self) -> ImagePixelType {

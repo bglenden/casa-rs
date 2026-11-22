@@ -27,11 +27,35 @@ impl<T: ImagePixel> TempImage<T> {
     where
         T: ImageExprValue,
     {
+        Self::with_expression(expression, None)
+    }
+
+    /// Attach a saved expression with its own persistent directory name.
+    ///
+    /// # Errors
+    /// Returns an error if the expression has no lattice shape.
+    pub fn from_saved_expression(
+        expression: ImageExpression<T>,
+        name: PathBuf,
+    ) -> Result<Self, ImageError>
+    where
+        T: ImageExprValue,
+    {
+        Self::with_expression(expression, Some(name))
+    }
+
+    fn with_expression(
+        expression: ImageExpression<T>,
+        name: Option<PathBuf>,
+    ) -> Result<Self, ImageError>
+    where
+        T: ImageExprValue,
+    {
         let has_mask = expression.may_have_mask();
         let info = expression.raw_image_info();
         let mut image = Self::with_read_only_source(
             expression,
-            None,
+            name,
             "ImageExpr",
             "ImageExpr::putSlice - is not possible as ImageExpr is not writable",
             has_mask,

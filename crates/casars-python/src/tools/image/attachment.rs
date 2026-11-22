@@ -144,6 +144,14 @@ impl AttachedImage {
         if path != probe && (!probe.is_dir() || !path.is_dir()) {
             return Err(unrecognized());
         }
+        if casa_images::expr_file::is_image_expr(probe) {
+            if probe.join("imageconcat.json").is_file() {
+                return Err(raised(
+                    "Opening a virtual concatenated image is not implemented yet (#1749)",
+                ));
+            }
+            return super::saved_expression::open(path);
+        }
         let key = key(path)?;
         let has_table_control = key.join("table.dat").is_file();
         if !has_table_control
@@ -437,6 +445,11 @@ impl AttachedImage {
             }
             let fits_path = {
                 let image = self.lock();
+                if image.is_saved_expression() {
+                    return Err(raised(
+                        "Saved image expression rename is not implemented yet (#1959)",
+                    ));
+                }
                 image
                     .fits()
                     .and_then(|_| image.path())
