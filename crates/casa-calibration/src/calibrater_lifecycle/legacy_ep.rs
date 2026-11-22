@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare the image and convolution owned by the legacy EP solver.
 
+mod degrid;
+mod fit;
+mod solve;
+mod table;
+
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
@@ -26,17 +31,19 @@ pub(super) struct LegacyEpSolver {
     cache: EpCache,
     angle_increment_deg: f64,
     pub(super) interval_seconds: f64,
+    preaverage_seconds: f64,
     pub(super) mode: CalibrationOutputMode,
     pub(super) reference: RefAntSelector,
     model: Option<PreparedEpModel>,
 }
 
 struct PreparedEpModel {
-    // EP's later residual and derivative solve use the retained complex image
-    // transform and the two kernels. The public setmodel call prepares them.
-    _fourier: [Vec<Complex32>; 4],
-    _products: EpCacheProducts,
-    _correlation_planes: Vec<StokesType>,
+    fourier: [Vec<Complex32>; 4],
+    products: EpCacheProducts,
+    correlation_planes: Vec<StokesType>,
+    side: usize,
+    cell_rad: [f64; 2],
+    coordinates: CoordinateSystem,
     _memory: Reservation,
 }
 
@@ -55,7 +62,7 @@ impl LegacyEpSolver {
         table: &Path,
         cache: &Path,
         angle_increment_deg: f64,
-        interval: &str,
+        (interval, preaverage_seconds): (&str, f64),
         mode: CalibrationOutputMode,
         reference: RefAntSelector,
     ) -> MsResult<(Self, String)> {
@@ -78,6 +85,15 @@ impl LegacyEpSolver {
             cache,
             angle_increment_deg,
             interval_seconds,
+            preaverage_seconds: if preaverage_seconds < 0. {
+                if interval_seconds > 0. {
+                    interval_seconds
+                } else {
+                    f64::MAX
+                }
+            } else {
+                preaverage_seconds
+            },
             mode,
             reference,
             model: None,
@@ -118,9 +134,12 @@ impl LegacyEpSolver {
             convolution_samples = products.convolution.len(), weight_samples = products.weights.len(),
             "legacy EP prepared its Fourier model");
         self.model = Some(PreparedEpModel {
-            _fourier: fourier,
-            _products: products,
-            _correlation_planes: buffer.correlations,
+            fourier,
+            products,
+            correlation_planes: buffer.correlations,
+            side: shape[0],
+            cell_rad,
+            coordinates,
             _memory: memory,
         });
         Ok(())
@@ -526,7 +545,7 @@ mod tests {
                         .all(|v| v.norm() == 0.)
                 );
             }
-            for (correlation, polarization) in model._correlation_planes.iter().enumerate() {
+            for (correlation, polarization) in model.correlation_planes.iter().enumerate() {
                 let actual = evaluate_sample(
                     model,
                     shape[0],
@@ -559,7 +578,7 @@ mod tests {
         let centre = side / 2 + 1;
         let position = position.map(|value| (value * side as f64 + centre as f64) as f32);
         let loc = position.map(|value| value.round() as isize - 1);
-        let products = &model._products;
+        let products = &model.products;
         let sampling = products.sampling as isize;
         let subpixel = std::array::from_fn::<_, 2, _>(|axis| {
             (((loc[axis] + 1) as f32 - position[axis]) * sampling as f32).round() as isize
@@ -572,7 +591,7 @@ mod tests {
             return Complex32::default();
         }
         let first = products.convolution.shape()[0] as isize / 2;
-        let grid = &model._fourier[polarization as usize - StokesType::RR as usize];
+        let grid = &model.fourier[polarization as usize - StokesType::RR as usize];
         let mut value = Complex32::default();
         let mut norm = Complex32::default();
         for y in -support..=support {

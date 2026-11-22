@@ -347,7 +347,7 @@ impl super::PyCalibrater {
                         &table,
                         std::path::Path::new(cfcache.unwrap_or("")),
                         painc.unwrap_or(360.),
-                        &elapsed,
+                        (&elapsed, preavg),
                         mode,
                         reference,
                     )
