@@ -57,8 +57,15 @@ def solve_case(work, engines, vis, name, *, options=None, selection=None,
     else:
         same_record(records['native']['solvestats'], records['casa']['solvestats'])
     if outcome == 'product':
-        compare_tables(paths['casa'], paths['native'])
+        # The A fixture leaves only float32 division residue, so the formal
+        # non-reference SNR exceeds 5e9 and is sensitive to its rounding.
+        tolerance = .006 if name == 'amplitude' else .001
+        compare_tables(paths['casa'], paths['native'], snr_tolerance=tolerance)
         compare_readers(paths)
+        if name == 'amplitude':
+            for path in paths.values():
+                with opened(path) as table:
+                    assert (table.getcol('SNR')[0::4, :, 1:] > 5e9).all()
     print(name, 'activity', activity['casa'], flush=True)
     return paths
 

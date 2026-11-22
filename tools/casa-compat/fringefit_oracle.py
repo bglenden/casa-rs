@@ -94,7 +94,7 @@ def check_global(solution, law, zero_rates):
 
 
 def compare_tables(reference, actual, delay_tolerance=.001, *, dispersion_tolerance=1e-6,
-                   time_tolerance=2e-5):
+                   time_tolerance=2e-5, snr_tolerance=1e-3):
     with opened(reference) as left, opened(actual) as right:
         assert right.info() == left.info()
         assert sorted(right.colnames()) == sorted(left.colnames())
@@ -112,7 +112,7 @@ def compare_tables(reference, actual, delay_tolerance=.001, *, dispersion_tolera
                 np.testing.assert_allclose(b[2::4], a[2::4], atol=1e-17, rtol=0.)
                 np.testing.assert_allclose(b[3::4], a[3::4], atol=dispersion_tolerance, rtol=1e-3)
             elif name == 'SNR':
-                np.testing.assert_allclose(b, a, atol=.001, rtol=1e-3, err_msg=name)
+                np.testing.assert_allclose(b, a, atol=.001, rtol=snr_tolerance, err_msg=name)
             else:
                 np.testing.assert_array_equal(b, a, err_msg=name)
     with opened(reference / 'SPECTRAL_WINDOW') as left, opened(actual / 'SPECTRAL_WINDOW') as right:
