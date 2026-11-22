@@ -10,6 +10,46 @@ pub(super) fn is_cross_hand_phase(subtype: &str) -> bool {
     )
 }
 
+pub(super) fn apply_x_mueller(
+    grid: Option<&CalibrationGrid>,
+    path: &Path,
+    forward: bool,
+    output: &mut ApplyBuffer<'_>,
+) -> Result<(), ApplyExecutionError> {
+    let Some(grid) = grid else {
+        return Ok(());
+    };
+    let CalibrationGrid::Complex(grid) = grid else {
+        return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+            path: path.display().to_string(),
+            reason: "X Mueller requires CPARAM".into(),
+        });
+    };
+    let sample = grid.sample(
+        0,
+        0,
+        output.data_channels,
+        &[],
+        ApplyInterpolationMode::Nearest,
+        path,
+    )?;
+    let (value, _) = correcting_gain(sample.value, sample.flagged);
+    for (index, &code) in output.correlation_types.iter().enumerate() {
+        let gain = match code {
+            6 | 10 => value,
+            7 | 11 => value.conj(),
+            _ => continue,
+        };
+        let mut cross_hand = output.corrected.index_axis_mut(ndarray::Axis(0), index);
+        if forward {
+            cross_hand.mapv_inplace(|sample| sample * gain);
+        } else {
+            cross_hand.mapv_inplace(|sample| sample / gain);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Leakage {
     Linearized,

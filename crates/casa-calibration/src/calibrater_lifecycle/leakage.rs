@@ -164,6 +164,7 @@ fn polarization_kind(name: &str) -> Option<LeakageSolveKind> {
         "DLLS Jones" => return Some(Dlls),
         "DfLLS Jones" => return Some(Dflls),
         "X Jones" => return Some(Xj),
+        "X Mueller" => return Some(XMueller),
         "Xf Jones" => return Some(Xf),
         "Xparang Jones" => return Some(Xparang),
         "Xfparang Jones" => return Some(Xfparang),

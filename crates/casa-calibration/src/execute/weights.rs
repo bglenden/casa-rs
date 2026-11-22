@@ -16,7 +16,7 @@ pub(super) fn supports_calwt(
     cross_hand_phase: bool,
 ) -> bool {
     let subtype = summary.table_subtype.as_str();
-    if super::baseline::is_subtype(subtype) {
+    if super::baseline::is_subtype(subtype) || subtype == "X Mueller" {
         return false;
     }
     (summary.parameter_family == CalibrationParameterFamily::Complex

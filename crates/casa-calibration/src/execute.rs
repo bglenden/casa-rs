@@ -2477,6 +2477,21 @@ fn apply_row_all_channels(
                 calculate()
             }
         };
+        if subtype == "X Mueller" {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            let solution = lookup(0, geometry_cache.as_deref_mut())?;
+            polarization::apply_x_mueller(
+                solution.as_ref().map(|solution| solution.grid.as_ref()),
+                &loaded_table.path,
+                forward_model,
+                &mut output,
+            )?;
+            continue;
+        }
         if loaded_table.baseline {
             flush_fast_gain_pairs(
                 &mut fast_gain_pairs,
@@ -4852,11 +4867,16 @@ fn load_parameters(
     };
 
     let baseline = ms.is_some() && baseline::is_subtype(&table_plan.summary.table_subtype);
+    let x_mueller = table_plan.summary.table_subtype == "X Mueller";
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
     for row_index in 0..table.row_count() {
         let field_id = get_i32(&table, row_index, COL_FIELD_ID)?;
         let spw_id = get_i32(&table, row_index, COL_SPECTRAL_WINDOW_ID)?;
         let antenna1 = get_i32(&table, row_index, COL_ANTENNA1)?;
+        if x_mueller && (antenna1 != 0 || get_i32(&table, row_index, COL_ANTENNA2)? != 0) {
+            // XMueller uses the first baseline parameter for every baseline.
+            continue;
+        }
         let (antenna_id, reversed) = if baseline {
             let antenna2 = get_i32(&table, row_index, COL_ANTENNA2)?;
             let index = baseline::require_index(antenna1, antenna2, &table_plan.spec.path)?;

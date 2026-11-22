@@ -128,12 +128,17 @@ impl IntervalFits {
             let measurement = match (kind, circular) {
                 (LeakageSolveKind::PosAng, true) => Measurement::CircularAngle,
                 (LeakageSolveKind::PosAng, false) => Measurement::LinearAngle,
+                (LeakageSolveKind::XMueller, _) => Measurement::MuellerPhase,
                 _ => Measurement::Phase,
             };
             Self::CrossHand(
                 (0..channels).map(|_| CrossHandFit::default()).collect(),
                 measurement,
-                mode,
+                if kind == LeakageSolveKind::XMueller {
+                    GainSolveMode::AmplitudePhase
+                } else {
+                    mode
+                },
             )
         } else if kind.iterative() {
             Self::Iterative {
@@ -311,7 +316,10 @@ fn cross_hand(
     }
     let mut sum = Complex32::ZERO;
     let mut channels = 0;
-    let position_angle = !matches!(measurement, Measurement::Phase);
+    let position_angle = matches!(
+        measurement,
+        Measurement::CircularAngle | Measurement::LinearAngle
+    );
     let values = fits
         .into_iter()
         .map(|fit| {
