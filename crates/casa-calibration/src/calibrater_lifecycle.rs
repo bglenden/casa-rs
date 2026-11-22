@@ -762,15 +762,39 @@ impl CalibraterLifecycle {
         cache: &Path,
         angle_deg: f64,
     ) -> Result<(), CalibraterLifecycleError> {
+        self.set_tool_ep_solve(
+            table,
+            cache,
+            angle_deg,
+            "",
+            CalibrationOutputMode::Replace,
+            crate::RefAntSelector::Unspecified,
+        )
+    }
+
+    /// Configure legacy EP with the public tool's interval, table mode, and reference list.
+    /// # Errors
+    /// The legacy iterator, an attached dataset, a valid interval, and a writable cache are required.
+    pub fn set_tool_ep_solve(
+        &mut self,
+        table: &Path,
+        cache: &Path,
+        angle_deg: f64,
+        interval: &str,
+        mode: CalibrationOutputMode,
+        reference: crate::RefAntSelector,
+    ) -> Result<(), CalibraterLifecycleError> {
         let legacy_iterator = self.legacy_iterator;
         let equation = self.equation_mut()?;
         if !legacy_iterator {
             tracing::error!("EP not yet supported via EPJones(msmc)");
             return Err(CalibraterLifecycleError::EpNeedsLegacyIterator);
         }
-        let solver = LegacyEpSolver::new(table, cache, angle_deg).map_err(AttachmentError::from)?;
+        let (solver, interval_label) =
+            LegacyEpSolver::new(table, cache, angle_deg, interval, mode, reference)
+                .map_err(AttachmentError::from)?;
         equation.solve = Some(ConfiguredSolve::LegacyEp(Box::new(solver)));
-        equation.solve_description = None;
+        self.record_solve_description(&interval_label, "", "flex", None);
         Ok(())
     }
 

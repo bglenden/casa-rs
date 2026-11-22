@@ -343,13 +343,15 @@ impl super::PyCalibrater {
             state.reset(false, true).map_err(super::runtime_error)?;
             if family == "EP" || family == "EP JONES" {
                 state
-                    .set_ep_solve(
+                    .set_tool_ep_solve(
                         &table,
                         std::path::Path::new(cfcache.unwrap_or("")),
                         painc.unwrap_or(360.),
+                        &elapsed,
+                        mode,
+                        reference,
                     )
                     .map_err(|_| setup_error())?;
-                state.record_solve_description(&elapsed, "AP", &refant_mode, None);
                 return Ok(true);
             }
             if table.as_os_str().is_empty() {

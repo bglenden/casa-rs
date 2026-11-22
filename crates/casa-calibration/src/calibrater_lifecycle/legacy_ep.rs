@@ -16,14 +16,18 @@ use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_tables::RequiredScalarColumnValues;
 use casa_types::Complex32;
+use casa_types::quanta::{Quantity, Unit};
 
 use super::ep_cache::{EpCache, EpCacheProducts, invalid};
-use crate::{AttachmentError, CalibrationAttachment};
+use crate::{AttachmentError, CalibrationAttachment, CalibrationOutputMode, RefAntSelector};
 
 pub(super) struct LegacyEpSolver {
     table: PathBuf,
     cache: EpCache,
     angle_increment_deg: f64,
+    pub(super) interval_seconds: f64,
+    pub(super) mode: CalibrationOutputMode,
+    pub(super) reference: RefAntSelector,
     model: Option<PreparedEpModel>,
 }
 
@@ -47,16 +51,38 @@ impl LegacyEpSolver {
         &self.table
     }
 
-    pub(super) fn new(table: &Path, cache: &Path, angle_increment_deg: f64) -> MsResult<Self> {
+    pub(super) fn new(
+        table: &Path,
+        cache: &Path,
+        angle_increment_deg: f64,
+        interval: &str,
+        mode: CalibrationOutputMode,
+        reference: RefAntSelector,
+    ) -> MsResult<(Self, String)> {
         if !angle_increment_deg.is_finite() {
             return Err(invalid("EP painc must be a finite angle"));
         }
-        Ok(Self {
+        let cache = EpCache::open(cache)?;
+        let interval_quantity = Quantity::read(interval).map_err(invalid)?;
+        let (interval_seconds, interval_label) = interval_quantity
+            .get_value_in(&Unit::new("s").expect("known unit"))
+            .map_or_else(
+                |_| (interval_quantity.value(), format!("{interval}s")),
+                |seconds| (seconds, interval.into()),
+            );
+        if !interval_seconds.is_finite() {
+            return Err(invalid("EP solint must be finite"));
+        }
+        let solver = Self {
             table: table.to_owned(),
-            cache: EpCache::open(cache)?,
+            cache,
             angle_increment_deg,
+            interval_seconds,
+            mode,
+            reference,
             model: None,
-        })
+        };
+        Ok((solver, interval_label))
     }
 
     pub(super) fn set_model(

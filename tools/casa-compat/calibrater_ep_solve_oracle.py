@@ -13,7 +13,7 @@ from casatools import calibrater as casa_calibrater
 import numpy as np
 
 from calibration_smoothcal_oracle import opened
-from calibrater_apply_tool_oracle import same_record
+from calibrater_apply_tool_oracle import result, same_record
 from calibrater_state_oracle import casa_log, native_log
 
 
@@ -65,17 +65,52 @@ def compare_reader(path, cells):
         assert reader.close()
 
 
+def setup_cases(args, factories):
+    cases = (
+        {}, {'t': None}, {'t': 3.}, {'t': '3'}, {'t': '1min'}, {'t': '10Hz'},
+        {'t': '-1s'}, {'t': 'int'}, {'t': 'inf'}, {'t': '2s,3chan'},
+        {'append': True}, {'phaseonly': True}, {'apmode': 'a'},
+        {'refant': '1,2', 'refantmode': 'strict'},
+        {'minsnr': 9., 'solnorm': True, 'preavg': 2.}, {'table': ''}, {'type': 'EP Jones'},
+    )
+    expected = []
+    for engine, factory in factories.items():
+        dataset = args.work/f'setup-{engine}.ms'
+        cache = args.work/f'setup-{engine}-cache'
+        copytree(args.dataset, dataset)
+        copytree(args.cache, cache)
+        tool = factory()
+        assert tool.setvi(old=True, quiet=True) and tool.open(str(dataset))
+        try:
+            for index, options in enumerate(cases):
+                kwargs = dict(type='EP', table=str(args.work/'setup.EP'), cfcache=str(cache)) | options
+                ready = result(tool.setsolve, **kwargs)
+                capture = casa_log(args.work/f'setup-{index}.log') if engine == 'casa' else native_log()
+                with capture as logger:
+                    configured = ready, logger(tool.state), list(tool.returndict()['solve_tables'])
+                if engine == 'casa':
+                    expected.append(configured)
+                else:
+                    assert configured == expected[index], (options, configured, expected[index])
+        finally:
+            assert tool.close()
+    print(len(cases), 'setup cases', 'reference' if args.reference_only else 'matched', flush=True)
+
+
 def run(args):
     assert casatasks.version_string() == '6.7.6.14'
     args.work.mkdir()
+    factories = {'casa': casa_calibrater}
+    if not args.reference_only:
+        from casars.tools import calibrater as native_calibrater
+
+        factories['native'] = native_calibrater
     with chdir(args.work):
+        setup_cases(args, factories)
+        if args.setup_only:
+            return
         for name, interval, epochs in (('one', '0s', 1), ('three', '1s', 3)):
             products = {engine: args.work/f'{name}-{engine}.EP' for engine in ('casa', 'native')}
-            factories = {'casa': casa_calibrater}
-            if not args.reference_only:
-                from casars.tools import calibrater as native_calibrater
-
-                factories['native'] = native_calibrater
             results, tables = {}, {}
             for engine, factory in factories.items():
                 dataset = args.work/f'{name}-{engine}.ms'
@@ -109,4 +144,5 @@ if __name__ == '__main__':
     for name in ('work', 'dataset', 'model', 'cache'):
         parser.add_argument(f'--{name}', type=lambda path: Path(path).resolve(), required=True)
     parser.add_argument('--reference-only', action='store_true')
+    parser.add_argument('--setup-only', action='store_true')
     run(parser.parse_args())

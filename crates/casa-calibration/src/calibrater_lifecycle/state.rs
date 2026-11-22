@@ -261,10 +261,10 @@ impl<'a> SolveState<'a> {
             ConfiguredSolve::LegacyEp(solver) => Self {
                 subtype: "EP Jones",
                 table: solver.output_path(),
-                interval: GainSolveInterval::Infinite,
+                interval: GainSolveInterval::Seconds(solver.interval_seconds),
                 frequency_dependent: false,
-                append: false,
-                reference: None,
+                append: solver.mode == CalibrationOutputMode::Append,
+                reference: Some(&solver.reference),
                 min_snr: 0.,
                 normalization: None,
             },
@@ -296,6 +296,7 @@ impl<'a> SolveState<'a> {
     ) -> String {
         let (time, frequency) = interval.split_once(',').unwrap_or((interval, ""));
         let time = match self.interval {
+            _ if self.subtype == "EP Jones" => time.into(),
             GainSolveInterval::Infinite => "inf".into(),
             GainSolveInterval::Integration if time.is_empty() => "int".into(),
             GainSolveInterval::Seconds(seconds) if time.is_empty() => format!("{seconds}s"),
