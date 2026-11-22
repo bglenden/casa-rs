@@ -60,7 +60,7 @@ fn describe_apply(equation: &VisibilityEquation) -> Vec<String> {
             && let Some(snapshot) = apply.table_snapshots.get(&table.path)
         {
             terms.push((
-                viscal_order(&snapshot.subtype),
+                (viscal_order(&snapshot.subtype), index),
                 snapshot.description.clone(),
             ));
         }
@@ -71,16 +71,19 @@ fn describe_apply(equation: &VisibilityEquation) -> Vec<String> {
             .get(library.tables.start)
             .is_some_and(|table| table.calwt);
         terms.push((
-            viscal_order(&library.subtype),
+            (viscal_order(&library.subtype), library.tables.start),
             format!(
                 "{}: table={} (by cal library) calWt={calwt}",
                 library.subtype, library.name
             ),
         ));
     }
-    terms.extend(
-        (0..apply.parang_terms).map(|_| (viscal_order("P Jones"), "P Jones <pre-computed>".into())),
-    );
+    terms.extend((0..apply.parang_terms).map(|_| {
+        (
+            (viscal_order("P Jones"), usize::MAX),
+            "P Jones <pre-computed>".into(),
+        )
+    }));
     terms.sort_by_key(|(order, _)| *order);
     terms
         .into_iter()
@@ -208,7 +211,11 @@ impl<'a> SolveState<'a> {
                         frequency_dependent: true,
                         append,
                         reference: Some(&request.refant),
-                        min_snr: request.cuts.as_ref().map_or(0., |cuts| cuts.min_snr),
+                        min_snr: if request.band_type == BandpassType::B {
+                            request.cuts.as_ref().map_or(0., |cuts| cuts.min_snr)
+                        } else {
+                            0.
+                        },
                         normalization: request
                             .normalize_average_amplitude
                             .then_some(bandpass.normalization),
@@ -313,7 +320,7 @@ fn antenna_names(equation: &VisibilityEquation, selector: &RefAntSelector) -> Op
         .filter_map(|id| {
             usize::try_from(id)
                 .ok()
-                .and_then(|id| antenna.string(id, "NAME").ok())
+                .and_then(|id| antenna.name(id).ok())
         })
         .collect::<Vec<_>>();
     (!names.is_empty()).then(|| names.join(","))

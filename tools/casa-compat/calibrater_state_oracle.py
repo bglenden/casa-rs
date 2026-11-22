@@ -74,6 +74,9 @@ def collect(factory, capture, vis, leakage, gain, output, legacy):
         library.add(caltable=str(gain), field='0', calwt=True, tinterp='nearest')
         assert tool.setcallib(library.cld)
         states['library'] = capture(tool.state)
+        assert tool.reset(True, False) and tool.setcallib(library.cld)
+        assert tool.setapply(table=str(gain), interp='nearest')
+        states['library-first'] = capture(tool.state)
 
         options = (
             ('gain', 'G', '20s', {'refant': 'A3,A0', 'refantmode': 'strict', 'minsnr': 2.3}),
