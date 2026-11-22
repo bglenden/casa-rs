@@ -22,10 +22,9 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
     let (captured, manifest) = SavedExpressionDirectory::open(path, root.clone())?;
-    let misc = manifest.misc_info().map_err(raised)?;
     let initial = PendingExpression::from_manifest(root, manifest, &directory)?;
     let mut graph = CapturedGraph::default();
-    let (pixels, single_precision) = graph.compile(initial, &directory)?;
+    let (pixels, single_precision, misc) = graph.compile(initial, &directory)?;
     captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
@@ -72,7 +71,7 @@ impl CapturedGraph {
         &mut self,
         root: PendingExpression,
         directory: &Path,
-    ) -> PyResult<(ImageToolPixelExpression, bool)> {
+    ) -> PyResult<(ImageToolPixelExpression, bool, Option<RecordValue>)> {
         let mut active = HashSet::from([root.path.clone()]);
         let mut pending = vec![root];
         let mut compiled = HashMap::new();
@@ -104,10 +103,11 @@ impl CapturedGraph {
             } else {
                 let frame = pending.pop().expect("checked for an expression frame");
                 let (pixels, single) = frame.compile(&compiled)?;
+                let misc = frame.manifest.misc_info().map_err(raised)?;
                 if pending.is_empty() {
-                    return Ok((pixels, single));
+                    return Ok((pixels, single, misc));
                 }
-                let pixels = match frame.manifest.misc_info().map_err(raised)? {
+                let pixels = match misc {
                     Some(misc) => replace_misc_info(pixels, misc),
                     None => pixels,
                 };
