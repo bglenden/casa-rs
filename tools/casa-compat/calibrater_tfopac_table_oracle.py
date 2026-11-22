@@ -14,6 +14,7 @@ import numpy as np
 
 from calibration_smoothcal_oracle import opened
 from calibrater_apply_tool_oracle import same_record
+from calibrater_solve_tool_oracle import compare_readers, compare_solutions
 from calibrater_state_oracle import casa_log, native_log
 from gaincal_delay_oracle import duplicate_rows
 from record_casa_returns import make_cal_ms
@@ -81,6 +82,18 @@ def apply(factory, capture, vis, name, legacy, weight, method, interp=None):
     return state, activity, (science, columns)
 
 
+def solve_with_prior(factory, vis, prior_table, output):
+    tool = factory()
+    assert tool.open(str(vis), addcorr=False, addmodel=False)
+    try:
+        assert tool.selectvis(field='0') and tool.setptmodel([1., 0., 0., 0.])
+        assert tool.setapply(table=str(prior_table), interp='linear,linear')
+        assert tool.setsolve('G', 'inf', str(output), refant='A0', minsnr=0.)
+        assert tool.solve() and output.is_dir()
+    finally:
+        assert tool.close()
+
+
 def run(args):
     assert casatasks.version_string() == '6.7.6.14'
     args.work.mkdir()
@@ -90,12 +103,12 @@ def run(args):
 
         factories['native'] = native_calibrater
     with chdir(args.work):
-        vis, table = args.work/'input.ms', args.work/'channelized.cal'
+        vis, channelized = args.work/'input.ms', args.work/'channelized.cal'
         make_cal_ms(str(vis))
-        prior(vis, table)
+        prior(vis, channelized)
         coarse = args.work/'coarse.cal'
         prior(vis, coarse, coarse=True)
-        controls = [(table, None, *case)
+        controls = [(channelized, None, *case)
                     for case in product((False, True), ('correct', 'corrupt'), (False, True))]
         controls.extend((coarse, f'{time},{freq}', old, 'correct', False)
                         for old, time, freq in ((False, 'linear', 'linear'),
@@ -121,6 +134,16 @@ def run(args):
                 np.testing.assert_allclose(actual[2][0], expected[2][0], rtol=1e-4, atol=2e-6)
                 same_record(actual[2][1], expected[2][1])
             print(label, 'reference' if args.reference_only else 'matched', flush=True)
+        for prior_table in (channelized, coarse):
+            paths = {engine: args.work/f'{prior_table.stem}-gain-{engine}.cal'
+                     for engine in factories}
+            for engine, factory in factories.items():
+                solve_with_prior(factory, vis, prior_table, paths[engine])
+            if not args.reference_only:
+                compare_solutions(paths)
+                compare_readers(paths)
+            print(prior_table.stem, 'gain solve',
+                  'reference' if args.reference_only else 'matched', flush=True)
 
 
 if __name__ == '__main__':
