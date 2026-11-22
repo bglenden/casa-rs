@@ -11,19 +11,20 @@ use casa_provider_contracts::{
     ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
 };
 use casa_types::{RecordValue, Value};
-use numpy::PyUntypedArray;
 use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::{
     prelude::*,
-    types::{PyComplex, PyDict, PyList, PyTuple},
+    types::{PyDict, PyList, PyTuple},
 };
 
 use super::{
     LOGGER, PyCalibrater,
-    arguments::{listing_selector, number, strict_bool, supplied, text, window_map_with_status},
+    arguments::{
+        append_double_vector, listing_selector, number, strict_bool, supplied, text,
+        window_map_with_status,
+    },
     runtime_error,
 };
-use crate::convert::double_vector_element;
 use crate::convert::reply_value::reply_value;
 use crate::parameters::parameter_value;
 use crate::tools::{LogLine, emit};
@@ -66,7 +67,7 @@ impl PyCalibrater {
         let pending_opacity = opacity.is_some_and(|value| {
             let mut values = Vec::new();
             value.is_instance_of::<PyTuple>()
-                || apply_opacity_values(&value, &mut values, 0).is_err()
+                || append_double_vector(&value, &mut values, 0).is_err()
         });
         let configured = self.attached(py, move |state| {
             state.set_traditional_apply(spec, &kind, &field, &interpolation)
@@ -176,32 +177,6 @@ fn setapply_conversion_error() -> PyErr {
     PySystemError::new_err(
         "<built-in function calibrater_setapply> returned a result with an exception set",
     )
-}
-
-fn apply_opacity_values(
-    value: &Bound<'_, PyAny>,
-    output: &mut Vec<f64>,
-    depth: usize,
-) -> PyResult<()> {
-    if depth > 32 {
-        return Err(setapply_conversion_error());
-    }
-    if value.is_instance_of::<PyUntypedArray>() {
-        let values = value
-            .call_method1("ravel", ("F",))?
-            .call_method0("tolist")?;
-        return apply_opacity_values(&values, output, depth + 1);
-    }
-    if value.is_instance_of::<PyList>() {
-        for item in value.try_iter()? {
-            apply_opacity_values(&item?, output, depth + 1)?;
-        }
-    } else if let Ok(complex) = value.cast::<PyComplex>() {
-        output.push(complex.real());
-    } else {
-        output.push(double_vector_element(value)?);
-    }
-    Ok(())
 }
 
 fn library_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<RecordValue> {

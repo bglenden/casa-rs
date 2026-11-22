@@ -7,12 +7,15 @@ mod eop;
 pub(crate) mod jyperk;
 mod power_curve;
 mod specify_tool;
+mod spectral_axis;
 mod switched_power;
 pub(crate) mod tecim;
 mod tsys;
 
 pub use antpos_file::AntposInputError;
 pub use specify_tool::CalibrationSpecification;
+use spectral_axis::write_prior_spectral_axis;
+pub(crate) use spectral_axis::write_spectral_axis;
 pub(crate) use switched_power::CORRELATOR_EFFICIENCY as EVLA_CORRELATOR_EFFICIENCY;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -314,6 +317,26 @@ pub(crate) fn gencal_with_output_mode(
     uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
+    generate_prior(
+        request,
+        polarization,
+        infile,
+        ant_pos_time_limit,
+        uniform,
+        mode,
+        None,
+    )
+}
+
+fn generate_prior(
+    request: &GencalRequest,
+    polarization: &str,
+    infile: Option<&Path>,
+    ant_pos_time_limit: Option<i64>,
+    uniform: bool,
+    mode: crate::CalibrationOutputMode,
+    tool: Option<specify_tool::PriorCalibrationTool<'_>>,
+) -> Result<GencalReport, GencalError> {
     if request.caltype == GencalType::Eop {
         return eop::generate(request, infile, mode);
     }
@@ -342,7 +365,9 @@ pub(crate) fn gencal_with_output_mode(
         }
     }
     let embedded = match request.caltype {
-        GencalType::Gc | GencalType::Gceff => {
+        GencalType::Gc | GencalType::Gceff
+            if tool.as_ref().is_none_or(|tool| !tool.legacy_iterator) =>
+        {
             power_curve::source_path(&request.measurement_set, ms.main_table())?
         }
         _ => None,
@@ -411,7 +436,11 @@ pub(crate) fn gencal_with_output_mode(
         | GencalType::Rq => {
             validate_prior_selection(&ms, request)?;
             let (power, noise_cal) = switched_power.expect("switched-power inputs resolved");
-            switched_power::rows(&ms, &power, &noise_cal, request.caltype)?
+            let selection = tool
+                .as_ref()
+                .filter(|tool| !tool.legacy_iterator)
+                .map(|tool| tool.selection);
+            switched_power::rows(&ms, &power, &noise_cal, request.caltype, selection)?
         }
         GencalType::Jyperk => unreachable!("Jy/K has its own factor source"),
         GencalType::Tecim => unreachable!("TEC has its own image source"),
@@ -1087,22 +1116,12 @@ fn write_prior_caltable(
 
     let present_windows = rows.iter().map(|row| row.spw_id).collect::<BTreeSet<_>>();
     let eop = request.caltype == GencalType::Eop;
-    if eop || request.caltype == GencalType::Tsys {
-        crate::table_maintenance::write_standard_calibration_subtables(
-            ms,
-            writer.output_path(),
-            eop.then_some(crate::writer::SingleChannelFrequency::MiddleChannel),
-        )
-        .map_err(GencalError::InvalidRequest)?;
-    } else {
-        writer.copy_subtables(&[
-            (SubtableId::Observation, "OBSERVATION"),
-            (SubtableId::Antenna, "ANTENNA"),
-            (SubtableId::Field, "FIELD"),
-            (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
-            (SubtableId::History, "HISTORY"),
-        ])?;
-    }
+    crate::table_maintenance::write_standard_calibration_subtables(
+        ms,
+        writer.output_path(),
+        eop.then_some(crate::writer::SingleChannelFrequency::MiddleChannel),
+    )
+    .map_err(GencalError::InvalidRequest)?;
     if !eop {
         write_prior_spectral_axis(
             &writer.output_path().join("SPECTRAL_WINDOW"),
@@ -1177,93 +1196,6 @@ fn gaincurves_for_window(
         }
     }
     Ok(curves)
-}
-
-/// SolvableVisCal::initSVC collapses all spectral vectors for uniform
-/// parameters: mean channel frequency and summed widths/resolutions.
-/// Keep this inside the writer's staging directory, before publication.
-pub(crate) fn write_spectral_axis(
-    path: &Path,
-    present_windows: &BTreeSet<i32>,
-    collapse: bool,
-) -> Result<(), GencalError> {
-    write_prior_spectral_axis(path, present_windows, collapse, false)
-}
-
-fn write_prior_spectral_axis(
-    path: &Path,
-    present_windows: &BTreeSet<i32>,
-    collapse: bool,
-    first_channel: bool,
-) -> Result<(), GencalError> {
-    let mut table = Table::open(TableOptions::new(path))
-        .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
-    for row in 0..table.row_count() {
-        let absent = !present_windows.contains(&(row as i32));
-        table
-            .cell_accessor_mut(row, "FLAG_ROW")
-            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Bool(absent))))
-            .map_err(|e| GencalError::InvalidRequest(e.to_string()))?;
-        for column in ["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"] {
-            if !collapse && column != "CHAN_WIDTH" {
-                continue;
-            }
-            let ArrayValue::Float64(values) = table
-                .cell_accessor(row, column)
-                .and_then(|cell| cell.array())
-                .map_err(|error| GencalError::InvalidRequest(error.to_string()))?
-            else {
-                return Err(GencalError::InvalidRequest(format!(
-                    "{column} is not a double array"
-                )));
-            };
-            if values.is_empty() {
-                return Err(GencalError::InvalidRequest(format!(
-                    "SPECTRAL_WINDOW row {row} has empty {column}"
-                )));
-            }
-            let value = if first_channel {
-                *values
-                    .iter()
-                    .next()
-                    .expect("checked for empty channel vectors")
-            } else if column == "CHAN_FREQ" {
-                values.iter().sum::<f64>() / values.len() as f64
-            } else {
-                values.iter().sum::<f64>()
-            };
-            if column == "CHAN_WIDTH" {
-                table
-                    .cell_accessor_mut(row, "TOTAL_BANDWIDTH")
-                    .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Float64(value.abs()))))
-                    .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
-            }
-            if !collapse {
-                continue;
-            }
-            table
-                .cell_accessor_mut(row, column)
-                .and_then(|mut cell| {
-                    cell.set(Value::Array(ArrayValue::Float64(ArrayD::from_elem(
-                        IxDyn(&[1]),
-                        value,
-                    ))))
-                })
-                .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
-        }
-        if collapse {
-            table
-                .cell_accessor_mut(row, "NUM_CHAN")
-                .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
-                .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
-        }
-    }
-    table
-        .save(TableOptions::new(path))
-        .map_err(|source| GencalError::Save {
-            path: path.display().to_string(),
-            source: Box::new(source),
-        })
 }
 
 fn spw_center_frequency_hz(

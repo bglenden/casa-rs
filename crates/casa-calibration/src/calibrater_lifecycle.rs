@@ -171,9 +171,13 @@ impl CalibraterLifecycle {
         &self,
         specification: crate::CalibrationSpecification<'_>,
     ) -> Result<(), CalibraterLifecycleError> {
-        let dataset = self.equation()?.attachment.path();
+        let attachment = &self.equation()?.attachment;
         specification
-            .write(dataset, self.legacy_iterator)
+            .write(
+                attachment.path(),
+                self.legacy_iterator,
+                attachment.selection(),
+            )
             .map_err(|error| {
                 tracing::error!(%error, "Calibration specification failed");
                 CalibraterLifecycleError::Specify(Box::new(error))

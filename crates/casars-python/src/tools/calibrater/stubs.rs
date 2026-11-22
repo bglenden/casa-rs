@@ -6,7 +6,7 @@ use std::path::Path;
 use casa_calibration::CalibrationSpecification;
 use pyo3::{exceptions::PySystemError, prelude::*, types::PyTuple};
 
-use super::arguments::{strict_bool, supplied, text};
+use super::arguments::{append_double_vector, strict_bool, supplied, text};
 use super::{PyCalibrater, runtime_error};
 use crate::convert::DoubleList;
 use crate::tools::not_yet_implemented_in;
@@ -77,7 +77,12 @@ impl PyCalibrater {
         let parameters = match parameter {
             None => vec![1.],
             Some(value) if value.is_none() => Vec::new(),
-            Some(value) => value.extract::<DoubleList>()?.0,
+            Some(value) if tuple => value.extract::<DoubleList>()?.0,
+            Some(value) => {
+                let mut values = Vec::new();
+                append_double_vector(&value, &mut values, 0)?;
+                values
+            }
         };
         let infile = text(infile, "infile", "")?;
         let uniform = uniform

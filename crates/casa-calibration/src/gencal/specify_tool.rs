@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Direct calibrater parameter prescriptions.
 
+use casa_ms::MsSelection;
 use std::path::Path;
 
 use super::{
-    GencalError, GencalRequest, GencalType, gencal_with_output_mode, open_measurement_set,
-    specified_rows, write_prior_caltable,
+    GencalError, GencalRequest, GencalType, generate_prior, open_measurement_set, specified_rows,
+    write_prior_caltable,
 };
 use crate::CalibrationOutputMode;
+
+pub(super) struct PriorCalibrationTool<'a> {
+    pub(super) legacy_iterator: bool,
+    pub(super) selection: &'a MsSelection,
+}
 
 /// A parameter prescription passed to the attached calibrater tool.
 pub struct CalibrationSpecification<'a> {
@@ -30,7 +36,12 @@ pub struct CalibrationSpecification<'a> {
 }
 
 impl CalibrationSpecification<'_> {
-    pub(crate) fn write(self, dataset: &Path, legacy_iterator: bool) -> Result<(), GencalError> {
+    pub(crate) fn write(
+        self,
+        dataset: &Path,
+        legacy_iterator: bool,
+        selection: &MsSelection,
+    ) -> Result<(), GencalError> {
         if self.table.as_os_str().is_empty() {
             return Err(GencalError::InvalidRequest(
                 "No output calibration table was specified.".into(),
@@ -81,13 +92,17 @@ impl CalibrationSpecification<'_> {
             let rows = specified_rows(&ms, &request, self.polarization, false)?;
             write_prior_caltable(&ms, &request, subtype, &rows, output, mode, true)?;
         } else {
-            gencal_with_output_mode(
+            generate_prior(
                 &request,
                 self.polarization,
                 self.infile.filter(|_| !antpos),
                 None,
                 self.uniform,
                 CalibrationOutputMode::Update,
+                Some(PriorCalibrationTool {
+                    legacy_iterator,
+                    selection,
+                }),
             )?;
         }
         Ok(())

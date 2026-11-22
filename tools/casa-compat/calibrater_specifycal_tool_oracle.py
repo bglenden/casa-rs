@@ -14,6 +14,7 @@ import numpy as np
 from blcal_oracle import copy_ms, nrms, opened, source
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_solve_tool_oracle import compare_readers
+from calibration_gencal_gaincurve_oracle import attach_power_curves
 from calibration_gencal_specify_oracle import compare_tables, with_second_window
 from calibration_gencal_tsys_oracle import attach_syscal
 from gencal_switched_power_oracle import MODES, compare_columns, read_calibration, seed
@@ -27,7 +28,7 @@ TUPLE_ERROR = (False, ('SystemError', '<built-in function calibrater_specifycal>
 
 
 def prescribe(work, engines, vis, name, stages, *, legacy=False, product=True,
-              compare=compare_tables):
+              compare=compare_tables, selection=None):
     paths = {}
     for engine, make_tool in engines.items():
         tool = make_tool()
@@ -36,7 +37,7 @@ def prescribe(work, engines, vis, name, stages, *, legacy=False, product=True,
         assert tool.setvi(legacy, True)
         assert tool.specifycal() is False
         assert tool.open(str(vis), addcorr=False, addmodel=False)
-        assert tool.selectvis(baseline='1&2')
+        assert tool.selectvis(**(selection or {'baseline': '1&2'}))
         assert tool.setsolve(type='G', table=str(path.with_suffix('.solve')), refant='1')
         before, activity = tool.returndict(), tool.activityrec()
         for parameters, expectation in stages:
@@ -52,6 +53,9 @@ def prescribe(work, engines, vis, name, stages, *, legacy=False, product=True,
     if product:
         error = compare(paths['native'], paths['casa'])
         compare_readers(paths)
+        for path in paths.values():
+            with opened(path/'HISTORY') as history:
+                assert history.nrows() == 0
         print(name, 'parameter NRMS', error, flush=True)
     else:
         print(name, 'rejected', flush=True)
@@ -77,6 +81,16 @@ def derived_prescriptions(work, engines, vla_source, gaincurves):
     for kind in ('swp', 'wts'):
         prescribe(work, engines, switched, f'{kind}-mode-error',
                    [(dict(caltype=kind), ERROR)], product=False)
+    with opened(switched, True) as table:
+        field = table.getcol('FIELD_ID')
+        field[:] = np.arange(field.size) % 2
+        assert table.putcol('FIELD_ID', field)
+    selected = prescribe(work, engines, switched, 'switched-selected-field', [
+        (dict(caltype='swpow'), ok),
+    ], compare=compare_switched_power, selection={'field': '1'})
+    for path in selected.values():
+        with opened(path) as table:
+            np.testing.assert_array_equal(table.getcol('FIELD_ID'), 1)
     ionosphere_ms = work/'ionosphere.ms'
     make_cal_ms(str(ionosphere_ms), channels=4, frequency='332MHz',
                 stokes='RR RL LR LL', telescope='VLA')
@@ -107,6 +121,14 @@ def derived_prescriptions(work, engines, vla_source, gaincurves):
         prescribe(work, engines, vla, f'tsys-uniform-{uniform}', [
             (dict(caltype='TSYS', uniform=uniform), ok),
         ])
+    attach_power_curves(vla, work/'power-curves.txt')
+    for legacy, subtype in [(False, 'EPowerCurve'), (True, 'EGainCurve')]:
+        paths = prescribe(work, engines, vla, f'embedded-gc-legacy-{legacy}', [
+            (dict(caltype='gc', infile=str(gaincurves)), ok),
+        ], legacy=legacy)
+        for path in paths.values():
+            with opened(path) as table:
+                assert table.info()['subType'] == subtype
 
 
 def main():
@@ -127,6 +149,10 @@ def main():
     work.mkdir()
     vis = source(work)
     with_second_window(vis)
+    with opened(vis/'HISTORY', True) as history:
+        row = history.nrows()
+        assert history.addrows(1)
+        assert history.putcell('MESSAGE', row, 'History from the MeasurementSet')
     engines = {'casa': casa_calibrater, 'native': native_calibrater}
     ok = (True, True)
     paths = prescribe(work, engines, vis, 'amplitude-update', [
@@ -144,6 +170,15 @@ def main():
         (('2020/01/01/00:00:00', '1', 'A4', 'R', 'G', [2.], '', False), ok),
         (dict(caltype='phase', time='IGNORED', spw='1', antenna='A4', pol='R', parameter=[32.]), ok),
     ])
+    for label, parameters in [
+        ('fortran-parameter-order', np.array([[2., 3.], [5., 7.]])),
+        ('nested-list', [[2., 3.], [5., 7.]]),
+        ('numeric-text', '2.25'),
+        ('real-part', 2.25 + 3j),
+    ]:
+        prescribe(work, engines, vis, label, [
+            (dict(caltype='G', spw='0,1', pol='R,L', parameter=parameters), ok),
+        ])
     for kind in ('PH', 'K', 'sbd', 'delay', 'mbd'):
         prescribe(work, engines, vis, kind.lower(), [
             (dict(caltype=kind, spw='0,1', antenna='A2', pol='L,R',
