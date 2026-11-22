@@ -665,6 +665,18 @@
         "measurement_set"
       ],
       "include_in_suite": true
+    },
+    {
+      "id": "sdbaseline",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
     }
   ]
 }

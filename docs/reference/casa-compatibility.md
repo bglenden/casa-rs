@@ -53,6 +53,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | polfromgain | polfromgain | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
+| sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
@@ -2369,6 +2370,191 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
+### sdbaseline
+
+- CASA source: `casatasks/sdbaseline.py`, 38 parameters
+- Implementation: `casatasks/private/task_sdbaseline.py`, `sdbaseline` (line 17): 0 return statements, 3 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 38, in CASA's order: yes
+- Defaults that differ: none
+
+#### sdbaseline parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `5995e36027dc7383185a234aca60c8596fd7014e`. Status counts: Default only: 0, Implemented: 22, Not implemented: 12, Partial: 4, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `infile` | `''` | `''`; `infile` → `infile` | Implemented | Open a MeasurementSet through the public task. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `path` (measurement_set) | [paired](#sdbaseline-evidence-paired) |
+| `datacolumn` | `'data'` | `'data'`; `datacolumn` → `datacolumn` | Implemented | Fit the real part of DATA or CORRECTED_DATA, or use FLOAT_DATA. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Resolve the antenna list and select its autocorrelations. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Select fields by name or index. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Keep the full selected spectral windows and use their specified channels for the fit. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Filter integrations by time. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `variant` | [paired](#sdbaseline-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Select integrations by scan. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `pol` | `''` | `''`; `pol` → `pol` | Implemented | Select the requested correlations. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Filter by observing intent. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `reindex` | `True` | `True`; `reindex` → `reindex` | Implemented | Preserve input identifiers or compact the selected subtables. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `bool` | [paired](#sdbaseline-evidence-paired) |
+| `maskmode` | `'list'` | `'list'`; `maskmode` → `maskmode` | Partial | Fit the supplied channel mask. Lowercase auto selects automatic line detection in CASA. [selection](#sdbaseline-behavior-selection) [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired), [pending](#sdbaseline-evidence-pending) |
+| `thresh` | `5.0` | `5.0`; `thresh` → `thresh` | Not implemented | Automatic masking uses this line-detection threshold. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `float` | [pending](#sdbaseline-evidence-pending) |
+| `avg_limit` | `4` | `4`; `avg_limit` → `avg_limit` | Not implemented | Automatic masking uses this maximum channel-averaging width. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `integer` | [pending](#sdbaseline-evidence-pending) |
+| `minwidth` | `4` | `4`; `minwidth` → `minwidth` | Not implemented | Automatic masking uses this minimum detected line width. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `integer` | [pending](#sdbaseline-evidence-pending) |
+| `edge` | `[0, 0]` | `[0, 0]`; `edge` → `edge` | Not implemented | Automatic masking removes these channels from each end. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [pending](#sdbaseline-evidence-pending) |
+| `blmode` | `'fit'` | `'fit'`; `blmode` → `blmode` | Partial | Fit or apply polynomial and Chebyshev baselines. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `dosubtract` | `True` | `True`; `dosubtract` → `dosubtract` | Implemented | Write corrected spectra or publish only the requested fits. [products](#sdbaseline-behavior-products)<br>Catalog domain: `bool` | [paired](#sdbaseline-evidence-paired) |
+| `blformat` | `'text'` | `'text'`; `blformat` → `blformat` | Implemented | Choose any combination of text, CSV and CASA baseline-table products. [products](#sdbaseline-behavior-products)<br>Catalog domain: `variant` | [paired](#sdbaseline-evidence-paired) |
+| `bloutput` | `''` | `''`; `bloutput` → `bloutput` | Implemented | Supply diagnostic filenames or use the CASA suffixes. [products](#sdbaseline-behavior-products)<br>Catalog domain: `variant` | [paired](#sdbaseline-evidence-paired) |
+| `bltable` | `''` | `''`; `bltable` → `bltable` | Partial | Read and apply the polynomial and Chebyshev coefficients in a CASA baseline table. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `blfunc` | `'poly'` | `'poly'`; `blfunc` → `blfunc` | Partial | Fit polynomial or Chebyshev models. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `order` | `5` | `5`; `order` → `order` | Implemented | Set the degree of the polynomial or Chebyshev family. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `integer` | [paired](#sdbaseline-evidence-paired) |
+| `npiece` | `2` | `2`; `npiece` → `npiece` | Not implemented | Cubic-spline fits use this number of pieces. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `integer` | [pending](#sdbaseline-evidence-pending) |
+| `applyfft` | `True` | `True`; `applyfft` → `applyfft` | Not implemented | Sinusoid fits use this switch to select FFT-derived wavenumbers. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `bool` | [pending](#sdbaseline-evidence-pending) |
+| `fftmethod` | `'fft'` | `'fft'`; `fftmethod` → `fftmethod` | Not implemented | Sinusoid fits use this FFT selection method. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `string` | [pending](#sdbaseline-evidence-pending) |
+| `fftthresh` | `3.0` | `3.0`; `fftthresh` → `fftthresh` | Not implemented | Sinusoid fits use this FFT selection threshold. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `variant` | [pending](#sdbaseline-evidence-pending) |
+| `addwn` | `[0]` | `[0]`; `addwn` → `addwn` | Not implemented | Sinusoid fits include these wavenumbers. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `variant` | [pending](#sdbaseline-evidence-pending) |
+| `rejwn` | `[]` | `[]`; `rejwn` → `rejwn` | Not implemented | Sinusoid fits exclude these wavenumbers. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `variant` | [pending](#sdbaseline-evidence-pending) |
+| `clipthresh` | `3.0` | `3.0`; `clipthresh` → `clipthresh` | Implemented | Set the residual rejection threshold during iterative fitting. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `float` | [paired](#sdbaseline-evidence-paired) |
+| `clipniter` | `0` | `0`; `clipniter` → `clipniter` | Implemented | Set the number of additional fitting passes after the initial fit. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `integer` | [paired](#sdbaseline-evidence-paired) |
+| `blparam` | `''` | `''`; `blparam` → `blparam` | Not implemented | Variable fitting reads the per-spectrum configuration file. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `string` | [pending](#sdbaseline-evidence-pending) |
+| `verbose` | `False` | `False`; `verbose` → `verbose` | Not implemented | Variable fitting uses this logging option. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `bool` | [pending](#sdbaseline-evidence-pending) |
+| `updateweight` | `False` | `False`; `updateweight` → `updateweight` | Implemented | Update scalar WEIGHT while preserving CASA’s SIGMA alignment. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `bool` | [paired](#sdbaseline-evidence-paired) |
+| `sigmavalue` | `'stddev'` | `'stddev'`; `sigmavalue` → `sigmavalue` | Implemented | Use the residual RMS or standard deviation to derive scalar weights. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `showprogress` | `False` | `False`; `showprogress` → `showprogress` | Implemented | CASA accepts the progress-display switch without consulting it in the task implementation. <br>Catalog domain: `bool` | [progress-controls](#sdbaseline-evidence-progress-controls) |
+| `minnrow` | `1000` | `1000`; `minnrow` → `minnrow` | Implemented | CASA accepts the minimum row count for progress display without consulting it. <br>Catalog domain: `integer` | [progress-controls](#sdbaseline-evidence-progress-controls) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | Publish the output MeasurementSet. The task supplies a default suffix. [products](#sdbaseline-behavior-products)<br>Catalog domain: `path` (measurement_set) | [paired](#sdbaseline-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Permit replacement of an existing output or report. [products](#sdbaseline-behavior-products)<br>Catalog domain: `bool` | [paired](#sdbaseline-evidence-paired) |
+
+#### sdbaseline interacting modes and task behavior
+
+<a id="sdbaseline-behavior-selection"></a>
+##### Selected whole spectra and fit-channel masks
+
+**Implemented** — Carry original scan, beam, antenna, spectral-window and time coordinates into the fits.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdbaseline-evidence-paired).
+
+<a id="sdbaseline-behavior-fit-apply"></a>
+##### Polynomial and Chebyshev fitting and application
+
+**Partial** — Fit spectra and apply compatible baseline tables across implementations.
+
+Other baseline families and automatic masking are tracked by #1532.
+
+Evidence: [paired](#sdbaseline-evidence-paired).
+
+<a id="sdbaseline-behavior-products"></a>
+##### Baseline reports and MeasurementSet publication
+
+**Implemented** — Write CASA-readable tables, text and CSV reports, corrected spectra and the tool’s model-only skeleton.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdbaseline-evidence-paired).
+
+<a id="sdbaseline-behavior-future-fits"></a>
+##### Remaining fitting and mask families
+
+**Not implemented** — Add cubic-spline, sinusoid, variable fits and automatic line masks.
+
+Tracked by #1532.
+
+Evidence: [pending](#sdbaseline-evidence-pending).
+
+#### sdbaseline deviations and unfinished work
+
+##### singleton-mask-pairs: Proposed
+
+- Record: [Single-dish baseline tables can contain malformed singleton mask ranges](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-tables-can-contain-malformed-singleton-mask-ranges)
+- Inputs: Select a spectrum whose fitted mask starts with a singleton channel and another disjoint range.
+- CASA: The saved mask has an odd endpoint count and CASA refuses to apply it.
+- casa-rs: The singleton channel has equal start and end endpoints and the native table applies in CASA.
+- Rationale: Every fitted range needs both endpoints to preserve its channels on interchange.
+- User impact: Coefficients can be reused after fitting non-contiguous masks.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#sdbaseline-evidence-paired).
+
+##### remove-spectral-noise: Proposed
+
+- Record: [Single-dish baseline weight updates can fail when removing two columns](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-weight-updates-can-fail-when-removing-two-columns)
+- Inputs: Set updateweight on an input containing both spectral noise columns.
+- CASA: The public task raises after producing the data and scalar weights.
+- casa-rs: The public task writes the recalculated weights with the two stale columns omitted.
+- Rationale: The table API must receive individual column names when dropping both columns.
+- User impact: A successful task leaves a usable product and only its current noise estimates.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#sdbaseline-evidence-paired).
+
+##### per-spectrum-clipped-count: Proposed
+
+- Record: [Single-dish baseline reports accumulate clipped-channel counts](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-reports-accumulate-clipped-channel-counts)
+- Inputs: Reject one spectral channel in each of multiple consecutive integrations.
+- CASA: Reports a running clipped-channel count within a visibility buffer.
+- casa-rs: Reports the number clipped in that spectrum.
+- Rationale: Each row in the diagnostic describes an individual fit.
+- User impact: The number describes the channels rejected in the specified spectrum.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#sdbaseline-evidence-paired).
+
+##### negative-iterations: Proposed
+
+- Record: [Single-dish baseline fitting accepts negative iteration counts in CASA](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-fitting-accepts-negative-iteration-counts-in-casa)
+- Inputs: Set clipniter below zero or num_fitting_max to zero.
+- CASA: Converts the result to an unsigned fit count. Zero can return a model without a fit.
+- casa-rs: Reports a fitting-iteration validation error.
+- Rationale: Fitting a baseline requires at least the initial fit.
+- User impact: The wrapper cannot publish unused or uninitialized coefficients as a fitted model.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [iteration-source](#sdbaseline-evidence-iteration-source).
+
+#### sdbaseline evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="sdbaseline-evidence-paired"></a>
+##### paired
+
+**Public Python task and tool comparison plus casacore table interchange — passed.** Paired products and independent coefficient, clipping and weight laws passed. Explicit list masks, two polynomial families, both readers, list and task products, flags, metadata, selection, clipping and scalar weights. The reviewed cases cover the retained clipping endpoint, insufficient refit, input overlap, two independent SPW selectors, padding, schema and time lookup.
+
+- [tools/casa-compat/sdbaseline_oracle.py](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/tools/casa-compat/sdbaseline_oracle.py)
+- Revision: `5995e36027dc7383185a234aca60c8596fd7014e`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1977`.
+
+<a id="sdbaseline-evidence-progress-controls"></a>
+##### progress-controls
+
+**Pinned upstream task source inspection — inspected.** The accepted switches do not affect output products. The private CASA task never reads showprogress or minnrow.
+
+
+<a id="sdbaseline-evidence-performance-smoke"></a>
+##### performance-smoke
+
+**Matched public task timing, compact map — measured.** 0.212 s native debug and 0.242 s CASA wall time on the same 240-row workflow. Release and dataset-scale profiling follow functionality parity under #979. 240 selected rows with text, CSV, baseline-table and MeasurementSet products.
+
+- Revision: `5995e36027dc7383185a234aca60c8596fd7014e`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1977`.
+
+<a id="sdbaseline-evidence-pending"></a>
+##### pending
+
+**Remaining baseline families and masks — planned.** Tracked by #1532. Cubic-spline, sinusoid, variable and automatic masking.
+
+
+<a id="sdbaseline-evidence-iteration-source"></a>
+##### iteration-source
+
+**Pinned upstream inspection and negative-count probe — inspected.** A task call with clipniter=-1 emits no fitted baseline. Casa-rs rejects negative counts. CASA 6.7.6.14 sdbaseline passes clipniter plus one to an unsigned solver count.
+
 
 ### sdcal
 

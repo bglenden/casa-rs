@@ -1,0 +1,543 @@
+{
+  "schema_version": 1,
+  "task": "sdbaseline",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "5995e36027dc7383185a234aca60c8596fd7014e",
+  "parameters": {
+    "infile": {
+      "scope": "Open a MeasurementSet through the public task.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "datacolumn": {
+      "scope": "Fit the real part of DATA or CORRECTED_DATA, or use FLOAT_DATA.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "antenna": {
+      "scope": "Resolve the antenna list and select its autocorrelations.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "field": {
+      "scope": "Select fields by name or index.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "spw": {
+      "scope": "Keep the full selected spectral windows and use their specified channels for the fit.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "timerange": {
+      "scope": "Filter integrations by time.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "scan": {
+      "scope": "Select integrations by scan.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "pol": {
+      "scope": "Select the requested correlations.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "intent": {
+      "scope": "Filter by observing intent.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "reindex": {
+      "scope": "Preserve input identifiers or compact the selected subtables.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "maskmode": {
+      "scope": "Fit the supplied channel mask. Lowercase auto selects automatic line detection in CASA.",
+      "status": "Partial",
+      "behaviors": [
+        "selection",
+        "future-fits"
+      ],
+      "evidence": [
+        "paired",
+        "pending"
+      ],
+      "gap": "Automatic line detection remains open on #1532."
+    },
+    "thresh": {
+      "scope": "Automatic masking uses this line-detection threshold.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "avg_limit": {
+      "scope": "Automatic masking uses this maximum channel-averaging width.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "minwidth": {
+      "scope": "Automatic masking uses this minimum detected line width.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "edge": {
+      "scope": "Automatic masking removes these channels from each end.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "blmode": {
+      "scope": "Fit or apply polynomial and Chebyshev baselines.",
+      "status": "Partial",
+      "behaviors": [
+        "fit-apply"
+      ],
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Other baseline families remain open on #1532."
+    },
+    "dosubtract": {
+      "scope": "Write corrected spectra or publish only the requested fits.",
+      "status": "Implemented",
+      "behaviors": [
+        "products"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "blformat": {
+      "scope": "Choose any combination of text, CSV and CASA baseline-table products.",
+      "status": "Implemented",
+      "behaviors": [
+        "products"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "bloutput": {
+      "scope": "Supply diagnostic filenames or use the CASA suffixes.",
+      "status": "Implemented",
+      "behaviors": [
+        "products"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "bltable": {
+      "scope": "Read and apply the polynomial and Chebyshev coefficients in a CASA baseline table.",
+      "status": "Partial",
+      "behaviors": [
+        "fit-apply"
+      ],
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Cubic-spline and sinusoid rows remain open on #1532."
+    },
+    "blfunc": {
+      "scope": "Fit polynomial or Chebyshev models.",
+      "status": "Partial",
+      "behaviors": [
+        "fit-apply"
+      ],
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Cubic-spline, sinusoid and variable fitting remain open on #1532."
+    },
+    "order": {
+      "scope": "Set the degree of the polynomial or Chebyshev family.",
+      "status": "Implemented",
+      "behaviors": [
+        "fit-apply"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "npiece": {
+      "scope": "Cubic-spline fits use this number of pieces.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "applyfft": {
+      "scope": "Sinusoid fits use this switch to select FFT-derived wavenumbers.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "fftmethod": {
+      "scope": "Sinusoid fits use this FFT selection method.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "fftthresh": {
+      "scope": "Sinusoid fits use this FFT selection threshold.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "addwn": {
+      "scope": "Sinusoid fits include these wavenumbers.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "rejwn": {
+      "scope": "Sinusoid fits exclude these wavenumbers.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "clipthresh": {
+      "scope": "Set the residual rejection threshold during iterative fitting.",
+      "status": "Implemented",
+      "behaviors": [
+        "fit-apply"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "clipniter": {
+      "scope": "Set the number of additional fitting passes after the initial fit.",
+      "status": "Implemented",
+      "behaviors": [
+        "fit-apply"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "blparam": {
+      "scope": "Variable fitting reads the per-spectrum configuration file.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "verbose": {
+      "scope": "Variable fitting uses this logging option.",
+      "status": "Not implemented",
+      "behaviors": [
+        "future-fits"
+      ],
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    },
+    "updateweight": {
+      "scope": "Update scalar WEIGHT while preserving CASA’s SIGMA alignment.",
+      "status": "Implemented",
+      "behaviors": [
+        "fit-apply"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "sigmavalue": {
+      "scope": "Use the residual RMS or standard deviation to derive scalar weights.",
+      "status": "Implemented",
+      "behaviors": [
+        "fit-apply"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "showprogress": {
+      "scope": "CASA accepts the progress-display switch without consulting it in the task implementation.",
+      "status": "Implemented",
+      "evidence": [
+        "progress-controls"
+      ]
+    },
+    "minnrow": {
+      "scope": "CASA accepts the minimum row count for progress display without consulting it.",
+      "status": "Implemented",
+      "evidence": [
+        "progress-controls"
+      ]
+    },
+    "outfile": {
+      "scope": "Publish the output MeasurementSet. The task supplies a default suffix.",
+      "status": "Implemented",
+      "behaviors": [
+        "products"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "overwrite": {
+      "scope": "Permit replacement of an existing output or report.",
+      "status": "Implemented",
+      "behaviors": [
+        "products"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "selection",
+      "title": "Selected whole spectra and fit-channel masks",
+      "scope": "Carry original scan, beam, antenna, spectral-window and time coordinates into the fits.",
+      "status": "Implemented",
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Dataset-scale release profiling follows functionality under #979."
+    },
+    {
+      "id": "fit-apply",
+      "title": "Polynomial and Chebyshev fitting and application",
+      "scope": "Fit spectra and apply compatible baseline tables across implementations.",
+      "status": "Partial",
+      "gap": "Other baseline families and automatic masking are tracked by #1532.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "products",
+      "title": "Baseline reports and MeasurementSet publication",
+      "scope": "Write CASA-readable tables, text and CSV reports, corrected spectra and the tool’s model-only skeleton.",
+      "status": "Implemented",
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Dataset-scale release profiling follows functionality under #979."
+    },
+    {
+      "id": "future-fits",
+      "title": "Remaining fitting and mask families",
+      "scope": "Add cubic-spline, sinusoid, variable fits and automatic line masks.",
+      "status": "Not implemented",
+      "gap": "Tracked by #1532.",
+      "evidence": [
+        "pending"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "singleton-mask-pairs",
+      "state": "Proposed",
+      "inputs": "Select a spectrum whose fitted mask starts with a singleton channel and another disjoint range.",
+      "casa": "The saved mask has an odd endpoint count and CASA refuses to apply it.",
+      "ours": "The singleton channel has equal start and end endpoints and the native table applies in CASA.",
+      "rationale": "Every fitted range needs both endpoints to preserve its channels on interchange.",
+      "impact": "Coefficients can be reused after fitting non-contiguous masks.",
+      "record": "Single-dish baseline tables can contain malformed singleton mask ranges",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "remove-spectral-noise",
+      "state": "Proposed",
+      "inputs": "Set updateweight on an input containing both spectral noise columns.",
+      "casa": "The public task raises after producing the data and scalar weights.",
+      "ours": "The public task writes the recalculated weights with the two stale columns omitted.",
+      "rationale": "The table API must receive individual column names when dropping both columns.",
+      "impact": "A successful task leaves a usable product and only its current noise estimates.",
+      "record": "Single-dish baseline weight updates can fail when removing two columns",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "per-spectrum-clipped-count",
+      "state": "Proposed",
+      "inputs": "Reject one spectral channel in each of multiple consecutive integrations.",
+      "casa": "Reports a running clipped-channel count within a visibility buffer.",
+      "ours": "Reports the number clipped in that spectrum.",
+      "rationale": "Each row in the diagnostic describes an individual fit.",
+      "impact": "The number describes the channels rejected in the specified spectrum.",
+      "record": "Single-dish baseline reports accumulate clipped-channel counts",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "negative-iterations",
+      "state": "Proposed",
+      "inputs": "Set clipniter below zero or num_fitting_max to zero.",
+      "casa": "Converts the result to an unsigned fit count. Zero can return a model without a fit.",
+      "ours": "Reports a fitting-iteration validation error.",
+      "rationale": "Fitting a baseline requires at least the initial fit.",
+      "impact": "The wrapper cannot publish unused or uninitialized coefficients as a fitted model.",
+      "record": "Single-dish baseline fitting accepts negative iteration counts in CASA",
+      "evidence": [
+        "iteration-source"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Public Python task and tool comparison plus casacore table interchange",
+      "state": "passed",
+      "casa_version": "6.7.6.14",
+      "revision": "5995e36027dc7383185a234aca60c8596fd7014e",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1977",
+      "scope": "Explicit list masks, two polynomial families, both readers, list and task products, flags, metadata, selection, clipping and scalar weights. The reviewed cases cover the retained clipping endpoint, insufficient refit, input overlap, two independent SPW selectors, padding, schema and time lookup.",
+      "result": "Paired products and independent coefficient, clipping and weight laws passed.",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_oracle.py <new-dir>",
+      "links": [
+        "tools/casa-compat/sdbaseline_oracle.py"
+      ]
+    },
+    "progress-controls": {
+      "kind": "Pinned upstream task source inspection",
+      "state": "inspected",
+      "scope": "The private CASA task never reads showprogress or minnrow.",
+      "result": "The accepted switches do not affect output products.",
+      "links": []
+    },
+    "performance-smoke": {
+      "kind": "Matched public task timing, compact map",
+      "state": "measured",
+      "scope": "240 selected rows with text, CSV, baseline-table and MeasurementSet products.",
+      "result": "0.212 s native debug and 0.242 s CASA wall time on the same 240-row workflow. Release and dataset-scale profiling follow functionality parity under #979.",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1977",
+      "links": [],
+      "revision": "5995e36027dc7383185a234aca60c8596fd7014e",
+      "casa_version": "6.7.6.14",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_oracle.py <new-dir>"
+    },
+    "pending": {
+      "kind": "Remaining baseline families and masks",
+      "state": "planned",
+      "scope": "Cubic-spline, sinusoid, variable and automatic masking.",
+      "result": "Tracked by #1532.",
+      "links": []
+    },
+    "iteration-source": {
+      "kind": "Pinned upstream inspection and negative-count probe",
+      "state": "inspected",
+      "scope": "CASA 6.7.6.14 sdbaseline passes clipniter plus one to an unsigned solver count.",
+      "result": "A task call with clipniter=-1 emits no fitted baseline. Casa-rs rejects negative counts.",
+      "links": []
+    }
+  }
+}

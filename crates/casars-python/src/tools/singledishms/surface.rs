@@ -19,7 +19,7 @@ const METHODS: &[Method] = &[
                 param("outfile", K::Text, D::Text("")),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Partial,
         )
     },
     Method {
@@ -151,7 +151,7 @@ const METHODS: &[Method] = &[
                 param("edge", K::Ints, D::Ints(&[0, 0])),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Partial,
         )
     },
     Method {

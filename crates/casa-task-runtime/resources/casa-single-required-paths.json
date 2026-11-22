@@ -25,6 +25,7 @@
   "plotbandpass": "caltable",
   "plotweather": "vis",
   "polcal": "vis",
+  "sdbaseline": "infile",
   "sdcal": "infile",
   "sdgaincal": "infile",
   "sdsmooth": "infile",

@@ -9,19 +9,6 @@ use crate::tools::not_yet_implemented_in;
 #[pymethods]
 #[allow(unused_variables, clippy::too_many_arguments, clippy::unused_self)]
 impl PySingleDishMs {
-    #[pyo3(signature = (bltable = None, datacolumn = None, spw = None, updateweight = None, sigmavalue = None, outfile = None), text_signature = "($self, bltable='', datacolumn='data', spw=[], updateweight=False, sigmavalue='stddev', outfile='')")]
-    fn apply_baseline_table(
-        &self,
-        bltable: Option<&Bound<'_, PyAny>>,
-        datacolumn: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        updateweight: Option<&Bound<'_, PyAny>>,
-        sigmavalue: Option<&Bound<'_, PyAny>>,
-        outfile: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        not_yet_implemented_in("singledishms", "apply_baseline_table", 1532)
-    }
-
     #[pyo3(signature = (config = None, datacolumn = None, outfile = None), text_signature = "($self, config={}, datacolumn='data', outfile='')")]
     fn atmcor(
         &self,
@@ -72,29 +59,6 @@ impl PySingleDishMs {
         parallel: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         not_yet_implemented_in("singledishms", "importnro", 1532)
-    }
-
-    #[pyo3(signature = (datacolumn = None, outfile = None, bloutput = None, dosubtract = None, spw = None, updateweight = None, sigmavalue = None, blfunc = None, order = None, clip_threshold_sigma = None, num_fitting_max = None, linefinding = None, threshold = None, avg_limit = None, minwidth = None, edge = None), text_signature = "($self, datacolumn='data', outfile='', bloutput='', dosubtract=True, spw=[], updateweight=False, sigmavalue='stddev', blfunc='poly', order=5, clip_threshold_sigma=3.0, num_fitting_max=1, linefinding=False, threshold=5.0, avg_limit=4, minwidth=4, edge=[0, 0])")]
-    fn subtract_baseline(
-        &self,
-        datacolumn: Option<&Bound<'_, PyAny>>,
-        outfile: Option<&Bound<'_, PyAny>>,
-        bloutput: Option<&Bound<'_, PyAny>>,
-        dosubtract: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        updateweight: Option<&Bound<'_, PyAny>>,
-        sigmavalue: Option<&Bound<'_, PyAny>>,
-        blfunc: Option<&Bound<'_, PyAny>>,
-        order: Option<&Bound<'_, PyAny>>,
-        clip_threshold_sigma: Option<&Bound<'_, PyAny>>,
-        num_fitting_max: Option<&Bound<'_, PyAny>>,
-        linefinding: Option<&Bound<'_, PyAny>>,
-        threshold: Option<&Bound<'_, PyAny>>,
-        avg_limit: Option<&Bound<'_, PyAny>>,
-        minwidth: Option<&Bound<'_, PyAny>>,
-        edge: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        not_yet_implemented_in("singledishms", "subtract_baseline", 1532)
     }
 
     #[pyo3(signature = (datacolumn = None, outfile = None, bloutput = None, dosubtract = None, spw = None, updateweight = None, sigmavalue = None, npiece = None, clip_threshold_sigma = None, num_fitting_max = None, linefinding = None, threshold = None, avg_limit = None, minwidth = None, edge = None), text_signature = "($self, datacolumn='data', outfile='', bloutput='', dosubtract=True, spw=[], updateweight=False, sigmavalue='stddev', npiece=5, clip_threshold_sigma=3.0, num_fitting_max=1, linefinding=False, threshold=5.0, avg_limit=4, minwidth=4, edge=[0, 0])")]

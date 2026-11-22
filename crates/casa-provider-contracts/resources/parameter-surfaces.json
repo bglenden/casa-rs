@@ -45582,6 +45582,1579 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "sdbaseline",
+      "contract_version": 1,
+      "display_name": "Single-dish spectral baselines",
+      "category": "Calibration",
+      "summary": "Fit, subtract and apply spectral baselines to selected single-dish observations.",
+      "provider_family": "calibration",
+      "casa_task": "sdbaseline",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "sdbaseline"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "infile",
+          "concept": {
+            "id": "single_dish.sky.infile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infile"
+              ]
+            },
+            "provider": {
+              "field": "infile"
+            },
+            "python": {
+              "name": "infile"
+            },
+            "presentation": {
+              "label": "Input MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "datacolumn",
+          "concept": {
+            "id": "parameter.datacolumn",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "data"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--datacolumn"
+              ],
+              "metavar": "COLUMN"
+            },
+            "provider": {
+              "field": "datacolumn",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "datacolumn",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Data Column",
+              "group": "Data"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Spectral window",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 5
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "START~END"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "timerange",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "pol",
+          "concept": {
+            "id": "specifycal.pol",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pol"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "pol"
+            },
+            "python": {
+              "name": "pol",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Correlation",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "reindex",
+          "concept": {
+            "id": "mstransform.reindex",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--reindex"
+              ]
+            },
+            "provider": {
+              "field": "reindex",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "reindex",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "Reindex subtable IDs",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "maskmode",
+          "concept": {
+            "id": "single_dish.baseline.maskmode",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "list"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--maskmode"
+              ]
+            },
+            "provider": {
+              "field": "maskmode",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "maskmode",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "maskmode",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "thresh",
+          "concept": {
+            "id": "single_dish.baseline.thresh",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 5.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--thresh"
+              ]
+            },
+            "provider": {
+              "field": "thresh",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "thresh",
+              "type_hint": "float"
+            },
+            "presentation": {
+              "label": "thresh",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "avg_limit",
+          "concept": {
+            "id": "single_dish.baseline.avg_limit",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--avg_limit"
+              ]
+            },
+            "provider": {
+              "field": "avg_limit",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "avg_limit",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "avg_limit",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "minwidth",
+          "concept": {
+            "id": "single_dish.baseline.minwidth",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minwidth"
+              ]
+            },
+            "provider": {
+              "field": "minwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minwidth",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "minwidth",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "edge",
+          "concept": {
+            "id": "single_dish.baseline.edge",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": 0
+                },
+                {
+                  "kind": "integer",
+                  "value": 0
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--edge"
+              ]
+            },
+            "provider": {
+              "field": "edge",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "edge",
+              "type_hint": "list[int]"
+            },
+            "presentation": {
+              "label": "edge",
+              "group": "Baseline"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1532",
+            "reason": "A pair of bounds masks channels from the two ends for automatic line finding."
+          }
+        },
+        {
+          "name": "blmode",
+          "concept": {
+            "id": "single_dish.baseline.blmode",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "fit"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--blmode"
+              ]
+            },
+            "provider": {
+              "field": "blmode",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "blmode",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "blmode",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "dosubtract",
+          "concept": {
+            "id": "single_dish.baseline.dosubtract",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dosubtract"
+              ]
+            },
+            "provider": {
+              "field": "dosubtract",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "dosubtract",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "dosubtract",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "blformat",
+          "concept": {
+            "id": "single_dish.baseline.blformat",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "text"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--blformat"
+              ]
+            },
+            "provider": {
+              "field": "blformat",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "blformat",
+              "type_hint": "str | list[str]"
+            },
+            "presentation": {
+              "label": "blformat",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "bloutput",
+          "concept": {
+            "id": "single_dish.baseline.bloutput",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--bloutput"
+              ]
+            },
+            "provider": {
+              "field": "bloutput",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "bloutput",
+              "type_hint": "str | list[str]"
+            },
+            "presentation": {
+              "label": "bloutput",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "bltable",
+          "concept": {
+            "id": "single_dish.baseline.bltable",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--bltable"
+              ]
+            },
+            "provider": {
+              "field": "bltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "bltable",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "bltable",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "blfunc",
+          "concept": {
+            "id": "single_dish.baseline.blfunc",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "poly"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--blfunc"
+              ]
+            },
+            "provider": {
+              "field": "blfunc",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "blfunc",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "blfunc",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "order",
+          "concept": {
+            "id": "single_dish.baseline.order",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 5
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--order"
+              ]
+            },
+            "provider": {
+              "field": "order",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "order",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "order",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "npiece",
+          "concept": {
+            "id": "single_dish.baseline.npiece",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--npiece"
+              ]
+            },
+            "provider": {
+              "field": "npiece",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "npiece",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "npiece",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "applyfft",
+          "concept": {
+            "id": "single_dish.baseline.applyfft",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--applyfft"
+              ]
+            },
+            "provider": {
+              "field": "applyfft",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "applyfft",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "applyfft",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "fftmethod",
+          "concept": {
+            "id": "single_dish.baseline.fftmethod",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "fft"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fftmethod"
+              ]
+            },
+            "provider": {
+              "field": "fftmethod",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "fftmethod",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "fftmethod",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "fftthresh",
+          "concept": {
+            "id": "single_dish.baseline.fftthresh",
+            "semantic_revision": 1
+          },
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 3.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fftthresh"
+              ]
+            },
+            "provider": {
+              "field": "fftthresh",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "fftthresh",
+              "type_hint": "float | int | str"
+            },
+            "presentation": {
+              "label": "fftthresh",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "addwn",
+          "concept": {
+            "id": "single_dish.baseline.addwn",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": 0
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--addwn"
+              ]
+            },
+            "provider": {
+              "field": "addwn",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "addwn",
+              "type_hint": "int | str | list[int]"
+            },
+            "presentation": {
+              "label": "addwn",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "rejwn",
+          "concept": {
+            "id": "single_dish.baseline.rejwn",
+            "semantic_revision": 1
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--rejwn"
+              ]
+            },
+            "provider": {
+              "field": "rejwn",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "rejwn",
+              "type_hint": "int | str | list[int]"
+            },
+            "presentation": {
+              "label": "rejwn",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "clipthresh",
+          "concept": {
+            "id": "single_dish.baseline.clipthresh",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 3.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--clipthresh"
+              ]
+            },
+            "provider": {
+              "field": "clipthresh",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "clipthresh",
+              "type_hint": "float"
+            },
+            "presentation": {
+              "label": "clipthresh",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "clipniter",
+          "concept": {
+            "id": "single_dish.baseline.clipniter",
+            "semantic_revision": 1
+          },
+          "order": 29,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--clipniter"
+              ]
+            },
+            "provider": {
+              "field": "clipniter",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "clipniter",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "clipniter",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "blparam",
+          "concept": {
+            "id": "single_dish.baseline.blparam",
+            "semantic_revision": 1
+          },
+          "order": 30,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--blparam"
+              ]
+            },
+            "provider": {
+              "field": "blparam",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "blparam",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "blparam",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "verbose",
+          "concept": {
+            "id": "parameter.verbose",
+            "semantic_revision": 1
+          },
+          "order": 31,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--verbose"
+              ]
+            },
+            "provider": {
+              "field": "verbose",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "verbose",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "verbose",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "updateweight",
+          "concept": {
+            "id": "single_dish.baseline.updateweight",
+            "semantic_revision": 1
+          },
+          "order": 32,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--updateweight"
+              ]
+            },
+            "provider": {
+              "field": "updateweight",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "updateweight",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "updateweight",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "sigmavalue",
+          "concept": {
+            "id": "single_dish.baseline.sigmavalue",
+            "semantic_revision": 1
+          },
+          "order": 33,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "stddev"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--sigmavalue"
+              ]
+            },
+            "provider": {
+              "field": "sigmavalue",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "sigmavalue",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "sigmavalue",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "showprogress",
+          "concept": {
+            "id": "single_dish.baseline.showprogress",
+            "semantic_revision": 1
+          },
+          "order": 34,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showprogress"
+              ]
+            },
+            "provider": {
+              "field": "showprogress",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showprogress",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "showprogress",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "minnrow",
+          "concept": {
+            "id": "single_dish.baseline.minnrow",
+            "semantic_revision": 1
+          },
+          "order": 35,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1000
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minnrow"
+              ]
+            },
+            "provider": {
+              "field": "minnrow",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minnrow",
+              "type_hint": "int"
+            },
+            "presentation": {
+              "label": "minnrow",
+              "group": "Baseline"
+            }
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "single_dish.smoothing.outfile",
+            "semantic_revision": 1
+          },
+          "order": 36,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile",
+              "type_hint": "StrPath"
+            },
+            "presentation": {
+              "label": "Output MeasurementSet",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 37,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "Overwrite output",
+              "group": "Output"
+            }
+          }
+        }
+      ]
     }
   ]
 }

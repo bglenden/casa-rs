@@ -9652,3 +9652,37 @@ convolver raises an error and can leave a MeasurementSet with zeroed spectra.
 Casa-rs stages the output, reports the convolution error, and preserves an
 existing MeasurementSet on a failed overwrite. A successful retry publishes
 the completed replacement.
+
+## Single-dish baseline tables can contain malformed singleton mask ranges
+
+CASA 6.7.6.14 writes an isolated fitted channel as one endpoint when the
+channel starts a spectrum's mask. Its own `apply_baseline_table` requires
+start/end pairs and rejects an odd-length list. Casa-rs writes both
+endpoints for singleton ranges. The paired baseline oracle applies the
+resulting casa-rs table with CASA.
+
+## Single-dish baseline weight updates can fail when removing two columns
+
+When both spectral noise columns exist, CASA 6.7.6.14 runs the baseline
+calculation, then passes the space-separated string
+`WEIGHT_SPECTRUM SIGMA_SPECTRUM` as a single column name to
+`table.removecols`. The task raises after writing the MeasurementSet.
+Casa-rs's task publishes the recalculated scalar weights and leaves out
+both spectral columns. The direct tool retains the undefined spectral
+columns in its output schema.
+
+## Single-dish baseline reports accumulate clipped-channel counts
+
+CASA 6.7.6.14 carries the clipped-channel count from earlier spectra in a
+visibility buffer into a spectrum's CSV and text report. With one rejected
+channel per spectrum and two polarizations, successive records can show
+`1,1,2,2,3,3`. Casa-rs reports the number rejected in each spectrum.
+
+## Single-dish baseline fitting accepts negative iteration counts in CASA
+
+The CASA 6.7.6.14 task passes `clipniter+1` to the tool, which converts it
+to an unsigned 16-bit fit count for the solver. A count of zero leaves the
+input real spectra in the output and can write coefficients and RMS values
+without performing a fit. Smaller values can wrap to very large fit counts.
+Casa-rs requires a nonnegative `clipniter` and a positive direct-tool
+`num_fitting_max`.

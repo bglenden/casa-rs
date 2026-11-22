@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use casa_tables::{
-    ColumnOverrides, ColumnType, StreamedScalarType, StreamedTiledShapeValueType, Table,
-    TableError, TableInfo, TableOptions,
+    ColumnOverrides, ColumnType, DataManagerKind, StreamedScalarType, StreamedTiledShapeValueType,
+    Table, TableError, TableInfo, TableOptions,
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
@@ -38,6 +38,7 @@ use crate::write_session::{
     MeasurementSetWriteResources, MeasurementSetWriteSession, MeasurementSetWriteTelemetry,
 };
 
+mod baseline;
 mod channel_average;
 mod convolution;
 mod correlation_metadata;
@@ -51,9 +52,10 @@ mod time_average;
 mod time_projection;
 mod visibility_columns;
 
+pub use baseline::{SpectrumBaseline, SpectrumRow};
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
-use convolution::Convolution;
-pub use convolution::{SpectrumConvolution, convolve_spectra};
+use convolution::{SpectralOperation, SpectrumOperator};
+pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
 pub use task_history::{TransformTaskHistory, append_task_history};
@@ -413,9 +415,9 @@ fn transform_product(
     grammar: RowGrammar,
     options: &MsTransformTaskOptions,
     metadata_template: Option<&Path>,
-    convolution: Option<Convolution<'_>>,
+    operation: Option<SpectralOperation<'_>>,
 ) -> Result<MsTransformReport, MsTransformError> {
-    let report = mstransform_staged(request, grammar, options, metadata_template, convolution)?;
+    let report = mstransform_staged(request, grammar, options, metadata_template, operation)?;
     if let Some(history) = &options.history {
         task_history::append_task_history(&request.output_ms, history)?;
     }
@@ -431,8 +433,14 @@ fn mstransform_staged(
     grammar: RowGrammar,
     options: &MsTransformTaskOptions,
     metadata_template: Option<&Path>,
-    mut convolution: Option<Convolution<'_>>,
+    mut operation: Option<SpectralOperation<'_>>,
 ) -> Result<MsTransformReport, MsTransformError> {
+    let order = match operation.as_ref().map(|op| &op.kernel) {
+        Some(SpectrumOperator::Convolution(_)) => selection_metadata::MainRowOrder::SingleDish,
+        Some(SpectrumOperator::Baseline(_)) => selection_metadata::MainRowOrder::Baseline,
+        None => selection_metadata::MainRowOrder::Transform,
+    };
+    let convolving = matches!(order, selection_metadata::MainRowOrder::SingleDish);
     let started_at = Instant::now();
     tracing::info!(
         input_ms = %request.input_ms.display(),
@@ -481,7 +489,7 @@ fn mstransform_staged(
     let visibility =
         VisibilityColumns::resolve(input.main_table(), request.data_column, &request.input_ms)?;
     let mut selection = request.selection.clone();
-    if convolution.is_some() {
+    if operation.is_some() {
         selection.antenna = Some(convolution::auto_correlations(
             &input,
             selection.antenna.as_deref(),
@@ -629,10 +637,14 @@ fn mstransform_staged(
             request,
             selected_rows,
             selected_ddids,
-            convolution.is_some(),
+            order,
         )?
     };
-    if let Some(convolution) = &mut convolution {
+    if let Some(SpectralOperation {
+        kernel: SpectrumOperator::Convolution(kernel),
+        ..
+    }) = &mut operation
+    {
         let windows = input
             .spectral_window()
             .map_err(|source| selection_error(MsSelectionError::Domain(source)))?;
@@ -646,11 +658,20 @@ fn mstransform_staged(
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|source| selection_error(MsSelectionError::Domain(source)))?;
-        convolution
-            .kernel
+        kernel
             .prepare(&counts)
             .map_err(MsTransformError::Spectrum)?;
     }
+    let baseline_rows = matches!(order, selection_metadata::MainRowOrder::Baseline)
+        .then(|| {
+            baseline::spectrum_rows(
+                input.main_table(),
+                request,
+                &selected_rows,
+                selected_ddids.iter().map(|id| ddid_to_spw[id]),
+            )
+        })
+        .transpose()?;
     let averaging_time = time_groups.is_some();
     let selected_field_ids_for_metadata =
         selected_field_ids_for_rows(input.main_table(), &selected_rows, &request.output_ms)?;
@@ -660,14 +681,13 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    let float_convolution =
-        convolution.is_some() && request.data_column == TransformDataColumn::FloatData;
+    let float_convolution = convolving && request.data_column == TransformDataColumn::FloatData;
     let mut spectra = SpectrumProjection::resolve(
         input.main_table(),
         first_selected_row,
         grammar,
         options.use_weight_spectrum,
-        (task_average, averaging_time, convolution.is_some()),
+        (task_average, averaging_time, convolving),
         &visibility,
     )
     .map_err(|source| MsTransformError::MutateMeasurementSet {
@@ -677,10 +697,27 @@ fn mstransform_staged(
     if float_convolution {
         spectra.source.clear();
     }
+    let mut writes_rows = true;
+    if let Some(SpectralOperation {
+        kernel: SpectrumOperator::Baseline(kernel),
+        ..
+    }) = operation.as_ref()
+    {
+        writes_rows = kernel.writes_rows();
+        if kernel.updates_weight() || !writes_rows {
+            spectra.source.clear();
+            spectra.fill_standard = false;
+            spectra.propagate_weights = false;
+            if kernel.omit_spectral_weights() {
+                spectra.output.clear();
+            }
+        }
+    }
+    let output_rows = if writes_rows { selected_rows.len() } else { 0 };
     prepare_output_root(&request.output_ms)?;
     let mut output_main = materialize_empty_main_table(
         metadata_template.unwrap_or(&request.input_ms),
-        selected_rows.len(),
+        output_rows,
         &request.output_ms,
         &visibility,
         grammar,
@@ -712,9 +749,7 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    let reindex = convolution
-        .as_ref()
-        .is_none_or(|operation| operation.reindex);
+    let reindex = operation.as_ref().is_none_or(|operation| operation.reindex);
     let compact_metadata = if reindex {
         compact_spectral_subtables(
             &request.input_ms,
@@ -770,14 +805,23 @@ fn mstransform_staged(
     })?;
     let (write_plan, input_batch_rows) = transform_array_write_plan(
         &input,
-        (&selected_rows, &selected_ddids, time_groups.as_deref()),
+        (
+            &selected_rows,
+            &selected_ddids,
+            time_groups.as_deref(),
+            output_rows,
+        ),
         &ddid_to_spw,
         &channel_bins,
         correlations.as_ref(),
         (&visibility, &spectra),
         write_resources,
     )?;
-    let batch_rows = write_plan.batch_rows().min(input_batch_rows);
+    let batch_rows = if writes_rows {
+        write_plan.batch_rows().min(input_batch_rows)
+    } else {
+        input_batch_rows
+    };
     let mut write_session = MeasurementSetWriteSession::start(&request.output_ms, write_plan)
         .map_err(|error| MsTransformError::WriteMeasurementSet {
             path: request.output_ms.display().to_string(),
@@ -786,7 +830,7 @@ fn mstransform_staged(
     let stage_started_at = Instant::now();
     let mut output_column_overrides = gather_selected_main_column_overrides(
         input.main_table(),
-        &selected_rows,
+        &selected_rows[..output_rows],
         &request.output_ms,
         batch_rows,
         &mut write_session,
@@ -998,11 +1042,12 @@ fn mstransform_staged(
             } else {
                 None
             };
-            let transformed_flags = if let Some(averages) = &averages {
+            let mut transformed_flags = if let Some(averages) = &averages {
                 averages.flags()
             } else {
                 transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
             };
+            let mut baseline_weights = None;
             for (column, values) in &mut data_values {
                 let source = column.source.name();
                 let target = column.output.name();
@@ -1033,16 +1078,40 @@ fn mstransform_staged(
                         }
                     })?
                 };
-                if let Some(operation) = &mut convolution {
-                    let ArrayValue::Bool(output_flags) = &transformed_flags else {
+                if let Some(operation) = &mut operation {
+                    let ArrayValue::Bool(output_flags) = &mut transformed_flags else {
                         return Err(MsTransformError::Spectrum(
                             "Spectral flags must be Bool.".into(),
                         ));
                     };
-                    operation
-                        .kernel
-                        .apply(&mut transformed, output_flags)
-                        .map_err(MsTransformError::Spectrum)?;
+                    match &mut operation.kernel {
+                        SpectrumOperator::Convolution(kernel) => {
+                            kernel
+                                .apply(&mut transformed, output_flags)
+                                .map_err(MsTransformError::Spectrum)?;
+                        }
+                        SpectrumOperator::Baseline(handler) => {
+                            let coordinates = baseline_rows
+                                .as_ref()
+                                .and_then(|rows| rows.get(row_index))
+                                .ok_or_else(|| {
+                                    MsTransformError::Spectrum(
+                                        "Missing original spectrum coordinates.".into(),
+                                    )
+                                })?;
+                            baseline_weights = handler
+                                .process(
+                                    coordinates,
+                                    &mut transformed,
+                                    output_flags,
+                                    noise.as_ref().map(|(weight, _)| weight),
+                                )
+                                .map_err(MsTransformError::Spectrum)?;
+                        }
+                    }
+                }
+                if !writes_rows {
+                    continue;
                 }
                 if column.source == OptionalMainColumn::FloatData {
                     push_f32_array_row(
@@ -1061,6 +1130,10 @@ fn mstransform_staged(
                         row_index,
                     )?;
                 }
+            }
+            if !writes_rows {
+                touched_spws.insert(spw_id);
+                continue;
             }
             push_bool_array_row(
                 &mut write_session,
@@ -1109,6 +1182,36 @@ fn mstransform_staged(
                 row_index,
             )?;
             let averaged_noise = averages.map(|averages| averages.statistics());
+            if let Some(weights) = baseline_weights
+                && let Some((original_weight, sigma)) = &noise
+            {
+                let (mut original_weight, mut sigma) = (original_weight.clone(), sigma.clone());
+                visibility.align_scalar_weights(&mut original_weight, &mut sigma);
+                push_f32_array_row(
+                    &mut write_session,
+                    "WEIGHT",
+                    &weights,
+                    &request.output_ms,
+                    row_index,
+                )?;
+                push_f32_array_row(
+                    &mut write_session,
+                    "SIGMA",
+                    &sigma,
+                    &request.output_ms,
+                    row_index,
+                )?;
+                for &column in &spectra.output {
+                    write_session.push_undefined_row(column).map_err(|error| {
+                        MsTransformError::WriteMeasurementSet {
+                            path: request.output_ms.display().to_string(),
+                            reason: error.to_string(),
+                        }
+                    })?;
+                }
+                touched_spws.insert(spw_id);
+                continue;
+            }
             let Some((weight, sigma)) = noise else {
                 // CASA publishes these columns with undefined cells when the
                 // transformed visibility column is FLOAT_DATA.
@@ -1126,7 +1229,11 @@ fn mstransform_staged(
                 touched_spws.insert(spw_id);
                 continue;
             };
-            let (mut weight, mut sigma, task_spectra) = if let Some(operation) = &convolution {
+            let (mut weight, mut sigma, task_spectra) = if let Some(SpectralOperation {
+                kernel: SpectrumOperator::Convolution(kernel),
+                ..
+            }) = &operation
+            {
                 let corrected = visibility.corrected_becomes_data();
                 let (weight, sigma) =
                     unaveraged_spectra(&weight, &sigma, spectra_cells, &flags, bins, corrected)
@@ -1140,7 +1247,7 @@ fn mstransform_staged(
                     weight,
                     sigma,
                     output_flags,
-                    operation.kernel.weight_kernel(),
+                    kernel.weight_kernel(),
                     corrected,
                 )
                 .map_err(mutation_error)?;
@@ -1173,11 +1280,7 @@ fn mstransform_staged(
             } else {
                 (weight, sigma, None)
             };
-            if grammar == RowGrammar::Transform
-                && !task_average
-                && !averaging_time
-                && convolution.is_none()
-            {
+            if grammar == RowGrammar::Transform && !task_average && !averaging_time && !convolving {
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
             }
             push_f32_array_row(
@@ -1250,7 +1353,7 @@ fn mstransform_staged(
     for name in spectra.output {
         output_column_overrides.insert_deferred(name);
     }
-    for ddid in &selected_ddids {
+    for ddid in &selected_ddids[..output_rows] {
         let compact = compact_metadata
             .ddid_map
             .get(ddid)
@@ -1268,7 +1371,7 @@ fn mstransform_staged(
                 reason: error.to_string(),
             })?;
     }
-    for field_id in &selected_field_ids_for_metadata {
+    for field_id in &selected_field_ids_for_metadata[..output_rows] {
         let compact = match &field_id_map {
             Some(ids) => ids.get(field_id).copied().ok_or_else(|| {
                 MsTransformError::SpectralMetadata {
@@ -1287,18 +1390,30 @@ fn mstransform_staged(
                 reason: error.to_string(),
             })?;
     }
-    let output_bindings = measurement_set_main_table_bindings(&output_main);
-    let write_telemetry = write_session
-        .save_table_and_finish(
-            &mut output_main,
-            measurement_set_table_options(&request.output_ms),
-            &output_bindings,
-            &output_column_overrides,
-        )
-        .map_err(|error| MsTransformError::WriteMeasurementSet {
-            path: request.output_ms.display().to_string(),
-            reason: error.to_string(),
-        })?;
+    let output_options = measurement_set_table_options(&request.output_ms);
+    let write_telemetry = if writes_rows {
+        let output_bindings = measurement_set_main_table_bindings(&output_main);
+        write_session
+            .save_table_and_finish(
+                &mut output_main,
+                output_options,
+                &output_bindings,
+                &output_column_overrides,
+            )
+            .map_err(|error| MsTransformError::WriteMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                reason: error.to_string(),
+            })?
+    } else {
+        // Empty MAIN has no visibilities from which to define tiled hypercubes.
+        output_main
+            .save(output_options.with_data_manager(DataManagerKind::StandardStMan))
+            .map_err(|error| MsTransformError::WriteMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                reason: error.to_string(),
+            })?;
+        MeasurementSetWriteTelemetry::default()
+    };
     maybe_log_transform_progress(
         "save_output_main",
         stage_started_at.elapsed(),
@@ -1324,7 +1439,7 @@ fn mstransform_staged(
     tracing::info!(
         input_ms = %request.input_ms.display(),
         output_ms = %request.output_ms.display(),
-        rows = row_count,
+        rows = output_rows,
         write_bytes = write_telemetry.bytes_written,
         write_peak_planned_resident_bytes = write_telemetry.maximum_resident_bytes,
         elapsed_ms = started_at.elapsed().as_millis() as u64,
@@ -1333,7 +1448,7 @@ fn mstransform_staged(
     Ok(MsTransformReport {
         input_ms: request.input_ms.clone(),
         output_ms: request.output_ms.clone(),
-        row_count,
+        row_count: output_rows,
         source_column: visibility.source_names(),
         output_column: visibility.output_names(),
         spw: request.spw.clone(),
@@ -1438,7 +1553,12 @@ fn transform_array_dimensions(
 
 fn transform_array_write_plan(
     input: &MeasurementSet,
-    (selected_rows, selected_ddids, groups): (&[usize], &[i32], Option<&[time_average::TimeGroup]>),
+    (selected_rows, selected_ddids, groups, output_rows): (
+        &[usize],
+        &[i32],
+        Option<&[time_average::TimeGroup]>,
+        usize,
+    ),
     ddid_to_spw: &BTreeMap<i32, i32>,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
     correlations: Option<&CorrelationSelection>,
@@ -1586,8 +1706,11 @@ fn transform_array_write_plan(
             storage_manager: MeasurementSetColumnStorage::TiledShape,
         });
     }
+    if output_rows == 0 {
+        columns.clear();
+    }
     let writer = MeasurementSetWritePlan::variable_array_creation(
-        selected_ddids.len(),
+        output_rows,
         columns,
         transform_scalar_column_plans(input.main_table()),
         resources,
