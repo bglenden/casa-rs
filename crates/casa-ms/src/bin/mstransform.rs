@@ -91,12 +91,14 @@ fn transform_request(
     };
     let options = MsTransformTaskOptions {
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
+        hanning: task.surface() == "mstransform" && task.flag("hanning")?,
         channel_widths,
         time_averaging: time_average_options(task)?,
         history: Some(task_history(task)),
         flag_command_widths: flag_command_widths(task),
         keep_mms,
         retained_scan_span,
+        ..MsTransformTaskOptions::default()
     };
     Ok((request, options))
 }

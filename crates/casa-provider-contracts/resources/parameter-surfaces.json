@@ -13315,8 +13315,7 @@
             "provider": {"field": "hanning"},
             "python": {"name": "hanning"},
             "presentation": {"label": "Hanning Smooth", "group": "Spectral", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "regridms",

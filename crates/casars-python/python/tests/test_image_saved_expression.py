@@ -399,12 +399,18 @@ def test_saved_expression_direct_factories_infer_all_pixel_types(tmp_path, backe
 @pytest.mark.parametrize("reader_backend", ["casa", "casars"])
 @pytest.mark.parametrize("pixeltype", ["float", "double", "complex", "dcomplex"])
 @pytest.mark.parametrize("factory", ["fromimage", "newimagefromimage"])
-def test_saved_expression_creates_interoperable_native_copies(tmp_path, writer_backend, reader_backend, pixeltype, factory):
+@pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+def test_saved_expression_creates_interoperable_native_copies(tmp_path, writer_backend, reader_backend, pixeltype, factory, nested):
     writer_api, reader_api = _backend(writer_backend), _backend(reader_backend)
     source = tmp_path / "operand.im"
     expected = _typed_operand(writer_api, source, pixeltype) * 3.
     expression = tmp_path / "manifest.im"
     _manifest(expression, ImageExpr=f'"{source}" * 3', DataType="unknown")
+    if nested:
+        outer = tmp_path / "outer.im"
+        _manifest(outer, ImageExpr=f'"{expression}" + 1')
+        expression = outer
+        expected += 1.
     output = tmp_path / "copied.im"
     writer, reader = writer_api.image(), reader_api.image()
     result = writer
@@ -423,3 +429,35 @@ def test_saved_expression_creates_interoperable_native_copies(tmp_path, writer_b
         result.done()
         if result is not writer:
             writer.done()
+
+
+@pytest.mark.parametrize("factory", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("location", ["same", "enclosing"])
+def test_nested_saved_copy_does_not_overwrite_an_operand(tmp_path, factory, location):
+    api = _backend("casars")
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    source = tmp_path / "operand.im"
+    destination = tmp_path / "existing.im"
+    _operand(api, source, pixels)
+    _operand(api, destination, pixels + 100)
+    inner = destination if location == "same" else destination / "inner.im"
+    _manifest(inner, ImageExpr=f'"{source}" * 3')
+    outer = tmp_path / "outer.im"
+    _manifest(outer, ImageExpr=f'"{inner}" + 1')
+    table = destination / "table.dat"
+    manifest = inner / "imageexpr.json"
+    original_table, original_manifest = table.read_bytes(), manifest.read_bytes()
+    image = api.image()
+    try:
+        assert image.fromarray(pixels=[41., 42.])
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression operand"):
+            getattr(image, factory)(infile=str(outer), outfile=str(destination), overwrite=True)
+        assert table.read_bytes() == original_table
+        assert manifest.read_bytes() == original_manifest
+        np.testing.assert_array_equal(image.getchunk(), [41., 42.])
+        assert image.open(str(outer))
+        valid = image.getchunk(getmask=True)
+        np.testing.assert_array_equal(valid, pixels > 4)
+        np.testing.assert_array_equal(image.getchunk()[valid], (pixels * 3 + 1)[valid])
+    finally:
+        image.done()

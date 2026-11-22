@@ -492,13 +492,12 @@ def mstransform(
     CASA's ``mstransform``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,
-    ``realmodelcol``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,
-    ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,
-    ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,
-    ``preaverage``, ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``,
-    ``fitorder``, ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``,
-    ``disableparallel``, ``ddistart``, ``monolithic_processing``,
-    ``reindex``.
+    ``realmodelcol``, ``combinespws``, ``regridms``, ``mode``, ``nchan``,
+    ``start``, ``width``, ``nspw``, ``interpolation``, ``phasecenter``,
+    ``restfreq``, ``outframe``, ``veltype``, ``preaverage``, ``docallib``,
+    ``callib``, ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,
+    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,
+    ``ddistart``, ``monolithic_processing``, ``reindex``.
     """
     return _call_casa(mstransform, locals())
 

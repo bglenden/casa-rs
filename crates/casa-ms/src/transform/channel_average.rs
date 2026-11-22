@@ -232,8 +232,19 @@ impl<'a> ChannelAverages<'a> {
     }
 
     pub(super) fn statistics(&self) -> AveragedStatistics {
+        let (weight, variance) = self.weight_spectra();
+        let sigma = variance.mapv(sigma_from_weight);
+        AveragedStatistics {
+            weight: ArrayValue::Float32(self.mean_bins(&weight).into_dyn()),
+            sigma: ArrayValue::Float32(self.mean_bins(&sigma).into_dyn()),
+            weight_spectrum: ArrayValue::Float32(weight.into_dyn()),
+            sigma_spectrum: ArrayValue::Float32(sigma.into_dyn()),
+        }
+    }
+
+    pub(super) fn weight_spectra(&self) -> (Array2<f32>, Array2<f32>) {
         let observed = self.data || (self.time_averaged && self.floating);
-        let (weight, variance) = if self.time_averaged && !(observed && self.corrected) {
+        if self.time_averaged && !(observed && self.corrected) {
             let weights = self.summed_weights(WeightKind::Calibrated);
             (weights.clone(), weights)
         } else if self.corrected {
@@ -254,14 +265,11 @@ impl<'a> ChannelAverages<'a> {
             };
             let weights = self.summed_weights(kind);
             (weights.clone(), weights)
-        };
-        let sigma = variance.mapv(sigma_from_weight);
-        AveragedStatistics {
-            weight: ArrayValue::Float32(self.mean_bins(&weight).into_dyn()),
-            sigma: ArrayValue::Float32(self.mean_bins(&sigma).into_dyn()),
-            weight_spectrum: ArrayValue::Float32(weight.into_dyn()),
-            sigma_spectrum: ArrayValue::Float32(sigma.into_dyn()),
         }
+    }
+
+    pub(super) fn bin_flags(&self) -> Array2<bool> {
+        self.bin_statistics.map(|bin| bin.flagged)
     }
 
     fn visibility_weight(&self, column: OptionalMainColumn) -> WeightKind {

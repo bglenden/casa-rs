@@ -1526,11 +1526,12 @@ def _coerce_ms_task_options(
         if "keepmms" in values:
             values["keepmms"] = bool(keep_mms)
     else:
-        active = check("timeaverage", (bool, np.bool_), "cBool")
+        for flag in ("timeaverage", "hanning"):
+            active = check(flag, (bool, np.bool_), "cBool")
+            if flag in values:
+                values[flag] = bool(active)
         distance = check("maxuvwdistance", (float, int, np.float32, np.float64, np.int32, np.int64),
                          "cFloat")
-        if "timeaverage" in values:
-            values["timeaverage"] = bool(active)
         if "maxuvwdistance" in values:
             values["maxuvwdistance"] = float(distance)
 

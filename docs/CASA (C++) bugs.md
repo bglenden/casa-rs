@@ -8120,6 +8120,20 @@ weights and channel flags. LAG_DATA retains its independent lag axis. The
 channel-averaging oracle checks the derived numbers against the input.
 [Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7018429826)
 
+The same spectral statistics writer is used with `mstransform(hanning=True)`.
+The native task retains defined WEIGHT and SIGMA using the calibrated noise
+and the Hanning coefficients. It smooths FLOAT_DATA on the frequency axis
+and preserves LAG_DATA on its independent axis (#1618).
+
+## A terminal channel stride can leave an incomplete SPECTRAL_WINDOW
+
+CASA 6.7.6.14 accepts `mstransform(spw="0:0~8^2", hanning=True)` on a
+nine-channel MS, but its SPW writer attempts to use channel nine when
+computing the last stride's footprint. It logs an error and leaves the SPW
+metadata incomplete. The native transform uses the available final channel
+as the last footprint and writes metadata for all five selected channels
+(#1618).
+
 ## Selecting defined spectra or several channel ranges can crash channel averaging
 
 Both CASA 6.7.6.14 tasks can terminate with SIGSEGV and leave an incomplete MS
@@ -8285,6 +8299,18 @@ Create two saved image-expression directories whose `ImageExpr` fields
 refer to each other, then open either directory. CASA 6.7.6.14 recurses
 until the Python process segfaults. Casa-rs resolves aliases to the same
 directory and raises an error on the cycle before publishing an output.
+See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
+
+### Copying a saved expression can delete one of its manifests
+
+Use a native table directory as a saved expression by adding
+`imageexpr.json`, or put an expression directory inside a native table
+directory. Use that expression in an outer saved expression and copy the
+outer expression with `fromimage` or `newimagefromimage`, naming the
+native table as the destination and setting `overwrite=True`. CASA
+6.7.6.14 succeeds and deletes the inner manifest, breaking the original
+outer expression. Casa-rs rejects an overwrite that overlaps any
+captured operand and preserves the receiver and source files.
 See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
 ### Updating saved-expression metadata can overwrite another manifest
