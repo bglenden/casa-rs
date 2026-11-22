@@ -102,10 +102,7 @@ impl FromStr for AntennaNameScheme {
     }
 }
 
-/// Task-style options for a future native `importvla` implementation.
-///
-/// The fields intentionally mirror CASA `importvla` naming so callers can keep
-/// using familiar parameter names while the native Rust filler comes online.
+/// CASA task-style options for importing disk-based VLA archives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImportVlaOptions {
     /// Input VLA archive files on disk.
@@ -118,9 +115,9 @@ pub struct ImportVlaOptions {
     pub frequencytol_hz: f64,
     /// Optional project filter.
     pub project: Option<String>,
-    /// Optional inclusive start time string.
+    /// Optional exclusive start time string.
     pub starttime: Option<String>,
-    /// Optional inclusive stop time string.
+    /// Optional exclusive stop time string.
     pub stoptime: Option<String>,
     /// Apply nominal sensitivity scaling.
     pub applytsys: bool,

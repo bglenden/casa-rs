@@ -7395,7 +7395,7 @@
             },
             "python": {
               "name": "frequencytol",
-              "type_hint": null
+              "type_hint": "str | int | float"
             },
             "presentation": {
               "label": "Frequency Tolerance",

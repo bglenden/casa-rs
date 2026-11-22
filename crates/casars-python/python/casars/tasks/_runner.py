@@ -245,6 +245,17 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if error.completion.parameter in ("beam", "defaultaxesvalues"):
                 raise TypeError(error.completion.message) from error
             raise
+    if name == "importvla":
+        if not arguments["vis"]:
+            raise RuntimeError("Need valid visibility file name (bad name or already exists)")
+        try:
+            return run(name, **values).value
+        except TaskParameterError as error:
+            if error.completion.parameter == "archivefiles":
+                raise AssertionError(error.completion.message) from error
+            if error.completion.parameter in ("vis", "project", "stoptime"):
+                raise RuntimeError(error.completion.message) from error
+            raise
     if name == "listcal":
         return _call_listcal(values, arguments)
     if name == "setjy" and arguments["listmodels"]:

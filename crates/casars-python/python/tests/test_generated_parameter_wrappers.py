@@ -90,10 +90,10 @@ def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
 
     monkeypatch.setattr(_runner, "run", fake_run)
     archivefiles = ["raw/one.exp", "raw/two.xp1"]
-    assert tasks.importvla(archivefiles=archivefiles) is None
+    assert tasks.importvla(archivefiles=archivefiles, vis="target.ms") is None
 
     assert captured["task"] == "importvla"
-    assert captured["overrides"] == {"archivefiles": archivefiles}
+    assert captured["overrides"] == {"archivefiles": archivefiles, "vis": "target.ms"}
 
 
 def test_generated_tclean_wrapper_preserves_vlass_awproject_controls(monkeypatch) -> None:

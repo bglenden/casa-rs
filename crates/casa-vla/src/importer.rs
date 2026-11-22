@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 use std::fs::{File, OpenOptions, create_dir_all};
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,8 +14,8 @@ use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetCreateTarget, MeasurementSetWritePlan, MeasurementSetWriteResources,
-    MeasurementSetWriteSession, OptionalMainColumn, SubTable, standard_main_scalar_column_plans,
+    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
+    OptionalMainColumn, SubTable, standard_main_scalar_column_plans,
 };
 use casa_tables::{ColumnSchema, StreamedTiledShapeValueType, Table};
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -31,13 +31,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::disk::LogicalRecord;
+use crate::output::ImportOutput;
 use crate::record::{
     CdaId, DirectionEpoch, DopplerDefinition, FrequencyFrame, IfId, IfUsage, StokesProduct,
 };
+use crate::selection::ArchiveSelection;
 use crate::{AntennaNameScheme, ImportVlaOptions, VlaDiskReader, VlaError};
 
 const DEFAULT_FLAG_CATEGORIES: usize = 6;
 const DEFAULT_TELESCOPE_NAME: &str = "VLA";
+const VLA_SUBARRAY_COUNT: i32 = 5;
 const SECONDS_PER_JULIAN_YEAR: f64 = 365.25 * 86_400.0;
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const PERF_ENV: &str = "CASA_RS_IMPORTVLA_PERF";
@@ -268,6 +271,7 @@ struct NormalizedAntenna {
 #[derive(Debug, Clone)]
 struct NormalizedGroup {
     descriptor: SpectralDescriptor,
+    cda_ids: Vec<CdaId>,
     baselines: Vec<NormalizedBaselineRow>,
 }
 
@@ -291,7 +295,6 @@ struct SpectralDescriptor {
     edge_frequency_hz: f64,
     observed_frequency_hz: f64,
     channel_width_hz: f64,
-    total_bandwidth_hz: f64,
     num_chan: usize,
     if_conv_chain: i32,
     rest_frequency_hz: f64,
@@ -323,6 +326,7 @@ struct DataDescriptionKey {
 #[derive(Debug, Clone)]
 struct SpectralWindowEntry {
     descriptor: SpectralDescriptor,
+    stored_bandwidth_hz: f64,
     row: i32,
     time_seconds: f64,
     source_direction: [f64; 2],
@@ -331,26 +335,24 @@ struct SpectralWindowEntry {
 
 /// Import archive files from disk into a new MeasurementSet.
 ///
-/// The current implementation accepts the task-style `importvla` option shape,
-/// but this wave only supports disk-file input plus the subset of selectors
-/// needed by the native writer: `archivefiles`, optional `vis`, `project`,
-/// `antnamescheme`, `autocorr`, `applytsys`, and `keepblanks`.
+/// Apply the archive selection to disk-file input and publish the complete
+/// MeasurementSet at `vis`, or the archive-derived name if one was omitted.
 pub fn import_archive_files_to_measurement_set_from_options(
     options: &ImportVlaOptions,
 ) -> Result<ImportReport, VlaError> {
+    import_archive_with_history(options, None)
+}
+
+pub(crate) fn import_archive_with_history(
+    options: &ImportVlaOptions,
+    history: Option<&casa_ms::TransformTaskHistory>,
+) -> Result<ImportReport, VlaError> {
     let total_started = Instant::now();
     let mut perf_tracer = ImportPerfTracer::from_env();
-    validate_import_options(options)?;
+    let selection = ArchiveSelection::new(options)?;
     let vis = options.effective_vis_for_import()?;
-    if vis.exists() {
-        return Err(VlaError::InvalidArgument {
-            argument: "vis",
-            message: format!("output MeasurementSet already exists: {}", vis.display()),
-        });
-    }
-    let output_target = MeasurementSetCreateTarget::prepare(&vis, false)
-        .map_err(|error| VlaError::import(error.to_string()))?;
-    let write_plan = plan_import_main_arrays(options)?;
+    let output = ImportOutput::prepare(&vis, history.is_some())?;
+    let (write_plan, flag_shapes) = plan_import_main_arrays(options, &selection, &vis)?;
 
     let builder = MeasurementSetBuilder::new()
         .with_main_column(OptionalMainColumn::Data)
@@ -359,27 +361,40 @@ pub fn import_archive_files_to_measurement_set_from_options(
         .with_optional_subtable(SubtableId::Source)
         .with_optional_subtable(SubtableId::Doppler);
     let create_started = Instant::now();
-    let ms = MeasurementSet::create(output_target.staging_path(), builder).map_err(|error| {
+    let ms = MeasurementSet::create(output.path(), builder).map_err(|error| {
         VlaError::import(format!("create MeasurementSet {}: {error}", vis.display()))
     })?;
-    let main_write_session =
-        MeasurementSetWriteSession::start(output_target.staging_path(), write_plan)
-            .map_err(|error| VlaError::import(error.to_string()))?;
+    let main_write_session = MeasurementSetWriteSession::start(output.path(), write_plan)
+        .map_err(|error| VlaError::import(error.to_string()))?;
 
     let mut writer =
         VlaImportState::new_with_write_session(options.clone(), ms, main_write_session)?;
     writer.perf_summary.create_measurement_set_ns = create_started.elapsed().as_nanos() as u64;
     set_flag_category_names(writer.ms.main_table_mut())?;
+    let mut info = writer.ms.main_table().info().clone();
+    info.sub_type = "VLA".into();
+    info.readme = vec![
+        "This is a MeasurementSet Table holding measurements from the VLA".into(),
+        "radio synthesis array (operated by NRAO)".into(),
+    ];
+    writer.ms.main_table_mut().set_info(info);
     for path in options.require_archivefiles()? {
-        let mut reader = VlaDiskReader::open(path)?;
+        let mut reader = open_import_archive(path)?;
+        let mut frequency_tolerance = options.frequencytol_hz;
         while let Some(record) = reader.next_record()? {
             writer.logical_records_seen += 1;
             let normalize_started = Instant::now();
-            if let Some(normalized) = normalize_record(&record, options, writer.measures.as_ref())?
-            {
+            if let Some(normalized) = normalize_record(
+                &record,
+                options,
+                &selection,
+                writer.measures.as_ref(),
+                &mut frequency_tolerance,
+            )? {
                 writer.perf_summary.normalize_record_ns +=
                     normalize_started.elapsed().as_nanos() as u64;
                 writer.logical_records_imported += 1;
+                writer.options.frequencytol_hz = frequency_tolerance;
                 let push_started = Instant::now();
                 writer.push_record(normalized)?;
                 writer.perf_summary.push_record_ns += push_started.elapsed().as_nanos() as u64;
@@ -390,11 +405,18 @@ pub fn import_archive_files_to_measurement_set_from_options(
                 writer.note_skipped_record();
             }
         }
+        writer.finish_archive()?;
     }
     writer.finish()?;
-    output_target
-        .commit()
-        .map_err(|error| VlaError::import(error.to_string()))?;
+    if let Some(history) = history {
+        casa_ms::append_task_history(output.path(), history)
+            .map_err(|error| VlaError::import(error.to_string()))?;
+        let staged = MeasurementSet::open(output.path())
+            .map_err(|error| VlaError::import(error.to_string()))?;
+        casa_ms::flagging::save_initial_flag_version(&staged, flag_shapes)
+            .map_err(|error| VlaError::import(error.to_string()))?;
+    }
+    output.publish()?;
     let report = ImportReport {
         vis,
         logical_records_seen: writer.logical_records_seen,
@@ -411,45 +433,42 @@ pub fn import_archive_files_to_measurement_set_from_options(
     Ok(report)
 }
 
-fn validate_import_options(options: &ImportVlaOptions) -> Result<(), VlaError> {
-    options.require_archivefiles()?;
-    if options.bandname.is_some() {
-        return Err(VlaError::InvalidArgument {
-            argument: "bandname",
-            message: "band selection is not implemented in this writer wave".to_string(),
-        });
+fn open_import_archive(path: &Path) -> Result<VlaDiskReader<BufReader<File>>, VlaError> {
+    let metadata = path.metadata().map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            VlaError::InvalidArgument {
+                argument: "archivefiles",
+                message: format!(
+                    "all elements of the vector parameter must be a path that exists (missing {})",
+                    path.display()
+                ),
+            }
+        } else {
+            VlaError::io(format!("read archive metadata {}", path.display()), source)
+        }
+    })?;
+    if !metadata.is_file() {
+        return Err(VlaError::import(format!(
+            "cannot read from {}",
+            path.display()
+        )));
     }
-    if options.starttime.is_some() {
-        return Err(VlaError::InvalidArgument {
-            argument: "starttime",
-            message: "time selection is not implemented in this writer wave".to_string(),
-        });
-    }
-    if options.stoptime.is_some() {
-        return Err(VlaError::InvalidArgument {
-            argument: "stoptime",
-            message: "time selection is not implemented in this writer wave".to_string(),
-        });
-    }
-    if options.evlabands {
-        return Err(VlaError::InvalidArgument {
-            argument: "evlabands",
-            message: "EVLA band remapping is not implemented in this writer wave".to_string(),
-        });
-    }
-    Ok(())
+    VlaDiskReader::open(path)
 }
 
 fn plan_import_main_arrays(
     options: &ImportVlaOptions,
-) -> Result<MeasurementSetWritePlan, VlaError> {
+    selection: &ArchiveSelection,
+    vis: &Path,
+) -> Result<(MeasurementSetWritePlan, Vec<MeasurementSetArrayShapePlan>), VlaError> {
     let mut visibility_shapes = BTreeMap::<(usize, usize), usize>::new();
     let mut weight_shapes = BTreeMap::<usize, usize>::new();
     let mut row_count = 0usize;
     for path in options.require_archivefiles()? {
-        let mut reader = VlaDiskReader::open(path)?;
+        let mut reader = open_import_archive(path)?;
+        let mut frequency_tolerance = options.frequencytol_hz;
         while let Some(record) = reader.next_record()? {
-            if !record_is_selected_for_import(&record, options)? {
+            if !record_is_selected_for_import(&record, options, selection)? {
                 continue;
             }
             let antenna_count = usize::from(
@@ -465,7 +484,7 @@ fn plan_import_main_arrays(
             let baselines = cross_baselines
                 .checked_add(if options.autocorr { antenna_count } else { 0 })
                 .ok_or_else(|| VlaError::import("MAIN baseline count overflow"))?;
-            let groups = collect_cda_groups(&record, options)?;
+            let groups = collect_cda_groups(&record, &mut frequency_tolerance)?;
             for (descriptor, cda_ids) in groups {
                 let correlation_count =
                     correlation_types_for_group(&record, &cda_ids, antenna_count)?.len();
@@ -483,6 +502,12 @@ fn plan_import_main_arrays(
         }
     }
 
+    if row_count == 0 {
+        return Err(VlaError::import(format!(
+            "visibility file is empty: {}",
+            vis.display()
+        )));
+    }
     let visibility = visibility_shapes
         .iter()
         .map(|(&(correlations, channels), &rows)| {
@@ -579,6 +604,7 @@ fn plan_import_main_arrays(
         standard_main_scalar_column_plans(),
         resources,
     )
+    .map(|plan| (plan, visibility))
     .map_err(|error| VlaError::import(error.to_string()))
 }
 
@@ -677,9 +703,11 @@ fn test_import_write_plan(
 fn normalize_record(
     record: &LogicalRecord,
     options: &ImportVlaOptions,
+    selection: &ArchiveSelection,
     measures: &dyn MeasuresProvider,
+    frequency_tolerance: &mut f64,
 ) -> Result<Option<NormalizedRecord>, VlaError> {
-    if !record_is_selected_for_import(record, options)? {
+    if !record_is_selected_for_import(record, options, selection)? {
         return Ok(None);
     }
 
@@ -715,7 +743,7 @@ fn normalize_record(
         .map_err(|error| VlaError::import(format!("decode integration time: {error}")))?;
 
     let antennas = normalize_antennas(record, options.antnamescheme, measures)?;
-    let groups = normalize_groups(record, options, antennas.len())?;
+    let groups = normalize_groups(record, options, antennas.len(), frequency_tolerance)?;
     if groups.is_empty() {
         return Ok(None);
     }
@@ -743,6 +771,7 @@ fn normalize_record(
 fn record_is_selected_for_import(
     record: &LogicalRecord,
     options: &ImportVlaOptions,
+    selection: &ArchiveSelection,
 ) -> Result<bool, VlaError> {
     if record
         .rca()
@@ -758,11 +787,7 @@ fn record_is_selected_for_import(
     let project = sda
         .observation_id()
         .map_err(|error| VlaError::import(format!("decode observation id: {error}")))?;
-    if options
-        .project
-        .as_ref()
-        .is_some_and(|expected| project.trim() != expected.trim())
-    {
+    if !selection.matches_project(&project) {
         return Ok(false);
     }
     let observation_mode = sda
@@ -774,7 +799,10 @@ fn record_is_selected_for_import(
     let source_name = sda
         .source_name()
         .map_err(|error| VlaError::import(format!("decode source name: {error}")))?;
-    Ok(!source_name.is_empty() || options.keepblanks)
+    if source_name.is_empty() && !options.keepblanks {
+        return Ok(false);
+    }
+    selection.matches_time_and_band(record)
 }
 
 fn is_supported_observation_mode(code: &str) -> bool {
@@ -863,12 +891,13 @@ fn normalize_groups(
     record: &LogicalRecord,
     options: &ImportVlaOptions,
     n_antennas: usize,
+    frequency_tolerance: &mut f64,
 ) -> Result<Vec<NormalizedGroup>, VlaError> {
     let revision = record
         .rca()
         .revision()
         .map_err(|error| VlaError::import(format!("decode revision: {error}")))?;
-    let cda_groups = collect_cda_groups(record, options)?;
+    let cda_groups = collect_cda_groups(record, frequency_tolerance)?;
 
     let mut groups = Vec::with_capacity(cda_groups.len());
     for (descriptor, cda_ids) in cda_groups {
@@ -930,6 +959,7 @@ fn normalize_groups(
         }
         groups.push(NormalizedGroup {
             descriptor,
+            cda_ids,
             baselines,
         });
     }
@@ -939,7 +969,7 @@ fn normalize_groups(
 
 fn collect_cda_groups(
     record: &LogicalRecord,
-    options: &ImportVlaOptions,
+    frequency_tolerance: &mut f64,
 ) -> Result<Vec<(SpectralDescriptor, Vec<CdaId>)>, VlaError> {
     let rca = record.rca();
     let sda = record
@@ -980,9 +1010,6 @@ fn collect_cda_groups(
             channel_width_hz: sda.channel_width_hz(cda_id).map_err(|error| {
                 VlaError::import(format!("decode channel width for {:?}: {error}", cda_id))
             })?,
-            total_bandwidth_hz: sda.correlated_bandwidth_hz(cda_id).map_err(|error| {
-                VlaError::import(format!("decode bandwidth for {:?}: {error}", cda_id))
-            })?,
             num_chan: usize::try_from(sda.n_channels(cda_id).map_err(|error| {
                 VlaError::import(format!("decode channel count for {:?}: {error}", cda_id))
             })?)
@@ -1010,8 +1037,11 @@ fn collect_cda_groups(
                 VlaError::import(format!("decode doppler tracking for {:?}: {error}", cda_id))
             })?,
         };
+        if *frequency_tolerance == 0.0 {
+            *frequency_tolerance = descriptor.channel_width_hz;
+        }
         if let Some((_, cdas)) = cda_groups.iter_mut().find(|(existing, _)| {
-            same_spectral_descriptor(existing, &descriptor, options.frequencytol_hz)
+            same_spectral_descriptor(existing, &descriptor, *frequency_tolerance)
         }) {
             cdas.push(cda_id);
         } else {
@@ -1244,12 +1274,9 @@ fn same_spectral_descriptor(
         (left.observed_frequency_hz - right.observed_frequency_hz).abs() <= tolerance_hz
     };
 
-    left.num_chan == right.num_chan
-        && left.if_conv_chain == right.if_conv_chain
+    same_spectral_window_shape(left, left.channel_width_hz * left.num_chan as f64, right)
         && left.doppler_tracking == right.doppler_tracking
         && center_frequency_matches
-        && (left.channel_width_hz - right.channel_width_hz).abs() <= tolerance_hz
-        && (left.total_bandwidth_hz - right.total_bandwidth_hz).abs() <= tolerance_hz
         && (!left.doppler_tracking
             || (left.rest_frame == right.rest_frame
                 && left.doppler_definition == right.doppler_definition
@@ -1259,19 +1286,14 @@ fn same_spectral_descriptor(
 
 fn same_spectral_window_shape(
     left: &SpectralDescriptor,
+    stored_bandwidth: f64,
     right: &SpectralDescriptor,
-    tolerance_hz: f64,
 ) -> bool {
-    let bandwidth_tolerance_hz = left
-        .total_bandwidth_hz
-        .abs()
-        .max(right.total_bandwidth_hz.abs())
-        / 4.0;
+    // CASA tests bandwidth separately from the reference-frequency tolerance.
+    let requested_bandwidth = right.channel_width_hz * right.num_chan as f64;
     left.num_chan == right.num_chan
         && left.if_conv_chain == right.if_conv_chain
-        && (left.total_bandwidth_hz - right.total_bandwidth_hz).abs()
-            <= bandwidth_tolerance_hz.max(tolerance_hz)
-        && (left.channel_width_hz - right.channel_width_hz).abs() <= tolerance_hz
+        && (stored_bandwidth - requested_bandwidth).abs() <= requested_bandwidth.abs() / 4.0
 }
 
 fn spectral_window_matches(
@@ -1283,8 +1305,18 @@ fn spectral_window_matches(
     tolerance_hz: f64,
     measures: Arc<dyn MeasuresProvider>,
 ) -> Result<bool, VlaError> {
-    if !same_spectral_window_shape(&existing.descriptor, descriptor, tolerance_hz) {
+    if !same_spectral_window_shape(
+        &existing.descriptor,
+        existing.stored_bandwidth_hz,
+        descriptor,
+    ) {
         return Ok(false);
+    }
+
+    let existing_reference = spectral_reference_frequency(&existing.descriptor);
+    let current_reference = spectral_reference_frequency(descriptor);
+    if existing_reference.refer() == current_reference.refer() {
+        return Ok((existing_reference.hz() - current_reference.hz()).abs() <= tolerance_hz);
     }
 
     let existing_frame = spectral_conversion_frame(
@@ -1295,13 +1327,13 @@ fn spectral_window_matches(
     )?;
     let current_frame =
         spectral_conversion_frame(time_seconds, source_direction, direction_epoch, measures)?;
-    let existing_topo = spectral_reference_frequency(&existing.descriptor)
+    let existing_topo = existing_reference
         .convert_to(FrequencyRef::TOPO, &existing_frame)
         .map_err(|error| {
             VlaError::import(format!("convert existing spectral window to TOPO: {error}"))
         })?
         .hz();
-    let current_topo = spectral_reference_frequency(descriptor)
+    let current_topo = current_reference
         .convert_to(FrequencyRef::TOPO, &current_frame)
         .map_err(|error| {
             VlaError::import(format!("convert current spectral window to TOPO: {error}"))
@@ -1497,6 +1529,13 @@ fn time_from_archive(obs_day: u32, obs_seconds: f64) -> f64 {
     f64::from(obs_day) * 86_400.0 + obs_seconds
 }
 
+struct ArchiveObservation {
+    id: i32,
+    projects: String,
+    start: f64,
+    end: f64,
+}
+
 struct VlaImportState {
     options: ImportVlaOptions,
     ms: MeasurementSet,
@@ -1509,10 +1548,10 @@ struct VlaImportState {
     antenna_rows: HashMap<String, i32>,
     field_rows: HashMap<FieldKey, i32>,
     source_rows: HashMap<FieldKey, i32>,
-    observation_rows: HashMap<String, i32>,
-    observation_ranges: HashMap<i32, (f64, f64)>,
+    archive_observation: Option<ArchiveObservation>,
     ms_direction_epoch: Option<DirectionEpoch>,
     spectral_windows: Vec<SpectralWindowEntry>,
+    last_spectral_windows: [Option<usize>; 4],
     current_freq_group: i32,
     pending_record_freq_group: Option<i32>,
     polarization_rows: HashMap<PolarizationKey, i32>,
@@ -1572,10 +1611,10 @@ impl VlaImportState {
             antenna_rows: HashMap::new(),
             field_rows: HashMap::new(),
             source_rows: HashMap::new(),
-            observation_rows: HashMap::new(),
-            observation_ranges: HashMap::new(),
+            archive_observation: None,
             ms_direction_epoch: None,
             spectral_windows: Vec::new(),
+            last_spectral_windows: [None; 4],
             current_freq_group: 0,
             pending_record_freq_group: None,
             polarization_rows: HashMap::new(),
@@ -1667,7 +1706,7 @@ impl VlaImportState {
             record.direction_epoch,
             ms_direction_epoch,
         )?;
-        let observation_id = self.ensure_observation(&record)?;
+        let observation_id = self.observe_record(&record)?;
         let field_key = FieldKey {
             source_name: record.source_name.clone(),
             calibration_code: record.calibration_code.clone(),
@@ -1696,20 +1735,30 @@ impl VlaImportState {
 
         let mut group_data_desc_ids = Vec::with_capacity(record.groups.len());
         let mut group_rows = Vec::with_capacity(record.groups.len());
+        let mut current_spectral_windows = [None; 4];
 
         for group in record.groups {
             let polarization_id = self.ensure_polarization(&group.baselines[0].corr_types)?;
+            let preferred = group
+                .cda_ids
+                .first()
+                .and_then(|id| self.last_spectral_windows[id.index()]);
             let spectral_window_id = self.ensure_spectral_window(
                 &group.descriptor,
                 source_id,
                 time_seconds,
                 source_direction,
                 ms_direction_epoch,
+                preferred,
             )?;
+            for id in group.cda_ids {
+                current_spectral_windows[id.index()] = Some(spectral_window_id as usize);
+            }
             let data_desc_id = self.ensure_data_description(spectral_window_id, polarization_id)?;
             group_data_desc_ids.push(data_desc_id);
             group_rows.push((group.baselines, data_desc_id));
         }
+        self.last_spectral_windows = current_spectral_windows;
 
         if self
             .last_data_desc_ids_by_array
@@ -1765,31 +1814,21 @@ impl VlaImportState {
 
     fn finish(&mut self) -> Result<(), VlaError> {
         let finish_started = Instant::now();
-        for (&row, &(start, end)) in &self.observation_ranges {
-            let mut obs = self.ms.observation_mut().map_err(|error| {
-                VlaError::import(format!("open OBSERVATION for update: {error}"))
-            })?;
-            let row_index =
-                usize::try_from(row).map_err(|_| VlaError::import("negative OBSERVATION row"))?;
-            obs.set_array(
-                row_index,
-                "TIME_RANGE",
-                ArrayValue::Float64(
-                    ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![start, end]).map_err(|error| {
-                        VlaError::import(format!("shape observation time range: {error}"))
-                    })?,
-                ),
-            )
-            .map_err(|error| VlaError::import(format!("update OBSERVATION.TIME_RANGE: {error}")))?;
-            obs.set_f64(
-                row_index,
-                "RELEASE_DATE",
-                end + 1.5 * SECONDS_PER_JULIAN_YEAR,
-            )
-            .map_err(|error| {
-                VlaError::import(format!("update OBSERVATION.RELEASE_DATE: {error}"))
-            })?;
-        }
+        self.finish_archive()?;
+        let main = self.ms.main_table_mut();
+        let mut scan_keywords = main
+            .column_keywords("SCAN_NUMBER")
+            .cloned()
+            .unwrap_or_default();
+        scan_keywords.upsert(
+            "LAST_SCAN",
+            Value::Array(ArrayValue::from_i32_vec(
+                (0..VLA_SUBARRAY_COUNT)
+                    .map(|array| self.current_scan_by_array.get(&array).copied().unwrap_or(0))
+                    .collect(),
+            )),
+        );
+        main.set_column_keywords("SCAN_NUMBER", scan_keywords);
         self.perf_summary.finish_metadata_ns = finish_started.elapsed().as_nanos() as u64;
         let save_started = Instant::now();
         let main_write_session = self
@@ -1939,11 +1978,43 @@ impl VlaImportState {
             .map_err(|error| VlaError::import(format!("add FEED row: {error}")))
     }
 
-    fn ensure_observation(&mut self, record: &NormalizedRecord) -> Result<i32, VlaError> {
-        if let Some(&row) = self.observation_rows.get(&record.project) {
-            self.update_observation_range(row, record.time_seconds, record.integration_seconds);
-            return Ok(row);
+    fn observe_record(&mut self, record: &NormalizedRecord) -> Result<i32, VlaError> {
+        if self.archive_observation.is_none() {
+            let table = self
+                .ms
+                .subtable(SubtableId::Observation)
+                .ok_or_else(|| VlaError::import("missing OBSERVATION subtable"))?;
+            let id = i32::try_from(table.row_count())
+                .map_err(|_| VlaError::import("OBSERVATION row count too large"))?;
+            self.archive_observation = Some(ArchiveObservation {
+                id,
+                projects: String::new(),
+                start: record.time_seconds,
+                end: record.time_seconds,
+            });
         }
+        let observation = self
+            .archive_observation
+            .as_mut()
+            .expect("initialized above");
+        if !observation.projects.contains(&record.project) {
+            if !observation.projects.is_empty() {
+                observation.projects.push(' ');
+            }
+            observation.projects.push_str(&record.project);
+        }
+        observation.end = record.time_seconds;
+        Ok(observation.id)
+    }
+
+    fn finish_archive(&mut self) -> Result<(), VlaError> {
+        self.new_scan_pending = true;
+        self.last_field_by_array.clear();
+        self.last_data_desc_ids_by_array.clear();
+        self.last_spectral_windows = [None; 4];
+        let Some(observation) = self.archive_observation.take() else {
+            return Ok(());
+        };
         let log = ArrayValue::String(
             ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec!["unavailable".to_string()])
                 .map_err(|error| VlaError::import(format!("shape OBSERVATION.LOG: {error}")))?,
@@ -1954,64 +2025,51 @@ impl VlaImportState {
             )?,
         );
         let time_range = ArrayValue::Float64(
-            ArrayD::from_shape_vec(
-                IxDyn(&[2]).f(),
-                vec![record.time_seconds, record.time_seconds],
-            )
-            .map_err(|error| VlaError::import(format!("shape OBSERVATION.TIME_RANGE: {error}")))?,
+            ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![observation.start, observation.end])
+                .map_err(|error| {
+                    VlaError::import(format!("shape OBSERVATION.TIME_RANGE: {error}"))
+                })?,
         );
-        let row = {
-            let table = self
-                .ms
-                .subtable_mut(SubtableId::Observation)
-                .ok_or_else(|| VlaError::import("missing OBSERVATION subtable"))?;
-            let row_index = i32::try_from(table.row_count())
-                .map_err(|_| VlaError::import("OBSERVATION row count too large"))?;
-            let row = make_row_from_columns(
-                casa_ms::schema::observation::REQUIRED_COLUMNS,
-                &[
-                    ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
-                    ("LOG", Value::Array(log)),
-                    (
-                        "OBSERVER",
-                        Value::Scalar(ScalarValue::String("unavailable".to_string())),
-                    ),
-                    (
-                        "PROJECT",
-                        Value::Scalar(ScalarValue::String(record.project.clone())),
-                    ),
-                    ("RELEASE_DATE", Value::Scalar(ScalarValue::Float64(0.0))),
-                    ("SCHEDULE", Value::Array(schedule)),
-                    (
-                        "SCHEDULE_TYPE",
-                        Value::Scalar(ScalarValue::String("unknown".to_string())),
-                    ),
-                    (
-                        "TELESCOPE_NAME",
-                        Value::Scalar(ScalarValue::String(DEFAULT_TELESCOPE_NAME.to_string())),
-                    ),
-                    ("TIME_RANGE", Value::Array(time_range)),
-                ],
-            )?;
-            table
-                .prepare_row_appender()
-                .and_then(|mut appender| appender.append(row))
-                .map_err(|error| VlaError::import(format!("add OBSERVATION row: {error}")))?;
-            row_index
-        };
-        self.observation_rows.insert(record.project.clone(), row);
-        self.update_observation_range(row, record.time_seconds, record.integration_seconds);
-        Ok(row)
-    }
-
-    fn update_observation_range(&mut self, row: i32, time_seconds: f64, _integration_seconds: f64) {
-        self.observation_ranges
-            .entry(row)
-            .and_modify(|range| {
-                range.0 = range.0.min(time_seconds);
-                range.1 = range.1.max(time_seconds);
-            })
-            .or_insert((time_seconds, time_seconds));
+        let table = self
+            .ms
+            .subtable_mut(SubtableId::Observation)
+            .ok_or_else(|| VlaError::import("missing OBSERVATION subtable"))?;
+        let row = make_row_from_columns(
+            casa_ms::schema::observation::REQUIRED_COLUMNS,
+            &[
+                ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+                ("LOG", Value::Array(log)),
+                (
+                    "OBSERVER",
+                    Value::Scalar(ScalarValue::String("unavailable".to_string())),
+                ),
+                (
+                    "PROJECT",
+                    Value::Scalar(ScalarValue::String(observation.projects)),
+                ),
+                (
+                    "RELEASE_DATE",
+                    Value::Scalar(ScalarValue::Float64(
+                        observation.end + 1.5 * SECONDS_PER_JULIAN_YEAR,
+                    )),
+                ),
+                ("SCHEDULE", Value::Array(schedule)),
+                (
+                    "SCHEDULE_TYPE",
+                    Value::Scalar(ScalarValue::String("unknown".to_string())),
+                ),
+                (
+                    "TELESCOPE_NAME",
+                    Value::Scalar(ScalarValue::String(DEFAULT_TELESCOPE_NAME.to_string())),
+                ),
+                ("TIME_RANGE", Value::Array(time_range)),
+            ],
+        )?;
+        table
+            .prepare_row_appender()
+            .and_then(|mut appender| appender.append(row))
+            .map_err(|error| VlaError::import(format!("add OBSERVATION row: {error}")))?;
+        Ok(())
     }
 
     fn ensure_source(
@@ -2239,9 +2297,16 @@ impl VlaImportState {
         time_seconds: f64,
         source_direction: [f64; 2],
         direction_epoch: DirectionEpoch,
+        preferred: Option<usize>,
     ) -> Result<i32, VlaError> {
         let measures: Arc<dyn MeasuresProvider> = self.measures.clone();
-        for entry in &self.spectral_windows {
+        let previous = preferred.and_then(|index| self.spectral_windows.get(index));
+        let newest = self
+            .spectral_windows
+            .iter()
+            .rev()
+            .filter(|entry| Some(entry.row as usize) != preferred);
+        for entry in previous.into_iter().chain(newest) {
             if spectral_window_matches(
                 entry,
                 descriptor,
@@ -2278,6 +2343,7 @@ impl VlaImportState {
             convert_topocentric_frequency(descriptor.channel_width_hz, meas_freq_ref, &frame)?
         };
         let widths = vec![converted_width; descriptor.num_chan];
+        let stored_bandwidth_hz = widths.iter().sum();
         let resolution = widths.clone();
         let chan_freq_array = ArrayValue::Float64(
             ArrayD::from_shape_vec(IxDyn(&[descriptor.num_chan]).f(), chan_freq).map_err(
@@ -2323,7 +2389,7 @@ impl VlaImportState {
                     ),
                     (
                         "TOTAL_BANDWIDTH",
-                        Value::Scalar(ScalarValue::Float64(widths.iter().sum())),
+                        Value::Scalar(ScalarValue::Float64(stored_bandwidth_hz)),
                     ),
                     ("CHAN_FREQ", Value::Array(chan_freq_array)),
                     (
@@ -2367,6 +2433,7 @@ impl VlaImportState {
         };
         self.spectral_windows.push(SpectralWindowEntry {
             descriptor: descriptor.clone(),
+            stored_bandwidth_hz,
             row,
             time_seconds,
             source_direction,
@@ -3555,11 +3622,11 @@ mod tests {
                     },
                 ],
                 groups: vec![NormalizedGroup {
+                    cda_ids: vec![CdaId::Cda0],
                     descriptor: SpectralDescriptor {
                         edge_frequency_hz: 1.4e9 - 0.5 * 5.0e7,
                         observed_frequency_hz: 1.4e9,
                         channel_width_hz: 5.0e7,
-                        total_bandwidth_hz: 5.0e7,
                         num_chan: 1,
                         if_conv_chain: 0,
                         rest_frequency_hz: 0.0,
@@ -3613,7 +3680,6 @@ mod tests {
             edge_frequency_hz: observed_frequency_hz - 0.5 * 5.0e7,
             observed_frequency_hz,
             channel_width_hz: 5.0e7,
-            total_bandwidth_hz: 5.0e7,
             num_chan: 1,
             if_conv_chain: 0,
             rest_frequency_hz: 0.0,
@@ -3699,6 +3765,7 @@ mod tests {
             direction_epoch: DirectionEpoch::J2000,
             antennas: test_antennas(),
             groups: vec![NormalizedGroup {
+                cda_ids: vec![CdaId::Cda0],
                 descriptor,
                 baselines: vec![test_baseline()],
             }],
@@ -3756,6 +3823,103 @@ mod tests {
             None => None,
             Some(other) => panic!("{column} had unexpected value {other:?}"),
         }
+    }
+
+    #[test]
+    fn spectral_window_lookup_tries_the_cda_then_the_newest_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overlapping-spw.ms");
+        let builder = MeasurementSetBuilder::new()
+            .with_main_column(OptionalMainColumn::Data)
+            .with_main_column(OptionalMainColumn::CorrectedData)
+            .with_main_column(OptionalMainColumn::ModelData)
+            .with_optional_subtable(SubtableId::Source)
+            .with_optional_subtable(SubtableId::Doppler);
+        let ms = MeasurementSet::create(&path, builder).unwrap();
+        let options = ImportVlaOptions {
+            frequencytol_hz: 3.2e9,
+            ..Default::default()
+        };
+        let mut writer = VlaImportState::new(options, ms, 5, 1).unwrap();
+        for (index, (frequency, cda)) in [
+            (8.5149e9, CdaId::Cda0),
+            (4.8851e9, CdaId::Cda1),
+            (7.8149e9, CdaId::Cda0),
+            (8.5149e9, CdaId::Cda1),
+            (7.8149e9, CdaId::Cda1),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut record = test_record(
+                "AT166",
+                4_281_838_800.0 + index as f64,
+                test_descriptor(frequency),
+            );
+            record.groups[0].cda_ids[0] = cda;
+            writer.push_record(record).unwrap();
+        }
+        writer.finish().unwrap();
+        let reopened = MeasurementSet::open(&path).unwrap();
+        assert_eq!(reopened.spectral_window().unwrap().row_count(), 2);
+        for (row, expected) in [0, 1, 1, 0, 0].into_iter().enumerate() {
+            let row = reopened.main_table().row_accessor().row(row).unwrap();
+            assert_eq!(optional_i32_scalar(&row, "DATA_DESC_ID"), Some(expected));
+        }
+    }
+
+    #[test]
+    fn spectral_window_bandwidth_depends_on_the_channel_grid() {
+        let mut narrow = test_descriptor(1.4e9);
+        narrow.num_chan = 16;
+        narrow.channel_width_hz = 50_000.0;
+        let mut wide = narrow.clone();
+        wide.channel_width_hz *= 2.0;
+        assert!(!same_spectral_descriptor(&narrow, &wide, 1.0e9));
+        assert!(!same_spectral_descriptor(&wide, &narrow, 1.0e9));
+    }
+
+    #[test]
+    fn original_version_keeps_correlation_and_channel_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("flags.ms");
+        let mut ms = MeasurementSet::create(&path, MeasurementSetBuilder::new()).unwrap();
+        let flags = ArrayValue::Bool(
+            ArrayD::from_shape_vec(
+                IxDyn(&[2, 3]).f(),
+                vec![true, false, false, true, false, false],
+            )
+            .unwrap(),
+        );
+        ms.main_table_mut()
+            .add_row(
+                make_row_from_columns(
+                    casa_ms::schema::main_table::REQUIRED_COLUMNS,
+                    &[
+                        ("FLAG", Value::Array(flags.clone())),
+                        ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(true))),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        ms.save().unwrap();
+        let source = MeasurementSet::open(&path).unwrap();
+        casa_ms::flagging::save_initial_flag_version(
+            &source,
+            vec![MeasurementSetArrayShapePlan::visibility(2, 3, 1, "VLA")],
+        )
+        .unwrap();
+        let snapshot = Table::open(casa_tables::TableOptions::new(
+            dir.path().join("flags.ms.flagversions/flags.Original"),
+        ))
+        .unwrap();
+        let row = snapshot.row_accessor().row(0).unwrap();
+        assert_eq!(row.get("FLAG"), Some(&Value::Array(flags)));
+        assert_eq!(
+            row.get("FLAG_ROW"),
+            Some(&Value::Scalar(ScalarValue::Bool(true)))
+        );
     }
 
     #[test]
@@ -3852,7 +4016,6 @@ mod tests {
             edge_frequency_hz: 23_691_048_000.0 - 127.0 / 2.0 * 24_414.062_5,
             observed_frequency_hz: 23_691_048_000.0,
             channel_width_hz: 24_414.062_5,
-            total_bandwidth_hz: 3_125_000.0,
             num_chan: 127,
             if_conv_chain: 0,
             rest_frequency_hz: 0.0,
@@ -3880,7 +4043,6 @@ mod tests {
             edge_frequency_hz: topo_descriptor.edge_frequency_hz,
             observed_frequency_hz: topo_descriptor.observed_frequency_hz,
             channel_width_hz: topo_descriptor.channel_width_hz,
-            total_bandwidth_hz: topo_descriptor.total_bandwidth_hz,
             num_chan: topo_descriptor.num_chan,
             if_conv_chain: topo_descriptor.if_conv_chain,
             rest_frequency_hz: lsrk_frequency_hz,
@@ -4118,7 +4280,6 @@ mod tests {
                     edge_frequency_hz: 23_689_639_186.578_94,
                     observed_frequency_hz: 23_691_189_479.547_69,
                     channel_width_hz: 24_414.062_5,
-                    total_bandwidth_hz: 3_125_000.0,
                     num_chan: 127,
                     if_conv_chain: 0,
                     rest_frequency_hz: 23_694_044_992.921_69,
@@ -4167,7 +4328,6 @@ mod tests {
             edge_frequency_hz: 7.8149e9 - 0.5 * 50.0e6,
             observed_frequency_hz: 7.8149e9,
             channel_width_hz: 50.0e6,
-            total_bandwidth_hz: 50.0e6,
             num_chan: 1,
             if_conv_chain: 0,
             rest_frequency_hz: 0.0,
@@ -4192,39 +4352,17 @@ mod tests {
             archivefiles: vec![PathBuf::from("input.xp1")],
             ..ImportVlaOptions::default()
         };
-        assert!(validate_import_options(&options).is_ok());
+        assert!(ArchiveSelection::new(&options).is_ok());
         options.bandname = Some(crate::BandName::L);
-        assert!(matches!(
-            validate_import_options(&options),
-            Err(VlaError::InvalidArgument {
-                argument: "bandname",
-                ..
-            })
-        ));
-        options.bandname = None;
         options.starttime = Some("01-Jan-1985/00:00:00".to_string());
-        assert!(matches!(
-            validate_import_options(&options),
-            Err(VlaError::InvalidArgument {
-                argument: "starttime",
-                ..
-            })
-        ));
-        options.starttime = None;
         options.stoptime = Some("01-Jan-1985/01:00:00".to_string());
+        options.evlabands = true;
+        assert!(ArchiveSelection::new(&options).is_ok());
+        options.stoptime = Some("31-Dec-1984/00:00:00".to_string());
         assert!(matches!(
-            validate_import_options(&options),
+            ArchiveSelection::new(&options),
             Err(VlaError::InvalidArgument {
                 argument: "stoptime",
-                ..
-            })
-        ));
-        options.stoptime = None;
-        options.evlabands = true;
-        assert!(matches!(
-            validate_import_options(&options),
-            Err(VlaError::InvalidArgument {
-                argument: "evlabands",
                 ..
             })
         ));
@@ -4394,7 +4532,6 @@ mod tests {
             edge_frequency_hz: 1.4e9 - 0.5 * 5.0e7,
             observed_frequency_hz: 1.4e9,
             channel_width_hz: 5.0e7,
-            total_bandwidth_hz: 5.0e7,
             num_chan: 1,
             if_conv_chain: 0,
             rest_frequency_hz: 0.0,
@@ -4444,6 +4581,7 @@ mod tests {
                 direction_epoch: DirectionEpoch::J2000,
                 antennas: antennas.clone(),
                 groups: vec![NormalizedGroup {
+                    cda_ids: vec![CdaId::Cda0],
                     descriptor: descriptor.clone(),
                     baselines: vec![baseline()],
                 }],
@@ -4462,6 +4600,7 @@ mod tests {
                 direction_epoch: DirectionEpoch::J2000,
                 antennas: antennas.clone(),
                 groups: vec![NormalizedGroup {
+                    cda_ids: vec![CdaId::Cda0],
                     descriptor: descriptor.clone(),
                     baselines: vec![baseline()],
                 }],
@@ -4480,6 +4619,7 @@ mod tests {
                 direction_epoch: DirectionEpoch::J2000,
                 antennas,
                 groups: vec![NormalizedGroup {
+                    cda_ids: vec![CdaId::Cda0],
                     descriptor: SpectralDescriptor {
                         edge_frequency_hz: 1.5e9 - 0.5 * 5.0e7,
                         observed_frequency_hz: 1.5e9,
@@ -4507,7 +4647,6 @@ mod tests {
             edge_frequency_hz: 23_691_189_479.547_69 - 127.0 / 2.0 * 24_414.062_5,
             observed_frequency_hz: 23_691_189_479.547_69,
             channel_width_hz: 24_414.062_5,
-            total_bandwidth_hz: 3_125_000.0,
             num_chan: 127,
             if_conv_chain: 0,
             rest_frequency_hz: 23_694_044_992.921_69,
@@ -4531,7 +4670,6 @@ mod tests {
             edge_frequency_hz: 23_691_189_479.547_69 - 127.0 / 2.0 * 24_414.062_5,
             observed_frequency_hz: 23_691_189_479.547_69,
             channel_width_hz: 24_414.062_5,
-            total_bandwidth_hz: 3_125_000.0,
             num_chan: 127,
             if_conv_chain: 0,
             rest_frequency_hz: 23_694_044_992.921_69,
@@ -4566,15 +4704,22 @@ mod tests {
             archivefiles: vec![path.clone()],
             ..ImportVlaOptions::default()
         };
+        let selection = ArchiveSelection::new(&options).expect("archive selection");
         let mut reader = VlaDiskReader::open(&path).expect("open archive");
         let mut row_base = 0usize;
         let mut logical_record_index = 0usize;
         let measures = test_measures();
+        let mut frequency_tolerance = options.frequencytol_hz;
 
         while let Some(record) = reader.next_record().expect("read logical record") {
-            let Some(normalized) =
-                normalize_record(&record, &options, measures.as_ref()).expect("normalize record")
-            else {
+            let Some(normalized) = normalize_record(
+                &record,
+                &options,
+                &selection,
+                measures.as_ref(),
+                &mut frequency_tolerance,
+            )
+            .expect("normalize record") else {
                 logical_record_index += 1;
                 continue;
             };
@@ -4718,9 +4863,6 @@ mod tests {
                 })?,
                 channel_width_hz: sda.channel_width_hz(cda_id).map_err(|error| {
                     VlaError::import(format!("decode channel width for {:?}: {error}", cda_id))
-                })?,
-                total_bandwidth_hz: sda.correlated_bandwidth_hz(cda_id).map_err(|error| {
-                    VlaError::import(format!("decode bandwidth for {:?}: {error}", cda_id))
                 })?,
                 num_chan: usize::try_from(sda.n_channels(cda_id).map_err(|error| {
                     VlaError::import(format!("decode channel count for {:?}: {error}", cda_id))

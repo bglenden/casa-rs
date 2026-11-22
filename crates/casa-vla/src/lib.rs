@@ -21,7 +21,9 @@ mod error;
 mod importer;
 mod modcomp;
 mod options;
+mod output;
 mod record;
+mod selection;
 mod summary;
 mod task_contract;
 

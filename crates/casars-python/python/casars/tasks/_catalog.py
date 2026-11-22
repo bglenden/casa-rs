@@ -158,7 +158,7 @@ def importvla(
     archivefiles: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     bandname: Literal['', '4', 'C', 'K', 'Ka', 'L', 'P', 'Q', 'S', 'U', 'X'] = '',
-    frequencytol: str = '150000.0Hz',
+    frequencytol: str | int | float = '150000.0Hz',
     project: str = '',
     starttime: str = '',
     stoptime: str = '',
