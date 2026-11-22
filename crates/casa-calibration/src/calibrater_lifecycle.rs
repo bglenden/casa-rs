@@ -85,6 +85,7 @@ enum ConfiguredSolve {
         invalid_mode: bool,
         bandpass: BandpassSolveControls,
         spline_mode: Option<String>,
+        tf: Option<crate::solve::TfSolveSettings>,
     },
     LegacyEp(Box<LegacyEpSolver>),
     Polarization {
@@ -688,6 +689,31 @@ impl CalibraterLifecycle {
         )
     }
 
+    /// Configure the Tf Jones factory with the scalar gain fitter.
+    ///
+    /// # Errors
+    /// Returns an error when no MeasurementSet is open.
+    pub fn set_tool_tf(
+        &mut self,
+        mut gain: crate::GainSolveRequest,
+        mode: CalibrationOutputMode,
+        frequency: Option<crate::BandpassFrequencyInterval>,
+        invalid_mode: bool,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation_mut()?;
+        gain.gain_type = crate::GainType::T;
+        equation.solve = Some(ConfiguredSolve::Task {
+            request: Box::new(CalibrationSolveRequest::Gain(gain)),
+            mode,
+            invalid_mode,
+            bandpass: BandpassSolveControls::default(),
+            spline_mode: None,
+            tf: Some(crate::solve::TfSolveSettings { frequency }),
+        });
+        equation.solve_description = None;
+        Ok(())
+    }
+
     /// Resolve the primary reference antenna before replacing the previous
     /// solve configuration. Use this for families that consume at most one
     /// reference antenna.
@@ -747,6 +773,7 @@ impl CalibraterLifecycle {
                 modern_polynomial: false,
             },
             spline_mode,
+            tf: None,
         });
         equation.solve_description = None;
         Ok(())
@@ -826,7 +853,7 @@ impl CalibraterLifecycle {
         activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     ) -> Result<CalibrationSolveResult, CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let (mut request, mode, mut bandpass, spline_mode, invalid_mode) =
+        let (mut request, mode, mut bandpass, spline_mode, invalid_mode, tf) =
             match equation.solve.as_ref() {
                 Some(ConfiguredSolve::Task {
                     request,
@@ -834,6 +861,7 @@ impl CalibraterLifecycle {
                     invalid_mode,
                     bandpass,
                     spline_mode,
+                    tf,
                 }) => {
                     if *invalid_mode
                         && !(activity.is_some()
@@ -847,6 +875,7 @@ impl CalibraterLifecycle {
                         *bandpass,
                         spline_mode.as_deref(),
                         *invalid_mode,
+                        *tf,
                     )
                 }
                 Some(ConfiguredSolve::LegacyEp(_)) => {
@@ -911,6 +940,7 @@ impl CalibraterLifecycle {
                 spline_mode,
                 legacy_iterator: self.legacy_iterator,
                 invalid_mode,
+                tf,
             },
         )?)
     }

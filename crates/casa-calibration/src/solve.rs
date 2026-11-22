@@ -44,7 +44,7 @@ use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{
     AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity,
 };
-use crate::{ApplyExecutionError, ApplyPlanError};
+use crate::{ApplyExecutionError, ApplyPlanError, BandpassFrequencyInterval};
 use grouping::{SolveGroupOptions, build_solve_groups};
 use kernel::solve_group;
 use writer::write_gain_caltable;
@@ -403,6 +403,10 @@ pub enum GainSolveError {
     #[error("delay solve: {0}")]
     Delay(String),
 
+    /// The retained Tf factory uses the single-bin scalar T fitter.
+    #[error("Tf Jones frequency configuration: {0}")]
+    FrequencyScalar(String),
+
     /// Temporary samples for an iterative polarization solve could not be stored.
     #[error("polarization solve scratch I/O failed: {0}")]
     PolarizationScratch(#[source] std::io::Error),
@@ -542,6 +546,59 @@ pub(crate) fn solve_gain(
     write_gain_caltable(ms, request, &solved, mode)
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct TfSolveSettings {
+    pub(crate) frequency: Option<BandpassFrequencyInterval>,
+}
+
+pub(crate) fn solve_tf(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    settings: TfSolveSettings,
+    mode: crate::CalibrationOutputMode,
+    activity: Option<&mut ToolSolveActivity>,
+) -> Result<GainSolveReport, GainSolveError> {
+    let (solved, spectrum) = solve_gain_rows_with_settings(ms, request, activity, Some(settings))?;
+    let spectrum = spectrum.expect("Tf prepared its spectral grid");
+    writer::write_tf_caltable(
+        ms,
+        request,
+        &solved,
+        mode,
+        writer::GainChannelGrid {
+            bin_widths: &spectrum.bin_widths,
+            selected_rows: &spectrum.selected_rows,
+        },
+    )
+}
+
+struct TfSpectrum {
+    bin_widths: BTreeMap<i32, usize>,
+    selected_rows: Vec<grouping::SelectedSolveRow>,
+}
+
+fn tf_multi_bin_windows(
+    ms: &MeasurementSet,
+    rows: &[grouping::SelectedSolveRow],
+    widths: &BTreeMap<i32, usize>,
+) -> Result<BTreeSet<i32>, GainSolveError> {
+    let fail = |error: MsError| GainSolveError::FrequencyScalar(error.to_string());
+    let selections = rows
+        .iter()
+        .map(|row| (row.data_spw_id, row.channel_selection.as_ref()))
+        .collect::<BTreeMap<_, _>>();
+    let spectral = ms.spectral_window().map_err(fail)?;
+    let mut multiple = BTreeSet::new();
+    for (spw, selection) in selections {
+        let count = spectral.num_chan(spw as usize).map_err(fail)?;
+        let selected = grouping::selected_channels(selection, count as usize)?.len();
+        if selected > widths.get(&spw).copied().unwrap_or(1) {
+            multiple.insert(spw);
+        }
+    }
+    Ok(multiple)
+}
+
 /// A gain solve's solutions, before they are written.
 pub(crate) struct SolvedGains {
     /// The solution rows, flagged ones included.
@@ -569,6 +626,15 @@ pub(crate) fn solve_gain_rows(
     if request.gain_type.is_delay() {
         return delay::solve(ms, request, activity);
     }
+    solve_gain_rows_with_settings(ms, request, activity, None).map(|(solved, _)| solved)
+}
+
+fn solve_gain_rows_with_settings(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    activity: Option<&mut ToolSolveActivity>,
+    tf: Option<TfSolveSettings>,
+) -> Result<(SolvedGains, Option<TfSpectrum>), GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel, true)?;
     } else if request.model_source == GainSolveModelSource::ModelColumn
@@ -605,6 +671,17 @@ pub(crate) fn solve_gain_rows(
             share_input_flags: !request.correlation_dependent_flags,
         },
     )?;
+    let tf_widths = tf
+        .map(|settings| {
+            crate::bandpass::solution_frequency_bin_widths(ms, &context.rows, settings.frequency)
+        })
+        .transpose()
+        .map_err(|error| GainSolveError::FrequencyScalar(error.to_string()))?;
+    let multi_bin_windows = tf_widths
+        .as_ref()
+        .map(|widths| tf_multi_bin_windows(ms, &context.rows, widths))
+        .transpose()?
+        .unwrap_or_default();
     let direct_gain = activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T);
     let groups = build_solve_groups(
         ms,
@@ -651,6 +728,15 @@ pub(crate) fn solve_gain_rows(
         &context.available_antennas,
     );
     for ((base_key, bucket_key), mut group) in groups {
+        if (group.attempted || group.gather_attempted())
+            && (multi_bin_windows.contains(&group.spw_id)
+                || (request.combine.spectral_windows && !multi_bin_windows.is_empty()))
+        {
+            return Err(GainSolveError::FrequencyScalar(format!(
+                "SPW {} has more than one frequency bin",
+                group.spw_id,
+            )));
+        }
         if group.attempted {
             attempted_spw_ids.insert(group.spw_id);
         }
@@ -715,14 +801,21 @@ pub(crate) fn solve_gain_rows(
         }
     }
     solve_stats.track_activity(activity);
-    Ok(SolvedGains {
+    let solved = SolvedGains {
         rows: solution_rows,
         refant_id: context.refant_id,
         attempted_spw_ids,
         channel_selections,
         selected_data: context.selected_data,
         solve_stats: solve_stats.finish(),
-    })
+    };
+    Ok((
+        solved,
+        tf_widths.map(|bin_widths| TfSpectrum {
+            bin_widths,
+            selected_rows: context.rows,
+        }),
+    ))
 }
 
 /// Gather at the shorter positive user preaverage or solution interval.

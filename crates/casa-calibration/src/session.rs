@@ -157,6 +157,7 @@ pub(crate) struct ToolSolveOptions<'a> {
     pub spline_mode: Option<&'a str>,
     pub legacy_iterator: bool,
     pub invalid_mode: bool,
+    pub tf: Option<crate::solve::TfSolveSettings>,
 }
 
 pub(crate) fn solve_calibration_with_activity(
@@ -205,10 +206,16 @@ fn solve_open_dataset(
         spline_mode,
         legacy_iterator,
         invalid_mode,
+        tf,
     } = options;
     match request {
         CalibrationSolveRequest::Gain(request) => {
-            solve_gain(measurement_set, &request, mode, activity)
+            let result = if let Some(settings) = tf {
+                crate::solve::solve_tf(measurement_set, &request, settings, mode, activity)
+            } else {
+                solve_gain(measurement_set, &request, mode, activity)
+            };
+            result
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }

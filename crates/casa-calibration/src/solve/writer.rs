@@ -82,6 +82,28 @@ pub(super) struct GainChannelGrid<'a> {
     pub(super) selected_rows: &'a [SelectedSolveRow],
 }
 
+pub(super) fn write_tf_caltable(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    solved: &SolvedGains,
+    mode: crate::CalibrationOutputMode,
+    channels: GainChannelGrid<'_>,
+) -> Result<GainSolveReport, GainSolveError> {
+    let name = ms.path().map_or_else(
+        || "<in-memory>".to_owned(),
+        |path| path.display().to_string(),
+    );
+    write_gain_table(
+        ms,
+        name,
+        request,
+        solved,
+        mode,
+        "Tf Jones",
+        GainTableSpectrum::Channelized(channels),
+    )
+}
+
 enum GainTableSpectrum<'a> {
     Collapsed,
     Channelized(GainChannelGrid<'a>),
@@ -179,11 +201,12 @@ fn write_gain_table(
     )?;
 
     for row in rows {
-        let shape = if channels.is_some() {
-            IxDyn(&[2, row.gains.len() / 2]).f()
+        let receptors = if channels.is_some() {
+            request.gain_type.polarizations()
         } else {
-            IxDyn(&[row.gains.len(), 1]).f()
+            row.gains.len()
         };
+        let shape = IxDyn(&[receptors, row.gains.len() / receptors]).f();
         let parameters = if delay {
             ArrayValue::Float32(
                 ArrayD::from_shape_vec(
@@ -284,14 +307,27 @@ fn write_gain_table(
         if legacy_mueller {
             write_legacy_mueller_channels(&path, solved)?;
         } else {
+            let mut windows = solved.attempted_spw_ids.clone();
+            if subtype == "Tf Jones" {
+                windows.extend(solved.rows.iter().map(|row| row.spw_id));
+                if request.combine.spectral_windows {
+                    windows.extend(channels.selected_rows.iter().map(|row| row.data_spw_id));
+                }
+            }
             crate::bandpass::write_solution_spectral_windows(
                 &path,
-                &solved.attempted_spw_ids,
+                &windows,
                 channels.bin_widths,
                 channels.selected_rows,
                 request.combine.spectral_windows,
             )
-            .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+            .map_err(|error| {
+                if subtype == "Tf Jones" {
+                    GainSolveError::FrequencyScalar(error.to_string())
+                } else {
+                    GainSolveError::Baseline(error.to_string())
+                }
+            })?;
         }
     } else {
         write_gain_spectral_window_subtable(
