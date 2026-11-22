@@ -43,6 +43,8 @@ pub(crate) enum SolveInputRows {
     Baselines,
     /// Retain all antenna pairs and the direct tool's baseline gather counts.
     BaselineTool,
+    /// Retain all baselines for CASA's old self-gathering Mueller solver.
+    LegacyBaseline,
 }
 
 impl SolveInputRows {
@@ -54,8 +56,10 @@ impl SolveInputRows {
         }
     }
 
-    pub(crate) fn baseline(direct: bool) -> Self {
-        if direct {
+    pub(crate) fn baseline(direct: bool, legacy: bool) -> Self {
+        if direct && legacy {
+            Self::LegacyBaseline
+        } else if direct {
             Self::BaselineTool
         } else {
             Self::Baselines
@@ -63,7 +67,10 @@ impl SolveInputRows {
     }
 
     pub(super) fn is_baseline(self) -> bool {
-        matches!(self, Self::Baselines | Self::BaselineTool)
+        matches!(
+            self,
+            Self::Baselines | Self::BaselineTool | Self::LegacyBaseline
+        )
     }
 
     pub(super) fn tracks_gather(self) -> bool {

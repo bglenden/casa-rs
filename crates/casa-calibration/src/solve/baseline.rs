@@ -62,7 +62,7 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &bin_widths,
         SolveGroupOptions {
-            input_rows: SolveInputRows::baseline(track_gather),
+            input_rows: SolveInputRows::baseline(direct, legacy_iterator),
             gain_type: GainType::G,
             model_source: request.model_source,
             point_stokes: request.smodel,

@@ -334,10 +334,14 @@ fn write_legacy_mueller_channels(path: &Path, solved: &SolvedGains) -> Result<()
         let window = row as i32;
         let attempted = solved.attempted_spw_ids.contains(&window);
         let mut cells = vec![("FLAG_ROW", Value::Scalar(ScalarValue::Bool(!attempted)))];
-        if attempted {
-            let widths = get_f64_array(&table, row, "CHAN_WIDTH")?;
+        let widths = get_f64_array(&table, row, "CHAN_WIDTH")?;
+        if !widths.is_empty() {
             let selected = selected_channels(solved.channel_selections.get(&window), widths.len())?;
-            let total_bandwidth = selected.iter().map(|&channel| widths[channel].abs()).sum();
+            let total_bandwidth = selected
+                .iter()
+                .map(|&channel| widths[channel])
+                .sum::<f64>()
+                .abs();
             for column in ["CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
                 let values = get_f64_array(&table, row, column)?;
                 if values.len() != widths.len() {
@@ -395,17 +399,19 @@ fn write_gain_spectral_window_subtable(
         .save(TableOptions::new(&destination))
         .map_err(failed)?;
     let mut table = Table::open(TableOptions::new(&destination)).map_err(failed)?;
-    let combined_window = if !legacy_mueller
-        && combine_spectral_windows
-        && solved.selected_data.spectral_windows.len() > 1
-    {
-        Some((
-            solved.selected_data.spectral_windows[0],
-            combined_window_metadata(&table, solved)?,
-        ))
-    } else {
-        None
-    };
+    let combined_window =
+        if combine_spectral_windows && solved.selected_data.spectral_windows.len() > 1 {
+            Some((
+                solved.selected_data.spectral_windows[0],
+                if legacy_mueller {
+                    legacy_combined_window_metadata(&table, &solved.selected_data.spectral_windows)?
+                } else {
+                    combined_window_metadata(&table, solved)?
+                },
+            ))
+        } else {
+            None
+        };
 
     let with_rows = solved
         .rows
@@ -438,6 +444,7 @@ fn write_gain_spectral_window_subtable(
         let collapsed =
             match combined_window {
                 Some((reference, window)) if spw_id == Some(reference) => Some(window),
+                _ if legacy_mueller => Some(legacy_collapsed_window(&table, row)?),
                 None if attempted && !legacy_mueller => {
                     let selection = solved.channel_selections.get(&(row as i32));
                     let channels = selected_channels(selection, frequencies.len())?;
@@ -532,6 +539,37 @@ fn combined_window_metadata(
         resolution: frequency,
         total_bandwidth: Some(frequency),
     })
+}
+
+fn legacy_collapsed_window(table: &Table, row: usize) -> Result<CollapsedWindow, GainSolveError> {
+    let frequencies = get_f64_array(table, row, "CHAN_FREQ")?;
+    let mut window = CollapsedWindow::unsolved(
+        &frequencies,
+        &get_f64_array(table, row, "CHAN_WIDTH")?,
+        &get_f64_array(table, row, "EFFECTIVE_BW")?,
+        &get_f64_array(table, row, "RESOLUTION")?,
+    )
+    .ok_or_else(|| GainSolveError::UnsupportedParameterShape {
+        path: format!("SPECTRAL_WINDOW row {row} without channels"),
+        shape: vec![frequencies.len()],
+    })?;
+    window.total_bandwidth = Some(window.width.abs());
+    Ok(window)
+}
+
+fn legacy_combined_window_metadata(
+    table: &Table,
+    windows: &[i32],
+) -> Result<CollapsedWindow, GainSolveError> {
+    let mut reference = legacy_collapsed_window(table, windows[0] as usize)?;
+    let mut weighted_frequency = reference.frequency * reference.effective_bw;
+    for &window in &windows[1..] {
+        let next = legacy_collapsed_window(table, window as usize)?;
+        weighted_frequency += next.frequency * next.effective_bw;
+        reference.effective_bw += next.effective_bw;
+    }
+    reference.frequency = weighted_frequency / reference.effective_bw;
+    Ok(reference)
 }
 
 /// The one channel of a window's row in a G or T gain table: what CASA's

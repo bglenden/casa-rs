@@ -277,6 +277,9 @@ pub(crate) fn build_solve_groups(
                 // interval by FIELD_ID. SDBList::aggregateFld uses the first.
                 group.field_id = group.field_id.min(row.field_id);
             }
+            if options.input_rows == SolveInputRows::LegacyBaseline {
+                group.observation_id = row.observation_id;
+            }
             let preapplied = preapplied_rows.and_then(|rows| rows.data.get(&row.row_index));
             group.observe(
                 ms,

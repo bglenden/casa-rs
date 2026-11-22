@@ -8,7 +8,7 @@ from pathlib import Path
 import casatasks
 from casatools import calibrater as casa_calibrater
 
-from blcal_oracle import compare_tables, copy_ms, opened, source
+from blcal_oracle import compare_tables, copy_ms, opened, source, weighted_windows
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_solve_tool_oracle import compare_readers
 
@@ -106,6 +106,13 @@ def main():
     solve_case(work, tools, flagged, 'mf-legacy-flagged', {}, legacy=True, outcome='empty')
     solve_case(work, tools, vis, 'mf-legacy-binned', {'t': 'inf,2ch'}, legacy=True,
                selection={'spw': '0:1~12'}, outcome='error')
+    windows = weighted_windows(work/'legacy-windows', vis)
+    with opened(windows/'SPECTRAL_WINDOW', True) as table:
+        for column, factor in (('EFFECTIVE_BW', 2.), ('RESOLUTION', 3.), ('CHAN_WIDTH', 4.)):
+            assert table.putcell(column, 1, table.getcell(column, 1) * factor)
+    solve_case(work, tools, windows, 'm-legacy-combined',
+               {'type': 'M', 'combine': 'spw,scan,obs'}, legacy=True, selection={'spw': '0,1'})
+    solve_case(work, tools, windows, 'mf-legacy-unselected-window', {}, legacy=True)
 
 
 if __name__ == '__main__':
