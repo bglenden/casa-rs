@@ -85,6 +85,7 @@ pub(super) struct FourierRow<'a> {
     pub(super) phase_time: f64,
     pub(super) frame: &'a MeasFrame,
     pub(super) uvw: [f64; 3],
+    pub(super) uncached_main_reads: bool,
     pub(super) focus_rows: &'a [FocusSample],
     pub(super) legacy_mosaic_pointing: Option<&'a super::MosaicPointing>,
     pub(super) scratch_channels: Option<[i32; 4]>,

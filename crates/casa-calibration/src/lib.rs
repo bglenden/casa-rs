@@ -82,6 +82,7 @@ mod table_maintenance;
 mod task_contract;
 mod timing;
 mod transform_calibration;
+mod transform_models;
 mod uvmodelfit;
 mod uvsub;
 mod weather;
@@ -126,6 +127,7 @@ pub use listing::CalibrationListingReport;
 pub use output::CalibrationOutputMode;
 pub use table_maintenance::{create_calibration_table, update_calibration_table};
 pub use transform_calibration::transform_callibrary;
+pub use transform_models::transform_model_input;
 
 pub use bandpass::{
     BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveError,

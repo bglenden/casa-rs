@@ -13220,12 +13220,7 @@
             "provider": {"field": "realmodelcol"},
             "python": {"name": "realmodelcol"},
             "presentation": {"label": "Real Model Column", "group": "Data", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "model"}},
-            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "all"}},
-            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "data,model,corrected"}}
-          ]}}
+          }
         },
         {
           "name": "keepflags",

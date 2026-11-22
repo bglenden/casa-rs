@@ -3,9 +3,10 @@
 
 use std::path::Path;
 
-use casa_tables::{StreamedTiledShapeValueType, Table};
+use casa_tables::StreamedTiledShapeValueType;
 use casa_types::ArrayValue;
 
+use crate::MeasurementSet;
 use crate::schema::main_table::OptionalMainColumn;
 
 use super::channel_average::{sigma_from_weight, weight_from_sigma};
@@ -31,7 +32,7 @@ pub(super) struct VisibilityColumns(Vec<VisibilityCopy>);
 
 impl VisibilityColumns {
     pub(super) fn resolve(
-        table: &Table,
+        input: &MeasurementSet,
         selection: TransformDataColumn,
         path: &Path,
         view: Option<&dyn TransformInputView>,
@@ -52,8 +53,9 @@ impl VisibilityColumns {
             }
         };
         let contains = |column: OptionalMainColumn| {
-            view.is_some_and(|view| view.provides(table, column.name()))
-                || table
+            view.is_some_and(|view| view.provides(input, column.name()))
+                || input
+                    .main_table()
                     .schema()
                     .is_some_and(|schema| schema.contains_column(column.name()))
         };

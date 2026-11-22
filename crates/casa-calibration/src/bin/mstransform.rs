@@ -5,7 +5,7 @@
 
 use std::{io::ErrorKind, num::NonZeroUsize, path::Path, process::ExitCode};
 
-use casa_calibration::{CallibError, transform_callibrary};
+use casa_calibration::{CallibError, transform_callibrary, transform_model_input};
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     ContinuumFitOptions, MsPartitionAxis, MsRegridOptions, MsTransformError,
@@ -47,6 +47,19 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         // iterator when both task switches are enabled.
         if options.continuum.is_none() {
             options.input_view = calibration;
+        }
+        if task.surface() == "mstransform"
+            && matches!(
+                request.data_column,
+                TransformDataColumn::ModelData
+                    | TransformDataColumn::DataModelCorrected
+                    | TransformDataColumn::All
+            )
+        {
+            options.input_view = Some(transform_model_input(
+                options.input_view.take(),
+                task.flag("realmodelcol")?,
+            ));
         }
     }
     // The output the transform refuses before it starts is the argument's
