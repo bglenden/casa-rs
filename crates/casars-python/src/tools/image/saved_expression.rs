@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_images::analysis::{ImageToolExpressionInputs, ImageToolPixelExpression};
-use casa_images::expr_file::{ToolExpressionManifest, is_image_expr, read_tool_manifest};
+use casa_images::concat_file::is_image_concat;
+use casa_images::expr_file::{ToolExpressionManifest, is_image_expr};
 use casa_images::{ImageExpression, TempImage, image_expr::ImageExprValue};
 use casa_tables::lexical_absolute;
 use casa_types::{Complex32, RecordValue};
@@ -19,12 +20,47 @@ mod rename;
 pub(super) use manifest::SavedExpressionDirectory;
 
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
+    let (image, inputs) = compile_at(path, AttachedImage::open, false)?;
+    let mut attachment = AttachedImage::with_saved_expression(image, inputs.directory);
+    attachment.retain_expression_inputs(inputs.retained, inputs.paths);
+    Ok(attachment)
+}
+
+pub(super) struct SavedExpressionInputs {
+    directory: SavedExpressionDirectory,
+    pub(super) retained: Vec<AttachedImage>,
+    pub(super) paths: Vec<PathBuf>,
+}
+
+impl SavedExpressionInputs {
+    pub(super) fn check_name(&self, path: &Path) -> PyResult<()> {
+        self.directory.check_name(path)
+    }
+}
+
+pub(super) fn open_for_concatenation(
+    path: &Path,
+) -> PyResult<(ImageHandle, SavedExpressionInputs)> {
+    // Final publication already holds the image registry. Source leases can
+    // still be opened directly without consulting or registering in it.
+    compile_at(path, AttachedImage::open_concat_expression_operand, true)
+}
+
+fn compile_at(
+    path: &Path,
+    open_source: fn(&Path) -> PyResult<AttachedImage>,
+    include_manifest_paths: bool,
+) -> PyResult<(ImageHandle, SavedExpressionInputs)> {
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
     let (captured, manifest) = SavedExpressionDirectory::open(path, root.clone())?;
     let initial = PendingExpression::from_manifest(root, manifest, &directory)?;
-    let mut graph = CapturedGraph::default();
-    let (pixels, single_precision, misc) = graph.compile(initial, &directory)?;
+    let mut graph = CapturedGraph {
+        include_manifest_paths,
+        ..CapturedGraph::default()
+    };
+    graph.retain_manifest(&captured)?;
+    let (pixels, single_precision, misc) = graph.compile(initial, &directory, open_source)?;
     captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
@@ -53,9 +89,14 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
         }
         ImageToolPixelExpression::Boolean(_) => unreachable!("saved image geometry is numeric"),
     };
-    let mut attachment = AttachedImage::with_saved_expression(image, captured);
-    attachment.retain_expression_inputs(graph.retained, graph.paths);
-    Ok(attachment)
+    Ok((
+        image,
+        SavedExpressionInputs {
+            directory: captured,
+            retained: graph.retained,
+            paths: graph.paths,
+        },
+    ))
 }
 
 #[derive(Default)]
@@ -64,6 +105,7 @@ struct CapturedGraph {
     seen_paths: HashSet<PathBuf>,
     links: HashSet<PathBuf>,
     retained: Vec<AttachedImage>,
+    include_manifest_paths: bool,
 }
 
 impl CapturedGraph {
@@ -71,6 +113,7 @@ impl CapturedGraph {
         &mut self,
         root: PendingExpression,
         directory: &Path,
+        open_source: fn(&Path) -> PyResult<AttachedImage>,
     ) -> PyResult<(ImageToolPixelExpression, bool, Option<RecordValue>)> {
         let mut active = HashSet::from([root.path.clone()]);
         let mut pending = vec![root];
@@ -90,15 +133,19 @@ impl CapturedGraph {
                     continue;
                 }
                 self.paths.push(path.to_path_buf());
-                if is_image_expr(path) {
-                    active.insert(path.to_path_buf());
-                    let nested = PendingExpression::read(path.to_path_buf(), directory)?;
+                if is_image_concat(path) {
+                    return Err(raised(
+                        "A virtual concatenation cannot yet be used inside a saved image expression (#1625)",
+                    ));
+                } else if is_image_expr(path) {
+                    let path = path.to_path_buf();
+                    active.insert(path.clone());
+                    let (captured, manifest) = SavedExpressionDirectory::open(&path, path.clone())?;
+                    self.retain_manifest(&captured)?;
+                    let nested = PendingExpression::from_manifest(path, manifest, directory)?;
                     pending.push(nested);
-                } else {
-                    self.retained
-                        .extend(AttachedImage::open_expression_inputs(std::iter::once(
-                            path,
-                        ))?);
+                } else if !path.is_file() {
+                    self.retained.push(open_source(path)?);
                 }
             } else {
                 let frame = pending.pop().expect("checked for an expression frame");
@@ -116,6 +163,16 @@ impl CapturedGraph {
             }
         }
         unreachable!("completed graph returns its root");
+    }
+
+    fn retain_manifest(&mut self, directory: &SavedExpressionDirectory) -> PyResult<()> {
+        if self.include_manifest_paths
+            && let Some((entry, referent)) = directory.linked_manifest_paths()
+        {
+            self.retain_operand_aliases(&entry)?;
+            self.paths.push(referent.to_owned());
+        }
+        Ok(())
     }
 
     fn retain_operand_aliases(&mut self, entry: &Path) -> PyResult<()> {
@@ -152,16 +209,6 @@ struct PendingExpression {
 }
 
 impl PendingExpression {
-    fn read(path: PathBuf, directory: &Path) -> PyResult<Self> {
-        if path.join("imageconcat.json").is_file() {
-            return Err(raised(
-                "Opening a virtual concatenated image is not implemented yet (#1749)",
-            ));
-        }
-        let manifest = read_tool_manifest(&path).map_err(raised)?;
-        Self::from_manifest(path, manifest, directory)
-    }
-
     fn from_manifest(
         path: PathBuf,
         manifest: ToolExpressionManifest,

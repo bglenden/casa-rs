@@ -6,7 +6,9 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
+use casa_images::analysis::ImageToolExpressionInputs;
 use casa_images::concat_file::{ConcatManifest, is_image_concat};
+use casa_images::expr_file::{is_image_expr, read_tool_manifest};
 use casa_images::miriad_read::MiriadImage;
 use pyo3::prelude::*;
 
@@ -90,30 +92,55 @@ impl Relocation<'_> {
             if !checked.insert((source.clone(), resolved.clone())) {
                 continue;
             }
-            if resolved.starts_with(self.destination) && is_image_concat(&source) {
-                let manifest = ConcatManifest::open(&source).map_err(raised)?;
-                images.extend(
-                    manifest
-                        .paths(&source)
-                        .into_iter()
-                        .zip(manifest.paths(&resolved)),
-                );
+            if is_image_concat(&source) {
+                if resolved.starts_with(self.destination) {
+                    let manifest = ConcatManifest::open(&source).map_err(raised)?;
+                    images.extend(
+                        manifest
+                            .paths(&source)
+                            .into_iter()
+                            .zip(manifest.paths(&resolved)),
+                    );
+                }
             } else if ImageHandle::recognizes_miriad(&source, &source) {
                 self.check_miriad_files(&source, &resolved)?;
+            } else if is_image_expr(&source) {
+                if !self.is_owned_copy(&source, &resolved) {
+                    images.push((
+                        source.join("imageexpr.json"),
+                        resolved.join("imageexpr.json"),
+                    ));
+                }
+                let manifest = read_tool_manifest(&source).map_err(raised)?;
+                let directory = std::env::current_dir().map_err(raised)?;
+                let operands = ImageToolExpressionInputs::resolve_in_directory(
+                    manifest.expression,
+                    &directory,
+                )
+                .map_err(raised)?;
+                images.extend(
+                    operands
+                        .paths_and_entries()
+                        .map(|(path, entry)| (path.to_owned(), entry.to_owned())),
+                );
             }
         }
         Ok(())
     }
 
-    fn check_miriad_files(&self, source: &Path, target: &Path) -> PyResult<()> {
-        let materialized = match &self.entries {
+    fn is_owned_copy(&self, source: &Path, target: &Path) -> bool {
+        match &self.entries {
             Entries::OwnedMembers(members) if self.removed.is_empty() => target
                 .parent()
                 .filter(|parent| *parent == self.destination)
                 .and_then(|_| members.get(target.file_name()?))
                 .is_some_and(|member| *member == source),
             _ => false,
-        };
+        }
+    }
+
+    fn check_miriad_files(&self, source: &Path, target: &Path) -> PyResult<()> {
+        let materialized = self.is_owned_copy(source, target);
         for entry in source.read_dir().map_err(raised)? {
             let entry = entry.map_err(raised)?;
             let name = entry.file_name();

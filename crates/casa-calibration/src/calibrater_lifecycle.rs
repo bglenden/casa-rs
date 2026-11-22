@@ -143,9 +143,6 @@ pub enum CalibraterLifecycleError {
     /// The EP solver uses the original visibility iterator.
     #[error("Error in Calibrater::setsolve.")]
     EpNeedsLegacyIterator,
-    /// Executing the full EP solve is owned by the solver-tool implementation.
-    #[error("calibrater.solve with EP is pending in #1528")]
-    EpSolvePending,
     /// The polarization solve could not be configured or completed.
     #[error("{0}")]
     LeakageSolve(String),
@@ -793,15 +790,39 @@ impl CalibraterLifecycle {
         cache: &Path,
         angle_deg: f64,
     ) -> Result<(), CalibraterLifecycleError> {
+        self.set_tool_ep_solve(
+            table,
+            cache,
+            angle_deg,
+            ("", -1.),
+            CalibrationOutputMode::Replace,
+            crate::RefAntSelector::Unspecified,
+        )
+    }
+
+    /// Configure legacy EP with the public tool's interval, table mode, and reference list.
+    /// # Errors
+    /// The legacy iterator, an attached dataset, a valid interval, and a writable cache are required.
+    pub fn set_tool_ep_solve(
+        &mut self,
+        table: &Path,
+        cache: &Path,
+        angle_deg: f64,
+        timing: (&str, f64),
+        mode: CalibrationOutputMode,
+        reference: crate::RefAntSelector,
+    ) -> Result<(), CalibraterLifecycleError> {
         let legacy_iterator = self.legacy_iterator;
         let equation = self.equation_mut()?;
         if !legacy_iterator {
             tracing::error!("EP not yet supported via EPJones(msmc)");
             return Err(CalibraterLifecycleError::EpNeedsLegacyIterator);
         }
-        let solver = LegacyEpSolver::new(table, cache, angle_deg).map_err(AttachmentError::from)?;
+        let (solver, interval_label) =
+            LegacyEpSolver::new(table, cache, angle_deg, timing, mode, reference)
+                .map_err(AttachmentError::from)?;
         equation.solve = Some(ConfiguredSolve::LegacyEp(Box::new(solver)));
-        equation.solve_description = None;
+        self.record_solve_description(&interval_label, "", "flex", None);
         Ok(())
     }
 
@@ -912,8 +933,15 @@ impl CalibraterLifecycle {
                         *tf,
                     )
                 }
-                Some(ConfiguredSolve::LegacyEp(_)) => {
-                    return Err(CalibraterLifecycleError::EpSolvePending);
+                Some(ConfiguredSolve::LegacyEp(solver)) => {
+                    equation.check_opacity_parameters()?;
+                    let solution_row_count = equation
+                        .attachment
+                        .with_write(|ms, selected, _| Ok(solver.fit_attached(ms, selected)?))?;
+                    return Ok(CalibrationSolveResult::LegacyEp {
+                        output_table: solver.output_path().to_owned(),
+                        solution_row_count,
+                    });
                 }
                 Some(ConfiguredSolve::SingleDish(_)) => {
                     return Err(CalibraterLifecycleError::SingleDishSolve(
@@ -1024,6 +1052,7 @@ impl CalibraterLifecycle {
         let stats = match &solved {
             CalibrationSolveResult::Gain(gain) => &gain.solve_stats,
             CalibrationSolveResult::Bandpass(bandpass) => &bandpass.solve_stats,
+            CalibrationSolveResult::LegacyEp { .. } => return Ok(()),
         };
         if !self.legacy_iterator && !stats.windows.is_empty() {
             self.last_solve_stats = Some(crate::casa_return::solvestats(stats));

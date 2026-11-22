@@ -8631,6 +8631,13 @@ casa-rs checks the manifest graph and symbolic links in the proposed
 directory layout before transferring the inputs. A chain of relative symlinks
 can move together when it continues to resolve to the same image.
 
+With a saved expression and its referenced native image as operands,
+`mode="move"` can displace both inputs and leave a product whose expression
+still points to the old pathname. Using the expression's referenced table
+as the output can also crash Python in `mode="nomove"`. Casa-rs checks the
+transitive operands and the proposed storage layout before publication.
+See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 See [#1749](https://github.com/bglenden/casa-rs/issues/1749).
 
 ## Renaming a sibling-relative virtual image can displace a readable image

@@ -20,25 +20,34 @@ use num_complex::{Complex32, Complex64};
 use pyo3::prelude::*;
 
 use super::owned_members::OwnedOperands;
-use super::{Input, Request, beam_records, coordinate_record, merge_misc, plane_axes};
+use super::{
+    Input, Request, beam_records, coordinate_record, merge_misc, plane_axes,
+    protect_expression_sources,
+};
 use crate::tools::LogLine;
 use crate::tools::image::attachment::{AttachedImage, registry};
 use crate::tools::image::handle::{ImageHandle, Storage, raised, same_file_identity, with_storage};
+use crate::tools::image::saved_expression::SavedExpressionInputs;
 
 pub(in crate::tools::image) fn open(path: &Path) -> PyResult<AttachedImage> {
-    let image = load(path, &mut HashSet::new())?;
+    let image = load(path, false, &mut HashSet::new())?;
     AttachedImage::with_virtual_concat(image, path, &mut registry())
 }
 
 pub(in crate::tools::image) fn open_handle(path: &Path) -> Result<ImageHandle, ImageError> {
-    load(path, &mut HashSet::new()).map_err(|error| ImageError::CasaSelection(error.to_string()))
+    load(path, false, &mut HashSet::new())
+        .map_err(|error| ImageError::CasaSelection(error.to_string()))
 }
 
 pub(in crate::tools::image) fn check_relocation(source: &Path, target: &Path) -> PyResult<()> {
     super::relocation::check_rename(source, target)
 }
 
-fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
+fn load(
+    path: &Path,
+    outer_tempclose: bool,
+    active: &mut HashSet<PathBuf>,
+) -> PyResult<ImageHandle> {
     let root = path.canonicalize().map_err(raised)?;
     if !active.insert(root.clone()) {
         return Err(raised(format!(
@@ -48,7 +57,8 @@ fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
     }
     let manifest = ConcatManifest::open(&root).map_err(raised)?;
     let paths = manifest.paths(&root);
-    let inputs = open_members(&paths, manifest.temp_close(), active)?;
+    let tempclose = outer_tempclose || manifest.temp_close();
+    let inputs = open_members(&paths, tempclose, active)?;
     let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
     let kind = manifest.pixel_type().map_err(raised)?;
     validate_types(&inputs, kind)?;
@@ -59,7 +69,7 @@ fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
         inputs,
         plan,
         manifest.misc_info().map_err(raised)?,
-        manifest.temp_close(),
+        tempclose,
         kind,
     )?;
     active.remove(&root);
@@ -92,6 +102,7 @@ pub(super) fn stage_nomove(
         }
     }
     let inputs = open_members(paths, request.tempclose, &mut HashSet::new())?;
+    protect_expression_sources(final_path, &inputs)?;
     let (kind, plan, misc) = creation_plan(request, &inputs, logs)?;
     let manifest = ConcatManifest::new(
         final_path,
@@ -127,6 +138,7 @@ pub(super) fn stage_owned(
     let mut members = OwnedOperands::inspect(paths, final_path, moving)?;
     let validation_paths = members.validation_paths();
     let inputs = open_members(&validation_paths, true, &mut HashSet::new())?;
+    protect_expression_sources(final_path, &inputs)?;
     let (kind, plan, misc) = creation_plan(request, &inputs, logs)?;
     members.capture_validated_inputs(inputs)?;
     let manifest = ConcatManifest::new(
@@ -172,12 +184,12 @@ fn open_members<'a>(
         .iter()
         .map(|path| {
             let resolved = path.canonicalize().map_err(raised)?;
-            let image = if is_image_concat(&resolved) {
-                load(&resolved, active)?
+            if is_image_concat(&resolved) {
+                let image = load(&resolved, tempclose, active)?;
+                Input::from_image(path, image, tempclose, None)
             } else {
-                ImageHandle::open_for_concatenation(&resolved).map_err(raised)?
-            };
-            Input::from_image(path, image, tempclose)
+                Input::open_resolved(path, &resolved, tempclose)
+            }
         })
         .collect()
 }
@@ -284,8 +296,10 @@ fn typed<T: MemberPixel>(
             writable_mask: input.writable_mask,
             advisory_lock: input.advisory_lock,
             beam_axes: plane_axes(&input.coordinate_record)?,
-            tempclose,
+            tempclose: tempclose && input.expression_operands.is_empty(),
             storage: Mutex::new(storage),
+            expression: input.expression,
+            expression_operands: input.expression_operands,
         });
         by_path.insert(path, Arc::clone(&member));
         members.push(member);
@@ -312,6 +326,8 @@ struct Member<T: MemberPixel> {
     beam_axes: (Option<usize>, Option<usize>),
     tempclose: bool,
     storage: Mutex<Option<Storage<T>>>,
+    expression: Option<SavedExpressionInputs>,
+    expression_operands: Vec<PathBuf>,
 }
 
 impl<T: MemberPixel> Member<T> {
@@ -320,6 +336,9 @@ impl<T: MemberPixel> Member<T> {
     }
 
     fn check_path(&self) -> Result<(), ImageError> {
+        if let Some(expression) = &self.expression {
+            return expression.check_name(&self.path).map_err(expression_error);
+        }
         if fs::metadata(&self.path)
             .is_ok_and(|current| same_file_identity(&self.expected, &current))
         {
@@ -360,6 +379,21 @@ impl<T: MemberPixel> Member<T> {
             None => operation(&mut self.reopen()?),
         }
     }
+
+    fn read_storage<R>(
+        &self,
+        read: impl FnOnce(&Storage<T>) -> Result<R, ImageError>,
+    ) -> Result<R, ImageError> {
+        if self.expression.is_some() && !self.lock(LockType::Read, 0)? {
+            return Err(ImageError::Io(
+                "Could not acquire the expression Read lock".into(),
+            ));
+        }
+        self.use_storage(|storage| {
+            require(storage, LockType::Read)?;
+            read(storage)
+        })
+    }
 }
 
 impl<T: MemberPixel> ConcatMember<T> for Member<T> {
@@ -386,10 +420,7 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         count: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<T>, ImageError> {
-        self.use_storage(|storage| {
-            require(storage, LockType::Read)?;
-            T::read(storage, start, count, stride)
-        })
+        self.read_storage(|storage| T::read(storage, start, count, stride))
     }
 
     fn read_mask(
@@ -398,10 +429,7 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         count: &[usize],
         stride: &[usize],
     ) -> Result<Option<ArrayD<bool>>, ImageError> {
-        self.use_storage(|storage| {
-            require(storage, LockType::Read)?;
-            T::read_mask(storage, start, count, stride)
-        })
+        self.read_storage(|storage| T::read_mask(storage, start, count, stride))
     }
 
     fn write(&self, values: &ArrayD<T>, start: &[usize]) -> Result<(), ImageError> {
@@ -459,6 +487,9 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
 
     fn lock(&self, kind: LockType, attempts: u32) -> Result<bool, ImageError> {
         self.check_path()?;
+        if let Some(expression) = &self.expression {
+            return lock_expression_inputs(&expression.retained, kind, attempts);
+        }
         let mut slot = self.slot();
         if let Some(storage) = slot.as_mut() {
             return lock(storage, kind, attempts);
@@ -472,7 +503,21 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         }
     }
 
+    fn close_after_lock(&self) -> Result<(), ImageError> {
+        if self.tempclose {
+            self.unlock()
+        } else {
+            Ok(())
+        }
+    }
+
     fn has_lock(&self, kind: LockType) -> bool {
+        if let Some(expression) = &self.expression {
+            return expression
+                .retained
+                .iter()
+                .all(|input| input.lock().has_storage_lock(kind));
+        }
         self.advisory_lock
             || self
                 .slot()
@@ -484,7 +529,20 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         self.advisory_lock
     }
 
+    fn expression_operands(&self) -> &[PathBuf] {
+        &self.expression_operands
+    }
+
     fn lock_state(&self) -> ConcatLockState {
+        if let Some(expression) = &self.expression {
+            return ConcatLockState::Nested(
+                expression
+                    .retained
+                    .iter()
+                    .map(expression_lock_state)
+                    .collect(),
+            );
+        }
         match self.slot().as_ref() {
             Some(Storage::Paged(image)) => ConcatLockState::Leaf(table_lock_state(image)),
             Some(Storage::Temp { image, .. }) => image
@@ -497,6 +555,17 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
     }
 
     fn restore_locks(&self, state: ConcatLockState) -> Result<(), ImageError> {
+        if let Some(expression) = &self.expression {
+            let ConcatLockState::Nested(states) = state else {
+                unreachable!("captured expression locks")
+            };
+            return expression
+                .retained
+                .iter()
+                .zip(states)
+                .rev()
+                .try_for_each(|(input, state)| restore_expression_lock(input, state));
+        }
         let mut slot = self.slot();
         if let Some(storage) = slot.as_mut() {
             match (&mut *storage, state) {
@@ -525,6 +594,12 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
     }
 
     fn unlock(&self) -> Result<(), ImageError> {
+        if let Some(expression) = &self.expression {
+            return expression
+                .retained
+                .iter()
+                .try_for_each(|input| input.lock().unlock_storage().map_err(expression_error));
+        }
         let mut storage = self.slot();
         if let Some(storage) = storage.as_mut() {
             unlock(storage)?;
@@ -536,6 +611,14 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
     }
 
     fn release_requested_lock(&self) -> Result<(), ImageError> {
+        if let Some(expression) = &self.expression {
+            return expression.retained.iter().try_for_each(|input| {
+                input
+                    .lock()
+                    .release_requested_lock()
+                    .map_err(expression_error)
+            });
+        }
         let mut slot = self.slot();
         let Some(storage) = slot.as_mut() else {
             return Ok(());
@@ -559,6 +642,71 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         }
         Ok(())
     }
+}
+
+fn expression_error(error: PyErr) -> ImageError {
+    ImageError::CasaSelection(error.to_string())
+}
+
+fn expression_lock_state(input: &AttachedImage) -> ConcatLockState {
+    let image = input.lock();
+    ConcatLockState::Leaf(
+        [LockType::Write, LockType::Read]
+            .into_iter()
+            .find(|&kind| image.has_storage_lock(kind)),
+    )
+}
+
+fn restore_expression_lock(
+    input: &AttachedImage,
+    state: ConcatLockState,
+) -> Result<(), ImageError> {
+    let ConcatLockState::Leaf(previous) = state else {
+        unreachable!("captured leaf locks")
+    };
+    let mut image = input.lock();
+    let current = [LockType::Write, LockType::Read]
+        .into_iter()
+        .find(|&kind| image.has_storage_lock(kind));
+    if current != previous {
+        image.unlock_storage().map_err(expression_error)?;
+        if let Some(kind) = previous
+            && !image.lock_storage(kind, 1).map_err(expression_error)?
+        {
+            return Err(ImageError::Io(
+                "Could not restore an expression operand lock".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn lock_expression_inputs(
+    inputs: &[AttachedImage],
+    kind: LockType,
+    attempts: u32,
+) -> Result<bool, ImageError> {
+    let mut acquired = Vec::new();
+    for input in inputs {
+        let prior = expression_lock_state(input);
+        let result = {
+            let mut image = input.lock();
+            input
+                .check_bound_name(&image)
+                .and_then(|()| image.lock_storage(kind, attempts))
+                .map_err(expression_error)
+        };
+        match result {
+            Ok(true) => acquired.push((input, prior)),
+            refused => {
+                for (input, state) in acquired.into_iter().rev() {
+                    restore_expression_lock(input, state)?;
+                }
+                return refused;
+            }
+        }
+    }
+    Ok(true)
 }
 
 fn table_lock_state<T: ImagePixel>(image: &casa_images::PagedImage<T>) -> Option<LockType> {

@@ -72,12 +72,22 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
     /// Take a table access lock if this member uses locking.
     fn lock(&self, kind: LockType, attempts: u32) -> Result<bool, ImageError>;
 
+    /// Release the access leases a temporary closure normally releases.
+    fn close_after_lock(&self) -> Result<(), ImageError> {
+        self.unlock()
+    }
+
     /// Report a member lock.
     fn has_lock(&self, kind: LockType) -> bool;
 
     /// Whether the member reports both locks without acquiring a storage lease.
     fn has_advisory_lock(&self) -> bool {
         false
+    }
+
+    /// Files and image directories needed by any saved-expression member.
+    fn expression_operands(&self) -> &[PathBuf] {
+        &[]
     }
 
     /// Capture the physical access leases this member holds.
@@ -345,16 +355,12 @@ impl<T: ImagePixel> ConcatImage<T> {
             if !seen.insert(member.path()) {
                 continue;
             }
-            if self.temp_close {
-                let result = member.lock(kind, attempts);
-                member.unlock()?;
-                if !result? {
-                    return Ok(false);
-                }
-                continue;
-            }
             let before = member.lock_state();
-            match member.lock(kind, attempts) {
+            let result = member.lock(kind, attempts);
+            if self.temp_close {
+                member.close_after_lock()?;
+            }
+            match result {
                 Ok(true) => acquired.push((member, before)),
                 refused => {
                     for (member, state) in acquired.into_iter().rev() {
@@ -375,6 +381,13 @@ impl<T: ImagePixel> ConcatImage<T> {
     /// Whether a member reports locks even after temporary closure.
     pub fn has_advisory_lock(&self) -> bool {
         self.members.iter().any(|member| member.has_advisory_lock())
+    }
+
+    /// Files and image directories referenced by saved expressions in the graph.
+    pub fn expression_operands(&self) -> impl Iterator<Item = &PathBuf> {
+        self.members
+            .iter()
+            .flat_map(|member| member.expression_operands())
     }
 
     /// Capture each physical member's access leases before a lock request.
