@@ -69,7 +69,7 @@ pub(super) enum NativeTableMove {
 pub(super) struct CopiedDirectory {
     identity: Metadata,
     use_lock: Option<Arc<TableUseLock>>,
-    _write_lock: Option<TableWriteLock>,
+    write_lock: Option<TableWriteLock>,
     #[cfg(unix)]
     _directory: Option<std::fs::File>,
 }
@@ -90,9 +90,17 @@ impl CopiedDirectory {
 enum CopyKind {
     NativeTable,
     ReadOnlyDirectory,
+    #[cfg(unix)]
+    Symlink,
 }
 
 impl NativeTableMove {
+    pub(super) fn release_copy_write_lock(&mut self) {
+        if let Self::Copied { published, .. } = self {
+            published.write_lock = None;
+        }
+    }
+
     pub(super) fn use_lock(&self) -> Option<Arc<TableUseLock>> {
         match self {
             Self::Renamed { .. } => None,
@@ -179,6 +187,22 @@ pub(super) fn move_native_table(
         target_metadata,
         CopyKind::NativeTable,
         prepare_copy,
+    )
+}
+
+#[cfg(unix)]
+pub(super) fn move_symlink(
+    source: &Path,
+    metadata: &Metadata,
+    target: &Path,
+) -> PyResult<NativeTableMove> {
+    move_image_directory(
+        source,
+        metadata,
+        target,
+        None,
+        CopyKind::Symlink,
+        |_| Ok(()),
     )
 }
 
@@ -438,19 +462,26 @@ fn copy_claimed_directory(
                 ))
             })?;
         }
-        copy_locked_table_tree(&claimed, &copied).map_err(raised)?;
+        match kind {
+            #[cfg(unix)]
+            CopyKind::Symlink => {
+                std::os::unix::fs::symlink(std::fs::read_link(&claimed).map_err(raised)?, &copied)
+                    .map_err(raised)?
+            }
+            _ => copy_locked_table_tree(&claimed, &copied).map_err(raised)?,
+        }
         prepare_copy(&copied)?;
         let (use_lock, write_lock) = match kind {
             CopyKind::NativeTable => (
                 Some(Arc::new(TableUseLock::acquire(&copied).map_err(raised)?)),
                 Some(TableWriteLock::acquire(&copied, 1).map_err(raised)?),
             ),
-            CopyKind::ReadOnlyDirectory => (None, None),
+            _ => (None, None),
         };
         let published = CopiedDirectory {
             identity: copied.symlink_metadata().map_err(raised)?,
             use_lock,
-            _write_lock: write_lock,
+            write_lock,
             #[cfg(unix)]
             _directory: matches!(kind, CopyKind::ReadOnlyDirectory)
                 .then(|| casa_tables::publication::open_directory_identity(&copied))

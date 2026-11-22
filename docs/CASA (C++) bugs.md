@@ -8567,6 +8567,36 @@ Casa-rs skips members with no requested samples and writes the two
 samples in order to the single physical member.
 See [#1749](https://github.com/bglenden/casa-rs/issues/1749).
 
+## Failed virtual concatenation can leave inputs and a previous output displaced
+
+In CASA 6.7.6.14, concatenate images with shapes `[2, 3]` and `[2, 4]`
+along axis zero. With `mode="copy"` the shape error leaves partial copies
+in the output. With `mode="move"` the error can leave both operands in that
+directory, with the original paths gone. A pre-existing destination can be
+removed before validation. casa-rs checks shape and path constraints first,
+publishes the complete output, and restores original names if a later step
+fails. Same-filesystem moves and rollback rename entries without duplicating
+pixel data. Across filesystems the move makes the necessary destination copy
+once and holds the original until publication succeeds.
+
+Distinct operands from different directories can also have the same
+basename. CASA's copy can replace the first copy and bind both sections
+to the second operand. Move can remove both originals and retain only the
+second. casa-rs refuses the conflict before transferring either image.
+
+See [#1749](https://github.com/bglenden/casa-rs/issues/1749).
+
+## Renaming a sibling-relative virtual image can displace a readable image
+
+Create a `nomove` concatenation of two sibling images in CASA 6.7.6.14
+and rename it into a new parent directory. The operands remain in the old
+parent, so reopen fails after CASA moves the virtual directory. casa-rs
+checks operand resolution before rename and refuses a destination that
+changes the bindings. Renaming an owned tree preserves its nested member
+paths across parent directories.
+
+See [#1749](https://github.com/bglenden/casa-rs/issues/1749).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

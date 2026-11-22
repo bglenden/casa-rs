@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from test_image_removal import _backend
+from test_image_cross_device_rename import other_filesystem
 
 
 KINDS = [
@@ -23,12 +24,14 @@ KINDS = [
 @pytest.mark.parametrize("tempclose", [False, True])
 @pytest.mark.parametrize("writer", ["casa", "casars"])
 @pytest.mark.parametrize("reader", ["casa", "casars"])
-def test_nomove_manifest_and_write_through(tmp_path, kind, dtype, precision, stored_type, tempclose, writer, reader):
+@pytest.mark.parametrize("mode", ["nomove", "copy", "move"])
+def test_virtual_manifest_and_write_through(tmp_path, kind, dtype, precision, stored_type, tempclose, writer, reader, mode):
     writer_api, reader_api = _backend(writer), _backend(reader)
     source = writer_api.image()
     reader_tool, operand = reader_api.image(), reader_api.image()
     paths = [tmp_path / "left.im", tmp_path / "right.im"]
     output = tmp_path / "joint.im"
+    members = paths if mode == "nomove" else [output / path.name for path in paths]
     joined = None
     factor = 1. + 2.j if np.issubdtype(dtype, np.complexfloating) else 1.
     expected = np.concatenate([np.full((3, 4), factor), np.full((3, 4), 2 * factor)])
@@ -36,17 +39,28 @@ def test_nomove_manifest_and_write_through(tmp_path, kind, dtype, precision, sto
         for number, path in enumerate(paths, start=1):
             assert source.fromarray(str(path), np.full((3, 4), number * factor, dtype=dtype), linear=True, type=precision)
             assert source.done()
-        joined = source.imageconcat(str(output), list(map(str, paths)), axis=0, relax=True, tempclose=tempclose, mode="nomove")
+        originals = [{entry.name: entry.stat() for entry in path.iterdir() if entry.is_file()}
+                     for path in paths]
+        original_dirs = [path.stat() for path in paths]
+        joined = source.imageconcat(str(output), list(map(str, paths)), axis=0, relax=True, tempclose=tempclose, mode=mode)
         assert joined.pixeltype() == kind
+        if kind in {"float", "complex"}:
+            assert any("ia.imageconcat" in row for row in joined.history())
         np.testing.assert_array_equal(joined.shape(), [6, 4])
-        assert set(output.iterdir()) == {output / "imageconcat.json"}
+        children = [] if mode == "nomove" else members
+        assert set(output.iterdir()) == {output / "imageconcat.json", *children}
+        assert all(path.exists() == (mode != "move") for path in paths)
+        if writer == "casars" and mode == "move":
+            for directory, payload, member in zip(original_dirs, originals, members):
+                assert os.path.samestat(directory, member.stat())
+                assert all(os.path.samestat(stat, (member / name).stat()) for name, stat in payload.items())
         manifest = json.loads((output / "imageconcat.json").read_text())
         assert manifest == {
             "Version": 1,
             "DataType": stored_type,
             "Axis": 0,
             "TempClose": tempclose,
-            "Images": ["./left.im", "./right.im"],
+            "Images": [(("./" if mode == "nomove" else "././") + path.name) for path in paths],
             "MiscInfo": {},
         }
         assert joined.done()
@@ -54,6 +68,7 @@ def test_nomove_manifest_and_write_through(tmp_path, kind, dtype, precision, sto
         assert reader_tool.pixeltype() == kind
         if kind in {"float", "complex"}:
             assert reader_tool.ispersistent()
+            assert not any("ia.imageconcat" in row for row in reader_tool.history())
             np.testing.assert_array_equal(reader_tool.haslock(), [not tempclose, False])
         else:
             with pytest.raises(RuntimeError, match="ispersistent does not support"):
@@ -88,10 +103,15 @@ def test_nomove_manifest_and_write_through(tmp_path, kind, dtype, precision, sto
                 joined.miscinfo()
         np.testing.assert_array_equal(joined.getchunk(), expected)
         assert joined.done()
-        for index, path in enumerate(paths):
+        for index, path in enumerate(members):
             assert operand.open(str(path))
             np.testing.assert_array_equal(operand.getchunk(), expected[index * 3:(index + 1) * 3, :])
             assert operand.done()
+        if mode == "copy":
+            for number, path in enumerate(paths, start=1):
+                assert operand.open(str(path))
+                np.testing.assert_array_equal(operand.getchunk(), np.full((3, 4), number * factor))
+                assert operand.done()
     finally:
         if joined is not None:
             joined.done()
@@ -152,7 +172,8 @@ def test_virtual_concat_rejects_an_active_graph_cycle(tmp_path):
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
-def test_nomove_concat_repeated_operand_reads_one_table(tmp_path, backend):
+@pytest.mark.parametrize("mode", ["nomove", "copy"])
+def test_virtual_concat_repeated_operand_reads_one_table(tmp_path, backend, mode):
     api = _backend(backend)
     a, b = tmp_path / "a.im", tmp_path / "b.im"
     image, out = api.image(), None
@@ -161,8 +182,9 @@ def test_nomove_concat_repeated_operand_reads_one_table(tmp_path, backend):
         assert image.done()
         assert image.fromarray(str(b), np.full((3, 4), 2.), linear=True)
         assert image.done()
-        out = image.imageconcat(str(tmp_path / "repeat.im"), list(map(str, [a, b, a])),
-                                axis=0, relax=True, mode="nomove", tempclose=False)
+        output = tmp_path / "repeat.im"
+        out = image.imageconcat(str(output), list(map(str, [a, b, a])),
+                                axis=0, relax=True, mode=mode, tempclose=False)
         np.testing.assert_array_equal(out.getchunk()[:, 0], [1, 1, 1, 2, 2, 2, 1, 1, 1])
         if backend == "casars":
             assert out.putchunk(np.array([[9.], [8.]]), blc=[0, 0], inc=[6, 1])
@@ -171,6 +193,66 @@ def test_nomove_concat_repeated_operand_reads_one_table(tmp_path, backend):
         if out is not None:
             out.done()
         image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("mode", ["copy", "move"])
+def test_owned_virtual_concat_can_nest_a_virtual_member(tmp_path, backend, mode):
+    api = _backend(backend)
+    tool, inner, outer = api.image(), None, None
+    members = [tmp_path / f"source-{i}.im" for i in [1, 2, 3]]
+    inner_path, output = tmp_path / "inner.im", tmp_path / "outer.im"
+    try:
+        for number, source in enumerate(members, 1):
+            assert tool.fromarray(str(source), np.full((2, 2), number), linear=True)
+            assert tool.done()
+        inner = tool.imageconcat(str(inner_path), list(map(str, members[:2])), axis=0,
+                                 mode="copy", relax=True)
+        assert inner.done()
+        outer = tool.imageconcat(str(output), [str(inner_path), str(members[2])], axis=0,
+                                 mode=mode, relax=True)
+        assert outer.done()
+        assert inner_path.exists() == (mode == "copy")
+        assert tool.open(str(output))
+        np.testing.assert_array_equal(tool.getchunk()[:, 0], [1, 1, 2, 2, 3, 3])
+        assert tool.done()
+        assert tool.open(str(output / "inner.im"))
+        np.testing.assert_array_equal(tool.getchunk()[:, 0], [1, 1, 2, 2])
+    finally:
+        if outer is not None:
+            outer.done()
+        if inner is not None:
+            inner.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("mode", ["copy", "move"])
+def test_owned_virtual_concat_handles_absolute_symlink_member(tmp_path, backend, mode):
+    api = _backend(backend)
+    tool, joined = api.image(), None
+    physical, alias, other, output = [tmp_path / f"{n}.im" for n in ["physical", "link", "other", "join"]]
+    try:
+        for path, value in [(physical, 1.), (other, 2.)]:
+            assert tool.fromarray(str(path), np.full((2, 2), value), linear=True)
+            assert tool.done()
+        alias.symlink_to(physical, target_is_directory=True)
+        joined = tool.imageconcat(str(output), [str(alias), str(other)], axis=0,
+                                   mode=mode, relax=True)
+        assert physical.is_dir()
+        assert alias.is_symlink() == (mode == "copy")
+        copied = output / alias.name
+        assert copied.is_symlink() == (mode == "move")
+        if copied.is_symlink():
+            assert copied.readlink() == physical
+        np.testing.assert_array_equal(joined.getchunk()[:, 0], [1, 1, 2, 2])
+        assert joined.done()
+        assert tool.open(str(output))
+        np.testing.assert_array_equal(tool.getchunk()[:, 0], [1, 1, 2, 2])
+    finally:
+        if joined is not None:
+            joined.done()
+        tool.done()
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
@@ -234,7 +316,8 @@ def test_virtual_concat_fits_member_is_read_only(tmp_path, backend):
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
-def test_virtual_concat_combines_restoring_beams_on_the_spectral_axis(tmp_path, backend):
+@pytest.mark.parametrize("mode", ["nomove", "copy", "move"])
+def test_virtual_concat_combines_restoring_beams_on_the_spectral_axis(tmp_path, backend, mode):
     api = _backend(backend)
     source, reader = api.image(), api.image()
     paths = [tmp_path / "left.im", tmp_path / "right.im"]
@@ -252,7 +335,7 @@ def test_virtual_concat_combines_restoring_beams_on_the_spectral_axis(tmp_path, 
                 assert coordinates.done()
             assert source.setrestoringbeam(f"{2 + i}arcsec", "1arcsec", "0deg")
             assert source.done()
-        out = source.imageconcat(str(target), list(map(str, paths)), axis=3, mode="nomove")
+        out = source.imageconcat(str(target), list(map(str, paths)), axis=3, mode=mode)
         assert out.done()
         assert reader.open(str(target))
         beams = [reader.restoringbeam(channel=channel, polarization=0) for channel in range(4)]
@@ -264,7 +347,8 @@ def test_virtual_concat_combines_restoring_beams_on_the_spectral_axis(tmp_path, 
             )
             assert reader.setrestoringbeam("4arcsec", "1arcsec", "0deg", channel=2, polarization=0)
             assert reader.done()
-            for path, expected in [(target, [2, 2, 4, 3]), (paths[1], [4, 3])]:
+            member = paths[1] if mode == "nomove" else target / paths[1].name
+            for path, expected in [(target, [2, 2, 4, 3]), (member, [4, 3])]:
                 assert reader.open(str(path))
                 beams = [reader.restoringbeam(channel=channel, polarization=0) for channel in range(len(expected))]
                 np.testing.assert_allclose(
@@ -282,7 +366,8 @@ def test_virtual_concat_combines_restoring_beams_on_the_spectral_axis(tmp_path, 
         source.done()
 
 
-def test_virtual_nomove_shape_admission_preserves_named_output_and_inputs(tmp_path):
+@pytest.mark.parametrize("mode", ["nomove", "copy", "move"])
+def test_virtual_shape_admission_preserves_named_output_and_inputs(tmp_path, mode):
     api = _backend("casars")
     paths = [tmp_path / "left.im", tmp_path / "right.im"]
     destination = tmp_path / "previous.im"
@@ -295,15 +380,164 @@ def test_virtual_nomove_shape_admission_preserves_named_output_and_inputs(tmp_pa
         ]:
             assert image.fromarray(str(path), data, linear=True)
             assert image.done()
+        original_entries = [path.stat() for path in [*paths, destination]]
         with pytest.raises(RuntimeError, match="Lattice shapes inconsistent"):
             image.imageconcat(str(destination), list(map(str, paths)), axis=0,
-                              mode="nomove", overwrite=True, relax=True)
+                              mode=mode, overwrite=True, relax=True)
         assert image.open(str(destination))
         np.testing.assert_array_equal(image.getchunk(), np.full((2, 2), 7.))
-        assert all(path.is_dir() for path in paths)
+        assert all(os.path.samestat(contents, path.stat())
+                   for contents, path in zip(original_entries, [*paths, destination]))
         assert not (destination / "imageconcat.json").exists()
     finally:
         image.done()
+
+
+@pytest.mark.parametrize("existing_output", [False, True])
+def test_virtual_move_failed_final_open_restores_sources(tmp_path, existing_output):
+    api = _backend("casars")
+    source, referent, alias, output = [
+        tmp_path / f"{name}.im" for name in ("a", "referent", "alias", "join")
+    ]
+    tool = api.image()
+    try:
+        originals = [(source, 1.), (referent, 2.)]
+        if existing_output:
+            originals.append((output, 7.))
+        for path, value in originals:
+            assert tool.fromarray(str(path), np.full((2, 2), value), linear=True)
+            assert tool.done()
+        alias.symlink_to(referent.name, target_is_directory=True)
+        before = {path: path.lstat() for path in [source, referent, alias, *([output] if existing_output else [])]}
+        contents = set(tmp_path.iterdir())
+        with pytest.raises(RuntimeError, match="No such file"):
+            tool.imageconcat(str(output), [str(source), str(alias)], axis=0, relax=True,
+                             mode="move", overwrite=existing_output)
+        assert set(tmp_path.iterdir()) == contents
+        assert str(alias.readlink()) == referent.name
+        assert all(os.path.samestat(stat, path.lstat()) for path, stat in before.items())
+        for path, value in originals:
+            assert tool.open(str(path))
+            np.testing.assert_array_equal(tool.getchunk(), np.full((2, 2), value))
+            assert tool.done()
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("mode", ["copy", "move"])
+def test_owned_virtual_concat_rejects_basename_collision(tmp_path, mode):
+    api = _backend("casars")
+    tool = api.image()
+    paths = [tmp_path / name / "member.im" for name in ("one", "two")]
+    output = tmp_path / "join.im"
+    try:
+        for index, path in enumerate(paths):
+            path.parent.mkdir()
+            assert tool.fromarray(str(path), np.full((2, 2), index + 1.), linear=True)
+            assert tool.done()
+        before = [path.stat() for path in paths]
+        with pytest.raises(RuntimeError, match="same.*basename|inputs have the destination basename"):
+            tool.imageconcat(str(output), list(map(str, paths)), axis=0, relax=True, mode=mode)
+        assert not output.exists()
+        for index, (original, path) in enumerate(zip(before, paths)):
+            assert os.path.samestat(original, path.stat())
+            assert tool.open(str(path))
+            np.testing.assert_array_equal(tool.getchunk(), np.full((2, 2), index + 1.))
+            assert tool.done()
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("mode", ["copy", "move"])
+def test_owned_virtual_concat_can_rename_to_another_parent(tmp_path, backend, mode):
+    api = _backend(backend)
+    holder = tmp_path / "holder"
+    holder.mkdir()
+    paths = [holder / "one.im", holder / "two.im"]
+    output = holder / "out.im"
+    tool, joined = api.image(), None
+    try:
+        for index, path in enumerate(paths):
+            assert tool.fromarray(str(path), np.full((2, 2), index + 1.), linear=True)
+            assert tool.done()
+        joined = tool.imageconcat(str(output), list(map(str, paths)), axis=0, relax=True, mode=mode)
+        relocated = tmp_path / "relocated"
+        relocated.mkdir()
+        assert joined.rename(str(relocated / output.name))
+        np.testing.assert_array_equal(joined.getchunk()[:, 0], [1, 1, 2, 2])
+        assert not output.exists()
+        assert joined.done()
+        assert tool.open(str(relocated / output.name))
+        np.testing.assert_array_equal(tool.getchunk()[:, 0], [1, 1, 2, 2])
+        assert tool.done()
+        for index, path in enumerate(paths):
+            assert tool.open(str(relocated / output.name / path.name))
+            np.testing.assert_array_equal(tool.getchunk(), np.full((2, 2), index + 1.))
+            assert tool.done()
+    finally:
+        if joined is not None:
+            joined.done()
+        tool.done()
+
+
+def test_virtual_nomove_rename_cannot_use_unrelated_siblings(tmp_path):
+    api = _backend("casars")
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    tool, joined = api.image(), None
+    output = first / "join.im"
+    unwanted = second / "join.im"
+    try:
+        for directory, offset in [(first, 0), (second, 8)]:
+            for i in [1, 2]:
+                assert tool.fromarray(str(directory / f"member-{i}.im"), np.full((2, 2), offset+i), linear=True)
+                assert tool.done()
+        sources = [str(first / f"member-{i}.im") for i in [1, 2]]
+        joined = tool.imageconcat(str(output), sources, axis=0, relax=True, mode="nomove")
+        with pytest.raises(RuntimeError, match="operand .* would resolve to"):
+            joined.rename(str(unwanted))
+        assert not unwanted.exists()
+        assert tool.open(str(output))
+        np.testing.assert_array_equal(tool.getchunk()[:, 0], [1, 1, 2, 2])
+    finally:
+        if joined is not None:
+            joined.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("writer", ["casa", "casars"])
+@pytest.mark.parametrize("reader", ["casa", "casars"])
+def test_virtual_owned_move_across_filesystems(tmp_path, other_filesystem, writer, reader):
+    writer_api, reader_api = _backend(writer), _backend(reader)
+    original = [tmp_path / f"member-{i}.im" for i in [1, 2]]
+    output = other_filesystem / "join.im"
+    relocated = tmp_path / "relocated.im"
+    tool, sensor, joined = writer_api.image(), reader_api.image(), None
+    try:
+        for number, path in enumerate(original, 1):
+            pixels = np.arange(4., dtype=np.float32).reshape(2, 2) + 4 * number
+            assert tool.fromarray(str(path), pixels, linear=True)
+            assert tool.calcmask(f'\"{path}\" > 6', "valid")
+            assert tool.done()
+        joined = tool.imageconcat(str(output), list(map(str, original)), axis=0, relax=True, mode="move")
+        assert not any(path.exists() for path in original)
+        assert tmp_path.stat().st_dev != output.stat().st_dev
+        assert joined.setmiscinfo({"kind": "owned"})
+        assert joined.rename(str(relocated))
+        assert joined.done()
+        assert not output.exists()
+        assert sensor.open(str(relocated))
+        expected = np.arange(4., 12., dtype=np.float32).reshape(4, 2)
+        np.testing.assert_array_equal(sensor.getchunk(), expected)
+        np.testing.assert_array_equal(sensor.getchunk(getmask=True), expected > 6)
+        assert sensor.miscinfo() == {"kind": "owned"}
+    finally:
+        if joined is not None:
+            joined.done()
+        sensor.done()
+        tool.done()
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
@@ -380,10 +614,12 @@ def test_attached_virtual_concat_refuses_mutation_after_replacement(tmp_path, ac
 
 @pytest.mark.parametrize("tempclose", [False, True])
 @pytest.mark.parametrize("backend", ["casa", "casars"])
-def test_virtual_concat_putregion_writes_physical_default_masks(tmp_path, backend, tempclose):
+@pytest.mark.parametrize("mode", ["nomove", "copy", "move"])
+def test_virtual_concat_putregion_writes_physical_default_masks(tmp_path, backend, tempclose, mode):
     api = _backend(backend)
     tool, joined = api.image(), None
     sources = [tmp_path / "one.im", tmp_path / "two.im"]
+    target = tmp_path / "join.im"
     valid = np.ones((4, 2), dtype=bool)
     valid[1:3, 0] = False
     try:
@@ -391,13 +627,14 @@ def test_virtual_concat_putregion_writes_physical_default_masks(tmp_path, backen
             assert tool.fromarray(str(source), np.ones((2, 2)), linear=True)
             assert tool.calcmask("T", "valid")
             assert tool.done()
-        joined = tool.imageconcat(str(tmp_path / "join.im"), list(map(str, sources)),
-                                   axis=0, relax=True, tempclose=tempclose, mode="nomove")
+        joined = tool.imageconcat(str(target), list(map(str, sources)),
+                                   axis=0, relax=True, tempclose=tempclose, mode=mode)
         assert joined.putregion(pixelmask=valid)
         np.testing.assert_array_equal(joined.getchunk(getmask=True), valid)
         assert joined.done()
         for index, source in enumerate(sources):
-            assert tool.open(str(source))
+            member = source if mode == "nomove" else target / source.name
+            assert tool.open(str(member))
             np.testing.assert_array_equal(tool.getchunk(getmask=True), valid[2 * index:2 * index + 2])
             np.testing.assert_array_equal(tool.getchunk(), np.ones((2, 2)))
             assert tool.done()

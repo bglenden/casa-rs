@@ -22,7 +22,10 @@ use crate::tools::coordsys::PyCoordsys;
 use super::beam_view::BeamView;
 use super::handle::{ImageHandle, Storage, raised, with_pixels};
 use super::miriad_rename::MiriadDirectory;
-use super::native_rename::{check_path_relationship, move_native_table, native_destination};
+use super::native_rename::{
+    NativeTableMove, check_path_relationship, move_native_table, move_read_only_directory,
+    native_destination,
+};
 use super::saved_expression::SavedExpressionDirectory;
 
 pub(super) struct SharedImage {
@@ -505,11 +508,14 @@ impl AttachedImage {
                 source.display()
             ))
         };
-        let old_name = {
+        let (old_name, virtual_concat) = {
             let image = self.lock();
             self.check_bound_name(&image)
                 .map_err(|_| source_changed())?;
-            self.name_path(&image).unwrap_or(source).to_path_buf()
+            (
+                self.name_path(&image).unwrap_or(source).to_path_buf(),
+                image.image_type_name() == "ImageConcat",
+            )
         };
         let target = native_destination(expanded?.as_ref(), name)?;
         let mut registry = registry();
@@ -563,6 +569,9 @@ impl AttachedImage {
             });
         }
         check_path_relationship(source, &target, name)?;
+        if virtual_concat {
+            super::concatenate::virtual_image::check_relocation(source, &target)?;
+        }
         let replaces_link = target_metadata
             .as_ref()
             .is_some_and(|entry| entry.is_symlink());
@@ -618,7 +627,8 @@ impl AttachedImage {
         let open = |path: &Path| {
             ImageHandle::open_native(path, self.image.shareable.then_some(1)).map_err(raised)
         };
-        let moved = move_native_table(
+        let moved = move_attached_directory(
+            virtual_concat,
             source,
             &source_metadata,
             &target,
@@ -766,6 +776,23 @@ impl AttachedImage {
         remove_native_table(entry, key, self.image.use_lock.as_deref())?;
         registry.remove(key);
         Ok(name.to_string_lossy().into_owned())
+    }
+}
+
+fn move_attached_directory(
+    virtual_concat: bool,
+    source: &Path,
+    identity: &fs::Metadata,
+    target: &Path,
+    previous: Option<&fs::Metadata>,
+    prepare_copy: impl FnOnce(&Path) -> PyResult<()>,
+) -> PyResult<NativeTableMove> {
+    if virtual_concat {
+        // The virtual root is a manifest directory. Its history is rebuilt
+        // on attachment, and it has no native table lock file.
+        move_read_only_directory(source, identity, target, previous, |_| Ok(()))
+    } else {
+        move_native_table(source, identity, target, previous, prepare_copy)
     }
 }
 

@@ -21,7 +21,8 @@ use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
-use super::handle::{ImageHandle, Storage, raised};
+use super::concatenate::owned_members::{MemberMoves, OwnedOperands};
+use super::handle::{ImageHandle, Storage, raised, same_file_identity};
 use super::lifecycle::resolve_image_path;
 use super::pixels::Pixels;
 
@@ -382,6 +383,14 @@ impl StagedImage {
     }
 
     fn install(self, existed: bool) -> PyResult<InstalledImage> {
+        let publication = self.publish(existed)?;
+        Ok(InstalledImage {
+            stage: self,
+            publication,
+        })
+    }
+
+    fn publish(&self, existed: bool) -> PyResult<ImagePublication> {
         self.check_alias()?;
         #[cfg(unix)]
         let directory = std::fs::File::open(&self.product).map_err(raised)?;
@@ -390,8 +399,7 @@ impl StagedImage {
         } else {
             rename_without_replacing(&self.product, &self.target).map_err(raised)?;
         }
-        Ok(InstalledImage {
-            stage: self,
+        Ok(ImagePublication {
             existed,
             #[cfg(unix)]
             directory,
@@ -432,6 +440,10 @@ fn check_distinct(primary: Option<&StagedImage>, companion: Option<&StagedImage>
 
 struct InstalledImage {
     stage: StagedImage,
+    publication: ImagePublication,
+}
+
+struct ImagePublication {
     existed: bool,
     #[cfg(unix)]
     directory: std::fs::File,
@@ -439,12 +451,28 @@ struct InstalledImage {
 
 impl InstalledImage {
     fn open(&self, registry: &mut attachment::OpenImages) -> PyResult<AttachedImage> {
-        let stage = &self.stage;
+        self.publication.open(&self.stage, registry)
+    }
+
+    fn restore(self, original: PyErr) -> PyErr {
+        match self.publication.restore(&self.stage) {
+            Ok(()) => original,
+            Err(error) => report_publication_recovery(self.stage, original, error),
+        }
+    }
+}
+
+impl ImagePublication {
+    fn open(
+        &self,
+        stage: &StagedImage,
+        registry: &mut attachment::OpenImages,
+    ) -> PyResult<AttachedImage> {
         if casa_images::concat_file::is_image_concat(&stage.target) {
             stage.check_alias()?;
             let name = stage.alias.as_deref().unwrap_or(&stage.target);
-            let image = super::concatenate::virtual_image::open_handle(name).map_err(raised)?;
-            if !self.still_at_destination() {
+            let image = super::concatenate::virtual_image::open_handle(&stage.target).map_err(raised)?;
+            if !self.still_at_destination(&stage.target) {
                 return Err(raised(
                     "The published virtual concatenation changed during creation",
                 ));
@@ -457,7 +485,7 @@ impl InstalledImage {
         stage.check_alias()?;
         let image = AttachedImage::open_created_as(registry, alias, &stage.target)?;
         stage.check_alias()?;
-        if !self.still_at_destination() {
+        if !self.still_at_destination(&stage.target) {
             return Err(raised(format!(
                 "The published image at {} changed during creation",
                 stage.target.display()
@@ -466,25 +494,25 @@ impl InstalledImage {
         Ok(image)
     }
 
-    fn still_at_destination(&self) -> bool {
+    fn still_at_destination(&self, target: &Path) -> bool {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
             matches!(
-                (self.directory.metadata(), self.stage.target.symlink_metadata()),
+                (self.directory.metadata(), target.symlink_metadata()),
                 (Ok(opened), Ok(current)) if opened.dev() == current.dev() && opened.ino() == current.ino(),
             )
         }
         #[cfg(not(unix))]
         {
-            self.stage.target.is_dir()
+            target.is_dir()
         }
     }
 
-    fn restore(self, original: PyErr) -> PyErr {
-        let staged = &self.stage.product;
-        let target = &self.stage.target;
-        let restored = if !self.still_at_destination() {
+    fn restore(&self, stage: &StagedImage) -> std::io::Result<()> {
+        let staged = &stage.product;
+        let target = &stage.target;
+        if !self.still_at_destination(target) {
             Err(std::io::Error::other(
                 "the destination changed after publication",
             ))
@@ -492,18 +520,20 @@ impl InstalledImage {
             exchange_directories(staged, target)
         } else {
             rename_without_replacing(target, staged)
-        };
-        match restored {
-            Ok(()) => original,
-            Err(error) => {
-                let recovery = self.stage.directory.keep();
-                raised(format!(
-                    "{original}. Image publication could not be rolled back. Inspect {} ({error})",
-                    recovery.display()
-                ))
-            }
         }
     }
+}
+
+fn report_publication_recovery(
+    stage: StagedImage,
+    original: PyErr,
+    error: std::io::Error,
+) -> PyErr {
+    let recovery = stage.directory.keep();
+    raised(format!(
+        "{original}. Image publication could not be rolled back. Inspect {} ({error})",
+        recovery.display()
+    ))
 }
 
 pub(super) fn publish_image(
@@ -531,6 +561,92 @@ pub(super) fn publish_virtual_concat(
             None,
         ))
     })
+}
+
+pub(super) fn publish_owned_virtual_concat(
+    outfile: &str,
+    expanded: &str,
+    overwrite: bool,
+    prepare: impl FnOnce(&Path, &Path) -> PyResult<OwnedOperands>,
+) -> PyResult<AttachedImage> {
+    let stage = StagedImage::allocate_creation(outfile, expanded, overwrite)?
+        .ok_or_else(|| raised("Virtual concatenation requires an output image"))?;
+    let members = prepare(&stage.target, &stage.product)?;
+    install_owned_virtual_concat(stage, overwrite, members, ImagePublication::open)
+}
+
+fn install_owned_virtual_concat(
+    mut stage: StagedImage,
+    overwrite: bool,
+    members: OwnedOperands,
+    open: impl FnOnce(
+        &ImagePublication,
+        &StagedImage,
+        &mut attachment::OpenImages,
+    ) -> PyResult<AttachedImage>,
+) -> PyResult<AttachedImage> {
+    let mut registry = attachment::registry();
+    let mut locks = BTreeMap::new();
+    let existed = stage.check(overwrite, &registry, &mut locks)?;
+    let previous = existed
+        .then(|| stage.target.symlink_metadata().map_err(raised))
+        .transpose()?;
+    // The stage can hold the only copy of a moved member. Returning from a
+    // failed transaction must never remove such a stage automatically.
+    stage.directory.disable_cleanup(true);
+    let mut moves = MemberMoves::default();
+    let mut recoverable_stage = true;
+    let result = (|| {
+        members.stage(&stage.product, &registry, &mut moves)?;
+        let publication = stage.publish(existed)?;
+        let opened = if previous.as_ref().is_some_and(|previous| {
+            !stage
+                .product
+                .symlink_metadata()
+                .is_ok_and(|actual| same_file_identity(previous, &actual))
+        }) {
+            Err(raised(format!(
+                "The previous output at {} changed",
+                stage.target.display()
+            )))
+        } else {
+            moves
+                .verify_links(&stage.target)
+                .and_then(|()| open(&publication, &stage, &mut registry))
+        };
+        match opened {
+            Ok(opened) => Ok(opened),
+            Err(error) => match publication.restore(&stage) {
+                Ok(()) => Err(error),
+                Err(restore) => {
+                    recoverable_stage = false;
+                    Err(raised(format!(
+                        "{error}. Could not restore the previous output: {restore}"
+                    )))
+                }
+            },
+        }
+    })();
+    drop(registry);
+    match result {
+        Ok(opened) => {
+            stage.directory.disable_cleanup(false);
+            moves.finish(&stage.target)?;
+            Ok(opened)
+        }
+        Err(error) => {
+            let (error, restored) = moves.rollback(error);
+            if restored && recoverable_stage {
+                stage.directory.disable_cleanup(false);
+                Err(error)
+            } else {
+                Err(raised(format!(
+                    "{error}. Concatenation recovery directory: {}",
+                    stage.directory.path().display()
+                )))
+            }
+        }
+    }
 }
 
 pub(super) fn publish_image_pair(
@@ -1045,6 +1161,88 @@ mod publication_tests {
         let mut output = Storage::<f32>::create(shape, coordinates, path, None).map_err(raised)?;
         output.save().map_err(raised)?;
         Ok(ImageHandle::Float(output))
+    }
+
+    fn owned_move_fixture(
+        root: &Path,
+    ) -> (
+        StagedImage,
+        OwnedOperands,
+        [PathBuf; 2],
+        [std::fs::Metadata; 2],
+    ) {
+        let sources = [root.join("a.im"), root.join("b.im")];
+        for source in &sources {
+            test_image(Some(source), 2).unwrap();
+        }
+        let snapshots = sources.clone().map(|path| path.symlink_metadata().unwrap());
+        let result = root.join("output.im");
+        let stage = StagedImage::allocate_at("output.im", &result).unwrap();
+        std::fs::create_dir(&stage.product).unwrap();
+        let owned = OwnedOperands::inspect(&sources, &result, true).unwrap();
+        (stage, owned, sources, snapshots)
+    }
+
+    #[test]
+    fn owned_virtual_move_rolls_back_when_later_member_is_open() {
+        Python::initialize();
+        let root = tempfile::tempdir().unwrap();
+        let (stage, members, sources, snapshots) = owned_move_fixture(root.path());
+        let target = stage.target.clone();
+        let staged_path = stage.directory.path().to_path_buf();
+        let open_second = AttachedImage::open(&sources[1]).unwrap();
+        let Err(error) = install_owned_virtual_concat(stage, false, members, |_, _, _| {
+            panic!("an input open elsewhere should prevent publication")
+        }) else {
+            panic!("moving an open input succeeded");
+        };
+        assert!(error.to_string().contains("still open in this process"));
+        drop(open_second);
+        assert!(!target.exists());
+        assert!(!staged_path.exists());
+        for (source, identity) in sources.iter().zip(snapshots) {
+            assert!(same_file_identity(
+                &identity,
+                &source.symlink_metadata().unwrap()
+            ));
+        }
+    }
+
+    #[test]
+    fn owned_virtual_move_retains_original_when_rollback_name_is_occupied() {
+        Python::initialize();
+        let root = tempfile::tempdir().unwrap();
+        let (stage, members, sources, snapshots) = owned_move_fixture(root.path());
+        let target = stage.target.clone();
+        let staged_path = stage.directory.path().to_path_buf();
+        let Err(error) = install_owned_virtual_concat(stage, false, members, |_, _, _| {
+            test_image(Some(&sources[0]), 7)?;
+            Err(raised("injected reopen failure"))
+        }) else {
+            panic!("the injected failure succeeded");
+        };
+        let detail = error.to_string();
+        assert!(detail.contains("injected reopen failure"));
+        assert!(detail.contains(staged_path.to_str().unwrap()));
+        assert!(!target.exists());
+        assert_eq!(ImageHandle::open(&sources[0]).unwrap().shape(), &[7]);
+        assert!(same_file_identity(
+            &snapshots[1],
+            &sources[1].symlink_metadata().unwrap()
+        ));
+        let product = staged_path.join("image");
+        let retained = product
+            .read_dir()
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .path()
+                    .symlink_metadata()
+                    .is_ok_and(|actual| same_file_identity(&snapshots[0], &actual))
+            })
+            .expect("the original is retained in the reported stage");
+        assert_eq!(ImageHandle::open(&retained.path()).unwrap().shape(), &[2]);
     }
 
     #[test]
