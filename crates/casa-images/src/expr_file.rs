@@ -58,7 +58,7 @@ use crate::image::{ImageInterface, ImagePixelType, PagedImage, image_pixel_type}
 use crate::image_expr::{ImageExprValue, ImageExpression};
 use crate::image_info::ImageInfo;
 
-mod tool_metadata;
+pub(crate) mod tool_metadata;
 
 // ---------------------------------------------------------------------------
 // Type string mapping

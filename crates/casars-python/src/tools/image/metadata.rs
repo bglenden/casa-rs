@@ -34,7 +34,11 @@ impl PyImageTool {
             let normalized = normalize_casa_unit_name(unit.trim());
             Unit::new(&normalized)
                 .map_err(|_| raised(format!("Unit::check Illegal unit string '{unit}'")))?;
-            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
+            if image.image_type_name() == "ImageConcat" {
+                attachment.check_bound_name(&image)?;
+            } else {
+                attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
+            }
             with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_units(normalized)))
                 .map_err(raised)?;
             if history {
@@ -121,7 +125,11 @@ impl PyImageTool {
                     "Exception: Supplied CoordinateSystem and image shape are inconsistent",
                 ));
             }
-            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
+            if image.image_type_name() == "ImageConcat" {
+                attachment.check_bound_name(&image)?;
+            } else {
+                attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
+            }
             image.set_coordinate_record(record)?;
             attachment.coordinates_changed();
             if history {

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use casa_lattices::TempStoragePolicy;
 
 use crate::image_expr::{ImageExprValue, ImageExpression};
+use crate::virtual_concat::ConcatImage;
 use crate::{ComponentListImage, ImageError, ImageInterface, ImagePixel};
 
 use super::TempImage;
@@ -62,6 +63,24 @@ impl TempImage<f32> {
 }
 
 impl<T: ImagePixel> TempImage<T> {
+    /// Attach a native virtual concatenation with its initial beam record.
+    ///
+    /// # Errors
+    /// Returns an error for invalid image metadata or geometry.
+    pub fn from_virtual_concat(
+        source: ConcatImage<T>,
+        info: casa_types::RecordValue,
+    ) -> Result<Self, ImageError> {
+        let mut image = Self::from_read_only_image(
+            source,
+            "ImageConcat",
+            "Some of the underlying lattices are not writable",
+        )?;
+        image.image_info = crate::ImageInfo::from_record(&info)?;
+        image.image_info_record = Some(info);
+        Ok(image)
+    }
+
     /// Attach an expression as a read-only pixel source with editable image metadata.
     /// Reads evaluate the requested region of the expression on demand.
     ///

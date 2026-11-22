@@ -200,6 +200,11 @@ impl<T: ImagePixel> TempImage<T> {
         data: &ArrayD<bool>,
         start: &[usize],
     ) -> Result<(), ImageError> {
+        if let Some(source) = self.concat_source()
+            && name.is_empty()
+        {
+            return source.write_mask_slice(data, start);
+        }
         if self.native_component_table().is_some() {
             return Err(ImageError::CasaSelection(
                 "MaskedLattice::pixelMask - no pixelmask available".into(),

@@ -151,6 +151,9 @@ impl ImageHandle {
         lock_attempts: Option<u32>,
         component_cache: bool,
     ) -> Result<Self, ImageError> {
+        if casa_images::concat_file::is_image_concat(path) {
+            return super::concatenate::virtual_image::open_handle(path);
+        }
         if casa_images::ComponentListImage::recognizes_native(path) {
             let (source, record) =
                 casa_images::ComponentListImage::open_native(path, component_cache)?;
