@@ -45,6 +45,37 @@ def nested_system_record(nested, world_at_origin):
     }
 
 
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_setcoordsys_rejects_invalid_increment_on_a_hidden_nested_world_axis(backend, request):
+    api = tools if backend == "casars" else request.getfixturevalue("casa")
+    coordinate = api.coordsys().newcoordsys(linear=2)
+    image = api.image()
+    try:
+        assert coordinate.setincrement([3., 5.])
+        nested = coordinate.torecord()
+        nested["worldmap0"] = np.array([0, -2], dtype=np.int32)
+        good = nested_system_record(nested, [0.])
+        good["pixelmap0"] = np.array([0, 1], dtype=np.int32)
+        good["pixelreplace0"] = np.zeros(2, dtype=np.float64)
+        invalid = deepcopy(good)
+        invalid["coordsys0"]["linear0"]["cdelt"] = [3., 0.]
+        assert image.fromshape(shape=[4, 3], csys=good)
+        with pytest.raises(RuntimeError, match="Linear transformation matrix is singular"):
+            image.setcoordsys(invalid)
+        assert image.isopen()
+        np.testing.assert_array_equal(image.toworld([2., 1.])["numeric"], [6.])
+        attached = image.coordsys()
+        try:
+            np.testing.assert_array_equal(
+                attached.torecord()["coordsys0"]["linear0"]["cdelt"], [3., 5.]
+            )
+        finally:
+            attached.done()
+    finally:
+        image.done()
+        coordinate.done()
+
+
 @pytest.mark.parametrize("permuted", [False, True])
 def test_nested_system_scalar_and_batch_world_transforms(casa, system_record, permuted):
     order = np.array([1, 0] if permuted else [0, 1])

@@ -15,6 +15,7 @@ use pyo3::types::{PyDict, PyList, PyString};
 use crate::convert::{StringList, value::CasaValue};
 use crate::tools::table::casa_record;
 
+use super::linear_transform::validate_restored_linear_coordinates;
 use super::{CoordinateState, PyCoordsys, current_epoch, default_spectral_conversion};
 
 fn raised(message: impl Into<String>) -> PyErr {
@@ -270,6 +271,7 @@ pub(super) fn restore(mut record: RecordValue, parent_name: String) -> PyResult<
 
     let mut coordinates =
         CoordinateSystem::from_record(&record).map_err(|error| raised(error.to_string()))?;
+    validate_restored_linear_coordinates(&coordinates, &record)?;
     let info = coordinates.obs_info_mut();
     if record.get("observer").is_none() && info.observer.is_empty() {
         info.observer = "UNKNOWN".into();

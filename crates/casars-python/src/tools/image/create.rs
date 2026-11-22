@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::convert::IntList;
+use crate::tools::coordsys::validate_restored_linear_coordinates;
 use crate::tools::table::casa_record;
 
 use super::PyImageTool;
@@ -56,6 +57,9 @@ impl Create<'_> {
         };
         let coordinates = CoordinateSystem::from_record(&record)
             .map_err(|_| raised("Exception: Invalid coordinate system record"))?;
+        if !self.record.is_empty() {
+            validate_restored_linear_coordinates(&coordinates, &record)?;
+        }
         let kind = self.kind.to_ascii_lowercase();
         let pixel_type = match (kind.as_str(), pixels.is_some_and(Pixels::is_complex)) {
             ("f", false) => ImagePixelType::Float32,

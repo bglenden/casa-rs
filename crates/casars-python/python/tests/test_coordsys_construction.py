@@ -14,6 +14,80 @@ def casa():
     return package
 
 
+@pytest.fixture(params=["casa", "casars"])
+def validation_backend(request):
+    return tools if request.param == "casars" else request.getfixturevalue("casa")
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("pc", np.zeros((2, 2), dtype=np.float64)),
+    ("pc", np.asarray([[0., 2.], [0., 3.]])),
+    ("cdelt", [0., 5.]),
+])
+def test_rejected_linear_records_keep_the_existing_transform(validation_backend, tmp_path, field, value):
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    api = validation_backend
+    coordinate = api.coordsys().newcoordsys(linear=2)
+    assert coordinate.setincrement([3., 5.])
+    good = coordinate.torecord()
+    invalid = coordinate.torecord()
+    invalid["linear0"][field] = value
+    with pytest.raises(RuntimeError, match="Linear transformation matrix is singular"):
+        coordinate.fromrecord(invalid)
+    np.testing.assert_array_equal(coordinate.toworld([2., 3.])["numeric"], [6., 15.])
+
+    image = api.image()
+    path = str(tmp_path / f"{api.__name__}.im")
+    try:
+        assert image.fromarray(path, pixels, csys=good)
+        history = image.history()
+        with pytest.raises(RuntimeError, match="Linear transformation matrix is singular"):
+            image.setcoordsys(invalid)
+        assert image.isopen()
+        np.testing.assert_array_equal(image.toworld([2., 3.])["numeric"], [6., 15.])
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+        assert image.history() == history
+        assert image.done()
+        assert image.open(path)
+        np.testing.assert_array_equal(image.toworld([2., 3.])["numeric"], [6., 15.])
+        assert image.history() == history
+    finally:
+        image.done()
+
+
+def test_linear_record_with_dependent_nonzero_rows_keeps_the_casa_forward_map(validation_backend):
+    api = validation_backend
+    coordinate = api.coordsys().newcoordsys(linear=2)
+    record = coordinate.torecord()
+    record["linear0"]["pc"] = np.asarray([[1., 2.], [2., 4.]])
+    assert coordinate.fromrecord(record)
+    np.testing.assert_array_equal(coordinate.toworld([2., 3.])["numeric"], [8., 16.])
+
+
+@pytest.mark.parametrize("method", ["fromshape", "fromarray", "newimagefromshape", "newimagefromarray"])
+def test_invalid_linear_record_cannot_overwrite_an_existing_image(validation_backend, tmp_path, method):
+    api = validation_backend
+    coordinate = api.coordsys().newcoordsys(linear=2)
+    invalid = coordinate.torecord()
+    invalid["linear0"]["cdelt"] = [0., 5.]
+    image = api.image()
+    path = str(tmp_path / f"{api.__name__}.im")
+    supplied = {"shape": [2, 2]} if method.endswith("shape") else {"pixels": [[1., 2.], [3., 4.]]}
+    try:
+        assert image.fromarray(path, [18., 34.])
+        assert image.done()
+        assert image.fromarray(pixels=[8., 9.])
+        with pytest.raises(RuntimeError, match="Linear transformation matrix is singular"):
+            getattr(image, method)(outfile=path, csys=invalid, overwrite=True, **supplied)
+        assert image.isopen() == method.startswith("new")
+        if image.isopen():
+            np.testing.assert_array_equal(image.getchunk(), [8., 9.])
+        assert image.open(path)
+        np.testing.assert_array_equal(image.getchunk(), [18., 34.])
+    finally:
+        image.done()
+
+
 def check_record(actual, expected):
     observed = actual.torecord()
     reference = expected.torecord()
