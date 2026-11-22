@@ -22,6 +22,7 @@
 
 mod accumulate;
 mod antpos_vla;
+mod appendantab;
 mod attachment;
 mod bandpass;
 mod calibrater_lifecycle;

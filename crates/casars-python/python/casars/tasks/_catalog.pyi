@@ -636,6 +636,16 @@ def pccor(
 ) -> Any:
     ...
 
+def appendantab(
+    vis: str = ...,
+    outvis: str = ...,
+    antab: str = ...,
+    overwrite: bool = ...,
+    append_tsys: bool = ...,
+    append_gc: bool = ...,
+) -> Any:
+    ...
+
 def bandpass(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     caltable: StrPath = ...,
@@ -1682,6 +1692,6 @@ def sdatmcor(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'fringefit', 'pccor', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor')
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'fringefit', 'pccor', 'appendantab', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor')
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'fringefit', 'pccor', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor']
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'fringefit', 'pccor', 'appendantab', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor']

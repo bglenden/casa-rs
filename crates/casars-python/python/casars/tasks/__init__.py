@@ -18,6 +18,7 @@ from ._catalog import (
     accor,
     fringefit,
     pccor,
+    appendantab,
     bandpass,
     fluxscale,
     uvsub,
@@ -74,4 +75,4 @@ from ._runner import (
     run,
 )
 
-__all__ = ['TaskBinaryNotFoundError', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskParameterError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'fringefit', 'pccor', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor']
+__all__ = ['TaskBinaryNotFoundError', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskParameterError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'accor', 'fringefit', 'pccor', 'appendantab', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor']

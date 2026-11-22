@@ -18,6 +18,12 @@
     "gainfield": "cStrVec",
     "interp": "cStrVec"
   },
+  "appendantab": {
+    "outvis": "cStr",
+    "overwrite": "cBool",
+    "append_tsys": "cBool",
+    "append_gc": "cBool"
+  },
   "applycal": {
     "field": "cStr",
     "spw": "cStr",

@@ -64,6 +64,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("fringefit", "casatasks"),
     ("accor", "casatasks"),
     ("pccor", "casatasks"),
+    ("appendantab", "casatasks"),
     ("gaincal", "casatasks"),
     ("gencal", "casatasks"),
     ("getantposalma", "casatasks"),

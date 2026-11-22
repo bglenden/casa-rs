@@ -269,6 +269,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_polfromgain(values, arguments)
     if name == "pccor":
         return _call_pccor(values, arguments)
+    if name == "appendantab":
+        return _call_appendantab(values, arguments)
     if name == "polcal":
         _validate_required_path(values, "vis", arguments["vis"], search_data=True)
         try:
@@ -1684,6 +1686,26 @@ def _resolve_relative_data_path(path: str) -> str:
         if candidate.exists():
             return str(candidate)
     return path
+
+
+def _call_appendantab(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    nulls = {key: ["null value not allowed"] for key, value in arguments.items() if value is None}
+    if nulls:
+        raise AssertionError(str(nulls))
+    for key in ("vis", "antab"):
+        value = arguments[key]
+        if not isinstance(value, str):
+            raise AssertionError(
+                f"the {key} parameter must be a path that exists ('{value}' does not exist)")
+        _validate_required_path(values, key, value, search_data=True)
+    if not isinstance(arguments["outvis"], str):
+        raise AssertionError("{'outvis': ['must be of cStr type']}")
+    try:
+        return run("appendantab", **values).value
+    except TaskExecutionError as error:
+        raise RuntimeError(error.completion.message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
 
 
 def _call_pccor(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:

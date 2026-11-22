@@ -17,6 +17,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | Surface | CASA task | CASA's signature | CASA parameters | Shared | CASA's casa-rs lacks | Default only | casa-rs's CASA lacks | Defaults differ |
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | accor | accor | yes | 21 | 21 | 0 | 0 | 3 | 0 |
+| appendantab | appendantab | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
 | calstat | calstat | yes | 3 | 3 | 0 | 0 | 0 | 0 |
@@ -86,6 +87,20 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
 - Shared parameters: 21, in CASA's order: yes
+- Defaults that differ: none
+
+### appendantab
+
+- CASA source: `casatasks/appendantab.py`, 6 parameters
+- Implementation: `casatasks/private/task_appendantab.py`, `appendantab` (line 150): 3 return statements, 0 raise statements
+  - returns at line 156: `None`
+  - returns at line 161: `None`
+  - returns at line 180: `None`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 6, in CASA's order: yes
 - Defaults that differ: none
 
 ### applycal

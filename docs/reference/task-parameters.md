@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 963
-- Surfaces: 61 (61 task, 0 session)
-- Surface bindings: 1404
+- Concepts: 967
+- Surfaces: 62 (62 task, 0 session)
+- Surface bindings: 1410
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -32,6 +32,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [ACCOR](#surface-accor)<br><code>accor</code> | task | 1 | <code>calibration</code> | 24 | Normalize sampler amplitudes using antenna autocorrelations. |
 | [Fringe Fit](#surface-fringefit)<br><code>fringefit</code> | task | 1 | <code>calibration</code> | 37 | Fit antenna phases, delays and delay rates to VLBI visibilities. |
 | [Pulse Calibration](#surface-pccor)<br><code>pccor</code> | task | 1 | <code>calibration</code> | 9 | Align VLBI pulse and cable calibration to a reference fringe solution. |
+| [Append ANTAB](#surface-appendantab)<br><code>appendantab</code> | task | 1 | <code>calibration</code> | 6 | Import ANTAB temperatures and gain curves into a copied MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
 | [Subtract Visibility Model](#surface-uvsub)<br><code>uvsub</code> | task | 1 | <code>calibration</code> | 2 | Subtract or restore the current visibility model in corrected data. |
@@ -830,6 +831,25 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>"none"</code>; optional | Pulse Calibration | Applycal antenna selector text. |
 | <code>cablecal_correction</code> | <code>calibration.pccor.cablecal_correction@r1</code> | <code>bool</code> | <code>false</code>; optional | Pulse Calibration | Add the measured cable delay to pulse calibration. |
 | <code>ff_table</code> | <code>calibration.pccor.ff_table@r1</code> | <code>string</code> | <code>"none"</code>; optional | Pulse Calibration | Precomputed reference fringe table, or none to run fringefit. |
+
+<a id="surface-appendantab"></a>
+
+## Append ANTAB (<code>appendantab</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Import ANTAB temperatures and gain curves into a copied MeasurementSet.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>outvis</code> | <code>calibration.antab.outvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; optional | ANTAB | Name of the copy to receive ANTAB calibration. |
+| <code>antab</code> | <code>calibration.antab.antab@r1</code> | <code>path (file)</code> | <code>""</code>; required | ANTAB | Input ANTAB text containing temperature and gain records. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | ANTAB | Replace an existing output file |
+| <code>append_tsys</code> | <code>calibration.antab.append_tsys@r1</code> | <code>bool</code> | <code>true</code>; optional | ANTAB | Import measured system temperatures into SYSCAL. |
+| <code>append_gc</code> | <code>calibration.antab.append_gc@r1</code> | <code>bool</code> | <code>true</code>; optional | ANTAB | Import station gain polynomials into GAIN_CURVE. |
 
 <a id="surface-bandpass"></a>
 
