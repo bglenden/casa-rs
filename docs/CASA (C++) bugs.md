@@ -9893,9 +9893,11 @@ each existing FIELD_ID. With disjoint field time ranges, applying the
 updated table to the original field loses its corrections.
 
 casa-rs publishes rows for selected fields and updates only those fields on
-append. The
+append. Added fits can have different knot counts. The stored arrays share
+a shape so CASA can read them, and each row keeps its actual count. The
 [paired oracle](../tools/casa-compat/gspline_oracle.py) compares the original
-rows to a saved copy of the initial solve and the new rows to CASA.
+rows to a saved copy of the initial solve and the new rows to CASA. It then
+applies the combined table through both implementations.
 
 ## GSPLINE fit logs give the RMS for the wrong baseline
 

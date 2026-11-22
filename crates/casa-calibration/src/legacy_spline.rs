@@ -170,12 +170,19 @@ impl Curve {
             .map_err(|_| "GSPLINE coefficient count is negative".to_owned())?;
         let count = usize::try_from(integer(table, row, &format!("N_KNOTS_{suffix}"))?)
             .map_err(|_| "GSPLINE knot count is negative".to_owned())?;
-        let knots = floats(table, row, &format!("SPLINE_KNOTS_{suffix}"))?;
-        let coefficients = floats(table, row, &format!("POLY_COEFF_{suffix}"))?;
+        let mut knots = floats(table, row, &format!("SPLINE_KNOTS_{suffix}"))?;
+        let mut coefficients = floats(table, row, &format!("POLY_COEFF_{suffix}"))?;
+        let used_coefficients = stride
+            .checked_mul(2)
+            .ok_or("GSPLINE coefficient count overflow")?;
+        // A table assembled by append can have a common physical size for
+        // rows with different logical lengths. The tails are unused.
+        knots.truncate(count);
+        coefficients.truncate(used_coefficients);
         if count < 8
             || knots.len() != count
             || stride < count - 4
-            || stride.checked_mul(2) != Some(coefficients.len())
+            || coefficients.len() != used_coefficients
             || knots.iter().chain(&coefficients).any(|v| !v.is_finite())
             || knots.windows(2).any(|w| w[0] > w[1])
             || knots[3] >= knots[count - 4]

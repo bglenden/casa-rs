@@ -4,7 +4,8 @@
 use std::path::Path;
 
 use casa_tables::{Table, TableOptions};
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::CalibrationTableWriteError;
 
@@ -172,10 +173,60 @@ pub(crate) fn append_legacy(
             .map_err(|error| invalid(source, error.to_string()))?;
     }
     append(old, new, source)?;
+    if new.info().sub_type == "GSPLINE" {
+        pad_spline_columns(old, source)?;
+    }
     preserve_subtables(source, stage)?;
     descriptors
         .save(TableOptions::new(stage.join("CAL_DESC")))
         .map_err(|e| invalid(stage, e.to_string()))
+}
+
+fn pad_spline_columns(table: &mut Table, path: &Path) -> Result<(), CalibrationTableWriteError> {
+    // CASA loads each legacy column as a whole array, then reads the logical
+    // knot/coefficient count in each row. Make the storage shape uniform.
+    for name in [
+        "SPLINE_KNOTS_AMP",
+        "SPLINE_KNOTS_PHASE",
+        "POLY_COEFF_AMP",
+        "POLY_COEFF_PHASE",
+    ] {
+        let rows: Vec<_> = (0..table.row_count()).collect();
+        let shapes = table
+            .column_accessor(name)
+            .and_then(|column| column.array_shapes_uncached(&rows))
+            .map_err(|error| invalid(path, error.to_string()))?;
+        let len = |shape: Option<&[usize]>| match shape {
+            Some([1, 1, 1, len]) => Ok(*len),
+            _ => Err(invalid(path, format!("invalid GSPLINE {name} cell shape"))),
+        };
+        let lengths = shapes
+            .iter()
+            .map(|shape| len(shape.as_deref()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let largest = lengths.iter().copied().max().unwrap_or(0);
+        for (row, size) in lengths.into_iter().enumerate() {
+            if size == largest {
+                continue;
+            }
+            let ArrayValue::Float64(values) = table
+                .cell_accessor(row, name)
+                .and_then(|cell| cell.array())
+                .map_err(|error| invalid(path, error.to_string()))?
+            else {
+                return Err(invalid(path, format!("invalid GSPLINE {name} cell type")));
+            };
+            let mut padded: Vec<_> = values.iter().copied().collect();
+            padded.resize(largest, 0.);
+            let array = ArrayD::from_shape_vec(IxDyn(&[1, 1, 1, largest]).f(), padded)
+                .map_err(|error| invalid(path, error.to_string()))?;
+            table
+                .cell_accessor_mut(row, name)
+                .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Float64(array))))
+                .map_err(|error| invalid(path, error.to_string()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Append incoming rows to the original schema (CASA's optional ARRAY_ID and

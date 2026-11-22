@@ -93,7 +93,7 @@ def check_science(table_path, vis, truth, mode):
     np.testing.assert_allclose(result, truth, atol=5e-7, rtol=5e-7)
 
 
-def compare_tables(reference, actual, rows=None):
+def compare_tables(reference, actual, rows=None, *, logical_splines=False):
     with opened(reference) as left, opened(actual) as right:
         assert left.info() == right.info()
         assert sorted(left.colnames()) == sorted(right.colnames())
@@ -107,6 +107,11 @@ def compare_tables(reference, actual, rows=None):
                 if not defined:
                     continue
                 a, b = left.getcell(name, left_row), right.getcell(name, right_row)
+                if logical_splines and name.startswith(('SPLINE_KNOTS_', 'POLY_COEFF_')):
+                    term = name.rsplit('_', 1)[1]
+                    count = (left.getcell(f'N_KNOTS_{term}', left_row) if name.startswith('SPLINE')
+                             else 2 * left.getcell(f'N_POLY_{term}', left_row)) or 1
+                    a, b = a.ravel()[:count], b.ravel()[:count]
                 if name == 'REF_FREQUENCY':
                     np.testing.assert_allclose(b, a, atol=.01, rtol=0., err_msg=name)
                 elif name == 'TIME' or name.startswith('SPLINE_KNOTS_'):
@@ -245,7 +250,7 @@ def benchmark(root, solvers):
                 compare_tables(products['casa', iteration], products['native', iteration])
 
 
-def check_solve_edges(root, solvers):
+def check_solve_edges(root, solvers, appliers):
     work = root / 'solve-controls'
     work.mkdir()
     vis = root / 'combined/source.ms'
@@ -304,12 +309,24 @@ def check_solve_edges(root, solvers):
             compare_tables(tables['casa'], tables['native'], (range(5, 10), range(5, 10)))
             shutil.copytree(tables['native'], work / 'before-replace-native.cal')
             solve(work, vis, solvers['native'], 'append-native', 'p',
-                  field='PHASE', splinetime=90., append=True)
+                  field='PHASE', splinetime=30., append=True)
             with opened(tables['native']) as table:
                 assert table.nrows() == 10
                 assert table.getcell('POLY_MODE', 6) == 'PHAS'
-                assert table.getcell('N_KNOTS_PHASE', 6) == 8
-            compare_tables(work / 'before-replace-native.cal', tables['native'], (range(5), range(5)))
+                assert table.getcell('N_KNOTS_PHASE', 6) > table.getcell('N_KNOTS_PHASE', 1)
+                for name in ('SPLINE_KNOTS_AMP', 'SPLINE_KNOTS_PHASE', 'POLY_COEFF_AMP', 'POLY_COEFF_PHASE'):
+                    assert table.getcell(name, 1).shape == table.getcell(name, 6).shape
+            compare_tables(work / 'before-replace-native.cal', tables['native'],
+                           (range(5), range(5)), logical_splines=True)
+            with opened(vis) as table:
+                data = table.getcol('DATA')
+                phase_field = table.getcol('FIELD_ID') == 1
+            expected = np.ones_like(data)
+            expected[..., phase_field] = np.abs(data[..., phase_field])
+            for backend, task in appliers.items():
+                calibrated, flags = apply(work, vis, task, tables['native'], f'mixed-{backend}')
+                assert not flags.any()
+                np.testing.assert_allclose(calibrated, expected, atol=6e-7, rtol=6e-7)
 
 
 def check_single_hand(root, solvers, appliers):
@@ -498,7 +515,7 @@ def main():
     check_case(root, 'wrap', 'p', solvers, appliers, noisy=True, wraps=True,
                splinetime=70., npointaver=4, phasewrap=145.)
     if args.edge_cases:
-        check_solve_edges(root, solvers)
+        check_solve_edges(root, solvers, appliers)
         check_single_hand(root, solvers, appliers)
         check_apply_edges(root, appliers)
         check_selection_model_and_prior(root, solvers, appliers)
