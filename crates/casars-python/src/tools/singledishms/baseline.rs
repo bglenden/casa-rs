@@ -5,7 +5,8 @@ use std::path::Path;
 use std::sync::PoisonError;
 
 use casa_calibration::{
-    SingleDishBaseline, SingleDishBaselineDiagnostics, SingleDishBaselineMode, SingleDishLineFinder,
+    SingleDishBaseline, SingleDishBaselineBasis, SingleDishBaselineDiagnostics,
+    SingleDishBaselineMode, SingleDishLineFinder, SingleDishSinusoid,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -72,11 +73,6 @@ impl PySingleDishMs {
     ) -> PyResult<bool> {
         let order = usize::try_from(order)
             .map_err(|_| PyRuntimeError::new_err("order must be positive or zero."))?;
-        let family = if blfunc.eq_ignore_ascii_case("chebyshev") {
-            "chebyshev"
-        } else {
-            "poly"
-        };
         self.run_fit(
             py,
             ToolOutput {
@@ -89,8 +85,10 @@ impl PySingleDishMs {
                 sigmavalue,
             },
             ToolFit {
-                family,
-                order,
+                basis: SingleDishBaselineBasis::Polynomial {
+                    order,
+                    chebyshev: blfunc.eq_ignore_ascii_case("chebyshev"),
+                },
                 clip_sigma: clip_threshold_sigma,
                 num_fitting_max,
                 line_finder: line_finder(
@@ -141,8 +139,61 @@ impl PySingleDishMs {
                 sigmavalue,
             },
             ToolFit {
-                family: "cspline",
-                order: pieces,
+                basis: SingleDishBaselineBasis::CubicSpline { pieces },
+                clip_sigma: clip_threshold_sigma,
+                num_fitting_max,
+                line_finder: line_finder(
+                    linefinding,
+                    threshold,
+                    avg_limit,
+                    minwidth,
+                    edge.as_ref(),
+                ),
+            },
+        )
+    }
+
+    #[pyo3(signature = (datacolumn="data", outfile="", bloutput="", dosubtract=true, spw=Variant::Empty, updateweight=false, sigmavalue="stddev", addwn="0", rejwn="", applyfft=false, fftmethod="fft", fftthresh=Variant::Empty, clip_threshold_sigma=3.0, num_fitting_max=1, linefinding=false, threshold=5.0, avg_limit=4, minwidth=4, edge=None), text_signature = "($self, datacolumn='data', outfile='', bloutput='', dosubtract=True, spw=[], updateweight=False, sigmavalue='stddev', addwn='0', rejwn='', applyfft=False, fftmethod='fft', fftthresh=[], clip_threshold_sigma=3.0, num_fitting_max=1, linefinding=False, threshold=5.0, avg_limit=4, minwidth=4, edge=[0, 0])")]
+    #[allow(clippy::too_many_arguments)]
+    fn subtract_baseline_sinusoid(
+        &self,
+        py: Python<'_>,
+        datacolumn: &str,
+        outfile: &str,
+        bloutput: &str,
+        dosubtract: bool,
+        spw: Variant,
+        updateweight: bool,
+        sigmavalue: &str,
+        addwn: &str,
+        rejwn: &str,
+        applyfft: bool,
+        fftmethod: &str,
+        fftthresh: Variant,
+        clip_threshold_sigma: f64,
+        num_fitting_max: i32,
+        linefinding: bool,
+        threshold: f64,
+        avg_limit: i32,
+        minwidth: i32,
+        edge: Option<IntList>,
+    ) -> PyResult<bool> {
+        let fftthresh = selector(&fftthresh).unwrap_or_default();
+        let sinusoid = SingleDishSinusoid::from_tool(addwn, rejwn, applyfft, fftmethod, &fftthresh)
+            .map_err(PyRuntimeError::new_err)?;
+        self.run_fit(
+            py,
+            ToolOutput {
+                datacolumn,
+                outfile,
+                bloutput,
+                dosubtract,
+                spw,
+                updateweight,
+                sigmavalue,
+            },
+            ToolFit {
+                basis: SingleDishBaselineBasis::Sinusoid(sinusoid),
                 clip_sigma: clip_threshold_sigma,
                 num_fitting_max,
                 line_finder: line_finder(
@@ -168,8 +219,7 @@ struct ToolOutput<'a> {
 }
 
 struct ToolFit {
-    family: &'static str,
-    order: usize,
+    basis: SingleDishBaselineBasis,
     clip_sigma: f64,
     num_fitting_max: i32,
     line_finder: Option<SingleDishLineFinder>,
@@ -221,8 +271,7 @@ impl PySingleDishMs {
             py,
             SingleDishBaseline {
                 mode: SingleDishBaselineMode::Fit {
-                    family: fit.family,
-                    order: fit.order,
+                    basis: fit.basis,
                     clip_sigma: fit.clip_sigma,
                     max_fits,
                     line_finder: fit.line_finder,

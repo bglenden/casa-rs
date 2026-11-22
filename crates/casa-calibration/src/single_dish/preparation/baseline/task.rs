@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::transform::TransformTaskHistory;
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_provider_contracts::CasaValue;
+use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
+use super::sinusoid::{FftThreshold, INVALID_WAVE, WaveSelection};
 use super::{
-    SingleDishBaseline, SingleDishBaselineDiagnostics, SingleDishBaselineMode, SingleDishLineFinder,
+    SingleDishBaseline, SingleDishBaselineBasis, SingleDishBaselineDiagnostics,
+    SingleDishBaselineMode, SingleDishLineFinder, SingleDishSinusoid,
 };
 use crate::single_dish::{preparation::SingleDishSession, selector};
 
@@ -55,18 +57,21 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let table = task.text("bltable")?.unwrap_or_default();
     let baseline_mode = match mode.as_str() {
         "fit" => {
-            if !matches!(family.as_str(), "poly" | "chebyshev" | "cspline") {
-                return Err(unsupported(&family, "blfunc"));
-            }
-            let order = if family == "cspline" {
-                usize::try_from(task.integer("npiece")?)
-                    .ok()
-                    .filter(|&pieces| pieces != 0)
-                    .ok_or_else(|| {
-                        TaskFailure::execution("npiece must be positive.").at("npiece")
-                    })?
-            } else {
-                nonnegative(task, "order")?
+            let basis = match family.as_str() {
+                "poly" | "chebyshev" => SingleDishBaselineBasis::Polynomial {
+                    order: nonnegative(task, "order")?,
+                    chebyshev: family == "chebyshev",
+                },
+                "cspline" => SingleDishBaselineBasis::CubicSpline {
+                    pieces: usize::try_from(task.integer("npiece")?)
+                        .ok()
+                        .filter(|&pieces| pieces != 0)
+                        .ok_or_else(|| {
+                            TaskFailure::execution("npiece must be positive.").at("npiece")
+                        })?,
+                },
+                "sinusoid" => SingleDishBaselineBasis::Sinusoid(sinusoid(task)?),
+                _ => return Err(unsupported(&family, "blfunc")),
             };
             let line_finder = if maskmode == "auto" {
                 Some(SingleDishLineFinder::new(
@@ -79,8 +84,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                 None
             };
             SingleDishBaselineMode::Fit {
-                family: &family,
-                order,
+                basis,
                 clip_sigma: task.number("clipthresh")?,
                 max_fits: nonnegative(task, "clipniter")? + 1,
                 line_finder,
@@ -140,6 +144,92 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         })
         .map_err(TaskFailure::execution)?;
     TaskSuccess::new(CasaValue::None, &report)
+}
+
+fn sinusoid(task: &TaskInvocation<'_>) -> Result<SingleDishSinusoid, TaskFailure> {
+    let include = wave_selection(task, "addwn")?;
+    let exclude = wave_selection(task, "rejwn")?;
+    let threshold = match task.value("fftthresh").map(numpy_scalar) {
+        Some(ParameterValue::Integer(value)) => value.to_string(),
+        Some(ParameterValue::Float(value)) => value.to_string(),
+        Some(ParameterValue::String(value)) => value.to_ascii_lowercase(),
+        _ => {
+            return Err(
+                TaskFailure::validation("fftthresh must be float or integer or string.")
+                    .at("fftthresh"),
+            );
+        }
+    };
+    FftThreshold::validate(&threshold)
+        .map_err(|message| TaskFailure::validation(message).at("fftthresh"))?;
+    if matches!(&include, WaveSelection::Explicit(values) if values.is_empty()) {
+        return Err(TaskFailure::execution("addwn must contain at least one element.").at("addwn"));
+    }
+    Ok(SingleDishSinusoid::new(
+        include,
+        exclude,
+        task.flag("applyfft")?,
+        &task.required_text("fftmethod")?.to_ascii_lowercase(),
+        &threshold,
+    ))
+}
+
+fn numpy_scalar(value: &ParameterValue) -> &ParameterValue {
+    match value {
+        ParameterValue::NumpyScalar { value, .. } => value,
+        value => value,
+    }
+}
+
+fn wave_selection(task: &TaskInvocation<'_>, name: &str) -> Result<WaveSelection, TaskFailure> {
+    let selection = match task.value(name) {
+        Some(ParameterValue::String(text)) => WaveSelection::from_task_text(text),
+        Some(ParameterValue::Integer(value)) => WaveSelection::explicit([*value]),
+        Some(ParameterValue::Array(values)) => wave_list(values),
+        _ => Err(INVALID_WAVE.into()),
+    };
+    selection.map_err(|message| TaskFailure::validation(message).at(name))
+}
+
+fn wave_list(values: &[ParameterValue]) -> Result<WaveSelection, String> {
+    if values
+        .iter()
+        .any(|value| matches!(value, ParameterValue::String(_)))
+    {
+        let mut text = Vec::with_capacity(values.len());
+        for value in values {
+            let ParameterValue::String(value) = value else {
+                return Err("Cannot sort a wavenumber list containing strings and numbers.".into());
+            };
+            text.push(value.as_str());
+        }
+        text.sort_unstable();
+        text.dedup();
+        let indexes = text
+            .into_iter()
+            .map(|value| value.trim().parse::<i64>().map_err(|_| INVALID_WAVE))
+            .collect::<Result<Vec<_>, _>>()?;
+        return WaveSelection::explicit(indexes);
+    }
+
+    // CASA sorts and deduplicates the original Python values, then converts
+    // the joined list to integer prefixes in the direct tool.
+    let mut numbers = Vec::with_capacity(values.len());
+    for value in values.iter().map(numpy_scalar) {
+        let number = match value {
+            ParameterValue::Float(value) if value.is_finite() => (*value, *value as i64),
+            ParameterValue::Integer(value) => (*value as f64, *value),
+            ParameterValue::Bool(value) => (f64::from(u8::from(*value)), 0),
+            _ => return Err(INVALID_WAVE.into()),
+        };
+        if number.1 < 0 {
+            return Err(INVALID_WAVE.into());
+        }
+        numbers.push(number);
+    }
+    numbers.sort_by(|left, right| left.0.partial_cmp(&right.0).expect("finite wave number"));
+    numbers.dedup_by(|left, right| left.0 == right.0);
+    WaveSelection::explicit(numbers.into_iter().map(|(_, index)| index))
 }
 
 fn selected_windows(input: &Path, mask: &str) -> Result<String, TaskFailure> {

@@ -359,8 +359,21 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if value not in allowed:
                 message = "null value not allowed" if value is None else f"unallowed value {value}"
                 raise AssertionError(str({parameter: [message]}))
+        if arguments["blfunc"].lower() == "sinusoid" and str(arguments["blmode"]).lower() == "fit":
+            import numpy as np
+
+            for parameter in ("addwn", "rejwn"):
+                value = arguments[parameter]
+                if isinstance(value, tuple):
+                    raise AssertionError(str({parameter: ["must be of cVariant type"]}))
+                if isinstance(value, np.ndarray):
+                    raise ValueError("wrong value given for addwn/rejwn")
         try:
             return run(name, **values).value
+        except TaskParameterError as error:
+            if error.completion.message == "Cannot sort a wavenumber list containing strings and numbers.":
+                raise TypeError(error.completion.message) from error
+            raise
         except TaskExecutionError as error:
             message = error.completion.message or ""
             if message.endswith("is not yet implemented (#1532)"):
