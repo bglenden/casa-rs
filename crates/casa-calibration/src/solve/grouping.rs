@@ -941,20 +941,7 @@ impl SolveAccumulator {
             return Ok(());
         }
         if options.channelized {
-            let channel_count = channels
-                .indices
-                .len()
-                .div_ceil(channels.bin_width.unwrap_or(1));
-            if !options.gain_type.is_delay()
-                && self.sample_rows > 0
-                && self.solution_channels != channel_count
-            {
-                return Err(GainSolveError::UnsupportedParameterShape {
-                    path: "<measurement-set DATA>".to_string(),
-                    shape: samples.data.shape().to_vec(),
-                });
-            }
-            self.solution_channels = self.solution_channels.max(channel_count);
+            self.update_solution_channels(channels, options.gain_type, samples.data.shape())?;
         }
 
         let baseline_solve = options.input_rows.is_baseline();
