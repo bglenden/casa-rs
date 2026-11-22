@@ -56,7 +56,7 @@ PARTIAL = {
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
     "image": {
-        "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
+        "fromcomplist", "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },
 }
 

@@ -8456,6 +8456,16 @@ referent. An internal relative link moves with its file. An external
 absolute link continues to share the existing file.
 See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
+## Uncached component-list images can count a point source twice
+
+Create a temporary component-list image of shape `[6, 8]` with a 2 Jy
+point source at the default direction reference and `cache=False`.
+In CASA 6.7.6.14, the first full read returns 2 Jy at `[3, 4]`. The next
+read returns 4 Jy there. The cached case returns 2 Jy on both reads.
+Casa-rs samples the same owned component model for each requested
+section and returns 2 Jy in either cache mode.
+See [#1691](https://github.com/bglenden/casa-rs/issues/1691).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

@@ -19,7 +19,7 @@ use CasaDefault::{
 use Kind as K;
 use Returns as R;
 #[allow(unused_imports)]
-use Status::{Implemented as Yes, NotYetImplemented as No};
+use Status::Implemented as Yes;
 
 /// Every public method of CASA's installed `image` binding.
 const METHODS: &[Method] = &[
@@ -455,14 +455,14 @@ const METHODS: &[Method] = &[
         &[
             param("outfile", K::Text, Text("")),
             param("shape", K::Any, Empty),
-            param("cl", K::Text, Text("")),
+            param("cl", K::Any, Text("")),
             param("csys", K::Record, EmptyRecord),
             param("overwrite", K::Bool, Bool(false)),
             param("log", K::Bool, Bool(true)),
             param("cache", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Status::Partial,
     ),
     method(
         "fromfits",

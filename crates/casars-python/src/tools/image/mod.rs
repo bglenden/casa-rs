@@ -73,7 +73,6 @@ mod serialization;
 mod slice;
 mod smoothing;
 mod statistics;
-mod stubs;
 mod subimage;
 mod summary;
 pub(crate) mod surface;

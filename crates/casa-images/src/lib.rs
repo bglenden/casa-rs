@@ -62,6 +62,7 @@
 pub mod analysis;
 pub mod beam;
 mod casa_return;
+mod component_list_image;
 pub mod concatenate;
 pub mod convolve2d;
 pub mod error;
@@ -109,6 +110,7 @@ pub use casa_return::{
     ImheadGetError, imhead_get_value, imhead_list_record, imhead_summary_record,
     imstat_planes_record, imstat_record,
 };
+pub use component_list_image::ComponentListImage;
 pub use convolve2d::{Convolved, convolve2d};
 pub use error::ImageError;
 pub use fits_read::{FitsImage, fits_image_shape, read_fits_image};

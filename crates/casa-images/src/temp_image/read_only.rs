@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use casa_lattices::TempStoragePolicy;
 
 use crate::image_expr::{ImageExprValue, ImageExpression};
-use crate::{ImageError, ImageInterface, ImagePixel};
+use crate::{ComponentListImage, ImageError, ImageInterface, ImagePixel};
 
 use super::TempImage;
 
@@ -15,6 +15,27 @@ pub(super) struct ReadOnlyImage<T: ImagePixel> {
     pub(super) image_type: &'static str,
     pub(super) write_error: &'static str,
     pub(super) has_mask: bool,
+}
+
+impl TempImage<f32> {
+    /// Rebuild the component sampler after a validated coordinate edit.
+    /// # Errors
+    /// Returns an error for any other image type or invalid component geometry.
+    pub fn set_component_coordinates(
+        &mut self,
+        coordinates: casa_coordinates::CoordinateSystem,
+    ) -> Result<(), ImageError> {
+        let invalid = || ImageError::CasaSelection("A component-list source is required".into());
+        let source = self.read_only.as_mut().ok_or_else(invalid)?;
+        let components = source
+            .source
+            .as_any()
+            .and_then(|source| source.downcast_ref::<ComponentListImage>())
+            .ok_or_else(invalid)?;
+        source.source = Box::new(components.with_coordinates(coordinates.clone())?);
+        self.coords = coordinates;
+        Ok(())
+    }
 }
 
 impl<T: ImagePixel> TempImage<T> {
