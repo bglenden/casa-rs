@@ -10,17 +10,24 @@ use casa_images::expr_file::{
     ToolExpressionManifest, encode_tool_manifest, is_image_expr, read_tool_manifest,
 };
 use casa_images::{ImageExpression, ImagePixelType, TempImage, image_expr::ImageExprValue};
+use casa_tables::lexical_absolute;
 use casa_types::{Complex32, PrimitiveType, RecordValue};
 use pyo3::prelude::*;
 
 use super::attachment::AttachedImage;
 use super::handle::{ImageHandle, Storage, raised, same_file_identity, same_file_snapshot};
 
+mod rename;
+
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
     let initial = PendingExpression::read(root, &directory)?;
-    let captured = SavedExpressionDirectory::open(path, &initial)?;
+    let captured = SavedExpressionDirectory::capture(
+        path,
+        initial.path.clone(),
+        initial.manifest.expression.clone(),
+    )?;
     let mut graph = CapturedGraph::default();
     let (pixels, single_precision) = graph.compile(initial, &directory)?;
     captured.check_name(path)?;
@@ -63,8 +70,7 @@ pub(super) struct SavedExpressionDirectory {
 }
 
 impl SavedExpressionDirectory {
-    fn open(name: &Path, initial: &PendingExpression) -> PyResult<Self> {
-        let path = initial.path.clone();
+    fn capture(name: &Path, path: PathBuf, expression: String) -> PyResult<Self> {
         #[cfg(unix)]
         let handle = casa_tables::publication::open_directory_identity(&path).map_err(raised)?;
         #[cfg(unix)]
@@ -74,7 +80,7 @@ impl SavedExpressionDirectory {
         let directory = Self {
             path,
             identity,
-            expression: initial.manifest.expression.clone(),
+            expression,
             #[cfg(unix)]
             handle,
         };
@@ -174,12 +180,15 @@ impl CapturedGraph {
         let mut pending = vec![root];
         let mut compiled = HashMap::new();
         while let Some(frame) = pending.last_mut() {
-            if let Some(path) = frame.next_path() {
+            if let Some((path, entry)) = frame.next_path() {
                 if active.contains(path) {
                     return Err(raised(format!(
                         "Cycle in saved image expression at {}",
                         path.display()
                     )));
+                }
+                if entry != path {
+                    self.paths.push(lexical_absolute(entry));
                 }
                 if !self.seen_paths.insert(path.to_path_buf()) {
                     continue;
@@ -235,10 +244,10 @@ impl PendingExpression {
         })
     }
 
-    fn next_path(&mut self) -> Option<&Path> {
-        let path = self.inputs.paths().nth(self.next)?;
+    fn next_path(&mut self) -> Option<(&Path, &Path)> {
+        let paths = self.inputs.paths_and_entries().nth(self.next)?;
         self.next += 1;
-        Some(path)
+        Some(paths)
     }
 
     fn compile(
