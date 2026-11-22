@@ -75,6 +75,7 @@ mod image_expr_lel;
 mod image_expr_ops;
 pub mod image_info;
 mod linear_mosaic;
+pub mod miriad_read;
 pub mod pixel_slice;
 mod plane;
 pub mod regrid;

@@ -90,8 +90,19 @@ impl PyImageTool {
                 logs.push(LogLine::warning("You must specify at least either the pixels or the mask to set"));
                 return Ok(false);
             }
-            if handle.fits().is_some() {
-                return Err(raised(if set_mask { "Cannot make requested mask for this image type which is FITSImage" } else { "FITSImage is not writable" }));
+            if let Some(kind) = handle.read_only_file_type() {
+                if kind == "MIRIADImage" {
+                    return Err(raised(if has_pixels {
+                        "Failed AlwaysAssert to.isWritable()"
+                    } else {
+                        "SubLattice::pixelMask - no pixelmask available"
+                    }));
+                }
+                return Err(raised(if set_mask {
+                    format!("Cannot make requested mask for this image type which is {kind}")
+                } else {
+                    format!("{kind} is not writable")
+                }));
             }
             attachment.require_lock(&mut handle, casa_tables::LockType::Write)?;
             let ImageHandle::Float(storage) = &*handle else { unreachable!("float attachment checked") };

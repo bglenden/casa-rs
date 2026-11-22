@@ -45,16 +45,18 @@ use crate::image::{
     ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface,
     PagedImage, assign_mask_slice, validate_mask_slice_write, validate_new_mask_name,
 };
-use crate::image_expr::{ImageExprBuilder, ImageExprValue, ImageExpression};
+use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
 
 mod mask;
+mod read_only;
 
 use mask::TempMask;
+use read_only::ReadOnlyImage;
 
-/// A temporary image that stores pixels in a [`TempLattice`] and metadata
-/// in member fields.
+/// An image with tool-local metadata and pixels in a [`TempLattice`] or a
+/// read-only source.
 ///
 /// Corresponds to C++ `casacore::TempImage<T>`.  Unlike [`PagedImage`],
 /// a `TempImage` never writes to a casacore table unless explicitly
@@ -65,7 +67,7 @@ use mask::TempMask;
 /// policy through [`TempStoragePolicy`].
 pub struct TempImage<T: ImagePixel> {
     lattice: TempLattice<T>,
-    expression: Option<ReadOnlyExpression<T>>,
+    read_only: Option<ReadOnlyImage<T>>,
     coords: CoordinateSystem,
     units: String,
     misc_info: RecordValue,
@@ -76,11 +78,6 @@ pub struct TempImage<T: ImagePixel> {
     default_mask: Option<String>,
     anonymous_mask: Option<TempMask>,
     history: Vec<ImageHistoryRow>,
-}
-
-struct ReadOnlyExpression<T: ImagePixel> {
-    source: Box<dyn ImageInterface<T> + Send + Sync>,
-    has_mask: bool,
 }
 
 // ---- Constructors -----------------------------------------------------------
@@ -103,7 +100,7 @@ impl<T: ImagePixel> TempImage<T> {
         };
         Ok(Self {
             lattice,
-            expression: None,
+            read_only: None,
             coords,
             units: String::new(),
             misc_info: RecordValue::default(),
@@ -117,51 +114,23 @@ impl<T: ImagePixel> TempImage<T> {
         })
     }
 
-    /// Attach an expression as a read-only pixel source with editable image metadata.
-    /// Reads evaluate the requested region of the expression on demand.
-    ///
-    /// # Errors
-    /// Returns an error if the expression has no lattice shape.
-    pub fn from_expression(expression: ImageExpression<T>) -> Result<Self, ImageError>
-    where
-        T: ImageExprValue,
-    {
-        let mut image = Self::new(
-            vec![1; expression.ndim()],
-            expression.coordinates().clone(),
-            TempStoragePolicy::Memory,
-        )?;
-        image.units = expression.units().to_owned();
-        image.misc_info = expression.misc_info();
-        image.image_info = expression.image_info()?;
-        image.image_info_record = expression.raw_image_info();
-        image.expression = Some(ReadOnlyExpression {
-            has_mask: expression.may_have_mask(),
-            source: Box::new(expression),
-        });
-        Ok(image)
-    }
-
     fn pixel_source(&self) -> &dyn Lattice<T> {
-        match &self.expression {
-            Some(expression) => expression.source.as_ref(),
+        match &self.read_only {
+            Some(image) => image.source.as_ref(),
             None => &self.lattice,
         }
     }
 
     fn require_writable_pixels(&self) -> Result<(), LatticeError> {
-        if self.is_writable() {
-            Ok(())
-        } else {
-            Err(LatticeError::Table(
-                "ImageExpr::putSlice - is not possible as ImageExpr is not writable".into(),
-            ))
+        match &self.read_only {
+            Some(image) => Err(LatticeError::Table(image.write_error.into())),
+            None => Ok(()),
         }
     }
 
     /// Returns `true` if the pixel data is held entirely in memory.
     pub fn is_in_memory(&self) -> bool {
-        self.expression.is_none() && self.lattice.is_in_memory()
+        self.read_only.is_none() && self.lattice.is_in_memory()
     }
 }
 
@@ -183,33 +152,37 @@ impl<T: ImagePixel> TempImage<T> {
         self.pixel_source().nelements()
     }
 
-    /// Returns `false` — temporary images are never persistent.
+    /// Reports whether the attachment has a persistent image source.
     pub fn is_persistent(&self) -> bool {
-        false
+        self.name().is_some()
     }
 
-    /// Returns `true` if the backing lattice uses paged storage.
+    /// Reports whether the attachment reads pixels from paged storage.
     pub fn is_paged(&self) -> bool {
         self.lattice.is_paged()
+            || self
+                .read_only
+                .as_ref()
+                .is_some_and(|image| image.name.is_some() && image.source.is_paged())
     }
 
     /// Reports whether this image's pixels are writable.
     pub fn is_writable(&self) -> bool {
-        self.expression.is_none()
+        self.read_only.is_none()
     }
 
     /// Returns the casacore-style class name.
     pub fn image_type_name(&self) -> &'static str {
-        if self.expression.is_some() {
-            "ImageExpr"
-        } else {
-            "TempImage"
-        }
+        self.read_only
+            .as_ref()
+            .map_or("TempImage", |image| image.image_type)
     }
 
-    /// Returns `None` — temporary images have no on-disk path.
+    /// Name of the read-only image source, when attached to a persistent image.
     pub fn name(&self) -> Option<&Path> {
-        None
+        self.read_only
+            .as_ref()
+            .and_then(|image| image.name.as_deref())
     }
 
     pub(crate) fn set_pixel_cache_budget(&mut self, bytes: usize) -> Result<(), ImageError> {
@@ -622,7 +595,7 @@ impl<T: ImagePixel> TempImage<T> {
     pub fn save_as(&self, path: impl AsRef<Path>) -> Result<PagedImage<T>, ImageError> {
         let path = path.as_ref();
         let mut paged = PagedImage::create(self.shape().to_vec(), self.coords.clone(), path)?;
-        if let Some(expression) = &self.expression {
+        if let Some(expression) = &self.read_only {
             let shape = self.shape().to_vec();
             let tile = paged.tile_shape().to_vec();
             let stride = vec![1; self.ndim()];
@@ -745,11 +718,11 @@ impl<T: ImagePixel> Lattice<T> for TempImage<T> {
     }
 
     fn is_persistent(&self) -> bool {
-        false
+        TempImage::is_persistent(self)
     }
 
     fn is_paged(&self) -> bool {
-        self.lattice.is_paged()
+        TempImage::is_paged(self)
     }
 
     fn is_writable(&self) -> bool {
@@ -893,7 +866,7 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
     }
 
     fn default_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
-        if let Some(expression) = &self.expression {
+        if let Some(expression) = &self.read_only {
             return expression.source.default_mask();
         }
         match self.default_mask.as_deref() {
@@ -903,7 +876,7 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
     }
 
     fn has_pixel_mask(&self) -> bool {
-        self.expression.as_ref().map_or(
+        self.read_only.as_ref().map_or(
             self.default_mask.is_some() || self.anonymous_mask.is_some(),
             |expression| expression.has_mask,
         )
@@ -915,7 +888,7 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<Option<ArrayD<bool>>, ImageError> {
-        if let Some(expression) = &self.expression {
+        if let Some(expression) = &self.read_only {
             return expression.source.get_mask_slice(start, shape, stride);
         }
         match self.default_mask.as_deref() {
