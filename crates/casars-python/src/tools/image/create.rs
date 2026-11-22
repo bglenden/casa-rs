@@ -471,7 +471,8 @@ impl ImagePublication {
         if casa_images::concat_file::is_image_concat(&stage.target) {
             stage.check_alias()?;
             let name = stage.alias.as_deref().unwrap_or(&stage.target);
-            let image = super::concatenate::virtual_image::open_handle(&stage.target).map_err(raised)?;
+            let image =
+                super::concatenate::virtual_image::open_handle(&stage.target).map_err(raised)?;
             if !self.still_at_destination(&stage.target) {
                 return Err(raised(
                     "The published virtual concatenation changed during creation",
