@@ -9,12 +9,12 @@ import casatasks
 from casatools import calibrater as casa_calibrater
 
 from blcal_oracle import compare_tables, copy_ms, opened, source
-from calibrater_apply_tool_oracle import same_record
+from calibrater_apply_tool_oracle import result, same_record
 from calibrater_solve_tool_oracle import compare_readers
 
 
 def solve_case(work, tools, vis, name, options, *, legacy=False, selection=None,
-               corrdep=False, append=False, empty=False):
+               corrdep=False, append=False, outcome='product'):
     paths, records, activity = {}, {}, {}
     selection = {'field': 'FLUX', 'spw': '0'} | (selection or {})
     for label, make_tool in tools.items():
@@ -25,16 +25,20 @@ def solve_case(work, tools, vis, name, options, *, legacy=False, selection=None,
         assert tool.selectvis(**selection) and tool.setptmodel([1., 0., 0., 0.])
         assert tool.setcorrdepflags(corrdep)
         assert tool.setsolve(table=str(path), **options)
-        assert tool.solve()
+        solved = result(tool.solve)
+        if outcome == 'error':
+            assert solved == (False, ('RuntimeError', 'Error in Calibrater::solve.'))
+        else:
+            assert solved == (True, True), (name, label, solved)
         if append:
             assert tool.selectvis(**(selection | {'field': 'PHASE'}))
             assert tool.setptmodel([1., 0., 0., 0.])
             assert tool.setsolve(table=str(path), append=True, **options)
             assert tool.solve()
-        assert path.is_dir() != empty, (name, label)
+        assert path.is_dir() == (outcome == 'product'), (name, label)
         records[label] = tool.returndict()
         activity[label] = tool.activityrec()
-        assert list(records[label]['solve_tables']) == [str(path)]
+        assert list(records[label]['solve_tables']) == ([] if outcome == 'error' else [str(path)])
         assert tool.close()
     same_record(activity['native'], activity['casa'])
     if legacy:
@@ -42,7 +46,7 @@ def solve_case(work, tools, vis, name, options, *, legacy=False, selection=None,
         assert all('solvestats' not in record for record in records.values())
     else:
         same_record(records['native']['solvestats'], records['casa']['solvestats'])
-    if not empty:
+    if outcome == 'product':
         error = compare_tables(paths['casa'], paths['native'])
         compare_readers(paths)
         print(name, 'solution NRMS', error, flush=True)
@@ -76,9 +80,12 @@ def main():
     solve_case(work, tools, vis, 'm-amp', {'type': 'M', 'apmode': 'A', 'solnorm': True})
     solve_case(work, tools, vis, 'mf-phase', {'type': 'MF', 'apmode': 'P'})
     solve_case(work, tools, vis, 'mf-append', {'type': 'MF'}, append=True)
-    solve_case(work, tools, flagged, 'mf-flagged', {}, empty=True)
+    solve_case(work, tools, flagged, 'mf-flagged', {}, outcome='empty')
     solve_case(work, tools, vis, 'm-legacy', {'type': 'M'}, legacy=True)
     solve_case(work, tools, vis, 'mf-legacy', {'type': 'MF'}, legacy=True)
+    solve_case(work, tools, flagged, 'mf-legacy-flagged', {}, legacy=True, outcome='empty')
+    solve_case(work, tools, vis, 'mf-legacy-binned', {'t': 'inf,2ch'}, legacy=True,
+               selection={'spw': '0:1~12'}, outcome='error')
 
 
 if __name__ == '__main__':

@@ -7,7 +7,8 @@ use casa_ms::MeasurementSet;
 use casa_types::Complex32;
 
 use super::grouping::{
-    PriorCalibrationMode, SolveAccumulator, SolveGroupOptions, SolveInputRows, build_solve_groups,
+    PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows,
+    build_solve_groups, selected_channels,
 };
 use super::kernel::SolutionRow;
 use super::writer::{GainChannelGrid, write_baseline_caltable};
@@ -50,6 +51,11 @@ pub(crate) fn solve(
     .map_err(setup_error)?;
     let bin_widths = solution_frequency_bin_widths(ms, &context.rows, frequency_interval)
         .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+    let incompatible_legacy_windows = if direct && legacy_iterator && frequency_dependent {
+        legacy_binned_windows(ms, &context.rows, &bin_widths)?
+    } else {
+        BTreeSet::new()
+    };
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -114,6 +120,11 @@ pub(crate) fn solve(
         if !attempted {
             continue;
         }
+        if incompatible_legacy_windows.contains(&group.spw_id) {
+            return Err(GainSolveError::Baseline(
+                "the legacy iterator cannot fit MF with frequency averaging".into(),
+            ));
+        }
         if group.baseline_correlation_counts.len() > 1 {
             return Err(GainSolveError::Baseline(
                 "Error in Calibrater::solve.".into(),
@@ -143,6 +154,35 @@ pub(crate) fn solve(
         selected_rows: &context.rows,
     });
     write_baseline_caltable(ms, request, &solved, mode, channels)
+}
+
+fn legacy_binned_windows(
+    ms: &MeasurementSet,
+    rows: &[SelectedSolveRow],
+    bin_widths: &BTreeMap<i32, usize>,
+) -> Result<BTreeSet<i32>, GainSolveError> {
+    if bin_widths.values().all(|&width| width <= 1) {
+        return Ok(BTreeSet::new());
+    }
+    let spectral = ms
+        .spectral_window()
+        .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+    let selections = rows
+        .iter()
+        .map(|row| (row.data_spw_id, row.channel_selection.as_ref()))
+        .collect::<BTreeMap<_, _>>();
+    let mut incompatible = BTreeSet::new();
+    for (window, selection) in selections {
+        if bin_widths.get(&window).is_some_and(|&width| width > 1) {
+            let count = spectral
+                .num_chan(window as usize)
+                .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+            if selected_channels(selection, count as usize)?.len() > 1 {
+                incompatible.insert(window);
+            }
+        }
+    }
+    Ok(incompatible)
 }
 
 fn setup_error(error: GainSolveError) -> GainSolveError {
