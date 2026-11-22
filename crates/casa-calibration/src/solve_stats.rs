@@ -29,6 +29,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_provider_contracts::CasaValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +103,40 @@ pub struct SolveStats {
     pub windows: Vec<WindowSolveStats>,
 }
 
+/// Interval-level counts do not depend on the number of correlations.
+#[derive(Debug, Clone, Copy, Default)]
+struct IntervalActivity {
+    expected: i64,
+    attempted: i64,
+    succeeded: i64,
+}
+
+/// The direct calibrater's per-window solve activity.
+#[derive(Default)]
+pub(crate) struct ToolSolveActivity {
+    windows: Vec<IntervalActivity>,
+}
+
+impl ToolSolveActivity {
+    pub(crate) fn record(&self) -> Option<CasaValue> {
+        if self.windows.is_empty() {
+            return None;
+        }
+        let vector = |field: fn(IntervalActivity) -> i64| {
+            CasaValue::int64_vector(self.windows.iter().copied().map(field))
+        };
+        Some(CasaValue::dict([
+            ("nAttempt", vector(|activity| activity.attempted)),
+            ("nExpected", vector(|activity| activity.expected)),
+            ("nSucceed", vector(|activity| activity.succeeded)),
+            (
+                "origin",
+                CasaValue::string("Calibrater::genericGatherAndSolve"),
+            ),
+        ]))
+    }
+}
+
 impl SolveStats {
     /// The counts summed over the windows, CASA's top-level counts; `None`
     /// for a solve with no windows.
@@ -168,7 +203,7 @@ pub(crate) struct AntennaSolution {
 type AntennaTally = (SolveCounts, u64);
 
 /// A window's counts and its antennas', by id.
-type WindowTally = (SolveCounts, BTreeMap<i32, AntennaTally>);
+type WindowTally = (SolveCounts, BTreeMap<i32, AntennaTally>, IntervalActivity);
 
 /// Accumulates [`SolveStats`] interval by interval.
 pub(crate) struct SolveStatsBuilder {
@@ -194,7 +229,16 @@ impl SolveStatsBuilder {
             antenna_ids: antenna_ids.iter().copied().collect(),
             windows: spw_ids
                 .into_iter()
-                .map(|spw_id| (spw_id, (SolveCounts::zero(polarizations), antennas.clone())))
+                .map(|spw_id| {
+                    (
+                        spw_id,
+                        (
+                            SolveCounts::zero(polarizations),
+                            antennas.clone(),
+                            IntervalActivity::default(),
+                        ),
+                    )
+                })
                 .collect(),
         }
     }
@@ -203,12 +247,15 @@ impl SolveStatsBuilder {
     pub(crate) fn interval(&mut self, stages: &IntervalStages<'_>) {
         let polarizations = self.polarizations;
         let blank = || (SolveCounts::zero(polarizations), 0);
-        let (window, antennas) = self.windows.entry(stages.spw_id).or_insert_with(|| {
+        let (window, antennas, activity) = self.windows.entry(stages.spw_id).or_insert_with(|| {
             (
                 SolveCounts::zero(polarizations),
                 self.antenna_ids.iter().map(|&id| (id, blank())).collect(),
+                IntervalActivity::default(),
             )
         });
+        activity.expected += 1;
+        activity.attempted += i64::from(stages.with_data.iter().any(|ants| !ants.is_empty()));
         let passed = !stages.constrained.is_empty();
         for polarization in 0..polarizations {
             let with_data = stages.with_data.get(polarization);
@@ -228,6 +275,13 @@ impl SolveStatsBuilder {
         }
     }
 
+    /// A solver kept this interval, independently of its final SNR flags.
+    pub(crate) fn record_success(&mut self, spw_id: i32, succeeded: bool) {
+        if let Some((_, _, activity)) = self.windows.get_mut(&spw_id) {
+            activity.succeeded += i64::from(succeeded);
+        }
+    }
+
     /// Count one interval's solutions as `minsnr` left them.
     pub(crate) fn solutions(
         &mut self,
@@ -235,7 +289,7 @@ impl SolveStatsBuilder {
         solutions: impl IntoIterator<Item = AntennaSolution>,
     ) {
         let polarizations = self.polarizations;
-        let Some((_, antennas)) = self.windows.get_mut(&spw_id) else {
+        let Some((_, antennas, _)) = self.windows.get_mut(&spw_id) else {
             return;
         };
         for solution in solutions {
@@ -252,11 +306,22 @@ impl SolveStatsBuilder {
     /// `antenna_id`, a solution of which the interval kept.
     pub(crate) fn used_as_refant(&mut self, spw_id: i32, antenna_id: i32) {
         let polarizations = self.polarizations;
-        if let Some((_, antennas)) = self.windows.get_mut(&spw_id) {
+        if let Some((_, antennas, _)) = self.windows.get_mut(&spw_id) {
             antennas
                 .entry(antenna_id)
                 .or_insert_with(|| (SolveCounts::zero(polarizations), 0))
                 .1 += 1;
+        }
+    }
+
+    /// Transfer the additional interval totals requested by the direct tool.
+    pub(crate) fn track_activity(&self, target: Option<&mut ToolSolveActivity>) {
+        if let Some(target) = target {
+            target.windows = self
+                .windows
+                .values()
+                .map(|(_, _, counts)| *counts)
+                .collect();
         }
     }
 
@@ -266,7 +331,7 @@ impl SolveStatsBuilder {
             windows: self
                 .windows
                 .into_iter()
-                .map(|(spw_id, (counts, antennas))| WindowSolveStats {
+                .map(|(spw_id, (counts, antennas, _))| WindowSolveStats {
                     spw_id,
                     counts,
                     antennas: antennas

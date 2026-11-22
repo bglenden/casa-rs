@@ -93,7 +93,7 @@ pub(crate) fn selectvis_record(selected: Option<&SelectedData>) -> CasaValue {
 /// CASA's `solvestats`: the counts summed over the windows, then each
 /// window's as `spw<id>`, each with its antennas' as `ant<id>`. CASA sorts
 /// every dictionary's keys as text, so `ant10` comes before `ant2`.
-fn solvestats(stats: &SolveStats) -> CasaValue {
+pub(crate) fn solvestats(stats: &SolveStats) -> CasaValue {
     let windows = stats.windows.iter().map(|window| {
         let antennas = window.antennas.iter().map(|antenna| {
             let mut entries = counts(&antenna.counts);

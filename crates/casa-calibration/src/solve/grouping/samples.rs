@@ -279,7 +279,7 @@ pub(super) fn rotate_model(
 /// The median, the mean of the middle two for an even count, as casacore's
 /// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
 /// channel-independent weight.
-pub(in crate::solve) fn median_with_even_mean(values: &mut [f32]) -> f32 {
+pub(crate) fn median_with_even_mean(values: &mut [f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
     }

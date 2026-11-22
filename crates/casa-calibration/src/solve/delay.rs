@@ -20,11 +20,12 @@ use super::{
     validate_solve_interval,
 };
 use crate::session::prepare_calibration_solve;
-use crate::solve_stats::{IntervalStages, SolveStatsBuilder};
+use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 
 pub(super) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
+    activity: Option<&mut ToolSolveActivity>,
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.refant, RefAntSelector::Unspecified) {
         return Err(delay_error("specify a reference antenna explicitly"));
@@ -110,6 +111,7 @@ pub(super) fn solve(
             continue;
         }
         attempted_spw_ids.insert(group.spw_id);
+        stats.record_success(group.spw_id, true);
         let solutions = group_delays(
             &group,
             request,
@@ -142,8 +144,10 @@ pub(super) fn solve(
             }
         }));
     }
+    let tool_solve = activity.is_some();
+    stats.track_activity(activity);
     let mut solve_stats = stats.finish();
-    if !cross_hand {
+    if !cross_hand && !tool_solve {
         // task_gaincal.resultsDictGaintypeExcept copies the unflagged
         // counts at each level, regardless of the actual solved delays.
         for window in &mut solve_stats.windows {

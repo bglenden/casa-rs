@@ -3,10 +3,6 @@
 
 use std::path::Path;
 
-use casa_calibration::{
-    CalibrationOutputMode, CalibrationSolveRequest, GainSolveMode, GainSolveModelSource,
-    GainSolveRequest, GainType, RefAntSelector,
-};
 use pyo3::prelude::*;
 
 use super::{PyCalibrater, runtime_error};
@@ -41,11 +37,6 @@ impl PyCalibrater {
         not_yet_implemented_in("calibrater", "fluxscale", 1528)
     }
 
-    #[pyo3(signature = (corrdepflags), text_signature = "($self, corrdepflags)")]
-    fn setcorrdepflags(&self, corrdepflags: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "setcorrdepflags", 1528)
-    }
-
     #[pyo3(signature = (modelimage), text_signature = "($self, modelimage)")]
     fn setmodel(&self, py: Python<'_>, modelimage: &str) -> PyResult<bool> {
         self.with_lifecycle(py, |state| {
@@ -54,123 +45,6 @@ impl PyCalibrater {
                 .map_err(runtime_error)?;
             Ok(true)
         })
-    }
-
-    #[pyo3(signature = (r#type = None, t = None, table = None, append = None, preavg = None, phaseonly = None, apmode = None, refant = None, refantmode = None, minblperant = None, solnorm = None, normtype = None, minsnr = None, combine = None, fillgaps = None, cfcache = None, painc = None, fitorder = None, fraction = None, numedge = None, radius = None, smooth = None, zerorates = None, globalsolve = None, niter = None, corrcomb = None, delaywindow = None, ratewindow = None, paramactive = None, concatspws = None, solmode = None, rmsthresh = None), text_signature = "($self, type='MF', t=[], table='', append=False, preavg=-1.0, phaseonly=False, apmode='AP', refant=[], refantmode='flex', minblperant=4, solnorm=False, normtype='mean', minsnr=0.0, combine='', fillgaps=0, cfcache='', painc=360.0, fitorder=0, fraction=0.1, numedge=-1, radius='', smooth=True, zerorates=False, globalsolve=True, niter=100, corrcomb='none', delaywindow=[], ratewindow=[], paramactive=[], concatspws=True, solmode='', rmsthresh=[])")]
-    fn setsolve(
-        &self,
-        py: Python<'_>,
-        r#type: Option<&str>,
-        t: Option<&Bound<'_, PyAny>>,
-        table: Option<&str>,
-        append: Option<&Bound<'_, PyAny>>,
-        preavg: Option<&Bound<'_, PyAny>>,
-        phaseonly: Option<&Bound<'_, PyAny>>,
-        apmode: Option<&Bound<'_, PyAny>>,
-        refant: Option<&Bound<'_, PyAny>>,
-        refantmode: Option<&Bound<'_, PyAny>>,
-        minblperant: Option<&Bound<'_, PyAny>>,
-        solnorm: Option<&Bound<'_, PyAny>>,
-        normtype: Option<&Bound<'_, PyAny>>,
-        minsnr: Option<&Bound<'_, PyAny>>,
-        combine: Option<&Bound<'_, PyAny>>,
-        fillgaps: Option<&Bound<'_, PyAny>>,
-        cfcache: Option<&str>,
-        painc: Option<f64>,
-        fitorder: Option<&Bound<'_, PyAny>>,
-        fraction: Option<&Bound<'_, PyAny>>,
-        numedge: Option<&Bound<'_, PyAny>>,
-        radius: Option<&Bound<'_, PyAny>>,
-        smooth: Option<&Bound<'_, PyAny>>,
-        zerorates: Option<&Bound<'_, PyAny>>,
-        globalsolve: Option<&Bound<'_, PyAny>>,
-        niter: Option<&Bound<'_, PyAny>>,
-        corrcomb: Option<&Bound<'_, PyAny>>,
-        delaywindow: Option<&Bound<'_, PyAny>>,
-        ratewindow: Option<&Bound<'_, PyAny>>,
-        paramactive: Option<&Bound<'_, PyAny>>,
-        concatspws: Option<&Bound<'_, PyAny>>,
-        solmode: Option<&Bound<'_, PyAny>>,
-        rmsthresh: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        if r#type.is_some_and(|kind| kind.eq_ignore_ascii_case("EP")) {
-            return self.attached(py, |state| {
-                state.set_ep_solve(
-                    Path::new(table.unwrap_or("")),
-                    Path::new(cfcache.unwrap_or("")),
-                    painc.unwrap_or(360.),
-                )
-            });
-        }
-        if r#type.is_some_and(|kind| kind.eq_ignore_ascii_case("G"))
-            && cfcache.is_none()
-            && painc.is_none()
-            && [
-                t,
-                preavg,
-                phaseonly,
-                apmode,
-                refant,
-                refantmode,
-                minblperant,
-                solnorm,
-                normtype,
-                minsnr,
-                combine,
-                fillgaps,
-                fitorder,
-                fraction,
-                numedge,
-                radius,
-                smooth,
-                zerorates,
-                globalsolve,
-                niter,
-                corrcomb,
-                delaywindow,
-                ratewindow,
-                paramactive,
-                concatspws,
-                solmode,
-                rmsthresh,
-            ]
-            .into_iter()
-            .all(|value| value.is_none())
-        {
-            let mode = if append
-                .map(|value| value.extract::<bool>())
-                .transpose()?
-                .unwrap_or(false)
-            {
-                CalibrationOutputMode::Append
-            } else {
-                CalibrationOutputMode::Replace
-            };
-            let request = GainSolveRequest {
-                output_table: Path::new(table.unwrap_or("")).to_owned(),
-                selection: Default::default(),
-                gain_type: GainType::G,
-                solve_mode: GainSolveMode::AmplitudePhase,
-                solve_interval: Default::default(),
-                preaverage_seconds: -1.,
-                correlation_dependent_flags: false,
-                combine: Default::default(),
-                refant: RefAntSelector::Unspecified,
-                prior_calibration_tables: Vec::new(),
-                parang: false,
-                model_source: GainSolveModelSource::FromMeasurementSet,
-                normalize_average_amplitude: false,
-                normalization_type: Default::default(),
-                robustness: Default::default(),
-                min_snr: 0.,
-                min_baselines_per_antenna: 4,
-                smodel: [1., 0., 0., 0.],
-            };
-            return self.attached(py, |state| {
-                state.set_solve(CalibrationSolveRequest::Gain(request), mode)
-            });
-        }
-        not_yet_implemented_in("calibrater", "setsolve", 1528)
     }
 
     #[pyo3(signature = (table = None, append = None, t = None, combine = None, degamp = None, degphase = None, visnorm = None, solnorm = None, maskcenter = None, maskedge = None, refant = None), text_signature = "($self, table='', append=False, t=[], combine='', degamp=3, degphase=3, visnorm=False, solnorm=True, maskcenter=0, maskedge=5.0, refant=[])")]
@@ -204,11 +78,6 @@ impl PyCalibrater {
         refant: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "setsolvegainspline", 1528)
-    }
-
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn solve(&self) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "solve", 1528)
     }
 
     #[pyo3(signature = (caltable = None, time = None, spw = None, antenna = None, pol = None, caltype = None, parameter = None, infile = None, uniform = None), text_signature = "($self, caltable='', time='', spw='', antenna='', pol='', caltype='', parameter=[1.0], infile='', uniform=True)")]

@@ -3,6 +3,7 @@
 
 mod apply;
 mod arguments;
+mod solve;
 mod stubs;
 pub(crate) mod surface;
 mod table_tools;

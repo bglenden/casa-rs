@@ -224,6 +224,7 @@ fn a_batch_solve_persists_the_msv2s_own_namespace() {
         &MeasurementSet::open(&path).expect("ms"),
         &production,
         crate::CalibrationOutputMode::Create,
+        None,
     )
     .expect("production");
     let observation = open(&path, &OpenOptions::default()).expect("open");
@@ -308,6 +309,7 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
         &MeasurementSet::open(&without).expect("ms"),
         &production,
         crate::CalibrationOutputMode::Create,
+        None,
     )
     .expect("gaincal");
     let applied = fixture(&root.path().join("applied"), "ms_trial.ms");
@@ -1247,6 +1249,7 @@ fn an_unbound_field_takes_no_solutions() {
         &MeasurementSet::open(&solved).expect("ms"),
         &request,
         crate::CalibrationOutputMode::Create,
+        None,
     )
     .expect("gaincal");
     let target = fixture(&root.path().join("moved"), "ms_trial.ms");
@@ -1303,7 +1306,7 @@ fn the_binding_refuses_an_applier_of_another_opening() {
         )
         .expect("scan");
     ms.save().expect("save");
-    solve_gain(&ms, &request, crate::CalibrationOutputMode::Create).expect("gaincal");
+    solve_gain(&ms, &request, crate::CalibrationOutputMode::Create, None).expect("gaincal");
     drop(ms);
     let by_scan = OpenOptions {
         partition_scheme: casa_ms::observation_io::PartitionScheme {

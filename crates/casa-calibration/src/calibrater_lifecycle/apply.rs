@@ -278,7 +278,7 @@ impl CalibraterLifecycle {
         let output = equation.solve.as_ref().map(|configured| {
             let path = match configured {
                 ConfiguredSolve::LegacyEp(ep) => ep.output_path(),
-                ConfiguredSolve::Task(request, _) => match request.as_ref() {
+                ConfiguredSolve::Task { request, .. } => match request.as_ref() {
                     CalibrationSolveRequest::Gain(gain)
                     | CalibrationSolveRequest::GainSpline { gain, .. }
                     | CalibrationSolveRequest::Fringe { gain, .. }
@@ -289,14 +289,18 @@ impl CalibraterLifecycle {
             };
             path.display().to_string()
         });
-        Ok(CasaValue::dict([
+        let mut entries = vec![
             (
                 "apply_tables",
                 CasaValue::str_vector(self.applied_table_names()),
             ),
             ("selectvis", selectvis_record(Some(&selected))),
             ("solve_tables", CasaValue::str_vector(output)),
-        ]))
+        ];
+        if let Some(stats) = &self.last_solve_stats {
+            entries.push(("solvestats", stats.clone()));
+        }
+        Ok(CasaValue::dict(entries))
     }
 }
 

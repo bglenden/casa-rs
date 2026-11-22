@@ -23,7 +23,6 @@ use std::path::{Path, PathBuf};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
-use casa_types::quanta::{Quantity, Unit};
 
 use super::read::{count, parse_gainfield_value, parse_interp_value};
 use crate::{
@@ -907,26 +906,13 @@ fn calmode(task: &TaskInvocation<'_>) -> Result<GainSolveMode, TaskFailure> {
 
 fn robust_gain_solve(task: &TaskInvocation<'_>) -> Result<crate::GainSolveRobustness, TaskFailure> {
     let mode = task.required_text("solmode")?;
-    let (l1, reject) = match mode.as_str() {
-        "" => (false, false),
-        "L1" => (true, false),
-        "R" => (false, true),
-        "L1R" => (true, true),
-        other => return Err(unknown("solmode", other, "'', 'L1', 'R' or 'L1R'")),
+    let thresholds = if matches!(mode.as_str(), "R" | "L1R") {
+        task.numbers("rmsthresh")?
+    } else {
+        Vec::new()
     };
-    let mut rms_thresholds = Vec::new();
-    if reject {
-        rms_thresholds = task
-            .numbers("rmsthresh")?
-            .into_iter()
-            .map(|value| value as f32)
-            .collect();
-        // GJones::setSolve and TJones::setSolve supply these for an empty list.
-        if rms_thresholds.is_empty() {
-            rms_thresholds.extend([7.0, 5.0, 4.0, 3.5, 3.0, 2.8, 2.6, 2.4, 2.2, 2.5]);
-        }
-    }
-    Ok(crate::GainSolveRobustness { l1, rms_thresholds })
+    crate::GainSolveRobustness::from_casa(&mode, thresholds)
+        .ok_or_else(|| unknown("solmode", &mode, "'', 'L1', 'R' or 'L1R'"))
 }
 
 /// CASA's `solint`, read as `SolvableVisCal::setSolve` reads it: empty
@@ -944,80 +930,25 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
 }
 
 fn parse_time_solint(text: &str) -> Result<GainSolveInterval, TaskFailure> {
-    let upper = text.to_ascii_uppercase();
-    if upper.is_empty() || upper.contains("INF") {
-        return Ok(GainSolveInterval::Infinite);
-    }
-    if upper.contains("INT") {
-        return Ok(GainSolveInterval::Integration);
-    }
-    let invalid = || unknown("solint", text, "'inf', 'int' or a time such as '60s'");
-    let quantity = text.parse::<Quantity>().map_err(|_| invalid())?;
-    let seconds = if quantity.unit().name().is_empty() {
-        quantity.value()
-    } else {
-        let second = Unit::new("s").map_err(|_| invalid())?;
-        quantity.get_value_in(&second).map_err(|_| invalid())?
-    };
-    if !seconds.is_finite() {
-        return Err(invalid());
-    }
-    Ok(if seconds > 0.0 {
-        GainSolveInterval::Seconds(seconds)
-    } else if seconds == 0.0 {
-        GainSolveInterval::Infinite
-    } else {
-        GainSolveInterval::Integration
-    })
+    GainSolveInterval::from_casa(text)
+        .ok_or_else(|| unknown("solint", text, "'inf', 'int' or a time such as '60s'"))
 }
 
 fn parse_frequency_solint(text: &str) -> Result<Option<BandpassFrequencyInterval>, TaskFailure> {
-    let upper = text.trim().to_ascii_uppercase();
-    if upper.is_empty() || upper.contains("NONE") {
-        return Ok(None);
-    }
-    let invalid = || {
+    BandpassFrequencyInterval::from_casa(text).ok_or_else(|| {
         unknown(
             "solint",
             text,
             "'none', a channel count, or a bandwidth such as '3MHz'",
         )
-    };
-    let channels = |count: f64| {
-        if !count.is_finite() {
-            return Err(invalid());
-        }
-        Ok((count > 1.0).then_some(BandpassFrequencyInterval::Channels(count)))
-    };
-    if let Some((count, _)) = upper.split_once("CH") {
-        return channels(count.trim().parse::<f64>().map_err(|_| invalid())?);
-    }
-    let quantity = text.trim().parse::<Quantity>().map_err(|_| invalid())?;
-    if quantity.unit().name().is_empty() {
-        return channels(quantity.value());
-    }
-    let hertz = Unit::new("Hz").map_err(|_| invalid())?;
-    let value = quantity.get_value_in(&hertz).map_err(|_| invalid())?;
-    if !value.is_finite() {
-        return Err(invalid());
-    }
-    Ok((value > 0.0).then_some(BandpassFrequencyInterval::Hertz(value)))
+    })
 }
 
 /// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
 /// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
 /// `'scan field'` both combine scans and fields).
 fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
-    let text = task.required_text("combine")?;
-    let upper = text.to_ascii_uppercase();
-    let spectral_windows = upper.contains("SPW");
-    let observations = upper.contains("OBS");
-    Ok(GainSolveCombine {
-        scans: upper.contains("SCAN"),
-        fields: upper.contains("FIELD"),
-        observations,
-        spectral_windows,
-    })
+    Ok(GainSolveCombine::from_casa(&task.required_text("combine")?))
 }
 
 fn bandpass_refant(text: &str) -> RefAntSelector {
