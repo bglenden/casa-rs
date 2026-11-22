@@ -5,12 +5,14 @@ use super::*;
 
 pub(super) fn corrected_data(ms: &mut MeasurementSet) -> Result<(), ApplyExecutionError> {
     let path = display_ms_path(ms);
-    if !ensure_corrected_data_column(ms, None)
+    let observed = crate::model_columns::observed_column(ms);
+    if !ensure_corrected_data_column(ms, observed)
         .map_err(|source| ApplyExecutionError::CreateCorrectedData {
             path: path.clone(),
             source,
         })?
         .created
+        || observed == "FLOAT_DATA"
     {
         return Ok(());
     }

@@ -64,6 +64,7 @@ use availability::execute as execute_apply_plan;
 mod fields;
 mod fringe;
 mod ionosphere;
+mod sky;
 pub(crate) use fields::load as load_interpolated_calibration_table;
 mod gain_validity;
 mod initialization;
@@ -623,9 +624,10 @@ fn for_each_apply_row(
     let chain = ApplyChain::load(ms, plan, forward_model)?;
 
     let any_calwt = applies_preview_weights(plan, &chain);
+    let observed_column = apply_observed_column(ms, plan);
     let mut columns = vec!["FLAG"];
     if !forward_model {
-        columns.push(VisibilityDataColumn::Data.name());
+        columns.push(observed_column);
     }
     let has_sigma_spectrum = if weight_source == PreviewWeightSource::FromSigma {
         columns.push("SIGMA");
@@ -645,7 +647,7 @@ fn for_each_apply_row(
             path: ms_path.clone(),
             source: MsError::from(source),
         })?;
-    let data_index = main_rows.column_index(VisibilityDataColumn::Data.name());
+    let data_index = main_rows.column_index(observed_column);
     let flag_index = main_rows
         .column_index("FLAG")
         .expect("prepared apply reader includes FLAG");
@@ -694,6 +696,13 @@ fn for_each_apply_row(
                 Complex32::new(1., 0.),
             ));
             &units
+        };
+        let complex_data;
+        let data = if let ArrayValue::Float32(values) = data {
+            complex_data = complex_visibility_from_float(values);
+            &complex_data
+        } else {
+            data
         };
         let plot_weights = sigma_slots
             .map(|slots| read_plot_weights(&main_rows, slots, &ms_path))
@@ -1044,14 +1053,13 @@ fn execute_apply_available(
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
     let execute_apply_plan_started_at = Instant::now();
+    let observed_column = apply_observed_column(ms, &plan);
+    let calibration_load_started_at = Instant::now();
+    let chain = ApplyChain::load(ms, &plan, false)?;
+    let calibration_load_ns = calibration_load_started_at.elapsed().as_nanos() as u64;
     let ensure_corrected_data_started_at = Instant::now();
-    let selected_row_indices = plan
-        .selected_rows
-        .iter()
-        .map(|row| row.row_index)
-        .collect::<BTreeSet<_>>();
     let corrected_data_creation = if plan.apply_mode.writes_corrected_data() {
-        ensure_corrected_data_column(ms, Some(&selected_row_indices)).map_err(|source| {
+        ensure_corrected_data_column(ms, observed_column).map_err(|source| {
             ApplyExecutionError::CreateCorrectedData {
                 path: ms_path.clone(),
                 source,
@@ -1071,10 +1079,6 @@ fn execute_apply_available(
         }
     })?;
     let correlation_lookup_ns = correlation_lookup_started_at.elapsed().as_nanos() as u64;
-    let calibration_load_started_at = Instant::now();
-    let chain = ApplyChain::load(ms, &plan, false)?;
-    let calibration_load_ns = calibration_load_started_at.elapsed().as_nanos() as u64;
-
     let mut updated_row_count = 0;
     let mut flagged_row_count = 0;
     let mut flagged_sample_count = 0;
@@ -1176,8 +1180,9 @@ fn execute_apply_available(
             },
             tile_shape: None,
             create_source_column: (*column == VisibilityDataColumn::CorrectedData.name()
-                && created_corrected_data_column)
-                .then(|| VisibilityDataColumn::Data.name().to_string()),
+                && created_corrected_data_column
+                && observed_column == VisibilityDataColumn::Data.name())
+            .then(|| observed_column.to_string()),
         })
         .collect();
     let write_resources =
@@ -1213,7 +1218,7 @@ fn execute_apply_available(
         let row_fetch_started_at = Instant::now();
         let data_values = ms
             .main_table()
-            .column_accessor(VisibilityDataColumn::Data.name())
+            .column_accessor(observed_column)
             .and_then(|column| column.array_cells_owned(&selected_row_indices))
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
@@ -1304,6 +1309,16 @@ fn execute_apply_available(
         let mut weight_spectrum_batch = Vec::with_capacity(planned_rows.len());
 
         for row in planned_rows {
+            let data = required_prefetched_array(
+                data_values.next().flatten(),
+                row.row_index,
+                observed_column,
+                &ms_path,
+            )?;
+            let data = match data {
+                ArrayValue::Float32(values) => complex_visibility_from_float(&values),
+                data => data,
+            };
             let prefetched = PrefetchedExecutionRowInputs {
                 preserved_corrected_data: preserved_corrected_values
                     .as_mut()
@@ -1311,12 +1326,7 @@ fn execute_apply_available(
                 preserved_weight_spectrum: preserved_spectrum_values
                     .as_mut()
                     .and_then(|values| values.next().flatten()),
-                data: required_prefetched_array(
-                    data_values.next().flatten(),
-                    row.row_index,
-                    VisibilityDataColumn::Data.name(),
-                    &ms_path,
-                )?,
+                data,
                 original_flags: flag_values
                     .as_mut()
                     .map(|values| {
@@ -2197,12 +2207,13 @@ fn apply_row_all_channels(
 
         let subtype = table_plan.summary.table_subtype.as_str();
         let is_tsys = subtype == "B TSYS";
+        let is_sky = crate::single_dish::is_sky_subtype(subtype);
         let is_switched_power = subtype == "G EVLASWPOW";
         let position_angle = subtype == "PosAng Jones";
         let channelized_polarization = polarization::Leakage::is_channelized(subtype)
             || matches!(subtype, "Xf Jones" | "Xfparang Jones" | "GlinXphf Jones")
             || position_angle;
-        let bounded_frequency_cache = is_tsys || channelized_polarization;
+        let bounded_frequency_cache = is_tsys || is_sky || channelized_polarization;
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
                 table_index,
@@ -2237,7 +2248,11 @@ fn apply_row_all_channels(
             }
         };
         let ant1 = lookup(row.antenna1, geometry_cache.as_deref_mut())?;
-        let ant2 = lookup(row.antenna2, geometry_cache.as_deref_mut())?;
+        let ant2 = if is_sky {
+            ant1.clone()
+        } else {
+            lookup(row.antenna2, geometry_cache.as_deref_mut())?
+        };
         if let Some(profile) = compute_profile.as_deref_mut() {
             ApplyRowComputeProfile::add_elapsed(&mut profile.table_lookup_ns, lookup_started_at);
         }
@@ -2264,7 +2279,7 @@ fn apply_row_all_channels(
         // CASA samples BPOLY on its CAL_DESC window and then interpolates
         // the resulting B grid onto the data window.
         let is_bandpass = is_tsys || matches!(subtype, "B Jones" | "BPOLY");
-        let resample_frequency = is_bandpass || channelized_polarization;
+        let resample_frequency = is_bandpass || is_sky || channelized_polarization;
         let first_receptor_only = (is_bandpass
             || is_switched_power
             || polarization::is_cross_hand_phase(subtype)
@@ -2324,6 +2339,26 @@ fn apply_row_all_channels(
             antpos_tropo: loaded_table.antpos_tropo.as_ref(),
         };
 
+        if is_sky {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            sky::apply_grid(&ant1, &loaded_table.path, &mut output, forward_model)?;
+            if calibrate_weights && let Some(exposures) = &loaded_table.sky_exposures {
+                let nearest =
+                    loaded_table.interp.time_options(0).mode == crate::TimeInterpolation::Nearest;
+                let factor = exposures.weight_factor(row, cal_spw_id, nearest);
+                if let Some(spectrum) = &mut weight_spectrum {
+                    *spectrum *= factor;
+                }
+                if let Some(spectrum) = &mut implicit_weight_spectrum {
+                    *spectrum *= factor;
+                }
+            }
+            continue;
+        }
         if let Some(leakage) = polarization::Leakage::from_subtype(subtype) {
             flush_fast_gain_pairs(
                 &mut fast_gain_pairs,
@@ -3674,6 +3709,7 @@ pub(crate) struct LoadedCalibrationTable {
     engine: Option<Arc<MsCalEngine>>,
     antpos_tropo: Option<TropoDelay>,
     ionosphere: Option<ionosphere::Ionosphere>,
+    sky_exposures: Option<sky::SkyExposures>,
     pub(crate) solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
 }
 
@@ -3684,6 +3720,7 @@ enum TimeParameterFamily {
     GainCurve { power: bool },
     Opacity,
     Tsys,
+    Sky,
     PositionAngle,
     Tec,
     Fringe,
@@ -3703,6 +3740,7 @@ impl TimeParameterFamily {
             "F Jones" => Some(Self::Tec),
             "Fringe Jones" => Some(Self::Fringe),
             "G EVLASWPOW" => Some(Self::SwitchedPower),
+            subtype if crate::single_dish::is_sky_subtype(subtype) => Some(Self::Sky),
             _ => None,
         }
     }
@@ -4506,18 +4544,15 @@ fn load_parameters(
     let leakage = polarization::Leakage::from_subtype(&table_plan.summary.table_subtype);
     let ionosphere = ionosphere::Ionosphere::for_plan(&table, table_plan)?;
     let cross_hand_phase = polarization::is_cross_hand_phase(&table_plan.summary.table_subtype);
-    let supports_calwt = (table_plan.summary.parameter_family
-        == CalibrationParameterFamily::Complex
-        && leakage.is_none()
-        && !cross_hand_phase
-        && !matches!(
-            table_plan.summary.table_subtype.as_str(),
-            "GlinXph Jones" | "GlinXphf Jones"
-        ))
-        || matches!(
-            table_plan.summary.table_subtype.as_str(),
-            "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"
-        );
+    let sky_term = crate::single_dish::is_sky_subtype(&table_plan.summary.table_subtype);
+    let sky_exposures = if sky_term && table_plan.calwt {
+        ms.map(|ms| sky::SkyExposures::read(ms, &table, &table_plan.spec.path))
+            .transpose()?
+    } else {
+        None
+    };
+    let supports_calwt =
+        weights::supports_calwt(&table_plan.summary, leakage.is_some(), cross_hand_phase);
     let antpos_tropo = match (
         table_plan.summary.table_subtype.as_str(),
         ms,
@@ -4688,6 +4723,7 @@ fn load_parameters(
         engine: geometry_engine.cloned(),
         antpos_tropo,
         ionosphere,
+        sky_exposures,
         solutions,
         callibrary: None,
         time_plans: HashMap::new(),
@@ -4812,6 +4848,7 @@ fn load_bpoly_calibration_table(
         engine: None,
         antpos_tropo: None,
         ionosphere: None,
+        sky_exposures: None,
         solutions,
         callibrary: None,
         time_plans: HashMap::new(),
@@ -5104,7 +5141,7 @@ struct CorrectedDataCreation {
 
 fn ensure_corrected_data_column(
     ms: &mut MeasurementSet,
-    _rows_overwritten_by_apply: Option<&BTreeSet<usize>>,
+    observed_column: &str,
 ) -> Result<CorrectedDataCreation, TableError> {
     if ms
         .main_table()
@@ -5112,6 +5149,18 @@ fn ensure_corrected_data_column(
         .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::CorrectedData.name()))
     {
         return Ok(CorrectedDataCreation { created: false });
+    }
+    if observed_column == "FLOAT_DATA"
+        && let Some(path) = ms.path()
+    {
+        let lock = casa_tables::TableWriteLock::acquire_to_reread(path, 1)?;
+        crate::model_columns::initialize_calibrater_columns(ms, false, true, false, lock).map_err(
+            |error| match error {
+                MsError::Table(error) => error,
+                other => TableError::Storage(other.to_string()),
+            },
+        )?;
+        return Ok(CorrectedDataCreation { created: true });
     }
 
     // CASA's `addScrCols` clears the cached sort keywords first.
@@ -5129,11 +5178,7 @@ fn ensure_corrected_data_column(
         .expect("corrected data column present")
         .clone();
     ms.main_table_mut().add_column(column, None)?;
-    if let Some(data_keywords) = ms
-        .main_table()
-        .column_keywords(VisibilityDataColumn::Data.name())
-        .cloned()
-    {
+    if let Some(data_keywords) = ms.main_table().column_keywords(observed_column).cloned() {
         ms.main_table_mut()
             .set_column_keywords(VisibilityDataColumn::CorrectedData.name(), data_keywords);
     }
@@ -5143,10 +5188,13 @@ fn ensure_corrected_data_column(
             .map(|row_index| {
                 let data = ms
                     .main_table()
-                    .column_accessor(VisibilityDataColumn::Data.name())?
+                    .column_accessor(observed_column)?
                     .array_cell(row_index)?
                     .clone();
-                Ok(data)
+                Ok(match data {
+                    ArrayValue::Float32(values) => complex_visibility_from_float(&values),
+                    data => data,
+                })
             })
             .collect::<Result<Vec<_>, casa_tables::TableError>>()?;
         let mut writer = ms
@@ -5163,6 +5211,23 @@ fn ensure_corrected_data_column(
     }
 
     Ok(CorrectedDataCreation { created: true })
+}
+
+fn apply_observed_column(ms: &MeasurementSet, plan: &ApplyPlan) -> &'static str {
+    if !crate::model_columns::has_column(ms, VisibilityDataColumn::Data)
+        || plan
+            .selected_rows
+            .iter()
+            .all(|row| row.antenna1 == row.antenna2)
+    {
+        crate::model_columns::observed_column(ms)
+    } else {
+        VisibilityDataColumn::Data.name()
+    }
+}
+
+fn complex_visibility_from_float(values: &ArrayD<f32>) -> ArrayValue {
+    ArrayValue::Complex32(values.mapv(|value| Complex32::new(value, 0.)))
 }
 
 fn display_ms_path(ms: &MeasurementSet) -> String {
@@ -6458,7 +6523,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            ensure_corrected_data_column(&mut ms, None).unwrap(),
+            ensure_corrected_data_column(&mut ms, "DATA").unwrap(),
             CorrectedDataCreation { created: true }
         );
         assert!(
@@ -6476,7 +6541,7 @@ mod tests {
                 .is_some()
         );
         assert_eq!(
-            ensure_corrected_data_column(&mut ms, None).unwrap(),
+            ensure_corrected_data_column(&mut ms, "DATA").unwrap(),
             CorrectedDataCreation { created: false }
         );
         assert_eq!(display_ms_path(&ms), "<in-memory>");

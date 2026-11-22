@@ -23,6 +23,11 @@ fn resample(
         (input, output)
     };
     let solution = crate::ComplexSolution::of(grid);
+    if matches!(parameter_family, Some(TimeParameterFamily::Sky)) {
+        return solution
+            .resample_real_array_frequency(input, output, mode)
+            .map(crate::ComplexSolution::into_gain_grid);
+    }
     if !matches!(
         parameter_family,
         Some(TimeParameterFamily::Tsys | TimeParameterFamily::PositionAngle)
@@ -217,6 +222,7 @@ mod tests {
             engine: None,
             antpos_tropo: None,
             ionosphere: None,
+            sky_exposures: None,
             time_parameter_family: family,
             phase_delay: false,
             callibrary: None,

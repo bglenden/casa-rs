@@ -13,7 +13,7 @@ pub(super) fn record_applycal(task: &TaskInvocation<'_>, vis: &Path) {
     record_task(task, vis);
 }
 
-pub(super) fn record_task(task: &TaskInvocation<'_>, vis: &Path) {
+pub(crate) fn record_task(task: &TaskInvocation<'_>, vis: &Path) {
     if let Err(error) = append(vis, "ms", task.surface(), messages(task)) {
         tracing::warn!(task = task.surface(), "updating HISTORY: {error}");
     }

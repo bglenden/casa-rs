@@ -161,18 +161,19 @@ impl CalibrationTableSummary {
 }
 
 pub(crate) fn supports_float_apply_subtype(subtype: &str) -> bool {
-    matches!(
-        subtype,
-        "K Jones"
-            | "Kcross Jones"
-            | "KAntPos Jones"
-            | "EGainCurve"
-            | "EPowerCurve"
-            | "TOpac"
-            | "B TSYS"
-            | "G EVLASWPOW"
-            | "PosAng Jones"
-            | "F Jones"
-            | "Fringe Jones"
-    )
+    crate::single_dish::is_sky_subtype(subtype)
+        || matches!(
+            subtype,
+            "K Jones"
+                | "Kcross Jones"
+                | "KAntPos Jones"
+                | "EGainCurve"
+                | "EPowerCurve"
+                | "TOpac"
+                | "B TSYS"
+                | "G EVLASWPOW"
+                | "PosAng Jones"
+                | "F Jones"
+                | "Fringe Jones"
+        )
 }

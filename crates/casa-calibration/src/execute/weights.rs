@@ -5,8 +5,27 @@ use casa_ms::MsError;
 use casa_tables::Table;
 use casa_types::ArrayValue;
 
+use crate::model::{CalibrationParameterFamily, CalibrationTableSummary};
+
 use super::{ApplyExecutionError, GainGrid, correcting_gain, correlation_receptors, stokes_name};
 use ndarray::{ArrayD, Axis};
+
+pub(super) fn supports_calwt(
+    summary: &CalibrationTableSummary,
+    is_leakage: bool,
+    cross_hand_phase: bool,
+) -> bool {
+    let subtype = summary.table_subtype.as_str();
+    (summary.parameter_family == CalibrationParameterFamily::Complex
+        && !is_leakage
+        && !cross_hand_phase
+        && !matches!(subtype, "GlinXph Jones" | "GlinXphf Jones"))
+        || matches!(
+            subtype,
+            "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"
+        )
+        || crate::single_dish::is_sky_subtype(subtype)
+}
 
 /// Calibrater uses partialMedians without takeEvenMean: an even channel count
 /// takes the lower central value, not the average of the two central values.

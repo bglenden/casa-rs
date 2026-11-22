@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's frequency resampling interpolates amplitude and unwrapped phase.
 use crate::interpolation::{
-    Curve, sample, spline_derivatives, tsys_weight_spline_derivatives, unwrap_phase,
+    Curve, array_spline_derivatives, sample, spline_derivatives, unwrap_phase,
 };
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
 use casa_types::Complex32;
@@ -69,7 +69,7 @@ impl FrequencyInterpolation {
 enum Coefficients {
     Complex,
     Real,
-    TsysWeight,
+    RealArray,
 }
 
 impl ComplexSolution {
@@ -110,13 +110,15 @@ impl ComplexSolution {
         self.resample_parameters(input_hz, output_hz, mode, Coefficients::Real)
     }
 
-    pub(crate) fn resample_tsys_weight_frequency(
+    /// Use casacore's array spline coefficients for single-dish sky
+    /// application and Tsys weight initialization.
+    pub(crate) fn resample_real_array_frequency(
         &self,
         input_hz: &[f64],
         output_hz: &[f64],
         mode: FrequencyInterpolation,
     ) -> Result<Self, ApplyExecutionError> {
-        self.resample_parameters(input_hz, output_hz, mode, Coefficients::TsysWeight)
+        self.resample_parameters(input_hz, output_hz, mode, Coefficients::RealArray)
     }
 
     fn resample_parameters(
@@ -220,8 +222,8 @@ impl ComplexSolution {
                 ));
             }
             let derivatives = match (interpolation, coefficients) {
-                (FrequencyInterpolation::Spline, Coefficients::TsysWeight) => {
-                    tsys_weight_spline_derivatives(&points)
+                (FrequencyInterpolation::Spline, Coefficients::RealArray) => {
+                    array_spline_derivatives(&points)
                 }
                 (FrequencyInterpolation::Spline, _) => spline_derivatives(&points),
                 _ => Vec::new(),

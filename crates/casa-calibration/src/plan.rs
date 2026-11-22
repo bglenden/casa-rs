@@ -530,11 +530,13 @@ pub(crate) fn plan_apply_with_preparation_error(
     request: &ApplyPlanRequest,
     preparation_error: Option<ApplyPreparationError<'_>>,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
-    ms.data_column(VisibilityDataColumn::Data)
-        .map_err(|error| match error {
-            MsError::ColumnNotPresent(_) => ApplyPlanError::MissingDataColumn,
-            other => ApplyPlanError::Selection { source: other },
-        })?;
+    if crate::model_columns::observed_column(ms) != "FLOAT_DATA" {
+        ms.data_column(VisibilityDataColumn::Data)
+            .map_err(|error| match error {
+                MsError::ColumnNotPresent(_) => ApplyPlanError::MissingDataColumn,
+                other => ApplyPlanError::Selection { source: other },
+            })?;
+    }
     plan_with_visibility_metadata(ms, request, preparation_error)
 }
 

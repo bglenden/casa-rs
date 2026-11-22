@@ -294,7 +294,7 @@ impl TabulatedSpectrum<'_> {
         let second = if self.interpolation == Curve::Spline {
             // casacore Interpolate1D leaves the first interior value at
             // its forward-elimination result, as does InterpolateArray1D.
-            interpolation::tsys_weight_spline_derivatives(&points)
+            interpolation::array_spline_derivatives(&points)
         } else {
             Vec::new()
         };
