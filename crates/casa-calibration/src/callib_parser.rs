@@ -20,9 +20,10 @@ const PARAMETERS: &[&str] = &[
     "obsmap", "scanmap", "spwmap",
 ];
 
-pub(super) fn parse(contents: &str) -> Result<Vec<Entry>, (usize, String)> {
+pub(super) fn parse(contents: &str) -> Result<(Vec<Entry>, bool), (usize, String)> {
     let tokens = lex(contents)?;
     let mut entries = Vec::new();
+    let mut has_statement = false;
     let mut values = BTreeMap::new();
     let mut index = 0;
     while index < tokens.len() {
@@ -43,6 +44,7 @@ pub(super) fn parse(contents: &str) -> Result<Vec<Entry>, (usize, String)> {
         let Token::String(key) = token else {
             return Err((*line, "expected parameter name".into()));
         };
+        has_statement = true;
         if !matches!(tokens.get(index + 1), Some((_, Token::Equals))) {
             return Err((*line, "expected '=' after parameter name".into()));
         }
@@ -101,7 +103,7 @@ pub(super) fn parse(contents: &str) -> Result<Vec<Entry>, (usize, String)> {
             values,
         });
     }
-    Ok(entries)
+    Ok((entries, has_statement))
 }
 
 fn lex(contents: &str) -> Result<Vec<(usize, Token)>, (usize, String)> {

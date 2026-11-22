@@ -131,7 +131,7 @@ pub use bandpass::{
 };
 pub use callib::{
     CallibError, CallibraryContextMap, CallibraryOptions, load_apply_specs_from_callib,
-    save_apply_specs_to_callib,
+    load_callibrary_record, save_apply_specs_to_callib, validate_callibrary_record,
 };
 pub use casa_return::{fluxscale_record, solve_record};
 pub use cli::{CALIBRATION_SURFACES, task_front_end};

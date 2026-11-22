@@ -20,6 +20,7 @@ use crate::{
     solve_calibration_with_output_mode,
 };
 
+mod apply;
 pub(crate) mod ep_cache;
 pub(crate) mod legacy_ep;
 mod table_tools;
@@ -49,6 +50,7 @@ enum ConfiguredSolve {
 #[derive(Default)]
 struct ApplyTerms {
     tables: Vec<ApplyCalibrationTableSpec>,
+    library_tables: Vec<String>,
     parang: bool,
 }
 
@@ -120,6 +122,9 @@ pub enum CalibraterLifecycleError {
     /// MeasurementSet attachment or visibility selection failed.
     #[error(transparent)]
     Attachment(#[from] AttachmentError),
+    /// A tool apply term could not be configured.
+    #[error("{0}")]
+    ApplyConfiguration(String),
     /// The configured solver could not complete.
     #[error(transparent)]
     Solve(#[from] CalibrationError),
