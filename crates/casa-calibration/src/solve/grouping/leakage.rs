@@ -498,6 +498,47 @@ impl GainIntervalData {
         }
         self.positive_weight |= bins.iter().any(|bin| bin.weights.iter().any(|&w| w > 0.0));
     }
+
+    fn record(
+        self,
+        stats: &mut SolveStatsBuilder,
+        rows: &[BucketedRow<'_>],
+        stages: Option<LeakageFitStages>,
+        tool: bool,
+        spectral_window: i32,
+        solved: bool,
+    ) {
+        let expected = rows
+            .iter()
+            .filter(|(row, _, _)| row.antenna1 != row.antenna2)
+            .flat_map(|(row, _, _)| [row.antenna1, row.antenna2])
+            .collect::<BTreeSet<_>>();
+        let (constrained, passed) = stages.map_or_else(
+            || (BTreeSet::new(), None),
+            |stages| (stages.constrained, Some(stages.passed)),
+        );
+        stats.interval(&IntervalStages {
+            spw_id: spectral_window,
+            antennas: &expected,
+            expected_window: !tool || !expected.is_empty(),
+            attempted_interval: tool.then_some(self.positive_weight),
+            with_data: vec![self.antennas.clone(), self.antennas],
+            constrained,
+        });
+        if let Some(passed) = passed {
+            stats.record_success(spectral_window, solved);
+            stats.solutions(
+                spectral_window,
+                passed
+                    .into_iter()
+                    .enumerate()
+                    .map(|(id, passed)| AntennaSolution {
+                        antenna_id: id as i32,
+                        passed: passed.into(),
+                    }),
+            );
+        }
+    }
 }
 
 impl BaselineAverages {
@@ -737,35 +778,14 @@ impl LeakageInputs<'_> {
             None
         };
         if let Some((stats, data)) = gain_stats.zip(gain_data) {
-            let expected = rows
-                .iter()
-                .filter(|(row, _, _)| row.antenna1 != row.antenna2)
-                .flat_map(|(row, _, _)| [row.antenna1, row.antenna2])
-                .collect::<BTreeSet<_>>();
-            stats.interval(&IntervalStages {
-                spw_id: spectral_window,
-                antennas: &expected,
-                expected_window: !self.tool || !expected.is_empty(),
-                attempted_interval: self.tool.then_some(data.positive_weight),
-                with_data: vec![data.antennas.clone(), data.antennas],
-                constrained: stages.as_mut().map_or_else(BTreeSet::new, |stages| {
-                    std::mem::take(&mut stages.constrained)
-                }),
-            });
-            if let Some(stages) = stages {
-                stats.record_success(spectral_window, solution.is_some());
-                stats.solutions(
-                    spectral_window,
-                    stages
-                        .passed
-                        .into_iter()
-                        .enumerate()
-                        .map(|(id, passed)| AntennaSolution {
-                            antenna_id: id as i32,
-                            passed: passed.into(),
-                        }),
-                );
-            }
+            data.record(
+                stats,
+                rows,
+                stages,
+                self.tool,
+                spectral_window,
+                solution.is_some(),
+            );
         }
         Ok(
             solution.map(|(reference, values, polarization)| LeakageSolution {
