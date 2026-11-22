@@ -201,6 +201,10 @@ pub enum FluxScaleError {
         reason: String,
     },
 
+    /// Writing direct calibrater provenance to the attached MS failed.
+    #[error("failed to update fluxscale HISTORY: {0}")]
+    History(String),
+
     /// Copying the caltable tree failed.
     #[error("failed to copy calibration table {source_path} -> {destination_path}: {reason}")]
     CopyTableTree {
@@ -290,31 +294,55 @@ pub(crate) fn fluxscale_tool(
         tracing::error!(%error, "Direct fluxscale failed");
         "Error in Calibrater::fluxscale.".to_owned()
     };
-    let info = load_field_info(dataset).map_err(failure)?;
+    let ms = casa_ms::MeasurementSet::open(dataset).map_err(|error| {
+        failure(FluxScaleError::UnsupportedInput {
+            path: dataset.display().to_string(),
+            reason: error.to_string(),
+        })
+    })?;
+    let subtable = |id| {
+        ms.subtable(id).ok_or_else(|| {
+            failure(FluxScaleError::UnsupportedInput {
+                path: dataset.display().to_string(),
+                reason: format!("MeasurementSet has no {id:?} table"),
+            })
+        })
+    };
+    if let Some(path) = &request.options.listfile {
+        let linked = ms
+            .subtable_ids()
+            .into_iter()
+            .filter_map(|id| ms.subtable(id).and_then(Table::path));
+        listing::validate_products(path, linked).map_err(failure)?;
+    }
+    let info = read_field_info(subtable(casa_ms::SubtableId::Field)?).map_err(failure)?;
     let reference = resolve_field_selectors(&request.reference_fields, &info)
         .map_err(|error| tool_field_error(error, &request.reference_fields))?;
     let transfer = (!request.transfer_fields.is_empty())
         .then(|| resolve_field_selectors(&request.transfer_fields, &info))
         .transpose()
         .map_err(|error| tool_field_error(error, &request.transfer_fields))?;
-    let fields = FluxScaleFields {
-        info,
-        reference,
-        transfer,
-    };
+    let history = subtable(casa_ms::SubtableId::History)?
+        .path()
+        .ok_or_else(|| failure(FluxScaleError::History("no on-disk HISTORY table".into())))?;
+    let windows = subtable(casa_ms::SubtableId::SpectralWindow)?;
+    let spw_names = (0..windows.row_count())
+        .map(|row| get_string(windows, row, "NAME"))
+        .collect::<Result<_, _>>()
+        .map_err(failure)?;
     let mode = if request.append {
         crate::CalibrationOutputMode::Append
     } else {
         crate::CalibrationOutputMode::Create
     };
-    let mut report = fluxscale_with_fields(request, mode, Some(fields)).map_err(failure)?;
-    let mut windows = load_spw_info(dataset)
-        .map_err(failure)?
-        .into_iter()
-        .collect::<Vec<_>>();
-    windows.sort_by_key(|(id, _)| *id);
-    report.spw_names = windows.into_iter().map(|(_, window)| window.name).collect();
-    history::record_tool(request);
+    let fields = FluxScaleFields {
+        info,
+        reference,
+        transfer,
+    };
+    let mut report =
+        fluxscale_with_fields(request, mode, Some((fields, history))).map_err(failure)?;
+    report.spw_names = spw_names;
     Ok(report)
 }
 
@@ -353,7 +381,7 @@ struct FluxScaleFields {
 fn fluxscale_with_fields(
     request: &FluxScaleRequest,
     mode: crate::CalibrationOutputMode,
-    fields: Option<FluxScaleFields>,
+    tool: Option<(FluxScaleFields, &Path)>,
 ) -> Result<FluxScaleReport, FluxScaleError> {
     let input_phase = crate::timing::Phase::start("fluxscale_read");
     validate_request(request)?;
@@ -363,12 +391,15 @@ fn fluxscale_with_fields(
             reason: error.to_string(),
         }
     })?;
+    let history_path = tool.as_ref().map(|(_, history)| *history);
     let field_root = request
         .options
         .measurement_set
         .as_deref()
         .unwrap_or(&request.input_table);
-    if let Some(vis) = &request.options.measurement_set {
+    if history_path.is_none()
+        && let Some(vis) = &request.options.measurement_set
+    {
         casa_ms::ms::MeasurementSet::open(vis).map_err(|error| {
             FluxScaleError::UnsupportedInput {
                 path: vis.display().to_string(),
@@ -380,7 +411,7 @@ fn fluxscale_with_fields(
         info: field_info,
         reference: reference_field_ids,
         transfer: transfer_selection,
-    } = if let Some(fields) = fields {
+    } = if let Some((fields, _)) = tool {
         fields
     } else {
         let info = load_field_info(field_root)?;
@@ -394,9 +425,21 @@ fn fluxscale_with_fields(
             transfer,
         }
     };
-    // CASA records its table/type entry after FIELD grammar validation, even
-    // when later selection or estimation fails. Batch successful task history
-    // at the CLI; on error preserve this initial entry before returning.
+    let info = input.info();
+    let calibration_table = info.table_type == crate::constants::TABLE_INFO_TYPE;
+    if let Some(path) = history_path
+        && calibration_table
+    {
+        history::record_tool_type(path, request, &info.sub_type)?;
+        if !matches!(info.sub_type.as_str(), "G Jones" | "T Jones") {
+            return Err(FluxScaleError::UnsupportedInput {
+                path: request.input_table.display().to_string(),
+                reason: format!("Type {} not supported in fluxscale", info.sub_type),
+            });
+        }
+    }
+    // The CLI batches successful task HISTORY. Preserve its initial entry on
+    // error as well. The direct tool writes each entry at its CASA phase.
     let result = (|| {
         validate_input_table(&input, &request.input_table)?;
         let spw_info = load_spw_info(&request.input_table)?;
@@ -426,9 +469,13 @@ fn fluxscale_with_fields(
         )?;
 
         drop(compute_phase);
-        let write_phase = crate::timing::Phase::start("fluxscale_write");
-        write_scaled_output(request, &input, &rows, &estimates, mode, &masks)?;
-        drop(write_phase);
+        let publish = || {
+            let _phase = crate::timing::Phase::start("fluxscale_write");
+            write_scaled_output(request, &input, &rows, &estimates, mode, &masks)
+        };
+        if history_path.is_none() {
+            publish()?;
+        }
         let report = build_report(
             request,
             &transfer_field_ids,
@@ -444,10 +491,23 @@ fn fluxscale_with_fields(
         if request.options.display {
             tracing::debug!("CASA fluxscale display hooks do not produce a plot");
         }
+        if let Some(path) = history_path {
+            history::record_tool_output(path, request)?;
+            if let Some(parent) = request.output_table.parent()
+                && !parent.as_os_str().is_empty()
+                && !parent.is_dir()
+            {
+                return Err(FluxScaleError::PrepareOutput {
+                    path: request.output_table.display().to_string(),
+                    reason: "output directory does not exist".into(),
+                });
+            }
+            publish()?;
+        }
         Ok(report)
     })();
-    if result.is_err() && input.info().table_type == crate::constants::TABLE_INFO_TYPE {
-        history::record_failure(request, &input.info().sub_type);
+    if history_path.is_none() && result.is_err() && calibration_table {
+        history::record_failure(request, &info.sub_type);
     }
     result
 }
@@ -497,10 +557,14 @@ fn load_field_info(root: &Path) -> Result<HashMap<i32, FieldInfo>, FluxScaleErro
             source: Box::new(source),
         }
     })?;
+    read_field_info(&table)
+}
+
+fn read_field_info(table: &Table) -> Result<HashMap<i32, FieldInfo>, FluxScaleError> {
     let mut out = HashMap::new();
     for row in 0..table.row_count() {
-        let name = get_string(&table, row, "NAME")?;
-        let code = get_string(&table, row, "CODE").ok();
+        let name = get_string(table, row, "NAME")?;
+        let code = get_string(table, row, "CODE").ok();
         let flagged = matches!(
             table
                 .cell_accessor(row, "FLAG_ROW")
@@ -656,8 +720,8 @@ fn write_scaled_output(
                 )),
             );
         }
-        incremental::populate(&mut table, metadata, rows, estimates, masks)?;
         incremental::copy_metadata(metadata, &target.staging)?;
+        incremental::populate(&mut table, &target.staging, rows, estimates, masks)?;
     } else {
         for row in rows {
             let Some(estimate) = estimates.get(&(row.field_id, row.spw_id)) else {

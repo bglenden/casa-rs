@@ -16,8 +16,19 @@ use super::{FluxScaleError, FluxScaleEstimate, GainSampleRow, selection::SampleM
 pub(super) fn copy_metadata(source: &Path, stage: &Path) -> Result<(), FluxScaleError> {
     let failed =
         |error: casa_tables::TableError| crate::output_merge::invalid(stage, error.to_string());
+    let main = Table::open_metadata_only(TableOptions::new(source)).map_err(failed)?;
+    let owner = crate::paths::subtable_owner(&main, source)
+        .map_err(|error| crate::output_merge::invalid(source, error.to_string()))?;
     for name in ["ANTENNA", "FIELD", "OBSERVATION", "SPECTRAL_WINDOW"] {
-        let table = Table::open(TableOptions::new(source.join(name))).map_err(failed)?;
+        let reference = match main.keywords().get(name) {
+            Some(Value::TableRef(value) | Value::Scalar(ScalarValue::String(value))) => Some(value),
+            _ => None,
+        };
+        let path = reference
+            .map(|value| casa_tables::add_directory(value, &owner))
+            .filter(|path| path.exists())
+            .unwrap_or_else(|| source.join(name));
+        let table = Table::open(TableOptions::new(path)).map_err(failed)?;
         table
             .save(TableOptions::new(stage.join(name)))
             .map_err(failed)?;

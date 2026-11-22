@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use casa_calibration::{
     CalibraterLifecycleError, FluxScaleOptions, FluxScaleRequest, fluxscale_record,
 };
-use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 
-use super::arguments::{listing_selector, strict_bool, supplied, text, window_map_with_status};
+use super::arguments::{listing_selector, strict_bool, supplied, text, window_map};
 use super::{PyCalibrater, runtime_error};
 use crate::convert::reply_value::reply_value;
 
@@ -53,7 +53,7 @@ impl PyCalibrater {
             .into_iter()
             .fold(listfile.as_str(), str::trim_start_matches);
         let listfile = whitespace.into_iter().fold(listfile, str::trim_end_matches);
-        let (refspwmap, pending_map) = window_map_with_status(refspwmap, &[-1])?;
+        let refspwmap = window_map(refspwmap, "fluxscale", &[-1])?;
         let gainthreshold = gainthreshold.map_or(Ok(-1.), |value| {
             value.extract::<f32>().map_err(|_| {
                 PyTypeError::new_err("in method 'calibrater_fluxscale', argument 9 of type 'float'")
@@ -95,11 +95,6 @@ impl PyCalibrater {
                 error => runtime_error(error),
             })
         })?;
-        if pending_map {
-            return Err(PySystemError::new_err(
-                "<built-in function calibrater_fluxscale> returned a result with an exception set",
-            ));
-        }
         reply_value(py, &fluxscale_record(&report))
     }
 }
