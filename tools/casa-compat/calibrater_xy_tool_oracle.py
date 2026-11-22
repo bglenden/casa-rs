@@ -111,8 +111,46 @@ def compare_autos(work, engines, vis, stokes):
         data[1] *= 20j
         data[2] *= -20j
         assert table.putcol('DATA', data, rows, rows)
+        times = table.getcol('TIME', rows, rows)
+        early = times == times.min()
+        for name, factor in (('SIGMA', .2), ('WEIGHT', 25.)):
+            weights = table.getcol(name, rows, rows)
+            weights[:, early] *= factor
+            assert table.putcol(name, weights, rows, rows)
     for old in (False, True):
         compare_xy(work, engines, path, f'XYf-autos-{old}', 'XYf+QU', stokes, old=old)
+
+
+def compare_legacy_gather(work, engines, vis, stokes):
+    binned = work/'unequal-bins.ms'
+    copy_ms(vis, binned)
+    with opened(binned, True) as table:
+        data = table.getcol('DATA')
+        data[1:3, 2:4] *= .3
+        data[1:3, 4] *= 2.3
+        assert table.putcol('DATA', data)
+    compare_xy(work, engines, binned, 'XYf-unequal-legacy-bins', 'XYf+QU', stokes, old=True,
+               selection={'spw': '0:2~4'}, options={'t': 'inf,2chan'})
+
+    sparse = work/'sparse-baseline.ms'
+    with opened(vis) as table:
+        times = table.getcol('TIME')
+        pair = (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 1)
+        skip = pair & (times == np.unique(times)[3]) & (table.getcol('FIELD_ID') == 0)
+        assert skip.sum() == 1
+        reference = table.selectrows(np.flatnonzero(~skip))
+        try:
+            copied = reference.copy(str(sparse), deep=True, valuecopy=True)
+            assert copied.close()
+        finally:
+            assert reference.close()
+    with opened(sparse, True) as table:
+        pair = pair[~skip]
+        for name, scale in (('SIGMA', .25), ('WEIGHT', 16.)):
+            values = table.getcol(name)
+            values[:, pair] *= scale
+            assert table.putcol(name, values)
+    compare_xy(work, engines, sparse, 'XYf-sparse-legacy-baseline', 'XYf+QU', stokes, old=True)
 
 
 def compare_basis(work, basis, engines):
@@ -152,6 +190,7 @@ def compare_basis(work, basis, engines):
                options={'t': 'int'})
     legacy_insufficient_angle(work, engines, vis, stokes)
     compare_autos(work, engines, vis, stokes)
+    compare_legacy_gather(work, engines, vis, stokes)
     with opened(vis, True) as table:
         flags = table.getcol('FLAG')
         flags[1, 3, ::6] = True
