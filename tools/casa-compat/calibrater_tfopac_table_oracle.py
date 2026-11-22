@@ -106,6 +106,10 @@ def run(args):
             for engine, factory in factories.items():
                 target = args.work/f'{label}-{engine}.ms'
                 copytree(vis, target)
+                if method == 'correct':
+                    with opened(target, True) as data:
+                        for column, fill in (('WEIGHT', 7.), ('SIGMA', 2.)):
+                            assert data.putcol(column, np.full_like(data.getcol(column), fill))
                 capture = casa_log(target.with_suffix('.log')) if engine == 'casa' else native_log()
                 with capture as logger:
                     results[engine] = apply(factory, logger, target, table, legacy, weight, method,

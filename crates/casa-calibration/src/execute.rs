@@ -2068,12 +2068,32 @@ impl RowGeometryCache {
         });
     }
 
-    fn materialized_grid(&self, key: MaterializedGridKey) -> Option<Arc<CalibrationGrid>> {
-        self.materialized_grids.get(&key).cloned()
+    fn materialized_grid(
+        &self,
+        key: MaterializedGridKey,
+        transient: bool,
+    ) -> Option<Arc<CalibrationGrid>> {
+        if transient {
+            &self.transient_frequency_grids
+        } else {
+            &self.materialized_grids
+        }
+        .get(&key)
+        .cloned()
     }
 
-    fn insert_materialized_grid(&mut self, key: MaterializedGridKey, grid: Arc<CalibrationGrid>) {
-        self.materialized_grids.insert(key, grid);
+    fn insert_materialized_grid(
+        &mut self,
+        key: MaterializedGridKey,
+        grid: Arc<CalibrationGrid>,
+        transient: bool,
+    ) {
+        if transient {
+            &mut self.transient_frequency_grids
+        } else {
+            &mut self.materialized_grids
+        }
+        .insert(key, grid);
     }
 
     fn calibration_lookup<F>(
@@ -2414,7 +2434,9 @@ fn apply_row_all_channels(
         let calibrate_weights = !trial
             && plan.apply_mode.writes_corrected_data()
             && table_plan.calwt
-            && loaded_table.supports_calwt;
+            && loaded_table.supports_calwt
+            // TfOpac requests sigma reset and writeback with unity scaling.
+            && table_plan.summary.table_subtype != "TfOpac";
         if let Some(profile) = compute_profile.as_deref_mut() {
             profile.table_applications += 1;
         }
@@ -2461,8 +2483,11 @@ fn apply_row_all_channels(
         let channelized_polarization = polarization::Leakage::is_channelized(subtype)
             || matches!(subtype, "Xf Jones" | "Xfparang Jones" | "GlinXphf Jones")
             || position_angle;
-        let bounded_frequency_cache =
-            is_tsys || is_sky || channelized_polarization || is_spline || subtype == "Mf Mueller";
+        let bounded_frequency_cache = is_tsys
+            || is_sky
+            || channelized_polarization
+            || is_spline
+            || matches!(subtype, "Mf Mueller" | "TfOpac");
         let evaluation_frequency_hz = if is_spline {
             let frequencies = data_channels.frequencies_hz;
             frequencies.iter().sum::<f64>() / frequencies.len() as f64
@@ -3717,10 +3742,11 @@ fn materialize_row_dependent_grid(
     let engine = table.engine.as_deref();
     let path = &table.path;
     let mut geometry_cache = geometry_cache;
+    let transient = matches!(grid.as_ref(), CalibrationGrid::SpectralOpacity(_));
     let cache_key =
         materialized_grid_key(&grid, field_id, antenna_id, time_seconds, data_spw.spw_id);
     if let (Some(cache), Some(key)) = (&geometry_cache, cache_key)
-        && let Some(grid) = cache.materialized_grid(key)
+        && let Some(grid) = cache.materialized_grid(key, transient)
     {
         return Ok(grid);
     }
@@ -3836,7 +3862,7 @@ fn materialize_row_dependent_grid(
     if let (Some(cache), Some(key), Ok(materialized)) =
         (&mut geometry_cache, cache_key, result.as_ref())
     {
-        cache.insert_materialized_grid(key, Arc::clone(materialized));
+        cache.insert_materialized_grid(key, Arc::clone(materialized), transient);
     }
     result
 }
