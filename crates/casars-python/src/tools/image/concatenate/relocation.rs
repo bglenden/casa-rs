@@ -7,9 +7,10 @@ use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
 use casa_images::concat_file::{ConcatManifest, is_image_concat};
+use casa_images::miriad_read::MiriadImage;
 use pyo3::prelude::*;
 
-use crate::tools::image::handle::{raised, same_file_identity};
+use crate::tools::image::handle::{ImageHandle, raised, same_file_identity};
 
 /// A virtual directory tree in its proposed location. Backing paths still
 /// name the original entries, so this check reads metadata without moving
@@ -86,10 +87,10 @@ impl Relocation<'_> {
                     return Err(binding_error(&"a different image"));
                 }
             }
-            if resolved.starts_with(self.destination)
-                && is_image_concat(&source)
-                && checked.insert((source.clone(), resolved.clone()))
-            {
+            if !checked.insert((source.clone(), resolved.clone())) {
+                continue;
+            }
+            if resolved.starts_with(self.destination) && is_image_concat(&source) {
                 let manifest = ConcatManifest::open(&source).map_err(raised)?;
                 images.extend(
                     manifest
@@ -97,6 +98,49 @@ impl Relocation<'_> {
                         .into_iter()
                         .zip(manifest.paths(&resolved)),
                 );
+            } else if ImageHandle::recognizes_miriad(&source, &source) {
+                self.check_miriad_files(&source, &resolved)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_miriad_files(&self, source: &Path, target: &Path) -> PyResult<()> {
+        let materialized = match &self.entries {
+            Entries::OwnedMembers(members) if self.removed.is_empty() => target
+                .parent()
+                .filter(|parent| *parent == self.destination)
+                .and_then(|_| members.get(target.file_name()?))
+                .is_some_and(|member| *member == source),
+            _ => false,
+        };
+        for entry in source.read_dir().map_err(raised)? {
+            let entry = entry.map_err(raised)?;
+            let name = entry.file_name();
+            if !name.to_str().is_some_and(MiriadImage::is_image_file)
+                || !entry.file_type().map_err(raised)?.is_symlink()
+            {
+                continue;
+            }
+            let original = regular_file(entry.path().metadata()).map_err(raised)?;
+            if materialized && original.is_some() {
+                continue;
+            }
+            let projected = regular_file(
+                self.resolve(&target.join(name))
+                    .and_then(|(_, backing)| backing.metadata()),
+            )
+            .map_err(raised)?;
+            let same = match (original, projected) {
+                (Some(original), Some(projected)) => same_file_identity(&original, &projected),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                return Err(raised(format!(
+                    "Cannot relocate virtual concatenation: MIRIAD image file {} would resolve to a different file",
+                    entry.path().display()
+                )));
             }
         }
         Ok(())
@@ -168,6 +212,15 @@ impl Relocation<'_> {
         Err(io::Error::other(
             "too many symbolic links resolving a concatenation member",
         ))
+    }
+}
+
+fn regular_file(metadata: io::Result<fs::Metadata>) -> io::Result<Option<fs::Metadata>> {
+    match metadata {
+        Ok(metadata) if metadata.is_file() => Ok(Some(metadata)),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 

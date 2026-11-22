@@ -53,6 +53,11 @@ impl MiriadImage {
         path.join("header").is_file() && path.join("image").is_file()
     }
 
+    /// Whether a file can supply pixels or metadata to this reader.
+    pub fn is_image_file(name: &str) -> bool {
+        matches!(name, "header" | "image") || is_image_keyword(name)
+    }
+
     /// Read the image metadata and verify the external pixel file.
     ///
     /// # Errors

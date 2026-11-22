@@ -16,6 +16,14 @@ use crate::concatenate::ConcatenationPlan;
 use crate::image_expr::{bounded_read_cursor, validate_slice_request};
 use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel};
 
+/// Physical access leases held before a concatenation lock request.
+pub enum ConcatLockState {
+    /// A single table, or a lattice with no physical lock.
+    Leaf(Option<LockType>),
+    /// The independent leases of a nested concatenation's members.
+    Nested(Vec<ConcatLockState>),
+}
+
 /// Section access to one member in a virtual concatenation.
 pub trait ConcatMember<T: ImagePixel>: Send + Sync {
     /// The member's resolved (physical) image path.
@@ -66,6 +74,17 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
 
     /// Report a member lock.
     fn has_lock(&self, kind: LockType) -> bool;
+
+    /// Whether the member reports both locks without acquiring a storage lease.
+    fn has_advisory_lock(&self) -> bool {
+        false
+    }
+
+    /// Capture the physical access leases this member holds.
+    fn lock_state(&self) -> ConcatLockState;
+
+    /// Restore a member's leases after an enclosing lock request fails.
+    fn restore_locks(&self, state: ConcatLockState) -> Result<(), ImageError>;
 
     /// Release the access locks held by this member.
     fn unlock(&self) -> Result<(), ImageError>;
@@ -321,7 +340,7 @@ impl<T: ImagePixel> ConcatImage<T> {
     /// Returns an error if a member's access lock cannot be used.
     pub fn lock(&self, kind: LockType, attempts: u32) -> Result<bool, ImageError> {
         let mut seen = std::collections::HashSet::new();
-        let mut acquired: Vec<(&dyn ConcatMember<T>, bool)> = Vec::new();
+        let mut acquired = Vec::new();
         for member in &self.members {
             if !seen.insert(member.path()) {
                 continue;
@@ -334,24 +353,12 @@ impl<T: ImagePixel> ConcatImage<T> {
                 }
                 continue;
             }
-            let read = member.has_lock(LockType::Read);
-            let write = member.has_lock(LockType::Write);
+            let before = member.lock_state();
             match member.lock(kind, attempts) {
-                Ok(true) => {
-                    let already_held = match kind {
-                        LockType::Read => read,
-                        LockType::Write => write,
-                    };
-                    if !already_held {
-                        acquired.push((member.as_ref(), read));
-                    }
-                }
+                Ok(true) => acquired.push((member, before)),
                 refused => {
-                    for (member, read) in acquired.into_iter().rev() {
-                        member.unlock()?;
-                        if read {
-                            member.lock(LockType::Read, 1)?;
-                        }
+                    for (member, state) in acquired.into_iter().rev() {
+                        member.restore_locks(state)?;
                     }
                     return refused;
                 }
@@ -363,6 +370,31 @@ impl<T: ImagePixel> ConcatImage<T> {
     /// Return whether any member holds the requested access lock.
     pub fn has_lock(&self, kind: LockType) -> bool {
         self.members.iter().any(|member| member.has_lock(kind))
+    }
+
+    /// Whether a member reports locks even after temporary closure.
+    pub fn has_advisory_lock(&self) -> bool {
+        self.members.iter().any(|member| member.has_advisory_lock())
+    }
+
+    /// Capture each physical member's access leases before a lock request.
+    pub fn lock_states(&self) -> Vec<ConcatLockState> {
+        self.members
+            .iter()
+            .map(|member| member.lock_state())
+            .collect()
+    }
+
+    /// Restore each member's original access leases after a failed request.
+    ///
+    /// # Errors
+    /// Returns an error if an original lock cannot be restored.
+    pub fn restore_locks(&self, states: Vec<ConcatLockState>) -> Result<(), ImageError> {
+        self.members
+            .iter()
+            .zip(states)
+            .rev()
+            .try_for_each(|(member, state)| member.restore_locks(state))
     }
 
     /// Release access locks on all members.

@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_tables::publication::{
-    check_write_access, copy_locked_table_tree, exchange_directories, rename_without_replacing,
+    check_write_access, copy_locked_external_tree, copy_locked_table_tree, exchange_directories,
+    rename_without_replacing,
 };
 use casa_tables::{TableUseLock, TableWriteLock};
 use pyo3::prelude::*;
@@ -472,7 +473,10 @@ fn copy_claimed_directory(
                 std::os::unix::fs::symlink(std::fs::read_link(&claimed).map_err(raised)?, &copied)
                     .map_err(raised)?
             }
-            _ => copy_locked_table_tree(&claimed, &copied).map_err(raised)?,
+            CopyKind::ReadOnlyDirectory => {
+                copy_locked_external_tree(&claimed, &copied, |_| false).map_err(raised)?
+            }
+            CopyKind::NativeTable => copy_locked_table_tree(&claimed, &copied).map_err(raised)?,
         }
         prepare_copy(&copied)?;
         let (use_lock, write_lock) = match kind {

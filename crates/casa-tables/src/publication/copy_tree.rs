@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::ffi::OsStr;
 use std::fs::{self, Metadata};
 use std::io::{self, ErrorKind};
 use std::path::Path;
@@ -17,6 +18,26 @@ use crate::lock::{LOCK_FILE_NAME, LockFile, LockOptions, read_sync_data_from_tab
 /// Returns an error for unreadable, unsupported or uncopyable entries.
 /// After failure the caller owns any partial destination.
 pub fn copy_locked_table_tree(source: &Path, target: &Path) -> io::Result<()> {
+    copy_tree(source, target, None)
+}
+
+/// Copy a non-table directory, retaining the table copy rules for physical
+/// subtables. Copy the referents of regular-file links selected at the root.
+///
+/// # Errors
+/// Returns an error for unreadable, unsupported or uncopyable entries.
+/// After failure the caller owns any partial destination.
+pub fn copy_locked_external_tree(
+    source: &Path,
+    target: &Path,
+    follow_file_link: impl Fn(&OsStr) -> bool,
+) -> io::Result<()> {
+    copy_tree(source, target, Some(&follow_file_link))
+}
+
+type FileLinkSelection<'a> = Option<&'a dyn Fn(&OsStr) -> bool>;
+
+fn copy_tree(source: &Path, target: &Path, external_root: FileLinkSelection<'_>) -> io::Result<()> {
     let metadata = source.symlink_metadata()?;
     if !metadata.is_dir() {
         return Err(io::Error::new(
@@ -24,13 +45,19 @@ pub fn copy_locked_table_tree(source: &Path, target: &Path) -> io::Result<()> {
             "Expected a table directory",
         ));
     }
-    copy_directory(source, target, &metadata)
+    copy_directory(source, target, &metadata, external_root)
 }
 
-fn copy_directory(source: &Path, target: &Path, metadata: &Metadata) -> io::Result<()> {
+fn copy_directory(
+    source: &Path,
+    target: &Path,
+    metadata: &Metadata,
+    external_root: FileLinkSelection<'_>,
+) -> io::Result<()> {
     fs::create_dir(target)?;
     #[cfg(unix)]
-    let is_table = source.join(crate::storage::TABLE_CONTROL_FILE).is_file();
+    let is_table =
+        external_root.is_none() && source.join(crate::storage::TABLE_CONTROL_FILE).is_file();
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         #[cfg(unix)]
@@ -38,7 +65,16 @@ fn copy_directory(source: &Path, target: &Path, metadata: &Metadata) -> io::Resu
             copy_table_lock(source, target)?;
             continue;
         }
-        copy_entry(&entry.path(), &target.join(entry.file_name()))?;
+        let path = entry.path();
+        let output = target.join(entry.file_name());
+        if external_root.is_some_and(|follow| follow(&entry.file_name()))
+            && entry.file_type()?.is_symlink()
+            && path.is_file()
+        {
+            copy_entry(&path.canonicalize()?, &output)?;
+        } else {
+            copy_entry(&path, &output)?;
+        }
     }
     fs::set_permissions(target, metadata.permissions())
 }
@@ -75,7 +111,7 @@ fn copy_entry(source: &Path, target: &Path) -> io::Result<()> {
         ));
     }
     if metadata.is_dir() {
-        return copy_directory(source, target, &metadata);
+        return copy_directory(source, target, &metadata, None);
     }
     if metadata.is_file() {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
