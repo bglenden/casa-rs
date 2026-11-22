@@ -4,6 +4,7 @@
 
 import argparse
 from contextlib import chdir
+from itertools import product
 from pathlib import Path
 from shutil import copytree
 
@@ -86,6 +87,49 @@ def second_window(original, path):
         assert table.putcol('DATA_DESC_ID', table.getcol('FIELD_ID'))
 
 
+def compare_application(work, vis, factories):
+    wanted = {}
+    columns = ('CORRECTED_DATA', 'FLAG', 'WEIGHT')
+    for writer, reader, weight in product(factories, factories, (False, True)):
+        path = work/f'apply-{writer}-{reader}-{weight}.ms'
+        copytree(vis, path)
+        tool = factories[reader]()
+        assert tool.open(str(path))
+        try:
+            assert tool.selectvis(field='0', spw='0:3')
+            assert tool.setapply(table=str(work/f'channel-{writer}.cal'), calwt=weight)
+            assert tool.correct('calflag')
+        finally:
+            assert tool.close()
+        with opened(path) as table:
+            cells = {name: table.getcol(name) for name in columns}
+            field = table.getcol('FIELD_ID')
+            assert np.max(np.abs(cells['CORRECTED_DATA'][:, 3, field == 0])) > .9
+        if writer == reader == 'casa':
+            wanted[weight] = cells
+        np.testing.assert_array_equal(cells['FLAG'], wanted[weight]['FLAG'])
+        for name in ('CORRECTED_DATA', 'WEIGHT'):
+            np.testing.assert_allclose(cells[name], wanted[weight][name], rtol=5e-5,
+                                       atol=2e-6, err_msg=name)
+        print(writer, reader, weight, 'correct matched', flush=True)
+
+
+def compare_append(work, vis, factories):
+    products = {engine: work/f'append-{engine}.cal' for engine in factories}
+    for engine, factory in factories.items():
+        capture = casa_log(work/'append-state.log') if engine == 'casa' else native_log()
+        with capture as logger:
+            solve(factory, logger, vis, products[engine], '0:3', 'inf', {}, product_expected=True)
+            solve(factory, logger, vis, products[engine], '0:3', 'inf',
+                  {'field': '1', 'append': True}, product_expected=True)
+        with opened(products[engine]) as table:
+            np.testing.assert_array_equal(np.unique(table.getcol('FIELD_ID')), [0, 1])
+    compare_solutions(products)
+    compare_readers(products)
+    compare_window(products)
+    print('append matched', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -115,6 +159,9 @@ def main():
                      {'type': 'Tf Noise'})
         compare_case(work, twin, native_calibrater, 'combined-windows', '0:3,1:3', 'inf', True,
                      {'field': '0,1', 'combine': 'spw'})
+        factories = {'casa': casa_calibrater, 'native': native_calibrater}
+        compare_application(work, vis, factories)
+        compare_append(work, vis, factories)
 
 
 if __name__ == '__main__':
