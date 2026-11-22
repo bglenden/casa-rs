@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Publication and rollback for moving complete native image tables.
+//! Publication and rollback for moving complete image directories.
 
 use std::fs::Metadata;
 use std::io::{self, ErrorKind};
@@ -59,38 +59,69 @@ pub(super) enum NativeTableMove {
         source_stage: TempDir,
         target_stage: TempDir,
         replaced: bool,
-        use_lock: Arc<TableUseLock>,
-        _write_lock: TableWriteLock,
+        published: Box<CopiedDirectory>,
     },
+}
+
+pub(super) struct CopiedDirectory {
+    identity: Metadata,
+    use_lock: Option<Arc<TableUseLock>>,
+    _write_lock: Option<TableWriteLock>,
+}
+
+impl CopiedDirectory {
+    fn matches(&self, path: &Path) -> bool {
+        path.symlink_metadata().is_ok_and(|actual| {
+            if let Some(lease) = &self.use_lock {
+                lease.matches_directory_metadata(&actual)
+            } else {
+                same_file_identity(&self.identity, &actual)
+            }
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CopyKind {
+    NativeTable,
+    ReadOnlyDirectory,
 }
 
 impl NativeTableMove {
     pub(super) fn use_lock(&self) -> Option<Arc<TableUseLock>> {
         match self {
             Self::Renamed(_) => None,
-            Self::Copied { use_lock, .. } => Some(use_lock.clone()),
+            Self::Copied { published, .. } => published.use_lock.clone(),
         }
     }
 
     pub(super) fn check_target(&self, target: &Path) -> PyResult<()> {
-        if let Self::Copied { use_lock, .. } = self
-            && !matches_table_entry(use_lock, target)
+        if let Self::Copied { published, .. } = self
+            && !published.matches(target)
         {
             return Err(changed_target(target));
         }
         Ok(())
     }
 
+    pub(super) fn check_moved_directory(&self, original: &Metadata, target: &Path) -> PyResult<()> {
+        if matches!(self, Self::Renamed(_)) && !matches_entry(original, target) {
+            return Err(changed_target(target));
+        }
+        self.check_target(target)
+    }
+
     pub(super) fn finish(self, target: &Path) -> PyResult<()> {
         if let Self::Copied {
             source_stage,
             target_stage,
-            _write_lock,
+            published,
             ..
         } = self
         {
             let source = close_stage(source_stage, target);
             let destination = close_stage(target_stage, target);
+            drop(published);
             match (source, destination) {
                 (Ok(()), result) | (result, Ok(())) => return result,
                 (Err(source), Err(destination)) => {
@@ -108,12 +139,11 @@ impl NativeTableMove {
                 source_stage,
                 target_stage,
                 replaced,
-                use_lock,
-                _write_lock,
+                published,
                 ..
             } => {
                 let target_result =
-                    restore_copied_target(target, &target_stage, replaced, &use_lock);
+                    restore_copied_target(target, &target_stage, replaced, &published);
                 let source_result =
                     rename_without_replacing(&source_stage.path().join("source"), source);
                 if source_result.is_ok() && target_result.is_ok() {
@@ -139,11 +169,46 @@ pub(super) fn move_native_table(
     target_metadata: Option<&Metadata>,
     prepare_copy: impl FnOnce(&Path) -> PyResult<()>,
 ) -> PyResult<NativeTableMove> {
+    move_image_directory(
+        source,
+        source_metadata,
+        target,
+        target_metadata,
+        CopyKind::NativeTable,
+        prepare_copy,
+    )
+}
+
+pub(super) fn move_read_only_directory(
+    source: &Path,
+    source_metadata: &Metadata,
+    target: &Path,
+    target_metadata: Option<&Metadata>,
+    check_copy: impl FnOnce(&Path) -> PyResult<()>,
+) -> PyResult<NativeTableMove> {
+    move_image_directory(
+        source,
+        source_metadata,
+        target,
+        target_metadata,
+        CopyKind::ReadOnlyDirectory,
+        check_copy,
+    )
+}
+
+fn move_image_directory(
+    source: &Path,
+    source_metadata: &Metadata,
+    target: &Path,
+    target_metadata: Option<&Metadata>,
+    kind: CopyKind,
+    prepare_copy: impl FnOnce(&Path) -> PyResult<()>,
+) -> PyResult<NativeTableMove> {
     let Some(expected) = target_metadata else {
         return match rename_without_replacing(source, target) {
             Ok(()) => Ok(NativeTableMove::Renamed(None)),
             Err(error) if error.kind() == ErrorKind::CrossesDevices => {
-                move_across_devices(source, source_metadata, target, None, prepare_copy)
+                move_across_devices(source, source_metadata, target, None, kind, prepare_copy)
             }
             Err(error) => Err(raised(error)),
         };
@@ -156,6 +221,7 @@ pub(super) fn move_native_table(
                 source_metadata,
                 target,
                 target_metadata,
+                kind,
                 prepare_copy,
             )
         } else {
@@ -192,11 +258,6 @@ fn matches_entry(expected: &Metadata, path: &Path) -> bool {
         .is_ok_and(|actual| same_file_identity(expected, &actual))
 }
 
-fn matches_table_entry(expected: &TableUseLock, path: &Path) -> bool {
-    path.symlink_metadata()
-        .is_ok_and(|actual| expected.matches_directory_metadata(&actual))
-}
-
 fn changed_target(target: &Path) -> PyErr {
     raised(format!(
         "The destination image entry at {} has changed",
@@ -209,6 +270,7 @@ fn move_across_devices(
     source_metadata: &Metadata,
     target: &Path,
     target_metadata: Option<&Metadata>,
+    kind: CopyKind,
     prepare_copy: impl FnOnce(&Path) -> PyResult<()>,
 ) -> PyResult<NativeTableMove> {
     let source_stage = tempdir_beside(source)?;
@@ -226,16 +288,26 @@ fn move_across_devices(
         }
         copy_locked_table_tree(&claimed, &copied).map_err(raised)?;
         prepare_copy(&copied)?;
-        let use_lock = Arc::new(TableUseLock::acquire(&copied).map_err(raised)?);
-        let write_lock = TableWriteLock::acquire(&copied, 1).map_err(raised)?;
+        let (use_lock, write_lock) = match kind {
+            CopyKind::NativeTable => (
+                Some(Arc::new(TableUseLock::acquire(&copied).map_err(raised)?)),
+                Some(TableWriteLock::acquire(&copied, 1).map_err(raised)?),
+            ),
+            CopyKind::ReadOnlyDirectory => (None, None),
+        };
+        let published = CopiedDirectory {
+            identity: copied.symlink_metadata().map_err(raised)?,
+            use_lock,
+            _write_lock: write_lock,
+        };
         if target_metadata.is_some() {
             exchange_directories(&copied, target).map_err(raised)?;
         } else {
             rename_without_replacing(&copied, target).map_err(raised)?;
         }
-        Ok::<_, PyErr>((use_lock, write_lock))
+        Ok::<_, PyErr>(published)
     };
-    let (use_lock, write_lock) = match install() {
+    let published = match install() {
         Ok(locks) => locks,
         Err(error) => {
             if let Err(restore) = rename_without_replacing(&claimed, source) {
@@ -253,8 +325,7 @@ fn move_across_devices(
         source_stage,
         target_stage,
         replaced: target_metadata.is_some(),
-        use_lock,
-        _write_lock: write_lock,
+        published: Box::new(published),
     };
     if target_metadata.is_some_and(|expected| !matches_entry(expected, &copied)) {
         return moved.restore(source, target, changed_target(target));
@@ -266,7 +337,7 @@ fn restore_copied_target(
     target: &Path,
     stage: &TempDir,
     replaced: bool,
-    published: &TableUseLock,
+    published: &CopiedDirectory,
 ) -> io::Result<()> {
     let changed = || {
         io::Error::other(format!(
@@ -274,12 +345,12 @@ fn restore_copied_target(
             target.display()
         ))
     };
-    if !matches_table_entry(published, target) {
+    if !published.matches(target) {
         return Err(changed());
     }
     let withdrawn = stage.path().join("withdrawn");
     rename_without_replacing(target, &withdrawn)?;
-    if !matches_table_entry(published, &withdrawn) {
+    if !published.matches(&withdrawn) {
         // The entry changed between preflight and withdrawal. Return it
         // without replacing any newer arrival, or leave it in the stage.
         rename_without_replacing(&withdrawn, target)?;
@@ -350,9 +421,14 @@ mod tests {
         fs::create_dir(&source).unwrap();
         fs::write(source.join("peer"), b"2").unwrap();
 
-        let error = move_across_devices(&source, &expected, &target, None, |_| {
-            panic!("a changed source must never be copied")
-        })
+        let error = move_across_devices(
+            &source,
+            &expected,
+            &target,
+            None,
+            CopyKind::NativeTable,
+            |_| panic!("a changed source must never be copied"),
+        )
         .err()
         .expect("the source changed");
 
@@ -382,6 +458,7 @@ mod tests {
                 &source.symlink_metadata().unwrap(),
                 &target,
                 target.symlink_metadata().ok().as_ref(),
+                CopyKind::NativeTable,
                 |_| Ok(()),
             )
             .unwrap();

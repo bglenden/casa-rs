@@ -8223,6 +8223,22 @@ It also refuses a destination ending in `..` because the argument does
 not identify a named replacement entry.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+### MIRIAD directory rename and replaced source paths
+
+With `parent/source.mir` attached, `ia.rename("parent", overwrite=True)`
+in CASA 6.7.6.14 can delete the source image and other entries in `parent`
+before reporting an error. casa-rs rejects the ancestor destination before
+moving or removing either path. The failed call detaches the tool, as in CASA.
+
+Open `source.mir` without reading a pixel, move its directory to `saved.mir`,
+and create a different image at `source.mir`. CASA can read the replacement
+pixels through the original attachment's coordinates. `ia.rename("target.mir")`
+can also move the replacement directory. casa-rs checks the image entry it
+originally opened, so the first pixel read and the rename report that the
+entry has changed. Both images stay at their existing names. A peer that has
+already read a pixel keeps its original stream after a rename, as in CASA.
+See [#1955](https://github.com/bglenden/casa-rs/issues/1955).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

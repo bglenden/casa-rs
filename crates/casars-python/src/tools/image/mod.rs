@@ -49,6 +49,7 @@ mod makecomplex;
 mod mask_expression;
 mod masks;
 mod metadata;
+mod miriad_rename;
 mod modify;
 mod moments;
 mod native_rename;
