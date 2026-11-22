@@ -1472,6 +1472,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// Returns an error if the image metadata cannot be read.
     pub fn from_image_sections(
         image: &dyn ImageInterface<T>,
+        coordinate_record: Option<&RecordValue>,
         read: impl Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<T>, ImageError>
         + Send
         + Sync
@@ -1481,7 +1482,10 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         + Sync
         + 'static,
     ) -> Result<Self, ImageError> {
-        let meta = ImageExprMeta::from_image(image)?;
+        let mut meta = ImageExprMeta::from_image(image)?;
+        if let Some(record) = coordinate_record {
+            meta.legacy_coords = Some(record.clone());
+        }
         let mask = image
             .has_pixel_mask()
             .then(|| Arc::new(read_mask) as OwnedMaskReader);

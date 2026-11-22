@@ -71,6 +71,26 @@ impl MiriadImage {
         matches!(name, "header" | "image") || is_image_keyword(name)
     }
 
+    /// Linked input files used by the MIRIAD reader, without listing the directory.
+    pub fn linked_input_files(path: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+        ["header", "image"]
+            .into_iter()
+            .chain(IMAGE_KEYWORDS.iter().copied())
+            .map(str::to_owned)
+            .chain(
+                AXIS_ITEM_PREFIXES
+                    .iter()
+                    .flat_map(|prefix| (1..=MAX_AXES).map(move |axis| format!("{prefix}{axis}"))),
+            )
+            .map(|name| path.join(name))
+            .filter(|entry| {
+                entry
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.is_symlink())
+                    && entry.is_file()
+            })
+    }
+
     /// Read the image metadata and verify the external pixel file.
     ///
     /// # Errors
@@ -671,22 +691,14 @@ fn legacy_spectral_frame(kind: &str) -> &'static str {
     }
 }
 
+const IMAGE_KEYWORDS: &[&str] = &[
+    "naxis", "epoch", "bunit", "restfreq", "telescop", "obstime", "btype", "bmaj", "bmin", "bpa",
+];
+const AXIS_ITEM_PREFIXES: &[&str] = &["naxis", "ctype", "crpix", "cdelt", "crval"];
+
 fn is_image_keyword(name: &str) -> bool {
-    matches!(
-        name,
-        "naxis"
-            | "epoch"
-            | "bunit"
-            | "restfreq"
-            | "telescop"
-            | "obstime"
-            | "btype"
-            | "bmaj"
-            | "bmin"
-            | "bpa"
-    ) || ["naxis", "ctype", "crpix", "cdelt", "crval"]
-        .iter()
-        .any(|stem| {
+    IMAGE_KEYWORDS.contains(&name)
+        || AXIS_ITEM_PREFIXES.iter().any(|stem| {
             name.strip_prefix(stem)
                 .and_then(|suffix| suffix.parse::<usize>().ok())
                 .is_some_and(|axis| (1..=MAX_AXES).contains(&axis))

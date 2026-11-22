@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use casa_images::analysis::{ImageToolExpressionInputs, ImageToolPixelExpression};
 use casa_images::concat_file::is_image_concat;
 use casa_images::expr_file::{ToolExpressionManifest, is_image_expr};
+use casa_images::miriad_read::MiriadImage;
 use casa_images::{
     ImageError, ImageExprBuilder, ImageExpression, ImageInterface, TempImage,
     image_expr::ImageExprValue,
@@ -151,6 +152,7 @@ impl CapturedGraph {
                     self.paths.extend(image.concat_expression_operands());
                     for operand in image.concat_operands() {
                         self.retain_operand_aliases(&operand)?;
+                        self.retain_miriad_files(&operand)?;
                     }
                     let source = AttachedImage::temporary(image);
                     compiled.insert(path.to_path_buf(), bound_pixels(&source).map_err(raised)?);
@@ -163,6 +165,7 @@ impl CapturedGraph {
                     let nested = PendingExpression::from_manifest(path, manifest, directory)?;
                     pending.push(nested);
                 } else if !path.is_file() {
+                    self.retain_miriad_files(path)?;
                     self.retained.push(open_source(path)?);
                 }
             } else {
@@ -189,6 +192,16 @@ impl CapturedGraph {
         {
             self.retain_operand_aliases(&entry)?;
             self.paths.push(referent.to_owned());
+        }
+        Ok(())
+    }
+
+    fn retain_miriad_files(&mut self, path: &Path) -> PyResult<()> {
+        if ImageHandle::recognizes_miriad(path, path) {
+            for entry in MiriadImage::linked_input_files(path) {
+                self.retain_operand_aliases(&entry)?;
+                self.paths.push(entry.canonicalize().map_err(raised)?);
+            }
         }
         Ok(())
     }
@@ -267,8 +280,13 @@ fn bound_image<T: ImageExprValue>(
 ) -> Result<ImageExpression<T>, ImageError> {
     let pixels = source.share_image();
     let mask = source.share_image();
+    let coordinate_record = match storage {
+        Storage::Temp { record, .. } => Some(record),
+        Storage::Paged(_) => None,
+    };
     with_storage!(storage, image => ImageExprBuilder::from_image_sections(
         image.as_ref(),
+        coordinate_record,
         move |start, count, stride| {
             let handle = pixels.lock();
             let storage = select(&handle);

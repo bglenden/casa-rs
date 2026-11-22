@@ -640,12 +640,23 @@ def test_saved_expression_uses_virtual_concat_pixels_and_mask(tmp_path, backend,
     other = _typed_operand(api, valid, "float")
     tool = api.image()
     joined = tool.imageconcat(str(virtual), [str(masked), str(valid)], axis=0, relax=True, mode="nomove")
+    coords = joined.coordsys()
+    coordinate_record = coords.torecord()
+    coords.done()
     assert joined.done()
     _manifest(expression, ImageExpr=f'"{virtual}{selector}" + 2')
     expected = np.concatenate([values, other]) + 2
     mask = np.concatenate([values > 4, np.ones_like(values, dtype=bool)])
     try:
         assert tool.open(str(expression))
+        coords = tool.coordsys()
+        try:
+            record = coords.torecord()
+            for key in coordinate_record:
+                if key.startswith(("worldreplace", "pixelreplace", "worldmap", "pixelmap")):
+                    np.testing.assert_array_equal(record[key], coordinate_record[key])
+        finally:
+            coords.done()
         np.testing.assert_array_equal(tool.getchunk(getmask=True), mask)
         np.testing.assert_array_equal(tool.getchunk()[mask], expected[mask])
         assert tool.haslock().tolist() == [False, False]
@@ -822,6 +833,113 @@ def test_move_protects_a_table_used_through_an_external_virtual_operand(tmp_path
     finally:
         joined.done()
         tool.done()
+
+
+@pytest.mark.parametrize("dependency", ["repeated-alias", "concat-manifest", "miriad-header", "miriad-image"])
+def test_overlap_check_keeps_linked_leaf_files_and_repeated_aliases(tmp_path, dependency):
+    api = _backend("casars")
+    output, leaf, source, expression, other = (
+        tmp_path / name for name in ("out.im", "leaf.im", "source.im", "expr.im", "other.im")
+    )
+    original = _typed_operand(api, output, "float")
+    tool = api.image()
+    if dependency.startswith("miriad"):
+        pixels = _sky(source)
+        link = source / dependency.split("-")[1]
+        contained = output / "payload"
+        link.rename(contained)
+        link.symlink_to(contained)
+    else:
+        one = _typed_operand(api, leaf, "float")
+        pixels = np.concatenate([one, one])
+        if dependency == "repeated-alias":
+            link = output / "alias.im"
+            link.symlink_to(leaf, target_is_directory=True)
+            contained = link
+            operands = [str(leaf), str(link)]
+        else:
+            operands = [str(leaf), str(leaf)]
+        tool.imageconcat(str(source), operands, axis=0, relax=True, mode="nomove").done()
+        if dependency == "concat-manifest":
+            link = source / "imageconcat.json"
+            contained = output / "manifest.json"
+            link.rename(contained)
+            link.symlink_to(contained)
+    assert tool.fromarray(str(other), np.zeros_like(pixels))
+    assert tool.done()
+    _manifest(expression, ImageExpr=f'"{source}" + 1')
+    try:
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression input"):
+            tool.imageconcat(str(output), [str(expression), str(other)], axis=0, relax=True, overwrite=True)
+        assert contained.exists() and link.is_symlink()
+        assert tool.open(str(output))
+        np.testing.assert_array_equal(tool.getchunk(), original)
+        assert tool.open(str(expression))
+        np.testing.assert_array_equal(tool.getchunk(), pixels + 1)
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("tempclose", [False, True])
+def test_saved_expression_section_reads_only_selected_fixed_members(tmp_path, backend, tempclose):
+    api = _backend(backend)
+    first, second, virtual, expression = (tmp_path / name for name in
+                                         ("first.im", "second.im", "virtual.im", "expr.im"))
+    _typed_operand(api, first, "float")
+    _typed_operand(api, second, "float")
+    tool = api.image()
+    tool.imageconcat(str(virtual), [str(first), str(second)], axis=0,
+                     relax=True, mode="nomove", tempclose=tempclose).done()
+    _manifest(expression, ImageExpr=f'"{virtual}" + 2')
+    assert tool.open(str(expression))
+    moved = second.with_suffix(".moved")
+    second.rename(moved)
+    try:
+        if tempclose:
+            with pytest.raises(RuntimeError):
+                tool.getchunk([0, 0], [0, 0])
+        else:
+            np.testing.assert_array_equal(tool.getchunk([0, 0], [0, 0]), [[2.]])
+            np.testing.assert_array_equal(tool.getchunk([0, 0], [0, 0], getmask=True), [[True]])
+    finally:
+        moved.rename(second)
+        tool.done()
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX file permissions")
+@pytest.mark.parametrize("table_files_writable", [False, True])
+def test_concat_beam_write_does_not_modify_members_without_a_physical_lease(tmp_path, table_files_writable):
+    api = _backend("casars")
+    writable, readonly, output = (tmp_path / name for name in ("rw.im", "ro.im", "out.im"))
+    for path in (writable, readonly):
+        _typed_operand(api, path, "float")
+    (readonly / "table.lock").unlink()
+    paths = [readonly, *readonly.rglob("*")]
+    permissions = {path: path.stat().st_mode & 0o777 for path in paths}
+    if not table_files_writable:
+        for path in paths[1:]:
+            path.chmod(0o555 if path.is_dir() else 0o444)
+    readonly.chmod(0o555)
+    tool = api.image()
+    joined = None
+    try:
+        joined = tool.imageconcat(str(output), [str(writable), str(readonly)], axis=0,
+                                   relax=True, mode="nomove", tempclose=False)
+        with pytest.raises(RuntimeError, match="cannot be opened for read/write"):
+            joined.setrestoringbeam("3arcsec", "2arcsec", "1deg")
+        assert joined.done()
+        for path in (writable, readonly):
+            assert tool.open(str(path))
+            assert tool.restoringbeam() == {}
+            assert tool.done()
+        assert not (readonly / "table.lock").exists()
+    finally:
+        if joined is not None:
+            joined.done()
+        tool.done()
+        for path, mode in permissions.items():
+            path.chmod(mode)
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])

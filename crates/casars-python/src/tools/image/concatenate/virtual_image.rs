@@ -65,6 +65,12 @@ fn load(
         )));
     }
     let manifest = ConcatManifest::open(&root).map_err(raised)?;
+    let entry = root.join("imageconcat.json");
+    let referent = entry.canonicalize().map_err(raised)?;
+    let mut operand_entries = vec![entry];
+    if referent != operand_entries[0] {
+        operand_entries.push(referent);
+    }
     let paths = manifest.paths(&root);
     let tempclose = outer_tempclose || manifest.temp_close();
     let inputs = open_members(&paths, tempclose, active)?;
@@ -76,6 +82,7 @@ fn load(
     let output = assemble(
         &root,
         inputs,
+        operand_entries,
         plan,
         manifest.misc_info().map_err(raised)?,
         tempclose,
@@ -129,6 +136,7 @@ pub(super) fn stage_nomove(
     assemble(
         final_path,
         inputs,
+        Vec::new(),
         plan,
         Some(misc),
         request.tempclose,
@@ -226,6 +234,7 @@ fn geometry_error(error: ImageError) -> PyErr {
 fn assemble(
     path: &Path,
     inputs: Vec<Input<'_>>,
+    operand_entries: Vec<PathBuf>,
     plan: ConcatenationPlan,
     misc: Option<RecordValue>,
     tempclose: bool,
@@ -249,19 +258,54 @@ fn assemble(
         .map(|&index| ordered[index].take().unwrap())
         .collect();
     match kind {
-        ImagePixelType::Float32 => {
-            typed(path, inputs, plan, misc, units, coords, beams, tempclose).map(ImageHandle::Float)
-        }
-        ImagePixelType::Float64 => typed(path, inputs, plan, misc, units, coords, beams, tempclose)
-            .map(ImageHandle::Double),
-        ImagePixelType::Complex32 => {
-            typed(path, inputs, plan, misc, units, coords, beams, tempclose)
-                .map(ImageHandle::Complex)
-        }
-        ImagePixelType::Complex64 => {
-            typed(path, inputs, plan, misc, units, coords, beams, tempclose)
-                .map(ImageHandle::DComplex)
-        }
+        ImagePixelType::Float32 => typed(
+            path,
+            inputs,
+            operand_entries,
+            plan,
+            misc,
+            units,
+            coords,
+            beams,
+            tempclose,
+        )
+        .map(ImageHandle::Float),
+        ImagePixelType::Float64 => typed(
+            path,
+            inputs,
+            operand_entries,
+            plan,
+            misc,
+            units,
+            coords,
+            beams,
+            tempclose,
+        )
+        .map(ImageHandle::Double),
+        ImagePixelType::Complex32 => typed(
+            path,
+            inputs,
+            operand_entries,
+            plan,
+            misc,
+            units,
+            coords,
+            beams,
+            tempclose,
+        )
+        .map(ImageHandle::Complex),
+        ImagePixelType::Complex64 => typed(
+            path,
+            inputs,
+            operand_entries,
+            plan,
+            misc,
+            units,
+            coords,
+            beams,
+            tempclose,
+        )
+        .map(ImageHandle::DComplex),
     }
 }
 
@@ -269,6 +313,7 @@ fn assemble(
 fn typed<T: MemberPixel>(
     path: &Path,
     inputs: Vec<Input<'_>>,
+    mut operand_entries: Vec<PathBuf>,
     plan: ConcatenationPlan,
     misc: RecordValue,
     units: String,
@@ -281,6 +326,7 @@ fn typed<T: MemberPixel>(
     let mut history = Vec::new();
     for mut input in inputs {
         history.append(&mut input.history);
+        operand_entries.append(&mut input.nested_operands);
         let path = input.resolved_path;
         if let Some(member) = by_path.get(&path) {
             members.push(Arc::clone(member));
@@ -309,13 +355,20 @@ fn typed<T: MemberPixel>(
             storage: Mutex::new(storage),
             expression: input.expression,
             expression_operands: input.expression_operands,
-            nested_operands: input.nested_operands,
         });
         by_path.insert(path, Arc::clone(&member));
         members.push(member);
     }
-    let joined = ConcatImage::new(path.to_path_buf(), plan, members, misc, units, tempclose)
-        .map_err(raised)?;
+    let joined = ConcatImage::new(
+        path.to_path_buf(),
+        plan,
+        members,
+        operand_entries,
+        misc,
+        units,
+        tempclose,
+    )
+    .map_err(raised)?;
     let mut image = TempImage::from_virtual_concat(joined, beams).map_err(raised)?;
     image.append_history_entries(&history).map_err(raised)?;
     Ok(Storage::Temp {
@@ -338,7 +391,6 @@ struct Member<T: MemberPixel> {
     storage: Mutex<Option<Storage<T>>>,
     expression: Option<SavedExpressionInputs>,
     expression_operands: Vec<PathBuf>,
-    nested_operands: Vec<PathBuf>,
 }
 
 impl<T: MemberPixel> Member<T> {
@@ -395,7 +447,9 @@ impl<T: MemberPixel> Member<T> {
         &self,
         read: impl FnOnce(&Storage<T>) -> Result<R, ImageError>,
     ) -> Result<R, ImageError> {
-        if self.expression.is_some() && !self.lock(LockType::Read, 0)? {
+        if let Some(expression) = &self.expression
+            && !lock_expression_inputs(&expression.retained, LockType::Read, 0, true)?
+        {
             return Err(ImageError::Io(
                 "Could not acquire the expression Read lock".into(),
             ));
@@ -464,6 +518,27 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         })
     }
 
+    fn check_image_info_write(&self) -> Result<(), ImageError> {
+        self.use_storage(|storage| match storage {
+            Storage::Paged(image)
+                if !image.is_writable()
+                    || casa_tables::publication::check_write_access(
+                        &self.path.join("table.dat"),
+                    )
+                    .is_err() =>
+            {
+                Err(ImageError::CasaSelection(format!(
+                    "Table {} cannot be opened for read/write",
+                    self.path.display(),
+                )))
+            }
+            Storage::Temp { image, .. } => image
+                .concat_source()
+                .map_or(Ok(()), ConcatImage::check_image_info_write),
+            Storage::Paged(_) => Ok(()),
+        })
+    }
+
     fn write_image_info(
         &self,
         info: &ImageInfo,
@@ -499,7 +574,7 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
     fn lock(&self, kind: LockType, attempts: u32) -> Result<bool, ImageError> {
         self.check_path()?;
         if let Some(expression) = &self.expression {
-            return lock_expression_inputs(&expression.retained, kind, attempts);
+            return lock_expression_inputs(&expression.retained, kind, attempts, false);
         }
         let mut slot = self.slot();
         if let Some(storage) = slot.as_mut() {
@@ -542,10 +617,6 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
 
     fn expression_operands(&self) -> &[PathBuf] {
         &self.expression_operands
-    }
-
-    fn nested_operands(&self) -> &[PathBuf] {
-        &self.nested_operands
     }
 
     fn lock_state(&self) -> ConcatLockState {
@@ -713,12 +784,13 @@ fn lock_expression_inputs(
     inputs: &[AttachedImage],
     kind: LockType,
     attempts: u32,
+    section_read: bool,
 ) -> Result<bool, ImageError> {
     let mut acquired = Vec::new();
     for input in inputs {
         let prior = expression_lock_state(input);
         let result = input
-            .lock_expression_operand(kind, attempts)
+            .lock_expression_operand(kind, attempts, section_read)
             .map_err(expression_error);
         match result {
             Ok(true) => acquired.push((input, prior)),

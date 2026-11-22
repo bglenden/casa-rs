@@ -61,6 +61,11 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
     /// Write the intrinsic validity of a local rectangular section.
     fn write_mask(&self, values: &ArrayD<bool>, start: &[usize]) -> Result<(), ImageError>;
 
+    /// Check whether the member can accept an image-info update.
+    fn check_image_info_write(&self) -> Result<(), ImageError> {
+        Ok(())
+    }
+
     /// Update image metadata using the member's section of the joined beam grid.
     fn write_image_info(
         &self,
@@ -90,11 +95,6 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
         &[]
     }
 
-    /// Entries referenced by a member that is itself a concatenation.
-    fn nested_operands(&self) -> &[PathBuf] {
-        &[]
-    }
-
     /// Capture the physical access leases this member holds.
     fn lock_state(&self) -> ConcatLockState;
 
@@ -113,6 +113,7 @@ pub struct ConcatImage<T: ImagePixel> {
     path: PathBuf,
     directory: Option<std::fs::File>,
     members: Vec<Arc<dyn ConcatMember<T>>>,
+    operand_entries: Vec<PathBuf>,
     boundaries: Vec<usize>,
     axis: usize,
     shape: Vec<usize>,
@@ -133,6 +134,7 @@ impl<T: ImagePixel> ConcatImage<T> {
         path: PathBuf,
         plan: ConcatenationPlan,
         members: Vec<Arc<dyn ConcatMember<T>>>,
+        operand_entries: Vec<PathBuf>,
         misc: RecordValue,
         units: String,
         temp_close: bool,
@@ -179,6 +181,7 @@ impl<T: ImagePixel> ConcatImage<T> {
             path,
             directory,
             members,
+            operand_entries,
             boundaries,
             axis: plan.axis,
             shape: plan.shape,
@@ -292,11 +295,22 @@ impl<T: ImagePixel> ConcatImage<T> {
         info: &ImageInfo,
         record: &RecordValue,
     ) -> Result<(), ImageError> {
-        self.check_directory()?;
+        self.check_image_info_write()?;
         for (member, &offset) in self.members.iter().zip(&self.boundaries) {
             member.write_image_info(info, record, self.axis, offset)?;
         }
         Ok(())
+    }
+
+    /// Preflight the member metadata writes before updating any image.
+    ///
+    /// # Errors
+    /// Returns an error when a member is no longer writable.
+    pub fn check_image_info_write(&self) -> Result<(), ImageError> {
+        self.check_directory()?;
+        self.members
+            .iter()
+            .try_for_each(|member| member.check_image_info_write())
     }
 
     pub(crate) fn write_misc_info(&self, misc: &RecordValue) -> Result<(), ImageError> {
@@ -397,10 +411,10 @@ impl<T: ImagePixel> ConcatImage<T> {
 
     /// Direct and transitive operand paths of the concatenation.
     pub fn operand_paths(&self) -> impl Iterator<Item = &Path> {
-        self.members.iter().flat_map(|member| {
-            std::iter::once(member.path())
-                .chain(member.nested_operands().iter().map(PathBuf::as_path))
-        })
+        self.members
+            .iter()
+            .map(|member| member.path())
+            .chain(self.operand_entries.iter().map(PathBuf::as_path))
     }
 
     /// Capture each physical member's access leases before a lock request.

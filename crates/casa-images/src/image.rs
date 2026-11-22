@@ -1312,6 +1312,17 @@ impl<T: ImagePixel> PagedImage<T> {
         !self.advisory_locks
     }
 
+    fn check_writable(&self) -> Result<(), ImageError> {
+        if !self.is_writable() {
+            let path = self.path.as_ref().expect("advisory image has a table path");
+            return Err(ImageError::CasaSelection(format!(
+                "Table {} cannot be opened for read/write",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
     /// A read-only directory without a lock file reports advisory locks.
     pub fn uses_advisory_locks(&self) -> bool {
         self.advisory_locks
@@ -1503,6 +1514,7 @@ impl<T: ImagePixel> PagedImage<T> {
 
     /// Replaces the brightness unit string.
     pub fn set_units(&mut self, units: impl Into<String>) -> Result<(), ImageError> {
+        self.check_writable()?;
         let units = units.into();
         self.table
             .keywords_mut()
@@ -1877,6 +1889,7 @@ impl<T: ImagePixel> PagedImage<T> {
 
     /// Replaces the image info record.
     pub fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
+        self.check_writable()?;
         self.table
             .keywords_mut()
             .upsert("imageinfo", Value::Record(info.to_record()));
@@ -1891,6 +1904,7 @@ impl<T: ImagePixel> PagedImage<T> {
     /// # Errors
     /// Returns an error before changing the image if the record is invalid.
     pub fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+        self.check_writable()?;
         ImageInfo::from_record(&record)?;
         self.table
             .keywords_mut()
@@ -1931,6 +1945,7 @@ impl<T: ImagePixel> PagedImage<T> {
 
     /// Replaces the misc-info record.
     pub fn set_misc_info(&mut self, rec: RecordValue) -> Result<(), ImageError> {
+        self.check_writable()?;
         self.table
             .keywords_mut()
             .upsert("miscinfo", Value::Record(rec.clone()));
@@ -2463,6 +2478,7 @@ impl<T: ImagePixel> PagedImage<T> {
         data: &ArrayD<bool>,
         start: &[usize],
     ) -> Result<(), ImageError> {
+        self.check_writable()?;
         validate_mask_slice_write(&self.shape, data.shape(), start)?;
         let entry = match self.table.keywords_mut().get_mut(MASKS_KEYWORD) {
             Some(Value::Record(masks)) => masks.get_mut(name),
@@ -2604,6 +2620,7 @@ impl<T: ImagePixel> PagedImage<T> {
     /// pixel data is already on disk — only metadata (table.dat, table.info,
     /// keywords, logtable) is written.
     pub fn save(&mut self) -> Result<(), ImageError> {
+        self.check_writable()?;
         let Some(path) = self.path.clone() else {
             return Err(ImageError::NotPersistent);
         };
@@ -2693,6 +2710,7 @@ impl<T: ImagePixel> PagedImage<T> {
     }
 
     fn write_array(&mut self, array: &ArrayD<T>) -> Result<(), ImageError> {
+        self.check_writable()?;
         self.table
             .cell_accessor_mut(0, MAP_COLUMN)?
             .set(Value::Array(to_array_value(array)))?;
@@ -3347,6 +3365,9 @@ fn paged_image_put_slice_view<T: ImagePixel>(
     data: ArrayViewD<'_, T>,
     start: &[usize],
 ) -> Result<(), LatticeError> {
+    image
+        .check_writable()
+        .map_err(|error| LatticeError::Table(error.to_string()))?;
     if start.len() != image.shape.len() {
         return Err(LatticeError::NdimMismatch {
             expected: image.shape.len(),
