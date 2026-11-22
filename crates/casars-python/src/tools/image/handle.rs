@@ -9,6 +9,7 @@ use casa_images::{
     AnyPagedImage, ImageError, ImagePixel, ImagePixelType, PagedImage, ScratchSpace, TempImage,
     TempStoragePolicy,
     fits_read::{FitsSectionReader, FitsToolImport, fits_section_image},
+    miriad_read::MiriadImage,
 };
 use casa_types::{RecordValue, Value};
 use ndarray::ArrayD;
@@ -208,12 +209,30 @@ impl ImageHandle {
         }
     }
 
+    pub(super) fn open_miriad(path: &Path) -> Result<Self, ImageError> {
+        let image = TempImage::from_read_only_image(
+            MiriadImage::open(path)?,
+            "MIRIADImage",
+            "MIRIADImage::putSlice - is not possible yet as MIRIADImage is not writable",
+        )?;
+        Ok(Self::Float(Storage::Temp {
+            record: image.coordinates().to_record(),
+            image: Box::new(image),
+            fits: None,
+        }))
+    }
+
     pub(super) fn image_type_name(&self) -> &'static str {
         if self.fits().is_some() {
             "FITSImage"
         } else {
             with_pixels!(self, storage => with_storage!(storage, image => image.image_type_name()))
         }
+    }
+
+    pub(super) fn read_only_file_type(&self) -> Option<&'static str> {
+        let kind = self.image_type_name();
+        matches!(kind, "FITSImage" | "MIRIADImage").then_some(kind)
     }
 
     pub(super) fn kind(&self) -> ImagePixelType {

@@ -99,7 +99,7 @@ fn apply_mask_operation(
             return Ok(vec![default.unwrap_or_default()]);
         }
         MaskOperation::Set => {
-            if image.fits().is_some() {
+            if image.read_only_file_type().is_some() {
                 return Err(raised(
                     "RegionHandler::setDefaultMask cannot be used for this image type",
                 ));
@@ -138,7 +138,7 @@ fn apply_mask_operation(
                     names.len()
                 )));
             };
-            if image.fits().is_some() {
+            if image.read_only_file_type().is_some() {
                 return Err(raised(
                     "RegionHandler::renameRegion cannot be used for this image type",
                 ));
@@ -155,7 +155,7 @@ fn apply_mask_operation(
             let [from, to, ..] = names else {
                 return Err(raised("Exception: Supply the original and new mask names."));
             };
-            if image.fits().is_some() {
+            if image.read_only_file_type().is_some() {
                 return Err(raised(
                     "RegionHandler::makeMask - cannot create mask for virtual image",
                 ));

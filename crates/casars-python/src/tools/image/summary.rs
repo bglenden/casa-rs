@@ -64,7 +64,6 @@ fn describe(
     logs: &mut Vec<LogLine>,
 ) -> PyResult<CasaValue> {
     let shape = image.shape();
-    let native = with_pixels!(image, storage => matches!(storage, Storage::Paged(_)));
     let tile = if let Some(fits) = image.fits() {
         fits.tile_shape.clone()
     } else {
@@ -91,7 +90,6 @@ fn describe(
     });
     let name = image
         .path()
-        .filter(|_| native || image.fits().is_some())
         .and_then(|path| path.file_name())
         .map_or_else(|| "Temporary_Image".into(), |name| name.to_string_lossy());
     let kind = image.image_type_name();

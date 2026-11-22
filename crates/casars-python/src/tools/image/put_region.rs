@@ -128,7 +128,7 @@ impl PyImageTool {
                 return Ok((false, Vec::new()));
             };
             let mut handle = attachment.lock();
-            if handle.fits().is_some() {
+            if handle.read_only_file_type().is_some() {
                 return Err(raised("This image is not writable"));
             }
             if let Some(pixels) = &pixels {

@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_images::fits_read::FitsToolImport;
+use casa_images::miriad_read::MiriadImage;
 use casa_tables::publication::check_write_access;
 use casa_tables::{Table, TableError, TableInfo, TableOptions, TableUseLock, TableWriteLock};
 use casa_types::RecordValue;
@@ -130,10 +131,19 @@ impl AttachedImage {
             return Err(unrecognized());
         }
         let key = key(path)?;
-        if !key.join("table.dat").is_file()
+        let has_table_control = key.join("table.dat").is_file();
+        if !has_table_control
             || !fs::read_to_string(key.join("table.info"))
                 .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image")
         {
+            if MiriadImage::recognizes(probe)
+                && (!has_table_control
+                    || Table::open_metadata_only(TableOptions::new(&key)).is_err())
+            {
+                return ImageHandle::open_miriad(path)
+                    .map(Self::temporary)
+                    .map_err(raised);
+            }
             return Err(unrecognized());
         }
         let name = std::path::absolute(path).map_err(raised)?;
@@ -366,7 +376,7 @@ impl AttachedImage {
     }
 
     pub(super) fn is_persistent(&self) -> bool {
-        self.key.is_some() || self.lock().fits().is_some()
+        self.key.is_some() || self.lock().path().is_some()
     }
 
     pub(super) fn check_directory(&self) -> PyResult<()> {
@@ -408,6 +418,9 @@ impl AttachedImage {
         let Some(source) = &self.key else {
             let fits_path = {
                 let image = self.lock();
+                if image.image_type_name() == "MIRIADImage" {
+                    return Err(raised("MIRIAD image rename is not implemented yet (#1955)"));
+                }
                 image
                     .fits()
                     .and_then(|_| image.path())
