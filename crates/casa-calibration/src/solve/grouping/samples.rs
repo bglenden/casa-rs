@@ -168,8 +168,12 @@ impl SolveAccumulator {
         let samples = self.receptor_accumulations.first()?;
         let first = samples.iter().filter_map(|(key, channels)| {
             let baseline = key.baseline;
+            let (first, second) = baseline.antennas;
             let data = channels.first()?;
-            (key.parallel_hand && buffer.contains(baseline) && data.weight > f32::EPSILON)
+            (first != second
+                && key.parallel_hand
+                && buffer.contains(baseline)
+                && data.weight > f32::EPSILON)
                 .then(|| (baseline.antennas, data.weighted_sum / data.weight))
         });
         let guess_antenna = first
@@ -375,7 +379,7 @@ pub(super) fn centroid_weight(
 }
 
 /// CASA's correlation-independent flags are shared by every receptor.
-/// Direct G's gather counts include correlations that are later excluded
+/// Direct antenna solve counts include correlations that are later excluded
 /// from the fit. The first and last input positions define the two counters.
 #[derive(Debug, Clone, Default)]
 pub(super) struct DirectGainGather {

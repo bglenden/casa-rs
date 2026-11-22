@@ -34,7 +34,7 @@ use crate::constants::{
 use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
 use crate::solve::grouping::{
-    SelectedSolveRow, SolveAccumulator, SolveGroupOptions, build_solve_groups,
+    SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows, build_solve_groups,
 };
 use crate::solve::kernel::{SolveGraphOptions, SolveStart, SolvedGraphs, solve_graphs};
 use crate::solve::spectral_window_ids;
@@ -428,7 +428,9 @@ pub(crate) fn solve_bandpass(
         context.preapplied_rows.as_ref(),
         &channel_bin_widths,
         SolveGroupOptions {
-            input_rows: Default::default(),
+            input_rows: SolveInputRows::gain(
+                activity.is_some() && request.band_type == BandpassType::B,
+            ),
             gain_type: GainType::G,
             model_source: request.model_source,
             point_stokes: request.smodel,

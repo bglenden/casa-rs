@@ -236,6 +236,7 @@ def solve_with_autocorrelations(work, engines):
             compare_readers(products)
         print('direct G matched selected autocorrelation residuals', label, flush=True)
 
+    ordinary_t_and_b_autocorrelations(work, vis, zero_vis, engines)
     for label, source in (('autocorr-only', vis), ('zero-phase-only', zero_vis)):
         auto_only = {'msselect': 'ANTENNA1==ANTENNA2'}
         mode = 'P' if label == 'zero-phase-only' else 'AP'
@@ -244,6 +245,50 @@ def solve_with_autocorrelations(work, engines):
         np.testing.assert_array_equal(result_records[0]['nAttempt'], [1])
         np.testing.assert_array_equal(result_records[0]['nSucceed'], [0])
         print('direct G reports an attempt without a caltable for', label, flush=True)
+
+
+def ordinary_t_and_b_autocorrelations(work, vis, zero_vis, engines):
+    second_hand = work/'autocorr-second-hand.ms'
+    copy_ms(vis, second_hand)
+    with opened(second_hand, True) as table:
+        flags = table.getcol('FLAG')
+        flags[0] = True
+        assert table.putcol('FLAG', flags)
+    high_auto = work/'autocorr-high-reference.ms'
+    copy_ms(vis, high_auto)
+    with opened(high_auto, True) as table:
+        rows = (table.getcol('ANTENNA1') == 1) & (table.getcol('ANTENNA2') == 1)
+        values = table.getcol('DATA')
+        values[..., rows] *= 100
+        assert table.putcol('DATA', values)
+    cases = (
+        ('scalar', 'T', vis, False, 'AP', 'A0'),
+        ('scalar-second-hand', 'T', second_hand, True, 'AP', 'A0'),
+        ('scalar-high-reference-auto', 'T', high_auto, False, 'AP', 'A1'),
+        ('channelized', 'B', vis, False, 'AP', 'A0'),
+        ('channelized-phase', 'B', zero_vis, False, 'P', 'A0'),
+    )
+    for case, family, source, corrdep, apmode, refant in cases:
+        products, stats, activity = {}, {}, {}
+        for label, tool in engines.items():
+            product = work/f'autocorr-{case}-{label}.cal'
+            products[label] = product
+            assert tool.open(str(source), addcorr=False, addmodel=False)
+            assert tool.selectvis(field='FLUX', spw='0:1~6')
+            assert tool.setptmodel([1, 0, 0, 0])
+            assert tool.setcorrdepflags(corrdep)
+            assert tool.setsolve(type=family, table=str(product), refant=refant,
+                                 minblperant=3, apmode=apmode)
+            assert tool.solve()
+            activity[label] = tool.activityrec()
+            stats[label] = tool.returndict()['solvestats']
+            assert tool.close()
+        if 'native' in engines:
+            same_record(activity['native'], activity['casa'])
+            same_record(stats['native'], stats['casa'])
+            compare_solutions(products)
+            compare_readers(products)
+        print('direct', family, 'matched selected autocorrelation residuals', case, flush=True)
 
 
 def gather_counts_without_product(work, vis, label, engines, selection, **solve):
