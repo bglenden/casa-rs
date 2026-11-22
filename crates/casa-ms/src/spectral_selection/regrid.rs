@@ -34,7 +34,7 @@ const UNSET_START: f64 = -9e99;
 /// The quantity in which CASA spaces the output channels equally
 /// (`convertGridPars`'s `t_regridQuantity`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RegridQuantity {
+pub(crate) enum RegridQuantity {
     /// `"freq"`: equal frequency steps; `start` and `width` in Hz.
     Frequency,
     /// `"vrad"`: equal radio-velocity steps; `start` and `width` in m/s.
@@ -51,19 +51,19 @@ impl RegridQuantity {
 
 /// A frequency- or velocity-mode cube grid as tclean asks for it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct RegridRequest {
+pub(crate) struct RegridRequest {
     /// Quantity the channels are equally spaced in.
-    pub(super) quantity: RegridQuantity,
+    pub(crate) quantity: RegridQuantity,
     /// Centre of the first channel (Hz or m/s); `None` for `start=''`.
-    pub(super) start: Option<f64>,
+    pub(crate) start: Option<f64>,
     /// Signed channel width (Hz or m/s); `None` for `width=''`.
-    pub(super) width: Option<f64>,
+    pub(crate) width: Option<f64>,
     /// Requested number of output channels (`nchan`), at least one;
     /// `None` for tclean's `nchan=-1`, which fills the data's band from
     /// the start.
-    pub(super) nchan: Option<usize>,
+    pub(crate) nchan: Option<usize>,
     /// Rest frequency in Hz; required for a velocity quantity.
-    pub(super) rest_frequency_hz: f64,
+    pub(crate) rest_frequency_hz: f64,
 }
 
 impl RegridRequest {
@@ -97,14 +97,14 @@ impl RegridRequest {
 /// CASA's `chanFreq` and `chanFreqStep` vectors as `getImFreq` leaves
 /// them for `buildCoordinateSystemCore`.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct CasaChannelFrequencies {
+pub(crate) struct CasaChannelFrequencies {
     /// Output channel centres in Hz (`chanFreq`); the image axis starts at
     /// the first.
-    pub(super) centres_hz: Vec<f64>,
+    pub(crate) centres_hz: Vec<f64>,
     /// Output channel widths in Hz (`chanFreqStep`, `hi − lo`), negated
     /// when `getImFreq` reverses `chanFreq`; a one-channel image's
     /// increment.
-    pub(super) steps_hz: Vec<f64>,
+    pub(crate) steps_hz: Vec<f64>,
 }
 
 /// CASA's output channels for `request` over the data channels
@@ -115,22 +115,34 @@ pub(super) fn casa_channel_frequencies(
     frequencies_hz: &[f64],
     widths_hz: &[f64],
 ) -> MsResult<CasaChannelFrequencies> {
+    let mut axis = casa_data_channel_frequencies(request, frequencies_hz, widths_hz)?;
+    // `getImFreq` reverses `chanFreq` when the order it wants differs from
+    // the order the regridder returned, and negates `chanFreqStep`.
+    let descending_out = axis.centres_hz.first() > axis.centres_hz.last();
+    if request.descending_axis() != descending_out {
+        axis.centres_hz.reverse();
+        axis.steps_hz
+            .iter_mut()
+            .for_each(|step_hz| *step_hz = -*step_hz);
+    }
+    Ok(axis)
+}
+
+/// CASA's MeasurementSet regrid grid, before the image-axis convention is applied.
+pub(crate) fn casa_data_channel_frequencies(
+    request: &RegridRequest,
+    frequencies_hz: &[f64],
+    widths_hz: &[f64],
+) -> MsResult<CasaChannelFrequencies> {
     let bounds = regrid_chan_bounds(request, frequencies_hz, widths_hz)?;
-    let mut centres_hz = bounds
+    let centres_hz = bounds
         .iter()
         .map(|(low_hz, high_hz)| (low_hz + high_hz) / 2.0)
         .collect::<Vec<_>>();
-    let mut steps_hz = bounds
+    let steps_hz = bounds
         .iter()
         .map(|(low_hz, high_hz)| high_hz - low_hz)
         .collect::<Vec<_>>();
-    // `getImFreq` reverses `chanFreq` when the order it wants differs from
-    // the order the regridder returned, and negates `chanFreqStep`.
-    let descending_out = centres_hz.first() > centres_hz.last();
-    if request.descending_axis() != descending_out {
-        centres_hz.reverse();
-        steps_hz.iter_mut().for_each(|step_hz| *step_hz = -*step_hz);
-    }
     Ok(CasaChannelFrequencies {
         centres_hz,
         steps_hz,

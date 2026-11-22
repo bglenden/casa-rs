@@ -1526,7 +1526,7 @@ def _coerce_ms_task_options(
         if "keepmms" in values:
             values["keepmms"] = bool(keep_mms)
     else:
-        for flag in ("timeaverage", "hanning"):
+        for flag in ("timeaverage", "hanning", "combinespws"):
             active = check(flag, (bool, np.bool_), "cBool")
             if flag in values:
                 values[flag] = bool(active)
