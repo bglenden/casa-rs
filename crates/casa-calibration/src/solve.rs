@@ -423,6 +423,14 @@ pub enum GainSolveError {
     #[error("{0}")]
     Baseline(String),
 
+    /// A legacy ACCOR gather reached a fit that requires VI2.
+    #[error("the legacy visibility iterator cannot fit ACCOR")]
+    AccorNeedsModernIterator,
+
+    /// The configured amplitude/phase mode cannot be applied to ACCOR solutions.
+    #[error("enforceAPonSoln divide-by-zero error.")]
+    AccorInvalidSolveMode,
+
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]
     ResolveRefAnt {
@@ -672,20 +680,7 @@ pub(crate) fn solve_gain_rows(
         );
         solution_rows.extend(group_rows);
     }
-    if context.refant_id >= 0 {
-        let strict = matches!(
-            request.refant,
-            RefAntSelector::Expression { strict: true, .. }
-        );
-        let mut alternates = context.refant_alternates.clone();
-        if !strict {
-            let last_preferred = alternates.last().copied().unwrap_or(context.refant_id);
-            let mut nearby = refant_distance_order(ms, last_preferred)?;
-            nearby.retain(|id| *id != context.refant_id && !alternates.contains(id));
-            alternates.extend(nearby);
-        }
-        apply_reference_antenna(&mut solution_rows, context.refant_id, &alternates, strict);
-    }
+    apply_requested_reference(ms, &mut solution_rows, &request.refant, &context)?;
     // CASA enforces amplitudes on the final gains after referencing and
     // before normalizing across all intervals (`globalPostSolveTinker`).
     if request.solve_mode != GainSolveMode::AmplitudePhase {
@@ -703,15 +698,7 @@ pub(crate) fn solve_gain_rows(
     if request.solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
         normalize_gain_solution_amplitudes(&mut solution_rows, request.normalization_type);
     }
-    let mut referenced = BTreeSet::new();
-    for row in &solution_rows {
-        if row.antenna_id == row.refant_id
-            && row.flags.iter().any(|flagged| !flagged)
-            && referenced.insert((row.spw_id, row.time_seconds.to_bits()))
-        {
-            solve_stats.used_as_refant(row.spw_id, row.antenna_id);
-        }
-    }
+    tally_references(&solution_rows, &mut solve_stats);
     drop(kernel_phase);
     let mut channel_selections = BTreeMap::new();
     for row in &context.rows {
@@ -761,6 +748,40 @@ pub(crate) fn spectral_window_ids(ms: &MeasurementSet) -> Result<Vec<i32>, GainS
     Ok((0..windows.row_count())
         .map(|row| i32::try_from(row).expect("window count fits in i32"))
         .collect())
+}
+
+fn apply_requested_reference(
+    ms: &MeasurementSet,
+    rows: &mut [kernel::SolutionRow],
+    request: &RefAntSelector,
+    context: &crate::session::CalibrationSolveContext,
+) -> Result<(), GainSolveError> {
+    let preferred = context.refant_id;
+    if preferred < 0 {
+        return Ok(());
+    }
+    let strict = matches!(request, RefAntSelector::Expression { strict: true, .. });
+    let mut alternates = context.refant_alternates.clone();
+    if !strict {
+        let last_preferred = alternates.last().copied().unwrap_or(preferred);
+        let mut nearby = refant_distance_order(ms, last_preferred)?;
+        nearby.retain(|id| *id != preferred && !alternates.contains(id));
+        alternates.extend(nearby);
+    }
+    apply_reference_antenna(rows, preferred, &alternates, strict);
+    Ok(())
+}
+
+fn tally_references(rows: &[kernel::SolutionRow], stats: &mut SolveStatsBuilder) {
+    let mut referenced = BTreeSet::new();
+    for row in rows {
+        if row.antenna_id == row.refant_id
+            && row.flags.iter().any(|flagged| !flagged)
+            && referenced.insert((row.spw_id, row.time_seconds.to_bits()))
+        {
+            stats.used_as_refant(row.spw_id, row.antenna_id);
+        }
+    }
 }
 
 /// Solve one complete group whose accumulation is finalized

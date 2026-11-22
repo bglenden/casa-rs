@@ -139,15 +139,15 @@ pub fn solve_calibration_with_output_mode(
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
-    solve_calibration_with_activity(
-        dataset,
-        request,
-        mode,
-        None,
-        BandpassSolveControls::default(),
-        None,
-        false,
-    )
+    solve_calibration_with_activity(dataset, request, mode, None, ToolSolveOptions::default())
+}
+
+#[derive(Default)]
+pub(crate) struct ToolSolveOptions<'a> {
+    pub bandpass: BandpassSolveControls,
+    pub spline_mode: Option<&'a str>,
+    pub legacy_iterator: bool,
+    pub invalid_mode: bool,
 }
 
 pub(crate) fn solve_calibration_with_activity(
@@ -155,9 +155,7 @@ pub(crate) fn solve_calibration_with_activity(
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
-    bandpass: BandpassSolveControls,
-    spline_mode: Option<&str>,
-    legacy_iterator: bool,
+    options: ToolSolveOptions<'_>,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     if let CalibrationSolveRequest::Fringe { gain, .. } = &request
         && gain.gain_type != GainType::K
@@ -177,25 +175,11 @@ pub(crate) fn solve_calibration_with_activity(
                 }
             })?;
             drop(open_phase);
-            solve_open_dataset(
-                &measurement_set,
-                request,
-                mode,
-                activity,
-                bandpass,
-                spline_mode,
-                legacy_iterator,
-            )
+            solve_open_dataset(&measurement_set, request, mode, activity, options)
         }
-        CalibrationDataset::Open(measurement_set) => solve_open_dataset(
-            measurement_set,
-            request,
-            mode,
-            activity,
-            bandpass,
-            spline_mode,
-            legacy_iterator,
-        ),
+        CalibrationDataset::Open(measurement_set) => {
+            solve_open_dataset(measurement_set, request, mode, activity, options)
+        }
     }
 }
 
@@ -204,10 +188,14 @@ fn solve_open_dataset(
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
-    bandpass: BandpassSolveControls,
-    spline_mode: Option<&str>,
-    legacy_iterator: bool,
+    options: ToolSolveOptions<'_>,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
+    let ToolSolveOptions {
+        bandpass,
+        spline_mode,
+        legacy_iterator,
+        invalid_mode,
+    } = options;
     match request {
         CalibrationSolveRequest::Gain(request) => {
             solve_gain(measurement_set, &request, mode, activity)
@@ -224,9 +212,16 @@ fn solve_open_dataset(
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }
-        CalibrationSolveRequest::Accor(gain) => accor::solve(measurement_set, &gain, mode)
-            .map(CalibrationSolveResult::Gain)
-            .map_err(CalibrationError::from),
+        CalibrationSolveRequest::Accor(gain) => accor::solve(
+            measurement_set,
+            &gain,
+            mode,
+            activity,
+            legacy_iterator,
+            invalid_mode,
+        )
+        .map(CalibrationSolveResult::Gain)
+        .map_err(CalibrationError::from),
         CalibrationSolveRequest::Baseline {
             gain,
             frequency_dependent,

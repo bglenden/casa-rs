@@ -743,29 +743,34 @@ impl CalibraterLifecycle {
         activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     ) -> Result<CalibrationSolveResult, CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let (mut request, mode, mut bandpass, spline_mode) = match equation.solve.as_ref() {
-            Some(ConfiguredSolve::Task {
-                request,
-                mode,
-                invalid_mode,
-                bandpass,
-                spline_mode,
-            }) => {
-                if *invalid_mode {
-                    return Err(CalibraterLifecycleError::InvalidSolveMode);
+        let (mut request, mode, mut bandpass, spline_mode, invalid_mode) =
+            match equation.solve.as_ref() {
+                Some(ConfiguredSolve::Task {
+                    request,
+                    mode,
+                    invalid_mode,
+                    bandpass,
+                    spline_mode,
+                }) => {
+                    if *invalid_mode
+                        && !(activity.is_some()
+                            && matches!(**request, CalibrationSolveRequest::Accor(_)))
+                    {
+                        return Err(CalibraterLifecycleError::InvalidSolveMode);
+                    }
+                    (
+                        (**request).clone(),
+                        *mode,
+                        *bandpass,
+                        spline_mode.as_deref(),
+                        *invalid_mode,
+                    )
                 }
-                (
-                    (**request).clone(),
-                    *mode,
-                    *bandpass,
-                    spline_mode.as_deref(),
-                )
-            }
-            Some(ConfiguredSolve::LegacyEp(_)) => {
-                return Err(CalibraterLifecycleError::EpSolvePending);
-            }
-            None => return Err(CalibraterLifecycleError::NoSolver),
-        };
+                Some(ConfiguredSolve::LegacyEp(_)) => {
+                    return Err(CalibraterLifecycleError::EpSolvePending);
+                }
+                None => return Err(CalibraterLifecycleError::NoSolver),
+            };
         if activity.is_some() && !self.legacy_iterator {
             if matches!(&request, CalibrationSolveRequest::GainSpline { .. }) {
                 return Err(CalibraterLifecycleError::SplineNeedsLegacyIterator);
@@ -811,9 +816,12 @@ impl CalibraterLifecycle {
             request,
             mode,
             activity,
-            bandpass,
-            spline_mode,
-            self.legacy_iterator,
+            crate::session::ToolSolveOptions {
+                bandpass,
+                spline_mode,
+                legacy_iterator: self.legacy_iterator,
+                invalid_mode,
+            },
         )?)
     }
 
@@ -828,13 +836,8 @@ impl CalibraterLifecycle {
     /// Returns an error if the current equation cannot be solved.
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let generic = matches!(
-            equation.solve,
-            Some(ConfiguredSolve::Task {
-                invalid_mode: false,
-                ..
-            })
-        );
+        let generic = matches!(&equation.solve, Some(ConfiguredSolve::Task { request, invalid_mode, .. })
+            if !invalid_mode || matches!(**request, CalibrationSolveRequest::Accor(_)));
         if generic {
             self.last_solve_stats = None;
         }
