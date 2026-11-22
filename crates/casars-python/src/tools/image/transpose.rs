@@ -561,7 +561,7 @@ impl PyImageTool {
                         make_output(image, active, record, &beams, &axes, path))?;
                     let original_history = match storage {
                         Storage::Paged(image) => image_history_rows(image.name().expect("native path")).map_err(raised)?,
-                        Storage::Temp { image, .. } => image.history_rows().to_vec(),
+                        Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
                     };
                     let mut output = ImageHandle::Float(result);
                     let ImageHandle::Float(storage) = &mut output else { unreachable!() };

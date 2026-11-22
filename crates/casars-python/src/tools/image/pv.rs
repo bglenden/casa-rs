@@ -187,7 +187,7 @@ fn build(
             Storage::Paged(image) => {
                 image_history_rows(image.name().expect("persistent image")).map_err(raised)?
             }
-            Storage::Temp { image, .. } => image.history_rows().to_vec(),
+            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
         };
         result
             .image

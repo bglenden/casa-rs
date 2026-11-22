@@ -22,6 +22,9 @@ use ndarray::{Array3, ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use crate::{ImageError, ImageInfo, ImageInterface};
 
+mod native;
+pub(crate) use native::write_component_keyword;
+
 /// A read-only layer of image pixels evaluated from sky components on demand.
 pub struct ComponentListImage {
     shape: Vec<usize>,
@@ -34,6 +37,7 @@ pub struct ComponentListImage {
     components: Arc<ComponentList>,
     placements: OnceLock<Result<Vec<Placement>, ImageError>>,
     cache: Option<Mutex<Option<CachedSection>>>,
+    native: Option<native::ComponentTable>,
 }
 
 enum Placement {
@@ -69,12 +73,25 @@ impl ComponentListImage {
         &self,
         coordinates: CoordinateSystem,
     ) -> Result<Self, ImageError> {
-        Self::with_geometry(
+        let mut image = Self::with_geometry(
             self.shape.clone(),
             Arc::clone(&self.components),
             coordinates,
             self.cache.is_some(),
-        )
+        )?;
+        image.native = self.native.clone();
+        Ok(image)
+    }
+
+    pub(crate) fn with_cache_mode(&self, enabled: bool) -> Result<Self, ImageError> {
+        let mut image = Self::with_geometry(
+            self.shape.clone(),
+            Arc::clone(&self.components),
+            self.coordinates.clone(),
+            enabled,
+        )?;
+        image.native = self.native.clone();
+        Ok(image)
     }
 
     fn with_geometry(
@@ -149,6 +166,7 @@ impl ComponentListImage {
             components,
             placements: OnceLock::new(),
             cache: cache.then(|| Mutex::new(None)),
+            native: None,
         })
     }
 
@@ -481,14 +499,78 @@ impl ImageInterface<f32> for ComponentListImage {
     }
 
     fn misc_info(&self) -> RecordValue {
-        RecordValue::default()
+        self.native
+            .as_ref()
+            .map_or_else(RecordValue::default, |table| table.misc.clone())
     }
 
     fn image_info(&self) -> Result<ImageInfo, ImageError> {
-        Ok(ImageInfo::default())
+        Ok(self
+            .native
+            .as_ref()
+            .map_or_else(ImageInfo::default, |table| table.info.clone()))
     }
 
     fn name(&self) -> Option<&Path> {
-        None
+        self.native.as_ref().map(|table| table.path.as_path())
+    }
+
+    fn mask_names(&self) -> Vec<String> {
+        self.native.as_ref().map_or_else(Vec::new, |table| {
+            table
+                .masks
+                .fields()
+                .iter()
+                .map(|field| field.name.clone())
+                .collect()
+        })
+    }
+
+    fn default_mask_name(&self) -> Option<String> {
+        self.native
+            .as_ref()
+            .and_then(|table| table.default_mask.clone())
+    }
+
+    fn has_pixel_mask(&self) -> bool {
+        self.native
+            .as_ref()
+            .is_some_and(|table| table.default_mask.is_some())
+    }
+
+    fn default_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
+        self.default_mask_name()
+            .map(|name| self.get_named_mask(&name))
+            .transpose()
+    }
+
+    fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
+        let origin = vec![0; self.shape.len()];
+        let stride = vec![1; self.shape.len()];
+        self.get_named_mask_slice(name, &origin, &self.shape, &stride)
+    }
+
+    fn get_named_mask_slice(
+        &self,
+        name: &str,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        self.native
+            .as_ref()
+            .ok_or_else(|| ImageError::MaskNotFound(name.into()))?
+            .read_mask(name, start, shape, stride)
+    }
+
+    fn get_mask_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        self.default_mask_name()
+            .map(|name| self.get_named_mask_slice(&name, start, shape, stride))
+            .transpose()
     }
 }

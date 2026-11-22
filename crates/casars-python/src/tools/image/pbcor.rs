@@ -402,7 +402,9 @@ fn history_rows(image: &ImageHandle) -> PyResult<Vec<ImageHistoryRow>> {
         ImageHandle::Float(Storage::Paged(image)) => {
             image_history_rows(image.name().expect("native image path")).map_err(raised)
         }
-        ImageHandle::Float(Storage::Temp { image, .. }) => Ok(image.history_rows().to_vec()),
+        ImageHandle::Float(Storage::Temp { image, .. }) => {
+            Ok(image.history_rows().map_err(raised)?.into_owned())
+        }
         _ => unreachable!("checked Float image"),
     }
 }

@@ -161,7 +161,7 @@ pub(super) fn publish_regridded_image(
             };
             let inherited = with_pixels!(handle, source => match source {
                 Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
-                Storage::Temp { image, .. } => image.history_rows().to_vec(),
+                Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
             });
             with_pixels!(&mut output, storage => with_storage!(storage, image => image.append_history_entries(&inherited))).map_err(raised)?;
             if let Some((method, arguments)) = history {

@@ -37,18 +37,19 @@ use casa_lattices::{
     Lattice, LatticeError, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy,
     TraversalCacheHint, TraversalCacheScope, TraversalCursorIter, TraversalSpec,
 };
-use casa_types::{ArrayD, RecordValue};
+use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::IxDyn;
 
 use crate::error::ImageError;
 use crate::image::{
-    ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface,
-    PagedImage, assign_mask_slice, validate_mask_slice_write, validate_new_mask_name,
+    ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface, PagedImage,
+    assign_mask_slice, validate_mask_slice_write, validate_new_mask_name,
 };
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
 
+mod history;
 mod mask;
 mod read_only;
 
@@ -277,6 +278,13 @@ impl<T: ImagePixel> TempImage<T> {
     /// Replaces the image info.
     pub fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
         self.check_beams(info)?;
+        if let Some(path) = self.component_table_path() {
+            crate::component_list_image::write_component_keyword(
+                path,
+                "imageinfo",
+                Value::Record(info.to_record()),
+            )?;
+        }
         self.image_info = info.clone();
         self.image_info_record = None;
         Ok(())
@@ -294,6 +302,13 @@ impl<T: ImagePixel> TempImage<T> {
     pub fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
         let info = ImageInfo::from_record(&record)?;
         self.check_beams(&info)?;
+        if let Some(path) = self.component_table_path() {
+            crate::component_list_image::write_component_keyword(
+                path,
+                "imageinfo",
+                Value::Record(record.clone()),
+            )?;
+        }
         self.image_info = info;
         self.image_info_record = Some(record);
         Ok(())
@@ -308,6 +323,18 @@ impl<T: ImagePixel> TempImage<T> {
         Ok(())
     }
 
+    fn native_component_source(&self) -> Option<&dyn ImageInterface<T>> {
+        let source = self.read_only.as_ref()?;
+        if source.image_type != "ComponentListImage" || source.name.is_none() {
+            return None;
+        }
+        Some(source.source.as_ref())
+    }
+
+    fn component_table_path(&self) -> Option<&Path> {
+        self.native_component_source()?.name()
+    }
+
     /// Returns the misc-info record.
     pub fn misc_info(&self) -> RecordValue {
         self.misc_info.clone()
@@ -315,6 +342,13 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Replaces the misc-info record.
     pub fn set_misc_info(&mut self, rec: RecordValue) -> Result<(), ImageError> {
+        if let Some(path) = self.component_table_path() {
+            crate::component_list_image::write_component_keyword(
+                path,
+                "miscinfo",
+                Value::Record(rec.clone()),
+            )?;
+        }
         self.misc_info = rec;
         Ok(())
     }
@@ -396,6 +430,9 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
+        if let Some(source) = self.native_component_source() {
+            return source.get_named_mask(name);
+        }
         self.find_named_mask(name)?.read()
     }
 
@@ -511,6 +548,11 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Unsets the default mask.
     pub fn unset_default_mask(&mut self) -> Result<(), ImageError> {
+        if self.component_table_path().is_some() {
+            return Err(ImageError::CasaSelection(
+                "Editing native component image masks is tracked in #1691".into(),
+            ));
+        }
         self.default_mask = None;
         self.anonymous_mask = None;
         Ok(())
@@ -523,71 +565,18 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Returns the default mask name if present.
     pub fn default_mask_name(&self) -> Option<String> {
-        self.default_mask.clone()
+        self.native_component_source().map_or_else(
+            || self.default_mask.clone(),
+            |source| source.default_mask_name(),
+        )
     }
 
     /// Returns the names of all stored masks.
     pub fn mask_names(&self) -> Vec<String> {
-        self.masks.iter().map(|(name, _)| name.clone()).collect()
-    }
-}
-
-// ---- History ----------------------------------------------------------------
-
-impl<T: ImagePixel> TempImage<T> {
-    /// Returns the history entries.
-    pub fn history(&self) -> Result<Vec<String>, ImageError> {
-        Ok(self
-            .history
-            .iter()
-            .map(|row| row.entry.message.clone())
-            .collect())
-    }
-
-    /// Appends a history message.
-    pub fn add_history(&mut self, msg: impl Into<String>) -> Result<(), ImageError> {
-        self.append_history_at("casa-images", &[msg.into()])
-    }
-
-    /// Appends history messages with a location retained by future saves.
-    ///
-    /// # Errors
-    /// Returns an error if the system clock is earlier than the UNIX epoch.
-    pub fn append_history_at(
-        &mut self,
-        location: &str,
-        messages: &[String],
-    ) -> Result<(), ImageError> {
-        let time = ImageHistoryEntry::current_time()?;
-        self.history.extend(messages.iter().map(|message| {
-            ImageHistoryRow::informational(ImageHistoryEntry {
-                priority: "INFO".into(),
-                time_mjd_seconds: time,
-                location: location.into(),
-                message: message.clone(),
-            })
-        }));
-        Ok(())
-    }
-
-    /// Append the original FITS or CASA log entries for future saves.
-    pub fn append_history_entries(
-        &mut self,
-        entries: &[ImageHistoryRow],
-    ) -> Result<(), ImageError> {
-        self.history.extend_from_slice(entries);
-        Ok(())
-    }
-
-    /// Returns the temporary image's original log rows for derived images.
-    pub fn history_rows(&self) -> &[ImageHistoryRow] {
-        &self.history
-    }
-
-    /// Clears the history log.
-    pub fn clear_history(&mut self) -> Result<(), ImageError> {
-        self.history.clear();
-        Ok(())
+        self.native_component_source().map_or_else(
+            || self.masks.iter().map(|(name, _)| name.clone()).collect(),
+            |source| source.mask_names(),
+        )
     }
 }
 
@@ -878,6 +867,9 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
+        if let Some(source) = self.native_component_source() {
+            return source.get_named_mask_slice(name, start, shape, stride);
+        }
         self.find_named_mask(name)?.read_slice(start, shape, stride)
     }
 

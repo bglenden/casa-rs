@@ -121,11 +121,20 @@ impl AttachedImage {
     }
 
     pub(super) fn open_resolved(path: &Path, probe: &Path, name: &Path) -> PyResult<Self> {
-        Self::open_with_read_lock(path, probe, name, true)
+        Self::open_resolved_with_cache(path, probe, name, true)
+    }
+
+    pub(super) fn open_resolved_with_cache(
+        path: &Path,
+        probe: &Path,
+        name: &Path,
+        component_cache: bool,
+    ) -> PyResult<Self> {
+        Self::open_with_read_lock(path, probe, name, true, component_cache)
     }
 
     pub(super) fn open_for_ordered_read(path: &Path) -> PyResult<Self> {
-        Self::open_with_read_lock(path, path, path, false)
+        Self::open_with_read_lock(path, path, path, false, true)
     }
 
     pub(super) fn name_path<'a>(&'a self, image: &'a ImageHandle) -> Option<&'a Path> {
@@ -145,6 +154,7 @@ impl AttachedImage {
         probe: &Path,
         name: &Path,
         keep_read_lock: bool,
+        component_cache: bool,
     ) -> PyResult<Self> {
         if probe.is_file() {
             let source =
@@ -172,10 +182,10 @@ impl AttachedImage {
         }
         let key = key(path)?;
         let has_table_control = key.join("table.dat").is_file();
-        if !has_table_control
-            || !fs::read_to_string(key.join("table.info"))
-                .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image")
-        {
+        let paged = has_table_control
+            && fs::read_to_string(key.join("table.info"))
+                .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image");
+        if !paged && !casa_images::ComponentListImage::recognizes_native(&key) {
             if MiriadImage::recognizes(probe)
                 && (!has_table_control
                     || Table::open_metadata_only(TableOptions::new(&key)).is_err())
@@ -195,7 +205,13 @@ impl AttachedImage {
 
         // The data lock may wait for a different process. Keep the registry
         // available to other image names while this open is in progress.
-        let mut opened = Self::open_native(&name, &key, Some(0), TableUseLock::acquire_waiting)?;
+        let mut opened = Self::open_native(
+            &name,
+            &key,
+            Some(0),
+            TableUseLock::acquire_waiting,
+            component_cache,
+        )?;
         if !keep_read_lock {
             opened.lock().unlock_storage()?;
         }
@@ -232,7 +248,7 @@ impl AttachedImage {
         name: &Path,
         key: &Path,
     ) -> PyResult<Self> {
-        let mut opened = Self::open_native(name, key, Some(1), TableUseLock::acquire)?;
+        let mut opened = Self::open_native(name, key, Some(1), TableUseLock::acquire, true)?;
         if !opened
             .lock()
             .lock_storage(casa_tables::LockType::Write, 1)?
@@ -281,7 +297,7 @@ impl AttachedImage {
         } else {
             TableUseLock::acquire_readonly
         };
-        let mut opened = Self::open_native(&key, &key, None, acquire)?;
+        let mut opened = Self::open_native(&key, &key, None, acquire, true)?;
         opened.register(registry);
         Ok(opened)
     }
@@ -291,6 +307,7 @@ impl AttachedImage {
         key: &Path,
         lock_attempts: Option<u32>,
         acquire: fn(&Path) -> Result<TableUseLock, TableError>,
+        component_cache: bool,
     ) -> PyResult<Self> {
         let use_lock = key
             .join("table.dat")
@@ -298,14 +315,16 @@ impl AttachedImage {
             .then(|| acquire(key).map(Arc::new))
             .transpose()
             .map_err(raised)?;
-        let handle = ImageHandle::open_native(key, lock_attempts).map_err(raised)?;
+        let handle = ImageHandle::open_native_with_cache(key, lock_attempts, component_cache)
+            .map_err(raised)?;
+        let shareable = lock_attempts.is_some() && handle.image_type_name() != "ComponentListImage";
         let beam_view = BeamView::from_image(&handle);
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
             use_lock,
             miriad_directory: None,
             saved_expression_directory: None,
-            shareable: lock_attempts.is_some(),
+            shareable,
             coordinates_replaced: AtomicBool::new(false),
         });
         let opened = Self {

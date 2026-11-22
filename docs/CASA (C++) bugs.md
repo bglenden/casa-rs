@@ -8495,6 +8495,18 @@ Casa-rs samples the same owned component model for each requested
 section and returns 2 Jy in either cache mode.
 See [#1691](https://github.com/bglenden/casa-rs/issues/1691).
 
+## A scalar spectral index can give invalid polarized component-image pixels
+
+In CASA 6.7.6.14, create a point component with Stokes flux
+`[2, 1, 0, 0]` Jy, reference frequency 1.415 GHz and scalar spectral
+index `-3`. Sample a component image with Stokes I and Q and frequencies
+1 kHz to either side of the reference. The Q values can depend on other
+allocations in the Python process. `SpectralIndex::sampleStokes` indexes
+four parameters in its matrix overload when the scalar input supplied
+one. The explicit vector `[-3, 0, 0, 0]` produces the expected power law
+in both planes. Casa-rs returns that same power law for the scalar form.
+See [#1691](https://github.com/bglenden/casa-rs/issues/1691).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

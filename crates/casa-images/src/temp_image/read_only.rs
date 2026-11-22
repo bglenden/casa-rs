@@ -24,17 +24,40 @@ impl TempImage<f32> {
     pub fn set_component_coordinates(
         &mut self,
         coordinates: casa_coordinates::CoordinateSystem,
+        record: &casa_types::RecordValue,
     ) -> Result<(), ImageError> {
+        let updated = self
+            .component_source()?
+            .with_coordinates(coordinates.clone())?;
+        if let Some(path) = self.component_table_path() {
+            crate::component_list_image::write_component_keyword(
+                path,
+                "coords",
+                casa_types::Value::Record(record.clone()),
+            )?;
+        }
+        self.read_only.as_mut().expect("component source").source = Box::new(updated);
+        self.coords = coordinates;
+        Ok(())
+    }
+
+    /// Enable or disable evaluated section caching for the component source.
+    /// # Errors
+    /// Returns an error if the image does not contain a component source.
+    pub fn set_component_cache(&mut self, enabled: bool) -> Result<(), ImageError> {
+        let updated = self.component_source()?.with_cache_mode(enabled)?;
+        self.read_only.as_mut().expect("component source").source = Box::new(updated);
+        Ok(())
+    }
+
+    fn component_source(&self) -> Result<&ComponentListImage, ImageError> {
         let invalid = || ImageError::CasaSelection("A component-list source is required".into());
-        let source = self.read_only.as_mut().ok_or_else(invalid)?;
-        let components = source
+        let source = self.read_only.as_ref().ok_or_else(invalid)?;
+        source
             .source
             .as_any()
             .and_then(|source| source.downcast_ref::<ComponentListImage>())
-            .ok_or_else(invalid)?;
-        source.source = Box::new(components.with_coordinates(coordinates.clone())?);
-        self.coords = coordinates;
-        Ok(())
+            .ok_or_else(invalid)
     }
 }
 

@@ -304,7 +304,7 @@ impl CopyImage<'_> {
             with_pixels!(original, storage => with_storage!(storage, image => image.misc_info()));
         let history = with_pixels!(original, storage => match storage {
             Storage::Paged(image) => image_history_rows(image.name().expect("native image has a path")).map_err(raised)?,
-            Storage::Temp { image, .. } => image.history_rows().to_vec(),
+            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
         });
         with_pixels!(&mut copy, storage => with_storage!(storage, image => (|| {
             image.set_units(units)?;

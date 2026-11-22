@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
-use casa_images::{ComponentListImage, ImagePixelType, TempImage};
+use casa_images::{ComponentListImage, ImagePixelType};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{TableWriteLock, lexical_absolute};
 use casa_types::{RecordValue, Value};
@@ -14,8 +14,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::convert::IntList;
+use crate::tools::componentlist::component_image_creation_model;
 use crate::tools::coordsys::validate_restored_linear_coordinates;
 use crate::tools::table::casa_record;
+use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
@@ -778,18 +780,15 @@ impl PyImageTool {
         log: bool,
         cache: bool,
     ) -> PyResult<bool> {
-        let components = component_list_input(py, cl);
+        let input = component_list_input(py, cl);
+        let expanded = resolve_image_path(py, outfile);
         let record = casa_record(py, csys)?;
         let shape = shape.map_or_else(Vec::new, |shape| shape.0);
-        let message = py.detach(|| {
+        let messages = py.detach(|| {
             let mut state = self.state();
             state.image = None;
-            let components = ComponentList::from_record(&components?).map_err(raised)?;
-            if !outfile.is_empty() {
-                return Err(raised(
-                    "Named component-list images are not implemented yet (#1691)",
-                ));
-            }
+            let expanded = expanded?;
+            let input = input?;
             if !(2..=4).contains(&shape.len()) {
                 return Err(raised("ComponentListImages must have 2, 3, or 4 dimensions"));
             }
@@ -808,37 +807,40 @@ impl PyImageTool {
                 kind: "f".into(),
             }
             .geometry(None)?;
+            let stage = StagedImage::allocate_creation(outfile, &expanded, overwrite)?;
+            let mut messages = Vec::new();
+            let (components, spectral_records) = input.load(stage.is_some(), &mut messages)?;
             let message = format!("Created ComponentListImage {outfile} of shape {shape:?}.");
             let source = ComponentListImage::new(shape.clone(), components, geometry.coordinates, cache)
                 .map_err(raised)?;
-            let image = TempImage::from_read_only_image(
-                source,
-                "ComponentListImage",
-                "ComponentListImage::doPutSlice: pixel values cannot be modified in a ComponentListImage",
-            )
-            .map_err(raised)?;
-            let mut image = ImageHandle::Float(Storage::Temp {
-                image: Box::new(image),
-                record: geometry.record,
-                fits: None,
-            });
-            image.append_history_at("ImageFactory::createComponentListImage", std::slice::from_ref(&message))?;
-            if state.history {
-                image.record_history(
-                    "fromcomplist",
-                    format!("ia.fromcomplist(outfile={outfile:?}, shape={shape:?}, cl={{...}}, csys={{...}}, overwrite={overwrite}, log={log}, cache={cache})"),
-                )?;
+            let attachment = publish_staged_pair(stage, None, overwrite, |path, _| {
+                if let Some(path) = path {
+                    source.write_native(path, &geometry.record, &spectral_records).map_err(raised)?;
+                }
+                let mut image = ImageHandle::from_component(source, geometry.record).map_err(raised)?;
+                if path.is_none() {
+                    image.append_history_at(
+                        "ImageFactory::createComponentListImage", std::slice::from_ref(&message),
+                    )?;
+                    if state.history {
+                        image.record_history(
+                            "fromcomplist",
+                            format!("ia.fromcomplist(outfile={outfile:?}, shape={shape:?}, cl={{...}}, csys={{...}}, overwrite={overwrite}, log={log}, cache={cache})"),
+                        )?;
+                    }
+                }
+                Ok((image, None))
+            })?;
+            if !cache && !outfile.is_empty() {
+                attachment.lock().disable_component_cache().map_err(raised)?;
             }
-            state.image = Some(AttachedImage::temporary(image));
-            Ok(message)
+            state.image = Some(attachment);
+            if log {
+                messages.push(LogLine::info(message));
+            }
+            Ok::<_, PyErr>(messages)
         })?;
-        if log {
-            crate::tools::emit(
-                py,
-                "casars.tools.image",
-                &[crate::tools::LogLine::info(message)],
-            )?;
-        }
+        emit(py, "casars.tools.image", &messages)?;
         Ok(true)
     }
 
@@ -951,22 +953,52 @@ impl PyImageTool {
     }
 }
 
-fn component_list_input(py: Python<'_>, input: Option<&Bound<'_, PyAny>>) -> PyResult<RecordValue> {
+enum ComponentListInput {
+    Record(RecordValue),
+    Table(PathBuf),
+}
+
+impl ComponentListInput {
+    fn load(
+        self,
+        persistent: bool,
+        logs: &mut Vec<LogLine>,
+    ) -> PyResult<(ComponentList, BTreeMap<usize, RecordValue>)> {
+        match self {
+            Self::Record(record) => Ok(component_image_creation_model(&record, logs, persistent)?),
+            Self::Table(path) => {
+                // CASA opens the list, then constructs the image from its
+                // public component records. Column-only metadata does not
+                // pass through that conversion.
+                let components = ComponentList::read_table(path).map_err(raised)?;
+                let record = components.to_record().map_err(raised)?;
+                Ok((
+                    ComponentList::from_record(&record).map_err(raised)?,
+                    BTreeMap::new(),
+                ))
+            }
+        }
+    }
+}
+
+fn component_list_input(
+    py: Python<'_>,
+    input: Option<&Bound<'_, PyAny>>,
+) -> PyResult<ComponentListInput> {
     let Some(input) = input else {
         return Err(raised(
             "Exception: Component list table name cannot be empty.",
         ));
     };
     if let Ok(record) = input.cast::<PyDict>() {
-        return casa_record(py, Some(record));
+        return casa_record(py, Some(record)).map(ComponentListInput::Record);
     }
     match input.extract::<String>() {
         Ok(name) if name.is_empty() => Err(raised(
             "Exception: Component list table name cannot be empty.",
         )),
-        Ok(_) => Err(raised(
-            "Component-list table inputs are not implemented yet (#1691)",
-        )),
+        Ok(name) => resolve_image_path(py, &name)
+            .map(|expanded| ComponentListInput::Table(PathBuf::from(expanded.as_ref()))),
         Err(_) => Err(raised("Unsupported type for parameter cl")),
     }
 }

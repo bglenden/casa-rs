@@ -83,6 +83,7 @@ impl PyImageTool {
                     }
                     Storage::Temp { image, .. } => image
                         .history_rows()
+                        .map_err(raised)?
                         .iter()
                         .map(|row| row.entry.clone())
                         .collect(),

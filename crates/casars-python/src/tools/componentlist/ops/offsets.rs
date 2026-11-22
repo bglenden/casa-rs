@@ -124,7 +124,7 @@ impl State {
         Ok(spectrum)
     }
 
-    pub(super) fn spectral_records(
+    pub(in crate::tools::componentlist) fn spectral_records(
         &self,
     ) -> Result<std::collections::BTreeMap<usize, RecordValue>, String> {
         let mut records = std::collections::BTreeMap::new();

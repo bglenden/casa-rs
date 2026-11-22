@@ -189,7 +189,7 @@ impl Request<'_> {
         };
         let history_rows: Vec<ImageHistoryRow> = with_pixels!(image, storage => match storage {
             Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
-            Storage::Temp { image, .. } => image.history_rows().to_vec(),
+            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
         });
         with_pixels!(&mut output, storage => with_storage!(storage, product => product.append_history_entries(&history_rows))).map_err(raised)?;
         if history {

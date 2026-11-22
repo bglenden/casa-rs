@@ -132,7 +132,7 @@ impl ImageHandle {
         if path.is_file() {
             return Self::open_fits(path, FitsToolImport::open_attachment(path)?);
         }
-        AnyPagedImage::open(path).map(Self::from_paged)
+        Self::open_native(path, None)
     }
 
     pub(super) fn open_read(path: &Path) -> Result<Self, ImageError> {
@@ -143,13 +143,49 @@ impl ImageHandle {
     }
 
     pub(super) fn open_native(path: &Path, lock_attempts: Option<u32>) -> Result<Self, ImageError> {
+        Self::open_native_with_cache(path, lock_attempts, true)
+    }
+
+    pub(super) fn open_native_with_cache(
+        path: &Path,
+        lock_attempts: Option<u32>,
+        component_cache: bool,
+    ) -> Result<Self, ImageError> {
+        if casa_images::ComponentListImage::recognizes_native(path) {
+            let (source, record) =
+                casa_images::ComponentListImage::open_native(path, component_cache)?;
+            return Self::from_component(source, record);
+        }
         #[cfg(unix)]
         if let Some(attempts) = lock_attempts {
             return AnyPagedImage::open_with_lock(path, attempts).map(Self::from_paged);
         }
         #[cfg(not(unix))]
         let _ = lock_attempts;
-        Self::open(path)
+        AnyPagedImage::open(path).map(Self::from_paged)
+    }
+
+    pub(super) fn from_component(
+        source: casa_images::ComponentListImage,
+        record: RecordValue,
+    ) -> Result<Self, ImageError> {
+        let image = TempImage::from_read_only_image(
+            source,
+            "ComponentListImage",
+            "ComponentListImage::doPutSlice: pixel values cannot be modified in a ComponentListImage",
+        )?;
+        Ok(Self::Float(Storage::Temp {
+            image: Box::new(image),
+            record,
+            fits: None,
+        }))
+    }
+
+    pub(super) fn disable_component_cache(&mut self) -> Result<(), ImageError> {
+        if let Self::Float(Storage::Temp { image, .. }) = self {
+            image.set_component_cache(false)?;
+        }
+        Ok(())
     }
 
     fn from_paged(image: AnyPagedImage) -> Self {
@@ -273,7 +309,7 @@ impl ImageHandle {
     pub(super) fn history_entries(&self) -> PyResult<Vec<casa_images::image::ImageHistoryRow>> {
         with_pixels!(self, storage => match storage {
             Storage::Paged(image) => casa_images::image::image_history_rows(image.name().expect("native image path")).map_err(raised),
-            Storage::Temp { image, .. } => Ok(image.history_rows().to_vec()),
+            Storage::Temp { image, .. } => Ok(image.history_rows().map_err(raised)?.into_owned()),
         })
     }
 
@@ -320,7 +356,7 @@ impl ImageHandle {
         {
             let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
             image
-                .set_component_coordinates(coordinates)
+                .set_component_coordinates(coordinates, &record)
                 .map_err(raised)?;
             *current = record;
             return Ok(());
