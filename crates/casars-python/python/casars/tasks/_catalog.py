@@ -435,7 +435,7 @@ def mstransform(
     outputvis: StrPath = '',
     createmms: bool = False,
     separationaxis: str = 'auto',
-    numsubms: str = 'auto',
+    numsubms: str | int = 'auto',
     tileshape: list[int] | tuple[int, ...] = [0],
     field: str = '',
     spw: str = '',
@@ -491,10 +491,8 @@ def mstransform(
 
     CASA's ``mstransform``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``createmms``, ``separationaxis``, ``numsubms``, ``realmodelcol``,
-    ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``, ``fitorder``,
-    ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``,
-    ``disableparallel``, ``monolithic_processing``.
+    ``realmodelcol``, ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``,
+    ``fitorder``, ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``.
     """
     return _call_casa(mstransform, locals())
 

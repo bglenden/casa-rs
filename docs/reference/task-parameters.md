@@ -546,7 +546,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
 | <code>createmms</code> | <code>mstransform.createmms@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Write a multi-MS rather than one MeasurementSet. |
 | <code>separationaxis</code> | <code>mstransform.separationaxis@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Axis a multi-MS is partitioned along. |
-| <code>numsubms</code> | <code>mstransform.numsubms@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Number of sub-MeasurementSets in a multi-MS: 'auto' or a count. |
+| <code>numsubms</code> | <code>mstransform.numsubms@r1</code> | <code>variant</code> | <code>"auto"</code>; optional | Output | Number of sub-MeasurementSets in a multi-MS: 'auto' or a count. |
 | <code>tileshape</code> | <code>mstransform.tileshape@r1</code> | <code>array&lt;integer&gt;</code> | <code>[0]</code>; optional | Output | Tile shape of the output data columns. |
 | <code>field</code> | <code>ms.selection.field@r7</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA field selection for MeasurementSet transforms. |
 | <code>spw</code> | <code>ms.selection.spw@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA spw selection for MeasurementSet transforms. |
@@ -592,7 +592,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>denoising_lib</code> | <code>uvcontsub.denoising_lib@r1</code> | <code>bool</code> | <code>true</code>; optional | Continuum | Fit the continuum with the GSL denoising library. |
 | <code>nthreads</code> | <code>uvcontsub.nthreads@r1</code> | <code>integer</code> | <code>1</code>; optional | Continuum | Threads for the continuum fit. |
 | <code>niter</code> | <code>uvcontsub.niter@r1</code> | <code>integer</code> | <code>1</code>; optional | Continuum | Iterations of the continuum's re-weighted linear fit. |
-| <code>disableparallel</code> | <code>mstransform.disableparallel@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | CASA's internal control of parallel processing. |
+| <code>disableparallel</code> | <code>mstransform.disableparallel@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | CASA's internal control of parallel processing.<br><em>Surface:</em> The standalone provider executes members sequentially. |
 | <code>ddistart</code> | <code>mstransform.ddistart@r1</code> | <code>integer</code> | <code>-1</code>; optional | Output | CASA's internal first data-description id. |
 | <code>taql</code> | <code>mstransform.taql@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | TaQL expression that selects rows. |
 | <code>monolithic_processing</code> | <code>mstransform.monolithic_processing@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | CASA's internal control of multi-MS processing. |

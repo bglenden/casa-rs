@@ -8118,6 +8118,15 @@ variance for DATA and FLOAT_DATA. The oracle verifies the independent lanes
 against CASA runs on the separate layouts and against an analytic lag sum.
 [Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Automatic Multi-MS partitioning can keep flagged rows with keepflags disabled
+
+CASA 6.7.6.14 can publish automatic or baseline Multi-MS members containing
+rows with `FLAG_ROW=true` when the task uses `keepflags=False`. Its worker
+prepends the flag predicate to an OR-separated partition expression without
+parenthesizing the partition expression. Later alternatives can bypass the
+flag predicate. casa-rs selects the partition and applies the flag filter to
+every row. The paired Multi-MS probe includes an input with every row flagged.
+
 ## A nonzero mstransform DDI start can leave dangling row references
 
 With CASA 6.7.6.14, a standalone `mstransform(ddistart=3)` of an MS

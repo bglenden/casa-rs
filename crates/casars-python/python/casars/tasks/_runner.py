@@ -413,6 +413,16 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             raise
         except TaskParameterError as error:
             message = error.completion.message or ""
+            if name == "mstransform" and error.completion.parameter == "separationaxis":
+                if message.startswith("unallowed value "):
+                    raise AssertionError(str({"separationaxis": [message]})) from error
+                if message.startswith("Cannot create MMS using separationaxis="):
+                    raise Exception(message) from error
+            if name == "mstransform" and error.completion.parameter == "numsubms":
+                if message == "float division by zero":
+                    raise ZeroDivisionError(message) from error
+                if message.startswith("'<' not supported"):
+                    raise TypeError(message) from error
             if error.completion.parameter == "outputvis":
                 if message.startswith("Output MS "):
                     raise OSError(message) from error

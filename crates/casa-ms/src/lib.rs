@@ -191,9 +191,10 @@ pub use task_contract::{
 };
 pub use task_front_end::{ms_task_success, task_flag_merge, task_selection_text};
 pub use transform::{
-    MsRegridOptions, MsTransformError, MsTransformReport, MsTransformRequest,
-    MsTransformTaskOptions, MsTransformTiling, TimeAverageOptions, TransformDataColumn,
-    TransformTaskHistory, append_task_history, mstransform, mstransform_task,
+    MsPartitionAxis, MsRegridOptions, MsTransformError, MsTransformMultiMsOptions,
+    MsTransformReport, MsTransformRequest, MsTransformTaskOptions, MsTransformTiling,
+    TimeAverageOptions, TransformDataColumn, TransformTaskHistory, append_task_history,
+    mstransform, mstransform_task,
 };
 pub use virtual_model::{
     VirtualModelCombinations, VirtualModelEntry, VirtualModelKind, VirtualModelRecord,

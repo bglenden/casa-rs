@@ -13,6 +13,7 @@ use crate::{MeasurementSet, MsError, MsResult, SubtableId};
 
 use super::{MsTransformError, MsTransformRequest, rewrite_table_rows_with_variable_arrays};
 
+#[derive(Clone)]
 pub(super) struct CorrelationSelection {
     by_polarization: Vec<Vec<usize>>,
     by_ddid: BTreeMap<i32, usize>,

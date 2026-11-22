@@ -3,13 +3,14 @@
 //! and `split` task provider, on the shared task front end. Its first word
 //! names the surface (`mstransform split ...`); `mstransform` runs otherwise.
 
-use std::process::ExitCode;
+use std::{num::NonZeroUsize, process::ExitCode};
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MsRegridOptions, MsTransformError, MsTransformRequest, MsTransformTaskOptions,
-    MsTransformTiling, TimeAverageOptions, TransformDataColumn, TransformTaskHistory,
-    ms_task_success, mstransform_task, mstransform_task_schema_bundle, task_selection_text,
+    MsPartitionAxis, MsRegridOptions, MsTransformError, MsTransformMultiMsOptions,
+    MsTransformRequest, MsTransformTaskOptions, MsTransformTiling, TimeAverageOptions,
+    TransformDataColumn, TransformTaskHistory, ms_task_success, mstransform_task,
+    mstransform_task_schema_bundle, task_selection_text,
 };
 use casa_provider_contracts::{
     CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr,
@@ -36,7 +37,7 @@ fn main() -> ExitCode {
     )
 }
 
-/// Both surfaces run the one transform; CASA's tasks return None.
+/// Run the shared transform and project the public task's return value.
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let (request, options) = transform_request(task)?;
     // The output the transform refuses before it starts is the argument's
@@ -49,7 +50,8 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         MsTransformError::MissingDataColumn { path, column } => TaskFailure::execution(format!(
             "Desired column ({column}) not found in the input MS ({path})."
         )),
-        MsTransformError::RegridParameter { parameter, reason } => {
+        MsTransformError::RegridParameter { parameter, reason }
+        | MsTransformError::MultiMsParameter { parameter, reason } => {
             TaskFailure::validation(reason).at(parameter)
         }
         MsTransformError::ChannelWidthCount => {
@@ -61,7 +63,10 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         other => TaskFailure::execution(other.to_string()),
     })?;
-    ms_task_success(CasaValue::None, &report)
+    let result = report
+        .retained_mms
+        .map_or(CasaValue::None, |value| CasaValue::Bool { value });
+    ms_task_success(result, &report)
 }
 
 fn transform_request(
@@ -110,9 +115,55 @@ fn transform_request(
         flag_command_widths: flag_command_widths(task),
         keep_mms,
         retained_scan_span,
+        multi_ms: multi_ms_options(task)?,
         ..MsTransformTaskOptions::default()
     };
     Ok((request, options))
+}
+
+fn multi_ms_options(
+    task: &TaskInvocation<'_>,
+) -> Result<Option<MsTransformMultiMsOptions>, TaskFailure> {
+    if task.surface() != "mstransform" {
+        return Ok(None);
+    }
+    let create = task.flag("createmms")?;
+    let axis = match task.required_text("separationaxis")?.as_str() {
+        "scan" | "SCAN" => MsPartitionAxis::Scan,
+        "spw" | "SPW" => MsPartitionAxis::SpectralWindow,
+        "auto" | "AUTO" => MsPartitionAxis::Automatic,
+        "baseline" | "BASELINE" => MsPartitionAxis::Baseline,
+        other => {
+            return Err(
+                TaskFailure::validation(format!("unallowed value {other}")).at("separationaxis")
+            );
+        }
+    };
+    let count = match task.value("numsubms") {
+        Some(ParameterValue::String(text)) if text == "auto" => None,
+        Some(value) => {
+            let integer = channel_integer(value);
+            let count = integer
+                .and_then(|n| usize::try_from(n).ok())
+                .and_then(NonZeroUsize::new);
+            if create && count.is_none() {
+                let message = match integer {
+                    Some(0) => "float division by zero",
+                    Some(_) => "numsubms must be positive.",
+                    None => "'<' not supported between instances of 'str' and 'int'",
+                };
+                return Err(TaskFailure::validation(message).at("numsubms"));
+            }
+            count
+        }
+        None => None,
+    };
+    Ok(Some(MsTransformMultiMsOptions {
+        create,
+        axis,
+        count,
+        monolithic: task.flag("monolithic_processing")?,
+    }))
 }
 
 fn tile_layout(task: &TaskInvocation<'_>) -> Result<Option<MsTransformTiling>, TaskFailure> {

@@ -25,7 +25,7 @@ pub(super) struct OutputTiling {
 pub(super) fn resolve_tiling(
     input: &MeasurementSet,
     mode: MsTransformTiling,
-    spw: &SpwSelection,
+    (spw, tile_window): (&SpwSelection, Option<i32>),
     (channels, widths): (
         &BTreeMap<i32, TransformChannelSelection>,
         Option<&BTreeMap<i32, usize>>,
@@ -40,9 +40,8 @@ pub(super) fn resolve_tiling(
     let visibility = match mode {
         MsTransformTiling::Explicit(tile) => tile,
         MsTransformTiling::Standard | MsTransformTiling::FastMosaic => {
-            let id = selected_spw_order(channels, spw)
-                .into_iter()
-                .next()
+            let id = tile_window
+                .or_else(|| selected_spw_order(channels, spw).into_iter().next())
                 .ok_or_else(|| error("The tile layout needs a selected spectral window.".into()))?;
             let ddid = descriptions
                 .iter()
