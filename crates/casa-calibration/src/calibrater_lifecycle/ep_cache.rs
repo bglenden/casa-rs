@@ -33,6 +33,7 @@ pub(crate) struct EpCacheProducts {
     pub weights: ArrayD<Complex32>,
     pub support: Vec<usize>,
     pub sampling: usize,
+    pub reference_angle_rad: f64,
     pub w_scale: Option<f64>,
     _memory: Reservation,
 }
@@ -161,6 +162,7 @@ impl EpCache {
             weights,
             support: support.to_vec(),
             sampling: slot.sampling,
+            reference_angle_rad: slot.angle_deg.to_radians(),
             w_scale: None,
             _memory: memory,
         }))

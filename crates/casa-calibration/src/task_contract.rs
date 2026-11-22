@@ -609,7 +609,7 @@ impl CalibrationTaskRequest {
                 )
                 .map(|result| match result {
                     CalibrationSolveResult::Gain(report) => report,
-                    CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
+                    _ => unreachable!("gain request result"),
                 })
                 .map(CalibrationTaskResult::SolveGain)
                 .map_err(|error| error.to_string())
@@ -638,7 +638,7 @@ impl CalibrationTaskRequest {
             )
             .map(|result| match result {
                 CalibrationSolveResult::Bandpass(report) => report,
-                CalibrationSolveResult::Gain(_) => unreachable!("bandpass request result"),
+                _ => unreachable!("bandpass request result"),
             })
             .map(CalibrationTaskResult::SolveBandpass)
             .map_err(|error| error.to_string()),

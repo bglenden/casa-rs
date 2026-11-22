@@ -205,7 +205,10 @@ impl<'a> CalibrationTableWriter<'a> {
 
     pub(crate) fn save_main(mut self) -> Result<(), CalibrationTableWriteError> {
         if self.mode == CalibrationOutputMode::Append && self.output.destination.exists() {
-            if matches!(self.table.info().sub_type.as_str(), "BPOLY" | "GSPLINE") {
+            if matches!(
+                self.table.info().sub_type.as_str(),
+                "BPOLY" | "GSPLINE" | "EP Jones"
+            ) {
                 let mut old = output_merge::open(&self.output.destination)?;
                 output_merge::append_legacy(
                     &mut old,

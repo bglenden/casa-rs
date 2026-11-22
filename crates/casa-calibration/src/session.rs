@@ -98,6 +98,13 @@ pub enum CalibrationSolveResult {
     Gain(GainSolveReport),
     /// Bandpass-calibration report.
     Bandpass(BandpassSolveReport),
+    /// Legacy EP antenna pointing solution.
+    LegacyEp {
+        /// Output calibration table path.
+        output_table: std::path::PathBuf,
+        /// Number of antenna rows written.
+        solution_row_count: usize,
+    },
 }
 
 /// Failure from the shared calibration solve lifecycle or a family kernel.
