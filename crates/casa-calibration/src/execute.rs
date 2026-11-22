@@ -2148,7 +2148,7 @@ fn materialized_grid_key(
     let kind = match grid.as_ref() {
         CalibrationGrid::Antpos(_) => 1,
         CalibrationGrid::GainCurve(_) => 2,
-        CalibrationGrid::Opacity(_) => 3,
+        CalibrationGrid::Opacity(_) | CalibrationGrid::SpectralOpacity(_) => 3,
         _ => return None,
     };
     Some(MaterializedGridKey {
@@ -2583,7 +2583,8 @@ fn apply_row_all_channels(
         // CASA samples BPOLY on its CAL_DESC window and then interpolates
         // the resulting B grid onto the data window.
         let is_bandpass = is_tsys || matches!(subtype, "B Jones" | "BPOLY");
-        let resample_frequency = is_bandpass || is_sky || channelized_polarization;
+        let resample_frequency =
+            is_bandpass || is_sky || channelized_polarization || subtype == "TfOpac";
         let first_receptor_only = (is_bandpass
             || is_switched_power
             || polarization::is_cross_hand_phase(subtype)
@@ -3614,6 +3615,25 @@ fn fast_opacity_gain(
     path: &Path,
     geometry_cache: Option<&mut RowGeometryCache>,
 ) -> Result<f32, ApplyExecutionError> {
+    let elevation = opacity_elevation(
+        engine,
+        field_id,
+        antenna_id,
+        time_seconds,
+        path,
+        geometry_cache,
+    )?;
+    Ok(opacity_gain(grid.tau, elevation))
+}
+
+fn opacity_elevation(
+    engine: Option<&MsCalEngine>,
+    field_id: i32,
+    antenna_id: i32,
+    time_seconds: f64,
+    path: &Path,
+    geometry_cache: Option<&mut RowGeometryCache>,
+) -> Result<f64, ApplyExecutionError> {
     let Some(engine) = engine else {
         return Err(ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
@@ -3635,13 +3655,16 @@ fn fast_opacity_gain(
         path: path.display().to_string(),
         source,
     })?;
+    Ok(elevation)
+}
+
+fn opacity_gain(tau: f32, elevation: f64) -> f32 {
     let zenith_angle = std::f64::consts::FRAC_PI_2 - elevation;
-    let gain = if zenith_angle < std::f64::consts::FRAC_PI_2 {
-        (-f64::from(grid.tau) / zenith_angle.cos()).exp().sqrt() as f32
+    if zenith_angle < std::f64::consts::FRAC_PI_2 {
+        (-f64::from(tau) / zenith_angle.cos()).exp().sqrt() as f32
     } else {
         1.0
-    };
-    Ok(gain)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3776,33 +3799,15 @@ fn materialize_row_dependent_grid(
             })))
         }
         CalibrationGrid::Opacity(grid) => {
-            let Some(engine) = engine else {
-                return Err(ApplyExecutionError::UnsupportedCalibrationTable {
-                    path: path.display().to_string(),
-                    reason: "TOpac apply requires MeasurementSet geometry".to_string(),
-                });
-            };
-            let elevation = if let Some(cache) = geometry_cache.as_deref_mut() {
-                cache.elevation(engine, time_seconds, field_id, antenna_id)
-            } else {
-                engine
-                    .azel(
-                        time_seconds,
-                        usize::try_from(field_id).unwrap_or(usize::MAX),
-                        usize::try_from(antenna_id).unwrap_or(usize::MAX),
-                    )
-                    .map(|(_az, elevation)| elevation)
-            }
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: path.display().to_string(),
-                source,
-            })?;
-            let zenith_angle = std::f64::consts::FRAC_PI_2 - elevation;
-            let gain = if zenith_angle < std::f64::consts::FRAC_PI_2 {
-                (-f64::from(grid.tau) / zenith_angle.cos()).exp().sqrt() as f32
-            } else {
-                1.0
-            };
+            let gain = fast_opacity_gain(
+                grid,
+                engine,
+                field_id,
+                antenna_id,
+                time_seconds,
+                path,
+                reborrow_geometry_cache(&mut geometry_cache),
+            )?;
             Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
                 receptor_count: 1,
                 channel_count: 1,
@@ -3811,6 +3816,20 @@ fn materialize_row_dependent_grid(
                 flags: ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![grid.flagged])
                     .expect("opacity materialized flag shape is valid"),
             })))
+        }
+        CalibrationGrid::SpectralOpacity(tau) => {
+            let elevation = opacity_elevation(
+                engine,
+                field_id,
+                antenna_id,
+                time_seconds,
+                path,
+                reborrow_geometry_cache(&mut geometry_cache),
+            )?;
+            let mut gain = tau.clone();
+            gain.values
+                .mapv_inplace(|value| Complex32::new(opacity_gain(value.re, elevation), 0.));
+            Ok(Arc::new(CalibrationGrid::Complex(gain)))
         }
         _ => Ok(Arc::clone(&grid)),
     };
@@ -4038,6 +4057,7 @@ enum TimeParameterFamily {
     Antpos,
     GainCurve { power: bool },
     Opacity,
+    SpectralOpacity,
     Tsys,
     Sky,
     PositionAngle,
@@ -4054,6 +4074,7 @@ impl TimeParameterFamily {
             "EGainCurve" => Some(Self::GainCurve { power: false }),
             "EPowerCurve" => Some(Self::GainCurve { power: true }),
             "TOpac" => Some(Self::Opacity),
+            "TfOpac" => Some(Self::SpectralOpacity),
             "B TSYS" => Some(Self::Tsys),
             "PosAng Jones" => Some(Self::PositionAngle),
             "F Jones" => Some(Self::Tec),
@@ -4084,6 +4105,7 @@ pub(crate) enum CalibrationGrid {
     Antpos(AntposGrid),
     GainCurve(GainCurveGrid),
     Opacity(OpacityGrid),
+    SpectralOpacity(GainGrid),
     SwitchedPower(switched_power::SwitchedPowerGrid),
 }
 
@@ -4825,7 +4847,7 @@ fn geometry_engine_for_plan(
     let needs_geometry = plan.calibration_tables.iter().any(|table| {
         matches!(
             table.summary.table_subtype.as_str(),
-            "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac" | "F Jones"
+            "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac" | "TfOpac" | "F Jones"
         )
     });
     if !needs_geometry {
@@ -4941,7 +4963,10 @@ fn load_parameters(
                         source: MsError::from(source),
                     })?;
                 let path = &table_plan.spec.path;
-                if (table_plan.summary.table_subtype == "PosAng Jones" || ionosphere.is_some())
+                if (matches!(
+                    table_plan.summary.table_subtype.as_str(),
+                    "PosAng Jones" | "TfOpac"
+                ) || ionosphere.is_some())
                     && values.shape().first() != Some(&1)
                 {
                     return Err(ApplyExecutionError::UnsupportedParameterShape {
@@ -5013,7 +5038,10 @@ fn load_parameters(
                 )?)
             }
             CalibrationParameterFamily::Float
-                if table_plan.summary.table_subtype.as_str() == "TOpac" =>
+                if matches!(
+                    table_plan.summary.table_subtype.as_str(),
+                    "TOpac" | "TfOpac"
+                ) =>
             {
                 let tau = table
                     .cell_accessor(row_index, COL_FPARAM)
@@ -5022,11 +5050,12 @@ fn load_parameters(
                         path: table_plan.spec.path.display().to_string(),
                         source: MsError::from(source),
                     })?;
-                CalibrationGrid::Opacity(OpacityGrid::from_arrays(
-                    &table_plan.spec.path,
-                    tau,
-                    flags,
-                )?)
+                let path = &table_plan.spec.path;
+                if table_plan.summary.table_subtype == "TfOpac" {
+                    CalibrationGrid::SpectralOpacity(GainGrid::from_real_arrays(path, tau, flags)?)
+                } else {
+                    CalibrationGrid::Opacity(OpacityGrid::from_arrays(path, tau, flags)?)
+                }
             }
             _ => {
                 return Err(ApplyExecutionError::UnsupportedInterpolation {
