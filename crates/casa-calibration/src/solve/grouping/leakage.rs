@@ -363,21 +363,11 @@ pub(crate) fn solve_polarization_with_activity(
         .iter()
         .map(|(&id, window)| (id, window.bin_width))
         .collect();
-    let mut source = BTreeMap::<String, BTreeMap<i32, Complex32>>::new();
-    if request.kind == LeakageSolveKind::Xfparang {
-        let fields = ms.field().map_err(|error| error.to_string())?;
-        for interval in &solutions {
-            if let Some(qu) = interval.polarization {
-                let name = fields
-                    .name(interval.field as usize)
-                    .map_err(|error| error.to_string())?;
-                source
-                    .entry(name)
-                    .or_default()
-                    .insert(interval.spectral_window, qu);
-            }
-        }
-    }
+    let source = if request.kind == LeakageSolveKind::Xfparang {
+        source_polarization(ms, &solutions)?
+    } else {
+        BTreeMap::new()
+    };
     drop(fitting);
     let _publication = crate::timing::Phase::start("polarization_write");
     let rows = output::write(ms, request, &context.rows, &solutions, bin_widths)?;
@@ -392,6 +382,26 @@ pub(crate) fn solve_polarization_with_activity(
             .map(|interval| interval.spectral_window)
             .collect(),
     })
+}
+
+fn source_polarization(
+    ms: &MeasurementSet,
+    solutions: &[LeakageSolution],
+) -> Result<BTreeMap<String, BTreeMap<i32, Complex32>>, String> {
+    let fields = ms.field().map_err(|error| error.to_string())?;
+    let mut source = BTreeMap::<String, BTreeMap<i32, Complex32>>::new();
+    for interval in solutions {
+        if let Some(qu) = interval.polarization {
+            let name = fields
+                .name(interval.field as usize)
+                .map_err(|error| error.to_string())?;
+            source
+                .entry(name)
+                .or_default()
+                .insert(interval.spectral_window, qu);
+        }
+    }
+    Ok(source)
 }
 
 struct LeakageInputs<'a> {
