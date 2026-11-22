@@ -714,10 +714,8 @@ impl CalibraterLifecycle {
             CalibrationSolveResult::Gain(gain) => &gain.solve_stats,
             CalibrationSolveResult::Bandpass(bandpass) => &bandpass.solve_stats,
         };
-        if !stats.windows.is_empty() {
-            if !self.legacy_iterator {
-                self.last_solve_stats = Some(crate::casa_return::solvestats(stats));
-            }
+        if !self.legacy_iterator && !stats.windows.is_empty() {
+            self.last_solve_stats = Some(crate::casa_return::solvestats(stats));
         }
         if let Some(record) = activity.record() {
             self.last_activity = Some(record);

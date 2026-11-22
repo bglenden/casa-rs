@@ -662,7 +662,7 @@ pub(crate) fn solve_gain_rows(
         ) else {
             continue;
         };
-        solve_stats.succeeded(spw_id);
+        solve_stats.record_success(spw_id, true);
         solve_stats.solutions(
             spw_id,
             group_rows.iter().map(|row| AntennaSolution {

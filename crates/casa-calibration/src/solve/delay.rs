@@ -111,7 +111,7 @@ pub(super) fn solve(
             continue;
         }
         attempted_spw_ids.insert(group.spw_id);
-        stats.succeeded(group.spw_id);
+        stats.record_success(group.spw_id, true);
         let solutions = group_delays(
             &group,
             request,

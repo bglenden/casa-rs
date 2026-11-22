@@ -276,9 +276,9 @@ impl SolveStatsBuilder {
     }
 
     /// A solver kept this interval, independently of its final SNR flags.
-    pub(crate) fn succeeded(&mut self, spw_id: i32) {
+    pub(crate) fn record_success(&mut self, spw_id: i32, succeeded: bool) {
         if let Some((_, _, activity)) = self.windows.get_mut(&spw_id) {
-            activity.succeeded += 1;
+            activity.succeeded += i64::from(succeeded);
         }
     }
 

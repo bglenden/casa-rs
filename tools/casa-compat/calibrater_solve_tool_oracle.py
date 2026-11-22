@@ -10,6 +10,7 @@ from casatools import calibrater
 import numpy as np
 
 from blcal_oracle import copy_ms, nrms, opened
+from gaincal_delay_oracle import delay_data
 from gaincal_oracle import amplitude_data
 from record_casa_returns import make_cal_ms
 from calibrater_apply_tool_oracle import compare_calls, result, same_record
@@ -73,7 +74,7 @@ def compare_readers(paths):
             assert native.close()
 
 
-def solve_case(work, vis, label, legacy, engines, options, *, legacy_recovery=False):
+def solve_case(work, vis, label, legacy, engines, options, *, legacy_recovery=False, spw='0:2~9'):
     products, records, activities = {}, {}, {}
     for name, tool in engines.items():
         path = work/f'{label}-{legacy}-{name}.ms'
@@ -86,7 +87,7 @@ def solve_case(work, vis, label, legacy, engines, options, *, legacy_recovery=Fa
                 assert table.putcol('FLAG', flags)
         old = legacy and (not legacy_recovery or name == 'native')
         assert tool.setvi(old, True) and tool.open(str(path))
-        assert tool.selectvis(field='FLUX', spw='0:2~9')
+        assert tool.selectvis(field='FLUX', spw=spw)
         assert tool.setptmodel([1, 0, 0, 0])
         assert tool.setcorrdepflags(label == 'corrdep')
         products[name] = product = work/f'{label}-{legacy}-{name}.cal'
@@ -198,6 +199,10 @@ def main():
     if not config.legacy and config.only is None:
         engines = {name: factory() for name, factory in factories.items()}
         solve_with_registered_prior(work, vis, engines)
+        cross_vis = work/'cross-delay.ms'
+        delay_data(cross_vis, 'KCROSS')
+        engines = {name: factory() for name, factory in factories.items()}
+        solve_case(work, cross_vis, 'cross-delay', False, engines, {'type': 'KCROSS'}, spw='0')
 
 
 if __name__ == '__main__':

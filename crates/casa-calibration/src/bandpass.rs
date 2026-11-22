@@ -503,9 +503,7 @@ pub(crate) fn solve_bandpass(
                 }
             }
         }
-        if !rows.is_empty() {
-            solve_stats.succeeded(group.spw_id);
-        }
+        solve_stats.record_success(group.spw_id, !rows.is_empty());
         solve_stats.solutions(group.spw_id, solutions);
         solution_rows.extend(rows);
     }
