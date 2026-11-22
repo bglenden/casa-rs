@@ -192,7 +192,11 @@ fn merge_window(
                 let overlap = high.min(incoming.upper()) - low.max(incoming.lower());
                 if overlap > 0.0 {
                     let mut source = incoming.sources[0];
-                    source.fraction = (overlap / incoming.width).min(1.0);
+                    source.fraction = if low <= incoming.lower() && incoming.upper() <= high {
+                        1.0
+                    } else {
+                        (overlap / incoming.width).min(1.0)
+                    };
                     current.sources.push(source);
                 }
             }

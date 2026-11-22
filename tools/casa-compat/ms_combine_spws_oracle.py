@@ -7,10 +7,11 @@ import subprocess
 from tempfile import TemporaryDirectory
 
 import casatasks
-from casacore.tables import table
+from casacore.tables import makearrcoldesc, maketabdesc, table
 import numpy as np
 
 from casars import tasks
+from ms_data_columns_oracle import add_float_and_lag
 from ms_hanning_oracle import NOISE, compare_table, fixture
 from ms_selection_tasks_oracle import MAIN, SUBTABLES
 
@@ -40,7 +41,8 @@ def make_pair(root, name, offset, *, counts=(6, 6), spectra=False, time_offset=0
     return source
 
 
-def paired(root, source, case, *, datacolumn="data", usewtspectrum=True, deviations=None, **options):
+def paired(root, source, case, *, datacolumn="data", usewtspectrum=True, deviations=None,
+           spectral_deviations=None, **options):
     reference, native = (root / f"{case}-{side}.ms" for side in ("casa", "native"))
     for engine, path in ((casatasks, reference), (tasks, native)):
         assert engine.mstransform(vis=str(source), outputvis=str(path), datacolumn=datacolumn,
@@ -55,7 +57,8 @@ def paired(root, source, case, *, datacolumn="data", usewtspectrum=True, deviati
         columns = SUBTABLES[name]
         if name == "SPECTRAL_WINDOW":
             columns = (*columns, "MEAS_FREQ_REF")
-        compare_table(reference / name, native / name, columns, f"{case} {name}")
+        compare_table(reference / name, native / name, columns, f"{case} {name}",
+                      spectral_deviations if name == "SPECTRAL_WINDOW" else None)
     compare_table(reference / "FLAG_CMD", native / "FLAG_CMD", ("COMMAND", "APPLIED"), case)
     with table(str(native / "HISTORY"), ack=False) as history:
         assert any("".join(line.split()) == "combinespws=True" for line in history.getcol("MESSAGE"))
@@ -112,6 +115,122 @@ def varying_exposure(root):
     paired(root, source, "unequal-exposures", deviations={"DATA": compare})
 
 
+def mixed_row_flags(root):
+    source = make_pair(root, "mixed-row-flags", 6)
+    with table(str(source), readonly=False, ack=False) as ms:
+        right = ms.getcol("DATA_DESC_ID") == 1
+        flags = ms.getcol("FLAG_ROW")
+        left_rows = np.flatnonzero(~right)
+        right_rows = np.flatnonzero(right)
+        flags[left_rows[0]] = flags[right_rows[1]] = True
+        flags[right_rows[0]] = flags[left_rows[1]] = False
+        ms.putcol("FLAG_ROW", flags)
+    expected = flags[left_rows] & flags[right_rows]
+
+    def compare(row, native, reference):
+        assert native == expected[row]
+        assert reference.getcell("FLAG_ROW", row) == flags[right_rows[row]]
+
+    paired(root, source, "row-flag-reduction", deviations={"FLAG_ROW": compare})
+
+
+def array_width_refusal(root, source):
+    for engine in (casatasks, tasks):
+        output = root / f"array-bin-{engine.__name__}.ms"
+        try:
+            engine.mstransform(vis=str(source), outputvis=str(output), datacolumn="data",
+                              combinespws=True, chanaverage=True, chanbin=[2, 3])
+        except RuntimeError as error:
+            assert "chabin cannot be an array" in str(error), str(error)
+            if engine is tasks:
+                assert not output.exists()
+        else:
+            raise AssertionError(f"{engine.__name__} accepted per-window bins while combining SPWs")
+    print("passed combined array width refusal", flush=True)
+
+
+def aligned_fractional_width(root):
+    source = make_pair(root, "aligned-fractional-width", 4, spectra=True)
+    width = 300000.4
+    with table(str(source / "SPECTRAL_WINDOW"), readonly=False, ack=False) as ms:
+        for window in range(2):
+            frequencies = 1e11 + np.arange(4 * window, 4 * window + 6) * width
+            ms.putcell("CHAN_FREQ", window, frequencies)
+            ms.putcell("REF_FREQUENCY", window, frequencies[0])
+            ms.putcell("TOTAL_BANDWIDTH", window, 6 * width)
+            for name in ("CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+                ms.putcell(name, window, np.full(6, width))
+
+    def same_frequency(name):
+        return lambda row, got, ref: np.testing.assert_allclose(
+            got, ref.getcell(name, row), atol=1e-4, rtol=0
+        )
+
+    paired(root, source, "full-overlap-fractional-width", spectral_deviations={
+        name: same_frequency(name) for name in (
+            "CHAN_FREQ", "REF_FREQUENCY", "TOTAL_BANDWIDTH", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"
+        )
+    })
+
+
+def differing_time_average_epochs(root):
+    source = make_pair(root, "different-centroids", 6)
+    with table(str(source), ack=False, readonly=False) as ms:
+        time = ms.getcol("TIME")
+        right = ms.getcol("DATA_DESC_ID") == 1
+        shift = right & (time == np.unique(time)[1])
+        for name in ("TIME", "TIME_CENTROID"):
+            values = ms.getcol(name)
+            values[shift] += 3
+            ms.putcol(name, values)
+    reference, native = paired(root, source, "time-average-distinct-epochs",
+                               timeaverage=True, timebin="20s")
+    with table(str(reference), ack=False) as left, table(str(native), ack=False) as right:
+        np.testing.assert_allclose(left.getcol("TIME"), right.getcol("TIME"), rtol=0, atol=2e-6)
+
+
+def category_and_association_metadata(root):
+    source = make_pair(root, "category-and-association", 6)
+    with table(str(source), ack=False, readonly=False) as ms:
+        flags = ms.getcol("FLAG")
+        categories = np.stack((flags, ~flags), axis=1)
+        right = np.flatnonzero(ms.getcol("DATA_DESC_ID") == 1)
+        ms.putcolkeyword("FLAG_CATEGORY", "CATEGORY", ["line", "shadow"])
+        for row in right:
+            ms.putcell("FLAG_CATEGORY", int(row), categories[row])
+    with table(str(source / "SPECTRAL_WINDOW"), ack=False, readonly=False) as ms:
+        ms.addcols(maketabdesc([
+            makearrcoldesc("ASSOC_SPW_ID", 0, ndim=1, valuetype="int"),
+            makearrcoldesc("ASSOC_NATURE", "", ndim=1, valuetype="string"),
+        ]))
+        ms.putcell("ASSOC_SPW_ID", 0, [1])
+        ms.putcell("ASSOC_NATURE", 0, ["CHANNEL-ZERO"])
+        ms.putcell("ASSOC_SPW_ID", 1, [0])
+        ms.putcell("ASSOC_NATURE", 1, ["CHANNEL-ZERO"])
+    _, native = paired(root, source, "category-association-metadata")
+    with table(str(native), ack=False) as ms:
+        expected = np.concatenate((np.zeros_like(categories[right]), categories[right]), axis=2)
+        np.testing.assert_array_equal(ms.getcol("FLAG_CATEGORY"), expected)
+    with table(str(native / "SPECTRAL_WINDOW"), ack=False) as spw:
+        assert len(spw.getcell("ASSOC_SPW_ID", 0)) == 0
+        assert len(spw.getcell("ASSOC_NATURE", 0)) == 0
+
+
+def reject_incompatible_lags(root):
+    source = make_pair(root, "incompatible-lag", 6)
+    add_float_and_lag(source)
+    output = root / "rejected-lags.ms"
+    try:
+        tasks.mstransform(vis=str(source), outputvis=str(output), datacolumn="lag_data,data",
+                          combinespws=True)
+    except RuntimeError as error:
+        assert "different LAG_DATA cells" in str(error)
+        assert not output.exists()
+    else:
+        raise AssertionError("SPW combination discarded differing lag data")
+    print("passed incompatible lag refusal", flush=True)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14], casatasks.version()
     with TemporaryDirectory(prefix="mstransform-combine-spws-") as scratch:
@@ -127,6 +246,7 @@ def main():
             ("fractional-overlap", make_pair(root, "fractional", 4.5), {}),
             ("gap", make_pair(root, "gap", 8), {}),
             ("missing-window-rows", make_pair(root, "time-offset", 6, time_offset=3), {}),
+            ("sub-millisecond-rows", make_pair(root, "submillisecond-offset", 6, time_offset=0.0003), {}),
             ("descending", make_pair(root, "descending", 5, counts=(5, 5), descending=True), {}),
             ("selection", touching, dict(spw="0:1~4,1:1~4", field="PHASE", correlation="YY")),
             ("single-window", touching, dict(spw="1")),
@@ -140,7 +260,13 @@ def main():
             paired(root, source, case, **options)
         unequal(root, make_pair(root, "different-counts", 8, counts=(6, 4)), "")
         unequal(root, touching, "0:0~2,1")
+        array_width_refusal(root, touching)
         varying_exposure(root)
+        mixed_row_flags(root)
+        aligned_fractional_width(root)
+        differing_time_average_epochs(root)
+        category_and_association_metadata(root)
+        reject_incompatible_lags(root)
         for product in paired(root, overlap, "reopen"):
             output = subprocess.check_output(
                 ["taql", f"select NUM_CHAN from [{product}/SPECTRAL_WINDOW]"], text=True

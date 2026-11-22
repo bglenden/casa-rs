@@ -28,6 +28,7 @@ mod regrid;
 pub use combine::combine_spectral_windows;
 pub(crate) use combine::{CombinedChannel, combine_windows};
 pub use default_start::{casa_default_start_channels, casa_selected_band_hz};
+pub(crate) use regrid::{RegridQuantity, RegridRequest, casa_data_channel_frequencies};
 
 /// Spectral interpolation policy for cube imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

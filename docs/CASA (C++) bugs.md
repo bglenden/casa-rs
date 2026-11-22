@@ -8145,6 +8145,22 @@ overlapping real samples 16 and 1000 yield 508. The native task applies
 the matching observed weights in the sum and normalization, giving 901.6.
 Both tasks record the mean input exposure (#1618).
 
+## Combining spectral windows can copy the last row's FLAG_ROW
+
+With simultaneous windows whose row flags disagree, CASA 6.7.6.14
+`mstransform(combinespws=True)` can mark a usable combined row flagged
+when the last input row is flagged. The loop in
+`MSTransformManager::mapAndAverageVector` never increments its count,
+so the branch that combines flags with AND is skipped. The native task
+marks the row flagged only if all participating rows are flagged (#1618).
+
+When spectral windows are combined, CASA also leaves the input's category
+flags undefined and can leave an association to a deleted spectral window.
+The native task preserves category flags through the channel mapping and
+removes associations between windows that no longer exist separately. It
+refuses to combine distinct LAG_DATA cells when requested, since a merged
+frequency window has no mapping for their independent lag grids (#1618).
+
 ## Selecting defined spectra or several channel ranges can crash channel averaging
 
 Both CASA 6.7.6.14 tasks can terminate with SIGSEGV and leave an incomplete MS

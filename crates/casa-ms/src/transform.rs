@@ -559,7 +559,17 @@ fn mstransform_staged(
     });
     let channel_bins = channel_bins_by_spw(&channel_selection, &widths, average_metadata.as_ref())?;
     let combined_grid = if options.combine_spws {
-        combine::Grid::new(&input, &channel_selection, normalized_width(request.width))?
+        if options.channel_widths.is_some() {
+            return Err(MsTransformError::Spectrum(
+                "If SPW combination is active, chabin cannot be an array".into(),
+            ));
+        }
+        combine::Grid::new(
+            &input,
+            &channel_selection,
+            normalized_width(request.width),
+            budget.available_bytes / budget.maximum_live_blocks,
+        )?
     } else {
         None
     };
@@ -712,12 +722,25 @@ fn mstransform_staged(
     let combination = combined_grid
         .as_ref()
         .map(|grid| {
+            let times = time_groups
+                .as_deref()
+                .map(|groups| {
+                    combine::projected_times(
+                        &input,
+                        groups,
+                        &channel_selection,
+                        &ddid_to_spw,
+                        correlations.as_ref(),
+                    )
+                })
+                .transpose()?;
             combine::group_rows(
                 &input,
                 &selected_rows,
                 &selected_ddids,
                 &ddid_to_spw,
                 &grid.windows,
+                times.as_deref().zip(time_groups.as_deref()),
             )
         })
         .transpose()?;
@@ -922,11 +945,16 @@ fn mstransform_staged(
                 time_groups.as_deref()
             },
             output_rows,
-            combined: combined_grid.as_ref().map(|grid| CombinedArrayRows {
-                grid,
-                source_ddids: &selected_ddids,
-                source_time_groups: time_groups.as_deref(),
-            }),
+            combined: combined_grid
+                .as_ref()
+                .zip(combination.as_deref())
+                .map(|(grid, groups)| CombinedArrayRows {
+                    grid,
+                    groups,
+                    source_rows: &selected_rows,
+                    source_ddids: &selected_ddids,
+                    source_time_groups: time_groups.as_deref(),
+                }),
         },
         &ddid_to_spw,
         &channel_bins,
@@ -1007,7 +1035,7 @@ fn mstransform_staged(
     for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &output_input_rows[batch_start..batch_end];
-        let mut combined_exposures = Vec::new();
+        let mut combined_scalars = Vec::new();
         let (mut input_block, group_times) = if let (Some(grid), Some(groups)) =
             (&combined_grid, &combination)
         {
@@ -1020,7 +1048,7 @@ fn mstransform_staged(
                 (&visibility, &spectra.source),
                 time_projection.as_mut().zip(time_groups.as_deref()),
             )?;
-            combined_exposures = result.exposures;
+            combined_scalars = result.exposure_flags;
             (result.arrays, result.coordinates)
         } else if let (Some(projection), Some(groups)) = (&mut time_projection, &time_groups) {
             let plans = groups[batch_start..batch_end]
@@ -1113,13 +1141,18 @@ fn mstransform_staged(
                             reason: error.to_string(),
                         })?;
                 }
-            } else if let Some(exposure) = combined_exposures.get(batch_offset) {
-                write_session
-                    .push_scalar_row("EXPOSURE", Some(ScalarValue::Float64(*exposure)))
-                    .map_err(|error| MsTransformError::WriteMeasurementSet {
-                        path: request.output_ms.display().to_string(),
-                        reason: error.to_string(),
-                    })?;
+            } else if let Some(&(exposure, flag_row)) = combined_scalars.get(batch_offset) {
+                for (name, value) in [
+                    ("EXPOSURE", ScalarValue::Float64(exposure)),
+                    ("FLAG_ROW", ScalarValue::Bool(flag_row)),
+                ] {
+                    write_session
+                        .push_scalar_row(name, Some(value))
+                        .map_err(|error| MsTransformError::WriteMeasurementSet {
+                            path: request.output_ms.display().to_string(),
+                            reason: error.to_string(),
+                        })?;
+                }
             }
             let select_correlations = |value, name| {
                 select_visibility_axes(value, axes, name).map_err(|source| {
@@ -1418,13 +1451,16 @@ fn mstransform_staged(
                 .filter(|value| !value.is_empty())
             {
                 let flag_category = select_correlations(flag_category, "FLAG_CATEGORY")?;
-                let transformed =
-                    transform_flag_category_channels(flag_category, bins).map_err(|source| {
-                        MsTransformError::MutateMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            source: Box::new(source),
-                        }
+                let mut transformed = transform_flag_category_channels(flag_category, bins)
+                    .map_err(|source| MsTransformError::MutateMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        source: Box::new(source),
                     })?;
+                if let Some(grid) = &combined_grid {
+                    transformed = grid
+                        .interpolate_categories(transformed)
+                        .map_err(mutation_error)?;
+                }
                 push_bool_array_row(
                     &mut write_session,
                     "FLAG_CATEGORY",
@@ -1855,6 +1891,8 @@ struct TransformArrayRows<'a> {
 #[derive(Clone, Copy)]
 struct CombinedArrayRows<'a> {
     grid: &'a combine::Grid,
+    groups: &'a [combine::Group],
+    source_rows: &'a [usize],
     source_ddids: &'a [i32],
     source_time_groups: Option<&'a [time_average::TimeGroup]>,
 }
@@ -1935,6 +1973,7 @@ fn transform_array_write_plan(
         &dimensions,
         correlations.is_some() || polarization.is_some(),
         (groups, metadata_budget),
+        combined,
     )?;
     let io_error = |error: MsSelectionError| MsTransformError::WriteMeasurementSet {
         path: input_path.display().to_string(),
@@ -2233,6 +2272,7 @@ fn plan_flag_category_shapes(
     dimensions: &BTreeMap<i32, TransformArrayDimensions>,
     correlation_subset: bool,
     (groups, budget): (Option<&[time_average::TimeGroup]>, MsSelectionIoBudget),
+    combined: Option<CombinedArrayRows<'_>>,
 ) -> Result<(Vec<MeasurementSetArrayShapePlan>, usize), MsTransformError> {
     let main = input.main_table();
     let default_categories = match main
@@ -2244,7 +2284,33 @@ fn plan_flag_category_shapes(
     };
     let mut counts = BTreeMap::new();
     let mut largest_input = 0;
-    let shapes = optional_array_shapes(input, selected_rows, groups, "FLAG_CATEGORY", budget)?;
+    let shapes = if let Some(combined) = combined {
+        let source_shapes = optional_array_shapes(
+            input,
+            combined.source_rows,
+            combined.source_time_groups,
+            "FLAG_CATEGORY",
+            budget,
+        )?;
+        largest_input = source_shapes
+            .iter()
+            .flatten()
+            .map(|shape| shape.iter().copied().fold(1usize, usize::saturating_mul))
+            .max()
+            .unwrap_or(0);
+        combined
+            .groups
+            .iter()
+            .map(|group| {
+                group
+                    .members
+                    .iter()
+                    .find_map(|&(_, pos)| source_shapes[pos].clone())
+            })
+            .collect()
+    } else {
+        optional_array_shapes(input, selected_rows, groups, "FLAG_CATEGORY", budget)?
+    };
     for (original, ddid) in shapes.into_iter().zip(selected_ddids) {
         let shape = &dimensions[ddid];
         let cell = match original.as_deref() {
@@ -2257,7 +2323,11 @@ fn plan_flag_category_shapes(
                     } else {
                         corr
                     },
-                    if chan == 1 { 1 } else { shape.output_channels },
+                    if chan == 1 && combined.is_none() {
+                        1
+                    } else {
+                        shape.output_channels
+                    },
                     categories,
                 ]
             }
@@ -2657,7 +2727,7 @@ fn gather_selected_main_column_overrides(
         }
         if (averaging_time && TIME_OUTPUT_SCALARS.contains(&name))
             || (averaging_polarization && name == "FLAG_ROW")
-            || (combining && name == "EXPOSURE")
+            || (combining && matches!(name, "EXPOSURE" | "FLAG_ROW"))
         {
             continue;
         }

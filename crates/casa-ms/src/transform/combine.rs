@@ -2,14 +2,16 @@
 //! Plan and reduce synchronized visibility rows onto a combined spectral window.
 
 use std::collections::BTreeMap;
-use std::ops::{Add, AddAssign, Div, Mul, Sub};
+use std::ops::{AddAssign, Div, Mul};
 
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, ScalarValue, Value};
-use ndarray::{Array1, Array2, ArrayView2, Ix2};
+use ndarray::{Array1, Array2, Array3, ArrayView2, Ix2, Ix3};
 
 use crate::MeasurementSet;
-use crate::spectral_selection::{CombinedChannel, combine_windows};
+use crate::spectral_selection::{
+    CombinedChannel, RegridQuantity, RegridRequest, casa_data_channel_frequencies, combine_windows,
+};
 
 use super::channel_average::{
     AveragedStatistics, ChannelAverages, InputStatistic, SpectrumCells, sigma_from_weight,
@@ -22,7 +24,8 @@ use super::time_projection::{TimeGroupRead, TimeProjection};
 use super::visibility_columns::VisibilityColumns;
 use super::{
     CompactSpectralMetadata, MsTransformError, MsTransformRequest, STANDARD_SPECTRA,
-    TransformChannelSelection, scalar_f64, scalar_i32, select_channels,
+    TransformChannelSelection, scalar_bool, scalar_f64, scalar_i32, select_channels,
+    transform_flag_category_channels,
 };
 
 pub(super) struct Grid {
@@ -39,6 +42,7 @@ impl Grid {
         input: &MeasurementSet,
         selection: &BTreeMap<i32, TransformChannelSelection>,
         bin_width: usize,
+        grid_budget: usize,
     ) -> Result<Option<Self>, MsTransformError> {
         if selection.len() < 2 {
             return Ok(None);
@@ -107,13 +111,24 @@ impl Grid {
         let width = widths[0];
         let start = centres[0];
         let span = centres[centres.len() - 1] + widths[widths.len() - 1] / 2. - start + width / 2.;
-        let count = (span / width + 1e-9).floor();
+        let count = (span / width + 0.01).floor();
         if !(1. ..=f64::from(i32::MAX)).contains(&count) || width <= 0. {
             return Err(error("Combined SPW has invalid channel bounds.".into()));
         }
-        let frequencies = (0..count as usize)
-            .map(|channel| start + channel as f64 * width)
-            .collect::<Vec<_>>();
+        admit_grid(count as usize, grid_budget)?;
+        let frequencies = casa_data_channel_frequencies(
+            &RegridRequest {
+                quantity: RegridQuantity::Frequency,
+                start: Some(start),
+                width: Some(width),
+                nchan: None,
+                rest_frequency_hz: 0.,
+            },
+            &centres,
+            &widths,
+        )
+        .map_err(|source| error(source.to_string()))?
+        .centres_hz;
         let interpolation = linear_samples(&centres, &frequencies);
         Ok(Some(Self {
             windows: selection
@@ -153,13 +168,59 @@ impl Grid {
             )),
         }
     }
+
+    pub(super) fn interpolate_categories(
+        &self,
+        value: ArrayValue,
+    ) -> Result<ArrayValue, TableError> {
+        let values = category_view(&value)?;
+        let (correlations, _, categories) = values.dim();
+        let output = Array3::from_shape_fn(
+            (correlations, self.interpolation.len(), categories),
+            |(corr, channel, category)| {
+                let sample = self.interpolation[channel];
+                values[[corr, sample.left, category]] || values[[corr, sample.right, category]]
+            },
+        );
+        Ok(ArrayValue::Bool(output.into_dyn()))
+    }
+}
+
+fn admit_grid(channels: usize, available_bytes: usize) -> Result<(), MsTransformError> {
+    // Include interpolation, frequency centres and the temporary SPW
+    // metadata arrays written for each output channel.
+    let bytes = channels
+        .saturating_mul(std::mem::size_of::<LinearSample>() + 5 * std::mem::size_of::<f64>());
+    if bytes > available_bytes {
+        return Err(MsTransformError::Spectrum(format!(
+            "Combined SPW of {channels} channels needs {bytes} bytes for the grid, \
+             exceeding the {available_bytes} byte grid budget."
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::admit_grid;
+
+    #[test]
+    fn combined_grid_checks_its_footprint_before_allocation() {
+        assert!(admit_grid(10, 1024).is_ok());
+        assert!(
+            admit_grid(100, 1024)
+                .unwrap_err()
+                .to_string()
+                .contains("exceeding")
+        );
+    }
 }
 
 #[derive(Clone, Copy)]
 struct LinearSample {
     left: usize,
     right: usize,
-    fraction: f32,
+    fraction: f64,
     outside: bool,
 }
 
@@ -197,17 +258,17 @@ fn linear_samples(input: &[f64], output: &[f64]) -> Vec<LinearSample> {
             LinearSample {
                 left,
                 right,
-                fraction: fraction as f32,
+                fraction,
                 outside: frequency < input[0] || frequency > input[last],
             }
         })
         .collect()
 }
 
-fn apply_linear<T>(input: ArrayView2<'_, T>, samples: &[LinearSample]) -> Array2<T>
-where
-    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<f32, Output = T>,
-{
+fn apply_linear<T: Copy + LinearSampleValue>(
+    input: ArrayView2<'_, T>,
+    samples: &[LinearSample],
+) -> Array2<T> {
     Array2::from_shape_fn((input.nrows(), samples.len()), |(corr, channel)| {
         let LinearSample {
             left,
@@ -219,9 +280,26 @@ where
         if left == right {
             a
         } else {
-            a + (input[[corr, right]] - a) * fraction
+            a.interpolate(input[[corr, right]], fraction)
         }
     })
+}
+
+trait LinearSampleValue {
+    fn interpolate(self, right: Self, fraction: f64) -> Self;
+}
+
+impl LinearSampleValue for f32 {
+    fn interpolate(self, right: Self, fraction: f64) -> Self {
+        // Preserve a small positive interpolated weight near a zero endpoint.
+        (f64::from(self) + f64::from(right - self) * fraction) as f32
+    }
+}
+
+impl LinearSampleValue for num_complex::Complex32 {
+    fn interpolate(self, right: Self, fraction: f64) -> Self {
+        self + (right - self) * fraction as f32
+    }
 }
 
 fn array_view<T>(array: &ndarray::ArrayD<T>) -> Result<ArrayView2<'_, T>, TableError> {
@@ -239,7 +317,30 @@ pub(super) struct Group {
 pub(super) struct Batch {
     pub(super) arrays: MainArrayBlock,
     pub(super) coordinates: Vec<TimeCoordinates>,
-    pub(super) exposures: Vec<f64>,
+    pub(super) exposure_flags: Vec<(f64, bool)>,
+}
+
+#[derive(Clone, Copy)]
+struct IntegrationTime(f64);
+
+impl PartialEq for IntegrationTime {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for IntegrationTime {}
+
+impl PartialOrd for IntegrationTime {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for IntegrationTime {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
 }
 
 pub(super) fn group_rows(
@@ -248,6 +349,7 @@ pub(super) fn group_rows(
     descriptions: &[i32],
     ddid_to_spw: &BTreeMap<i32, i32>,
     windows: &BTreeMap<i32, usize>,
+    projection: Option<(&[f64], &[TimeGroup])>,
 ) -> Result<Vec<Group>, MsTransformError> {
     let error = |source: TableError| MsTransformError::MutateMeasurementSet {
         path: input
@@ -281,15 +383,21 @@ pub(super) fn group_rows(
             key[axis] = scalar_i32(value.as_ref(), name, row)?;
         }
     }
-    let times = read("TIME").map_err(error)?;
+    let times = match projection {
+        Some((times, _)) => times.to_vec(),
+        None => read("TIME")
+            .map_err(error)?
+            .iter()
+            .zip(rows)
+            .map(|(value, &row)| scalar_f64(value.as_ref(), "TIME", row))
+            .collect::<Result<Vec<_>, _>>()?,
+    };
     let mut grouped = BTreeMap::new();
     let ddi = input
         .data_description()
         .map_err(|source| MsTransformError::Spectrum(source.to_string()))?;
     let mut pol_for_ddi = BTreeMap::new();
-    for (pos, (&row, (&description, time))) in
-        rows.iter().zip(descriptions.iter().zip(times)).enumerate()
-    {
+    for (pos, (&description, time)) in descriptions.iter().zip(times).enumerate() {
         let pol = match pol_for_ddi.get(&description) {
             Some(&value) => value,
             None => {
@@ -300,11 +408,14 @@ pub(super) fn group_rows(
                 value
             }
         };
-        let time = scalar_f64(time.as_ref(), "TIME", row)?;
-        let ms = (time * 1000.).round() as i64;
+        let time = IntegrationTime(time);
         let [obs, array, scan, state, field, a1, a2, f1, f2] = keys[pos];
         let group = grouped
-            .entry(([obs, array, scan, state, field], ms, [a1, a2, f1, f2, pol]))
+            .entry((
+                [obs, array, scan, state, field],
+                time,
+                [a1, a2, f1, f2, pol],
+            ))
             .or_insert_with(|| Group {
                 representative: pos,
                 members: Vec::new(),
@@ -313,7 +424,84 @@ pub(super) fn group_rows(
             .members
             .push((windows[&ddid_to_spw[&description]], pos));
     }
+    if let Some((_, time_groups)) = projection {
+        let mut ordered = grouped.into_iter().collect::<Vec<_>>();
+        // CASA emits baseline order within each time-averaging buffer, even
+        // when the effective averaged epochs in that buffer differ.
+        ordered.sort_by_key(|((chunk, time, baseline), group)| {
+            (
+                *chunk,
+                IntegrationTime(time_groups[group.representative].first.time),
+                *baseline,
+                *time,
+            )
+        });
+        return Ok(ordered.into_iter().map(|(_, group)| group).collect());
+    }
     Ok(grouped.into_values().collect())
+}
+
+pub(super) fn projected_times(
+    input: &MeasurementSet,
+    groups: &[TimeGroup],
+    channels: &BTreeMap<i32, TransformChannelSelection>,
+    ddid_to_spw: &BTreeMap<i32, i32>,
+    correlations: Option<&CorrelationSelection>,
+) -> Result<Vec<f64>, MsTransformError> {
+    let table_error = |source: TableError| MsTransformError::MutateMeasurementSet {
+        path: input
+            .path()
+            .unwrap_or_else(|| std::path::Path::new("<memory>"))
+            .display()
+            .to_string(),
+        source: Box::new(source),
+    };
+    let table = input.main_table();
+    let flags = table.column_accessor("FLAG").map_err(table_error)?;
+    let epoch = |row| {
+        crate::subtables::get_f64(table, row, "TIME")
+            .map_err(|source| MsTransformError::Spectrum(source.to_string()))
+    };
+    groups
+        .iter()
+        .map(|group| {
+            let first = group.first.time;
+            let mut last = group.rows.last().expect("time groups have rows").physical;
+            if group.rows.len() > 1 {
+                let ddid = group.first.description;
+                let selected = &channels[&ddid_to_spw[&ddid]].channels;
+                let axes = correlations.and_then(|plan| plan.axes(ddid));
+                // The time accumulator's last sample is the last row with any
+                // selected sample unflagged, or the last input when all are flagged.
+                // Walk backwards so an ordinary group reads only one FLAG cell.
+                for member in group.rows.iter().rev() {
+                    let mut values = flags
+                        .array_cells_owned_uncached(&[member.physical])
+                        .map_err(table_error)?;
+                    let Some(ArrayValue::Bool(values)) = values.pop().flatten() else {
+                        return Err(table_error(TableError::Schema(
+                            "FLAG must hold Bool.".into(),
+                        )));
+                    };
+                    let view = array_view(&values).map_err(table_error)?;
+                    let is_usable = |corr| {
+                        selected
+                            .iter()
+                            .any(|&chan| view.get((corr, chan)) == Some(&false))
+                    };
+                    let usable = match axes {
+                        Some(axes) => axes.iter().copied().any(is_usable),
+                        None => (0..view.nrows()).any(is_usable),
+                    };
+                    if usable {
+                        last = member.physical;
+                        break;
+                    }
+                }
+            }
+            Ok(first + (epoch(last)? - first) * 0.5)
+        })
+        .collect()
 }
 
 pub(super) fn read_batch(
@@ -342,7 +530,7 @@ pub(super) fn read_batch(
         .flat_map(|group| group.members.iter().map(|&(_, pos)| pos))
         .collect::<Vec<_>>();
     let averaging = time.is_some();
-    let (raw, times, exposures) = if let Some((projection, time_groups)) = time {
+    let (raw, times, exposures, row_flags) = if let Some((projection, time_groups)) = time {
         let plans = sources
             .iter()
             .map(|&pos| {
@@ -356,7 +544,8 @@ pub(super) fn read_batch(
             .collect::<Vec<_>>();
         let (block, times) = projection.average_groups(&plans)?;
         let exposure = times.iter().map(|time| time.exposure).collect::<Vec<_>>();
-        (block, times, exposure)
+        let flags = times.iter().map(|time| time.flag_row).collect::<Vec<_>>();
+        (block, times, exposure, flags)
     } else {
         let indices = sources.iter().map(|&index| rows[index]).collect::<Vec<_>>();
         let table = input.main_table();
@@ -369,6 +558,14 @@ pub(super) fn read_batch(
             .iter()
             .zip(&indices)
             .map(|(value, &row)| scalar_f64(value.as_ref(), "EXPOSURE", row))
+            .collect::<Result<Vec<_>, _>>()?;
+        let flags = table
+            .column_accessor("FLAG_ROW")
+            .and_then(|column| column.scalar_cells_owned_for_rows(&indices))
+            .map_err(error)?
+            .iter()
+            .zip(&indices)
+            .map(|(value, &row)| scalar_bool(value.as_ref(), "FLAG_ROW", row))
             .collect::<Result<Vec<_>, _>>()?;
         let mut spectra_cells = std::mem::take(&mut block.spectra);
         block.spectra = STANDARD_SPECTRA
@@ -389,11 +586,11 @@ pub(super) fn read_batch(
             let channels = &channels[&ddid_to_spw[&ddid]].channels;
             select_row(&mut block, row, columns, axes, channels).map_err(error)?;
         }
-        (block, Vec::new(), exposure)
+        (block, Vec::new(), exposure, flags)
     };
     let mut output = MainArrayBlock::for_capacity(groups.len(), columns.copies().len(), 2);
     let mut coordinates = Vec::with_capacity(if averaging { groups.len() } else { 0 });
-    let mut output_exposures = Vec::with_capacity(if averaging { 0 } else { groups.len() });
+    let mut exposure_flags = Vec::with_capacity(if averaging { 0 } else { groups.len() });
     let mut start = 0;
     for group in groups {
         let end = start + group.members.len();
@@ -409,6 +606,7 @@ pub(super) fn read_batch(
             .iter()
             .any(|exposure| (exposure - first_exposure).abs() > f64::from(f32::EPSILON));
         let exposure = group_exposures.iter().sum::<f64>() / group_exposures.len() as f64;
+        let flag_row = row_flags[start..end].iter().all(|&flag| flag);
         reduce_group(
             grid,
             &raw,
@@ -422,17 +620,18 @@ pub(super) fn read_batch(
         if averaging {
             coordinates.push(TimeCoordinates {
                 exposure,
+                flag_row,
                 ..times[start]
             });
         } else {
-            output_exposures.push(exposure);
+            exposure_flags.push((exposure, flag_row));
         }
         start = end;
     }
     Ok(Batch {
         arrays: output,
         coordinates,
-        exposures: output_exposures,
+        exposure_flags,
     })
 }
 
@@ -462,6 +661,17 @@ fn select_row(
         )?;
     }
     select(&mut block.flags[row], "FLAG", true)?;
+    if let Some(categories) = block.categories[row]
+        .take()
+        .filter(|value| !value.is_empty())
+    {
+        let categories = select_visibility_axes(categories, axes, "FLAG_CATEGORY")?;
+        let bins = channels
+            .iter()
+            .map(|&channel| vec![channel])
+            .collect::<Vec<_>>();
+        block.categories[row] = Some(transform_flag_category_channels(categories, &bins)?);
+    }
     select(&mut block.weights[row], "WEIGHT", false)?;
     select(&mut block.sigmas[row], "SIGMA", false)?;
     for (name, cells) in STANDARD_SPECTRA.into_iter().zip(&mut block.spectra) {
@@ -556,7 +766,16 @@ fn reduce_group(
     for (i, copy) in columns.copies().iter().enumerate() {
         let cells = &input.visibility[i];
         let result = match copy.source {
-            LagData => cells[first].clone(),
+            LagData => {
+                let original = &cells[first];
+                if members.iter().any(|&(_, row)| &cells[row] != original) {
+                    return Err(TableError::Schema(
+                        "Cannot combine different LAG_DATA cells: their lag axes have no frequency mapping."
+                            .into(),
+                    ));
+                }
+                original.clone()
+            }
             FloatData => Some(ArrayValue::Float32(
                 contributions
                     .data(cells, weight_mode, different_exposure)?
@@ -589,13 +808,75 @@ fn reduce_group(
         )
     };
     output.flags.push(Some(ArrayValue::Bool(masks.into_dyn())));
-    output.categories.push(None);
+    output.categories.push(combine_categories(
+        grid,
+        input,
+        &rows_by_window,
+        correlations,
+    )?);
     output.uvw.push(input.uvw[first].clone());
     output.weights.push(input.weights[first].clone());
     output.sigmas.push(input.sigmas[first].clone());
     output.spectra[0].push(Some(ArrayValue::Float32(weight.into_dyn())));
     output.spectra[1].push(Some(ArrayValue::Float32(sigma.into_dyn())));
     Ok(())
+}
+
+fn category_view(value: &ArrayValue) -> Result<ndarray::ArrayView3<'_, bool>, TableError> {
+    if let ArrayValue::Bool(values) = value
+        && let Ok(view) = values.view().into_dimensionality::<Ix3>()
+    {
+        return Ok(view);
+    }
+    Err(TableError::Schema(
+        "FLAG_CATEGORY must hold rank-3 Bool cells.".into(),
+    ))
+}
+
+fn combine_categories(
+    grid: &Grid,
+    input: &MainArrayBlock,
+    windows: &[Option<Window<'_>>],
+    correlations: usize,
+) -> Result<Option<ArrayValue>, TableError> {
+    let views = windows
+        .iter()
+        .map(|window| {
+            window
+                .as_ref()
+                .and_then(|window| input.categories[window.row].as_ref())
+                .filter(|cell| !cell.is_empty())
+                .map(category_view)
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let Some(categories) = views.iter().flatten().next().map(|view| view.dim().2) else {
+        return Ok(None);
+    };
+    for (view, window) in views.iter().zip(windows) {
+        if let (Some(view), Some(window)) = (view, window) {
+            let (corr, channels, count) = view.dim();
+            if corr != correlations
+                || count != categories
+                || (channels != 1 && channels != window.flags.dim().1)
+            {
+                return Err(TableError::Schema(
+                    "FLAG_CATEGORY shapes disagree when combining spectral windows.".into(),
+                ));
+            }
+        }
+    }
+    let output = Array3::from_shape_fn(
+        (correlations, grid.channels.len(), categories),
+        |(corr, channel, category)| {
+            grid.channels[channel].sources.iter().any(|source| {
+                views[source.window].is_some_and(|view| {
+                    view[[corr, source.channel.min(view.dim().1 - 1), category]]
+                })
+            })
+        },
+    );
+    Ok(Some(ArrayValue::Bool(output.into_dyn())))
 }
 
 struct Window<'a> {
@@ -871,6 +1152,19 @@ pub(super) fn write_metadata(
         spw.column_accessor_mut(name)
             .and_then(|mut column| column.set(0, Value::Scalar(scalar)))
             .map_err(error)?;
+    }
+    for (name, empty) in [
+        ("ASSOC_SPW_ID", ArrayValue::from_i32_vec(Vec::new())),
+        ("ASSOC_NATURE", ArrayValue::from_string_vec(Vec::new())),
+    ] {
+        if spw
+            .schema()
+            .is_some_and(|schema| schema.contains_column(name))
+        {
+            spw.column_accessor_mut(name)
+                .and_then(|mut column| column.set(0, Value::Array(empty)))
+                .map_err(error)?;
+        }
     }
     spw.prepare_write()
         .save(TableOptions::new(request.output_ms.join("SPECTRAL_WINDOW")))
