@@ -3,7 +3,9 @@
 """Compare position-switch sky and system-temperature tables with pinned CASA."""
 
 import argparse
+import select
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -54,6 +56,13 @@ def make_position_switch(root):
                             ('EXPOSURE', exposure), ('FLAG', flags), ('DATA', data)]:
             main.putcol(name, value)
         main.putcol('FLAG_ROW', np.zeros(time.size, dtype=bool))
+    with opened(vis / 'SPECTRAL_WINDOW', True) as spectral:
+        assert spectral.nrows() == 1
+        spectral.addrows(1)
+        for name in spectral.colnames():
+            if spectral.iscelldefined(name, 0):
+                spectral.putcell(name, 1, spectral.getcell(name, 0))
+        spectral.putcol('TOTAL_BANDWIDTH', np.array([3., 7.]))
     return vis, time[ends], data.real[:, :, ends[:2]]
 
 
@@ -71,6 +80,10 @@ def assert_scientific_table(path, time, off):
     np.testing.assert_array_equal(cells['FPARAM'][:, :, 1], 0.)
     with opened(path) as table:
         assert table.info()['subType'] == table.getkeyword('VisCal') == 'SDSKY_PS'
+    with opened(path / 'SPECTRAL_WINDOW') as spectral:
+        np.testing.assert_array_equal(spectral.getcol('FLAG_ROW'), [False, True])
+        widths = spectral.getcol('CHAN_WIDTH')
+        np.testing.assert_allclose(spectral.getcol('TOTAL_BANDWIDTH'), np.abs(widths.sum(axis=0)))
     return cells
 
 
@@ -99,6 +112,9 @@ def compare_sky(root, engines):
 
 
 def compare_tsys(root, seed, engines):
+    from casaconfig import config
+    from casatools import ms as ms_tool
+
     vis = root / 'temperatures.ms'
     copy_ms(seed, vis)
     table_path = vis / 'SYSCAL'
@@ -131,11 +147,33 @@ def compare_tsys(root, seed, engines):
         syscal.putcolkeywords('TSYS_SPECTRUM', {'QuantumUnits': ['K']})
     with opened(vis, True) as main:
         main.putkeyword('SYSCAL', f'Table: {table_path}')
+    with opened(vis / 'HISTORY', True) as history:
+        row = history.nrows()
+        history.addrows(1)
+        history.putcell('MESSAGE', row, 'Input MS processing history')
+    with opened(vis / 'FIELD', True) as field:
+        field.putcell('TIME', 0, times[0])
+        for name in ('DELAY_DIR', 'PHASE_DIR', 'REFERENCE_DIR'):
+            field.putcell(name, 0, np.array([[1.e-6], [-2.e-6]]))
+    ephemeris = (Path(config.measurespath) / 'ephemerides' / 'JPL-Horizons'
+                 / 'Uranus_55197-59214dUTC_J2000.tab')
+    tool = ms_tool()
+    assert tool.open(str(vis), nomodify=False)
+    try:
+        assert tool.addephemeris(0, str(ephemeris), 'Uranus', [0])
+    finally:
+        tool.done()
     actual = {}
+    directions = {}
     for engine, task in engines.items():
         product = root / f'{engine}-tsys.cal'
         assert task(str(vis), 'tsys', outfile=str(product)) is None
         actual[engine] = columns(product)
+        with opened(product / 'HISTORY') as history:
+            assert history.nrows() == 0
+        with opened(product / 'FIELD') as fields:
+            directions[engine] = fields.getcell('PHASE_DIR', 0)
+            assert np.linalg.norm(directions[engine]) > 0.1
         np.testing.assert_allclose(actual[engine]['TIME'], times, rtol=0., atol=1e-6)
         np.testing.assert_array_equal(actual[engine]['FPARAM'],
                                       kelvin.T.reshape(2, channels, 3, order='F'))
@@ -150,6 +188,7 @@ def compare_tsys(root, seed, engines):
         compare_mapping(columns(product), actual[engine], False)
     if 'native' in actual:
         compare_mapping(actual['native'], actual['casa'], False)
+        np.testing.assert_allclose(directions['native'], directions['casa'], rtol=2e-7)
     print('Spectral Tsys generation, overwrite and product protection agree', flush=True)
     return vis
 
@@ -162,10 +201,18 @@ def check_selectors_and_errors(root, seed, temperatures, engines):
         assert task(str(seed), outfile=str(cal), spw='0:1', scan='1') is None
         assert columns(cal)['FPARAM'].shape[1:] == (channels, 1)
         result = root / f'{engine}-refused.cal'
+        fraction = root / f'{engine}-whitespace-fraction.cal'
+        assert task(str(seed), outfile=str(fraction), fraction=' 50%') is None
+        assert fraction.is_dir()
+        edges = root / f'{engine}-explicit-edge-count.cal'
+        assert task(str(seed), outfile=str(edges), fraction='75%', noff=1) is None
+        compare_mapping(columns(edges), columns(fraction), False)
         tests = [
             (seed, {'scan': '2'}, RuntimeError, 'Error in Calibrater::solve.'),
             (seed, {'fraction': 'oops'}, RuntimeError, "could not convert string to float: 'oops'"),
             (seed, {'fraction': '75%'}, ValueError, 'Too many edge points'),
+            (seed, {'fraction': []}, RuntimeError, 'Invalid fraction value'),
+            (seed, {'fraction': {}}, RuntimeError, 'Invalid fraction value'),
             (temperatures, {'calmode': 'tsys', 'field': 'MISSING_FIELD'}, RuntimeError,
              'Error in data selection specification'),
             (root / 'missing.ms', {}, AssertionError, 'the infile parameter must be a path that exists'),
@@ -183,6 +230,78 @@ def check_selectors_and_errors(root, seed, temperatures, engines):
     print('Channel selections and invalid position-switch and Tsys inputs agree', flush=True)
 
 
+def check_parameter_planes(root, seed, engines):
+    single = root / 'single-correlation.ms'
+    casa.split(str(seed), outputvis=str(single), datacolumn='data', correlation='XX')
+    with opened(single) as main:
+        assert main.getcol('DATA').shape[0] == 1
+    nonfinite = root / 'nonfinite.ms'
+    copy_ms(seed, nonfinite)
+    with opened(nonfinite, True) as main:
+        data = main.getcell('DATA', 0)
+        data[0, 1] = np.nan + 0j
+        main.putcell('DATA', 0, data)
+    for case, vis in (('single', single), ('nonfinite', nonfinite)):
+        products = {}
+        for engine, task in engines.items():
+            out = root / f'{engine}-{case}.cal'
+            assert task(str(vis), outfile=str(out), scan='1') is None
+            products[engine] = values = columns(out)
+            if case == 'single':
+                assert values['FPARAM'].shape[0] == 2
+                np.testing.assert_array_equal(values['FPARAM'][1], 0.)
+                np.testing.assert_array_equal(values['FLAG'][1], True)
+                np.testing.assert_array_equal(values['PARAMERR'][1], 0.)
+                np.testing.assert_array_equal(values['SNR'][1], 0.)
+            else:
+                assert np.isnan(values['FPARAM'][0, 1, 0])
+                assert not values['FLAG'][0, 1, 0]
+        if 'native' in products:
+            compare_mapping(products['native'], products['casa'], False)
+    print('Single-correlation padding and unflagged nonfinite cells agree', flush=True)
+
+
+def check_busy_replacement(root, seed, temperatures, native):
+    hold = """
+import sys
+from casatools import table
+tool = table()
+assert tool.open(sys.argv[1], nomodify=False, lockoptions='user')
+tool.lock(write=True, nattempts=1)
+assert tool.haslock(write=True)
+print('locked', flush=True)
+sys.stdin.readline()
+tool.close()
+"""
+    for mode, vis, product in [('ps', seed, root / 'native-data.cal'),
+                               ('tsys', temperatures, root / 'native-tsys.cal')]:
+        before = columns(product)
+        with subprocess.Popen([sys.executable, '-c', hold, str(product)], text=True,
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE) as peer:
+            try:
+                assert select.select([peer.stdout], [], [], 15.)[0]
+                assert peer.stdout.readline().strip() == 'locked'
+                try:
+                    native(str(vis), mode, outfile=str(product), overwrite=True)
+                except RuntimeError as error:
+                    assert 'lock' in str(error).lower()
+                else:
+                    raise AssertionError('Overwriting a busy calibration table must fail')
+            finally:
+                peer.communicate('\n', timeout=15)
+            assert peer.returncode == 0
+        compare_mapping(columns(product), before, False)
+    into_ms = temperatures / 'ANTENNA' / 'unsafe.cal'
+    try:
+        native(str(temperatures), 'tsys', outfile=str(into_ms))
+    except RuntimeError as error:
+        assert 'overlap' in str(error)
+    else:
+        raise AssertionError('A calibration table cannot replace input MS storage')
+    assert not into_ms.exists()
+    print('CASA-held output locks protect both native calibration products', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -198,6 +317,9 @@ def main():
     seed = compare_sky(root, tasks)
     temperatures = compare_tsys(root, seed, tasks)
     check_selectors_and_errors(root, seed, temperatures, tasks)
+    check_parameter_planes(root, seed, tasks)
+    if 'native' in tasks:
+        check_busy_replacement(root, seed, temperatures, tasks['native'])
 
 
 if __name__ == '__main__':

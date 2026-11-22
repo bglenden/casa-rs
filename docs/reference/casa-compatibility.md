@@ -2374,7 +2374,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Implementation: `casatasks/private/task_sdcal.py`, `sdcal` (line 23): 1 return statements, 13 raise statements
   - returns at line 30: `None`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
-- CASA's signature: yes
+- CASA's named parameters: yes
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 14, in CASA's order: yes

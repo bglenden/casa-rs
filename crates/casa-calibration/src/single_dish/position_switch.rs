@@ -2,18 +2,18 @@
 //! Position-switch sky spectra from autocorrelation OFF integrations.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_ms::MeasurementSet;
 use casa_tables::{RequiredScalarColumnValues, Table};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
-use ndarray::{ArrayD, Zip};
+use ndarray::{ArrayD, Axis, IxDyn, Zip};
 
 use crate::CalibrationOutputMode;
 use crate::constants::*;
 use crate::session::scan_timing::ScanTiming;
-use crate::table_maintenance::{overlaps_measurement_set, write_standard_calibration_subtables};
+use crate::table_maintenance::write_standard_calibration_subtables;
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, new_calibration_table_schema,
 };
@@ -75,7 +75,11 @@ impl SkySpectrum {
         time: f64,
         exposure: f64,
     ) -> Result<(), String> {
-        if self.signal.shape() != data.shape() || data.shape() != flags.shape() {
+        if self.signal.shape() != data.shape()
+            || data.shape() != flags.shape()
+            || data.ndim() != 2
+            || !(1..=2).contains(&data.shape()[0])
+        {
             return Err("Position-switch data and FLAG shapes disagree.".into());
         }
         self.all.add(time, exposure);
@@ -85,7 +89,7 @@ impl SkySpectrum {
             .and(data)
             .and(flags)
             .for_each(|signal, weight, &power, &flagged| {
-                if !flagged && power.is_finite() {
+                if !flagged {
                     *signal += exposure as f32 * power;
                     *weight += exposure as f32;
                     has_usable_channel = true;
@@ -113,8 +117,12 @@ impl SkySpectrum {
                     *signal /= exposure;
                 }
             });
-        let shape = self.signal.raw_dim();
-        let flags = self.exposure.mapv(|exposure| exposure == 0.);
+        let input_shape = self.signal.raw_dim();
+        let signal = two_receptors(self.signal, 0.);
+        let shape = signal.raw_dim();
+        let flags = two_receptors(self.exposure.mapv(|exposure| exposure == 0.), true);
+        let error = two_receptors(ArrayD::from_elem(input_shape.clone(), 0.1), 0.);
+        let snr = two_receptors(ArrayD::from_elem(input_shape, 1.), 0.);
         let integer =
             |name, value| RecordField::new(name, Value::Scalar(ScalarValue::Int32(value)));
         let number =
@@ -129,16 +137,10 @@ impl SkySpectrum {
             integer(COL_SCAN_NUMBER, scan.number),
             integer(COL_OBSERVATION_ID, scan.observation),
             integer(COL_SPECTRAL_WINDOW_ID, self.spw as i32),
-            array(COL_FPARAM, ArrayValue::Float32(self.signal)),
+            array(COL_FPARAM, ArrayValue::Float32(signal)),
             array(COL_FLAG, ArrayValue::Bool(flags)),
-            array(
-                COL_PARAMERR,
-                ArrayValue::Float32(ArrayD::from_elem(shape.clone(), 0.1)),
-            ),
-            array(
-                COL_SNR,
-                ArrayValue::Float32(ArrayD::from_elem(shape.clone(), 1.)),
-            ),
+            array(COL_PARAMERR, ArrayValue::Float32(error)),
+            array(COL_SNR, ArrayValue::Float32(snr)),
             array(
                 COL_WEIGHT,
                 ArrayValue::Float32(ArrayD::from_elem(
@@ -150,15 +152,22 @@ impl SkySpectrum {
     }
 }
 
+fn two_receptors<T: Clone>(one_or_two: ArrayD<T>, fill: T) -> ArrayD<T> {
+    if one_or_two.shape()[0] == 2 {
+        return one_or_two;
+    }
+    let mut two = ArrayD::from_elem(IxDyn(&[2, one_or_two.shape()[1]]), fill);
+    two.index_axis_mut(Axis(0), 0)
+        .assign(&one_or_two.index_axis(Axis(0), 0));
+    two
+}
+
 pub(super) fn generate(
     ms: &MeasurementSet,
     rows: &[usize],
     destination: &Path,
     overwrite: bool,
 ) -> Result<usize, String> {
-    if overlaps_measurement_set(ms, destination)? {
-        return Err("The MeasurementSet and output calibration table overlap.".into());
-    }
     let solutions = solve(ms, rows)?;
     let scans = ScanTiming::read(ms.main_table())?;
     let spectral = ms.spectral_window().map_err(error_text)?;
@@ -184,6 +193,10 @@ pub(super) fn generate(
     )
     .map_err(error_text)?;
     let rows = solutions.len();
+    let present_windows = solutions
+        .values()
+        .map(|spectrum| spectrum.spw as i32)
+        .collect::<BTreeSet<_>>();
     let mut channel_widths = BTreeMap::new();
     for (group, spectrum) in solutions {
         let width = match channel_widths.entry(spectrum.spw) {
@@ -203,6 +216,12 @@ pub(super) fn generate(
             .map_err(error_text)?;
     }
     write_standard_calibration_subtables(ms, writer.output_path(), None)?;
+    crate::gencal::write_spectral_axis(
+        &writer.output_path().join("SPECTRAL_WINDOW"),
+        &present_windows,
+        false,
+    )
+    .map_err(error_text)?;
     writer.save_main().map_err(error_text)?;
     Ok(rows)
 }
@@ -345,7 +364,7 @@ fn solve(
         solutions
             .entry(group)
             .or_insert_with(|| SkySpectrum::new(spw, &power))
-            .add(&power, &flags, time, exposure)?;
+            .add(&power, flags, time, exposure)?;
     }
     if solutions.is_empty() {
         return Err("No reference integration found in user-selected data. Please double-check your data selection criteria.".into());

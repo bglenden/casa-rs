@@ -7,14 +7,17 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::{CasaValue, ParameterValue};
+use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::CalibrationOutputMode;
 use crate::gencal::{GencalRequest, GencalType, gencal_with_output_mode};
 use crate::session::resolve_casa_calibration_selection;
+use crate::table_maintenance::overlaps_measurement_set;
 
 pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let mode = task.required_text("calmode")?;
+    let generates_table = matches!(mode.as_str(), "ps" | "tsys");
     let infile = task.input_path("infile")?;
     let outfile = task.text("outfile")?.unwrap_or_default();
     let overwrite = task.flag("overwrite")?;
@@ -40,9 +43,26 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
         ))
         .at("outfile"));
     }
-    if outfile.is_empty() && matches!(mode.as_str(), "tsys" | "ps") {
+    if outfile.is_empty() && generates_table {
         return Err(TaskFailure::execution("Output file name must be specified.").at("outfile"));
     }
+    let output_path = Path::new(&outfile);
+    if generates_table
+        && overlaps_measurement_set(&ms, output_path).map_err(TaskFailure::execution)?
+    {
+        return Err(TaskFailure::execution(
+            "The MeasurementSet and output calibration table overlap.",
+        )
+        .at("outfile"));
+    }
+    let _output_lock = if overwrite && generates_table && output_path.join("table.dat").is_file() {
+        Some(
+            TableWriteLock::acquire_to_reread(output_path, 1)
+                .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"))?,
+        )
+    } else {
+        None
+    };
     let count = match mode.as_str() {
         "ps" => {
             check_fraction(task)?;
@@ -100,20 +120,36 @@ fn check_fraction(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
     let fraction = match task.value("fraction") {
         Some(ParameterValue::String(text)) if text.trim().is_empty() => 0.1,
         Some(ParameterValue::String(text)) => {
-            let (value, scale) = text
-                .split_once('%')
-                .map_or((text.as_str(), 1.), |(value, _)| (value, 0.01));
+            // CASA uses the '%' position in the stripped string to index the
+            // original argument, so leading whitespace affects that slice.
+            let (value, scale) = if let Some(index) = text.trim().chars().position(|ch| ch == '%') {
+                let limit = text
+                    .char_indices()
+                    .nth(index)
+                    .map_or(text.len(), |(offset, _)| offset);
+                (&text[..limit], 0.01)
+            } else {
+                (text.as_str(), 1.)
+            };
             value.trim().parse::<f64>().map_err(|_| {
-                let text = casa_provider_contracts::python_repr(&ParameterValue::String(value.into()));
-                TaskFailure::execution(format!(
-                    "Invalid fraction value (original error message: \"could not convert string to float: {text}\")"
-                ))
-                .at("fraction")
+                let text =
+                    casa_provider_contracts::python_repr(&ParameterValue::String(value.into()));
+                invalid_fraction(&format!("could not convert string to float: {text}"))
             })? * scale
         }
         Some(ParameterValue::Float(value)) => *value,
         Some(ParameterValue::Integer(value)) => *value as f64,
         Some(ParameterValue::Bool(value)) => u8::from(*value) as f64,
+        Some(ParameterValue::Array(_)) => {
+            return Err(invalid_fraction(
+                "float() argument must be a string or a real number, not 'list'",
+            ));
+        }
+        Some(ParameterValue::Table(_)) => {
+            return Err(invalid_fraction(
+                "float() argument must be a string or a real number, not 'dict'",
+            ));
+        }
         _ => return Err(TaskFailure::validation("Invalid fraction value.").at("fraction")),
     };
     if task.integer("noff")? <= 0 && fraction >= 0.5 {
@@ -122,4 +158,11 @@ fn check_fraction(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
         );
     }
     Ok(())
+}
+
+fn invalid_fraction(reason: &str) -> TaskFailure {
+    TaskFailure::execution(format!(
+        "Invalid fraction value (original error message: \"{reason}\")"
+    ))
+    .at("fraction")
 }
