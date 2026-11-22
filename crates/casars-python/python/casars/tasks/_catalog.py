@@ -1678,13 +1678,13 @@ def polfromgain(
 def sdcal(
     infile: StrPath = '',
     calmode: Literal['ps', 'otfraster', 'otf', 'tsys', 'apply', 'ps,apply', 'tsys,apply', 'ps,tsys,apply', 'otfraster,apply', 'otfraster,tsys,apply', 'otf,apply', 'otf,tsys,apply'] = 'ps',
-    fraction: ParameterData = '10%',
+    fraction: str | int | float = '10%',
     noff: int = -1,
     width: float = 0.5,
     elongated: bool = False,
-    applytable: ParameterData = '',
+    applytable: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     interp: str = '',
-    spwmap: ParameterData = {},
+    spwmap: list[int] | dict[int | str, list[int]] = {},
     outfile: StrPath = '',
     overwrite: bool = False,
     field: str = '',
@@ -1697,6 +1697,28 @@ def sdcal(
     """
     return _call_casa(sdcal, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal')
+def sdgaincal(
+    infile: StrPath = '',
+    calmode: Literal['doublecircle'] = 'doublecircle',
+    radius: str | int | float = '',
+    smooth: bool = True,
+    antenna: str = '',
+    field: str = '',
+    spw: str = '',
+    scan: str = '',
+    intent: str = '',
+    applytable: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    interp: str | list[str] | tuple[str, ...] = '',
+    spwmap: list[int] | list[list[int]] | tuple[int, ...] | tuple[tuple[int, ...], ...] | dict[int, list[int]] = [],
+    outfile: StrPath = '',
+    overwrite: bool = False,
+) -> Any:
+    """Solve single-dish double-circle gain calibration.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal']
+    CASA's ``sdgaincal``: its parameters, defaults and return value.
+    """
+    return _call_casa(sdgaincal, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal']

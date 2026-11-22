@@ -304,6 +304,27 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if message == "Error in Calibrater::setapply.":
                 raise RuntimeError(message) from error
             raise
+    if name == "sdgaincal":
+        mode = arguments["calmode"]
+        if mode != "doublecircle":
+            message = "null value not allowed" if mode is None else f"unallowed value {mode}"
+            raise AssertionError(str({"calmode": [message]}))
+        _validate_required_path(values, "infile", arguments["infile"], search_data=True)
+        if not arguments["outfile"]:
+            raise ValueError("outfile is empty.")
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            message = error.completion.message or ""
+            if (message.startswith("Error in Calibrater::") or message.endswith(" exists.")
+                    or message.startswith("Double-circle gain needs")
+                    or message.startswith("Table ") and message.endswith(" does not exist.")):
+                raise RuntimeError(message) from error
+            raise
+        except TaskParameterError as error:
+            if error.completion.parameter in ("interp", "spwmap"):
+                raise AssertionError() from error
+            raise
     if name == "initweights":
         return _call_initweights(values)
     if name == "plotbandpass":

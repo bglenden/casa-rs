@@ -3,6 +3,8 @@
 
 mod application;
 mod edges;
+pub(crate) mod gain;
+mod map_geometry;
 mod position_switch;
 mod spectrum;
 

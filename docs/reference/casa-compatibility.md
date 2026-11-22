@@ -54,6 +54,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
@@ -2499,6 +2500,116 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1974`.
+
+### sdgaincal
+
+- CASA source: `casatasks/sdgaincal.py`, 14 parameters
+- Implementation: `casatasks/private/task_sdgaincal.py`, `sdgaincal` (line 64): 0 return statements, 7 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 14, in CASA's order: yes
+- Defaults that differ: none
+
+#### sdgaincal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `8407207930378977daae4a812e8f64a5038d99f7`. Status counts: Default only: 0, Implemented: 14, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `infile` | `''` | `''`; `infile` → `infile` | Implemented | Read complex DATA or float total-power input from the required MeasurementSet. [selection](#sdgaincal-behavior-selection)<br>Catalog domain: `path` (measurement_set) | [paired](#sdgaincal-evidence-paired) |
+| `calmode` | `'doublecircle'` | `'doublecircle'`; `calmode` → `calmode` | Implemented | Solve the doublecircle calibration mode. [selection](#sdgaincal-behavior-selection)<br>Catalog domain: `doublecircle` | [paired](#sdgaincal-evidence-paired) |
+| `radius` | `''` | `''`; `radius` → `radius` | Implemented | Use the supplied angular quantity, arcsecond number, or the default half primary-beam size. [selection](#sdgaincal-behavior-selection)<br>Catalog domain: `variant` | [paired](#sdgaincal-evidence-paired) |
+| `smooth` | `True` | `True`; `smooth` → `smooth` | Implemented | Smooth reference powers in the central time series before normalizing them. [solution](#sdgaincal-behavior-solution)<br>Catalog domain: `bool` | [paired](#sdgaincal-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Restrict the selected single-dish antennas. [selection](#sdgaincal-behavior-selection)<br>Catalog domain: `string` | [paired](#sdgaincal-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Select fields and their tracking centers. [selection](#sdgaincal-behavior-selection)<br>Catalog domain: `string` | [paired](#sdgaincal-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Select one scalar gain channel in each requested spectral window. [selection](#sdgaincal-behavior-selection)<br>Catalog domain: `string` | [paired](#sdgaincal-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Select requested scan rows before selecting the central region. [selection](#sdgaincal-behavior-selection)<br>Catalog domain: `string` | [paired](#sdgaincal-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Filter observing intents only when the caller supplies a selector. [selection](#sdgaincal-behavior-selection)<br>Catalog domain: `string` | [paired](#sdgaincal-evidence-paired) |
+| `applytable` | `''` | `''`; `applytable` → `applytable` | Implemented | Apply supplied prior calibration tables in the shared native solver path. [preapply](#sdgaincal-behavior-preapply)<br>Catalog domain: `variant` | [paired](#sdgaincal-evidence-paired) |
+| `interp` | `''` | `''`; `interp` → `interp` | Implemented | Use one interpolation for all tables or align entries by table index. [preapply](#sdgaincal-behavior-preapply)<br>Catalog domain: `variant` | [paired](#sdgaincal-evidence-paired) |
+| `spwmap` | `[]` | `[]`; `spwmap` → `spwmap` | Implemented | Use the same flat window map for all priors or configure each prior table. [preapply](#sdgaincal-behavior-preapply)<br>Catalog domain: `variant` | [paired](#sdgaincal-evidence-paired) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | Write a CASA-readable complex SDGAIN_OTFD calibration table, including a valid empty table when some integrations reach the solver but the group is short. [product](#sdgaincal-behavior-product)<br>Catalog domain: `path` (calibration_table) | [paired](#sdgaincal-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Replace an existing table when requested and keep its contents when no solution reaches the solver. [product](#sdgaincal-behavior-product)<br>Catalog domain: `bool` | [paired](#sdgaincal-evidence-paired) |
+
+#### sdgaincal interacting modes and task behavior
+
+<a id="sdgaincal-behavior-selection"></a>
+##### Double-circle reference integrations
+
+**Implemented** — Resolve CASA selectors, central regions, antenna pointing interpolation, and scalar frequency selection.
+
+Release and dataset-scale benchmarks follow functionality under #979.
+
+Evidence: [paired](#sdgaincal-evidence-paired).
+
+<a id="sdgaincal-behavior-solution"></a>
+##### Flag-aware gain normalization
+
+**Implemented** — Use the selected good samples to normalize gains by the group mean, preserving CASA per-receptor complex values and flags.
+
+Release and dataset-scale benchmarks follow functionality under #979.
+
+Evidence: [paired](#sdgaincal-evidence-paired).
+
+<a id="sdgaincal-behavior-preapply"></a>
+##### Per-table prior calibration
+
+**Implemented** — Apply actual time-varying prior corrections and mapped spectral Tsys before solving, with scalar and indexed interpolation and window lists.
+
+Release and dataset-scale benchmarks follow functionality under #979.
+
+Evidence: [paired](#sdgaincal-evidence-paired).
+
+<a id="sdgaincal-behavior-product"></a>
+##### Complex calibration table interoperability
+
+**Implemented** — Write standard compatible subtables and preserve the complex gain and selected spectral axis for CASA or native application.
+
+Release and dataset-scale benchmarks follow functionality under #979.
+
+Evidence: [paired](#sdgaincal-evidence-paired).
+
+#### sdgaincal deviations and unfinished work
+
+##### scalar-channel-requirement: Proposed
+
+- Inputs: Select two channels of a three-channel total-power spectral window for a double-circle gain solve.
+- CASA: Aborts while copying a two-channel spectrum into a scalar solve cell.
+- casa-rs: Returns a catchable error and preserves existing files before publication.
+- Rationale: Selecting one channel produces the defined scalar gain shape.
+- User impact: A caller can select one channel and rerun without restarting Python.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#sdgaincal-evidence-paired).
+
+##### no-central-integrations: Proposed
+
+- Inputs: Move the field reference outside the observed map so the pointing filter finds no central integration.
+- CASA: Segfaults while constructing time ranges from the empty selection.
+- casa-rs: Returns a catchable solve error and preserves existing files.
+- Rationale: No central integration is available to normalize gain.
+- User impact: A caller can adjust the radius or field and rerun safely.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#sdgaincal-evidence-paired).
+
+#### sdgaincal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="sdgaincal-evidence-paired"></a>
+##### paired
+
+**Same-input public CASA/native comparisons, independent gain laws and both-direction table interchange — passed.** The public oracle matches complex table cells, scalar frequencies, flagged selected rows, and outputs from both table readers. It checks no-output and short-group publication separately and exercises two CASA crash cases in isolated processes. All named task parameters, default and selected radius, smoothing, variable/mapped priors, flags, input types, reordered rows, mixed feed/window selection and publication.
+
+- [tools/casa-compat/sdgaincal_oracle.py](https://github.com/bglenden/casa-rs/blob/8407207930378977daae4a812e8f64a5038d99f7/tools/casa-compat/sdgaincal_oracle.py)
+- Revision: `8407207930378977daae4a812e8f64a5038d99f7`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdgaincal_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1975`.
 
 ### setjy
 

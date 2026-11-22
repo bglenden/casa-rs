@@ -89,6 +89,26 @@ impl SolvePriorApply {
         })
     }
 
+    pub(crate) fn single_dish(
+        ms: &MeasurementSet,
+        plan: ApplyPlan,
+    ) -> Result<Self, ApplyExecutionError> {
+        Self::new(ms, plan, false)
+    }
+
+    pub(crate) fn correct_single_dish(
+        &self,
+        row: usize,
+        correlations: &[i32],
+        data: &ArrayValue,
+        flags: ArrayValue,
+    ) -> Result<Option<EvaluatedApplyRow>, ApplyExecutionError> {
+        self.rows
+            .get(&row)
+            .map(|&position| self.apply(position, correlations, data, flags))
+            .transpose()
+    }
+
     pub(crate) fn correct(
         &self,
         row: usize,

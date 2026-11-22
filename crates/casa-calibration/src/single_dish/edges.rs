@@ -9,7 +9,10 @@ use casa_tables::RequiredScalarColumnValues::{Bool, Float64, Int32};
 use casa_types::ArrayValue;
 
 use super::spectrum::{self, ReferenceTimestamp, SkySpectrum};
-use crate::constants::{COL_ANTENNA1, COL_ANTENNA2, COL_FIELD_ID, COL_INTERVAL, COL_TIME};
+use crate::constants::{
+    COL_ANTENNA1, COL_ANTENNA2, COL_FIELD_ID, COL_INTERVAL, COL_OBSERVATION_ID, COL_SCAN_NUMBER,
+    COL_TIME,
+};
 
 mod mask;
 mod otf;
@@ -20,20 +23,22 @@ pub(super) enum Selection {
     Raster { fraction: f64, noff: i64 },
 }
 
-struct Integration {
-    row: usize,
-    field: i32,
-    antenna: i32,
-    other_antenna: i32,
-    feed: i32,
-    other_feed: i32,
-    description: i32,
-    window: usize,
-    state: i32,
-    time: f64,
-    interval: f64,
-    exposure: f64,
-    flagged: bool,
+pub(super) struct Integration {
+    pub(super) row: usize,
+    pub(super) field: i32,
+    pub(super) antenna: i32,
+    pub(super) other_antenna: i32,
+    pub(super) feed: i32,
+    pub(super) other_feed: i32,
+    pub(super) description: i32,
+    pub(super) window: usize,
+    pub(super) state: i32,
+    pub(super) scan: i32,
+    pub(super) observation: i32,
+    pub(super) time: f64,
+    pub(super) interval: f64,
+    pub(super) exposure: f64,
+    pub(super) flagged: bool,
 }
 
 pub(super) fn generate(
@@ -85,7 +90,7 @@ pub(super) fn generate(
     )
 }
 
-fn read_integrations(
+pub(super) fn read_integrations(
     ms: &MeasurementSet,
     rows: &[usize],
     windows: &[usize],
@@ -101,6 +106,8 @@ fn read_integrations(
                 "FEED2",
                 "DATA_DESC_ID",
                 "STATE_ID",
+                COL_SCAN_NUMBER,
+                COL_OBSERVATION_ID,
                 COL_TIME,
                 COL_INTERVAL,
                 "EXPOSURE",
@@ -124,6 +131,8 @@ fn read_integrations(
     let other_feed = ids("FEED2")?;
     let description = ids("DATA_DESC_ID")?;
     let state = ids("STATE_ID")?;
+    let scan = ids(COL_SCAN_NUMBER)?;
+    let observation = ids(COL_OBSERVATION_ID)?;
     let time = numbers(COL_TIME)?;
     let interval = numbers(COL_INTERVAL)?;
     let exposure = numbers("EXPOSURE")?;
@@ -152,6 +161,8 @@ fn read_integrations(
                 description: description[index],
                 window,
                 state: state[index],
+                scan: scan[index],
+                observation: observation[index],
                 time: time[index],
                 interval: interval[index],
                 exposure: exposure[index],

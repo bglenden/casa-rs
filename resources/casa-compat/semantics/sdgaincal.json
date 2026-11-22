@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "task": "sdgaincal",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "8407207930378977daae4a812e8f64a5038d99f7",
+  "parameters": {
+    "infile": {
+      "scope": "Read complex DATA or float total-power input from the required MeasurementSet.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "calmode": {
+      "scope": "Solve the doublecircle calibration mode.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "radius": {
+      "scope": "Use the supplied angular quantity, arcsecond number, or the default half primary-beam size.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "smooth": {
+      "scope": "Smooth reference powers in the central time series before normalizing them.",
+      "status": "Implemented",
+      "behaviors": [
+        "solution"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "antenna": {
+      "scope": "Restrict the selected single-dish antennas.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "field": {
+      "scope": "Select fields and their tracking centers.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "spw": {
+      "scope": "Select one scalar gain channel in each requested spectral window.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "scan": {
+      "scope": "Select requested scan rows before selecting the central region.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "intent": {
+      "scope": "Filter observing intents only when the caller supplies a selector.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "applytable": {
+      "scope": "Apply supplied prior calibration tables in the shared native solver path.",
+      "status": "Implemented",
+      "behaviors": [
+        "preapply"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "interp": {
+      "scope": "Use one interpolation for all tables or align entries by table index.",
+      "status": "Implemented",
+      "behaviors": [
+        "preapply"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "spwmap": {
+      "scope": "Use the same flat window map for all priors or configure each prior table.",
+      "status": "Implemented",
+      "behaviors": [
+        "preapply"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "outfile": {
+      "scope": "Write a CASA-readable complex SDGAIN_OTFD calibration table, including a valid empty table when some integrations reach the solver but the group is short.",
+      "status": "Implemented",
+      "behaviors": [
+        "product"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "overwrite": {
+      "scope": "Replace an existing table when requested and keep its contents when no solution reaches the solver.",
+      "status": "Implemented",
+      "behaviors": [
+        "product"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "selection",
+      "title": "Double-circle reference integrations",
+      "scope": "Resolve CASA selectors, central regions, antenna pointing interpolation, and scalar frequency selection.",
+      "status": "Implemented",
+      "gap": "Release and dataset-scale benchmarks follow functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "solution",
+      "title": "Flag-aware gain normalization",
+      "scope": "Use the selected good samples to normalize gains by the group mean, preserving CASA per-receptor complex values and flags.",
+      "status": "Implemented",
+      "gap": "Release and dataset-scale benchmarks follow functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "preapply",
+      "title": "Per-table prior calibration",
+      "scope": "Apply actual time-varying prior corrections and mapped spectral Tsys before solving, with scalar and indexed interpolation and window lists.",
+      "status": "Implemented",
+      "gap": "Release and dataset-scale benchmarks follow functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "product",
+      "title": "Complex calibration table interoperability",
+      "scope": "Write standard compatible subtables and preserve the complex gain and selected spectral axis for CASA or native application.",
+      "status": "Implemented",
+      "gap": "Release and dataset-scale benchmarks follow functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "scalar-channel-requirement",
+      "state": "Proposed",
+      "inputs": "Select two channels of a three-channel total-power spectral window for a double-circle gain solve.",
+      "casa": "Aborts while copying a two-channel spectrum into a scalar solve cell.",
+      "ours": "Returns a catchable error and preserves existing files before publication.",
+      "rationale": "Selecting one channel produces the defined scalar gain shape.",
+      "impact": "A caller can select one channel and rerun without restarting Python.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "no-central-integrations",
+      "state": "Proposed",
+      "inputs": "Move the field reference outside the observed map so the pointing filter finds no central integration.",
+      "casa": "Segfaults while constructing time ranges from the empty selection.",
+      "ours": "Returns a catchable solve error and preserves existing files.",
+      "rationale": "No central integration is available to normalize gain.",
+      "impact": "A caller can adjust the radius or field and rerun safely.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input public CASA/native comparisons, independent gain laws and both-direction table interchange",
+      "state": "passed",
+      "casa_version": "6.7.6.14",
+      "revision": "8407207930378977daae4a812e8f64a5038d99f7",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1975",
+      "scope": "All named task parameters, default and selected radius, smoothing, variable/mapped priors, flags, input types, reordered rows, mixed feed/window selection and publication.",
+      "result": "The public oracle matches complex table cells, scalar frequencies, flagged selected rows, and outputs from both table readers. It checks no-output and short-group publication separately and exercises two CASA crash cases in isolated processes.",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdgaincal_oracle.py <new-dir>",
+      "links": [
+        "tools/casa-compat/sdgaincal_oracle.py"
+      ]
+    }
+  }
+}

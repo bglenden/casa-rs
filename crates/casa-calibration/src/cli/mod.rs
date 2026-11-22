@@ -77,6 +77,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if task.surface() == "sdcal" {
         return crate::single_dish::sdcal(task);
     }
+    if task.surface() == "sdgaincal" {
+        return crate::single_dish::gain::run(task);
+    }
     if task.surface() == "getjyperkalma"
         || (task.surface() == "gencal" && task.required_text("caltype")? == "jyperk")
     {

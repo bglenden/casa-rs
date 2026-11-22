@@ -612,6 +612,17 @@
     "spw": "cStr",
     "scan": "cStr"
   },
+  "sdgaincal": {
+    "calmode": "cStr",
+    "smooth": "cBool",
+    "antenna": "cStr",
+    "field": "cStr",
+    "spw": "cStr",
+    "scan": "cStr",
+    "intent": "cStr",
+    "outfile": "cStr",
+    "overwrite": "cBool"
+  },
   "setjy": {
     "vis": "cStr",
     "field": "cStr",

@@ -3,9 +3,9 @@
 
 use std::collections::BTreeMap;
 
+use crate::single_dish::map_geometry::{MapTargets, SourceRow};
+use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::{MeasurementSet, PlanetaryEphemeris};
-use casa_types::measures::direction::DirectionRef;
 
 use super::{Integration, error_text, mask};
 
@@ -30,15 +30,7 @@ pub(super) fn reference_rows<'a>(
     let engine = MsCalEngine::new(ms)
         .and_then(|engine| engine.with_field_ephemerides(ms))
         .map_err(error_text)?;
-    let field = ms.field().map_err(error_text)?;
-    let source = ms.source().map_err(error_text)?;
-    let mut names = BTreeMap::new();
-    for row in 0..source.row_count() {
-        let id = source.i32(row, "SOURCE_ID").map_err(error_text)?;
-        if let std::collections::btree_map::Entry::Vacant(entry) = names.entry(id) {
-            entry.insert(source.string(row, "NAME").map_err(error_text)?);
-        }
-    }
+    let mut targets = MapTargets::read(ms)?;
     let samples = groups
         .iter()
         .flatten()
@@ -50,32 +42,16 @@ pub(super) fn reference_rows<'a>(
         .map_err(error_text)?;
     let mut directions = directions.into_iter();
     let mut off = Vec::new();
-    let mut body_tables = BTreeMap::new();
     for group in groups {
         let field_id = group[0].field as usize;
-        let source_id = field.source_id(field_id).map_err(error_text)?;
-        let name = names
-            .get(&source_id)
-            .ok_or("No SOURCE row for selected map field.")?
-            .to_ascii_uppercase();
-        let body = if is_planet(&name) {
-            let table = match body_tables.entry(name.clone()) {
-                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(PlanetaryEphemeris::open_discovered(&name).map_err(error_text)?)
-                }
-            };
-            Some(&*table)
-        } else {
-            None
-        };
+        let target = targets.field(field_id, SourceRow::Required)?;
         let mut pointings = group
             .iter()
             .zip(directions.by_ref())
             .map(|(row, direction)| {
                 let (lon, lat) = direction.as_angles();
                 let Some((source_lon, source_lat)) =
-                    body_direction(&engine, row, body, name == "COMET")?
+                    target.direction(&engine, row.time, row.antenna as usize, field_id)?
                 else {
                     return Ok([lon, lat]);
                 };
@@ -91,44 +67,4 @@ pub(super) fn reference_rows<'a>(
         );
     }
     Ok(off)
-}
-
-fn body_direction(
-    engine: &MsCalEngine,
-    row: &Integration,
-    body: Option<&PlanetaryEphemeris>,
-    comet: bool,
-) -> Result<Option<(f64, f64)>, String> {
-    if comet {
-        return engine
-            .tracked_body_direction_j2000(row.time, row.field as usize)
-            .map(|direction| Some(direction.as_angles()))
-            .map_err(error_text);
-    }
-    let Some(body) = body else { return Ok(None) };
-    let frame = engine
-        .antenna_frame(row.time, row.antenna as usize)
-        .map_err(error_text)?;
-    let direction = body
-        .direction(&frame)
-        .map_err(error_text)?
-        .convert_to(DirectionRef::J2000, &frame)
-        .map_err(error_text)?;
-    Ok(Some(direction.as_angles()))
-}
-
-fn is_planet(name: &str) -> bool {
-    matches!(
-        name,
-        "SUN"
-            | "MOON"
-            | "MERCURY"
-            | "VENUS"
-            | "MARS"
-            | "JUPITER"
-            | "SATURN"
-            | "URANUS"
-            | "NEPTUNE"
-            | "PLUTO"
-    )
 }
