@@ -148,15 +148,22 @@ def test_temporary_component_list_samples_only_a_selected_section(cache):
         tool.done()
 
 
-@pytest.mark.parametrize("backend", ["casa", "casars"])
-def test_temporary_component_list_samples_spectral_index_in_stokes_planes(backend):
+@pytest.mark.parametrize(
+    ("backend", "index"),
+    [
+        pytest.param("casa", [-3., 0., 0., 0.], id="casa-four-indices"),
+        pytest.param("casars", [-3., 0., 0., 0.], id="casars-four-indices"),
+        pytest.param("casars", -3., id="casars-scalar-index"),
+    ],
+)
+def test_temporary_component_list_samples_spectral_index_in_stokes_planes(backend, index):
     api = _backend(backend)
     components = api.componentlist()
     tool = api.image()
     try:
         components.addcomponent(
             flux=[2., 1., 0., 0.], fluxunit="Jy", dir="J2000 0deg 0deg",
-            shape="point", freq="1.415GHz", spectrumtype="spectral index", index=-3.,
+            shape="point", freq="1.415GHz", spectrumtype="spectral index", index=index,
         )
         assert tool.fromcomplist(shape=[6, 8, 2, 3], cl=components.torecord())
         frequencies = np.array([1_414_999_000., 1_415_000_000., 1_415_001_000.])
