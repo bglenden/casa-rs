@@ -5,11 +5,14 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_tables::publication::{copy_locked_table_tree, rename_without_replacing};
+use casa_images::miriad_read::MiriadImage;
+use casa_tables::publication::{
+    copy_locked_external_tree, copy_locked_table_tree, rename_without_replacing,
+};
 use pyo3::prelude::*;
 
 use crate::tools::image::attachment::{OpenImages, conflicting_images, lock_table_tree};
-use crate::tools::image::handle::{raised, same_file_identity, same_file_snapshot};
+use crate::tools::image::handle::{ImageHandle, raised, same_file_identity, same_file_snapshot};
 use crate::tools::image::native_rename::{
     NativeTableMove, move_native_table, move_read_only_directory,
 };
@@ -237,7 +240,14 @@ fn copy_member(member: &OwnedMember, destination: &Path) -> PyResult<()> {
     let _locks = lock_referent_for_read(member)?;
     #[cfg(not(unix))]
     member.check_revision(None)?;
-    copy_locked_table_tree(&member.source, destination).map_err(raised)?;
+    if ImageHandle::recognizes_miriad(&member.source, &member.source) {
+        copy_locked_external_tree(&member.source, destination, |name| {
+            name.to_str().is_some_and(MiriadImage::is_image_file)
+        })
+    } else {
+        copy_locked_table_tree(&member.source, destination)
+    }
+    .map_err(raised)?;
     member.check_source()
 }
 
@@ -248,7 +258,7 @@ fn lock_referent_for_read(member: &OwnedMember) -> PyResult<Vec<casa_tables::Tab
     let mut locks = Vec::new();
     let mut pending = vec![member.resolved.clone()];
     while let Some(directory) = pending.pop() {
-        if directory.join("table.dat").is_file() {
+        if ImageHandle::has_native_control(&directory) {
             locks.push(
                 Table::open_with_lock_attempts(
                     TableOptions::new(&directory),
@@ -413,7 +423,7 @@ fn claim(member: &OwnedMember, holding: &Path, registry: &OpenImages) -> PyResul
         .transpose()
         .map_err(raised)?;
     member.check_revision(generation)?;
-    if member.source.join("table.dat").is_file() {
+    if ImageHandle::has_native_control(&member.source) {
         move_native_table(&member.source, &member.metadata, holding, None, |_| Ok(()))
     } else {
         move_read_only_directory(&member.source, &member.metadata, holding, None, |_| Ok(()))

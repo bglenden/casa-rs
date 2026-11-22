@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use casa_images::concat_file::{ConcatManifest, is_image_concat};
 use casa_images::concatenate::ConcatenationPlan;
-use casa_images::virtual_concat::{ConcatImage, ConcatMember};
+use casa_images::virtual_concat::{ConcatImage, ConcatLockState, ConcatMember};
 use casa_images::{
     ImageError, ImageInfo, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
     TempImage,
@@ -484,6 +484,46 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         self.advisory_lock
     }
 
+    fn lock_state(&self) -> ConcatLockState {
+        match self.slot().as_ref() {
+            Some(Storage::Paged(image)) => ConcatLockState::Leaf(table_lock_state(image)),
+            Some(Storage::Temp { image, .. }) => image
+                .concat_source()
+                .map_or(ConcatLockState::Leaf(None), |source| {
+                    ConcatLockState::Nested(source.lock_states())
+                }),
+            None => ConcatLockState::Leaf(None),
+        }
+    }
+
+    fn restore_locks(&self, state: ConcatLockState) -> Result<(), ImageError> {
+        let mut slot = self.slot();
+        if let Some(storage) = slot.as_mut() {
+            match (&mut *storage, state) {
+                (Storage::Paged(image), ConcatLockState::Leaf(previous)) => {
+                    if table_lock_state(image) != previous {
+                        unlock(storage)?;
+                        if let Some(kind) = previous
+                            && !lock(storage, kind, 1)?
+                        {
+                            return Err(ImageError::Io(
+                                "Could not restore a concatenation member lock".into(),
+                            ));
+                        }
+                    }
+                }
+                (Storage::Temp { image, .. }, ConcatLockState::Nested(states)) => {
+                    if let Some(source) = image.concat_source() {
+                        source.restore_locks(states)?;
+                    }
+                }
+                (_, ConcatLockState::Leaf(None)) => {}
+                _ => unreachable!("captured locks belong to the same member"),
+            }
+        }
+        Ok(())
+    }
+
     fn unlock(&self) -> Result<(), ImageError> {
         let mut storage = self.slot();
         if let Some(storage) = storage.as_mut() {
@@ -518,6 +558,18 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
             *slot = None;
         }
         Ok(())
+    }
+}
+
+fn table_lock_state<T: ImagePixel>(image: &casa_images::PagedImage<T>) -> Option<LockType> {
+    #[cfg(unix)]
+    return [LockType::Write, LockType::Read]
+        .into_iter()
+        .find(|&kind| image.has_lock(kind));
+    #[cfg(not(unix))]
+    {
+        let _ = image;
+        None
     }
 }
 

@@ -930,7 +930,7 @@ fn lock_tables_in_tree(
             return Err(not_writable(&directory));
         }
         let control = directory.join("table.dat");
-        if control.is_file() {
+        if ImageHandle::has_native_control(&directory) {
             OpenOptions::new()
                 .write(true)
                 .open(control)

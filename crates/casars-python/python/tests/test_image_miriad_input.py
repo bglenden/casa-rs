@@ -194,6 +194,123 @@ def test_miriad_concatenates_with_a_masked_native_image(tmp_path, writer, reader
 
 
 @pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("mode", ["copy", "move"])
+def test_miriad_owned_concat_ignores_unrelated_table_control(tmp_path, backend, mode):
+    image = _backend(backend).image()
+    paths = [tmp_path / "left.mir", tmp_path / "right.mir"]
+    expected = np.concatenate([_sky(path) for path in paths])
+    for path in paths:
+        (path / "table.dat").write_text("unrelated sidecar")
+    output = tmp_path / "joined.im"
+    joined = image.imageconcat(str(output), list(map(str, paths)), axis=0, relax=True, mode=mode)
+    try:
+        np.testing.assert_array_equal(joined.getchunk(), expected)
+        for path in paths:
+            locations = [output / path.name]
+            if mode == "copy":
+                locations.append(path)
+            for location in locations:
+                assert (location / "table.dat").read_text() == "unrelated sidecar"
+                assert not (location / "table.lock").exists()
+    finally:
+        joined.done()
+        image.done()
+
+
+@pytest.mark.parametrize(("backend", "mode", "same_binding"), [
+    ("casa", "copy", False), ("casars", "copy", False), ("casars", "move", False),
+    ("casa", "move", True), ("casars", "move", True),
+])
+def test_miriad_owned_concat_keeps_linked_payload_and_header(tmp_path, backend, mode, same_binding):
+    image = _backend(backend).image()
+    source_parent = tmp_path / "source"
+    source_parent.mkdir()
+    first, original, replacement = (source_parent / "a.mir", source_parent / "b.mir", tmp_path / "b.mir")
+    _sky(first)
+    values = _sky(original)
+    swapped = _sky(replacement) + 1000
+    (replacement / "image").write_bytes(struct.pack(">I", 4) + swapped.astype(">f4").tobytes(order="F"))
+    _replace_cached_number(replacement, "crval1", 1., 2.)
+    for name in ("image", "header"):
+        (first / name).unlink()
+        (first / name).symlink_to(Path("../b.mir") / name)
+    output = tmp_path / "joined.im"
+    args = dict(axis=0, relax=True, mode=mode)
+    try:
+        if mode == "copy" or same_binding:
+            second = original if same_binding else replacement
+            joined = image.imageconcat(str(output), [str(first), str(second)], **args)
+            try:
+                want = values if same_binding else swapped
+                np.testing.assert_array_equal(joined.getchunk(), np.concatenate([values, want]))
+                np.testing.assert_allclose(joined.toworld([1, 1])["numeric"], [1., .25], atol=1e-12)
+            finally:
+                joined.done()
+        else:
+            assert image.fromarray(str(output), [17.]) and image.done()
+            with pytest.raises(RuntimeError, match="MIRIAD image file .* different file"):
+                image.imageconcat(str(output), [str(first), str(replacement)], overwrite=True, **args)
+            assert image.open(str(output))
+            np.testing.assert_array_equal(image.getchunk(), [17.])
+        for name in ("image", "header"):
+            member = output / first.name if same_binding else first
+            referent = output / original.name if same_binding else original
+            assert (member / name).is_symlink()
+            assert (member / name).resolve() == referent / name
+        assert replacement.is_dir()
+    finally:
+        image.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires casacore POSIX access locks")
+def test_nested_miriad_concat_keeps_advisory_locks_and_restores_physical_locks(tmp_path):
+    external, first, last, inner_path, outer_path = (
+        tmp_path / name for name in ("sky.mir", "inner.im", "last.im", "nested.im", "outer.im")
+    )
+    pixels = _sky(external)
+    tool = tools.image()
+    assert tool.open(str(external))
+    coords = tool.coordsys()
+    record = coords.torecord()
+    coords.done()
+    assert tool.done()
+    for path in (first, last):
+        assert tool.fromarray(str(path), np.full_like(pixels, 3.), csys=record)
+        assert tool.done()
+    args = dict(axis=0, relax=True, mode="nomove", tempclose=False)
+    inner = tool.imageconcat(str(inner_path), [str(external), str(first)], **args)
+    assert inner.done()
+    outer = tool.imageconcat(str(outer_path), [str(inner_path), str(last)], **args)
+    assert outer.unlock()
+    np.testing.assert_array_equal(outer.haslock(), [True, True])
+    probe = """
+import fcntl
+from pathlib import Path
+import sys
+with (Path(sys.argv[1]) / 'table.lock').open('r+b') as data:
+    fcntl.lockf(data, fcntl.LOCK_SH | fcntl.LOCK_NB, 1, 0)
+    if sys.argv[2] == 'wait':
+        print('ready', flush=True)
+        sys.stdin.readline()
+"""
+    blocker = subprocess.Popen([sys.executable, "-c", probe, str(last), "wait"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True)
+    try:
+        assert blocker.stdout.readline().strip() == "ready"
+        assert not outer.lock(writelock=True, nattempts=1)
+        # Both reported flags are advisory. The inner native table must have
+        # released the real write lock it acquired before the last member failed.
+        np.testing.assert_array_equal(outer.haslock(), [True, True])
+        subprocess.run([sys.executable, "-c", probe, str(first), "check"],
+                       check=True, capture_output=True, text=True, timeout=10)
+    finally:
+        blocker.communicate(input="done\n", timeout=10)
+        outer.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
 @pytest.mark.parametrize(("method", "kwargs"), [
     ("open", {"cache": True}), ("open", {"cache": False}),
     ("newimage", {}), ("newimagefromfile", {}),

@@ -8428,6 +8428,27 @@ before raising `Failed AlwaysAssert setCoordinateInfo`. casa-rs reports
 the shape and decoded coordinates and rejects the copy before publication.
 See [#1955](https://github.com/bglenden/casa-rs/issues/1955).
 
+### Moving a concatenation can rebind MIRIAD data links
+
+Set `source/a.mir/image` to the relative symbolic link `../b.mir/image`.
+Concatenate `source/a.mir` with a different `b.mir`, using `mode="move"`.
+CASA 6.7.6.14 can resolve the link to the newly adjacent `b.mir` and return
+its pixels in both sections without reporting an error. Casa-rs checks the
+projected bindings of the linked payload and metadata before moving either
+input. If a binding would change, the call preserves both inputs and any
+previous output. `mode="copy"` preserves the linked file contents in the
+owned MIRIAD copy. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+### A failed nested concatenation lock can retain a table lock
+
+Nest a virtual concatenation containing a MIRIAD image and a native table
+inside another virtual concatenation, with `tempclose=False` at both levels.
+Unlock the outer image and take a read lock on its final native member in
+another process. CASA 6.7.6.14 returns `False` from `lock(writelock=True)`
+but can retain the write lock on the earlier native table. Casa-rs restores
+each member's physical lease independently of the MIRIAD advisory flags.
+See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ### A null field in saved image-expression metadata can crash `image.open`
 
 Create a saved Float expression with `"MiscInfo": {"unknown": null}` in

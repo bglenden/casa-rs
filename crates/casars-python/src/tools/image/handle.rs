@@ -205,10 +205,7 @@ impl ImageHandle {
         if path.is_file() {
             return Self::open_fits(path, FitsToolImport::open_for_concatenation(path)?);
         }
-        if Self::recognizes_miriad(path, path)
-            && !casa_images::concat_file::is_image_concat(path)
-            && !casa_images::expr_file::is_image_expr(path)
-        {
+        if Self::recognizes_miriad(path, path) {
             return Self::open_miriad(path);
         }
         Self::open_native(path, Some(0))
@@ -257,8 +254,14 @@ impl ImageHandle {
 
     pub(super) fn recognizes_miriad(probe: &Path, resolved: &Path) -> bool {
         MiriadImage::recognizes(probe)
+            && !casa_images::concat_file::is_image_concat(probe)
+            && !casa_images::expr_file::is_image_expr(probe)
             && (!resolved.join("table.dat").is_file()
                 || Table::open_metadata_only(TableOptions::new(resolved)).is_err())
+    }
+
+    pub(super) fn has_native_control(path: &Path) -> bool {
+        path.join("table.dat").is_file() && !Self::recognizes_miriad(path, path)
     }
 
     pub(super) fn open_miriad(path: &Path) -> Result<Self, ImageError> {
