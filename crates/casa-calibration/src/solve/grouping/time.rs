@@ -147,6 +147,12 @@ impl SolveAccumulator {
             .map(|gather| (gather.with_data.clone(), gather.attempted))
     }
 
+    pub(crate) fn gather_attempted(&self) -> bool {
+        self.direct_gain
+            .as_ref()
+            .is_some_and(|gather| gather.attempted)
+    }
+
     pub(crate) fn expects_cross_correlation(&self) -> bool {
         self.direct_gain.is_none() || !self.antenna_ids.is_empty()
     }

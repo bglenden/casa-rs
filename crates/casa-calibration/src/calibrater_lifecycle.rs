@@ -56,6 +56,7 @@ enum ConfiguredSolve {
         mode: CalibrationOutputMode,
         invalid_mode: bool,
         bandpass: BandpassSolveControls,
+        spline_mode: Option<String>,
     },
     LegacyEp(Box<LegacyEpSolver>),
 }
@@ -89,6 +90,9 @@ pub enum CalibraterLifecycleError {
     /// The requested amplitude/phase solve mode is rejected during execution.
     #[error("unrecognized amplitude/phase solve mode")]
     InvalidSolveMode,
+    /// The installed CASA tool executes the spline solver via VI1.
+    #[error("gain spline solves require the legacy visibility iterator")]
+    SplineNeedsLegacyIterator,
     /// Delay solving requires an explicit reference antenna.
     #[error("specify a reference antenna explicitly")]
     DelayNeedsReference,
@@ -535,6 +539,7 @@ impl CalibraterLifecycle {
             Some(GainSolveMode::AmplitudePhase),
             GainNormalization::Mean,
             -1.,
+            None,
         )
     }
 
@@ -575,6 +580,29 @@ impl CalibraterLifecycle {
             visibility_mode,
             normalization,
             preaverage_seconds,
+            None,
+        )
+    }
+
+    /// Configure the dedicated legacy gain spline solver and its literal mode.
+    /// The mode selects fitted components and is preserved in the table.
+    ///
+    /// # Errors
+    /// Returns an error when no MeasurementSet is open.
+    pub fn set_tool_spline(
+        &mut self,
+        gain: crate::GainSolveRequest,
+        controls: crate::GainSplineControls,
+        mode: CalibrationOutputMode,
+        spline_mode: String,
+    ) -> Result<(), CalibraterLifecycleError> {
+        self.configure_solve(
+            CalibrationSolveRequest::GainSpline { gain, controls },
+            mode,
+            Some(GainSolveMode::AmplitudePhase),
+            GainNormalization::Mean,
+            -1.,
+            Some(spline_mode),
         )
     }
 
@@ -585,6 +613,7 @@ impl CalibraterLifecycle {
         visibility_mode: Option<GainSolveMode>,
         normalization: GainNormalization,
         preaverage_seconds: f64,
+        spline_mode: Option<String>,
     ) -> Result<(), CalibraterLifecycleError> {
         self.equation_mut()?.solve = Some(ConfiguredSolve::Task {
             request: Box::new(request),
@@ -594,7 +623,9 @@ impl CalibraterLifecycle {
                 solve_mode: visibility_mode.unwrap_or(GainSolveMode::AmplitudePhase),
                 normalization,
                 preaverage_seconds,
+                modern_polynomial: false,
             },
+            spline_mode,
         });
         Ok(())
     }
@@ -671,23 +702,35 @@ impl CalibraterLifecycle {
         activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     ) -> Result<CalibrationSolveResult, CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let (mut request, mode, bandpass) = match equation.solve.as_ref() {
+        let (mut request, mode, mut bandpass, spline_mode) = match equation.solve.as_ref() {
             Some(ConfiguredSolve::Task {
                 request,
                 mode,
                 invalid_mode,
                 bandpass,
+                spline_mode,
             }) => {
                 if *invalid_mode {
                     return Err(CalibraterLifecycleError::InvalidSolveMode);
                 }
-                ((**request).clone(), *mode, *bandpass)
+                (
+                    (**request).clone(),
+                    *mode,
+                    *bandpass,
+                    spline_mode.as_deref(),
+                )
             }
             Some(ConfiguredSolve::LegacyEp(_)) => {
                 return Err(CalibraterLifecycleError::EpSolvePending);
             }
             None => return Err(CalibraterLifecycleError::NoSolver),
         };
+        if activity.is_some() && !self.legacy_iterator {
+            if matches!(&request, CalibrationSolveRequest::GainSpline { .. }) {
+                return Err(CalibraterLifecycleError::SplineNeedsLegacyIterator);
+            }
+            bandpass.modern_polynomial = true;
+        }
         let (model_source, stokes) = match equation.model {
             CalibraterModel::FromMeasurementSet => {
                 (GainSolveModelSource::FromMeasurementSet, [1., 0., 0., 0.])
@@ -728,6 +771,7 @@ impl CalibraterLifecycle {
             mode,
             activity,
             bandpass,
+            spline_mode,
         )?)
     }
 

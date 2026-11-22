@@ -62,11 +62,11 @@ fn robust_mode(value: &str) -> &'static str {
     }
 }
 
-fn setup_error() -> PyErr {
+pub(super) fn setup_error() -> PyErr {
     PyRuntimeError::new_err("Error in Calibrater::setsolve.")
 }
 
-fn refant(value: Option<&Bound<'_, PyAny>>, mode: &str) -> PyResult<RefAntSelector> {
+pub(super) fn refant(value: Option<&Bound<'_, PyAny>>, mode: &str) -> PyResult<RefAntSelector> {
     let selection = listing_selector(value)?;
     if selection.is_empty() {
         Ok(RefAntSelector::Unspecified)

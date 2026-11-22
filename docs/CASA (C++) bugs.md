@@ -9899,6 +9899,10 @@ a shape so CASA can read them, and each row keeps its actual count. The
 rows to a saved copy of the initial solve and the new rows to CASA. It then
 applies the combined table through both implementations.
 
+The direct `calibrater.setsolvegainspline` and `solve` workflow uses the same
+selected-field publication policy. Its paired oracle checks the new field's
+coefficients against CASA and verifies that append preserves the prior field.
+
 ## GSPLINE fit logs give the RMS for the wrong baseline
 
 The `gaincal(gaintype='GSPLINE')` diagnostic log indexes residuals as if

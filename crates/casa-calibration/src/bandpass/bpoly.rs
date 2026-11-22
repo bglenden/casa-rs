@@ -26,7 +26,7 @@ use crate::constants::{
 use crate::selected_data::SelectedData;
 use crate::session::CalibrationSolveContext;
 use crate::solve::grouping::SolveAccumulator;
-use crate::solve_stats::SolveStats;
+use crate::solve_stats::{IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity};
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, set_fixed_unit_keyword,
     set_measinfo_keyword,
@@ -34,15 +34,47 @@ use crate::writer::{
 
 const LEGACY_CAL_HISTORY_KEYWORD: &str = "CAL_HISTORY";
 
+pub(super) fn modern_gather(
+    ms: &MeasurementSet,
+    request: &BandpassSolveRequest,
+    context: CalibrationSolveContext,
+    groups: impl Iterator<Item = SolveAccumulator>,
+    activity: &mut ToolSolveActivity,
+) -> Result<BandpassSolveReport, BandpassSolveError> {
+    let mut stats = SolveStatsBuilder::new(
+        2,
+        crate::solve::spectral_window_ids(ms)?,
+        &context.available_antennas,
+    );
+    for group in groups {
+        if group.gather_attempted() {
+            return Err(BandpassSolveError::UnsupportedConfiguration {
+                reason: "the modern visibility iterator cannot fit BPOLY".into(),
+            });
+        }
+        stats.interval(&IntervalStages::of(&group, 0));
+    }
+    stats.track_activity(Some(activity));
+    Ok(empty_report(
+        request,
+        context.refant_id,
+        context.selected_data,
+        stats.finish(),
+    ))
+}
+
 pub(super) fn solve_polynomial(
     ms: &MeasurementSet,
     request: &BandpassSolveRequest,
     context: CalibrationSolveContext,
     groups: impl Iterator<Item = SolveAccumulator>,
     bin_widths: &BTreeMap<i32, usize>,
-    cuts: BandpassSolveCuts,
+    mut activity: Option<&mut ToolSolveActivity>,
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
+    let cuts = request
+        .cuts
+        .expect("polynomial solver with configured cuts");
     let window = ms
         .spectral_window()
         .map_err(|source| BandpassSolveError::OpenMeasurementSet {
@@ -117,6 +149,9 @@ pub(super) fn solve_polynomial(
             SolveStats::default(),
         ));
     }
+    if let Some(activity) = activity.as_deref_mut() {
+        activity.initialize(window.row_count());
+    }
     let mut channel_count = 0;
     let mut fitted = Vec::new();
     for group in groups {
@@ -131,7 +166,11 @@ pub(super) fn solve_polynomial(
                 (*id, (frequencies.as_slice(), *spacing))
             })
             .collect::<BTreeMap<_, _>>();
+        let output_window = combined_window.unwrap_or(group.spw_id);
         if frequencies.is_empty() {
+            if let Some(activity) = activity.as_deref_mut() {
+                activity.count_polynomial_interval(group.spw_id, output_window, false, false);
+            }
             continue;
         }
         let mut rows = match fit::fit_interval(
@@ -149,6 +188,9 @@ pub(super) fn solve_polynomial(
             }
             Err(error) => return Err(error),
         };
+        if let Some(activity) = activity.as_deref_mut() {
+            activity.count_polynomial_interval(group.spw_id, output_window, true, !rows.is_empty());
+        }
         if !rows.is_empty() {
             if let Some(spw) = combined_window {
                 for row in &mut rows {

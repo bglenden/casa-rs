@@ -59,8 +59,13 @@ impl SolveAccumulator {
         correlations: &[i32],
         channels: SelectedChannels<'_>,
         point_stokes: [f32; 4],
+        correlation_dependent_flags: bool,
     ) {
         self.observe_metadata(row, false);
+        if let Some(gather) = &mut self.direct_gain {
+            let flags = (!correlation_dependent_flags).then(|| samples::channel_flags(samples));
+            gather.observe(row, samples, channels.indices, flags.as_deref());
+        }
         self.polynomial
             .get_or_insert_with(Default::default)
             .observe(row, samples, correlations, channels, point_stokes);

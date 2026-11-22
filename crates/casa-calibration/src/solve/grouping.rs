@@ -927,6 +927,7 @@ impl SolveAccumulator {
                 correlation_types,
                 channels,
                 options.point_stokes,
+                options.correlation_dependent_flags,
             );
             return Ok(());
         }

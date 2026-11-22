@@ -47,39 +47,6 @@ impl PyCalibrater {
         })
     }
 
-    #[pyo3(signature = (table = None, append = None, t = None, combine = None, degamp = None, degphase = None, visnorm = None, solnorm = None, maskcenter = None, maskedge = None, refant = None), text_signature = "($self, table='', append=False, t=[], combine='', degamp=3, degphase=3, visnorm=False, solnorm=True, maskcenter=0, maskedge=5.0, refant=[])")]
-    fn setsolvebandpoly(
-        &self,
-        table: Option<&Bound<'_, PyAny>>,
-        append: Option<&Bound<'_, PyAny>>,
-        t: Option<&Bound<'_, PyAny>>,
-        combine: Option<&Bound<'_, PyAny>>,
-        degamp: Option<&Bound<'_, PyAny>>,
-        degphase: Option<&Bound<'_, PyAny>>,
-        visnorm: Option<&Bound<'_, PyAny>>,
-        solnorm: Option<&Bound<'_, PyAny>>,
-        maskcenter: Option<&Bound<'_, PyAny>>,
-        maskedge: Option<&Bound<'_, PyAny>>,
-        refant: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "setsolvebandpoly", 1528)
-    }
-
-    #[pyo3(signature = (table = None, append = None, mode = None, splinetime = None, preavg = None, npointaver = None, phasewrap = None, refant = None), text_signature = "($self, table='', append=False, mode='PHAS', splinetime=10800.0, preavg=0.0, npointaver=10, phasewrap=250.0, refant=[])")]
-    fn setsolvegainspline(
-        &self,
-        table: Option<&Bound<'_, PyAny>>,
-        append: Option<&Bound<'_, PyAny>>,
-        mode: Option<&Bound<'_, PyAny>>,
-        splinetime: Option<&Bound<'_, PyAny>>,
-        preavg: Option<&Bound<'_, PyAny>>,
-        npointaver: Option<&Bound<'_, PyAny>>,
-        phasewrap: Option<&Bound<'_, PyAny>>,
-        refant: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "setsolvegainspline", 1528)
-    }
-
     #[pyo3(signature = (caltable = None, time = None, spw = None, antenna = None, pol = None, caltype = None, parameter = None, infile = None, uniform = None), text_signature = "($self, caltable='', time='', spw='', antenna='', pol='', caltype='', parameter=[1.0], infile='', uniform=True)")]
     fn specifycal(
         &self,

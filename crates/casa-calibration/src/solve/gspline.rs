@@ -31,6 +31,7 @@ pub(crate) fn solve(
     request: &GainSolveRequest,
     controls: GainSplineControls,
     mode: CalibrationOutputMode,
+    tool_mode: Option<&str>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let input = crate::timing::Phase::start("gspline_select_average");
     let context = prepare_calibration_solve(
@@ -105,12 +106,30 @@ pub(crate) fn solve(
     let (times, series) = time_series(groups.values(), &correlations, hands);
     drop(input);
     let fit_phase = crate::timing::Phase::start("gspline_fit");
+    let fit_amplitude = tool_mode.map_or(request.solve_mode != GainSolveMode::Phase, |mode| {
+        mode.contains('A')
+    });
+    let fit_phase_component = tool_mode
+        .map_or(request.solve_mode != GainSolveMode::Amplitude, |mode| {
+            mode.contains('P')
+        });
+    let poly_mode = match tool_mode.unwrap_or(match request.solve_mode {
+        GainSolveMode::Amplitude => "A",
+        GainSolveMode::Phase => "P",
+        GainSolveMode::AmplitudePhase => "AP",
+    }) {
+        "A" => "AMP",
+        "P" => "PHAS",
+        "AP" => "PHASAMP",
+        mode => mode,
+    };
     let coefficients = fit(
         &times,
         &series,
         context.available_antennas.len(),
         &SplineKernelOptions {
-            mode: request.solve_mode,
+            amplitude: fit_amplitude,
+            phase: fit_phase_component,
             hands,
             spacing_seconds: controls.splinetime,
             phase_points: controls.npointaver.max(2) as usize,
@@ -134,6 +153,7 @@ pub(crate) fn solve(
             mode,
             &fields,
             (context.refant_id, &solved_antennas, frequency),
+            poly_mode,
         )?;
         diagnostics::write_logs(&request.output_table, &times, &series, coefficients, hands);
         count
@@ -343,7 +363,8 @@ pub(super) struct BaselineSeries {
 }
 
 pub(super) struct SplineKernelOptions {
-    pub(super) mode: GainSolveMode,
+    pub(super) amplitude: bool,
+    pub(super) phase: bool,
     pub(super) hands: usize,
     pub(super) spacing_seconds: f64,
     pub(super) phase_points: usize,
@@ -380,12 +401,12 @@ pub(super) fn fit(
         .map(|&time| basis::sample(&knots, time))
         .collect::<Option<Vec<_>>>()?;
     let size = (antenna_count, knots.len() - 4);
-    let log_amplitude = if options.mode == GainSolveMode::Phase {
+    let log_amplitude = if !options.amplitude {
         None
     } else {
         Some(fit_component(&basis, baselines, size, options, false)?)
     };
-    let phase = if options.mode == GainSolveMode::Amplitude {
+    let phase = if !options.phase {
         None
     } else {
         Some(fit_component(&basis, baselines, size, options, true)?)
