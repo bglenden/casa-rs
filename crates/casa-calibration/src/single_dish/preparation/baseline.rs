@@ -18,7 +18,7 @@ use casa_types::{ArrayValue, Complex32, RecordValue};
 use ndarray::{Array1, ArrayD, Axis};
 
 use diagnostics::Diagnostics;
-use polynomial::{Fit, Polynomial, PolynomialFit};
+use polynomial::{Fit, INVALID_FIT_ARGUMENT, Polynomial, PolynomialFit};
 use table::{AppliedPolynomial, BaselineRow, BaselineTable, SpectrumModel, mask_ranges};
 
 use super::{SingleDishSession, data_column};
@@ -115,7 +115,7 @@ impl SingleDishSession {
                     return Err("Number of fits must be positive.".into());
                 }
                 if clip_sigma.is_nan() || clip_sigma <= 0. {
-                    return Err("sakura_LSQFitPolynomialFloat() failed -- InvalidArgument".into());
+                    return Err(INVALID_FIT_ARGUMENT.into());
                 }
                 let family = if family.eq_ignore_ascii_case("chebyshev") {
                     Polynomial::Chebyshev
@@ -123,7 +123,7 @@ impl SingleDishSession {
                     Polynomial::Monomial
                 };
                 (
-                    Operation::Fit(FitOperation {
+                    Operation::Fit(Box::new(FitOperation {
                         request: FitRequest {
                             family,
                             order,
@@ -134,13 +134,20 @@ impl SingleDishSession {
                         bases: BTreeMap::new(),
                         records: Vec::new(),
                         diagnostics: Diagnostics::prepare(diagnostics, request.overwrite)?,
-                    }),
+                    })),
                     table,
                 )
             }
             SingleDishBaselineMode::Apply { table } => {
                 if table.as_os_str().is_empty() {
                     return Err("baseline table is not given.".into());
+                }
+                if let Some(output) = request.output
+                    && crate::paths::overlap(table, output).map_err(error_text)?
+                {
+                    return Err(
+                        "The output MeasurementSet overlaps the input baseline table.".into(),
+                    );
                 }
                 (
                     Operation::Apply(Box::new(BaselineTable::open(table)?)),
@@ -258,13 +265,13 @@ struct FitOperation {
 }
 
 enum Operation {
-    Fit(FitOperation),
+    Fit(Box<FitOperation>),
     Apply(Box<BaselineTable>),
 }
 
 struct BaselineWorker {
     operation: Operation,
-    masks: BTreeMap<i32, Vec<bool>>,
+    masks: WindowMasks,
     noise: Option<Noise>,
     omit_spectral_weights: bool,
     subtract: bool,
@@ -280,7 +287,7 @@ impl FitOperation {
                 entry.insert(fit)
             }
         };
-        Ok(basis.fit(values, mask, self.request.clip_sigma, self.request.max_fits))
+        basis.fit(values, mask, self.request.clip_sigma, self.request.max_fits)
     }
 }
 
@@ -319,6 +326,15 @@ impl SpectrumBaseline for BaselineWorker {
         });
         let mut models = Vec::new();
         let ids = row_ids(row)?;
+        let (fit_mask, fallback) = self.masks.for_window(row.window);
+        if fallback && fit_mask.is_some_and(|mask| mask.len() != channels) {
+            if let Operation::Fit(_) = &self.operation {
+                return Err(INVALID_FIT_ARGUMENT.into());
+            }
+            if self.noise.is_some() {
+                return Err("The input mask does not match the spectrum channel count.".into());
+            }
+        }
         let matching = if let Operation::Apply(table) = &self.operation {
             table.matching_row(
                 ids.window,
@@ -337,10 +353,7 @@ impl SpectrumBaseline for BaselineWorker {
             let mask = (0..channels)
                 .map(|channel| {
                     !flags[channel]
-                        && self
-                            .masks
-                            .get(&row.window)
-                            .is_none_or(|mask| mask.get(channel).copied().unwrap_or(false))
+                        && fit_mask.is_none_or(|mask| mask.get(channel).copied().unwrap_or(false))
                 })
                 .collect::<Vec<_>>();
             let mut noise_mask = None;
@@ -523,28 +536,42 @@ impl Noise {
     }
 }
 
-fn masks(input: &MeasurementSet, selector: &str) -> Result<BTreeMap<i32, Vec<bool>>, String> {
+struct WindowMasks {
+    windows: BTreeMap<i32, Vec<bool>>,
+    first: Option<i32>,
+}
+
+impl WindowMasks {
+    fn for_window(&self, window: i32) -> (Option<&[bool]>, bool) {
+        if let Some(mask) = self.windows.get(&window) {
+            return (Some(mask), false);
+        }
+        let mask = self.first.and_then(|first| self.windows.get(&first));
+        (mask.map(Vec::as_slice), mask.is_some())
+    }
+}
+
+fn masks(input: &MeasurementSet, selector: &str) -> Result<WindowMasks, String> {
     let selection = input
         .resolve_spw_selector(if selector.is_empty() { "*" } else { selector })
         .map_err(|error| error.to_string())?;
     let metadata = input.spectral_window().map_err(|error| error.to_string())?;
     let mut masks = BTreeMap::new();
     for &window in selection.spw_ids() {
-        if let Some(channels) = selection
-            .channels_of(window)
-            .map_err(|error| error.to_string())?
-        {
-            let count = metadata
-                .num_chan(window)
-                .map_err(|error| error.to_string())?;
-            let mut mask = vec![false; count as usize];
+        let count = metadata.num_chan(window).map_err(error_text)? as usize;
+        let channels = selection.channels_of(window).map_err(error_text)?;
+        let mut mask = vec![channels.is_none(); count];
+        if let Some(channels) = channels {
             for channel in channels {
                 if let Some(included) = mask.get_mut(channel) {
                     *included = true;
                 }
             }
-            masks.insert(window as i32, mask);
         }
+        masks.insert(window as i32, mask);
     }
-    Ok(masks)
+    Ok(WindowMasks {
+        windows: masks,
+        first: selection.spw_ids().first().map(|&window| window as i32),
+    })
 }

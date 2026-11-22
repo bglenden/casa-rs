@@ -9670,3 +9670,19 @@ calculation, then passes the space-separated string
 Casa-rs's task publishes the recalculated scalar weights and leaves out
 both spectral columns. The direct tool retains the undefined spectral
 columns in its output schema.
+
+## Single-dish baseline reports accumulate clipped-channel counts
+
+CASA 6.7.6.14 carries the clipped-channel count from earlier spectra in a
+visibility buffer into a spectrum's CSV and text report. With one rejected
+channel per spectrum and two polarizations, successive records can show
+`1,1,2,2,3,3`. Casa-rs reports the number rejected in each spectrum.
+
+## Single-dish baseline fitting accepts negative iteration counts in CASA
+
+The CASA 6.7.6.14 task passes `clipniter+1` to the tool, which converts it
+to an unsigned 16-bit fit count for the solver. A count of zero leaves the
+input real spectra in the output and can write coefficients and RMS values
+without performing a fit. Smaller values can wrap to very large fit counts.
+Casa-rs requires a nonnegative `clipniter` and a positive direct-tool
+`num_fitting_max`.

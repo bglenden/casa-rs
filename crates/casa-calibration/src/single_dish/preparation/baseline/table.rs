@@ -55,6 +55,7 @@ pub(super) struct AppliedPolynomial {
 impl BaselineTable {
     pub(super) fn open(path: &Path) -> Result<Self, String> {
         let table = Table::open(TableOptions::new(path)).map_err(error_text)?;
+        validate_layout(&table)?;
         let mut rows = BTreeMap::<_, Vec<IndexedRow>>::new();
         for index in 0..table.row_count() {
             let window = scalar_uint(&table, index, "IFNO")?;
@@ -106,16 +107,7 @@ impl BaselineTable {
         if time < rows.first()?.time || time > rows.last()?.time {
             return None;
         }
-        let later = rows.partition_point(|row| row.time < time);
-        let matching = if rows[later].time == time {
-            rows[later]
-        } else {
-            // CASA tests the earlier bracketing integration first.
-            *rows
-                .get(later.saturating_sub(1)..=later)?
-                .iter()
-                .find(|row| (row.time - time).abs() < interval / 2.)?
-        };
+        let matching = matching_time(rows, time, interval)?;
         (matching.scan == scan).then_some(matching.index)
     }
 
@@ -182,6 +174,47 @@ impl BaselineTable {
     }
 }
 
+fn matching_time(rows: &[IndexedRow], time: f64, interval: f64) -> Option<&IndexedRow> {
+    let (mut first, mut last) = (0, rows.len() - 1);
+    while last - first > 1 {
+        let middle = first + (last - first) / 2;
+        if let Some(exact) = [first, middle, last]
+            .into_iter()
+            .map(|index| &rows[index])
+            .find(|row| row.time == time)
+        {
+            return Some(exact);
+        }
+        if rows[middle].time < time {
+            first = middle;
+        } else {
+            last = middle;
+        }
+    }
+    // In its final bracket CASA checks both candidates in time order.
+    let half = interval / 2.;
+    rows[first..=last]
+        .iter()
+        .find(|row| time - half < row.time && row.time < time + half)
+}
+
+fn validate_layout(table: &Table) -> Result<(), String> {
+    let actual = table.schema().ok_or("Missing baseline table schema.")?;
+    for expected in schema().columns() {
+        let name = expected.name();
+        let column = actual
+            .column(name)
+            .ok_or_else(|| format!("Table column {name} is unknown"))?;
+        if column.data_type() != expected.data_type()
+            || std::mem::discriminant(column.column_type())
+                != std::mem::discriminant(expected.column_type())
+        {
+            return Err(format!("Unexpected data type for baseline column {name}."));
+        }
+    }
+    Ok(())
+}
+
 fn baseline_scalar<T>(values: &ndarray::ArrayD<T>, receptor: usize) -> Option<&T> {
     match values.ndim() {
         1 => values.get([receptor]),
@@ -196,11 +229,19 @@ fn decode_ranges(ranges: &[u32], channels: usize) -> Result<Vec<bool>, String> {
         return Err("masklist must have even number of elements.".into());
     }
     let mut included = vec![false; channels];
+    let Some(last) = channels.checked_sub(1) else {
+        return Ok(included);
+    };
     for &[start, end] in pairs {
-        let section = included
-            .get_mut(start as usize..=end as usize)
-            .ok_or("Baseline mask range is outside the spectral window.")?;
-        section.fill(true);
+        let end = end as usize;
+        if let Some(section) = included.get_mut(start as usize..=end.min(last)) {
+            section.fill(true);
+        }
+        // Casacore pads narrower polarization masks to make a rectangular
+        // cell. The first pair ending at the last channel terminates the mask.
+        if end == last {
+            break;
+        }
     }
     Ok(included)
 }

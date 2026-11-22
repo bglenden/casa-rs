@@ -22,14 +22,13 @@ impl Diagnostics {
         destinations: SingleDishBaselineDiagnostics<'_>,
         overwrite: bool,
     ) -> Result<Self, String> {
-        // The tool appends to existing reports; the task writes fresh reports.
-        let append = destinations.heading.is_none();
-        let prepare = |path: Option<&Path>| {
+        // CASA appends only direct-tool text output. CSV is always replaced.
+        let prepare = |path: Option<&Path>, append| {
             path.map(|path| ReportFile::prepare(path, overwrite, append))
                 .transpose()
         };
-        let csv = prepare(destinations.csv)?;
-        let mut text = prepare(destinations.text)?;
+        let csv = prepare(destinations.csv, false)?;
+        let mut text = prepare(destinations.text, destinations.heading.is_none())?;
         if let (Some(text), Some(heading)) = (&mut text, destinations.heading) {
             text.writer
                 .write_all(heading.as_bytes())

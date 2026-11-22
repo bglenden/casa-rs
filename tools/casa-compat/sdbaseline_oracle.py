@@ -27,14 +27,15 @@ def without_flags(root, source):
     return result
 
 
-def tool_fit(factory, source, ms_output, baseline, family, *, subtract=True):
+def tool_fit(factory, source, ms_output, baseline, family, *, subtract=True,
+             mask='*', order=1, **options):
     tool = factory()
     try:
         assert tool.open(str(source)) is True
         assert tool.set_selection(spw='*') is True
         assert tool.subtract_baseline(
-            outfile=str(ms_output), bloutput=f',,{baseline}', dosubtract=subtract, spw='*',
-            order=1, blfunc=family,
+            outfile=str(ms_output), bloutput=f',,{baseline}', dosubtract=subtract, spw=mask,
+            order=order, blfunc=family, **options,
         ) is True
     finally:
         assert tool.close() is True
@@ -49,6 +50,28 @@ def tool_apply(factory, source, baseline, output, **weights):
                                          **weights) is True
     finally:
         assert tool.close() is True
+
+
+def check_tool_report_replacement(root, source, tools):
+    previous = 'existing report contents\n'
+    for name, factory in tools.items():
+        prefix = root / f'tool-reports-{name}'
+        csv_path, text_path = prefix.with_suffix('.csv'), prefix.with_suffix('.txt')
+        csv_path.write_text(previous)
+        text_path.write_text(previous)
+        tool = factory()
+        try:
+            assert tool.open(str(source)) is True
+            assert tool.set_selection(spw='*') is True
+            assert tool.subtract_baseline(
+                outfile=str(prefix.with_suffix('.ms')), spw='*', order=1,
+                bloutput=f'{csv_path},{text_path},',
+            ) is True
+        finally:
+            assert tool.close() is True
+        assert len(csv_path.read_text().splitlines()) == 480
+        assert not csv_path.read_text().startswith(previous)
+        assert text_path.read_text().startswith(previous + 'Scan[')
 
 
 def check_coefficients(source, calibration, family):
@@ -136,6 +159,65 @@ def clipping_fixture(root, source):
     return vis
 
 
+def check_clipping_endpoint(root, source, tools):
+    vis = root / 'endpoint-input.ms'
+    copy_ms(source, vis)
+    with opened(vis, True) as main:
+        for row in range(main.nrows()):
+            data = main.getcell('DATA', row)
+            data[:, ::2] = -1
+            data[:, 1::2] = 1
+            main.putcell('DATA', row, data)
+    for name, factory in tools.items():
+        output = root / f'endpoint-{name}.ms'
+        models = root / f'endpoint-{name}.bltable'
+        tool_fit(factory, vis, output, models, 'poly', order=0, num_fitting_max=2,
+                 clip_threshold_sigma=0.5, updateweight=True)
+        with opened(output) as ms, opened(models) as table:
+            assert ms.nrows() == table.nrows() == 240
+            for row in range(ms.nrows()):
+                data = ms.getcell('DATA', row)
+                nchan = data.shape[1]
+                np.testing.assert_array_equal(data[:, ::2], -2)
+                np.testing.assert_array_equal(data[:, 1::2], 0)
+                np.testing.assert_array_equal(ms.getcell('FLAG', row), False)
+                np.testing.assert_array_equal(ms.getcell('WEIGHT', row), 0)
+                np.testing.assert_array_equal(table.getcell('RESULT', row), 1)
+                np.testing.assert_array_equal(table.getcell('MASKLIST', row),
+                                              np.tile([nchan - 1] * 2, (2, 1)))
+        try:
+            tool_fit(factory, vis, root / f'bad-refit-{name}.ms',
+                     root / f'bad-refit-{name}.bltable', 'poly', order=1,
+                     num_fitting_max=2, clip_threshold_sigma=0.1)
+        except RuntimeError as error:
+            assert 'sakura_LSQFitPolynomialFloat() failed -- NG' in str(error)
+        else:
+            raise AssertionError('accepted an underdetermined clipped refit')
+
+
+def check_direct_mask_fallback(root, different_widths, tools):
+    equal_root = root / 'equal-windows'
+    equal_root.mkdir()
+    source = without_flags(equal_root, spectral_map(equal_root, (6, 6)))
+    for name, factory in tools.items():
+        model = root / f'fallback-{name}.bltable'
+        tool_fit(factory, source, root / f'fallback-{name}.ms', model, 'poly',
+                 order=0, mask='0:1~2')
+        with opened(model) as table:
+            assert 1 in table.getcol('IFNO')
+            for row in range(table.nrows()):
+                np.testing.assert_array_equal(table.getcell('MASKLIST', row), [[1, 2], [1, 2]])
+        try:
+            tool_fit(factory, different_widths, root / f'bad-fallback-{name}.ms',
+                     root / f'bad-fallback-{name}.bltable', 'poly', order=0, mask='0:1~2')
+        except RuntimeError as error:
+            assert 'sakura_LSQFitPolynomialFloat() failed -- InvalidArgument' in str(error)
+        else:
+            raise AssertionError('used an incompatible fallback fit mask')
+    if 'native' in tools:
+        compare_baselines(root / 'fallback-casa.bltable', root / 'fallback-native.bltable')
+
+
 def check_clipping(product, table):
     with opened(product) as main, opened(table) as models:
         assert main.nrows() == models.nrows() == 240
@@ -193,6 +275,64 @@ def check_apply_weights(root, source, tools):
                 assert not main.iscelldefined('SIGMA_SPECTRUM', 0)
         if 'native' in products:
             compare_outputs(products['casa'], products['native'])
+
+
+def check_apply_table_edges(root, source, tools):
+    original = root / 'poly-casa.bltable'
+    padded = root / 'padded-mask.bltable'
+    copy_ms(original, padded)
+    with opened(padded, True) as table:
+        table.putcell('FUNC_PARAM', 0, [[0], [0]])
+        table.putcell('RESULT', 0, [[0.], [0.]])
+        table.putcell('MASKLIST', 0, [[2, 5, 0, 0], [1, 2, 4, 5]])
+    for name, factory in tools.items():
+        output = root / f'padded-apply-{name}.ms'
+        tool_apply(factory, source, padded, output, updateweight=True)
+        with opened(output) as main:
+            np.testing.assert_allclose(main.getcell('WEIGHT', 0), [.8, .4], rtol=2e-6)
+
+    overlapping = root / 'overlapping-times.bltable'
+    copy_ms(original, overlapping)
+    with opened(overlapping, True) as table:
+        table.removerows(list(range(2, table.nrows())))
+        instant = table.getcell('TIME', 0)
+        for column in table.colnames():
+            table.putcell(column, 1, table.getcell(column, 0))
+        for row, (offset, coefficient) in enumerate([(-.25, 1.), (0., 9.)]):
+            table.putcell('TIME', row, instant + offset)
+            table.putcell('FUNC_PARAM', row, [[0], [0]])
+            table.putcell('RESULT', row, [[coefficient], [coefficient]])
+    with opened(source) as main:
+        row = np.flatnonzero(main.getcol('TIME') == instant)[0]
+        expected = main.getcell('DATA', int(row)).real - 1
+    for name, factory in tools.items():
+        output = root / f'overlap-time-apply-{name}.ms'
+        tool_apply(factory, source, overlapping, output)
+        with opened(output) as main:
+            assert main.getcell('TIME', 0) == instant
+            np.testing.assert_array_equal(main.getcell('DATA', 0), expected)
+        try:
+            tool_apply(factory, source, root / 'model-only.ms',
+                       root / f'wrong-kind-{name}.ms')
+        except RuntimeError as error:
+            assert 'Table column SCANNO is unknown' in str(error)
+        else:
+            raise AssertionError('accepted an empty MeasurementSet as a baseline table')
+
+    if 'native' in tools:
+        existing = root / 'protected-output.ms'
+        copy_ms(source, existing)
+        nested = existing / 'keep.bltable'
+        copy_ms(original, nested)
+        for output in (existing, nested / 'inside.ms'):
+            try:
+                tool_apply(tools['native'], source, nested, output)
+            except RuntimeError as error:
+                assert 'overlaps the input baseline table' in str(error)
+            else:
+                raise AssertionError('allowed output to overlap the baseline input')
+            with opened(nested) as table:
+                assert table.nrows() == 240
 
 
 def check_default_products(task, source, prefix):
@@ -275,10 +415,14 @@ def task_checks(root, flagged, source, reference_only):
         check_application(output, prefix.with_suffix('.applied.ms'))
         check_task_errors(task, source, prefix)
         check_default_products(task, source, prefix)
+        clip_csv = prefix.with_suffix('.clip.csv')
         assert task(str(clipped), order=0, clipthresh=1.7, clipniter=1,
-                    outfile=str(prefix.with_suffix('.clip.ms')), blformat='table',
-                    bloutput=str(prefix.with_suffix('.clip.bltable'))) is None
+                    outfile=str(prefix.with_suffix('.clip.ms')), blformat=['table', 'csv'],
+                    bloutput=[str(prefix.with_suffix('.clip.bltable')), str(clip_csv)]) is None
         check_clipping(prefix.with_suffix('.clip.ms'), prefix.with_suffix('.clip.bltable'))
+        with clip_csv.open() as report:
+            counts = [int(row[-1]) for row in csv.reader(report)]
+            assert counts[:4] == ([1, 1, 2, 2] if name == 'casa' else [1, 1, 1, 1])
         for reindex in (False, True):
             result = root / f'selected-{name}-{reindex}.ms'
             try:
@@ -360,7 +504,11 @@ def main():
         compare_baselines(table, native_models)
         compare_outputs(no_ms, native_skeleton)
     if not args.tool_only:
+        check_tool_report_replacement(root, source, tools)
+        check_clipping_endpoint(root, source, tools)
+        check_direct_mask_fallback(root, source, tools)
         check_apply_weights(root, source, tools)
+        check_apply_table_edges(root, source, tools)
         task_checks(root, flagged, source, args.reference_only)
     print('Polynomial and Chebyshev baselines match and interchange.', flush=True)
 

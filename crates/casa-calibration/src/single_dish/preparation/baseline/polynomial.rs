@@ -3,6 +3,10 @@
 
 use casa_numerics::solve_weighted_least_squares;
 
+pub(super) const FIT_FAILED: &str = "sakura_LSQFitPolynomialFloat() failed -- NG";
+pub(super) const INVALID_FIT_ARGUMENT: &str =
+    "sakura_LSQFitPolynomialFloat() failed -- InvalidArgument";
+
 #[derive(Clone, Copy)]
 pub(super) enum Polynomial {
     Monomial,
@@ -44,9 +48,9 @@ impl PolynomialFit {
         included: &[bool],
         clip_sigma: f64,
         max_fits: usize,
-    ) -> Option<Fit> {
-        if spectrum.len() != self.basis.len() || spectrum.len() != included.len() || max_fits == 0 {
-            return None;
+    ) -> Result<Option<Fit>, String> {
+        if spectrum.len() != self.basis.len() || spectrum.len() != included.len() {
+            return Err(INVALID_FIT_ARGUMENT.into());
         }
         let mut included = included.to_vec();
         for iteration in 0..max_fits {
@@ -58,7 +62,15 @@ impl PolynomialFit {
                 .filter(|&(_, &use_channel)| use_channel)
                 .map(|((terms, &value), _)| (terms.clone(), f64::from(value), 1.))
                 .collect::<Vec<_>>();
-            let coefficients = solve_weighted_least_squares(&samples, self.terms)?;
+            if samples.len() < self.terms {
+                return if iteration == 0 {
+                    Ok(None)
+                } else {
+                    Err(FIT_FAILED.into())
+                };
+            }
+            let coefficients =
+                solve_weighted_least_squares(&samples, self.terms).ok_or(FIT_FAILED)?;
             let errors = self
                 .basis
                 .iter()
@@ -72,18 +84,26 @@ impl PolynomialFit {
                     value - fitted
                 })
                 .collect::<Vec<_>>();
-            let power = errors
+            let (sum, power) = errors
                 .iter()
                 .zip(&included)
                 .filter(|&(_, &use_channel)| use_channel)
-                .map(|(&value, _)| f64::from(value).powi(2))
-                .sum::<f64>();
-            let rms = (power / samples.len() as f64).sqrt();
+                .fold((0., 0.), |(sum, power), (&value, _)| {
+                    let value = f64::from(value);
+                    (sum + value, power + value * value)
+                });
+            let count = samples.len() as f64;
+            let mean = sum / count;
+            let rms = (power / count - mean * mean).abs().sqrt();
             if iteration + 1 < max_fits {
-                let threshold = clip_sigma * rms;
+                let threshold = (clip_sigma * rms) as f32;
+                let lower = (mean - f64::from(threshold)) as f32;
+                let upper = (mean + f64::from(threshold)) as f32;
                 let mut changed = false;
-                for (&value, use_channel) in errors.iter().zip(&mut included) {
-                    if *use_channel && f64::from(value.abs()) > threshold {
+                // Libsakura does not clip the endpoint of each basis segment.
+                // A polynomial uses one segment spanning the whole spectrum.
+                for (&value, use_channel) in errors[..errors.len() - 1].iter().zip(&mut included) {
+                    if *use_channel && (value - lower) * (upper - value) < 0. {
                         *use_channel = false;
                         changed = true;
                     }
@@ -92,14 +112,14 @@ impl PolynomialFit {
                     continue;
                 }
             }
-            return Some(Fit {
+            return Ok(Some(Fit {
                 coefficients: self.table_coefficients(coefficients),
                 residuals: errors,
                 included,
                 rms: rms as f32,
-            });
+            }));
         }
-        None
+        Err(INVALID_FIT_ARGUMENT.into())
     }
 
     fn table_coefficients(&self, mut coefficients: Vec<f64>) -> Vec<f64> {
