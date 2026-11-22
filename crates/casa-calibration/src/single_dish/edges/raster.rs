@@ -61,7 +61,13 @@ pub(super) fn edge_windows(
     let mut sorted = differences.clone().collect::<Vec<_>>();
     sorted.sort_unstable_by(f64::total_cmp);
     let middle = sorted.len() / 2;
-    let median = (sorted[(sorted.len() - 1) / 2] + sorted[middle]) / 2.;
+    let lower = sorted[(sorted.len() - 1) / 2];
+    // casacore averages the middle pair only on the small-array path.
+    let median = if sorted.len() <= 100 {
+        (lower + sorted[middle]) / 2.
+    } else {
+        lower
+    };
     let half_interval = scan
         .iter()
         .map(|row| row.interval)

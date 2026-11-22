@@ -1283,7 +1283,7 @@ fn detect_time_reference(ms: &MeasurementSet) -> EpochRef {
     detect_epoch_reference(ms.main_table(), "TIME", EpochRef::UTC)
 }
 
-fn detect_epoch_reference(table: &Table, column: &str, default: EpochRef) -> EpochRef {
+pub(crate) fn detect_epoch_reference(table: &Table, column: &str, default: EpochRef) -> EpochRef {
     let Some(reference) = borrowed_measure_reference(table, column) else {
         return default;
     };

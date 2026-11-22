@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 import casatasks as casa
+from casatools import measures
 import numpy as np
 
 from applycal_oracle import copy_ms
@@ -66,15 +67,21 @@ def raster_map(source, output):
     return output
 
 
+def raster_strips(times):
+    gaps = np.diff(times)
+    median = np.median(gaps) if gaps.size <= 100 else np.sort(gaps)[(gaps.size - 1) // 2]
+    split = np.flatnonzero(gaps > 5. * median) + 1
+    return np.split(np.arange(times.size), split)
+
+
 def check_raster(vis, product, *, count=None, fraction=None, allow_omitted_tail=False):
     with opened(vis) as main:
         times = main.getcol('TIME')
         exposures = main.getcol('EXPOSURE')
         flags = main.getcol('FLAG')
         data = main.getcol('DATA').real
-    split = np.flatnonzero(np.diff(times) > 5. * np.median(np.diff(times))) + 1
     rows = []
-    for line in np.split(np.arange(times.size), split):
+    for line in raster_strips(times):
         if count is not None:
             nedge = count
         elif fraction:
@@ -120,8 +127,23 @@ def compare_implementation(root, engines, vis, mode, label, options, raster_coun
         if mode == 'otfraster':
             check_raster(vis, product, count=options.get('noff'), fraction=raster_count,
                          allow_omitted_tail=engine == 'casa')
+            if engine == 'casa':
+                with opened(product) as table:
+                    rows = table.nrows()
+                with opened(vis) as main:
+                    expected = 2 * len(raster_strips(main.getcol('TIME')))
+                for attempt in range(2):
+                    if rows == expected:
+                        break
+                    product = root / f'{mode}-{label}-{engine}-fresh-{attempt}.cal'
+                    assert task(str(vis), mode, outfile=str(product), **options) is None
+                    check_raster(vis, product, count=options.get('noff'), fraction=raster_count,
+                                 allow_omitted_tail=True)
+                    with opened(product) as table:
+                        rows = table.nrows()
+                assert rows == expected, 'CASA did not produce a complete deterministic reference'
         products[engine] = product
-    if 'native' in products and label != 'automatic':
+    if 'native' in products:
         compare_tables(products['casa'], products['native'])
     return products
 
@@ -218,6 +240,35 @@ def check_interpolated_float_map(root, engines, source):
         else:
             compare_products(result, expected)
     print('FLOAT_DATA edges agree between pointing knots', flush=True)
+    mixed = root / 'mixed-epoch-map.ms'
+    copy_ms(vis, mixed)
+    with opened(mixed / 'ANTENNA', True) as antennas:
+        assert antennas.nrows() == 1
+        antennas.addrows(1)
+        for column in antennas.colnames():
+            if antennas.iscelldefined(column, 0):
+                antennas.putcell(column, 1, antennas.getcell(column, 0))
+        antennas.putcell('NAME', 1, 'UNSELECTED')
+    with opened(mixed / 'POINTING', True) as pointing:
+        first = pointing.getcell('TIME', 0)
+        tool = measures()
+        converted = tool.measure(tool.epoch('UTC', f'{first}s'), 'TAI')['m0']
+        assert converted['unit'] == 'd'
+        offset = round(converted['value'] * 86400. - first)
+        assert offset > 30
+        pointing.putcol('TIME', pointing.getcol('TIME') + offset)
+        info = pointing.getcolkeyword('TIME', 'MEASINFO')
+        info['Ref'] = 'TAI'
+        pointing.putcolkeyword('TIME', 'MEASINFO', info)
+        count = pointing.nrows()
+        pointing.addrows(3)
+        for index in range(3):
+            for column in pointing.colnames():
+                if pointing.iscelldefined(column, index):
+                    pointing.putcell(column, count + index, pointing.getcell(column, index))
+            pointing.putcell('ANTENNA_ID', count + index, 1)
+    compare_implementation(root, engines, mixed, 'otf', 'mixed-epochs', {'fraction': '.25'})
+    print('UTC MAIN and TAI POINTING match with an unselected short pointing series', flush=True)
 
 
 def check_selected_map(root, engines, source):
@@ -236,6 +287,93 @@ def check_selected_map(root, engines, source):
             assert table.nrows() > 0 and table.getcol('FPARAM').shape[1] == 3
             np.testing.assert_array_equal(table.getcol('SCAN_NUMBER'), 2)
     print('Selected field, channel interval and second scan match CASA', flush=True)
+
+
+def check_shared_pointings(root, engines, source):
+    vis = root / 'shared-pointing-map.ms'
+    copy_ms(source, vis)
+    with opened(vis) as main:
+        times = main.getcol('TIME')
+    with opened(vis / 'POINTING', True) as pointing:
+        assert pointing.nrows() == times.size
+        pointing.putcol('TIME', times)
+        pointing.putcol('ANTENNA_ID', np.full(times.size, -1, dtype=np.int32))
+    products = compare_implementation(root, engines, vis, 'otf', 'shared', {'fraction': '15%'})
+    with opened(products['casa']) as table:
+        assert table.nrows() > 0
+    print('Array-wide POINTING samples match CASA', flush=True)
+
+
+def check_fractional_pixel_edge(root, engines, source):
+    vis = root / 'fractional-pixel.ms'
+    copy_ms(source, vis)
+    with opened(vis, True) as main:
+        times = main.getcol('TIME')[:10]
+        scan = main.getcol('SCAN_NUMBER')
+        scan[:10] = 2
+        main.putcol('SCAN_NUMBER', scan)
+    offsets = np.array([(8, 3), (4, 2), (4, 1), (8, 5), (4, 0),
+                        (0, 1), (6, 5), (6, 2), (8, 2), (6, 1)])
+    with opened(vis / 'POINTING', True) as pointing:
+        for row, coords in enumerate(np.array([1., .5]) + 1e-4 * offsets):
+            pointing.putcell('TIME', row, times[row])
+            pointing.putcell('DIRECTION', row, coords[:, None])
+    products = compare_implementation(root, engines, vis, 'otf', 'pixel',
+                                      {'fraction': '.1', 'scan': '2'})
+    for product in products.values():
+        with opened(product) as table:
+            expected = [times[:4].mean(), times[5:].mean()]
+            np.testing.assert_allclose(table.getcol('TIME'), expected, rtol=0., atol=1e-6)
+    print('Negative fractional pixels do not create a reference sample', flush=True)
+
+
+def check_large_raster_median(root, engines, source):
+    vis = root / 'median-lower.ms'
+    with opened(source) as main:
+        rows = main.selectrows(list(range(103)))
+        rows.copy(str(vis), deep=True, valuecopy=True).close()
+        rows.close()
+    with opened(vis, True) as main:
+        t0 = main.getcell('TIME', 0)
+        gaps = np.asarray([1.] * 51 + [6.] + [2.] * 50)
+        times = t0 + np.concatenate(([0.], np.cumsum(gaps)))
+        main.putcol('TIME', times)
+        main.putcol('TIME_CENTROID', times)
+    products = compare_implementation(root, engines, vis, 'otfraster', 'median', {'noff': 1})
+    for product in products.values():
+        with opened(product) as table:
+            np.testing.assert_array_equal(table.getcol('TIME'), times[[0, 51, 52, 102]])
+    print('Long raster lists use the lower midpoint for gap detection', flush=True)
+
+
+def check_lunar_tracking(root, engines, source):
+    vis = root / 'lunar-map.ms'
+    copy_ms(source, vis)
+    with opened(vis / 'ANTENNA') as antennas:
+        position = antennas.getcell('POSITION', 0)
+    tool = measures()
+    assert tool.doframe(tool.position('ITRF', *(f'{axis}m' for axis in position)))
+    with opened(vis, True) as main:
+        t0 = main.getcell('TIME', 0)
+        times = t0 + 40. * np.arange(main.nrows())
+        main.putcol('TIME', times)
+        main.putcol('TIME_CENTROID', times)
+    with opened(vis / 'SOURCE', True) as sources:
+        sources.putcol('NAME', np.full(sources.nrows(), 'Moon'))
+    with opened(vis / 'POINTING', True) as pointing:
+        offsets = pointing.getcol('DIRECTION')
+        offsets -= offsets.mean(axis=-1, keepdims=True)
+        for row, time in enumerate(times):
+            assert tool.doframe(tool.epoch('UTC', f'{time}s'))
+            apparent = tool.measure(tool.direction('MOON'), 'AZEL')
+            celestial = tool.measure(apparent, 'J2000')
+            target = np.asarray([celestial['m0']['value'], celestial['m1']['value']])
+            pointing.putcell('DIRECTION', row, offsets[..., row] + target[:, None])
+        pointing.putcol('TIME', times)
+    products = compare_implementation(root, engines, vis, 'otf', 'lunar', {'fraction': '15%'})
+    with opened(products['casa']) as table:
+        assert table.nrows() > 0
+    print('Topocentric Moon map matches the site-dependent CASA track', flush=True)
 
 
 def main():
@@ -268,6 +406,10 @@ def main():
     compare_application(root, engines, mapping, 'otf', sky, options)
     check_interpolated_float_map(root, engines, mapping)
     check_selected_map(root, engines, mapping)
+    check_shared_pointings(root, engines, mapping)
+    check_fractional_pixel_edge(root, engines, mapping)
+    check_large_raster_median(root, engines, mapping)
+    check_lunar_tracking(root, engines, mapping)
     if args.ephemeris:
         check_ephemeris(root, engines, args.ephemeris.resolve())
 

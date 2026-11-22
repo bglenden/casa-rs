@@ -43,13 +43,18 @@ pub(super) fn select(directions: &mut [[f64; 2]], fraction: f64) -> Result<Vec<b
                 if !(low..=high).contains(&point[axis]) {
                     return None;
                 }
-                let value = ((dimensions[axis] - 1) as f64 / 2.
-                    + (point[axis] - (low + high) / 2.) / spacing)
-                    .round();
-                (value >= 0. && value < dimensions[axis] as f64).then_some(value as usize)
+                let value = (dimensions[axis] - 1) as f64 / 2.
+                    + (point[axis] - (low + high) / 2.) / spacing;
+                let rounded = value.round();
+                (rounded >= 0. && rounded < dimensions[axis] as f64)
+                    .then_some((rounded as usize, value >= 0.))
             };
-            let pixel = index(0)? * ny + index(1)?;
-            occupancy[pixel] = true;
+            let (x, x_inside) = index(0)?;
+            let (y, y_inside) = index(1)?;
+            let pixel = x * ny + y;
+            // The occupancy stage checks fractional coordinates, while
+            // the mask lookup uses their rounded pixel indices.
+            occupancy[pixel] |= x_inside && y_inside;
             Some(pixel)
         })
         .collect::<Vec<_>>();
