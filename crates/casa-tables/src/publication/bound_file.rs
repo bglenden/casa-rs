@@ -17,13 +17,14 @@ fn entry_name(name: &OsStr) -> io::Result<CString> {
 
 fn open_entry(directory: &File, entry: &CStr, flags: i32) -> io::Result<File> {
     // SAFETY: the descriptor and entry name stay valid. The mode argument
-    // is used only when creating a new private staging file.
+    // is used only when creating a new private staging file. Pass it at
+    // C variadic integer width, including on hosts with a 16-bit mode_t.
     let fd = unsafe {
         libc::openat(
             directory.as_raw_fd(),
             entry.as_ptr(),
             flags | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
-            0o600 as libc::mode_t,
+            0o600 as libc::c_uint,
         )
     };
     if fd < 0 {
