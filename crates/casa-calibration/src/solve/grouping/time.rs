@@ -187,6 +187,14 @@ impl SolveAccumulator {
             .map(|buffer| (buffer.field, buffer.data_desc_id))
     }
 
+    pub(in crate::solve) fn in_first_input_buffer(
+        &self,
+        (ddid, field, start): (i32, i32, u64),
+    ) -> bool {
+        self.first_t_buffer
+            .is_some_and(|buffer| buffer.contains_start(field, ddid, start))
+    }
+
     pub(crate) fn direct_gain_data(&self) -> Option<([BTreeSet<i32>; 2], bool)> {
         self.direct_gain
             .as_ref()
@@ -365,11 +373,19 @@ pub(super) struct FirstTBuffer {
 
 impl FirstTBuffer {
     pub(super) fn contains(self, baseline: AveragedBaseline) -> bool {
-        baseline.field_id == self.field
-            && baseline.data_desc_id == self.data_desc_id
+        self.contains_start(
+            baseline.field_id,
+            baseline.data_desc_id,
+            baseline.start_bits,
+        )
+    }
+
+    fn contains_start(self, field: i32, ddid: i32, start: u64) -> bool {
+        field == self.field
+            && ddid == self.data_desc_id
             && self
                 .max_span
-                .is_none_or(|span| f64::from_bits(baseline.start_bits) - self.time <= span)
+                .is_none_or(|span| f64::from_bits(start) - self.time <= span)
     }
 }
 

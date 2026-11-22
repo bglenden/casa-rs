@@ -134,6 +134,15 @@ pub(crate) fn solve(
     }
     if let Some(mut stats) = stats {
         super::apply_requested_reference(ms, &mut solved.rows, &request.refant, &context)?;
+        if solve_mode != GainSolveMode::AmplitudePhase {
+            for row in &mut solved.rows {
+                for (gain, &flagged) in row.gains.iter_mut().zip(&row.flags) {
+                    if flagged || gain.re == 0. {
+                        *gain = Complex32::new(1., 0.);
+                    }
+                }
+            }
+        }
         if solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
             super::normalize_gain_solution_amplitudes(&mut solved.rows, request.normalization_type);
         }
@@ -155,8 +164,7 @@ fn solve_group(
     antennas: &BTreeSet<i32>,
     mode: GainSolveMode,
 ) -> Result<Vec<SolutionRow>, GainSolveError> {
-    // CASA channel- and time-averages the samples, then uses the first
-    // buffer when more than one field or spectral window is combined.
+    // CASA collapses each input buffer before fitting only the first one.
     let Some(first) = group.first_input_buffer() else {
         return Ok(Vec::new());
     };
@@ -167,7 +175,15 @@ fn solve_group(
         .fold((0., 0.), |(offset, total), spectrum| {
             let weight = spectrum
                 .channels()
-                .map(|(_, weight)| f64::from(weight))
+                .map(|(sum, weight)| {
+                    if mode == GainSolveMode::Phase && weight > 0. {
+                        let amplitude = (sum / weight).norm();
+                        if amplitude > 0. {
+                            return f64::from(weight * amplitude.powi(2));
+                        }
+                    }
+                    f64::from(weight)
+                })
                 .sum::<f64>();
             (
                 offset + weight * (spectrum.time_seconds - origin),
@@ -186,7 +202,7 @@ fn solve_group(
     for spectrum in group.delay_spectra().filter(|spectrum| {
         spectrum.parallel_hand
             && spectrum.antennas.0 == spectrum.antennas.1
-            && (spectrum.buffer.1, spectrum.buffer.0) == first
+            && group.in_first_input_buffer(spectrum.buffer)
     }) {
         let Some((sum, weight)) = spectrum.channels().next() else {
             continue;

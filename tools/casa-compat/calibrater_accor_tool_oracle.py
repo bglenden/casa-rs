@@ -93,12 +93,31 @@ def main():
             np.testing.assert_array_equal(table.getcol('CPARAM'), 1.)
             np.testing.assert_array_equal(table.getcol('ANTENNA2'), -1)
     solve_case(work, engines, scalar, 'scalar', options={'t': 'int'})
+    for mode in ('A', 'P'):
+        solve_case(work, engines, scalar, f'scalar-{mode}', options={'apmode': mode})
     solve_case(work, engines, vis, 'selected', selection={'spw': '0:2~9'},
                options={'t': '20s', 'preavg': 8.})
     solve_case(work, engines, vis, 'amp-median',
                options={'apmode': 'A', 'solnorm': True, 'normtype': 'median'})
     solve_case(work, engines, vis, 'phase', options={'apmode': 'P'})
     solve_case(work, engines, vis, 'append', append=True)
+
+    varying = work/'varying-autocorrelations.ms'
+    copy_ms(vis, varying)
+    with opened(varying, True) as table:
+        first, second, times = [table.getcol(key) for key in ('ANTENNA1', 'ANTENNA2', 'TIME')]
+        auto = first == second
+        elapsed = times - times.min()
+        data = table.getcol('DATA')
+        data[..., auto] = np.where(elapsed < 8, 4, np.where(elapsed < 16, 9, 16))[auto]
+        for key in ('DATA', 'CORRECTED_DATA'):
+            assert table.putcol(key, data)
+    for mode, expected_gain in [('AP', 2.), ('P', 1.)]:
+        paths = solve_case(work, engines, varying, f'varying-{mode}',
+                           options={'preavg': 8., 'apmode': mode})
+        for path in paths.values():
+            with opened(path) as table:
+                np.testing.assert_array_equal(table.getcol('CPARAM'), expected_gain)
 
     def flag_auto_reference(flags, first, second):
         flags[..., (first == second) & (first == 0)] = True
@@ -114,6 +133,8 @@ def main():
             with opened(path) as table:
                 np.testing.assert_array_equal(table.getcol('ANTENNA2'), expected)
                 assert table.getcol('FLAG').all() == (mode == 'strict')
+    solve_case(work, engines, reference, 'ref-strict-amplitude',
+               options={'refant': 'A0', 'refantmode': 'strict', 'apmode': 'A'})
     flagged = change_flags(work, vis, 'all-flagged', lambda flags, *_: flags.fill(True))
     for legacy in (False, True):
         solve_case(work, engines, flagged, f'fully-flagged-{legacy}', legacy=legacy, outcome='empty')
