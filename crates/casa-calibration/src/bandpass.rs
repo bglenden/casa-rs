@@ -389,7 +389,9 @@ pub(crate) fn solve_bandpass(
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
     let use_casa_solve = request.band_type == BandpassType::B || request.cuts.is_some();
-    let polynomial_bandpass = request.band_type == BandpassType::BPoly && request.cuts.is_some();
+    let polynomial_bandpass = request.band_type == BandpassType::BPoly
+        && request.cuts.is_some()
+        && !controls.modern_polynomial;
     let rotate_model = request.parang && use_casa_solve;
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
     let context = prepare_calibration_solve(

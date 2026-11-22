@@ -7,7 +7,7 @@ use casa_calibration::{
     BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
     BandpassType, CalibraterLifecycle, CalibrationOutputMode, CalibrationSolveRequest,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainSplineControls, GainType,
+    GainSplineControls, GainType, RefAntSelector,
 };
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -49,14 +49,18 @@ impl PyCalibrater {
     fn configure_polynomial(
         &self,
         py: Python<'_>,
-        configure: impl FnOnce(&mut CalibraterLifecycle) -> PyResult<()> + Send,
+        reference: RefAntSelector,
+        configure: impl FnOnce(&mut CalibraterLifecycle, RefAntSelector) -> PyResult<()> + Send,
     ) -> PyResult<bool> {
         let configured = self.with_lifecycle(py, |state| {
             if state.dataset_path().is_none() {
                 return Ok(false);
             }
+            let reference = state
+                .resolve_polynomial_refant(reference)
+                .map_err(super::runtime_error)?;
             state.reset(false, true).map_err(super::runtime_error)?;
-            configure(state)?;
+            configure(state, reference)?;
             Ok(true)
         })?;
         if !configured {
@@ -109,8 +113,8 @@ impl PyCalibrater {
         let maskcenter = integer(maskcenter, method, 10, 0)?.max(0) as usize;
         let maskedge = number(maskedge.cloned(), method, 11, 5.)? as f32;
         let reference = self::refant(refant, "flex")?;
-        self.configure_polynomial(py, move |state| {
-            if table.as_os_str().is_empty() {
+        self.configure_polynomial(py, reference, move |state, reference| {
+            if table.as_os_str().is_empty() || degrees.iter().any(|&degree| degree < -1) {
                 return Err(setup_error());
             }
             let (time, frequency) = elapsed.split_once(',').unwrap_or((&elapsed, ""));
@@ -174,7 +178,7 @@ impl PyCalibrater {
             phasewrap: number(phasewrap.cloned(), method, 8, 250.)?,
         };
         let reference = self::refant(refant, "flex")?;
-        self.configure_polynomial(py, move |state| {
+        self.configure_polynomial(py, reference, move |state, reference| {
             if table.as_os_str().is_empty() {
                 return Err(setup_error());
             }

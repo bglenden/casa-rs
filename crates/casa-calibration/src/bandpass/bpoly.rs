@@ -139,6 +139,13 @@ pub(super) fn solve_polynomial(
                 .map(|(channels, _)| channels.len())
                 .max()
     {
+        if activity.is_some() {
+            return Err(BandpassSolveError::UnsupportedConfiguration {
+                reason:
+                    "spectral windows with different selected channel counts cannot be combined"
+                        .into(),
+            });
+        }
         tracing::warn!(
             "Spectral windows with different selected channel counts cannot be combined"
         );
@@ -182,7 +189,7 @@ pub(super) fn solve_polynomial(
             cuts,
         ) {
             Ok(rows) => rows,
-            Err(error @ BandpassSolveError::FitPolynomial { .. }) => {
+            Err(error @ BandpassSolveError::FitPolynomial { .. }) if activity.is_none() => {
                 tracing::warn!("{error}");
                 break;
             }

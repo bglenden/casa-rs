@@ -93,6 +93,9 @@ pub enum CalibraterLifecycleError {
     /// The installed CASA tool executes the spline solver via VI1.
     #[error("gain spline solves require the legacy visibility iterator")]
     SplineNeedsLegacyIterator,
+    /// The specialized setter could not parse a reference antenna selection.
+    #[error("{0}")]
+    ReferenceAntennaSelection(String),
     /// Delay solving requires an explicit reference antenna.
     #[error("specify a reference antenna explicitly")]
     DelayNeedsReference,
@@ -604,6 +607,43 @@ impl CalibraterLifecycle {
             -1.,
             Some(spline_mode),
         )
+    }
+
+    /// Bind the primary antenna used by the specialized polynomial solvers
+    /// before replacing the previous solve configuration.
+    ///
+    /// # Errors
+    /// Returns an error if the attached MS or antenna selection is invalid.
+    pub fn resolve_polynomial_refant(
+        &self,
+        reference: crate::RefAntSelector,
+    ) -> Result<crate::RefAntSelector, CalibraterLifecycleError> {
+        use crate::RefAntSelector;
+
+        let RefAntSelector::Expression { selection, .. } = reference else {
+            return Ok(reference);
+        };
+        let ms = MeasurementSet::open(self.equation()?.attachment.path())
+            .map_err(AttachmentError::from)?;
+        let antennas = ms.resolve_reference_antennas(&selection).map_err(|error| {
+            let casa_ms::MsError::InvalidInput(detail) = error else {
+                return CalibraterLifecycleError::ReferenceAntennaSelection(error.to_string());
+            };
+            let detail = detail
+                .strip_prefix(&format!("antenna selection {selection:?}: "))
+                .unwrap_or(&detail);
+            let message = if detail.starts_with("Antenna Expression: No match found") {
+                format!("{detail}  ")
+            } else if detail.starts_with("No match found for the antenna specificion") {
+                format!("{detail} ")
+            } else {
+                detail.replacen(" (near char.", "\n(near char.", 1)
+            };
+            CalibraterLifecycleError::ReferenceAntennaSelection(message)
+        })?;
+        Ok(antennas.first().map_or(RefAntSelector::Unspecified, |&id| {
+            RefAntSelector::AntennaId(id as i32)
+        }))
     }
 
     fn configure_solve(

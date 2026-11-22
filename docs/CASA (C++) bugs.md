@@ -6387,6 +6387,9 @@ later intervals still produce valid solutions. Output creation and
 replacement use the shared calibration table lifecycle. The pinned BPOLY
 oracle checks the CASA product, the native return, and retained intervals.
 
+The direct polynomial setter rejects degrees below -1. CASA 6.7.6.14 can
+abort in `solve` while constructing a negative-sized coefficient array.
+
 ## BPOLY reads a second channel from a singleton selection
 
 - Date noted: 2026-11-18
