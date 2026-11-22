@@ -79,10 +79,12 @@ impl CalibraterLifecycle {
             refant: standard.refant,
             append,
         };
-        self.equation_mut()?.solve = Some(ConfiguredSolve::Polarization {
+        let equation = self.equation_mut()?;
+        equation.solve = Some(ConfiguredSolve::Polarization {
             request: Box::new(request),
             invalid_mode,
         });
+        equation.solve_description = None;
         Ok(())
     }
 

@@ -88,8 +88,8 @@ pub(crate) use tool_activity::{ApplyTermCounts, LibraryApplyRegistration};
 pub(crate) use tool_corrupt::{ModelCorruption, execute_tool_corrupt};
 pub(crate) mod tsys_weights;
 mod weights;
-pub(crate) use chain::has_polarization_matrix;
 use chain::{ApplyChain, ApplyStep};
+pub(crate) use chain::{has_polarization_matrix, viscal_order};
 use channels::{DataChannelGrid, apply_row};
 pub(crate) use solve_priors::{
     PreappliedRows, PriorSolveBoundary, SolvePriorApply, evaluate_solve_priors,

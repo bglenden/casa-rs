@@ -113,6 +113,7 @@ impl PyCalibrater {
         let maskcenter = integer(maskcenter, method, 10, 0)?.max(0) as usize;
         let maskedge = number(maskedge.cloned(), method, 11, 5.)? as f32;
         let reference = self::refant(refant, "flex")?;
+        let display_reference = reference.clone();
         self.configure_polynomial(py, reference, move |state, reference| {
             if table.as_os_str().is_empty() || degrees.iter().any(|&degree| degree < -1) {
                 return Err(setup_error());
@@ -150,7 +151,9 @@ impl PyCalibrater {
             });
             state
                 .set_solve(request, append)
-                .map_err(super::runtime_error)
+                .map_err(super::runtime_error)?;
+            state.record_solve_description(&elapsed, "", "flex", Some(&display_reference));
+            Ok(())
         })
     }
 
@@ -178,6 +181,7 @@ impl PyCalibrater {
             phasewrap: number(phasewrap.cloned(), method, 8, 250.)?,
         };
         let reference = self::refant(refant, "flex")?;
+        let display_reference = reference.clone();
         self.configure_polynomial(py, reference, move |state, reference| {
             if table.as_os_str().is_empty() {
                 return Err(setup_error());
@@ -206,9 +210,11 @@ impl PyCalibrater {
                     },
                     controls,
                     append,
-                    mode,
+                    mode.clone(),
                 )
-                .map_err(super::runtime_error)
+                .map_err(super::runtime_error)?;
+            state.record_solve_description("inf", &mode, "flex", Some(&display_reference));
+            Ok(())
         })
     }
 }

@@ -67,7 +67,7 @@ pub enum GainType {
 }
 
 impl GainType {
-    fn vis_cal(self) -> &'static str {
+    pub(crate) fn vis_cal(self) -> &'static str {
         match self {
             Self::G => "G Jones",
             Self::T => "T Jones",
