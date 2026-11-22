@@ -7,6 +7,7 @@ mod solve;
 mod table;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
@@ -39,10 +40,13 @@ pub(super) struct LegacyEpSolver {
 
 struct PreparedEpModel {
     fourier: [Vec<Complex32>; 4],
-    products: EpCacheProducts,
+    products: Arc<EpCacheProducts>,
     correlation_planes: Vec<StokesType>,
     side: usize,
     cell_rad: [f64; 2],
+    scale: [f64; 2],
+    reference_frequency_hz: f64,
+    initial_angle_rad: f64,
     coordinates: CoordinateSystem,
     _memory: Reservation,
 }
@@ -141,10 +145,13 @@ impl LegacyEpSolver {
             "legacy EP prepared its Fourier model");
         self.model = Some(PreparedEpModel {
             fourier,
-            products,
+            products: Arc::new(products),
             correlation_planes: buffer.correlations,
             side: shape[0],
             cell_rad,
+            scale: cell_rad.map(|increment| increment * shape[0] as f64),
+            reference_frequency_hz: buffer.frequency_hz,
+            initial_angle_rad: buffer.angle_rad,
             coordinates,
             _memory: memory,
         });

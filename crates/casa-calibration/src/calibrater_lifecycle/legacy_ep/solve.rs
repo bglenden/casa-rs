@@ -2,18 +2,23 @@
 //! Read each legacy visibility chunk once and fit a pointing solution.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use casa_coordinates::{Coordinate, CoordinateModel, StokesType};
 use casa_imaging_model::GridFtProjection;
+use casa_imaging_runtime::HostResources;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_tables::RequiredScalarColumnValues;
-use casa_types::ArrayValue;
 use casa_types::measures::direction::MDirection;
+use casa_types::{ArrayValue, Complex32};
+use ndarray::ArrayD;
 
 use super::degrid::PointingSample;
 use super::fit::{self, Baseline, Observation};
-use super::{LegacyEpSolver, PreparedEpModel, invalid, table};
+use super::{
+    EpCacheProducts, FirstBuffer, LegacyEpSolver, PreparedEpModel, convolution, invalid, table,
+};
 
 const SPEED_OF_LIGHT: f64 = 299_792_458.;
 
@@ -33,6 +38,43 @@ struct Rows<'a> {
 struct LoadedChunk {
     baselines: Vec<Baseline>,
     reference_time: f64,
+}
+
+struct ConvolutionSelection<'a> {
+    solver: &'a LegacyEpSolver,
+    model: &'a PreparedEpModel,
+    selected_angle: f64,
+    selected: Arc<EpCacheProducts>,
+    host: Option<HostResources>,
+}
+
+impl ConvolutionSelection<'_> {
+    fn at(&mut self, angle: f64) -> MsResult<&Arc<EpCacheProducts>> {
+        if angle != self.selected_angle
+            && (angle - self.selected_angle).abs().to_degrees() > self.solver.angle_increment_deg
+        {
+            if self.host.is_none() {
+                self.host = Some(HostResources::detect().map_err(invalid)?);
+            }
+            let buffer = FirstBuffer {
+                correlations: self.model.correlation_planes.clone(),
+                frequency_hz: self.model.reference_frequency_hz,
+                angle_rad: angle,
+            };
+            let products = convolution(
+                &self.solver.cache,
+                (self.solver.angle_increment_deg, 1),
+                self.host.as_ref().expect("host resources detected"),
+                &buffer,
+                [self.model.side, self.model.side, 4, 1],
+                self.model.cell_rad,
+                &self.model.coordinates,
+            )?;
+            self.selected = Arc::new(products);
+            self.selected_angle = angle;
+        }
+        Ok(&self.selected)
+    }
 }
 
 impl<'a> Rows<'a> {
@@ -111,13 +153,20 @@ impl LegacyEpSolver {
         let antenna_count = ms.antenna()?.row_count();
         let mut rows = Rows::new(ms, selected, self.interval_seconds)?;
         let mut results = Vec::new();
+        let mut kernels = ConvolutionSelection {
+            solver: self,
+            model,
+            selected_angle: model.initial_angle_rad,
+            selected: Arc::clone(&model.products),
+            host: None,
+        };
         while let Some(chunk) = rows.next() {
             let first = chunk[0].0;
             let input = crate::timing::Phase::start("ep_gather");
             let Some(LoadedChunk {
                 baselines,
                 reference_time,
-            }) = load_chunk(ms, selected, model, &engine, chunk, self.preaverage_seconds)?
+            }) = load_chunk(ms, selected, &engine, chunk, &mut kernels)?
             else {
                 continue;
             };
@@ -132,7 +181,7 @@ impl LegacyEpSolver {
             // EPJones::solveRPar aliases pointPar_, which guessPar zeros
             // at the beginning of every independent solution interval.
             let mut offsets = vec![[0.; 4]; antenna_count];
-            if fit::solve(&baselines, &mut offsets, model.correlation_planes.len()) {
+            if fit::solve(model, &baselines, &mut offsets) {
                 results.push(Slot {
                     spw: first.spectral_window_id,
                     field: first.field_id,
@@ -153,10 +202,9 @@ impl LegacyEpSolver {
 fn load_chunk(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
-    model: &PreparedEpModel,
     geometry: &MsCalEngine,
     chunk: &[(&ResolvedMsSelectionRow, [i32; 4])],
-    preaverage_seconds: f64,
+    kernels: &mut ConvolutionSelection<'_>,
 ) -> MsResult<Option<LoadedChunk>> {
     let first = chunk[0].0;
     let rows = chunk
@@ -167,112 +215,158 @@ fn load_chunk(
     if rows.is_empty() {
         return Ok(None);
     }
-    let spectra = ms.spectral_window()?;
-    let spw = first.spectral_window_id;
-    let frequencies = spectra.chan_freq(spw as usize)?;
-    let channels = selected.channel_selections.get(&spw).map_or_else(
-        || Ok((0..frequencies.len()).collect()),
-        |selection| selection.indices(frequencies.len()),
-    )?;
-    let CoordinateModel::Spectral(axis) = model.coordinates.coordinate(2) else {
-        return Err(invalid("EP model is missing its spectral coordinate"));
-    };
-    let matches = crate::ft::image::match_channels(axis, 1, &frequencies);
-    let hand_count = model.correlation_planes.len();
-    let hands = input_hand_indices(ms, first.polarization_id, &model.correlation_planes)?;
-    let CoordinateModel::Direction(direction) = model.coordinates.coordinate(0) else {
-        return Err(invalid("EP model is missing its direction coordinate"));
-    };
-    let centre = direction.reference_value();
-    let target = MDirection::from_angles(centre[0], centre[1], direction.direction_ref());
+    let model = kernels.model;
+    let spectral = Window::prepare(ms, selected, model, first)?;
+    let hand_count = spectral.input_hands.len();
     let field = first.field_id as usize;
-    let source = geometry.field_direction_j2000(field)?;
-    let projection = GridFtProjection::between_directions(source, &target);
-    let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
-    let read = |column| {
-        ms.main_table()
-            .column_accessor(column)?
-            .array_cells_owned_uncached(&indices)
-    };
-    let data = read("DATA")?;
-    let flags = read("FLAG")?;
-    let uvw = read("UVW")?;
-    let weights = read("WEIGHT")?;
-    let mut baselines = BTreeMap::<_, Baseline>::new();
+    let projection = projection(geometry, model, field)?;
+    let preaverage_seconds = kernels.solver.preaverage_seconds;
+    let mut accumulated = BTreeMap::<_, Baseline>::new();
     let mut angles = BTreeMap::new();
     let mut epoch_start = first.time_mjd_seconds;
     let mut bucket = 0;
     let mut weighted_time = 0.;
     let mut time_weight = 0.;
-    for ((((row, data), flags), uvw), weights) in
-        rows.iter().zip(data).zip(flags).zip(uvw).zip(weights)
-    {
-        let (
-            Some(ArrayValue::Complex32(data)),
-            Some(ArrayValue::Bool(flags)),
-            Some(ArrayValue::Float64(uvw)),
-            Some(ArrayValue::Float32(weights)),
-        ) = (data, flags, uvw, weights)
-        else {
-            return Err(invalid(
-                "EP requires defined DATA, FLAG, UVW and WEIGHT cells",
-            ));
-        };
-        if data.shape() != [hand_count, frequencies.len()]
-            || data.shape() != flags.shape()
-            || uvw.len() != 3
-            || weights.len() != hand_count
-        {
-            return Err(invalid(
-                "EP visibility shape disagrees with its spectral window",
-            ));
-        }
-        let weight = weights.iter().copied().sum::<f32>() / hand_count as f32;
-        if weight <= 0. || !weight.is_finite() {
-            continue;
-        }
-        // syncSolveMeta uses flagRow and the weighted clock of the first VB.
-        if row.time_mjd_seconds == first.time_mjd_seconds {
-            weighted_time += row.time_mjd_seconds * f64::from(weight);
-            time_weight += f64::from(weight);
-        }
-        if row.antenna1_id == row.antenna2_id {
-            continue;
-        }
-        if row.time_mjd_seconds - epoch_start > preaverage_seconds {
-            epoch_start = row.time_mjd_seconds;
-            bucket += 1;
-        }
-        let angle = match angles.entry(row.time_mjd_seconds.to_bits()) {
-            std::collections::btree_map::Entry::Occupied(slot) => *slot.get(),
-            std::collections::btree_map::Entry::Vacant(slot) => *slot.insert(f64::from(
-                geometry.feed_parallactic_angle(row.time_mjd_seconds, field, 0)? as f32,
-            )),
-        };
-        let ([u, v, _], phase_m) = projection.apply([uvw[0], uvw[1], uvw[2]]);
-        let hands = std::array::from_fn(|hand| {
-            let mut result = fit::ObservedHand::default();
-            if hand >= hand_count {
-                return result;
+    for block in rows.chunks(256) {
+        let inputs = visibility_cells(ms, block)?;
+        for (row, cells) in block.iter().zip(inputs) {
+            let visibility = Visibility::decode(cells, hand_count, spectral.frequencies.len())?;
+            let weight = visibility.weight();
+            if weight <= 0. || !weight.is_finite() {
+                continue;
             }
-            let input_hand = hands[hand];
-            for &channel in &channels {
-                if flags[[input_hand, channel]] {
+            // syncSolveMeta uses flagRow and the weighted clock of the first VB.
+            if row.time_mjd_seconds == first.time_mjd_seconds {
+                weighted_time += row.time_mjd_seconds * f64::from(weight);
+                time_weight += f64::from(weight);
+            }
+            if row.antenna1_id == row.antenna2_id {
+                continue;
+            }
+            if row.time_mjd_seconds - epoch_start >= preaverage_seconds
+                && row.time_mjd_seconds != epoch_start
+            {
+                epoch_start = row.time_mjd_seconds;
+                bucket += 1;
+            }
+            let angle = match angles.entry(row.time_mjd_seconds.to_bits()) {
+                std::collections::btree_map::Entry::Occupied(slot) => *slot.get(),
+                std::collections::btree_map::Entry::Vacant(slot) => *slot.insert(f64::from(
+                    geometry.feed_parallactic_angle(row.time_mjd_seconds, field, 0)? as f32,
+                )),
+            };
+            let kernels = kernels.at(angle)?;
+            let channels = spectral
+                .selected
+                .iter()
+                .copied()
+                .filter(|&channel| (0..hand_count).all(|hand| !visibility.flags[[hand, channel]]))
+                .collect::<Vec<_>>();
+            if channels.is_empty() {
+                continue;
+            }
+            let antennas = [row.antenna1_id as usize, row.antenna2_id as usize];
+            let baseline = accumulated
+                .entry((bucket, antennas))
+                .or_insert_with(|| Baseline {
+                    antennas,
+                    observations: Vec::new(),
+                    good_channels: Default::default(),
+                });
+            baseline.observations.push(spectral.observe(
+                model,
+                kernels,
+                &visibility,
+                &channels,
+                &projection,
+                angle,
+            ));
+            baseline.good_channels.extend(channels);
+        }
+    }
+    Ok((time_weight > 0.).then(|| LoadedChunk {
+        reference_time: weighted_time / time_weight,
+        baselines: accumulated.into_values().collect(),
+    }))
+}
+
+fn projection(
+    geometry: &MsCalEngine,
+    model: &PreparedEpModel,
+    field: usize,
+) -> MsResult<GridFtProjection> {
+    let CoordinateModel::Direction(direction) = model.coordinates.coordinate(0) else {
+        return Err(invalid("EP model is missing its direction coordinate"));
+    };
+    let centre = direction.reference_value();
+    let target = MDirection::from_angles(centre[0], centre[1], direction.direction_ref());
+    let source = geometry.field_direction_j2000(field)?;
+    Ok(GridFtProjection::between_directions(source, &target))
+}
+
+struct Window {
+    frequencies: Vec<f64>,
+    selected: Vec<usize>,
+    matches: Vec<i32>,
+    input_hands: Vec<usize>,
+}
+
+impl Window {
+    fn prepare(
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+        model: &PreparedEpModel,
+        first: &ResolvedMsSelectionRow,
+    ) -> MsResult<Self> {
+        let spw = first.spectral_window_id;
+        let frequencies = ms.spectral_window()?.chan_freq(spw as usize)?;
+        let selected = selected.channel_selections.get(&spw).map_or_else(
+            || Ok((0..frequencies.len()).collect()),
+            |selection| selection.indices(frequencies.len()),
+        )?;
+        let CoordinateModel::Spectral(axis) = model.coordinates.coordinate(2) else {
+            return Err(invalid("EP model is missing its spectral coordinate"));
+        };
+        let matches = crate::ft::image::match_channels(axis, 1, &frequencies);
+        let input_hands = input_hand_indices(ms, first.polarization_id, &model.correlation_planes)?;
+        Ok(Self {
+            frequencies,
+            selected,
+            matches,
+            input_hands,
+        })
+    }
+
+    fn observe(
+        &self,
+        model: &PreparedEpModel,
+        products: &Arc<EpCacheProducts>,
+        visibility: &Visibility,
+        channels: &[usize],
+        projection: &GridFtProjection,
+        angle: f64,
+    ) -> Observation {
+        let ([u, v, _], phase_m) = projection.apply(visibility.uvw);
+        let hands = std::array::from_fn(|hand| {
+            let Some(&input_hand) = self.input_hands.get(hand) else {
+                return fit::ObservedHand::default();
+            };
+            let mut result = fit::ObservedHand {
+                weight: visibility.weights[input_hand],
+                ..Default::default()
+            };
+            for &channel in channels {
+                result.data += visibility.data[[input_hand, channel]];
+                // A single circular hand has no conjugate kernel to sample.
+                if self.input_hands.len() == 1 || self.matches[channel] < 0 {
                     continue;
                 }
-                result.data += data[[input_hand, channel]];
-                result.channels += 1;
-                // dpbwgrad selects the conjugate convolution plane. A
-                // single circular hand has no conjugate kernel to sample.
-                if hand_count == 1 || matches[channel] < 0 {
-                    continue;
-                }
-                let scale = frequencies[channel] / SPEED_OF_LIGHT;
+                let scale = self.frequencies[channel] / SPEED_OF_LIGHT;
                 let pol = model.correlation_planes[hand] as usize - StokesType::RR as usize;
-                result.samples.push(PointingSample::new(
+                result.samples.extend(PointingSample::new(
                     model,
-                    pol,
-                    1 - hand,
+                    products,
+                    (pol, 1 - hand),
                     [-u * scale, -v * scale],
                     angle,
                     std::f64::consts::TAU * phase_m * scale,
@@ -280,20 +374,71 @@ fn load_chunk(
             }
             result
         });
-        let antennas = [row.antenna1_id as usize, row.antenna2_id as usize];
-        baselines
-            .entry((bucket, antennas))
-            .or_insert_with(|| Baseline {
-                antennas,
-                observations: Vec::new(),
-            })
-            .observations
-            .push(Observation { weight, hands });
+        Observation {
+            weight: visibility.weight(),
+            hands,
+        }
     }
-    Ok((time_weight > 0.).then(|| LoadedChunk {
-        reference_time: weighted_time / time_weight,
-        baselines: baselines.into_values().collect(),
-    }))
+}
+
+struct Visibility {
+    data: ArrayD<Complex32>,
+    flags: ArrayD<bool>,
+    uvw: [f64; 3],
+    weights: ArrayD<f32>,
+}
+
+impl Visibility {
+    fn decode(cells: [Option<ArrayValue>; 4], hands: usize, channels: usize) -> MsResult<Self> {
+        let [
+            Some(ArrayValue::Complex32(data)),
+            Some(ArrayValue::Bool(flags)),
+            Some(ArrayValue::Float64(uvw)),
+            Some(ArrayValue::Float32(weights)),
+        ] = cells
+        else {
+            return Err(invalid(
+                "EP requires defined DATA, FLAG, UVW and WEIGHT cells",
+            ));
+        };
+        if data.shape() != [hands, channels]
+            || data.shape() != flags.shape()
+            || uvw.shape() != [3]
+            || weights.shape() != [hands]
+        {
+            return Err(invalid(
+                "EP visibility shape disagrees with its spectral window",
+            ));
+        }
+        Ok(Self {
+            data,
+            flags,
+            uvw: [uvw[0], uvw[1], uvw[2]],
+            weights,
+        })
+    }
+
+    fn weight(&self) -> f32 {
+        self.weights.iter().copied().sum::<f32>() / self.weights.len() as f32
+    }
+}
+
+fn visibility_cells(
+    ms: &MeasurementSet,
+    rows: &[&ResolvedMsSelectionRow],
+) -> MsResult<impl Iterator<Item = [Option<ArrayValue>; 4]> + use<>> {
+    let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+    let read = |column| {
+        ms.main_table()
+            .column_accessor(column)?
+            .array_cells_owned_uncached(&indices)
+    };
+    Ok(read("DATA")?
+        .into_iter()
+        .zip(read("FLAG")?)
+        .zip(read("UVW")?)
+        .zip(read("WEIGHT")?)
+        .map(|(((data, flags), uvw), weights)| [data, flags, uvw, weights]))
 }
 
 fn input_hand_indices(

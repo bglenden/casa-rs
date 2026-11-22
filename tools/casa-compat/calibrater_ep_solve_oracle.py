@@ -27,8 +27,8 @@ def solve(factory, capture, dataset, model, cache, product, interval, **controls
     tool = factory()
     assert tool.setvi(old=True, quiet=True) and tool.open(str(dataset))
     try:
-        assert tool.setsolve('EP', interval, str(product), cfcache=str(cache), painc=360.,
-                             **controls)
+        assert tool.setsolve('EP', interval, str(product),
+                             **({'cfcache': str(cache), 'painc': 360.} | controls))
         state = capture(tool.state)
         assert tool.setmodel(str(model))
         start = perf_counter()
@@ -88,7 +88,7 @@ def compare_append(args, products, factories):
             solve(factory, logger, args.work/f'three-{engine}.ms', args.model,
                   args.work/f'three-{engine}-cache', incoming, '0s', append=True)
         tables[engine] = solution(incoming, 3)
-        epochs, counts = np.unique(tables[engine]['TIME'], return_counts=True)
+        _, counts = np.unique(tables[engine]['TIME'], return_counts=True)
         np.testing.assert_array_equal(counts, [56, 28, 28])
     compare_cells(tables['native'], tables['casa'])
     np.testing.assert_array_equal(tables['native']['TIME'], tables['casa']['TIME'])
@@ -170,6 +170,31 @@ def setup_cases(args, factories):
     print(len(cases), 'setup cases', 'reference' if args.reference_only else 'matched', flush=True)
 
 
+def adjust_input(name, dataset):
+    if name not in ('weighted', 'shared-flags', 'skipped-first-buffer'):
+        return
+    with opened(dataset, True) as table:
+        epoch = table.getcol('TIME')
+        moments = np.unique(epoch)
+        middle = epoch == moments[1]
+        if name == 'weighted':
+            weights = table.getcol('WEIGHT')
+            weights[:, middle] *= np.array([[2.], [.5]], np.float32)
+            weights[:, epoch == moments[2]] *= np.array([[.4], [2.5]], np.float32)
+            assert table.putcol('WEIGHT', weights)
+        elif name == 'shared-flags':
+            flags = table.getcol('FLAG')
+            flags[0, ::5, middle] = True
+            data = table.getcol('DATA')
+            data[1, ::5, middle] *= np.complex64(2. - .4j)
+            assert table.putcol('FLAG', flags) and table.putcol('DATA', data)
+        else:
+            scans = table.getcol('SCAN_NUMBER')
+            scans[epoch >= moments[1]] = scans[0] + 1
+            row_flags = table.getcol('FLAG_ROW') | middle
+            assert table.putcol('SCAN_NUMBER', scans) and table.putcol('FLAG_ROW', row_flags)
+
+
 def run(args):
     assert casatasks.version_string() == '6.7.6.14'
     args.work.mkdir()
@@ -184,6 +209,8 @@ def run(args):
             return
         for name, interval, epochs, controls in (
             ('one', '0s', 1, {}), ('three', '1s', 3, {}), ('preaverage', '0s', 1, {'preavg': 10.}),
+            ('weighted', '0s', 1, {}), ('shared-flags', '0s', 1, {}),
+            ('skipped-first-buffer', '0s', 1, {}), ('parallactic-angles', '1s', 3, {'painc': .01}),
         ):
             products = {engine: args.work/f'{name}-{engine}.EP' for engine in ('casa', 'native')}
             results, tables = {}, {}
@@ -191,12 +218,17 @@ def run(args):
                 dataset = args.work/f'{name}-{engine}.ms'
                 cache = args.work/f'{name}-{engine}-cache'
                 copytree(args.dataset, dataset)
+                adjust_input(name, dataset)
                 copytree(args.cache, cache)
                 capture = casa_log(dataset.with_suffix('.log')) if engine == 'casa' else native_log()
                 with capture as logger:
                     results[engine] = solve(factory, logger, dataset, args.model, cache,
                                             products[engine], interval, **controls)
                 tables[engine] = solution(products[engine], epochs)
+                if name == 'parallactic-angles':
+                    angles = int((cache/'aux.dat').read_text().split()[0])
+                    assert angles > 1
+                    print(engine, angles, 'retained parallactic angles', flush=True)
             if not args.reference_only:
                 assert results['native'][:2] == results['casa'][:2]
                 same_record(results['native'][2], results['casa'][2])

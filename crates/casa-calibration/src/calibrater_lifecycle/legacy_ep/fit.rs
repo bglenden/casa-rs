@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Fit the two pointing axes of each receptor from baseline residuals.
 
+use std::collections::BTreeSet;
+
 use casa_types::Complex32;
 
+use super::PreparedEpModel;
 use super::degrid::PointingSample;
 
 #[derive(Default)]
 pub(super) struct ObservedHand {
     pub(super) data: Complex32,
-    pub(super) channels: usize,
+    pub(super) weight: f32,
     pub(super) samples: Vec<PointingSample>,
 }
 
@@ -20,6 +23,7 @@ pub(super) struct Observation {
 pub(super) struct Baseline {
     pub(super) antennas: [usize; 2],
     pub(super) observations: Vec<Observation>,
+    pub(super) good_channels: BTreeSet<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -29,42 +33,53 @@ struct Assessment {
 }
 
 impl Baseline {
-    fn assess(&self, offsets: &[[f32; 4]], axes: [usize; 2], hand: usize) -> Assessment {
+    fn assess(
+        &self,
+        model: &PreparedEpModel,
+        offsets: &[[f32; 4]],
+        axes: [usize; 2],
+        hand: usize,
+    ) -> Assessment {
         let [a, b] = self.antennas;
         let offset = axes.map(|axis| f64::from(offsets[a][axis]) + f64::from(offsets[b][axis]));
         let mut result = Assessment::default();
+        let mut hand_weight = 0.;
         for observation in &self.observations {
             let hand = &observation.hands[hand];
-            if hand.channels == 0 {
-                continue;
-            }
             let mut predicted = [Complex32::default(); 3];
             for sample in &hand.samples {
-                for (sum, value) in predicted.iter_mut().zip(sample.evaluate(offset)) {
+                for (sum, value) in predicted.iter_mut().zip(sample.evaluate(model, offset)) {
                     *sum += value;
                 }
             }
             predicted[0] -= hand.data;
-            let scale = observation.weight / hand.channels as f32;
             for (sum, value) in result.values.iter_mut().zip(predicted) {
-                *sum += value * scale;
+                *sum += value * hand.weight;
             }
+            hand_weight += hand.weight;
             result.weight += observation.weight;
         }
-        if result.weight > 0. {
-            result.values = result.values.map(|value| value / result.weight);
+        if hand_weight > 0. && !self.good_channels.is_empty() {
+            // VisBuffAccumulator first normalizes by the hand weight over
+            // time. freqAveCubes then divides by the union of good channels.
+            let scale = (hand_weight * self.good_channels.len() as f32).recip();
+            result.values = result.values.map(|value| value * scale);
         }
         result
     }
 }
 
-pub(super) fn solve(baselines: &[Baseline], offsets: &mut [[f32; 4]], hands: usize) -> bool {
+pub(super) fn solve(
+    model: &PreparedEpModel,
+    baselines: &[Baseline],
+    offsets: &mut [[f32; 4]],
+) -> bool {
     let mut converged = false;
-    for hand in 0..hands {
+    for hand in 0..model.correlation_planes.len() {
         // dpbwgrad uses the conjugate kernel plane. solve2 fits the
         // opposite receptor's two offsets for each measured correlation.
         let axes = [1 - hand, 3 - hand];
-        let mut current = assess(baselines, offsets, axes, hand);
+        let mut current = assess(model, baselines, offsets, axes, hand);
         let Some(mut best_chi) = chi_square(&current) else {
             return false;
         };
@@ -73,7 +88,7 @@ pub(super) fn solve(baselines: &[Baseline], offsets: &mut [[f32; 4]], hands: usi
         converged = false;
         for _ in 0..250 {
             descend(baselines, &current, offsets, axes, gain);
-            current = assess(baselines, offsets, axes, hand);
+            current = assess(model, baselines, offsets, axes, hand);
             let Some(chi) = chi_square(&current) else {
                 return false;
             };
@@ -92,7 +107,7 @@ pub(super) fn solve(baselines: &[Baseline], offsets: &mut [[f32; 4]], hands: usi
                     converged = true;
                     break;
                 }
-                current = assess(baselines, offsets, axes, hand);
+                current = assess(model, baselines, offsets, axes, hand);
             }
         }
     }
@@ -100,6 +115,7 @@ pub(super) fn solve(baselines: &[Baseline], offsets: &mut [[f32; 4]], hands: usi
 }
 
 fn assess(
+    model: &PreparedEpModel,
     baselines: &[Baseline],
     offsets: &[[f32; 4]],
     axes: [usize; 2],
@@ -107,7 +123,7 @@ fn assess(
 ) -> Vec<Assessment> {
     baselines
         .iter()
-        .map(|baseline| baseline.assess(offsets, axes, hand))
+        .map(|baseline| baseline.assess(model, offsets, axes, hand))
         .collect()
 }
 
