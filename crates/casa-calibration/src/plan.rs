@@ -556,6 +556,7 @@ pub(crate) fn plan_with_visibility_metadata(
 pub(crate) struct RegisteredApplySelection<'a> {
     pub(crate) selected: &'a ResolvedMsSelection,
     pub(crate) has_library_registration: bool,
+    pub(crate) legacy_corruption: bool,
 }
 
 pub(crate) fn plan_with_selection(
@@ -647,7 +648,14 @@ pub(crate) fn plan_with_selection(
     let calibration_tables = request
         .calibration_tables
         .iter()
-        .map(|spec| build_table_plan(ms, spec, &selected_rows))
+        .map(|spec| {
+            build_table_plan(
+                ms,
+                spec,
+                &selected_rows,
+                registered.is_some_and(|registration| registration.legacy_corruption),
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(ApplyPreparationError::Argument(error)) = preparation_error {
         return Err(ApplyPlanError::Argument(error.clone()));
@@ -710,6 +718,7 @@ fn build_table_plan(
     ms: &MeasurementSet,
     spec: &ApplyCalibrationTableSpec,
     selected_rows: &[ApplyRowPlan],
+    legacy_corruption: bool,
 ) -> Result<library::PlannedTable, ApplyPlanError> {
     let summary = summarize_table(&spec.path).map_err(|source| {
         ApplyPlanError::SummarizeCalibrationTable {
@@ -751,7 +760,8 @@ fn build_table_plan(
         });
     }
 
-    let applicable_row_indices = library::selected_rows(ms, spec, selected_rows)?;
+    let applicable_row_indices =
+        library::selected_rows(ms, spec, selected_rows, legacy_corruption)?;
     let applicable_rows = selected_rows
         .iter()
         .filter(|row| {

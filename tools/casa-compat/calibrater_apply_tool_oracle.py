@@ -687,6 +687,81 @@ def corrupt_requires_physical_model(work, tools):
                 assert 'MODEL_DATA' not in table.colnames()
 
 
+def corrupt_prefix_before_error(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    prior = str(work/'prior-current.cal')
+    for legacy in (False, True):
+        paths = {}
+        for name, tool in tools.items():
+            path = paths[name] = work/f'corrupt-failed-buffer-{name}-{legacy}.ms'
+            copy_ms(work/'baseline-2.ms', path)
+            with opened(path, True) as table:
+                original = table.getcol('MODEL_DATA')
+                scan = np.arange(table.nrows(), dtype=np.int32) % 2 + 1
+                table.putcol('SCAN_NUMBER', scan)
+                descriptor = table.getcoldesc('MODEL_DATA')
+                descriptor.update(option=0, dataManagerType='StandardStMan',
+                                  dataManagerGroup='VariableModel')
+                descriptor.pop('shape', None)
+                assert table.removecols(['MODEL_DATA'])
+                assert table.addcols({'MODEL_DATA': descriptor})
+                for row in np.flatnonzero(scan == 1):
+                    assert table.putcell('MODEL_DATA', int(row), original[:, :, row])
+            assert tool.setvi(legacy, True)
+            assert tool.open(str(path), addcorr=False, addmodel=False)
+        assert compare_calls(tools, 'setapply', table=prior) == (True, True)
+        suffix = '' if legacy else '2'
+        assert compare_calls(tools, 'corrupt') == (
+            False, ('RuntimeError', f'Error in Calibrater::corrupt{suffix}.')
+        )
+        assert compare_calls(tools, 'returndict')[1]['apply_tables'].size == 0
+        assert compare_calls(tools, 'close') == (True, True)
+        for path in paths.values():
+            with opened(path) as table:
+                for row in np.flatnonzero(scan == 1):
+                    np.testing.assert_allclose(table.getcell('MODEL_DATA', int(row)),
+                                               original[:, :, row] * np.float32(1.2)**2,
+                                               rtol=2e-6, atol=2e-7)
+                assert not table.iscelldefined('MODEL_DATA', int(np.flatnonzero(scan == 2)[0]))
+        print('corrupt preserved the completed scan before the undefined model', legacy, flush=True)
+
+
+def corrupt_library_scan_and_intent(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    prior = str(work/'prior-current.cal')
+    for legacy in (False, True):
+        for selector in ({'scan': '1'}, {'intent': 'CALIBRATE_FLUX*'}):
+            paths = {}
+            for name, tool in tools.items():
+                path = paths[name] = work/f'corrupt-context-{name}-{legacy}-{next(iter(selector))}.ms'
+                copy_ms(work/'baseline-2.ms', path)
+                with opened(path, True) as table:
+                    scan = np.arange(table.nrows(), dtype=np.int32) % 2 + 1
+                    table.putcol('SCAN_NUMBER', scan)
+                    table.putcol('STATE_ID', scan - 1)
+                    original = table.getcol('MODEL_DATA')
+                with opened(path/'STATE', True) as table:
+                    table.addrows(max(0, 2 - table.nrows()))
+                    table.putcell('OBS_MODE', 0, 'CALIBRATE_FLUX#ON_SOURCE')
+                    table.putcell('OBS_MODE', 1, 'CALIBRATE_PHASE#ON_SOURCE')
+                assert tool.setvi(legacy, True)
+                assert tool.open(str(path))
+            assert compare_calls(tools, 'setcallib', {
+                prior: {'0': {'tinterp': 'linear', **selector}}
+            }) == (True, True)
+            assert compare_calls(tools, 'corrupt') == (True, True)
+            assert compare_calls(tools, 'close') == (True, True)
+            expected = original.copy()
+            expected[:, :, (scan == 1) | legacy] *= np.float32(1.2)**2
+            for path in paths.values():
+                with opened(path) as table:
+                    np.testing.assert_allclose(table.getcol('MODEL_DATA'), expected,
+                                               rtol=2e-6, atol=2e-7)
+            print('corrupt library slice context matched', legacy, selector, flush=True)
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('work', type=Path)
@@ -715,6 +790,8 @@ def main():
         activity_cycle(work, tools)
         corrupt_models(work, tools)
         corrupt_requires_physical_model(work, tools)
+        corrupt_prefix_before_error(work, tools)
+        corrupt_library_scan_and_intent(work, tools)
         if 'native' in tools:
             retained_main_lock(work)
 

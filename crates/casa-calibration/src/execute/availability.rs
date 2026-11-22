@@ -139,20 +139,40 @@ pub(super) fn rows_in_buffer_order(
     ms: &MeasurementSet,
     rows: Vec<ApplyRowPlan>,
 ) -> Result<Vec<ApplyRowPlan>, ApplyExecutionError> {
+    Ok(buffer_ordered_rows(ms, rows)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect())
+}
+
+/// The explicit VI iterator sort columns identify a single visibility buffer.
+type VisibilityBufferKey = (i32, i32, i32, i32, u64);
+
+pub(super) fn buffer_ordered_rows(
+    ms: &MeasurementSet,
+    rows: Vec<ApplyRowPlan>,
+) -> Result<Vec<(VisibilityBufferKey, ApplyRowPlan)>, ApplyExecutionError> {
     let mut ordered = rows
         .into_iter()
         .map(|row| {
             let array = get_i32(ms.main_table(), row.row_index, "ARRAY_ID")?;
-            Ok((array, row))
+            let key = (
+                array,
+                row.scan_number,
+                row.field_id,
+                row.data_desc_id,
+                row.time_seconds.to_bits(),
+            );
+            Ok((key, row))
         })
         .collect::<Result<Vec<_>, ApplyExecutionError>>()?;
-    ordered.sort_by(|(array_a, a), (array_b, b)| {
-        (array_a, a.scan_number, a.field_id, a.data_desc_id)
-            .cmp(&(array_b, b.scan_number, b.field_id, b.data_desc_id))
+    ordered.sort_by(|(key_a, a), (key_b, b)| {
+        (key_a.0, key_a.1, key_a.2, key_a.3)
+            .cmp(&(key_b.0, key_b.1, key_b.2, key_b.3))
             .then_with(|| a.time_seconds.total_cmp(&b.time_seconds))
             .then_with(|| a.row_index.cmp(&b.row_index))
     });
-    Ok(ordered.into_iter().map(|(_, row)| row).collect())
+    Ok(ordered)
 }
 
 fn flag_unavailable(

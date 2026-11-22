@@ -1132,6 +1132,7 @@ pub(crate) fn execute_tool_apply(
     let registration = RegisteredApplySelection {
         selected,
         has_library_registration: correction.has_library_registration,
+        legacy_corruption: false,
     };
     let (plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
     let mut activity = ToolApplyActivity::from_plan(

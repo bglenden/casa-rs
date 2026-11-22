@@ -26,6 +26,7 @@ pub(crate) fn execute_tool_corrupt(
     let registration = RegisteredApplySelection {
         selected,
         has_library_registration: correction.has_library_registration,
+        legacy_corruption: operation.legacy,
     };
     let (mut plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
     let activity = ToolApplyActivity::from_plan(
@@ -41,7 +42,7 @@ pub(crate) fn execute_tool_corrupt(
     let (all_calibrated, missing_library) =
         select_corruption_rows(ms, &mut plan, tracking.libraries, operation)?;
     if !plan.selected_rows.is_empty() {
-        write_corrupted_model(ms, &plan, &chain, lock)?;
+        write_corrupted_model(ms, &mut plan, &chain, lock)?;
     }
     if let Some(name) = missing_library {
         return Err(ApplyExecutionError::UnsupportedCalibrationTable {
@@ -98,7 +99,7 @@ fn select_corruption_rows(
 
 fn write_corrupted_model(
     ms: &mut MeasurementSet,
-    plan: &ApplyPlan,
+    plan: &mut ApplyPlan,
     chain: &ApplyChain,
     lock: &mut TableWriteLock,
 ) -> Result<(), ApplyExecutionError> {
@@ -113,7 +114,8 @@ fn write_corrupted_model(
     };
     let correlations = load_correlation_types_by_ddid(ms).map_err(ms_error)?;
     let cells = maximum_visibility_cells(plan, &correlations)?;
-    let index = plan.selected_rows.iter().map(|row| row.row_index).collect();
+    let rows = availability::buffer_ordered_rows(ms, std::mem::take(&mut plan.selected_rows))?;
+    let index = rows.iter().map(|(_, row)| row.row_index).collect();
     let write_plan = MeasurementSetWritePlan::selected_row_mutation(
         index,
         vec![MeasurementSetWriteColumnPlan {
@@ -139,9 +141,12 @@ fn write_corrupted_model(
         Some(lock),
         write_error,
         |writer, ms| {
-            for rows in plan.selected_rows.chunks(batch_rows) {
+            for buffer in rows.chunk_by(|first, next| first.0 == next.0) {
                 let read_started = started.map(|_| Instant::now());
-                let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+                let indices = buffer
+                    .iter()
+                    .map(|(_, row)| row.row_index)
+                    .collect::<Vec<_>>();
                 let models = ms
                     .main_table()
                     .column_accessor(model_column)
@@ -151,8 +156,8 @@ fn write_corrupted_model(
                     read_time += read_started.elapsed();
                 }
                 let compute_started = started.map(|_| Instant::now());
-                let mut values = Vec::with_capacity(rows.len());
-                for (row, model) in rows.iter().zip(models) {
+                let mut values = Vec::with_capacity(buffer.len());
+                for ((_, row), model) in buffer.iter().zip(models) {
                     let model =
                         required_prefetched_array(model, row.row_index, model_column, &path)?;
                     let layout = correlations.get(&row.data_desc_id).ok_or_else(|| {
@@ -189,18 +194,25 @@ fn write_corrupted_model(
                     compute_time += compute_started.elapsed();
                 }
                 let write_started = started.map(|_| Instant::now());
-                writer
-                    .write_mutation_batch(
-                        ms,
-                        MeasurementSetMutationBatch {
-                            row_indices: indices,
-                            columns: vec![MeasurementSetMutationColumnBatch {
-                                name: model_column.into(),
-                                values: MeasurementSetMutationColumnValues::Arrays(values),
-                            }],
-                        },
-                    )
-                    .map_err(write_error)?;
+                // Complete evaluation of this buffer before publishing it.
+                // A later buffer error must leave this buffer on disk.
+                let mut values = values.into_iter();
+                for indices in indices.chunks(batch_rows) {
+                    writer
+                        .write_mutation_batch(
+                            ms,
+                            MeasurementSetMutationBatch {
+                                row_indices: indices.to_vec(),
+                                columns: vec![MeasurementSetMutationColumnBatch {
+                                    name: model_column.into(),
+                                    values: MeasurementSetMutationColumnValues::Arrays(
+                                        values.by_ref().take(indices.len()).collect(),
+                                    ),
+                                }],
+                            },
+                        )
+                        .map_err(write_error)?;
+                }
                 if let Some(write_started) = write_started {
                     write_time += write_started.elapsed();
                 }
@@ -214,7 +226,7 @@ fn write_corrupted_model(
             started.elapsed().as_secs_f64(),
             Some(format!(
                 "rows={} read={:.3}s compute={:.3}s write={:.3}s",
-                plan.selected_rows.len(),
+                rows.len(),
                 read_time.as_secs_f64(),
                 compute_time.as_secs_f64(),
                 write_time.as_secs_f64()
