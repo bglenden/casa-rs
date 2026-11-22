@@ -19,8 +19,12 @@ pub(super) struct LegacyCrossHandAveraging {
 }
 
 impl LegacyCrossHandAveraging {
-    pub(super) fn start(&mut self, row: &SelectedSolveRow, span: f64) -> f64 {
-        let group = (row.field_id, row.data_spw_id);
+    pub(super) fn start(&mut self, row: &SelectedSolveRow, span: f64, shared: bool) -> f64 {
+        let group = if shared {
+            (0, 0)
+        } else {
+            (row.field_id, row.data_spw_id)
+        };
         if row.flag_row {
             return self.starts.get(&group).copied().unwrap_or(row.time_seconds);
         }
@@ -172,6 +176,9 @@ impl CrossHandFit {
         model: [Complex32; 4],
         weights: [f32; 4],
     ) {
+        if matches!(measurement, Measurement::MuellerPhase) && weights[0] + weights[3] <= 0.0 {
+            return;
+        }
         self.saw_samples = true;
         let required = match measurement {
             Measurement::LinearAngle => 0b1111,

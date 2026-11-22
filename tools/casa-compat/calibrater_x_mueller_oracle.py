@@ -8,6 +8,7 @@ from pathlib import Path
 
 import casatasks
 from casatools import calibrater as casa_calibrater
+from casatools import table as casa_table
 import numpy as np
 
 from applycal_oracle import copy_ms
@@ -15,23 +16,26 @@ from calibrater_apply_tool_oracle import result
 from calibrater_solve_tool_oracle import compare_readers, compare_solutions
 from calibrater_state_oracle import casa_log, native_log
 from calibration_smoothcal_oracle import opened
+from gaincal_delay_oracle import duplicate_rows
 from polcal_cross_hand_oracle import plant_cross_hand
 from polcal_leakage_solve_oracle import plant, put_observations
 
 
-def solve(work, engines, vis, label, stokes, *, old=True, options=None):
+def solve(work, engines, vis, label, stokes, *, old=True, options=None, selection=None, writes=True):
     products = {engine: work/f'{label}-{engine}.cal' for engine in engines}
     for engine, factory in engines.items():
         product = products[engine]
         tool = factory()
         assert tool.setvi(old, True) and tool.open(str(vis), addcorr=False, addmodel=False)
         try:
-            assert tool.selectvis(field='0') and tool.setptmodel(stokes)
+            assert tool.selectvis(**({'field': '0'} | (selection or {})))
+            if stokes is not None:
+                assert tool.setptmodel(stokes)
             setup = {'t': 'inf', 'refant': 'A3'} | (options or {})
             assert tool.setsolve('X', table=str(product), **setup)
             assert list(tool.returndict()['solve_tables']) == [str(product)]
             if old:
-                assert tool.solve() and product.exists()
+                assert tool.solve() and product.exists() == writes
                 assert tool.activityrec() == {} and 'solvestats' not in tool.returndict()
                 assert tool.reset(False, True) and len(tool.returndict()['solve_tables']) == 0
             else:
@@ -39,7 +43,7 @@ def solve(work, engines, vis, label, stokes, *, old=True, options=None):
                 assert not product.exists()
         finally:
             assert tool.close()
-    if old:
+    if old and writes:
         compare_solutions(products)
         compare_readers(products)
         with opened(products['casa']) as expected, opened(products['native']) as actual:
@@ -105,9 +109,101 @@ def compare_scans(work, engines, vis, stokes):
     with opened(data, True) as table:
         times, scans = (table.getcol(name) for name in ('TIME', 'SCAN_NUMBER'))
         field = table.getcol('FIELD_ID') == 0
-        scans[field & (times > np.median(times[field]))] = scans.max() + 3
+        late = field & (times > np.median(times[field]))
+        scans[late] = scans.max() + 3
         assert table.putcol('SCAN_NUMBER', scans)
     solve(work, engines, data, 'legacy-scans', stokes)
+    with opened(data, True) as table:
+        flags = table.getcol('FLAG')
+        flags[..., late] = True
+        assert table.putcol('FLAG', flags)
+    products = solve(work, engines, data, 'legacy-flagged-scan', stokes)
+    with opened(products['native']) as table:
+        assert table.nrows() == 30 and table.getcol('FLAG').sum() == 15
+    with opened(data, True) as table:
+        flags[..., field] = True
+        assert table.putcol('FLAG', flags)
+    solve(work, engines, data, 'legacy-all-flagged', stokes, writes=False)
+
+
+def compare_combined(work, engines, vis, axis):
+    data = work/f'combined-{axis}.ms'
+    copy_ms(vis, data)
+    if axis == 'spw':
+        assert duplicate_rows(casa_table(), data/'SPECTRAL_WINDOW') == 1
+        assert duplicate_rows(casa_table(), data/'DATA_DESCRIPTION') == 1
+        with opened(data/'DATA_DESCRIPTION', True) as table:
+            assert table.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    added = duplicate_rows(casa_table(), data)
+    with opened(data, True) as table:
+        fields = table.getcol('FIELD_ID')
+        times = table.getcol('TIME')
+        first = times[fields == 0].min()
+        scans = table.getcol('SCAN_NUMBER')
+        assert table.putcol('SCAN_NUMBER', np.full_like(scans, scans.min()))
+        column = 'DATA_DESC_ID' if axis == 'spw' else 'FIELD_ID'
+        assert table.putcol(column, np.ones(added, np.int32), added, added)
+        for name in ('DATA', 'MODEL_DATA'):
+            values = table.getcol(name)
+            values[1:3] = 1.
+            values[1:3, :, added:] = 2.
+            if name == 'DATA':
+                values[1, :, added:] *= 1j
+                values[2, :, added:] *= -1j
+            assert table.putcol(name, values)
+    selection = {'field': '0' if axis == 'spw' else '0,1', 'baseline': 'A0&A1',
+                 'msselect': f'abs(TIME-{first}) < 0.01'}
+    result = solve(work, engines, data, f'legacy-combine-{axis}', None,
+                   options={'combine': axis}, selection=selection)
+    with opened(result['native']) as table:
+        np.testing.assert_allclose(table.getcol('CPARAM'), (1 + 2j) / np.sqrt(5.), atol=1e-6)
+
+
+def compare_zero_parallel(work, engines, vis):
+    data = work/'zero-parallel.ms'
+    copy_ms(vis, data)
+    with opened(data, True) as table:
+        chosen = (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 2)
+        for name in ('DATA', 'MODEL_DATA'):
+            values = table.getcol(name)
+            values[1:3] = 1.
+            if name == 'DATA':
+                values[1, :, chosen] *= 1j
+                values[2, :, chosen] *= -1j
+            assert table.putcol(name, values)
+        for name in ('SIGMA', 'WEIGHT'):
+            values = np.ones_like(table.getcol(name))
+            values[0, chosen] = values[3, chosen] = 0.
+            assert table.putcol(name, values)
+    result = solve(work, engines, data, 'legacy-zero-parallel', None)
+    with opened(result['native']) as table:
+        np.testing.assert_array_equal(table.getcol('CPARAM'), 1.)
+
+
+def corrupt_zero(work, engines, vis, original):
+    product = work/'zero-gain.cal'
+    with opened(original) as table:
+        assert table.copy(str(product), deep=True, valuecopy=True).close()
+    with opened(product, True) as table:
+        assert table.putcell('CPARAM', 0, np.zeros((1, 1), np.complex64))
+    for engine, factory in engines.items():
+        data = work/f'zero-model-{engine}.ms'
+        copy_ms(vis, data)
+        with opened(data) as table:
+            field = table.getcol('FIELD_ID') == 0
+            before = table.getcol('MODEL_DATA')[..., field]
+            assert np.any(before[1:3])
+        tool = factory()
+        assert tool.setvi(True, True) and tool.open(str(data), addcorr=False, addmodel=False)
+        try:
+            assert tool.selectvis(field='0') and tool.setapply(table=str(product)) and tool.corrupt()
+        finally:
+            assert tool.close()
+        with opened(data) as table:
+            after = table.getcol('MODEL_DATA')[..., field]
+            np.testing.assert_array_equal(after[[0, 3]], before[[0, 3]])
+            np.testing.assert_array_equal(after[1:3], 0.)
+    print(work.name, 'zero-forward matched', flush=True)
 
 
 def compare_basis(work, basis, engines, solutions_only):
@@ -129,11 +225,15 @@ def compare_basis(work, basis, engines, solutions_only):
     with opened(flagged['native']) as table:
         assert table.getcol('FLAG').all()
     compare_scans(work, engines, vis, stokes)
+    for axis in ('field', 'spw'):
+        compare_combined(work, engines, vis, axis)
+    compare_zero_parallel(work, engines, vis)
     if not solutions_only:
         correct(work, engines, vis, positive, 'correct-positive')
         correct(work, engines, vis, flagged, 'correct-flagged')
         correct(work, engines, vis, {'changed': changed_first_baseline(work, positive['casa'])},
                 'correct-first-baseline')
+        corrupt_zero(work, engines, vis, positive['casa'])
 
 
 def main():

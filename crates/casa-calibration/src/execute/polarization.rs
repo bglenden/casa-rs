@@ -26,7 +26,11 @@ pub(super) fn apply_x_mueller(
         });
     };
     // The legacy factory marks every computed matrix element usable.
-    let (value, _) = correcting_gain(grid.value_at(0, 0), false);
+    let value = if forward {
+        grid.value_at(0, 0)
+    } else {
+        correcting_gain(grid.value_at(0, 0), false).0
+    };
     for (index, &code) in output.correlation_types.iter().enumerate() {
         let gain = match code {
             6 | 10 => value,
