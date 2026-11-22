@@ -13,7 +13,9 @@ pub use copy_tree::copy_locked_table_tree;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod bound_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub use bound_file::{StagedDirectoryFile, open_regular_directory_entry};
+pub use bound_file::{
+    StagedDirectoryFile, open_regular_directory_entry, open_symlink_directory_entry,
+};
 
 /// Keep a directory's filesystem identity alive without listing its entries.
 ///

@@ -47,6 +47,34 @@ pub fn open_regular_directory_entry(directory: &File, name: &OsStr) -> io::Resul
     open_entry(directory, &entry_name(name)?, libc::O_RDONLY)
 }
 
+/// Keep a symbolic link's inode alive without opening its referent.
+/// # Errors
+/// Returns an I/O error for an invalid name, unreadable entry, or non-link.
+pub fn open_symlink_directory_entry(directory: &File, name: &OsStr) -> io::Result<File> {
+    let entry = entry_name(name)?;
+    #[cfg(target_os = "linux")]
+    let flags = libc::O_PATH | libc::O_NOFOLLOW;
+    #[cfg(target_os = "macos")]
+    let flags = libc::O_SYMLINK | libc::O_NONBLOCK;
+    // SAFETY: the directory descriptor and C string remain valid for openat.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            entry.as_ptr(),
+            flags | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: this descriptor was opened above and has no other owner.
+    let file = unsafe { File::from_raw_fd(fd) };
+    if !file.metadata()?.is_symlink() {
+        return Err(io::Error::other("expected a symbolic link directory entry"));
+    }
+    Ok(file)
+}
+
 /// Stage a file and publish or clean it up relative to an open directory.
 pub struct StagedDirectoryFile<'a> {
     directory: &'a File,
@@ -165,6 +193,27 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    #[test]
+    fn a_pinned_link_keeps_its_identity_after_unlink() -> io::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir()?;
+        let directory = super::super::open_directory_identity(root.path())?;
+        let entry = root.path().join("link");
+        symlink("referent", &entry)?;
+        let pinned = open_symlink_directory_entry(&directory, OsStr::new("link"))?;
+        let before = entry.symlink_metadata()?;
+        assert!(same_identity(&pinned.metadata()?, &before));
+        fs::remove_file(&entry)?;
+        symlink("referent", &entry)?;
+        assert!(same_identity(&pinned.metadata()?, &before));
+        assert!(!same_identity(
+            &pinned.metadata()?,
+            &entry.symlink_metadata()?
+        ));
+        Ok(())
+    }
 
     #[test]
     fn replacement_preserves_a_new_target_at_the_commit_boundary() -> io::Result<()> {
