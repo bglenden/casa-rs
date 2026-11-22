@@ -83,7 +83,8 @@ impl ParallacticAverages {
                 unflagged[channel / 64] |= 1 << (channel % 64);
                 segment.usable = true;
             }
-            if let Some((data, model, weights)) = mean.finish(false)
+            if (!self.gain_phase || antennas[0] != antennas[1])
+                && let Some((data, model, weights)) = mean.finish(false)
                 && (weights[1] > 0.0 || weights[2] > 0.0)
             {
                 let [(xy, wx), (yx, wy)] = [1, 2].map(|corr| {
@@ -97,7 +98,12 @@ impl ParallacticAverages {
                     antennas,
                     data: [xy, yx],
                     model: [model[1], model[2]],
-                    weights: [wx, wy],
+                    weights: if self.legacy && self.gain_phase {
+                        // VI1 weights both cross-hands by the sum of their weights.
+                        [0.5 * (wx + wy); 2]
+                    } else {
+                        [wx, wy]
+                    },
                 };
                 self.rows
                     .push(channel, sample)
@@ -164,6 +170,9 @@ impl ParallacticAverages {
         } else {
             3
         };
+        if self.legacy && self.gain_phase && samples.len() < required {
+            return Ok((vec![None; channels], Complex32::ZERO));
+        }
         if samples.len() < required {
             if self.gain_phase {
                 return Err(GainSolveError::InsufficientGainPhaseSegments);

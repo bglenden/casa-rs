@@ -8,11 +8,15 @@ from pathlib import Path
 
 import casatasks
 from casatools import calibrater as casa_calibrater
+from casatools import table as casa_table
 import numpy as np
 
-from calibrater_apply_tool_oracle import result
-from calibrater_cross_hand_tool_oracle import case
+from applycal_oracle import copy_ms
+from calibrater_apply_tool_oracle import result, same_record
+from calibrater_cross_hand_tool_oracle import case, solve
+from calibrater_solve_tool_oracle import compare_readers
 from calibration_smoothcal_oracle import opened
+from gaincal_delay_oracle import duplicate_rows
 from polcal_cross_hand_oracle import plant_cross_hand
 from polcal_leakage_solve_oracle import plant, put_observations
 
@@ -44,13 +48,80 @@ def compare_xy(work, engines, vis, label, kind, stokes, **controls):
     return products['native']
 
 
+def amplitude_only(work, engines, vis, model, data, times, *, circular):
+    if circular:
+        # Constant amplitude has no resolvable phase after amplitude enforcement.
+        # Keep the CASA result as evidence of its rounding-dependent phase.
+        values = {}
+        products = {engine: work/f'XYf-constant-A-{engine}.cal' for engine in engines}
+        for engine, factory in engines.items():
+            values[engine] = solve(factory, vis, products[engine], 'XYf+QU', model,
+                                   parang=False, options={'preavg': 300., 'apmode': 'A'})
+            with opened(products[engine]) as table:
+                assert not table.getcol('FLAG').any()
+                np.testing.assert_allclose(table.getkeyword('QU')['QU'], 0., atol=1e-7, rtol=0.)
+                if engine == 'native':
+                    np.testing.assert_array_equal(table.getcol('CPARAM'), 1.)
+        for actual, expected in zip(values['native'], values['casa'], strict=True):
+            same_record(actual, expected)
+        compare_readers(products)
+        print(work.name, 'XYf-constant-A degenerate phase documented', flush=True)
+    varied = data.copy()
+    factor = .4 + 1.7 * (times - times.min()) / np.ptp(times)
+    varied[1] *= factor
+    varied[2] *= factor**2
+    with opened(vis, True) as table:
+        assert table.putcol('DATA', varied)
+    try:
+        compare_xy(work, engines, vis, 'XYf-mode-A', 'XYf+QU', model,
+                   options={'apmode': 'A', 'solnorm': True})
+    finally:
+        with opened(vis, True) as table:
+            assert table.putcol('DATA', data)
+
+
+def legacy_insufficient_angle(work, engines, vis, stokes):
+    products = {engine: work/f'XYf-legacy-single-time-{engine}.cal' for engine in engines}
+    values = {}
+    for engine, factory in engines.items():
+        values[engine] = solve(factory, vis, products[engine], 'XYf+QU', stokes,
+                               old=True, parang=False)
+        with opened(products[engine]) as table:
+            assert table.nrows() == 5
+            flags = table.getcol('FLAG')
+            if engine == 'native':
+                assert flags.all()
+            else:
+                assert not flags.any()
+            np.testing.assert_array_equal(table.getkeyword('QU')['QU'], 0.)
+    for actual, expected in zip(values['native'], values['casa'], strict=True):
+        same_record(actual, expected)
+    compare_readers(products)
+    print(work.name, 'XYf-legacy-single-time unconstrained phase documented', flush=True)
+
+
+def compare_autos(work, engines, vis, stokes):
+    path = work/'with-autos.ms'
+    copy_ms(vis, path)
+    rows = duplicate_rows(casa_table(), path)
+    with opened(path, True) as table:
+        antenna = table.getcol('ANTENNA1', rows, rows)
+        assert table.putcol('ANTENNA2', antenna, rows, rows)
+        data = table.getcol('DATA', rows, rows)
+        data[1] *= 20j
+        data[2] *= -20j
+        assert table.putcol('DATA', data, rows, rows)
+    for old in (False, True):
+        compare_xy(work, engines, path, f'XYf-autos-{old}', 'XYf+QU', stokes, old=old)
+
+
 def compare_basis(work, basis, engines):
     work.mkdir()
     vis, _, gain, stokes, sky = plant(work, basis)
     with opened(vis) as table:
-        epoch = table.getcol('TIME').min()
+        times = table.getcol('TIME')
     phase = work/'planted-phase.cal'
-    expected = plant_cross_hand(vis, phase, 5, epoch)
+    expected = plant_cross_hand(vis, phase, 5, times.min())
     data = put_observations(vis, sky, [phase])
     unpolarized = [1.6, 0., 0., 0.]
 
@@ -71,10 +142,16 @@ def compare_basis(work, basis, engines):
     compare_xy(work, engines, vis, 'XYf-ignored-cuts', 'XYf+QU', unpolarized,
                options={'minblperant': 50, 'minsnr': 1e20})
     compare_xy(work, engines, vis, 'XYf-append', 'XYf+QU', unpolarized, append=True)
-    for mode in ('A', 'P'):
-        compare_xy(work, engines, vis, f'XYf-mode-{mode}', 'XYf+QU', unpolarized,
-                   options={'apmode': mode, 'solnorm': True})
+    amplitude_only(work, engines, vis, unpolarized, data, times, circular=basis.startswith('RR'))
+    compare_xy(work, engines, vis, 'XYf-mode-P', 'XYf+QU', unpolarized,
+               options={'apmode': 'P', 'solnorm': True})
     reject_solve(work, engines, vis, 'XYf-one-modern-segment', preavg=0.)
+    compare_xy(work, engines, vis, 'XYf-legacy-default-I', 'XYf+QU', unpolarized, old=True,
+               options={'preavg': -1.})
+    compare_xy(work, engines, vis, 'XYf-legacy-integration-I', 'XYf+QU', unpolarized, old=True,
+               options={'t': 'int'})
+    legacy_insufficient_angle(work, engines, vis, stokes)
+    compare_autos(work, engines, vis, stokes)
     with opened(vis, True) as table:
         flags = table.getcol('FLAG')
         flags[1, 3, ::6] = True

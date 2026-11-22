@@ -542,6 +542,7 @@ impl LeakageInputs<'_> {
             match self.request.kind {
                 LeakageSolveKind::PosAng => 30.0,
                 LeakageSolveKind::Xj | LeakageSolveKind::Xf if self.legacy_cross_hand => 300.0,
+                kind if kind.gain_phase() && self.legacy_cross_hand => f64::INFINITY,
                 LeakageSolveKind::Xj
                 | LeakageSolveKind::Xf
                 | LeakageSolveKind::XY
