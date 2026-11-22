@@ -47,6 +47,7 @@ mod flag_commands;
 mod hanning;
 mod main_arrays;
 mod multi_ms;
+mod output_layout;
 mod regrid;
 mod selection_metadata;
 mod single_dish_polarization;
@@ -120,6 +121,12 @@ pub struct MsTransformRequest {
 pub struct MsTransformTaskOptions {
     /// Create and fill weight and sigma spectra even when the input has none.
     pub use_weight_spectrum: bool,
+    /// CASA task preference for the output's array storage.
+    pub tiling: Option<MsTransformTiling>,
+    /// Keep original field, antenna, observation, state and spectral IDs.
+    pub preserve_ids: bool,
+    /// First output data-description ID when spectral IDs are reassigned.
+    pub ddi_start: usize,
     /// Apply a three-channel Hanning window after selection and averaging.
     pub hanning: bool,
     /// Combine selected spectral windows for each simultaneous baseline sample.
@@ -142,6 +149,17 @@ pub struct MsTransformTaskOptions {
     pub keep_mms: Option<bool>,
     /// The raw numeric timebin for retained split's exact combine="scan" check.
     pub retained_scan_span: Option<f64>,
+}
+
+/// Tile layout options accepted by the CASA mstransform task.
+#[derive(Debug, Clone, Copy)]
+pub enum MsTransformTiling {
+    /// Select the default layout for the first selected visibility shape.
+    Standard,
+    /// Size the default tile for one pointing of the selected array.
+    FastMosaic,
+    /// Explicit default tile dimensions in correlation, channel, row order.
+    Explicit([usize; 3]),
 }
 
 /// Spectral regridding arguments for the public mstransform task.
@@ -596,6 +614,24 @@ fn mstransform_staged(
             .collect::<BTreeMap<_, _>>()
     });
     let regrid_options = options.regrid.as_ref();
+    let retained_combination = if options.preserve_ids && options.combine_spws {
+        let all_spws =
+            input
+                .resolve_spw_selector("*")
+                .map_err(|source| MsTransformError::InvalidSpw {
+                    selector: "*".into(),
+                    reason: source.to_string(),
+                })?;
+        let mut channels = resolve_transform_channels(&input, &all_spws, "*")?;
+        channels.extend(
+            channel_selection
+                .iter()
+                .map(|(&id, selection)| (id, selection.clone())),
+        );
+        Some((all_spws, channels))
+    } else {
+        None
+    };
     let mut channel_bins = channel_bins_by_spw(
         &channel_selection,
         &widths,
@@ -615,6 +651,9 @@ fn mstransform_staged(
             combine::Grid::new(
                 &input,
                 &channel_selection,
+                retained_combination
+                    .as_ref()
+                    .map_or(&channel_selection, |(_, channels)| channels),
                 normalized_width(request.width),
                 budget.available_bytes / budget.maximum_live_blocks,
             )?
@@ -937,14 +976,39 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    let reindex = operation.as_ref().is_none_or(|operation| operation.reindex);
-    let mut compact_metadata = if reindex {
+    let reindex =
+        !options.preserve_ids && operation.as_ref().is_none_or(|operation| operation.reindex);
+    let reindex_spectra = reindex || combined_grid.is_some() || copies_per_row > 1;
+    let ddi_offset = if reindex_spectra {
+        i32::try_from(options.ddi_start).map_err(|_| {
+            MsTransformError::Spectrum("ddistart exceeds the data-description index limit.".into())
+        })?
+    } else {
+        0
+    };
+    let mut compact_metadata = if reindex_spectra {
+        let (metadata_spws, metadata_bins) = if let Some((all_spws, channels)) =
+            &retained_combination
+            && combined_grid.is_some()
+        {
+            (
+                all_spws,
+                Some(
+                    channels
+                        .iter()
+                        .map(|(&id, channels)| (id, vec![channels.channels.clone()]))
+                        .collect::<BTreeMap<_, _>>(),
+                ),
+            )
+        } else {
+            (&spw_selection, None)
+        };
         compact_spectral_subtables(
             &request.input_ms,
             &request.output_ms,
-            &channel_bins,
+            metadata_bins.as_ref().unwrap_or(&channel_bins),
             &ddid_to_spw,
-            &spw_selection,
+            metadata_spws,
             correlations.as_ref(),
             grammar,
         )?
@@ -1000,6 +1064,21 @@ fn mstransform_staged(
             reason: error.to_string(),
         }
     })?;
+    let tile = options
+        .tiling
+        .map(|mode| {
+            output_layout::resolve_tiling(
+                &input,
+                mode,
+                &spw_selection,
+                (
+                    &channel_selection,
+                    (combined_grid.is_none() && regrid_options.is_none()).then_some(&widths),
+                ),
+                (&selected_ddids, &ddid_to_spw, correlations.as_ref()),
+            )
+        })
+        .transpose()?;
     let (write_plan, input_batch_rows) = transform_array_write_plan(
         &input,
         TransformArrayRows {
@@ -1012,6 +1091,7 @@ fn mstransform_staged(
             },
             output_rows,
             regrid: regrid.as_ref(),
+            tile,
             combined: combined_grid
                 .as_ref()
                 .zip(combination.as_deref())
@@ -1815,7 +1895,15 @@ fn mstransform_staged(
                 ),
             })?;
         for part in 0..copies_per_row {
-            let id = compact * copies_per_row as i32 + part as i32;
+            let id = compact
+                .checked_mul(copies_per_row as i32)
+                .and_then(|id| id.checked_add(part as i32))
+                .and_then(|id| id.checked_add(ddi_offset))
+                .ok_or_else(|| {
+                    MsTransformError::Spectrum(
+                        "Output data-description ID exceeds the index limit.".into(),
+                    )
+                })?;
             write_session
                 .push_scalar_row("DATA_DESC_ID", Some(ScalarValue::Int32(id)))
                 .map_err(|error| MsTransformError::WriteMeasurementSet {
@@ -1888,6 +1976,13 @@ fn mstransform_staged(
         )?;
     } else {
         update_spectral_window_metadata(&compact_metadata.channel_bins, &request.output_ms)?;
+    }
+    if ddi_offset > 0 {
+        output_layout::pad_ddids(
+            &request.output_ms,
+            ddi_offset as usize,
+            budget.available_bytes / budget.maximum_live_blocks,
+        )?;
     }
     maybe_log_transform_progress(
         "update_spectral_window",
@@ -2033,6 +2128,7 @@ struct TransformArrayRows<'a> {
     output_rows: usize,
     combined: Option<CombinedArrayRows<'a>>,
     regrid: Option<&'a regrid::Plan>,
+    tile: Option<output_layout::OutputTiling>,
 }
 
 #[derive(Clone, Copy)]
@@ -2053,6 +2149,7 @@ fn transform_array_write_plan(
         output_rows,
         combined,
         regrid,
+        tile,
     }: TransformArrayRows<'_>,
     ddid_to_spw: &BTreeMap<i32, i32>,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
@@ -2233,6 +2330,9 @@ fn transform_array_write_plan(
     if output_rows == 0 {
         columns.clear();
     }
+    if let Some(tile) = tile {
+        tile.apply(&mut columns);
+    }
     let writer = MeasurementSetWritePlan::variable_array_creation(
         output_rows,
         columns,
@@ -2243,6 +2343,11 @@ fn transform_array_write_plan(
         path: input_path.display().to_string(),
         reason: error.to_string(),
     })?;
+    let writer = if let Some(tile) = tile {
+        writer.with_array_default_tiles(|name| tile.default_for(name))
+    } else {
+        writer
+    };
     Ok((writer, input_batch_rows))
 }
 
@@ -3353,6 +3458,7 @@ where
     Ok(())
 }
 
+#[derive(Clone)]
 struct TransformChannelSelection {
     channels: Vec<usize>,
     metadata_ends: Vec<usize>,

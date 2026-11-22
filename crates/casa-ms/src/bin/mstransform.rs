@@ -8,8 +8,8 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     MsRegridOptions, MsTransformError, MsTransformRequest, MsTransformTaskOptions,
-    TimeAverageOptions, TransformDataColumn, TransformTaskHistory, ms_task_success,
-    mstransform_task, mstransform_task_schema_bundle, task_selection_text,
+    MsTransformTiling, TimeAverageOptions, TransformDataColumn, TransformTaskHistory,
+    ms_task_success, mstransform_task, mstransform_task_schema_bundle, task_selection_text,
 };
 use casa_provider_contracts::{
     CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr,
@@ -97,6 +97,13 @@ fn transform_request(
         hanning: task.surface() == "mstransform" && task.flag("hanning")?,
         combine_spws: task.surface() == "mstransform" && task.flag("combinespws")?,
         regrid: regrid_options(task)?,
+        tiling: tile_layout(task)?,
+        preserve_ids: task.surface() == "mstransform" && !task.flag("reindex")?,
+        ddi_start: task
+            .value("ddistart")
+            .and_then(channel_integer)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or_default(),
         channel_widths,
         time_averaging: time_average_options(task)?,
         history: Some(task_history(task)),
@@ -106,6 +113,41 @@ fn transform_request(
         ..MsTransformTaskOptions::default()
     };
     Ok((request, options))
+}
+
+fn tile_layout(task: &TaskInvocation<'_>) -> Result<Option<MsTransformTiling>, TaskFailure> {
+    if task.surface() != "mstransform" {
+        return Ok(None);
+    }
+    let invalid = |reason| TaskFailure::validation(reason).at("tileshape");
+    let Some(ParameterValue::Array(values)) = task.value("tileshape") else {
+        return Err(invalid("Parameter tileshape must have 1 or 3 elements."));
+    };
+    let values = values
+        .iter()
+        .map(|value| {
+            channel_integer(value).ok_or_else(|| invalid("Tile extents must be integers."))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let result = match values.as_slice() {
+        [0] => MsTransformTiling::Standard,
+        [1] => MsTransformTiling::FastMosaic,
+        [_] => {
+            return Err(invalid(
+                "When tileshape has one element, it should be either 0 or 1.",
+            ));
+        }
+        &[corr, chan, rows]
+            if [corr, chan, rows]
+                .into_iter()
+                .all(|n| (0..=i64::from(i32::MAX)).contains(&n)) =>
+        {
+            MsTransformTiling::Explicit([corr as usize, chan as usize, rows as usize])
+        }
+        [_, _, _] => return Err(invalid("Tile extents must be nonnegative 32-bit integers.")),
+        _ => return Err(invalid("Parameter tileshape must have 1 or 3 elements.")),
+    };
+    Ok(Some(result))
 }
 
 fn regrid_options(task: &TaskInvocation<'_>) -> Result<Option<MsRegridOptions>, TaskFailure> {

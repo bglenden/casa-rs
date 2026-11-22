@@ -879,6 +879,17 @@ impl MeasurementSetWritePlan {
             scalar_columns,
         })
     }
+    pub(crate) fn with_array_default_tiles(
+        mut self,
+        shape_for_column: impl Fn(&str) -> Vec<usize>,
+    ) -> Self {
+        for column in &mut self.columns {
+            if column.tile_shape.is_some() {
+                column.tile_shape = Some(shape_for_column(&column.name));
+            }
+        }
+        self
+    }
 }
 
 /// One distinct output shape in a bounded variable-array column plan.
@@ -1252,7 +1263,7 @@ impl MeasurementSetWriteSession {
         {
             let mut writers = HashMap::with_capacity(plan.array_columns.len());
             for column in &plan.array_columns {
-                let writer = StreamingTiledShapeWriter::create(
+                let mut writer = StreamingTiledShapeWriter::create(
                     output.join(format!(".casa-rs.{}.table.f.tmp", column.name)),
                     column.value_type,
                     column.layouts(),
@@ -1260,6 +1271,16 @@ impl MeasurementSetWriteSession {
                     false,
                 )
                 .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                if let Some(default) = plan
+                    .columns
+                    .iter()
+                    .find(|plan| plan.name == column.name)
+                    .and_then(|plan| plan.tile_shape.as_ref())
+                {
+                    writer
+                        .set_default_tile_shape(default.clone())
+                        .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                }
                 writers.insert(column.name.clone(), writer);
             }
             let scalar_writers =

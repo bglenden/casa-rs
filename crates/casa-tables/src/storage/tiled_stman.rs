@@ -6969,6 +6969,20 @@ pub struct StreamingTiledShapeWriter {
 }
 
 impl StreamingTiledShapeWriter {
+    /// Set the manager's default tile for future hypercubes. The explicit
+    /// layout of each existing cube remains the one passed at creation.
+    pub fn set_default_tile_shape(&mut self, default: Vec<usize>) -> Result<(), StorageError> {
+        if default.len() != self.default_tile_shape.len()
+            || default.iter().any(|&extent| extent > i32::MAX as usize)
+        {
+            return Err(StorageError::FormatMismatch(
+                "streamed TiledShape default tile has an invalid rank or extent".into(),
+            ));
+        }
+        self.default_tile_shape = default;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn create(
         temp_data_path: impl Into<PathBuf>,

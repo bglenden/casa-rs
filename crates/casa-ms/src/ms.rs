@@ -1212,15 +1212,7 @@ pub(crate) fn casa_visibility_tile_shape(
 ) -> Vec<usize> {
     let corr_tile = num_corr.max(1);
     let mut chan_tile = num_chan.max(1);
-    let n_ifr = match telescope_name {
-        "ATCA" => 15usize,
-        "VLA" => 351usize,
-        "WSRT" => 91usize,
-        "BIMA" => 36usize,
-        "DRAO" => 21usize,
-        "SMA" => 28usize,
-        _ => 200usize,
-    };
+    let n_ifr = casa_interferometer_count(telescope_name);
     let io_block_size = 131_072usize;
     let mut element_io_block_size = io_block_size;
     if chan_tile < 100 {
@@ -1239,6 +1231,18 @@ pub(crate) fn casa_visibility_tile_shape(
     chan_tile = chan_tile.min(num_chan).max(1);
     let row_tile = (element_io_block_size / corr_tile / chan_tile).max(1);
     vec![corr_tile, chan_tile, row_tile]
+}
+
+pub(crate) fn casa_interferometer_count(telescope_name: &str) -> usize {
+    match telescope_name {
+        "ATCA" => 15usize,
+        "VLA" => 351usize,
+        "WSRT" => 91usize,
+        "BIMA" => 36usize,
+        "DRAO" => 21usize,
+        "SMA" => 28usize,
+        _ => 200usize,
+    }
 }
 
 pub(crate) fn casa_weight_tile_shape(visibility_tile_shape: &[usize]) -> Vec<usize> {

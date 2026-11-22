@@ -8118,6 +8118,17 @@ variance for DATA and FLOAT_DATA. The oracle verifies the independent lanes
 against CASA runs on the separate layouts and against an analytic lag sum.
 [Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## A nonzero mstransform DDI start can leave dangling row references
+
+With CASA 6.7.6.14, a standalone `mstransform(ddistart=3)` of an MS
+with one selected data description writes MAIN rows with
+`DATA_DESC_ID=3` while the DATA_DESCRIPTION table contains one row.
+That offset is intended for subsequent Multi-MS assembly. The native
+task publishes the requested MAIN IDs and reserves the preceding
+data-description entries as flagged rows with valid spectral window
+and polarization references. The native output remains readable as a
+standalone MeasurementSet (#1615).
+
 ## Channel-width argument variants can crash both MeasurementSet tasks
 
 CASA 6.7.6.14 `split` and `mstransform` leave a partial MeasurementSet after
