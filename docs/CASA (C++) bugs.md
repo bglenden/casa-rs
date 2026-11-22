@@ -9942,3 +9942,16 @@ is a subtable. The default task path already uses `ANTENNA1==ANTENNA2`.
 Casa-rs intersects the caller's predicate with `ANTENNA1==ANTENNA2` in both
 cases. Its test compares the result to CASA selecting those same antennas
 through `antenna`.
+
+## `pccor` can fail after creating an empty calibration table
+
+Selecting no spectral windows in CASA 6.7.6.14, for example with
+`spw='!0'` on a one-window MeasurementSet, reaches the table constructor
+before the first attempt to index an empty set of solutions. The task
+raises `IndexError`. Casa-rs checks the selected windows before
+publication and returns the same exception.
+
+CASA can also raise `UnboundLocalError` when the first selected reference
+antenna has pulse data only outside the reference interval. Casa-rs
+reports the missing reference data with a `RuntimeError`. The paired
+PCCOR oracle covers both cases and checks destination preservation.

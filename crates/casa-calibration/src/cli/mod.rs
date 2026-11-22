@@ -74,6 +74,9 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if task.surface() == "pccor" {
+        return crate::pccor::run(task);
+    }
     if task.surface() == "sdcal" {
         return crate::single_dish::sdcal(task);
     }

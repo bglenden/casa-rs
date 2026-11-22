@@ -50,6 +50,7 @@ mod model_columns;
 mod output;
 mod output_merge;
 mod paths;
+mod pccor;
 mod plan;
 mod plotbandpass;
 #[doc(hidden)]

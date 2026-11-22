@@ -471,6 +471,16 @@
     "monolithic_processing": "cBool",
     "reindex": "cBool"
   },
+  "pccor": {
+    "pccor_caltable": "cStr",
+    "refant": "cStr",
+    "timerange": "cStr",
+    "scan": "cStr",
+    "spw": "cStr",
+    "antenna": "cStr",
+    "cablecal_correction": "cBool",
+    "ff_table": "cStr"
+  },
   "plotbandpass": {
     "yaxis": "cStr",
     "xaxis": "cStr",

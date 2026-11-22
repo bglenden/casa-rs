@@ -48,6 +48,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 32 | 0 | 0 |
+| pccor | pccor | yes | 9 | 9 | 0 | 0 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | yes | 102 | 102 | 0 | 12 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
@@ -1588,6 +1589,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `realmodelcol`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
+- Defaults that differ: none
+
+### pccor
+
+- CASA source: `casatasks/pccor.py`, 9 parameters
+- Implementation: `casatasks/private/task_pccor.py`, `pccor` (line 1115): 1 return statements, 0 raise statements
+  - returns at line 1145: `output_dict`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 9, in CASA's order: yes
 - Defaults that differ: none
 
 ### plotbandpass
