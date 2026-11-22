@@ -171,7 +171,7 @@ def setup_cases(args, factories):
 
 
 def adjust_input(name, dataset):
-    if name not in ('weighted', 'shared-flags', 'skipped-first-buffer'):
+    if name not in ('weighted', 'shared-flags', 'skipped-first-buffer', 'parallactic-angles'):
         return
     with opened(dataset, True) as table:
         epoch = table.getcol('TIME')
@@ -188,11 +188,15 @@ def adjust_input(name, dataset):
             data = table.getcol('DATA')
             data[1, ::5, middle] *= np.complex64(2. - .4j)
             assert table.putcol('FLAG', flags) and table.putcol('DATA', data)
-        else:
+        elif name == 'skipped-first-buffer':
             scans = table.getcol('SCAN_NUMBER')
             scans[epoch >= moments[1]] = scans[0] + 1
             row_flags = table.getcol('FLAG_ROW') | middle
             assert table.putcol('SCAN_NUMBER', scans) and table.putcol('FLAG_ROW', row_flags)
+        else:
+            shift = 1800. * np.searchsorted(moments, epoch)
+            for name in ('TIME', 'TIME_CENTROID'):
+                assert table.putcol(name, table.getcol(name) + shift)
 
 
 def run(args):
@@ -210,8 +214,10 @@ def run(args):
         for name, interval, epochs, controls in (
             ('one', '0s', 1, {}), ('three', '1s', 3, {}), ('preaverage', '0s', 1, {'preavg': 10.}),
             ('weighted', '0s', 1, {}), ('shared-flags', '0s', 1, {}),
-            ('skipped-first-buffer', '0s', 1, {}), ('parallactic-angles', '1s', 3, {'painc': .01}),
+            ('skipped-first-buffer', '0s', 1, {}), ('parallactic-angles', '1s', 3, {'painc': .5}),
         ):
+            if args.only is not None and name != args.only:
+                continue
             products = {engine: args.work/f'{name}-{engine}.EP' for engine in ('casa', 'native')}
             results, tables = {}, {}
             for engine, factory in factories.items():
@@ -248,4 +254,6 @@ if __name__ == '__main__':
         parser.add_argument(f'--{name}', type=lambda path: Path(path).resolve(), required=True)
     parser.add_argument('--reference-only', action='store_true')
     parser.add_argument('--setup-only', action='store_true')
+    parser.add_argument('--only', choices=('one', 'three', 'preaverage', 'weighted', 'shared-flags',
+                                          'skipped-first-buffer', 'parallactic-angles'))
     run(parser.parse_args())
