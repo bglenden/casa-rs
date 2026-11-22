@@ -56,6 +56,43 @@ pub(crate) fn apply(
     Ok(())
 }
 
+/// Corrupt a model with the two feed Jones matrices in CASA's order.
+pub(super) fn corrupt(
+    data_desc_id: i32,
+    correlations: &[i32],
+    first_angle: f64,
+    second_angle: f64,
+    model: &mut ArrayD<Complex32>,
+) -> Result<(), ApplyExecutionError> {
+    if !correlations.iter().all(|code| matches!(code, 5..=8)) {
+        return apply(
+            data_desc_id,
+            correlations,
+            -first_angle,
+            -second_angle,
+            model,
+        );
+    }
+    // PJones rounds each feed angle to Float before taking its phasor.
+    // JonesDiag then multiplies the model by the left matrix and the
+    // conjugate right matrix separately, rounding at each antenna.
+    let [left, right] =
+        [first_angle, second_angle].map(|angle| circular_parang_gain(f64::from(angle as f32)));
+    for (index, correlation) in correlations.iter().enumerate() {
+        let (first, second) = match correlation {
+            5 => (left.conj(), right),
+            6 => (left.conj(), right.conj()),
+            7 => (left, right),
+            8 => (left, right.conj()),
+            _ => unreachable!("circular correlations"),
+        };
+        model
+            .index_axis_mut(ndarray::Axis(0), index)
+            .mapv_inplace(|value| (value * first) * second);
+    }
+    Ok(())
+}
+
 /// Correction for two real Jones matrices with rows [cos(a), sin(a)] and
 /// [-sin(a), cos(a)] uses transpose(P1) * V * P2.
 pub(super) fn rotate_linear(
