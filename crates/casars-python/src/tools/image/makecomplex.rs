@@ -155,7 +155,7 @@ impl PyImageTool {
                 preserve_beam_records(&real, &mut output, &real_record, &origin)?;
                 let rows = with_pixels!(&*real, storage => match storage {
                     Storage::Paged(image) => image_history_rows(image.name().expect("persistent image")),
-                    Storage::Temp { image, .. } => Ok(image.history_rows().to_vec()),
+                    Storage::Temp { image, .. } => Ok(image.history_rows().map_err(raised)?.into_owned()),
                 })
                 .map_err(raised)?;
                 with_pixels!(&mut output, storage => with_storage!(storage, image => image.append_history_entries(&rows)))

@@ -1,11 +1,13 @@
 """Native component-list image products and their opening routes."""
 
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from test_image_component_list import _component_record
+from test_componentlist_review import OFFSET
 from test_image_removal import _backend
 
 
@@ -168,3 +170,179 @@ def test_native_component_image_rename_and_remove(tmp_path, backend):
     finally:
         source.done()
         reopened.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_native_component_creation_preserves_output_alias_and_lexical_parent(tmp_path, backend):
+    api = _backend(backend)
+    image = api.image()
+    record = _component_record(api)
+    real, alias = tmp_path / "real.im", tmp_path / "alias.im"
+    alias.symlink_to(real, target_is_directory=True)
+    left, right = tmp_path / "lexical", tmp_path / "physical"
+    left.mkdir()
+    (right / "nested").mkdir(parents=True)
+    (left / "link").symlink_to(right / "nested", target_is_directory=True)
+    physical = right / "target.im"
+    lexical = left / "target.im"
+    try:
+        with pytest.raises(RuntimeError, match="is not a true table directory"):
+            image.fromcomplist(str(alias), [6, 8], record, overwrite=True)
+        assert alias.is_symlink() and not real.exists()
+        assert image.fromarray(str(real), [17., 19.])
+        assert image.done()
+        assert image.fromcomplist(str(alias), [6, 8], record, overwrite=True)
+        assert alias.is_symlink() and real.is_dir()
+        assert image.done()
+        assert image.open(str(real))
+        assert image.getchunk()[3, 4] == 2.
+        assert image.done()
+        assert image.fromarray(str(physical), [41., 42.])
+        assert image.done()
+        assert image.fromcomplist(str(left / "link" / ".." / "target.im"), [6, 8], record, overwrite=True)
+        assert image.name() == str(lexical)
+        assert image.done()
+        assert image.open(str(physical))
+        np.testing.assert_array_equal(image.getchunk(), [41., 42.])
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_named_component_image_can_be_created_beside_its_input_rows(tmp_path, backend):
+    api = _backend(backend)
+    cl, image = api.componentlist(), api.image()
+    path = tmp_path / "source.cl"
+    try:
+        assert cl.fromrecord(_component_record(api))
+        assert cl.rename(str(path))
+        assert cl.done()
+        nested = path / "nested.im"
+        assert image.fromcomplist(str(nested), [6, 8], str(path))
+        assert image.getchunk()[3, 4] == 2.
+        assert image.done()
+        assert cl.open(str(path))
+        assert cl.length() == 1
+        assert cl.done()
+        assert image.fromcomplist(str(path), [6, 8], str(path), overwrite=True)
+        assert image.getchunk()[3, 4] == 2.
+    finally:
+        cl.done()
+        image.done()
+
+
+@pytest.mark.parametrize("writer", ["casa", "casars"])
+@pytest.mark.parametrize("reader", ["casa", "casars"])
+@pytest.mark.parametrize("use_table", [False, True])
+def test_native_component_reference_frequency_records(tmp_path, writer, reader, use_table):
+    writer_api, reader_api = _backend(writer), _backend(reader)
+    cl, image, table = writer_api.componentlist(), writer_api.image(), reader_api.table()
+    record = {"nelements": 1, "component0": deepcopy(OFFSET)}
+    path = tmp_path / "source.cl"
+    target = tmp_path / "image.im"
+    try:
+        if use_table:
+            assert cl.fromrecord(record)
+            assert cl.rename(str(path))
+            assert cl.done()
+            assert table.open(str(path), nomodify=False)
+            table.putcell("Frequency_Error", 0, 1.e6)
+            assert table.done()
+            record = str(path)
+        assert image.fromcomplist(str(target), [6, 8], record)
+        assert image.done()
+        assert table.open(str(target))
+        frequency = table.getcell("Spectral_Record", 0)["frequency"]
+        assert table.getcell("Reference_Frequency", 0) == pytest.approx(2.4e9)
+        assert table.getcell("Frequency_Error", 0) == 0.
+        assert frequency["m0"]["unit"] == "GHz"
+        assert frequency["m0"]["value"] == pytest.approx(2.4 if use_table else 1.4)
+        if not use_table:
+            assert frequency["offset"]["m0"] == {"unit": "Hz", "value": 1.e9}
+        else:
+            assert "offset" not in frequency
+    finally:
+        table.done()
+        image.done()
+        cl.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_component_image_record_defaults(tmp_path, backend):
+    api = _backend(backend)
+    image = api.image()
+    try:
+        path = tmp_path / "default.im"
+        assert image.fromcomplist(str(path), [6, 8, 2], {"nelements": 1, "component0": {}})
+        assert image.getchunk().shape == (6, 8, 2)
+        np.testing.assert_array_equal(image.getchunk(), np.zeros((6, 8, 2)))
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_component_image_history_is_inherited_by_derivations(tmp_path, backend):
+    api = _backend(backend)
+    path = tmp_path / "source.im"
+    source, derived = api.image(), api.image()
+    subimage = None
+    try:
+        assert source.fromcomplist(str(path), [6, 8], _component_record(api))
+        assert source.sethistory("provenance", ["exposure calibration"])
+        subimage = source.subimage()
+        assert "exposure calibration" in subimage.history(list=False)
+        assert source.done()
+        assert derived.fromimage(infile=str(path))
+        assert "exposure calibration" in derived.history(list=False)
+    finally:
+        if subimage is not None:
+            subimage.done()
+        source.done()
+        derived.done()
+
+
+@pytest.mark.parametrize("reader", ["casa", "casars"])
+@pytest.mark.parametrize("wrong_shape", [False, True])
+def test_component_image_checks_the_default_mask_on_open(tmp_path, reader, wrong_shape):
+    casa, api = _backend("casa"), _backend(reader)
+    source, reopened, table = casa.image(), api.image(), casa.table()
+    path = tmp_path / "source.im"
+    try:
+        assert source.fromcomplist(str(path), [6, 8], _component_record(casa))
+        assert source.calcmask("F", "point")
+        assert source.done()
+        assert table.open(str(path), nomodify=False)
+        if wrong_shape:
+            table.putkeyword("shape", np.array([7, 9], dtype=np.int32))
+        else:
+            table.putkeyword("Image_defaultmask", "missing")
+        assert table.done()
+        if wrong_shape:
+            with pytest.raises(RuntimeError, match="does not cover the full image"):
+                reopened.open(str(path))
+            assert not reopened.isopen()
+        else:
+            assert reopened.open(str(path))
+            assert np.all(reopened.getchunk(getmask=True))
+    finally:
+        table.done()
+        reopened.done()
+        source.done()
+
+
+def test_unimplemented_default_mask_clear_does_not_report_success(tmp_path):
+    casa, api = _backend("casa"), _backend("casars")
+    source, reopened = casa.image(), api.image()
+    path = tmp_path / "source.im"
+    try:
+        assert source.fromcomplist(str(path), [6, 8], _component_record(casa))
+        assert source.calcmask("F", "none")
+        assert source.done()
+        assert reopened.open(str(path))
+        with pytest.raises(RuntimeError, match="#1691"):
+            reopened.maskhandler("set", [])
+        assert list(reopened.maskhandler("default")) == ["none"]
+        assert not np.any(reopened.getchunk(getmask=True))
+    finally:
+        reopened.done()
+        source.done()

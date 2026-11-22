@@ -147,7 +147,7 @@ impl PyImageTool {
                 }?;
                 let history = match source {
                     Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
-                    Storage::Temp { image, .. } => image.history_rows().to_vec(),
+                    Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
                 };
                 with_storage!(&mut cropped, image => image.append_history_entries(&history)).map_err(raised)?;
                 let mut cropped = ImageHandle::Float(cropped);

@@ -548,6 +548,11 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Unsets the default mask.
     pub fn unset_default_mask(&mut self) -> Result<(), ImageError> {
+        if self.component_table_path().is_some() {
+            return Err(ImageError::CasaSelection(
+                "Editing native component image masks is tracked in #1691".into(),
+            ));
+        }
         self.default_mask = None;
         self.anonymous_mask = None;
         Ok(())

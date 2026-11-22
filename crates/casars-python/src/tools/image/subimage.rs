@@ -273,7 +273,7 @@ impl Request<'_> {
             Storage::Paged(image) => {
                 image_history_rows(image.name().expect("persistent image")).map_err(raised)?
             }
-            Storage::Temp { image, .. } => image.history_rows().to_vec(),
+            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
         };
         with_storage!(&mut result, image => image.append_history_entries(&rows)).map_err(raised)?;
         Ok(result)
@@ -345,7 +345,7 @@ impl PyImageTool {
                         let source = fits.image_view(image);
                         let mut storage = request.copy_selection(&source, Some(record.clone()), path, &mut logs)?;
                         with_storage!(&mut storage, product =>
-                            product.append_history_entries(image.history_rows())
+                            product.append_history_entries(&image.history_rows().map_err(raised)?)
                         ).map_err(raised)?;
                         ImageHandle::Float(storage)
                     }

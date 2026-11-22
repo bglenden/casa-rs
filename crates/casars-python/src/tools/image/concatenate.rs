@@ -162,7 +162,7 @@ impl<'a> Input<'a> {
         )));
         let history = with_pixels!(&image, storage => match storage {
             Storage::Paged(_) => image_history_rows(path).map_err(raised)?,
-            Storage::Temp { image, .. } => image.history_rows().to_vec(),
+            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
         });
         let revision = tempclose
             .then(|| InputRevision::read(path, &image))

@@ -206,7 +206,7 @@ fn copy_storage<T: ImagePixel>(
         Storage::Paged(image) => {
             image_history_rows(image.name().expect("persistent image")).map_err(raised)?
         }
-        Storage::Temp { image, .. } => image.history_rows().to_vec(),
+        Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
     };
     with_storage!(&mut output, image => image.append_history_entries(&rows)).map_err(raised)?;
     Ok(output)

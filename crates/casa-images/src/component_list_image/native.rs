@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
@@ -68,18 +69,34 @@ impl ComponentListImage {
         if !info.beam_set.is_empty() {
             return Err(invalid("A ComponentListImage may not have a beam(s)"));
         }
+        let masks = keyword_record(keywords, "masks");
+        let default_mask = match keywords.get("Image_defaultmask") {
+            Some(Value::Scalar(ScalarValue::String(name))) if masks.get(name).is_some() => {
+                Some(name.clone())
+            }
+            _ => None,
+        };
         let native = ComponentTable {
             path: path.to_path_buf(),
             info,
             misc: keyword_record(keywords, "miscinfo"),
-            masks: keyword_record(keywords, "masks"),
-            default_mask: match keywords.get("Image_defaultmask") {
-                Some(Value::Scalar(ScalarValue::String(name))) if !name.is_empty() => {
-                    Some(name.clone())
-                }
-                _ => None,
-            },
+            masks,
+            default_mask,
         };
+        if let Some(name) = &native.default_mask {
+            let mask = native.open_mask(name)?;
+            if mask.ndim() != shape.len()
+                || mask
+                    .shape()
+                    .iter()
+                    .zip(&shape)
+                    .any(|(mask, image)| mask < image)
+            {
+                return Err(invalid(&format!(
+                    "region {name} does not cover the full image",
+                )));
+            }
+        }
         let components = ComponentList::read_table(path)
             .map_err(|error| ImageError::CasaSelection(error.to_string()))?;
         let mut image = Self::new(shape, components, coordinates, cache)?;
@@ -88,6 +105,8 @@ impl ComponentListImage {
     }
 
     /// Write a new Component List image table at the caller's staging path.
+    /// Raw spectral records keep the input's reference offsets alongside the
+    /// materialized frequencies already present in the sampled component model.
     /// # Errors
     /// Returns an error if the component values, image geometry, or native
     /// table metadata cannot be stored.
@@ -95,6 +114,7 @@ impl ComponentListImage {
         &self,
         path: &Path,
         coordinate_record: &RecordValue,
+        spectral_records: &BTreeMap<usize, RecordValue>,
     ) -> Result<(), ImageError> {
         let shape = self
             .shape
@@ -103,7 +123,7 @@ impl ComponentListImage {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| invalid("Component image shape exceeds the native integer range"))?;
         self.components
-            .write_table(path)
+            .write_table_with_spectral_records(path, spectral_records)
             .map_err(|error| ImageError::CasaSelection(error.to_string()))?;
         PagedImage::<f32>::reset_logtable(&path.join("logtable"))?;
         update_keywords(path, |keywords| {
@@ -126,6 +146,12 @@ impl ComponentTable {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
+        self.open_mask(name)?
+            .get_slice(start, shape, stride)
+            .map_err(Into::into)
+    }
+
+    fn open_mask(&self, name: &str) -> Result<PagedArray<bool>, ImageError> {
         let Some(Value::Record(region)) = self.masks.get(name) else {
             return Err(ImageError::MaskNotFound(name.into()));
         };
@@ -139,8 +165,7 @@ impl ComponentTable {
                 ));
             }
         };
-        let mask = PagedArray::<bool>::open(add_directory(reference, &self.path))?;
-        mask.get_slice(start, shape, stride).map_err(Into::into)
+        PagedArray::<bool>::open(add_directory(reference, &self.path)).map_err(Into::into)
     }
 }
 

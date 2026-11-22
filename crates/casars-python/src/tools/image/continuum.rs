@@ -103,7 +103,7 @@ impl Request<'_> {
             Storage::Paged(image) => {
                 image_history_rows(image.name().expect("native source")).map_err(raised)?
             }
-            Storage::Temp { image, .. } => image.history_rows().to_vec(),
+            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
         };
         let history_arguments = history.then(|| {
             let Self { outline, outcont, channels, region, pol, fitorder, overwrite } = self;

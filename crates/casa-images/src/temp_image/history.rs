@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::borrow::Cow;
+
 use crate::ImageError;
 use crate::image::{ImageHistoryEntry, ImageHistoryRow, ImagePixel, PagedImage};
 
@@ -8,14 +10,8 @@ use super::TempImage;
 impl<T: ImagePixel> TempImage<T> {
     /// Returns the history entries.
     pub fn history(&self) -> Result<Vec<String>, ImageError> {
-        if let Some(path) = self.component_table_path() {
-            return Ok(crate::image::image_history_rows(path)?
-                .into_iter()
-                .map(|row| row.entry.message)
-                .collect());
-        }
         Ok(self
-            .history
+            .history_rows()?
             .iter()
             .map(|row| row.entry.message.clone())
             .collect())
@@ -77,9 +73,15 @@ impl<T: ImagePixel> TempImage<T> {
         Ok(())
     }
 
-    /// Returns the temporary image's original log rows for derived images.
-    pub fn history_rows(&self) -> &[ImageHistoryRow] {
-        &self.history
+    /// Returns the image's original log rows for derived images.
+    ///
+    /// # Errors
+    /// Returns an error if the native component image's history is unreadable.
+    pub fn history_rows(&self) -> Result<Cow<'_, [ImageHistoryRow]>, ImageError> {
+        if let Some(path) = self.component_table_path() {
+            return crate::image::image_history_rows(path).map(Cow::Owned);
+        }
+        Ok(Cow::Borrowed(&self.history))
     }
 
     /// Clears the history log.

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Component-list records used by the public image tool.
 
+use std::collections::BTreeMap;
+
 use casa_components::{ComponentList, ShapeType};
 use casa_types::RecordValue;
 use casa_types::quanta::Quantity;
@@ -58,4 +60,20 @@ pub(in crate::tools) fn image_component_model(
         ConvertError::runtime("Exception: model is an invalid componentlist record.")
     })?
     .into_image_model()
+}
+
+pub(in crate::tools) fn component_image_creation_model(
+    record: &RecordValue,
+    logs: &mut Vec<LogLine>,
+    persistent: bool,
+) -> ConvertResult<(ComponentList, BTreeMap<usize, RecordValue>)> {
+    let components = State::image_components(record, logs, ConvertError::runtime)?;
+    let spectral_records = if persistent {
+        components
+            .spectral_records()
+            .map_err(ConvertError::runtime)?
+    } else {
+        BTreeMap::new()
+    };
+    Ok((components.into_image_model()?, spectral_records))
 }

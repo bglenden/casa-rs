@@ -14,8 +14,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::convert::IntList;
+use crate::tools::componentlist::component_image_creation_model;
 use crate::tools::coordsys::validate_restored_linear_coordinates;
 use crate::tools::table::casa_record;
+use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
@@ -782,11 +784,11 @@ impl PyImageTool {
         let expanded = resolve_image_path(py, outfile);
         let record = casa_record(py, csys)?;
         let shape = shape.map_or_else(Vec::new, |shape| shape.0);
-        let message = py.detach(|| {
+        let messages = py.detach(|| {
             let mut state = self.state();
             state.image = None;
             let expanded = expanded?;
-            let components = input?.load(Path::new(expanded.as_ref()))?;
+            let input = input?;
             if !(2..=4).contains(&shape.len()) {
                 return Err(raised("ComponentListImages must have 2, 3, or 4 dimensions"));
             }
@@ -805,12 +807,15 @@ impl PyImageTool {
                 kind: "f".into(),
             }
             .geometry(None)?;
+            let stage = StagedImage::allocate_creation(outfile, &expanded, overwrite)?;
+            let mut messages = Vec::new();
+            let (components, spectral_records) = input.load(stage.is_some(), &mut messages)?;
             let message = format!("Created ComponentListImage {outfile} of shape {shape:?}.");
             let source = ComponentListImage::new(shape.clone(), components, geometry.coordinates, cache)
                 .map_err(raised)?;
-            let attachment = publish_image(expanded.as_ref(), overwrite, |path| {
+            let attachment = publish_staged_pair(stage, None, overwrite, |path, _| {
                 if let Some(path) = path {
-                    source.write_native(path, &geometry.record).map_err(raised)?;
+                    source.write_native(path, &geometry.record, &spectral_records).map_err(raised)?;
                 }
                 let mut image = ImageHandle::from_component(source, geometry.record).map_err(raised)?;
                 if path.is_none() {
@@ -824,21 +829,18 @@ impl PyImageTool {
                         )?;
                     }
                 }
-                Ok(image)
+                Ok((image, None))
             })?;
             if !cache && !outfile.is_empty() {
                 attachment.lock().disable_component_cache().map_err(raised)?;
             }
             state.image = Some(attachment);
-            Ok(message)
+            if log {
+                messages.push(LogLine::info(message));
+            }
+            Ok::<_, PyErr>(messages)
         })?;
-        if log {
-            crate::tools::emit(
-                py,
-                "casars.tools.image",
-                &[crate::tools::LogLine::info(message)],
-            )?;
-        }
+        emit(py, "casars.tools.image", &messages)?;
         Ok(true)
     }
 
@@ -957,19 +959,23 @@ enum ComponentListInput {
 }
 
 impl ComponentListInput {
-    fn load(self, output: &Path) -> PyResult<ComponentList> {
+    fn load(
+        self,
+        persistent: bool,
+        logs: &mut Vec<LogLine>,
+    ) -> PyResult<(ComponentList, BTreeMap<usize, RecordValue>)> {
         match self {
-            Self::Record(record) => ComponentList::from_record(&record).map_err(raised),
+            Self::Record(record) => Ok(component_image_creation_model(&record, logs, persistent)?),
             Self::Table(path) => {
-                let source = path.canonicalize().map_err(raised)?;
-                if let Ok(target) = output.canonicalize()
-                    && (source.starts_with(&target) || target.starts_with(&source))
-                {
-                    return Err(raised(
-                        "Cannot overwrite an output that overlaps the component-list input table",
-                    ));
-                }
-                ComponentList::read_table(source).map_err(raised)
+                // CASA opens the list, then constructs the image from its
+                // public component records. Column-only metadata does not
+                // pass through that conversion.
+                let components = ComponentList::read_table(path).map_err(raised)?;
+                let record = components.to_record().map_err(raised)?;
+                Ok((
+                    ComponentList::from_record(&record).map_err(raised)?,
+                    BTreeMap::new(),
+                ))
             }
         }
     }

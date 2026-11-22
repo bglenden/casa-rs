@@ -307,14 +307,9 @@ impl ImageHandle {
     }
 
     pub(super) fn history_entries(&self) -> PyResult<Vec<casa_images::image::ImageHistoryRow>> {
-        if self.image_type_name() == "ComponentListImage"
-            && let Some(path) = self.path()
-        {
-            return casa_images::image::image_history_rows(path).map_err(raised);
-        }
         with_pixels!(self, storage => match storage {
             Storage::Paged(image) => casa_images::image::image_history_rows(image.name().expect("native image path")).map_err(raised),
-            Storage::Temp { image, .. } => Ok(image.history_rows().to_vec()),
+            Storage::Temp { image, .. } => Ok(image.history_rows().map_err(raised)?.into_owned()),
         })
     }
 
