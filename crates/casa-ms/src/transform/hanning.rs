@@ -166,10 +166,12 @@ fn filter_noise(
                 for (offset, (weight, coefficient)) in
                     inputs.into_iter().zip(COEFFICIENTS).enumerate()
                 {
-                    if weight > f32::MIN_POSITIVE {
-                        variance += coefficient * coefficient / weight;
-                    } else {
+                    if weight <= f32::MIN_POSITIVE {
                         flagged = true;
+                    } else {
+                        // An unknown (NaN) variance must propagate through
+                        // the filter. Zero or negative weight marks a flag.
+                        variance += coefficient * coefficient / weight;
                     }
                     flagged |= mask[channel - 1 + offset];
                 }

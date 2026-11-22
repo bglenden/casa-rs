@@ -730,7 +730,7 @@ fn mstransform_staged(
         first_selected_row,
         grammar,
         options.use_weight_spectrum,
-        (task_average, averaging_time, convolving || hanning),
+        (task_average, averaging_time, convolving, hanning),
         &visibility,
     )
     .map_err(|source| MsTransformError::MutateMeasurementSet {
@@ -1907,7 +1907,7 @@ impl SpectrumProjection {
         selected_row: usize,
         grammar: RowGrammar,
         force_spectra: bool,
-        (channel_average, time_average, spectral_convolution): (bool, bool, bool),
+        (channel_average, time_average, spectral_convolution, hanning): (bool, bool, bool, bool),
         visibility: &VisibilityColumns,
     ) -> Result<Self, TableError> {
         let exists = |name| {
@@ -1947,12 +1947,12 @@ impl SpectrumProjection {
                 .any(|column| column.source == OptionalMainColumn::CorrectedData)
                 || (copies.len() == 1 && copies[0].source == OptionalMainColumn::LagData)
         } else {
-            channel_average || fill_standard || spectral_convolution
+            channel_average || fill_standard || spectral_convolution || hanning
         };
         if needs_weight && exists("WEIGHT_SPECTRUM") {
             source.push("WEIGHT_SPECTRUM");
         }
-        let needs_sigma = if channel_average || time_average {
+        let needs_sigma = if channel_average || time_average || hanning {
             visibility.copies().iter().any(|column| {
                 column.source == OptionalMainColumn::Data
                     || (time_average && column.source == OptionalMainColumn::FloatData)

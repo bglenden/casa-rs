@@ -160,6 +160,29 @@ def sparse_failure(root, source):
     print("passed sparse-spectrum refusal", flush=True)
 
 
+def unused_sigma_spectrum(root, source):
+    sparse = root / "unused-sigma.ms"
+    clone(source, sparse)
+    with table(str(sparse), readonly=False, ack=False) as ms:
+        sigmas = ms.getcol("SIGMA_SPECTRUM")
+        ms.removecols("SIGMA_SPECTRUM")
+        ms.addcols(maketabdesc(makearrcoldesc("SIGMA_SPECTRUM", 0, ndim=2, valuetype="float")))
+        for row in (0, *range(2, ms.nrows())):
+            ms.putcell("SIGMA_SPECTRUM", row, sigmas[row])
+    paired(root, sparse, "model-ignores-undefined-sigma-spectrum", datacolumn="model")
+
+
+def nonpositive_and_unknown_weights(root, source):
+    for label, value in (("zero", 0.), ("nan", np.nan)):
+        vis = root / f"{label}.ms"
+        clone(source, vis)
+        with table(str(vis), readonly=False, ack=False) as ms:
+            weights = ms.getcell("WEIGHT_SPECTRUM", 0)
+            weights[3, 0] = value
+            ms.putcell("WEIGHT_SPECTRUM", 0, weights)
+        paired(root, vis, f"{label}-weight", datacolumn="corrected")
+
+
 def invalid_switches(root, source):
     for value, diagnostic in ((None, "null value not allowed"),
                               (1, "must be of cBool type"),
@@ -263,6 +286,8 @@ def main():
         for side, product in zip(("casa", "native"), pair):
             paired(root, product, f"reopen-{side}-product")
         sparse_failure(root, source)
+        unused_sigma_spectrum(root, spectral)
+        nonpositive_and_unknown_weights(root, spectral)
         invalid_switches(root, source)
         float_and_lag(root, source)
 
