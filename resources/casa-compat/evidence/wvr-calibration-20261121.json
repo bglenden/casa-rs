@@ -7,7 +7,8 @@
   "scope": "Two compact ALMA fixtures with physical WVR temperatures, selected sky states and two source intervals.",
   "commands": [
     "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_oracle.py --work <new-directory>",
-    "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --work <new-directory>"
+    "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --work <new-directory>",
+    "CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/wvrgcal_options_oracle.py --recorded-ms <uid___A002_X8ca70c_X5_shortened.ms> --work <new-directory>"
   ],
   "task_parameters": 24,
   "tool_parameters": 26,
@@ -54,5 +55,40 @@
     "gain_normalized_rms": 0.0,
     "visibility_normalized_rms": 1.07326e-07
   },
-  "recorded_alma_case": "Pending access to the recorded ALMA input on the Mac mini."
+  "recorded_alma_case": {
+    "execution_date": "2026-11-21",
+    "execution_timezone": "America/Denver",
+    "revision": "b2ec90630ba2db384666dea9f944c97e394a9b06",
+    "receipt": "https://github.com/bglenden/casa-rs/pull/1982",
+    "dataset": "measurementset/alma/uid___A002_X8ca70c_X5_shortened.ms",
+    "casatestdata_revision": "5e48637233019176f328ab4552e96395ab967581",
+    "verified_files": 122,
+    "verified_bytes": 522470469,
+    "main_rows": 250560,
+    "pointing_rows": 1123547,
+    "timing_scope": "Local cloud debug build with the MS in local memory-backed scratch storage",
+    "previous_default_native_abort_after_s": 684,
+    "cases": {
+      "default": {
+        "gain_nrms": 2.4133e-05,
+        "upstream_segment_assignment_nrms": 0.123251,
+        "casa_s": 3.151,
+        "native_debug_s": 11.08
+      },
+      "time-offset": {
+        "gain_nrms": 1.80145e-09,
+        "casa_s": 1.865,
+        "native_debug_s": 7.651
+      },
+      "fixed-fits": {
+        "gain_nrms": 1.1747e-09,
+        "casa_s": 3.659,
+        "native_debug_s": 13.389
+      }
+    },
+    "science_spw": 1,
+    "visibility_normalized_rms": 3.51205e-07,
+    "empty_single_retrieval": "CASA exits with SIGSEGV. casa-rs returns rval=1 without a table.",
+    "result": "Corrected default gains agreed to 2.4133e-05 normalized RMS, fixed-interval gains to 1.80145e-09, and calibrated science visibilities to 3.51205e-07."
+  }
 }
