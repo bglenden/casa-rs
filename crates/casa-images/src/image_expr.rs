@@ -1463,6 +1463,31 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         }
     }
 
+    /// Bind owned, bounded section readers to an image's current geometry.
+    ///
+    /// The readers must address the same image and return arrays with the
+    /// requested shape. The mask reader is used only for a masked image.
+    ///
+    /// # Errors
+    /// Returns an error if the image metadata cannot be read.
+    pub fn from_image_sections(
+        image: &dyn ImageInterface<T>,
+        read: impl Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<T>, ImageError>
+        + Send
+        + Sync
+        + 'static,
+        read_mask: impl Fn(&[usize], &[usize], &[usize]) -> Result<Option<ArrayD<bool>>, ImageError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Result<Self, ImageError> {
+        let meta = ImageExprMeta::from_image(image)?;
+        let mask = image
+            .has_pixel_mask()
+            .then(|| Arc::new(read_mask) as OwnedMaskReader);
+        Ok(Self::from_section_readers(meta, Arc::new(read), mask))
+    }
+
     /// Negates the expression lazily.
     pub fn negate(self) -> Self {
         self.unary(ImageExprUnaryOp::Negate)

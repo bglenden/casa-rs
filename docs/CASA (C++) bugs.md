@@ -8473,6 +8473,8 @@ Create two saved image-expression directories whose `ImageExpr` fields
 refer to each other, then open either directory. CASA 6.7.6.14 recurses
 until the Python process segfaults. Casa-rs resolves aliases to the same
 directory and raises an error on the cycle before publishing an output.
+The same active path check covers a saved expression reached through a
+virtual concatenation.
 See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
 ### Copying a saved expression can delete one of its manifests

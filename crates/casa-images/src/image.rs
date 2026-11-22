@@ -810,6 +810,7 @@ pub struct PagedImage<T: ImagePixel> {
     /// needs mutation even through `&self` trait methods.
     tiled_io: Option<RefCell<TiledArrayStorage>>,
     max_cache_bytes: Cell<usize>,
+    advisory_locks: bool,
     #[cfg(unix)]
     cached_modify_counter: Option<u32>,
     #[cfg(unix)]
@@ -1085,6 +1086,7 @@ impl<T: ImagePixel> PagedImage<T> {
             max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
             #[cfg(unix)]
             cached_modify_counter: None,
+            advisory_locks: false,
             #[cfg(unix)]
             pending_tile_writes: false,
             _pixel: PhantomData,
@@ -1166,6 +1168,7 @@ impl<T: ImagePixel> PagedImage<T> {
             max_cache_bytes: Cell::new(cache_bytes),
             #[cfg(unix)]
             cached_modify_counter: None,
+            advisory_locks: false,
             #[cfg(unix)]
             pending_tile_writes: false,
             _pixel: PhantomData,
@@ -1217,6 +1220,7 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(Self {
             #[cfg(unix)]
             cached_modify_counter: table.locked_modify_counter().ok(),
+            advisory_locks: false,
             #[cfg(unix)]
             pending_tile_writes: false,
             table,
@@ -1303,9 +1307,14 @@ impl<T: ImagePixel> PagedImage<T> {
         self.path.is_some()
     }
 
-    /// Returns `true` because `PagedImage<T>` supports mutation.
+    /// Whether this image can be changed through the current attachment.
     pub fn is_writable(&self) -> bool {
-        true
+        !self.advisory_locks
+    }
+
+    /// A read-only directory without a lock file reports advisory locks.
+    pub fn uses_advisory_locks(&self) -> bool {
+        self.advisory_locks
     }
 
     /// Returns the casacore-style class name for this image.
@@ -3161,6 +3170,10 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
 
     fn is_paged(&self) -> bool {
         self.path.is_some()
+    }
+
+    fn is_writable(&self) -> bool {
+        self.is_writable()
     }
 
     fn get_at(&self, position: &[usize]) -> Result<T, LatticeError> {

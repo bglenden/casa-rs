@@ -1,6 +1,7 @@
 """Pinned behavior of the public image tool on a saved expression."""
 
 import json
+import os
 
 import numpy as np
 import pytest
@@ -624,6 +625,202 @@ def test_concat_saved_expression_keeps_the_source_mask(tmp_path, backend, mode, 
         np.testing.assert_array_equal(product.getchunk()[:3][pixels > 4], (pixels * 3)[pixels > 4])
     finally:
         product.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("selector", ["", ":nomask", ":unknown"])
+def test_saved_expression_uses_virtual_concat_pixels_and_mask(tmp_path, backend, selector):
+    api = _backend(backend)
+    masked, valid, virtual, expression, output = (
+        tmp_path / name for name in ("masked.im", "valid.im", "virtual.im", "expression.im", "out.im")
+    )
+    values = np.arange(12, dtype=np.float32).reshape(3, 4)
+    _operand(api, masked, values)
+    other = _typed_operand(api, valid, "float")
+    tool = api.image()
+    joined = tool.imageconcat(str(virtual), [str(masked), str(valid)], axis=0, relax=True, mode="nomove")
+    assert joined.done()
+    _manifest(expression, ImageExpr=f'"{virtual}{selector}" + 2')
+    expected = np.concatenate([values, other]) + 2
+    mask = np.concatenate([values > 4, np.ones_like(values, dtype=bool)])
+    try:
+        assert tool.open(str(expression))
+        np.testing.assert_array_equal(tool.getchunk(getmask=True), mask)
+        np.testing.assert_array_equal(tool.getchunk()[mask], expected[mask])
+        assert tool.haslock().tolist() == [False, False]
+        assert tool.done()
+        joined = tool.imageconcat(str(output), [str(expression), str(valid)],
+                                   axis=0, relax=True, mode="nomove")
+        np.testing.assert_array_equal(joined.getchunk(getmask=True)[:6], mask)
+        np.testing.assert_array_equal(joined.getchunk()[:6][mask], expected[mask])
+    finally:
+        joined.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("pixeltype", ["double", "complex", "dcomplex"])
+def test_saved_expression_preserves_virtual_operand_precision(tmp_path, backend, pixeltype):
+    api = _backend(backend)
+    left, right, virtual, expression = (tmp_path / name for name in
+                                        ("left.im", "right.im", "virtual.im", "expr.im"))
+    first = _typed_operand(api, left, pixeltype)
+    second = _typed_operand(api, right, pixeltype)
+    tool = api.image()
+    product = tool.imageconcat(str(virtual), [str(left), str(right)], axis=0,
+                                relax=True, mode="nomove")
+    assert product.done()
+    _manifest(expression, ImageExpr=f'"{virtual}" + 2')
+    try:
+        assert tool.open(str(expression))
+        assert tool.pixeltype() == pixeltype
+        np.testing.assert_array_equal(tool.getchunk(), np.concatenate([first, second]) + 2)
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("selector", ["", ":nomask", ":unknown"])
+def test_saved_expression_reads_miriad_leaves(tmp_path, backend, selector):
+    api = _backend(backend)
+    miriad, expression, native, output = (tmp_path / name for name in
+                                        ("sky.im", "expression.im", "native.im", "out.im"))
+    pixels = _sky(miriad)
+    _manifest(expression, ImageExpr=f'"{miriad}{selector}" + 2')
+    tool = api.image()
+    try:
+        if selector == ":unknown":
+            with pytest.raises(RuntimeError, match="has no named masks"):
+                tool.open(str(expression))
+            return
+        assert tool.open(str(expression))
+        np.testing.assert_array_equal(tool.getchunk(), pixels + 2)
+        assert tool.haslock().tolist() == [True, True]
+        assert tool.done()
+        calculated = tool.imagecalc(pixels=f'"{miriad}{selector}" + 2')
+        try:
+            np.testing.assert_array_equal(calculated.getchunk(), pixels + 2)
+        finally:
+            calculated.done()
+        assert tool.fromarray(str(native), pixels)
+        assert tool.done()
+        joined = tool.imageconcat(str(output), [str(expression), str(native)],
+                                   axis=0, relax=True, mode="nomove")
+        try:
+            np.testing.assert_array_equal(joined.getchunk(), np.concatenate([pixels + 2, pixels]))
+        finally:
+            joined.done()
+    finally:
+        tool.done()
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX file permissions")
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_concat_saved_expression_reads_readonly_native_without_table_lock(tmp_path, backend):
+    api = _backend(backend)
+    leaf, other, expression, output = (tmp_path / name for name in
+                                      ("leaf.im", "other.im", "expression.im", "out.im"))
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    _operand(api, leaf, pixels)
+    _typed_operand(api, other, "float")
+    lock_file = leaf / "table.lock"
+    lock_file.unlink()
+    paths = [leaf, *leaf.rglob("*")]
+    permissions = {path: path.stat().st_mode & 0o777 for path in paths}
+    for path in reversed(paths):
+        path.chmod(0o555 if path.is_dir() else 0o444)
+    _manifest(expression, ImageExpr=f'"{leaf}:nomask" + 2')
+    tool = api.image()
+    try:
+        for method in ("open", "newimage", "newimagefromfile", "newimagefromimage"):
+            result = getattr(tool, method)(str(leaf))
+            reader = tool if method == "open" else result
+            try:
+                np.testing.assert_array_equal(reader.getchunk(), pixels)
+                np.testing.assert_array_equal(reader.getchunk(getmask=True), pixels > 4)
+                assert reader.haslock().tolist() == [True, True]
+                if method != "newimagefromimage":
+                    with pytest.raises(RuntimeError):
+                        reader.putchunk(np.ones_like(pixels))
+                    np.testing.assert_array_equal(reader.getchunk(), pixels)
+            finally:
+                reader.done()
+        assert tool.fromimage(str(tmp_path / "copied.im"), str(leaf))
+        np.testing.assert_array_equal(tool.getchunk(), pixels)
+        assert tool.done()
+        assert not lock_file.exists()
+        joined_native = tool.imageconcat(str(tmp_path / "native-joined.im"), [str(leaf), str(other)],
+                                          axis=0, relax=True, mode="nomove", tempclose=True)
+        try:
+            np.testing.assert_array_equal(joined_native.getchunk()[:3], pixels)
+            assert joined_native.haslock().tolist() == [False, False]
+        finally:
+            joined_native.done()
+        assert tool.open(str(expression))
+        np.testing.assert_array_equal(tool.getchunk(), pixels + 2)
+        np.testing.assert_array_equal(tool.getchunk(getmask=True), np.ones_like(pixels, dtype=bool))
+        assert tool.done()
+        joined = tool.imageconcat(str(output), [str(expression), str(other)],
+                                   axis=0, relax=True, mode="nomove", tempclose=True)
+        try:
+            np.testing.assert_array_equal(joined.getchunk()[:3], pixels + 2)
+            assert joined.haslock().tolist() == [True, True]
+            assert not lock_file.exists()
+        finally:
+            joined.done()
+    finally:
+        tool.done()
+        for path, mode in permissions.items():
+            path.chmod(mode)
+
+
+def test_open_rejects_a_cycle_across_saved_expression_and_concat(tmp_path):
+    api = _backend("casars")
+    expression, virtual, leaf, output = (tmp_path / name for name in
+                                        ("expression.im", "virtual.im", "leaf.im", "out.im"))
+    _typed_operand(api, leaf, "float")
+    _manifest(expression, ImageExpr=f'"{virtual}" + 2')
+    virtual.mkdir()
+    (virtual / "imageconcat.json").write_text(json.dumps({
+        "DataType": "float", "Axis": 0, "Images": ["./expression.im", "./leaf.im"],
+    }))
+    tool = api.image()
+    try:
+        for path in (expression, virtual):
+            with pytest.raises(RuntimeError, match="Cycle in"):
+                tool.open(str(path))
+        with pytest.raises(RuntimeError, match="Cycle in"):
+            tool.imageconcat(str(output), [str(expression), str(leaf)], axis=0, mode="nomove")
+        assert not output.exists()
+    finally:
+        tool.done()
+
+
+def test_move_protects_a_table_used_through_an_external_virtual_operand(tmp_path):
+    api = _backend("casars")
+    first, second, virtual, expression, output = (
+        tmp_path / name for name in ("first.im", "second.im", "virtual.im", "expr.im", "output.im")
+    )
+    first_pixels = _typed_operand(api, first, "float")
+    second_pixels = _typed_operand(api, second, "float")
+    original = _typed_operand(api, output, "float")
+    tool = api.image()
+    joined = tool.imageconcat(str(virtual), [str(first), str(second)], axis=0, relax=True, mode="nomove")
+    assert joined.done()
+    _manifest(expression, ImageExpr=f'"{virtual}" + 2')
+    try:
+        with pytest.raises(RuntimeError, match="Cannot relocate virtual concatenation"):
+            tool.imageconcat(str(output), [str(expression), str(first)], axis=0,
+                             relax=True, mode="move", overwrite=True)
+        assert first.is_dir() and expression.is_dir()
+        assert tool.open(str(output))
+        np.testing.assert_array_equal(tool.getchunk(), original)
+        assert tool.open(str(expression))
+        np.testing.assert_array_equal(tool.getchunk(),
+                                      np.concatenate([first_pixels, second_pixels]) + 2)
+    finally:
+        joined.done()
         tool.done()
 
 

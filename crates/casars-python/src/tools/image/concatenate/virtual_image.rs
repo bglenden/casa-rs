@@ -26,7 +26,9 @@ use super::{
 };
 use crate::tools::LogLine;
 use crate::tools::image::attachment::{AttachedImage, registry};
-use crate::tools::image::handle::{ImageHandle, Storage, raised, same_file_identity, with_storage};
+use crate::tools::image::handle::{
+    ImageHandle, Storage, raised, same_file_identity, with_pixels, with_storage,
+};
 use crate::tools::image::saved_expression::SavedExpressionInputs;
 
 pub(in crate::tools::image) fn open(path: &Path) -> PyResult<AttachedImage> {
@@ -37,6 +39,13 @@ pub(in crate::tools::image) fn open(path: &Path) -> PyResult<AttachedImage> {
 pub(in crate::tools::image) fn open_handle(path: &Path) -> Result<ImageHandle, ImageError> {
     load(path, false, &mut HashSet::new())
         .map_err(|error| ImageError::CasaSelection(error.to_string()))
+}
+
+pub(in crate::tools::image) fn open_expression_leaf(
+    path: &Path,
+    active: &mut HashSet<PathBuf>,
+) -> PyResult<ImageHandle> {
+    load(path, false, active)
 }
 
 pub(in crate::tools::image) fn check_relocation(source: &Path, target: &Path) -> PyResult<()> {
@@ -188,7 +197,7 @@ fn open_members<'a>(
                 let image = load(&resolved, tempclose, active)?;
                 Input::from_image(path, image, tempclose, None)
             } else {
-                Input::open_resolved(path, &resolved, tempclose)
+                Input::open_resolved(path, &resolved, tempclose, active)
             }
         })
         .collect()
@@ -300,6 +309,7 @@ fn typed<T: MemberPixel>(
             storage: Mutex::new(storage),
             expression: input.expression,
             expression_operands: input.expression_operands,
+            nested_operands: input.nested_operands,
         });
         by_path.insert(path, Arc::clone(&member));
         members.push(member);
@@ -328,6 +338,7 @@ struct Member<T: MemberPixel> {
     storage: Mutex<Option<Storage<T>>>,
     expression: Option<SavedExpressionInputs>,
     expression_operands: Vec<PathBuf>,
+    nested_operands: Vec<PathBuf>,
 }
 
 impl<T: MemberPixel> Member<T> {
@@ -533,6 +544,10 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
         &self.expression_operands
     }
 
+    fn nested_operands(&self) -> &[PathBuf] {
+        &self.nested_operands
+    }
+
     fn lock_state(&self) -> ConcatLockState {
         if let Some(expression) = &self.expression {
             return ConcatLockState::Nested(
@@ -650,6 +665,12 @@ fn expression_error(error: PyErr) -> ImageError {
 
 fn expression_lock_state(input: &AttachedImage) -> ConcatLockState {
     let image = input.lock();
+    if let Some(state) = with_pixels!(&*image, storage => match storage {
+        Storage::Temp { image, .. } => image.concat_source().map(ConcatImage::lock_states),
+        Storage::Paged(_) => None,
+    }) {
+        return ConcatLockState::Nested(state);
+    }
     ConcatLockState::Leaf(
         [LockType::Write, LockType::Read]
             .into_iter()
@@ -661,10 +682,17 @@ fn restore_expression_lock(
     input: &AttachedImage,
     state: ConcatLockState,
 ) -> Result<(), ImageError> {
-    let ConcatLockState::Leaf(previous) = state else {
-        unreachable!("captured leaf locks")
-    };
     let mut image = input.lock();
+    let previous = match state {
+        ConcatLockState::Leaf(previous) => previous,
+        ConcatLockState::Nested(states) => {
+            return with_pixels!(&*image, storage => match storage {
+                Storage::Temp { image, .. } => image.concat_source()
+                    .expect("captured concatenation locks").restore_locks(states),
+                Storage::Paged(_) => unreachable!("captured concatenation locks"),
+            });
+        }
+    };
     let current = [LockType::Write, LockType::Read]
         .into_iter()
         .find(|&kind| image.has_storage_lock(kind));
@@ -689,13 +717,9 @@ fn lock_expression_inputs(
     let mut acquired = Vec::new();
     for input in inputs {
         let prior = expression_lock_state(input);
-        let result = {
-            let mut image = input.lock();
-            input
-                .check_bound_name(&image)
-                .and_then(|()| image.lock_storage(kind, attempts))
-                .map_err(expression_error)
-        };
+        let result = input
+            .lock_expression_operand(kind, attempts)
+            .map_err(expression_error);
         match result {
             Ok(true) => acquired.push((input, prior)),
             refused => {
@@ -713,7 +737,7 @@ fn table_lock_state<T: ImagePixel>(image: &casa_images::PagedImage<T>) -> Option
     #[cfg(unix)]
     return [LockType::Write, LockType::Read]
         .into_iter()
-        .find(|&kind| image.has_lock(kind));
+        .find(|&kind| !image.uses_advisory_locks() && image.has_lock(kind));
     #[cfg(not(unix))]
     {
         let _ = image;

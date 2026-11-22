@@ -53,6 +53,19 @@ impl MiriadImage {
         path.join("header").is_file() && path.join("image").is_file()
     }
 
+    /// Recognize an input after honoring native table and manifest precedence.
+    ///
+    /// `probe` is the supplied image path and `resolved` is the directory
+    /// used to read a native table's control record.
+    pub fn recognizes_input(probe: &Path, resolved: &Path) -> bool {
+        Self::recognizes(probe)
+            && !crate::concat_file::is_image_concat(probe)
+            && !crate::expr_file::is_image_expr(probe)
+            && (!resolved.join("table.dat").is_file()
+                || casa_tables::Table::open_metadata_only(casa_tables::TableOptions::new(resolved))
+                    .is_err())
+    }
+
     /// Whether a file can supply pixels or metadata to this reader.
     pub fn is_image_file(name: &str) -> bool {
         matches!(name, "header" | "image") || is_image_keyword(name)

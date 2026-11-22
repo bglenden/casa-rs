@@ -90,6 +90,11 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
         &[]
     }
 
+    /// Entries referenced by a member that is itself a concatenation.
+    fn nested_operands(&self) -> &[PathBuf] {
+        &[]
+    }
+
     /// Capture the physical access leases this member holds.
     fn lock_state(&self) -> ConcatLockState;
 
@@ -388,6 +393,14 @@ impl<T: ImagePixel> ConcatImage<T> {
         self.members
             .iter()
             .flat_map(|member| member.expression_operands())
+    }
+
+    /// Direct and transitive operand paths of the concatenation.
+    pub fn operand_paths(&self) -> impl Iterator<Item = &Path> {
+        self.members.iter().flat_map(|member| {
+            std::iter::once(member.path())
+                .chain(member.nested_operands().iter().map(PathBuf::as_path))
+        })
     }
 
     /// Capture each physical member's access leases before a lock request.

@@ -3,16 +3,20 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
-use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
+use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions, TableUseLock};
 
 use super::{AnyPagedImage, ImageError, ImagePixel, ImagePixelType, PagedImage};
 
-fn open_read_locked_table(path: &Path, attempts: u32) -> Result<Table, ImageError> {
-    Ok(Table::open_with_lock_attempts(
+fn open_read_locked_table(path: &Path, attempts: u32) -> Result<(Table, bool), ImageError> {
+    if TableUseLock::readonly_without_lock_file(path) {
+        return Ok((Table::open(TableOptions::new(path))?, true));
+    }
+    let table = Table::open_with_lock_attempts(
         TableOptions::new(path),
         LockOptions::new(LockMode::AutoLocking),
         attempts,
-    )?)
+    )?;
+    Ok((table, false))
 }
 
 impl AnyPagedImage {
@@ -23,22 +27,22 @@ impl AnyPagedImage {
     /// acquire a write lock before a mutation with [`PagedImage::lock`].
     pub fn open_with_lock(path: impl AsRef<Path>, attempts: u32) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
-        let table = open_read_locked_table(&path, attempts)?;
+        let (table, advisory_locks) = open_read_locked_table(&path, attempts)?;
         let kind = ImagePixelType::from_primitive_type(
             PagedImage::<f32>::map_column_primitive_type(&table, None)?,
         )?;
         match kind {
             ImagePixelType::Float32 => {
-                PagedImage::from_locked_disk(path, table, 0).map(Self::Float32)
+                PagedImage::from_locked_disk(path, table, 0, advisory_locks).map(Self::Float32)
             }
             ImagePixelType::Float64 => {
-                PagedImage::from_locked_disk(path, table, 0).map(Self::Float64)
+                PagedImage::from_locked_disk(path, table, 0, advisory_locks).map(Self::Float64)
             }
             ImagePixelType::Complex32 => {
-                PagedImage::from_locked_disk(path, table, 0).map(Self::Complex32)
+                PagedImage::from_locked_disk(path, table, 0, advisory_locks).map(Self::Complex32)
             }
             ImagePixelType::Complex64 => {
-                PagedImage::from_locked_disk(path, table, 0).map(Self::Complex64)
+                PagedImage::from_locked_disk(path, table, 0, advisory_locks).map(Self::Complex64)
             }
         }
     }
@@ -49,19 +53,22 @@ impl<T: ImagePixel> PagedImage<T> {
         path: &Path,
         max_cache_bytes: usize,
     ) -> Result<Self, ImageError> {
-        let table = open_read_locked_table(path, 0)?;
-        Self::from_locked_disk(path.to_path_buf(), table, max_cache_bytes)
+        let (table, advisory_locks) = open_read_locked_table(path, 0)?;
+        Self::from_locked_disk(path.to_path_buf(), table, max_cache_bytes, advisory_locks)
     }
 
     fn from_locked_disk(
         path: PathBuf,
         table: Table,
         max_cache_bytes: usize,
+        advisory_locks: bool,
     ) -> Result<Self, ImageError> {
         let tiled_io = Self::open_tiled_io(&path, max_cache_bytes)
             .ok()
             .map(RefCell::new);
-        Self::from_disk(path, table, tiled_io, max_cache_bytes)
+        let mut image = Self::from_disk(path, table, tiled_io, max_cache_bytes)?;
+        image.advisory_locks = advisory_locks;
+        Ok(image)
     }
 
     /// Acquires a casacore-compatible table lock on a locking-enabled image.
@@ -69,6 +76,9 @@ impl<T: ImagePixel> PagedImage<T> {
     /// See [`Table::lock`] for the meaning of `nattempts`. A new table
     /// generation refreshes the coordinates and invalidates image caches.
     pub fn lock(&mut self, kind: LockType, nattempts: u32) -> Result<bool, ImageError> {
+        if self.advisory_locks {
+            return Ok(true);
+        }
         if self.has_lock(kind) {
             self.table.resync_locked()?;
         } else if !self.table.lock(kind, nattempts)? {
@@ -84,11 +94,14 @@ impl<T: ImagePixel> PagedImage<T> {
 
     /// Reports whether this handle holds the given lock.
     pub fn has_lock(&self, kind: LockType) -> bool {
-        self.table.has_lock(kind)
+        self.advisory_locks || self.table.has_lock(kind)
     }
 
     /// Flushes a held write lock and releases this handle's table lock.
     pub fn unlock(&mut self) -> Result<(), ImageError> {
+        if self.advisory_locks {
+            return Ok(());
+        }
         if self.has_lock(LockType::Write) {
             if self.pending_tile_writes || self.table.holds_unflushed_changes() {
                 self.save()?;

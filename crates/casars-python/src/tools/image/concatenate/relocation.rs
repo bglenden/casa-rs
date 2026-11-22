@@ -93,15 +93,13 @@ impl Relocation<'_> {
                 continue;
             }
             if is_image_concat(&source) {
-                if resolved.starts_with(self.destination) {
-                    let manifest = ConcatManifest::open(&source).map_err(raised)?;
-                    images.extend(
-                        manifest
-                            .paths(&source)
-                            .into_iter()
-                            .zip(manifest.paths(&resolved)),
-                    );
-                }
+                let manifest = ConcatManifest::open(&source).map_err(raised)?;
+                images.extend(
+                    manifest
+                        .paths(&source)
+                        .into_iter()
+                        .zip(manifest.paths(&resolved)),
+                );
             } else if ImageHandle::recognizes_miriad(&source, &source) {
                 self.check_miriad_files(&source, &resolved)?;
             } else if is_image_expr(&source) {
