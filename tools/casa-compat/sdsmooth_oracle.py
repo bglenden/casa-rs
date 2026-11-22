@@ -169,9 +169,18 @@ def floating_data(root, source):
 
 def task_pair(root, tasks, label, source, **options):
     products = {}
+    with opened(source / 'HISTORY') as history:
+        prior = [message for origin, message in zip(history.getcol('ORIGIN'), history.getcol('MESSAGE'))
+                 if origin == 'sdsmooth']
     for name, task in tasks.items():
         output = root / f'{label}-{name}.ms'
         assert task(str(source), outfile=str(output), **options) is None
+        with opened(output / 'HISTORY') as history:
+            messages = [message for origin, message in
+                        zip(history.getcol('ORIGIN'), history.getcol('MESSAGE'))
+                        if origin == 'sdsmooth']
+            assert len(messages) == len(prior) + 2 and messages[:-2] == prior
+            assert messages[-2] == 'taskname=sdsmooth' and messages[-1].startswith('version: ')
         products[name] = output
     if 'native' in products:
         compare_outputs(products['casa'], products['native'])
@@ -240,9 +249,12 @@ def test_lifecycle(root, tools, source):
         assert session.set_selection(spw='7') is True
         assert session.set_selection(spw='0:1~4,1', reindex=False, beam=[0]) is True
         output = root / f'tool-{name}.ms'
+        assert session.smooth('gaussian', 2, 'data', str(output)) is True
         assert session.smooth('boxcar', 2, 'data', str(output)) is True
         assert session.done() is True
         assert session.close() is True
+        with opened(output / 'HISTORY') as history:
+            assert 'sdsmooth' not in history.getcol('ORIGIN')
         products[name] = output
     check_pixels(source, products['casa'], 'boxcar', 2, partial=True)
     if 'native' in products:
@@ -301,6 +313,10 @@ def test_publication(root, tasks, source):
         assert_error(task, AssertionError,
                      "the infile parameter must be a path that exists ('' does not exist)")
         assert_error(lambda: task(str(source)), ValueError, 'outfile is empty.')
+        negative = root / f'negative-antenna-{name}.ms'
+        assert_error(lambda: task(str(source), antenna='!1', outfile=str(negative)), RuntimeError,
+                     "Antenna Expression: Parse error at or near '-'\n(near char. 0 in string \"-1&&&\")")
+        assert not negative.exists()
         output = root / f'replace-{name}.ms'
         assert task(str(source), outfile=str(output), kernel='boxcar', kwidth=2) is None
         assert_error(lambda: task(str(source), outfile=str(output)), ValueError,
@@ -346,6 +362,11 @@ def main():
     products = task_pair(root, tasks, 'float', floating, datacolumn='FLOAT_DATA',
                          kernel='gaussian', kwidth=2)
     check_pixels(floating, products['casa'], 'gaussian', 2, 'FLOAT_DATA')
+    products = task_pair(root, tasks, 'float-again', products['casa'], datacolumn='FLOAT_DATA',
+                         kernel='gaussian', kwidth=2)
+    with opened(products['casa']) as output:
+        assert output.nrows() == 240
+        assert not output.iscelldefined('WEIGHT', 0)
     test_reindex(root, tasks, source)
     test_selection(root, tasks, source)
     test_lifecycle(root, tools, source)

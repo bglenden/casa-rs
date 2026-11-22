@@ -240,6 +240,31 @@ fn antenna_clauses(
 }
 
 impl MeasurementSet {
+    /// CASA's antenna-1 list includes negative IDs from negated clauses.
+    pub(crate) fn signed_antenna1_indices(&self, text: &str) -> MsResult<Vec<i32>> {
+        self.with_antenna_rows(|rows| {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut indices = Vec::new();
+            for clause in antenna_clauses(rows, text, true)? {
+                let ids = match clause.term {
+                    Term::Cross(ids) | Term::AutoOnly(ids) | Term::Pair { first: ids, .. } => ids,
+                    Term::Ordered(_) => continue,
+                };
+                for id in ids {
+                    let id = if clause.negate {
+                        -(id as i32)
+                    } else {
+                        id as i32
+                    };
+                    if seen.insert(id) {
+                        indices.push(id);
+                    }
+                }
+            }
+            Ok(indices)
+        })
+    }
+
     /// Antennas listed by `MSSelection` for reindexing a transformed MS.
     pub(crate) fn transform_antenna_ids(&self, text: &str) -> MsResult<Vec<i32>> {
         self.with_antenna_rows(|rows| {

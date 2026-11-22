@@ -9,6 +9,7 @@ use ndarray::{Array1, Array2, ArrayD, Axis};
 
 use casa_tables::TableError;
 
+use crate::MeasurementSet;
 use crate::observation_io::creation::{Replacement, Stage};
 use crate::selection::RowGrammar;
 
@@ -30,6 +31,32 @@ pub trait SpectrumConvolution {
 pub(super) struct Convolution<'a> {
     pub(super) kernel: &'a mut dyn SpectrumConvolution,
     pub(super) reindex: bool,
+}
+
+pub(super) fn auto_correlations(
+    input: &MeasurementSet,
+    selector: Option<&str>,
+) -> Result<String, MsTransformError> {
+    let Some(selector) = selector.filter(|text| !text.is_empty()) else {
+        return Ok("*&&&".into());
+    };
+    let ids = input
+        .signed_antenna1_indices(selector)
+        .map_err(|source| MsTransformError::Spectrum(source.to_string()))?;
+    let rewritten = ids
+        .iter()
+        .map(|antenna| format!("{antenna}&&&"))
+        .collect::<Vec<_>>()
+        .join(";");
+    if let Some(index) = rewritten.find('-') {
+        return Err(MsTransformError::Spectrum(format!(
+            "Antenna Expression: Parse error at or near '-'\n(near char. {index} in string \"{rewritten}\")"
+        )));
+    }
+    if rewritten.is_empty() {
+        return Ok("*&&&".into());
+    }
+    Ok(rewritten)
 }
 
 pub(super) fn statistics(

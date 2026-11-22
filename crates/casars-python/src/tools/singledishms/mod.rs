@@ -133,7 +133,7 @@ impl PySingleDishMs {
                     width,
                     datacolumn,
                     output: Path::new(outfile),
-                    overwrite: false,
+                    overwrite: true,
                     history: None,
                 })
                 .map(|_| true)
