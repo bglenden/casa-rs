@@ -212,7 +212,34 @@ impl CometTable {
         }))
     }
 
+    /// Interpolate the radial velocity in metres per second on the native
+    /// comet table grid. Returns `None` outside the interpolation span.
+    ///
+    /// # Errors
+    ///
+    /// Returns a data error when the bracketing rows cannot be read.
+    pub fn radial_velocity_m_s(&self, mjd: f64) -> Result<Option<f64>, MeasuresDataError> {
+        self.within_bracket(mjd, |bracket, fraction| {
+            let first = scalar(&self.table, "RadVel", bracket.index)?;
+            let last = scalar(&self.table, "RadVel", bracket.index + 1)?;
+            Ok((first + fraction * (last - first)) * self.au_m / 86_400.)
+        })?
+        .transpose()
+    }
+
     fn position_au(&self, mjd: f64) -> Result<Option<[f64; 3]>, MeasuresDataError> {
+        self.within_bracket(mjd, |bracket, fraction| {
+            std::array::from_fn(|i| {
+                bracket.start_au[i] + fraction * (bracket.end_au[i] - bracket.start_au[i])
+            })
+        })
+    }
+
+    fn within_bracket<T>(
+        &self,
+        mjd: f64,
+        sample: impl FnOnce(&Bracket, f64) -> T,
+    ) -> Result<Option<T>, MeasuresDataError> {
         let index = ((mjd - self.origin_mjd) / self.step_days).floor() - 1.0;
         if !(0.0..(self.table.row_count() - 1) as f64).contains(&index) {
             return Ok(None);
@@ -229,9 +256,7 @@ impl CometTable {
         }
         let bracket = cache.as_ref().expect("comet bracket is loaded");
         let fraction = (mjd - bracket.start_mjd) / self.step_days;
-        Ok(Some(std::array::from_fn(|i| {
-            bracket.start_au[i] + fraction * (bracket.end_au[i] - bracket.start_au[i])
-        })))
+        Ok(Some(sample(bracket, fraction)))
     }
 }
 

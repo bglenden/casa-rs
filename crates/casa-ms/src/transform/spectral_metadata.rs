@@ -91,16 +91,7 @@ pub(super) fn write_channel_selection(
         let windows = match averaged {
             Some(windows) => windows,
             None => {
-                unaveraged = selection
-                    .channels
-                    .iter()
-                    .zip(&selection.metadata_ends)
-                    .map(|(&first, &last)| ChannelWindow {
-                        first,
-                        last,
-                        dropped: false,
-                    })
-                    .collect::<Vec<_>>();
+                unaveraged = selection_windows(selection);
                 &unaveraged
             }
         };
@@ -142,6 +133,29 @@ pub(super) fn write_channel_selection(
             .map_err(error)?;
     }
     Ok(())
+}
+
+fn selection_windows(selection: &TransformChannelSelection) -> Vec<ChannelWindow> {
+    selection
+        .channels
+        .iter()
+        .zip(&selection.metadata_ends)
+        .map(|(&first, &last)| ChannelWindow {
+            first,
+            last,
+            dropped: false,
+        })
+        .collect()
+}
+
+/// Use the existing copy-task channel geometry before sampling a new grid.
+pub(super) fn selected_footprints(
+    selection: &TransformChannelSelection,
+    frequencies: &[f64],
+    widths: &[f64],
+) -> Option<(Vec<f64>, Vec<f64>)> {
+    let grid = selected_windows(&selection_windows(selection), frequencies, widths, widths)?;
+    Some((grid.centres, grid.widths))
 }
 
 fn selected_windows(

@@ -13328,8 +13328,7 @@
             "provider": {"field": "regridms"},
             "python": {"name": "regridms"},
             "presentation": {"label": "Regrid", "group": "Spectral", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "mode",
@@ -13344,8 +13343,7 @@
             "python": {"name": "mode"},
             "presentation": {"label": "Mode", "group": "Spectral", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's mode chooses how the regridded spectral axis is given, distinct from other tasks' operation modes."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's mode chooses how the regridded spectral axis is given, distinct from other tasks' operation modes."}
         },
         {
           "name": "nchan",
@@ -13359,8 +13357,7 @@
             "provider": {"field": "nchan"},
             "python": {"name": "nchan"},
             "presentation": {"label": "Channels", "group": "Spectral", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "start",
@@ -13375,8 +13372,7 @@
             "python": {"name": "start"},
             "presentation": {"label": "Start", "group": "Spectral", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's start is the first channel of the regridded spectral axis, distinct from the imager's and impv's starts."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's start is the first channel of the regridded spectral axis, distinct from the imager's and impv's starts."}
         },
         {
           "name": "width",
@@ -13391,8 +13387,7 @@
             "python": {"name": "width"},
             "presentation": {"label": "Width", "group": "Spectral", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's width is the channel width of the regridded spectral axis, distinct from channel averaging and image widths."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's width is the channel width of the regridded spectral axis, distinct from channel averaging and image widths."}
         },
         {
           "name": "nspw",
@@ -13406,8 +13401,7 @@
             "provider": {"field": "nspw"},
             "python": {"name": "nspw"},
             "presentation": {"label": "Output SPWs", "group": "Spectral", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "interpolation",
@@ -13422,8 +13416,7 @@
             "python": {"name": "interpolation"},
             "presentation": {"label": "Interpolation", "group": "Spectral", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's interpolation regrids the spectral axis, distinct from image regridding interpolation."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's interpolation regrids the spectral axis, distinct from image regridding interpolation."}
         },
         {
           "name": "phasecenter",
@@ -13437,8 +13430,7 @@
             "provider": {"field": "phasecenter"},
             "python": {"name": "phasecenter"},
             "presentation": {"label": "Phase Center", "group": "Spectral", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "restfreq",
@@ -13452,8 +13444,7 @@
             "provider": {"field": "restfreq"},
             "python": {"name": "restfreq"},
             "presentation": {"label": "Rest Frequency", "group": "Spectral", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "outframe",
@@ -13468,8 +13459,7 @@
             "python": {"name": "outframe"},
             "presentation": {"label": "Output Frame", "group": "Spectral", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's outframe is the regridded MeasurementSet's frame, distinct from the imager's choice of frame."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's outframe is the regridded MeasurementSet's frame, distinct from the imager's choice of frame."}
         },
         {
           "name": "veltype",
@@ -13484,8 +13474,7 @@
             "python": {"name": "veltype"},
             "presentation": {"label": "Velocity Type", "group": "Spectral", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's veltype names the velocity definition in CASA's lower-case spelling, distinct from the imager's choice."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's veltype names the velocity definition in CASA's lower-case spelling, distinct from the imager's choice."}
         },
         {
           "name": "preaverage",
@@ -13499,8 +13488,7 @@
             "provider": {"field": "preaverage"},
             "python": {"name": "preaverage"},
             "presentation": {"label": "Pre-average", "group": "Spectral", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "timeaverage",

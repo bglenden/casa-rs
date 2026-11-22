@@ -424,6 +424,11 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if error.completion.parameter == "datacolumn" and message.startswith("unsupported datacolumn "):
                 invalid = arguments["datacolumn"]
                 raise AssertionError(str({"datacolumn": [f"unallowed value {invalid}"]})) from error
+            if name == "mstransform" and arguments["regridms"]:
+                if message.startswith("unallowed value "):
+                    raise AssertionError(str({error.completion.parameter: [message]})) from error
+                if error.completion.parameter in ("start", "width") and message.endswith(" units"):
+                    raise TypeError(message) from error
             if error.completion.parameter == "width" and message == "list index out of range":
                 raise IndexError(message) from error
             raise

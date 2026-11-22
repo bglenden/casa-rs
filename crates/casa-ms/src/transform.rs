@@ -47,6 +47,7 @@ mod flag_commands;
 mod hanning;
 mod main_arrays;
 mod multi_ms;
+mod regrid;
 mod selection_metadata;
 mod single_dish_polarization;
 mod spectral_metadata;
@@ -123,6 +124,8 @@ pub struct MsTransformTaskOptions {
     pub hanning: bool,
     /// Combine selected spectral windows for each simultaneous baseline sample.
     pub combine_spws: bool,
+    /// Transform the selected spectra onto a new frequency grid.
+    pub regrid: Option<MsRegridOptions>,
     /// Active per-selected-SPW widths, or a single width broadcast to each SPW.
     /// When absent, the task uses the scalar width in the request.
     pub channel_widths: Option<Vec<usize>>,
@@ -139,6 +142,33 @@ pub struct MsTransformTaskOptions {
     pub keep_mms: Option<bool>,
     /// The raw numeric timebin for retained split's exact combine="scan" check.
     pub retained_scan_span: Option<f64>,
+}
+
+/// Spectral regridding arguments for the public mstransform task.
+#[derive(Debug, Clone)]
+pub struct MsRegridOptions {
+    /// Axis parameterization: channel, channel_b, frequency or velocity.
+    pub mode: String,
+    /// Requested channel count per output window. Negative means automatic.
+    pub nchan: i64,
+    /// First channel or a frequency/velocity quantity.
+    pub start: String,
+    /// Channel step or a frequency/velocity quantity.
+    pub width: String,
+    /// Number of output spectral windows.
+    pub nspw: usize,
+    /// Interpolation method used to sample the new grid.
+    pub interpolation: String,
+    /// Reference FIELD ID or a direction measure.
+    pub phasecenter: String,
+    /// Rest frequency for velocity-based grids.
+    pub restfreq: String,
+    /// Requested output frequency reference frame.
+    pub outframe: String,
+    /// Radio or optical velocity convention.
+    pub veltype: String,
+    /// Bin wide channels ahead of interpolation.
+    pub preaverage: bool,
 }
 
 /// Time averaging parameters shared by the split and mstransform tasks.
@@ -189,6 +219,14 @@ pub enum MsTransformError {
     /// Validation or computation of the selected spectrum failed.
     #[error("{0}")]
     Spectrum(String),
+    /// A spectral regridding argument was rejected.
+    #[error("{reason}")]
+    RegridParameter {
+        /// Name of the argument.
+        parameter: &'static str,
+        /// Reason for rejection.
+        reason: String,
+    },
     /// The retained Multi-MS cannot average across the selected scans.
     #[error("Unable to continue with MMS processing")]
     MultiMsScanSpan,
@@ -557,22 +595,32 @@ fn mstransform_staged(
             .map(|(&spw, selection)| (spw, selection.metadata_for_width(widths[&spw])))
             .collect::<BTreeMap<_, _>>()
     });
-    let channel_bins = channel_bins_by_spw(&channel_selection, &widths, average_metadata.as_ref())?;
-    let combined_grid = if options.combine_spws {
-        if options.channel_widths.is_some() {
-            return Err(MsTransformError::Spectrum(
-                "If SPW combination is active, chabin cannot be an array".into(),
-            ));
-        }
-        combine::Grid::new(
-            &input,
-            &channel_selection,
-            normalized_width(request.width),
-            budget.available_bytes / budget.maximum_live_blocks,
-        )?
-    } else {
-        None
-    };
+    let regrid_options = options.regrid.as_ref();
+    let mut channel_bins = channel_bins_by_spw(
+        &channel_selection,
+        &widths,
+        if regrid_options.is_some() {
+            None
+        } else {
+            average_metadata.as_ref()
+        },
+    )?;
+    let mut combined_grid =
+        if options.combine_spws || regrid_options.is_some_and(|options| options.nspw > 1) {
+            if options.channel_widths.is_some() {
+                return Err(MsTransformError::Spectrum(
+                    "If SPW combination is active, chabin cannot be an array".into(),
+                ));
+            }
+            combine::Grid::new(
+                &input,
+                &channel_selection,
+                normalized_width(request.width),
+                budget.available_bytes / budget.maximum_live_blocks,
+            )?
+        } else {
+            None
+        };
     let ddid_to_spw = data_description_spw_map(&input)?;
     let mut time_rows = Vec::new();
     let antenna_ids = selection_metadata::selected_antenna_ids(
@@ -643,6 +691,19 @@ fn mstransform_staged(
         .copied()
         .min()
         .expect("nonempty row selection");
+    let mut regrid = regrid_options
+        .map(|options| {
+            regrid::Plan::new(
+                &input,
+                options,
+                combined_grid.as_mut(),
+                &channel_selection,
+                &mut channel_bins,
+                first_selected_row,
+                budget.available_bytes / budget.maximum_live_blocks,
+            )
+        })
+        .transpose()?;
     let stage_started_at = Instant::now();
     let time_groups = options
         .time_averaging
@@ -791,7 +852,7 @@ fn mstransform_staged(
         (
             task_average,
             averaging_time,
-            convolving || combination.is_some(),
+            convolving || combination.is_some() || regrid.is_some(),
             hanning,
         ),
         &visibility,
@@ -831,11 +892,16 @@ fn mstransform_staged(
             }
         }
     }
-    let output_rows = if writes_rows {
+    let partitions = regrid.as_ref().and_then(regrid::Plan::split).cloned();
+    let copies_per_row = partitions.as_ref().map_or(1, regrid::Partitions::count);
+    let selected_output_rows = if writes_rows {
         output_input_rows.len()
     } else {
         0
     };
+    let output_rows = selected_output_rows
+        .checked_mul(copies_per_row)
+        .ok_or_else(|| MsTransformError::Spectrum("Too many partitioned output rows.".into()))?;
     prepare_output_root(&request.output_ms)?;
     let mut output_main = materialize_empty_main_table(
         metadata_template.unwrap_or(&request.input_ms),
@@ -945,6 +1011,7 @@ fn mstransform_staged(
                 time_groups.as_deref()
             },
             output_rows,
+            regrid: regrid.as_ref(),
             combined: combined_grid
                 .as_ref()
                 .zip(combination.as_deref())
@@ -979,9 +1046,19 @@ fn mstransform_staged(
             reason: error.to_string(),
         })?;
     let stage_started_at = Instant::now();
+    let partitioned_rows;
+    let scalar_input_rows = if copies_per_row == 1 {
+        &output_input_rows[..selected_output_rows]
+    } else {
+        partitioned_rows = output_input_rows[..selected_output_rows]
+            .iter()
+            .flat_map(|&row| std::iter::repeat_n(row, copies_per_row))
+            .collect::<Vec<_>>();
+        &partitioned_rows
+    };
     let mut output_column_overrides = gather_selected_main_column_overrides(
         input.main_table(),
-        &output_input_rows[..output_rows],
+        scalar_input_rows,
         &request.output_ms,
         batch_rows,
         &mut write_session,
@@ -1119,6 +1196,26 @@ fn mstransform_staged(
         for (batch_offset, (flags, &ddid)) in flag_values.into_iter().zip(descriptions).enumerate()
         {
             let row_index = batch_start + batch_offset;
+            let write_error =
+                |source: crate::MeasurementSetWriteError| MsTransformError::WriteMeasurementSet {
+                    path: request.output_ms.display().to_string(),
+                    reason: source.to_string(),
+                };
+            let write_array = |session: &mut MeasurementSetWriteSession,
+                               name: &str,
+                               value: &ArrayValue| {
+                if let Some(parts) = &partitions {
+                    parts.write_channel_array(session, name, value, &request.output_ms, row_index)
+                } else {
+                    regrid::write_spectrum(session, name, value, &request.output_ms, row_index)
+                }
+            };
+            let undefined = |session: &mut MeasurementSetWriteSession, name: &str| {
+                for _ in 0..copies_per_row {
+                    session.push_undefined_row(name).map_err(write_error)?;
+                }
+                Ok::<_, MsTransformError>(())
+            };
             let averaged_polarization = polarization
                 .as_ref()
                 .is_some_and(|projection| projection.contains(ddid));
@@ -1134,24 +1231,22 @@ fn mstransform_staged(
                     .into_iter()
                     .zip(coordinates.scalar_cells())
                 {
-                    write_session
-                        .push_scalar_row(name, Some(value))
-                        .map_err(|error| MsTransformError::WriteMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            reason: error.to_string(),
-                        })?;
+                    for _ in 0..copies_per_row {
+                        write_session
+                            .push_scalar_row(name, Some(value.clone()))
+                            .map_err(write_error)?;
+                    }
                 }
             } else if let Some(&(exposure, flag_row)) = combined_scalars.get(batch_offset) {
                 for (name, value) in [
                     ("EXPOSURE", ScalarValue::Float64(exposure)),
                     ("FLAG_ROW", ScalarValue::Bool(flag_row)),
                 ] {
-                    write_session
-                        .push_scalar_row(name, Some(value))
-                        .map_err(|error| MsTransformError::WriteMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            reason: error.to_string(),
-                        })?;
+                    for _ in 0..copies_per_row {
+                        write_session
+                            .push_scalar_row(name, Some(value.clone()))
+                            .map_err(write_error)?;
+                    }
                 }
             }
             let select_correlations = |value, name| {
@@ -1176,6 +1271,10 @@ fn mstransform_staged(
                 reason: format!("selected row {row_index} maps to spectral window {spw_id}, but --spw does not include that SPW"),
             })?;
             let bins = combined_grid.as_ref().map_or(bins, |grid| &grid.bins);
+            let regrid = regrid
+                .as_mut()
+                .map(|plan| plan.row(spw_id, input.main_table(), input_rows[batch_offset]))
+                .transpose()?;
             let mutation_error = |source| MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
@@ -1252,7 +1351,10 @@ fn mstransform_staged(
             } else {
                 None
             };
-            let averages = if let (true, Some((weight, sigma))) = (task_average, &noise) {
+            let average_regrid_input = regrid.is_some() && !bins_are_single_channel(bins);
+            let averages = if let (true, Some((weight, sigma))) =
+                (task_average || average_regrid_input, &noise)
+            {
                 Some(
                     ChannelAverages::new(
                         &flags,
@@ -1262,7 +1364,10 @@ fn mstransform_staged(
                         spectra_cells,
                         &visibility,
                         (
-                            spectra.propagate_weights || averaging_time || combination.is_some(),
+                            spectra.propagate_weights
+                                || averaging_time
+                                || combination.is_some()
+                                || regrid.is_some(),
                             averaging_time,
                         ),
                     )
@@ -1292,7 +1397,47 @@ fn mstransform_staged(
             } else {
                 None
             };
-            let combined_noise = if let Some(grid) = &combined_grid {
+            let fft_flags = regrid
+                .as_ref()
+                .map(|regrid| regrid.fft_input_flags(&transformed_flags))
+                .transpose()
+                .map_err(mutation_error)?
+                .flatten();
+            let combined_noise = if let Some(regrid) = &regrid {
+                let source_noise = if let Some(statistics) =
+                    hanning_noise.or_else(|| averages.as_ref().map(ChannelAverages::statistics))
+                {
+                    Some((statistics.weight_spectrum, statistics.sigma_spectrum))
+                } else if combination.is_some() {
+                    spectra_cells
+                        .weight
+                        .cloned()
+                        .zip(spectra_cells.sigma.cloned())
+                } else if let Some((weight, sigma)) = &noise {
+                    Some(
+                        regrid::input_noise(
+                            (weight, sigma),
+                            spectra_cells,
+                            &flags,
+                            bins,
+                            &visibility,
+                            averaging_time,
+                        )
+                        .map_err(mutation_error)?,
+                    )
+                } else {
+                    None
+                };
+                transformed_flags = regrid
+                    .apply(transformed_flags, None)
+                    .map_err(mutation_error)?;
+                source_noise
+                    .map(|(weight, sigma)| {
+                        regrid.statistics(weight, sigma, &transformed_flags, fft_flags.as_ref())
+                    })
+                    .transpose()
+                    .map_err(mutation_error)?
+            } else if let Some(grid) = &combined_grid {
                 let result = combine::finish_noise(
                     grid,
                     hanning_noise,
@@ -1328,12 +1473,7 @@ fn mstransform_staged(
                 let target = column.output.name();
                 let Some(value) = values.next().flatten() else {
                     if column.source == OptionalMainColumn::LagData {
-                        write_session.push_undefined_row(target).map_err(|error| {
-                            MsTransformError::WriteMeasurementSet {
-                                path: request.output_ms.display().to_string(),
-                                reason: error.to_string(),
-                            }
-                        })?;
+                        undefined(&mut write_session, target)?;
                         continue;
                     }
                     return Err(missing_column_error(&request.output_ms, row_index, source));
@@ -1360,10 +1500,14 @@ fn mstransform_staged(
                     )
                     .map_err(mutation_error)?;
                 }
-                if let Some(grid) = &combined_grid
-                    && column.source != OptionalMainColumn::LagData
-                {
-                    transformed = grid.interpolate(transformed).map_err(mutation_error)?;
+                if column.source != OptionalMainColumn::LagData {
+                    if let Some(regrid) = &regrid {
+                        transformed = regrid
+                            .apply(transformed, fft_flags.as_ref())
+                            .map_err(mutation_error)?;
+                    } else if let Some(grid) = &combined_grid {
+                        transformed = grid.interpolate(transformed).map_err(mutation_error)?;
+                    }
                 }
                 if let Some(operation) = &mut operation {
                     let ArrayValue::Bool(output_flags) = &mut transformed_flags else {
@@ -1416,35 +1560,25 @@ fn mstransform_staged(
                 if !writes_rows {
                     continue;
                 }
-                if column.source == OptionalMainColumn::FloatData {
-                    push_f32_array_row(
-                        &mut write_session,
-                        target,
-                        &transformed,
-                        &request.output_ms,
-                        row_index,
-                    )?;
+                if column.source == OptionalMainColumn::LagData {
+                    for _ in 0..copies_per_row {
+                        regrid::write_spectrum(
+                            &mut write_session,
+                            target,
+                            &transformed,
+                            &request.output_ms,
+                            row_index,
+                        )?;
+                    }
                 } else {
-                    push_complex32_array_row(
-                        &mut write_session,
-                        target,
-                        &transformed,
-                        &request.output_ms,
-                        row_index,
-                    )?;
+                    write_array(&mut write_session, target, &transformed)?;
                 }
             }
             if !writes_rows {
                 touched_spws.insert(spw_id);
                 continue;
             }
-            push_bool_array_row(
-                &mut write_session,
-                "FLAG",
-                &transformed_flags,
-                &request.output_ms,
-                row_index,
-            )?;
+            write_array(&mut write_session, "FLAG", &transformed_flags)?;
             if let Some(flag_category) = flag_category_values
                 .next()
                 .flatten()
@@ -1456,37 +1590,34 @@ fn mstransform_staged(
                         path: request.output_ms.display().to_string(),
                         source: Box::new(source),
                     })?;
-                if let Some(grid) = &combined_grid {
+                if let Some(regrid) = &regrid {
+                    if transformed.shape()[1] != 1 || combination.is_some() {
+                        transformed = regrid
+                            .apply_categories(transformed)
+                            .map_err(mutation_error)?;
+                    }
+                } else if let Some(grid) = &combined_grid {
                     transformed = grid
                         .interpolate_categories(transformed)
                         .map_err(mutation_error)?;
                 }
-                push_bool_array_row(
-                    &mut write_session,
-                    "FLAG_CATEGORY",
-                    &transformed,
-                    &request.output_ms,
-                    row_index,
-                )?;
+                write_array(&mut write_session, "FLAG_CATEGORY", &transformed)?;
             } else {
-                write_session
-                    .push_undefined_row("FLAG_CATEGORY")
-                    .map_err(|error| MsTransformError::WriteMeasurementSet {
-                        path: request.output_ms.display().to_string(),
-                        reason: error.to_string(),
-                    })?;
+                undefined(&mut write_session, "FLAG_CATEGORY")?;
             }
             let uvw = uvw_values
                 .next()
                 .flatten()
                 .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "UVW"))?;
-            push_f64_array_row(
-                &mut write_session,
-                "UVW",
-                &uvw,
-                &request.output_ms,
-                row_index,
-            )?;
+            for _ in 0..copies_per_row {
+                push_f64_array_row(
+                    &mut write_session,
+                    "UVW",
+                    &uvw,
+                    &request.output_ms,
+                    row_index,
+                )?;
+            }
             let averaged_noise =
                 combined_noise.or_else(|| averages.map(|averages| averages.statistics()));
             if let Some(weights) = baseline_weights
@@ -1509,12 +1640,7 @@ fn mstransform_staged(
                     row_index,
                 )?;
                 for &column in &spectra.output {
-                    write_session.push_undefined_row(column).map_err(|error| {
-                        MsTransformError::WriteMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            reason: error.to_string(),
-                        }
-                    })?;
+                    undefined(&mut write_session, column)?;
                 }
                 touched_spws.insert(spw_id);
                 continue;
@@ -1526,16 +1652,31 @@ fn mstransform_staged(
                     .into_iter()
                     .chain(spectra.output.iter().copied())
                 {
-                    write_session.push_undefined_row(column).map_err(|error| {
-                        MsTransformError::WriteMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            reason: error.to_string(),
-                        }
-                    })?;
+                    undefined(&mut write_session, column)?;
                 }
                 touched_spws.insert(spw_id);
                 continue;
             };
+            if let Some(parts) = &partitions {
+                let statistics = averaged_noise.ok_or_else(|| {
+                    MsTransformError::Spectrum("Missing split-regrid noise statistics.".into())
+                })?;
+                parts.write_noise(
+                    &mut write_session,
+                    &statistics,
+                    &transformed_flags,
+                    spectra.fill_standard,
+                    &request.output_ms,
+                    row_index,
+                )?;
+                if !spectra.fill_standard {
+                    for &column in &spectra.output {
+                        undefined(&mut write_session, column)?;
+                    }
+                }
+                touched_spws.insert(spw_id);
+                continue;
+            }
             let (mut weight, mut sigma, task_spectra) = if let Some(SpectralOperation {
                 kernel: SpectrumOperator::Convolution(kernel),
                 ..
@@ -1593,6 +1734,7 @@ fn mstransform_staged(
                 && !convolving
                 && !hanning
                 && combination.is_none()
+                && regrid.is_none()
             {
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
             }
@@ -1637,12 +1779,7 @@ fn mstransform_staged(
                         row_index,
                     )?;
                 } else {
-                    write_session.push_undefined_row(name).map_err(|error| {
-                        MsTransformError::WriteMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            reason: error.to_string(),
-                        }
-                    })?;
+                    undefined(&mut write_session, name)?;
                 }
             }
             touched_spws.insert(spw_id);
@@ -1666,7 +1803,7 @@ fn mstransform_staged(
     for name in spectra.output {
         output_column_overrides.insert_deferred(name);
     }
-    for ddid in &output_input_ddids[..output_rows] {
+    for ddid in &output_input_ddids[..selected_output_rows] {
         let compact = compact_metadata
             .ddid_map
             .get(ddid)
@@ -1677,14 +1814,17 @@ fn mstransform_staged(
                     "selected DATA_DESC_ID {ddid} was not present in compacted metadata"
                 ),
             })?;
-        write_session
-            .push_scalar_row("DATA_DESC_ID", Some(ScalarValue::Int32(compact)))
-            .map_err(|error| MsTransformError::WriteMeasurementSet {
-                path: request.output_ms.display().to_string(),
-                reason: error.to_string(),
-            })?;
+        for part in 0..copies_per_row {
+            let id = compact * copies_per_row as i32 + part as i32;
+            write_session
+                .push_scalar_row("DATA_DESC_ID", Some(ScalarValue::Int32(id)))
+                .map_err(|error| MsTransformError::WriteMeasurementSet {
+                    path: request.output_ms.display().to_string(),
+                    reason: error.to_string(),
+                })?;
+        }
     }
-    for field_id in &selected_field_ids_for_metadata[..output_rows] {
+    for field_id in &selected_field_ids_for_metadata[..selected_output_rows] {
         let compact = match &field_id_map {
             Some(ids) => ids.get(field_id).copied().ok_or_else(|| {
                 MsTransformError::SpectralMetadata {
@@ -1696,12 +1836,14 @@ fn mstransform_staged(
             })?,
             None => *field_id,
         };
-        write_session
-            .push_scalar_row("FIELD_ID", Some(ScalarValue::Int32(compact)))
-            .map_err(|error| MsTransformError::WriteMeasurementSet {
-                path: request.output_ms.display().to_string(),
-                reason: error.to_string(),
-            })?;
+        for _ in 0..copies_per_row {
+            write_session
+                .push_scalar_row("FIELD_ID", Some(ScalarValue::Int32(compact)))
+                .map_err(|error| MsTransformError::WriteMeasurementSet {
+                    path: request.output_ms.display().to_string(),
+                    reason: error.to_string(),
+                })?;
+        }
     }
     let output_options = measurement_set_table_options(&request.output_ms);
     let write_telemetry = if writes_rows {
@@ -1733,7 +1875,9 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    if combined_grid.is_some() {
+    if let Some(regrid) = &regrid {
+        regrid.write_metadata(request, &compact_metadata)?;
+    } else if combined_grid.is_some() {
         // The combined grid was written with the compact spectral metadata.
     } else if average_metadata.is_some() || normalized_width(request.width) == 1 {
         spectral_metadata::write_channel_selection(
@@ -1803,6 +1947,7 @@ struct TransformArrayDimensions {
     input_channels: usize,
     output_correlations: usize,
     output_channels: usize,
+    output_parts: Vec<usize>,
 }
 
 fn transform_array_dimensions(
@@ -1875,6 +2020,7 @@ fn transform_array_dimensions(
                     .map_or(input_correlations, <[usize]>::len)
             },
             output_channels,
+            output_parts: vec![output_channels],
         });
     }
     Ok(dimensions)
@@ -1886,6 +2032,7 @@ struct TransformArrayRows<'a> {
     groups: Option<&'a [time_average::TimeGroup]>,
     output_rows: usize,
     combined: Option<CombinedArrayRows<'a>>,
+    regrid: Option<&'a regrid::Plan>,
 }
 
 #[derive(Clone, Copy)]
@@ -1905,6 +2052,7 @@ fn transform_array_write_plan(
         groups,
         output_rows,
         combined,
+        regrid,
     }: TransformArrayRows<'_>,
     ddid_to_spw: &BTreeMap<i32, i32>,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
@@ -1927,18 +2075,33 @@ fn transform_array_write_plan(
     if let Some(CombinedArrayRows { grid, .. }) = combined {
         for dimension in dimensions.values_mut() {
             dimension.output_channels = grid.frequencies.len();
+            dimension.output_parts = vec![dimension.output_channels];
+        }
+    }
+    if let Some(regrid) = regrid {
+        for (&ddid, dimension) in &mut dimensions {
+            let spw = ddid_to_spw[&ddid];
+            dimension.output_channels = regrid.channel_count(spw);
+            dimension.output_parts = regrid
+                .parts(spw)
+                .ranges()
+                .iter()
+                .map(|part| part.len())
+                .collect();
         }
     }
     let mut shape_counts = BTreeMap::<Vec<usize>, usize>::new();
     let mut weight_shape_counts = BTreeMap::<Vec<usize>, usize>::new();
     for &ddid in selected_ddids {
         let shape = &dimensions[&ddid];
-        *shape_counts
-            .entry(vec![shape.output_correlations, shape.output_channels])
-            .or_default() += 1;
-        *weight_shape_counts
-            .entry(vec![shape.output_correlations])
-            .or_default() += 1;
+        for &channels in &shape.output_parts {
+            *shape_counts
+                .entry(vec![shape.output_correlations, channels])
+                .or_default() += 1;
+            *weight_shape_counts
+                .entry(vec![shape.output_correlations])
+                .or_default() += 1;
+        }
     }
     let shapes = shape_counts
         .into_iter()
@@ -2028,7 +2191,7 @@ fn transform_array_write_plan(
             value_type: StreamedTiledShapeValueType::Float64,
             shapes: vec![MeasurementSetArrayShapePlan {
                 cell_shape: vec![3],
-                row_count: selected_ddids.len(),
+                row_count: shapes.iter().map(|shape| shape.row_count).sum(),
                 tile_shape: crate::ms::casa_uvw_tile_shape(&visibility_tile),
             }],
             storage_manager: MeasurementSetColumnStorage::TiledColumn,
@@ -2333,7 +2496,10 @@ fn plan_flag_category_shapes(
             }
             _ => [shape.output_correlations, 1, default_categories],
         };
-        *counts.entry(cell).or_default() += 1;
+        for &channels in &shape.output_parts {
+            let cell = [cell[0], if cell[1] == 1 { 1 } else { channels }, cell[2]];
+            *counts.entry(cell).or_default() += 1;
+        }
     }
     let plans = counts
         .into_iter()
@@ -2381,7 +2547,8 @@ fn plan_lag_shapes(
                 });
             }
         };
-        *counts.entry([output_correlations, lags]).or_default() += 1;
+        *counts.entry([output_correlations, lags]).or_default() +=
+            dimensions[&description].output_parts.len();
     }
     let plans = counts
         .into_iter()
@@ -4185,6 +4352,7 @@ mod array_budget_tests {
             input_channels: 4096,
             output_correlations: 1,
             output_channels: 1,
+            output_parts: vec![1],
         }];
         let budget = MsSelectionIoBudget {
             available_bytes: 128 * 1024,
@@ -4203,6 +4371,7 @@ mod array_budget_tests {
             input_channels: 4096,
             output_correlations: 1,
             output_channels: 4096,
+            output_parts: vec![4096],
         }];
         let resources = MeasurementSetWriteResources {
             available_bytes: 1_200_000,

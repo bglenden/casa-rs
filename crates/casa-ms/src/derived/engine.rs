@@ -409,6 +409,16 @@ impl MsCalEngine {
         ))
     }
 
+    pub(crate) fn attached_radial_velocity(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+    ) -> MsResult<Option<casa_types::measures::radial_velocity::MRadialVelocity>> {
+        self.field_series(field_id)?
+            .map(|(series, _)| series.radial_velocity(self.ephemeris_mjd_utc(time_mjd_sec)?))
+            .transpose()
+    }
+
     fn ephemeris_mjd_tdb(&self, time_mjd_sec: f64) -> MsResult<f64> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
