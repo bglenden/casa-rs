@@ -3,6 +3,7 @@
 """Compare direct calibrater.specifycal prescriptions with CASA 6.7.6.14."""
 
 import argparse
+from contextlib import chdir
 import os
 from pathlib import Path
 
@@ -70,6 +71,12 @@ def derived_prescriptions(work, engines, vla_source, gaincurves):
     for index, kind in enumerate(MODES):
         prescribe(work, engines, switched, f'switched-{index}', [(dict(caltype=kind), ok)],
                    compare=compare_switched_power)
+    for kind in ('swp/rq-extra', 'rq-extra'):
+        prescribe(work, engines, switched, kind.replace('/', '-'), [(dict(caltype=kind), ok)],
+                   compare=compare_switched_power)
+    for kind in ('swp', 'wts'):
+        prescribe(work, engines, switched, f'{kind}-mode-error',
+                   [(dict(caltype=kind), ERROR)], product=False)
     ionosphere_ms = work/'ionosphere.ms'
     make_cal_ms(str(ionosphere_ms), channels=4, frequency='332MHz',
                 stokes='RR RL LR LL', telescope='VLA')
@@ -147,6 +154,11 @@ def main():
         (dict(caltype='antpos', antenna='A1', parameter=[.04, -.01, .02]), ok),
         (dict(caltype='antpos', antenna='A1', parameter=[-.02, .04, -.01]), ok),
     ])
+    prescribe(work, engines, vis, 'antpos-broadcast', [
+        (dict(caltype='ANTPOS', parameter=[.03, .01, -.02]), ok),
+        (dict(caltype='antpos', antenna='A4', parameter=[.04, -.01, .02],
+              infile=str(work/'absent')), ok),
+    ])
     prescribe(work, engines, vis, 'opacity', [
         (dict(caltype='opacity', spw='1', antenna='A1', parameter=[.05]), ok),
         (dict(caltype='opac', spw='1', antenna='A1', parameter=[.03]), ok),
@@ -154,6 +166,16 @@ def main():
     defaults = prescribe(work, engines, vis, 'default-parameters', [
         (dict(caltype='G', infile=str(work/'absent'), uniform=True), ok),
     ])
+    for engine, make_tool in engines.items():
+        path = defaults[engine]
+        tool = make_tool()
+        assert tool.open(str(vis), addcorr=False, addmodel=False)
+        with chdir(path):
+            assert result(tool.specifycal, caltype='G', parameter=[3.]) == ERROR
+            assert result(tool.specifycal, '', caltype='G', parameter=[3.]) == ERROR
+        assert tool.close()
+        with opened(path) as table:
+            np.testing.assert_array_equal(table.getcol('CPARAM'), 1.)
     native = native_calibrater()
     assert native.open(str(vis), addcorr=False, addmodel=False)
     wildcard = work/'wildcard-native.cal'

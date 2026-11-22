@@ -31,6 +31,11 @@ pub struct CalibrationSpecification<'a> {
 
 impl CalibrationSpecification<'_> {
     pub(crate) fn write(self, dataset: &Path, legacy_iterator: bool) -> Result<(), GencalError> {
+        if self.table.as_os_str().is_empty() {
+            return Err(GencalError::InvalidRequest(
+                "No output calibration table was specified.".into(),
+            ));
+        }
         let kind = self.caltype.to_ascii_uppercase();
         let (caltype, sky_subtype) = if let Some(caltype) = prior_type(&kind) {
             (caltype, None)
@@ -52,11 +57,17 @@ impl CalibrationSpecification<'_> {
                 self.caltype
             )));
         };
+        let antpos = matches!(caltype, GencalType::Antpos | GencalType::AntposVla);
+        let antenna = if antpos && self.antenna.trim().is_empty() {
+            "*"
+        } else {
+            self.antenna
+        };
         let request = GencalRequest {
             measurement_set: dataset.to_owned(),
             output_table: self.table.to_owned(),
             caltype,
-            antenna: self.antenna.to_owned(),
+            antenna: antenna.to_owned(),
             spw: self.spw.to_owned(),
             parameter: self.parameters,
             gaincurve_table: None,
@@ -73,7 +84,7 @@ impl CalibrationSpecification<'_> {
             gencal_with_output_mode(
                 &request,
                 self.polarization,
-                self.infile,
+                self.infile.filter(|_| !antpos),
                 None,
                 self.uniform,
                 CalibrationOutputMode::Update,
@@ -94,14 +105,23 @@ fn prior_type(kind: &str) -> Option<GencalType> {
         {
             GencalType::Sbd
         }
-        kind if kind.contains("ANTPOSVLA") => GencalType::AntposVla,
+        kind if kind.contains("ANTPOS") && kind.contains("VLA") => GencalType::AntposVla,
         kind if kind.contains("ANTPOS") => GencalType::Antpos,
         kind if kind.contains("TSYS") => GencalType::Tsys,
-        "EVLAGAIN" => GencalType::Evlagain,
-        "SWP/RQ" => GencalType::SwpOverRq,
-        "RQ" => GencalType::Rq,
-        kind if kind.contains("WTS") => GencalType::Swpwts,
-        kind if kind.contains("SWP") => GencalType::Swpow,
+        kind if ["EVLAGAIN", "SWP", "RQ", "WTS"]
+            .iter()
+            .any(|token| kind.contains(token)) =>
+        {
+            [
+                ("SWP/RQ", GencalType::SwpOverRq),
+                ("SWPOW", GencalType::Swpow),
+                ("EVLAGAIN", GencalType::Evlagain),
+                ("RQ", GencalType::Rq),
+                ("SWPWTS", GencalType::Swpwts),
+            ]
+            .into_iter()
+            .find_map(|(token, family)| kind.contains(token).then_some(family))?
+        }
         kind if kind.contains("OPAC") => GencalType::Opac,
         kind if kind.contains("GC") && kind.contains("EFF") => GencalType::Gceff,
         kind if kind.contains("GC") => GencalType::Gc,
