@@ -110,6 +110,7 @@ impl<'a> ImageTwoPoint<'a> {
             },
             Some(beams),
         )?;
+        source.require_single_region()?;
         let mut coordinates = source.coordinates.clone();
         let sky = coordinates
             .find_coordinate(CoordinateType::Direction)

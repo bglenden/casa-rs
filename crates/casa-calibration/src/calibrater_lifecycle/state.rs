@@ -195,10 +195,15 @@ impl<'a> SolveState<'a> {
                 request,
                 mode,
                 bandpass,
+                tf,
                 ..
             } => {
                 let append = *mode == CalibrationOutputMode::Append;
                 match request.as_ref() {
+                    CalibrationSolveRequest::Gain(gain) if tf.is_some() => Self {
+                        frequency_dependent: true,
+                        ..Self::gain(gain, "Tf Jones", append)
+                    },
                     CalibrationSolveRequest::Gain(gain) => {
                         Self::gain(gain, gain.gain_type.vis_cal(), append)
                     }

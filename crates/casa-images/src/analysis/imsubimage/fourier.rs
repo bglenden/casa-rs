@@ -103,7 +103,8 @@ impl<'a> ImageFourier<'a> {
     /// Resolve the selected image domain and Fourier coordinates.
     ///
     /// # Errors
-    /// The selection, axis list, or preserved coordinate model is invalid.
+    /// Returns an error for an unsupported selection, invalid axes, or an
+    /// invalid preserved coordinate model.
     pub fn new<T: FourierPixel>(
         image: &dyn ImageInterface<T>,
         coordinate_record: RecordValue,
@@ -120,6 +121,7 @@ impl<'a> ImageFourier<'a> {
             },
             Some(beam_record),
         )?;
+        section.require_single_region()?;
         let mut axes = if options.axes.is_empty() || matches!(options.axes, [axis] if *axis < 0) {
             section
                 .coordinates

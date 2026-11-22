@@ -97,6 +97,7 @@ pub fn decompose_image(
             keepaxes: &[],
         },
     )?;
+    plan.require_single_region()?;
     let rank = plan.shape.len();
     if !(2..=3).contains(&rank) && (options.fit || !options.simple) {
         return Err(invalid(

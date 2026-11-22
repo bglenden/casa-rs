@@ -19,6 +19,61 @@ def _fft(values, axes):
     )
 
 
+@pytest.mark.parametrize("shape_kind", ["world-box", "world-polygon", "strided-pixel"])
+def test_fft_selected_single_region_with_mixed_precision_mask(casa, tmp_path, shape_kind):
+    shape = (15, 17, 1, 5)
+    pixels = np.arange(np.prod(shape), dtype=np.float32).reshape(shape) * np.float32(0.125)
+    weights = np.indices(shape).sum(axis=0).astype(np.float64) * 0.5
+    maker, region_tool = casa.image(), casa.regionmanager()
+    primary, secondary = (tmp_path / name for name in ("single.im", "double.im"))
+    coordinate = None
+    try:
+        assert maker.fromarray(str(secondary), weights, type="d")
+        assert maker.done()
+        assert maker.fromarray(str(primary), pixels)
+        coordinate = maker.coordsys()
+        record = coordinate.torecord()
+        assert maker.done()
+        if shape_kind == "world-box":
+            region = region_tool.wbox(["4pix", "5pix"], ["10pix", "12pix"], [0, 1], record)
+            view = np.s_[4:11, 5:13]
+            membership = True
+        elif shape_kind == "world-polygon":
+            region = region_tool.fromtext(
+                "poly[[4pix,5pix],[10pix,5pix],[4pix,12pix]]", list(shape), record,
+            )
+            view = np.s_[4:11, 5:13]
+            x, y = np.ogrid[:7, :8]
+            membership = (7 * x + 6 * y <= 42)[..., None, None]
+        else:
+            region = region_tool.box([4, 5, 0, 0], [10, 12, 0, 4], [2, 1, 1, 1])
+            view = np.s_[4:11:2, 5:13]
+            membership = True
+    finally:
+        if coordinate is not None:
+            coordinate.done()
+        region_tool.done()
+        maker.done()
+    accepted = (pixels + weights > 90)[view] & membership
+    assert accepted.any() and not accepted.all()
+    expected = _fft(np.where(accepted, pixels[view], 0), (0, 1))
+    expression = f'("{primary}" + "{secondary}") > 90'
+    for backend in (casa, tools):
+        image, reopened = backend.image(), casa.image()
+        output = str(tmp_path / f"{backend.__name__}-fourier.im")
+        try:
+            assert image.open(str(primary))
+            assert image.fft(axes=[0, 1], region=region, mask=expression, complex=output)
+            assert image.done()
+            assert reopened.open(output)
+            assert reopened.pixeltype() == "complex"
+            np.testing.assert_array_equal(reopened.getchunk(getmask=True), accepted)
+            np.testing.assert_allclose(reopened.getchunk(), expected, rtol=1e-6, atol=4e-4)
+        finally:
+            reopened.done()
+            image.done()
+
+
 @pytest.mark.parametrize("dtype, precision", [
     (np.float32, "f"), (np.complex64, "f"),
     (np.float64, "d"), (np.complex128, "d"),

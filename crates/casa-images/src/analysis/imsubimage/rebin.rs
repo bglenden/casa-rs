@@ -113,6 +113,7 @@ impl<'a> ImageRebin<'a> {
                 Some(beams),
             )?
         };
+        section.require_single_region()?;
         if options.dropdeg {
             for (axis, &size) in section.shape.iter().enumerate() {
                 if image.shape()[axis] == 1 {
