@@ -3,13 +3,18 @@
 
 mod asap;
 mod metadata;
+mod nro;
 mod polarization;
 mod writer;
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use casa_tables::{Table, TableOptions};
+use casa_types::Value;
 
 pub use asap::read_asap;
+pub use nro::read_nro;
 use polarization::Basis;
 
 use crate::{MeasurementSet, MsError, MsResult};
@@ -18,8 +23,30 @@ use crate::{MeasurementSet, MsError, MsResult};
 pub struct ImportedScanTable {
     /// Spectra and metadata in MeasurementSet v2 form.
     pub measurement_set: MeasurementSet,
-    /// Backing and referenced input tables to protect during publication.
+    /// The source files and linked tables to protect during publication.
     pub input_tables: Vec<PathBuf>,
+    auxiliary_tables: Vec<(String, Table)>,
+}
+
+impl ImportedScanTable {
+    /// Write the MeasurementSet and instrument-specific tables into a staging directory.
+    ///
+    /// # Errors
+    /// Returns a storage error when any table cannot be written. The caller
+    /// can discard the stage before publishing it.
+    pub fn write_stage(&mut self, path: &Path) -> MsResult<()> {
+        for (name, _) in &self.auxiliary_tables {
+            self.measurement_set
+                .main_table_mut()
+                .keywords_mut()
+                .upsert(name, Value::TableRef(format!("././{name}")));
+        }
+        self.measurement_set.save_as_standard(path)?;
+        for (name, table) in &self.auxiliary_tables {
+            table.save(TableOptions::new(path.join(name)))?;
+        }
+        Ok(())
+    }
 }
 
 struct Antenna {
@@ -38,7 +65,8 @@ struct Window {
 }
 
 struct ImportHeader {
-    antenna: Antenna,
+    antenna: Vec<Antenna>,
+    direction_frame: &'static str,
     telescope: String,
     observer: String,
     project: String,
@@ -81,6 +109,7 @@ struct Integration {
     time: f64,
     interval: f64,
     scan: i32,
+    antenna: i32,
     field: i32,
     feed: i32,
     window: i32,
@@ -93,7 +122,7 @@ struct Integration {
 struct Plane {
     index: usize,
     data: Vec<f32>,
-    flag: Vec<bool>,
+    flag: Option<Vec<bool>>,
     flag_row: bool,
     system_temperature: Vec<f32>,
     calibration_temperature: Vec<f32>,
@@ -104,7 +133,7 @@ struct RawIntegration {
     plane: Plane,
 }
 
-type IntegrationKey = (i32, i32, i32, Basis, &'static str);
+type IntegrationKey = (i32, i32, i32, i32, Basis, &'static str);
 
 #[derive(Default)]
 struct TimeGroups {
@@ -115,7 +144,14 @@ struct TimeGroups {
 impl TimeGroups {
     fn push(&mut self, input: RawIntegration) -> MsResult<()> {
         let RawIntegration { row, plane } = input;
-        let key = (row.field, row.feed, row.window, row.basis, row.state.0);
+        let key = (
+            row.antenna,
+            row.field,
+            row.feed,
+            row.window,
+            row.basis,
+            row.state.0,
+        );
         let next = self.order.len();
         let rank = *self.order.entry(key).or_insert(next);
         match self.current.entry(rank) {

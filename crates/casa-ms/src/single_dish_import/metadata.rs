@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! MeasurementSet metadata shared by single-dish imports.
 
-use casa_tables::{Table, table_measures::TableMeasDesc, table_quantum::TableQuantumDesc};
+use casa_tables::{
+    Table,
+    table_measures::{MeasureType, TableMeasDesc},
+    table_quantum::TableQuantumDesc,
+};
 use casa_types::{RecordValue, ScalarValue, Value};
 
 use super::{Direction, Field, ImportHeader, Source};
@@ -29,6 +33,19 @@ pub(super) fn create(
     add_windows(&mut ms, header)?;
     add_sources(&mut ms, sources)?;
     add_fields(&mut ms, fields)?;
+    for (id, columns) in [
+        (
+            SubtableId::Field,
+            &["DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"][..],
+        ),
+        (SubtableId::Pointing, &["DIRECTION", "TARGET"][..]),
+        (SubtableId::Source, &["DIRECTION"][..]),
+    ] {
+        for column in columns {
+            TableMeasDesc::new_fixed(column, MeasureType::Direction, header.direction_frame)
+                .write(subtable_mut(&mut ms, id)?)?;
+        }
+    }
     add_optional(
         subtable_mut(&mut ms, SubtableId::SysCal)?,
         SubtableId::SysCal,
@@ -49,18 +66,20 @@ pub(super) fn create(
 }
 
 fn add_fixed_tables(ms: &mut MeasurementSet, header: &ImportHeader) -> MsResult<()> {
-    insert(
-        ms,
-        SubtableId::Antenna,
-        &[
-            ("DISH_DIAMETER", f(header.antenna.diameter)),
-            ("NAME", s(&header.antenna.name)),
-            ("STATION", s(&header.antenna.station)),
-            ("TYPE", s("GROUND-BASED")),
-            ("MOUNT", s("ALT-AZ")),
-            ("POSITION", f64_array(&header.antenna.position, vec![3])),
-        ],
-    )?;
+    for antenna in &header.antenna {
+        insert(
+            ms,
+            SubtableId::Antenna,
+            &[
+                ("DISH_DIAMETER", f(antenna.diameter)),
+                ("NAME", s(&antenna.name)),
+                ("STATION", s(&antenna.station)),
+                ("TYPE", s("GROUND-BASED")),
+                ("MOUNT", s("ALT-AZ")),
+                ("POSITION", f64_array(&antenna.position, vec![3])),
+            ],
+        )?;
+    }
     let mut observation = row_from_defs(
         schema::observation::REQUIRED_COLUMNS,
         &[

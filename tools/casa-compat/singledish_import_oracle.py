@@ -3,8 +3,10 @@
 """Compare CASA 6.7.6.14's detached single-dish imports and MSv2 outputs."""
 
 import argparse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
+import struct
 import time
 
 import casatasks
@@ -258,6 +260,101 @@ def check_linked_input(root, source, factory):
         np.testing.assert_array_equal(table.getcol('TEMPERATURE'), temperatures)
 
 
+def check_nro_spectra(source, output):
+    jst = timezone(timedelta(hours=9))
+    mjd_zero = datetime(1858, 11, 17, tzinfo=timezone.utc)
+    with (source.open('rb') as raw, opened(output) as main,
+          opened(output / 'NRO_ARRAY') as mapping, opened(output / 'DATA_DESCRIPTION') as descriptions,
+          opened(output / 'POLARIZATION') as polarization):
+        header = raw.read(15136)
+        endian = '>' if 0 < struct.unpack_from('>i', header, 144)[0] <= 35 else '<'
+        count, scans = struct.unpack_from(endian + 'ii', header, 144)
+        stride, _, bits = struct.unpack_from(endian + 'iii', header, 14936)
+        channels = struct.unpack_from(endian + 'i', header, 620)[0]
+        interval = struct.unpack_from(endian + 'd', header, 640)[0]
+        assert bits == 12
+        assert mapping.nrows() == 35
+        source_rows = {}
+        for index in (0, 1, scans // 2, scans - 1):
+            raw.seek(15136 + index * count * stride)
+            for _ in range(count):
+                record = raw.read(stride)
+                array = int(record[121:124].rstrip(b'\0 ')) - 1
+                beam = mapping.getcell('BEAM', array)
+                window = mapping.getcell('SPECTRAL_WINDOW', array)
+                pol = mapping.getcell('POLARIZATION', array)
+                scan = struct.unpack_from(endian + 'i', record, 4)[0]
+                stamp = record[8:32].split(b'\0', 1)[0].decode().strip()
+                moment = datetime.strptime(stamp[:14], '%Y%m%d%H%M%S').replace(tzinfo=jst)
+                fraction = float('0' + stamp[14:]) if len(stamp) > 14 else 0.
+                seconds = (moment - mjd_zero).total_seconds() + fraction + interval / 2.
+                factor = struct.unpack_from(endian + 'd', header, 4576 + 8 * array)[0]
+                scale, offset = struct.unpack_from(endian + 'dd', record, 408)
+                samples = {}
+                for channel in (0, 1, channels // 2, channels - 1):
+                    packed = int.from_bytes(record[424 + 3 * (channel // 2):427 + 3 * (channel // 2)], 'big')
+                    code = packed & 0xfff if channel % 2 else packed >> 12
+                    samples[channel] = np.float32((code * scale + offset) * factor)
+                source_rows[round(seconds, 4), scan, beam, window, pol] = samples
+        columns = ('TIME', 'SCAN_NUMBER', 'ANTENNA1', 'DATA_DESC_ID')
+        for row, (seconds, scan, beam, desc) in enumerate(zip(*(main.getcol(name) for name in columns))):
+            window = descriptions.getcell('SPECTRAL_WINDOW_ID', desc)
+            plane_codes = polarization.getcell('CORR_TYPE', descriptions.getcell('POLARIZATION_ID', desc))
+            for plane, code in enumerate(plane_codes):
+                key = round(seconds, 4), scan, beam, window, code
+                if key in source_rows:
+                    samples = source_rows.pop(key)
+                    spectrum = main.getcell('FLOAT_DATA', row)[plane]
+                    np.testing.assert_array_equal(spectrum[list(samples)], list(samples.values()))
+        assert not source_rows, list(source_rows)[:4]
+
+
+def reverse_words(record, fields):
+    for offset, width, count in fields:
+        for start in range(offset, offset + width * count, width):
+            record[start:start + width] = record[start:start + width][::-1]
+
+
+def check_nro_byte_order(root, source, factories):
+    # The published Orion KL file has a big-endian header and two 12-bit
+    # samples per three payload bytes. Only header numbers change byte order.
+    with source.open('rb') as raw:
+        header = bytearray(raw.read(15136))
+        arrays = struct.unpack_from('>i', header, 144)[0]
+        stride = struct.unpack_from('>i', header, 14936)[0]
+        scans = [bytearray(raw.read(stride)) for _ in range(2 * arrays)]
+    struct.pack_into('>i', header, 148, 2)
+    big = root / 'trimmed-big.nostar'
+    big.write_bytes(header + b''.join(scans))
+    reverse_words(header, [
+        (144, 4, 2), (296, 8, 4), (328, 4, 2), (456, 8, 1), (620, 4, 3), (640, 8, 1),
+        (4576, 8, 35), (6256, 8, 35), (6536, 8, 350), (9336, 8, 350),
+        (14936, 4, 3), (14972, 4, 4), (15028, 2, 36),
+    ])
+    for scan in scans:
+        reverse_words(scan, [
+            (4, 4, 1), (40, 8, 10), (124, 4, 13), (176, 8, 9), (248, 4, 2), (256, 8, 1),
+            (408, 8, 2),
+        ])
+    little = root / 'trimmed-little.nostar'
+    little.write_bytes(header + b''.join(scans))
+    for name, factory in factories.items():
+        products = []
+        for operand in (big, little):
+            output = root / f'{operand.stem}-{name}.ms'
+            assert factory().importnro(str(operand), str(output))
+            check_nro_spectra(operand, output)
+            products.append(output)
+        compare_products(*products)
+    if 'native' in factories:
+        truncated = root / 'truncated.nostar'
+        truncated.write_bytes(little.read_bytes()[:-1])
+        protected = root / 'trimmed-little-native.ms'
+        before = (protected / 'table.dat').read_bytes()
+        assert factories['native']().importnro(str(truncated), str(protected), True) is False
+        assert (protected / 'table.dat').read_bytes() == before
+
+
 def run_imports(factory, name, kind, source, work):
     tool = factory()
     method = getattr(tool, 'import' + kind)
@@ -337,6 +434,11 @@ def main():
         check_duplicate_plane(root, source, factories)
         if 'native' in factories:
             check_linked_input(root, source, factories['native'])
+    else:
+        check_nro_spectra(source, casa[0])
+        if 'native' in factories:
+            check_nro_spectra(source, native[0])
+        check_nro_byte_order(root, source, factories)
     print(f'{args.kind.upper()} import, serial/parallel equivalence and product checks passed.', flush=True)
 
 

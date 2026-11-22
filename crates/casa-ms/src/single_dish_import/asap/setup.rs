@@ -31,12 +31,13 @@ pub(super) fn header(path: &Path, table: &Table) -> MsResult<ImportHeader> {
             [min.min(time), max.max(time)]
         });
     Ok(ImportHeader {
-        antenna: Antenna {
+        antenna: vec![Antenna {
             name: name.into(),
             station: station.into(),
             position,
             diameter: antenna_diameter(name),
-        },
+        }],
+        direction_frame: "J2000",
         telescope: observatory.into(),
         observer: string(keywords, "Observer")?.into(),
         project: string(keywords, "Project")?.into(),
