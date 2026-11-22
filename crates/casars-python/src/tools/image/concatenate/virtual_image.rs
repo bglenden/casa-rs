@@ -282,6 +282,7 @@ fn typed<T: MemberPixel>(
             masked: input.has_mask,
             writable: input.writable,
             writable_mask: input.writable_mask,
+            advisory_lock: input.advisory_lock,
             beam_axes: plane_axes(&input.coordinate_record)?,
             tempclose,
             storage: Mutex::new(storage),
@@ -307,6 +308,7 @@ struct Member<T: MemberPixel> {
     masked: bool,
     writable: bool,
     writable_mask: bool,
+    advisory_lock: bool,
     beam_axes: (Option<usize>, Option<usize>),
     tempclose: bool,
     storage: Mutex<Option<Storage<T>>>,
@@ -471,9 +473,15 @@ impl<T: MemberPixel> ConcatMember<T> for Member<T> {
     }
 
     fn has_lock(&self, kind: LockType) -> bool {
-        self.slot()
-            .as_ref()
-            .is_some_and(|storage| has_lock(storage, kind))
+        self.advisory_lock
+            || self
+                .slot()
+                .as_ref()
+                .is_some_and(|storage| has_lock(storage, kind))
+    }
+
+    fn has_advisory_lock(&self) -> bool {
+        self.advisory_lock
     }
 
     fn unlock(&self) -> Result<(), ImageError> {

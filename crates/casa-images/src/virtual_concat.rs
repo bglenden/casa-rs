@@ -67,6 +67,11 @@ pub trait ConcatMember<T: ImagePixel>: Send + Sync {
     /// Report a member lock.
     fn has_lock(&self, kind: LockType) -> bool;
 
+    /// Whether the member reports both locks without acquiring a storage lease.
+    fn has_advisory_lock(&self) -> bool {
+        false
+    }
+
     /// Release the access locks held by this member.
     fn unlock(&self) -> Result<(), ImageError>;
 
@@ -363,6 +368,11 @@ impl<T: ImagePixel> ConcatImage<T> {
     /// Return whether any member holds the requested access lock.
     pub fn has_lock(&self, kind: LockType) -> bool {
         self.members.iter().any(|member| member.has_lock(kind))
+    }
+
+    /// Whether a member reports locks even after temporary closure.
+    pub fn has_advisory_lock(&self) -> bool {
+        self.members.iter().any(|member| member.has_advisory_lock())
     }
 
     /// Release access locks on all members.

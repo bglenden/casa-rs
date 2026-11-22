@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_images::fits_read::FitsToolImport;
-use casa_images::miriad_read::MiriadImage;
 use casa_tables::publication::check_write_access;
 use casa_tables::{Table, TableError, TableInfo, TableOptions, TableUseLock, TableWriteLock};
 use casa_types::RecordValue;
@@ -187,10 +186,7 @@ impl AttachedImage {
             && fs::read_to_string(key.join("table.info"))
                 .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image");
         if !paged && !casa_images::ComponentListImage::recognizes_native(&key) {
-            if MiriadImage::recognizes(probe)
-                && (!has_table_control
-                    || Table::open_metadata_only(TableOptions::new(&key)).is_err())
-            {
+            if ImageHandle::recognizes_miriad(probe, &key) {
                 return Self::open_miriad(path);
             }
             return Err(unrecognized());

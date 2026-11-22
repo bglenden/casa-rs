@@ -121,6 +121,78 @@ def _sin_pixel(x, y):
     return [longitude, latitude]
 
 
+@pytest.mark.parametrize("writer", ["casa", "casars"])
+@pytest.mark.parametrize("reader", ["casa", "casars"])
+@pytest.mark.parametrize("tempclose", [False, True])
+@pytest.mark.parametrize("mode", ["paged", "nomove", "copy", "move"])
+def test_miriad_concatenates_with_a_masked_native_image(tmp_path, writer, reader, tempclose, mode):
+    source = _backend(writer).image()
+    restored = _backend(reader).image()
+    external = tmp_path / "external.mir"
+    native = tmp_path / "native.im"
+    output = tmp_path / "joined.im"
+    external_pixels = _sky(external)
+    external_bytes = (external / "image").read_bytes()
+    original_directory = external.stat()
+    native_pixels = np.full_like(external_pixels, 5.)
+    native_pixels[7, 3] = -5.
+    expected = np.concatenate([external_pixels, native_pixels])
+    valid = np.concatenate([np.ones_like(external_pixels, dtype=bool), native_pixels > 0])
+    joined = None
+    try:
+        assert source.open(str(external))
+        coords = source.coordsys()
+        record = coords.torecord()
+        coords.done()
+        assert source.done()
+        assert source.fromarray(str(native), native_pixels, csys=record)
+        assert source.setbrightnessunit("Jy/pixel")
+        assert source.calcmask(f'"{native}" > 0', name="valid")
+        assert source.done()
+
+        joined = source.imageconcat(str(output), [str(external), str(native)], axis=0,
+                                    relax=True, mode=mode, tempclose=tempclose)
+        np.testing.assert_array_equal(joined.shape(), expected.shape)
+        np.testing.assert_array_equal(joined.getchunk(), expected)
+        assert [path.exists() for path in (external, native)] == [mode != "move"] * 2
+        member = output / external.name if mode in {"copy", "move"} else external
+        assert (member / "image").read_bytes() == external_bytes
+        if mode == "move" and writer == "casars":
+            assert os.path.samestat(original_directory, member.stat())
+        assert joined.done()
+
+        assert restored.open(str(output))
+        assert restored.pixeltype() == "float"
+        assert restored.brightnessunit() == "Jy/pixel"
+        pixels = restored.getchunk()
+        assert pixels.dtype == np.float64
+        np.testing.assert_array_equal(pixels, expected)
+        np.testing.assert_array_equal(restored.getchunk(getmask=True), valid)
+        coords = restored.coordsys()
+        try:
+            assert coords.setunits(["rad", "rad"])
+            np.testing.assert_allclose(coords.toworld([40, 8])["numeric"], _sin_pixel(40, 8),
+                                       rtol=0, atol=1e-10)
+        finally:
+            coords.done()
+        patch = np.array([[73.]], dtype=np.float32)
+        if mode == "paged":
+            assert restored.putchunk(patch, blc=[5, 1])
+            assert restored.getchunk([5, 1], [5, 1]).item() == 73.
+        else:
+            assert restored.unlock()
+            np.testing.assert_array_equal(restored.haslock(), [True, True])
+            with pytest.raises(RuntimeError, match="not writable"):
+                restored.putchunk(patch, blc=[5, 1])
+            np.testing.assert_array_equal(restored.getchunk(), expected)
+        assert (member / "image").read_bytes() == external_bytes
+    finally:
+        restored.done()
+        if joined is not None:
+            joined.done()
+        source.done()
+
+
 @pytest.mark.parametrize("backend", ["casa", "casars"])
 @pytest.mark.parametrize(("method", "kwargs"), [
     ("open", {"cache": True}), ("open", {"cache": False}),

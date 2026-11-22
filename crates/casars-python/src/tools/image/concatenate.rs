@@ -154,6 +154,7 @@ struct Input<'a> {
     has_mask: bool,
     writable: bool,
     writable_mask: bool,
+    advisory_lock: bool,
     opened: Option<ImageHandle>,
     revision: Option<InputRevision>,
 }
@@ -192,6 +193,15 @@ impl<'a> Input<'a> {
             }
             Storage::Temp { image, .. } => image.concat_source().is_some_and(|source| source.mask_writable()),
         }) && writable;
+        // MIRIAD inherits casacore's lattice locks, which report success
+        // without a table lease, even under TempClose and after unlock.
+        let advisory_lock = with_pixels!(&image, storage => match storage {
+            Storage::Paged(_) => false,
+            Storage::Temp { image, .. } => {
+                image.image_type_name() == "MIRIADImage"
+                    || image.concat_source().is_some_and(|source| source.has_advisory_lock())
+            }
+        });
         Ok(Self {
             path,
             resolved_path,
@@ -207,6 +217,7 @@ impl<'a> Input<'a> {
             has_mask: has_mask || image.fits().is_some_and(|fits| fits.has_mask),
             writable,
             writable_mask,
+            advisory_lock,
             opened: (!tempclose).then_some(image),
             revision,
         })
@@ -408,7 +419,7 @@ impl Request<'_> {
             let image = if let Some(opened) = &entry.opened {
                 opened
             } else {
-                reopened = ImageHandle::open_read(entry.path).map_err(raised)?;
+                reopened = ImageHandle::open_for_concatenation(entry.path).map_err(raised)?;
                 &reopened
             };
             let same_revision = match &entry.revision {
