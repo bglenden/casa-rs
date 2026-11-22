@@ -7517,7 +7517,10 @@ unchecked, so the task can report success without producing the listing.
 casa-rs refuses overlapping listing/product paths before mutation and reports
 listing write errors. This preserves data and implements the requested file
 output rather than silently losing it. Source: `SolvableVisJones::fluxscale`,
-the `oListFile` stream blocks.
+the `oListFile` stream blocks. The direct calibrater writes the listing before
+publishing or appending to the caltable, so retrying after a listing error
+does not duplicate rows. The direct oracle checks the pinned success with a
+directory as the listing path and native preservation of an existing table.
 
 ## `tablerow.__getitem__` process abort in CASA 6.7.6.14
 
