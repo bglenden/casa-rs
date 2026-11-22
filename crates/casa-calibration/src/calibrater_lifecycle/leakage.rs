@@ -166,6 +166,8 @@ fn polarization_kind(name: &str) -> Option<LeakageSolveKind> {
         "Xparang Jones" => return Some(Xparang),
         "Xfparang Jones" => return Some(Xfparang),
         "PosAng Jones" => return Some(PosAng),
+        "GlinXph Jones" => return Some(XY),
+        "GlinXphf Jones" => return Some(XYf),
         _ => return None,
     };
     Some(if source_pol {

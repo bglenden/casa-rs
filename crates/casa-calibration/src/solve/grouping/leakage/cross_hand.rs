@@ -30,9 +30,9 @@ impl LegacyCrossHandAveraging {
         *start
     }
 
-    pub(super) fn observe(&mut self, segment: BaselineSegment) {
-        self.output
-            .get_or_insert((segment.field, segment.spectral_window));
+    pub(super) fn observe(&mut self, segment: BaselineSegment) -> bool {
+        let group = (segment.field, segment.spectral_window);
+        *self.output.get_or_insert(group) == group
     }
 
     pub(super) fn fits(&self, segment: BaselineSegment) -> bool {

@@ -34,6 +34,7 @@ struct SegmentRows {
 pub(super) struct ParallacticAverages {
     circular: bool,
     gain_phase: bool,
+    legacy: bool,
     mode: GainSolveMode,
     segments: BTreeMap<(u64, i32, i32), SegmentRows>,
     rows: ChannelSamples<PhaseSample>,
@@ -45,10 +46,12 @@ impl ParallacticAverages {
         circular: bool,
         gain_phase: bool,
         mode: GainSolveMode,
+        legacy: bool,
     ) -> Self {
         Self {
             circular,
             gain_phase,
+            legacy,
             mode,
             segments: BTreeMap::new(),
             rows: ChannelSamples::new(channels),
@@ -72,6 +75,8 @@ impl ParallacticAverages {
                 usable: false,
             });
         let mut unflagged = vec![0; channels.len().div_ceil(64)];
+        let legacy_phase_normalization = (self.legacy && self.mode == GainSolveMode::Phase)
+            .then(|| super::cross_hand::legacy_phase_normalization(channels));
         for (channel, mean) in channels.iter_mut().enumerate() {
             let mean = std::mem::take(mean);
             if mean.unflagged != 0 {
@@ -81,8 +86,12 @@ impl ParallacticAverages {
             if let Some((data, model, weights)) = mean.finish(false)
                 && (weights[1] > 0.0 || weights[2] > 0.0)
             {
-                let [(xy, wx), (yx, wy)] =
-                    [1, 2].map(|corr| solve_sample(self.mode, data[corr], weights[corr]));
+                let [(xy, wx), (yx, wy)] = [1, 2].map(|corr| {
+                    let (value, weight) = solve_sample(self.mode, data[corr], weights[corr]);
+                    let weight = legacy_phase_normalization
+                        .map_or(weight, |normalization| normalization[corr] * weights[corr]);
+                    (value, weight)
+                });
                 let sample = PhaseSample {
                     segment: segment.id as u32,
                     antennas,
@@ -180,6 +189,15 @@ impl ParallacticAverages {
                     }
                 })
                 .map_err(GainSolveError::PolarizationScratch)?;
+        }
+        if self.legacy
+            && self.gain_phase
+            && !samples
+                .iter()
+                .flat_map(|segment| &segment.channels)
+                .any(SegmentChannel::has_weight)
+        {
+            return Ok((vec![None; channels], Complex32::ZERO));
         }
         solve(&samples, channels, self.circular, !self.gain_phase)
             .map_err(|_| GainSolveError::SingularSourcePolarization)

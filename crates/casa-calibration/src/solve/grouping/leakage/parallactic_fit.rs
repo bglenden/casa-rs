@@ -28,6 +28,10 @@ pub(super) struct SegmentChannel {
 }
 
 impl SegmentChannel {
+    pub(super) fn has_weight(&self) -> bool {
+        self.weight > 0.0
+    }
+
     pub(super) fn observe(
         &mut self,
         [xy, yx]: [Complex32; 2],

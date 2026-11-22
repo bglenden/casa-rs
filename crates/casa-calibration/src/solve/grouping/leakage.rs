@@ -584,7 +584,14 @@ impl LeakageInputs<'_> {
         let span = self.preaverage_span();
         let circular = kind.intensity_normalized()
             && correlation_types_for_ddid(self.ms, first.data_desc_id)?.contains(&5);
-        let mut fits = IntervalFits::new(count, antennas, kind, circular, self.request.solve_mode);
+        let mut fits = IntervalFits::new(
+            count,
+            antennas,
+            kind,
+            circular,
+            self.request.solve_mode,
+            self.legacy_cross_hand,
+        );
         let mut averages = BTreeMap::new();
         let mut time = WeightedTime::default();
         let mut legacy = self
@@ -671,8 +678,10 @@ impl LeakageInputs<'_> {
                 )?;
                 if let Some(legacy) = &mut legacy
                     && active.bins.iter().any(|bin| bin.unflagged != 0)
+                    && !legacy.observe(active.segment)
+                    && kind.gain_phase()
                 {
-                    legacy.observe(active.segment);
+                    return Err(GainSolveError::LegacyGainPhaseMultipleBuffers);
                 }
                 if self.legacy_cross_hand {
                     time.observe(row.time_seconds, scalar_weight.unwrap_or_default());
@@ -913,7 +922,7 @@ impl LeakageInputs<'_> {
             let slot = position / window.bin_width;
             let mut data = order.map(|corr| samples.data[[corr, channel]]);
             let mut weights = match legacy_weights {
-                Some((weights, channels)) if self.request.kind == LeakageSolveKind::Xj => {
+                Some((weights, channels)) if !self.request.kind.channelized() => {
                     // Old freqAveCubes averages the row's channels before
                     // it contributes its scalar weight to the time average.
                     weights.map(|weight| weight / channels as f32)

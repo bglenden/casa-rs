@@ -116,6 +116,7 @@ impl IntervalFits {
         kind: LeakageSolveKind,
         circular: bool,
         mode: GainSolveMode,
+        legacy: bool,
     ) -> Self {
         if kind.parallactic() {
             Self::Parallactic(ParallacticAverages::new(
@@ -123,6 +124,7 @@ impl IntervalFits {
                 circular,
                 kind.gain_phase(),
                 mode,
+                legacy,
             ))
         } else if kind.cross_hand() {
             let measurement = match (kind, circular) {
