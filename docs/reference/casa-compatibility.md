@@ -2386,7 +2386,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `5995e36027dc7383185a234aca60c8596fd7014e`. Status counts: Default only: 0, Implemented: 22, Not implemented: 12, Partial: 4, Unassessed: 0.
+Audit baseline: `9988be830413ce58f7a05b46a413e8de21a0dc46`. Status counts: Default only: 0, Implemented: 28, Not implemented: 7, Partial: 3, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -2402,19 +2402,19 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `pol` | `''` | `''`; `pol` → `pol` | Implemented | Select the requested correlations. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
 | `intent` | `''` | `''`; `intent` → `intent` | Implemented | Filter by observing intent. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
 | `reindex` | `True` | `True`; `reindex` → `reindex` | Implemented | Preserve input identifiers or compact the selected subtables. [selection](#sdbaseline-behavior-selection)<br>Catalog domain: `bool` | [paired](#sdbaseline-evidence-paired) |
-| `maskmode` | `'list'` | `'list'`; `maskmode` → `maskmode` | Partial | Fit the supplied channel mask. Lowercase auto selects automatic line detection in CASA. [selection](#sdbaseline-behavior-selection) [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired), [pending](#sdbaseline-evidence-pending) |
-| `thresh` | `5.0` | `5.0`; `thresh` → `thresh` | Not implemented | Automatic masking uses this line-detection threshold. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `float` | [pending](#sdbaseline-evidence-pending) |
-| `avg_limit` | `4` | `4`; `avg_limit` → `avg_limit` | Not implemented | Automatic masking uses this maximum channel-averaging width. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `integer` | [pending](#sdbaseline-evidence-pending) |
-| `minwidth` | `4` | `4`; `minwidth` → `minwidth` | Not implemented | Automatic masking uses this minimum detected line width. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `integer` | [pending](#sdbaseline-evidence-pending) |
-| `edge` | `[0, 0]` | `[0, 0]`; `edge` → `edge` | Not implemented | Automatic masking removes these channels from each end. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [pending](#sdbaseline-evidence-pending) |
-| `blmode` | `'fit'` | `'fit'`; `blmode` → `blmode` | Partial | Fit or apply polynomial and Chebyshev baselines. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `maskmode` | `'list'` | `'list'`; `maskmode` → `maskmode` | Implemented | Use a list mask or detect spectral lines with lowercase auto. [automatic-masking](#sdbaseline-behavior-automatic-masking)<br>Catalog domain: `string` | [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
+| `thresh` | `5.0` | `5.0`; `thresh` → `thresh` | Implemented | Set the masked median absolute deviation threshold for line detection. [automatic-masking](#sdbaseline-behavior-automatic-masking)<br>Catalog domain: `float` | [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
+| `avg_limit` | `4` | `4`; `avg_limit` → `avg_limit` | Implemented | Allow channel bins up to the specified width. [automatic-masking](#sdbaseline-behavior-automatic-masking)<br>Catalog domain: `integer` | [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
+| `minwidth` | `4` | `4`; `minwidth` → `minwidth` | Implemented | Set the minimum width of a detected spectral line. [automatic-masking](#sdbaseline-behavior-automatic-masking)<br>Catalog domain: `integer` | [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
+| `edge` | `[0, 0]` | `[0, 0]`; `edge` → `edge` | Implemented | Exclude zero, symmetric or asymmetric edge channels from line finding. [automatic-masking](#sdbaseline-behavior-automatic-masking)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
+| `blmode` | `'fit'` | `'fit'`; `blmode` → `blmode` | Partial | Fit or apply polynomial, Chebyshev and cubic-spline baselines. [fit-apply](#sdbaseline-behavior-fit-apply) [cubic-spline](#sdbaseline-behavior-cubic-spline)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired), [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
 | `dosubtract` | `True` | `True`; `dosubtract` → `dosubtract` | Implemented | Write corrected spectra or publish only the requested fits. [products](#sdbaseline-behavior-products)<br>Catalog domain: `bool` | [paired](#sdbaseline-evidence-paired) |
 | `blformat` | `'text'` | `'text'`; `blformat` → `blformat` | Implemented | Choose any combination of text, CSV and CASA baseline-table products. [products](#sdbaseline-behavior-products)<br>Catalog domain: `variant` | [paired](#sdbaseline-evidence-paired) |
 | `bloutput` | `''` | `''`; `bloutput` → `bloutput` | Implemented | Supply diagnostic filenames or use the CASA suffixes. [products](#sdbaseline-behavior-products)<br>Catalog domain: `variant` | [paired](#sdbaseline-evidence-paired) |
-| `bltable` | `''` | `''`; `bltable` → `bltable` | Partial | Read and apply the polynomial and Chebyshev coefficients in a CASA baseline table. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
-| `blfunc` | `'poly'` | `'poly'`; `blfunc` → `blfunc` | Partial | Fit polynomial or Chebyshev models. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired) |
+| `bltable` | `''` | `''`; `bltable` → `bltable` | Partial | Apply polynomial, Chebyshev and cubic-spline coefficients from a CASA baseline table. [fit-apply](#sdbaseline-behavior-fit-apply) [cubic-spline](#sdbaseline-behavior-cubic-spline)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired), [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
+| `blfunc` | `'poly'` | `'poly'`; `blfunc` → `blfunc` | Partial | Fit polynomial, Chebyshev or cubic-spline models. [fit-apply](#sdbaseline-behavior-fit-apply) [cubic-spline](#sdbaseline-behavior-cubic-spline)<br>Catalog domain: `string` | [paired](#sdbaseline-evidence-paired), [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
 | `order` | `5` | `5`; `order` → `order` | Implemented | Set the degree of the polynomial or Chebyshev family. [fit-apply](#sdbaseline-behavior-fit-apply)<br>Catalog domain: `integer` | [paired](#sdbaseline-evidence-paired) |
-| `npiece` | `2` | `2`; `npiece` → `npiece` | Not implemented | Cubic-spline fits use this number of pieces. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `integer` | [pending](#sdbaseline-evidence-pending) |
+| `npiece` | `2` | `2`; `npiece` → `npiece` | Implemented | Set the number of cubic-spline pieces and choose knots from the initial fit mask. [cubic-spline](#sdbaseline-behavior-cubic-spline)<br>Catalog domain: `integer` | [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline) |
 | `applyfft` | `True` | `True`; `applyfft` → `applyfft` | Not implemented | Sinusoid fits use this switch to select FFT-derived wavenumbers. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `bool` | [pending](#sdbaseline-evidence-pending) |
 | `fftmethod` | `'fft'` | `'fft'`; `fftmethod` → `fftmethod` | Not implemented | Sinusoid fits use this FFT selection method. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `string` | [pending](#sdbaseline-evidence-pending) |
 | `fftthresh` | `3.0` | `3.0`; `fftthresh` → `fftthresh` | Not implemented | Sinusoid fits use this FFT selection threshold. [future-fits](#sdbaseline-behavior-future-fits)<br>Catalog domain: `variant` | [pending](#sdbaseline-evidence-pending) |
@@ -2447,7 +2447,7 @@ Evidence: [paired](#sdbaseline-evidence-paired).
 
 **Partial** — Fit spectra and apply compatible baseline tables across implementations.
 
-Other baseline families and automatic masking are tracked by #1532.
+Sinusoidal and variable fitting remain tracked by #1532.
 
 Evidence: [paired](#sdbaseline-evidence-paired).
 
@@ -2463,17 +2463,35 @@ Evidence: [paired](#sdbaseline-evidence-paired).
 <a id="sdbaseline-behavior-future-fits"></a>
 ##### Remaining fitting and mask families
 
-**Not implemented** — Add cubic-spline, sinusoid, variable fits and automatic line masks.
+**Not implemented** — Add sinusoidal and variable-parameter fits.
 
 Tracked by #1532.
 
 Evidence: [pending](#sdbaseline-evidence-pending).
 
+<a id="sdbaseline-behavior-automatic-masking"></a>
+##### Automatic single-dish line masks
+
+**Implemented** — Detect emission and absorption channels with masked MAD and CASA channel averaging.
+
+Release-scale performance follows functionality under #979.
+
+Evidence: [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline).
+
+<a id="sdbaseline-behavior-cubic-spline"></a>
+##### Continuous piecewise cubic fitting and table application
+
+**Implemented** — Derive knots from the initial fit mask, clip within segments, and exchange tables.
+
+Release-scale performance follows functionality under #979.
+
+Evidence: [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline).
+
 #### sdbaseline deviations and unfinished work
 
 ##### singleton-mask-pairs: Proposed
 
-- Record: [Single-dish baseline tables can contain malformed singleton mask ranges](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-tables-can-contain-malformed-singleton-mask-ranges)
+- Record: [Single-dish baseline tables can contain malformed singleton mask ranges](https://github.com/bglenden/casa-rs/blob/9988be830413ce58f7a05b46a413e8de21a0dc46/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-tables-can-contain-malformed-singleton-mask-ranges)
 - Inputs: Select a spectrum whose fitted mask starts with a singleton channel and another disjoint range.
 - CASA: The saved mask has an odd endpoint count and CASA refuses to apply it.
 - casa-rs: The singleton channel has equal start and end endpoints and the native table applies in CASA.
@@ -2484,7 +2502,7 @@ Evidence: [pending](#sdbaseline-evidence-pending).
 
 ##### remove-spectral-noise: Proposed
 
-- Record: [Single-dish baseline weight updates can fail when removing two columns](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-weight-updates-can-fail-when-removing-two-columns)
+- Record: [Single-dish baseline weight updates can fail when removing two columns](https://github.com/bglenden/casa-rs/blob/9988be830413ce58f7a05b46a413e8de21a0dc46/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-weight-updates-can-fail-when-removing-two-columns)
 - Inputs: Set updateweight on an input containing both spectral noise columns.
 - CASA: The public task raises after producing the data and scalar weights.
 - casa-rs: The public task writes the recalculated weights with the two stale columns omitted.
@@ -2495,7 +2513,7 @@ Evidence: [pending](#sdbaseline-evidence-pending).
 
 ##### per-spectrum-clipped-count: Proposed
 
-- Record: [Single-dish baseline reports accumulate clipped-channel counts](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-reports-accumulate-clipped-channel-counts)
+- Record: [Single-dish baseline reports accumulate clipped-channel counts](https://github.com/bglenden/casa-rs/blob/9988be830413ce58f7a05b46a413e8de21a0dc46/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-reports-accumulate-clipped-channel-counts)
 - Inputs: Reject one spectral channel in each of multiple consecutive integrations.
 - CASA: Reports a running clipped-channel count within a visibility buffer.
 - casa-rs: Reports the number clipped in that spectrum.
@@ -2506,7 +2524,7 @@ Evidence: [pending](#sdbaseline-evidence-pending).
 
 ##### negative-iterations: Proposed
 
-- Record: [Single-dish baseline fitting accepts negative iteration counts in CASA](https://github.com/bglenden/casa-rs/blob/5995e36027dc7383185a234aca60c8596fd7014e/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-fitting-accepts-negative-iteration-counts-in-casa)
+- Record: [Single-dish baseline fitting accepts negative iteration counts in CASA](https://github.com/bglenden/casa-rs/blob/9988be830413ce58f7a05b46a413e8de21a0dc46/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-baseline-fitting-accepts-negative-iteration-counts-in-casa)
 - Inputs: Set clipniter below zero or num_fitting_max to zero.
 - CASA: Converts the result to an unsigned fit count. Zero can return a model without a fit.
 - casa-rs: Reports a fitting-iteration validation error.
@@ -2514,6 +2532,28 @@ Evidence: [pending](#sdbaseline-evidence-pending).
 - User impact: The wrapper cannot publish unused or uninitialized coefficients as a fitted model.
 - Owner decision: Pending; not an accepted deviation.
 - Evidence: [iteration-source](#sdbaseline-evidence-iteration-source).
+
+##### dense-spline-accuracy: Proposed
+
+- Record: [Dense single-dish cubic splines can lose numerical accuracy in CASA](https://github.com/bglenden/casa-rs/blob/9988be830413ce58f7a05b46a413e8de21a0dc46/docs/CASA%20%28C%2B%2B%29%20bugs.md#dense-single-dish-cubic-splines-can-lose-numerical-accuracy-in-casa)
+- Inputs: Fit 47 or 93 cubic pieces to a 96-channel seeded Gaussian spectrum.
+- CASA: Residuals differ from the independent B-spline least-squares solution.
+- casa-rs: An SVD of the design matrix reproduces that solution within 2.2e-8 RMS.
+- Rationale: The normal system squares the condition number of a dense spline design.
+- User impact: Highly segmented fits retain numerical accuracy.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline).
+
+##### line-finder-index-limits: Proposed
+
+- Record: [Single-dish automatic line masks can access invalid channels in CASA](https://github.com/bglenden/casa-rs/blob/9988be830413ce58f7a05b46a413e8de21a0dc46/docs/CASA%20%28C%2B%2B%29%20bugs.md#single-dish-automatic-line-masks-can-access-invalid-channels-in-casa)
+- Inputs: Select a narrow fitted range or detect a line touching channel zero.
+- CASA: Can index before the median array or decrement an unsigned zero channel index.
+- casa-rs: Stop an averaging level with fewer than two eligible bins and bound wing extension.
+- Rationale: Those cases have no contributing bins or channels beyond the available data.
+- User impact: A narrow range can be fitted even if a coarser bin has no eligible channels.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [automatic-and-spline](#sdbaseline-evidence-automatic-and-spline).
 
 #### sdbaseline evidence
 
@@ -2555,6 +2595,26 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Pinned upstream inspection and negative-count probe — inspected.** A task call with clipniter=-1 emits no fitted baseline. Casa-rs rejects negative counts. CASA 6.7.6.14 sdbaseline passes clipniter plus one to an unsigned solver count.
 
+
+<a id="sdbaseline-evidence-automatic-and-spline"></a>
+##### automatic-and-spline
+
+**Public task/tool physics, diagnostics and table interchange — passed.** The paired outputs, expected masks, knot boundaries, model coefficients and residual laws agree. Six line masks, a narrow channel stripe, invalid controls, one to three spline pieces, clipping, reports and both table readers. Includes infinite thresholds, unused controls on fully flagged spectra, skipped-receptor metadata and an independent dense-spline comparison.
+
+- [tools/casa-compat/sdbaseline_mask_spline_oracle.py](https://github.com/bglenden/casa-rs/blob/9988be830413ce58f7a05b46a413e8de21a0dc46/tools/casa-compat/sdbaseline_mask_spline_oracle.py)
+- Revision: `9988be830413ce58f7a05b46a413e8de21a0dc46`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_mask_spline_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1978`.
+
+<a id="sdbaseline-evidence-spline-debug-performance"></a>
+##### spline-debug-performance
+
+**Matched compact runtime and native phase trace — measured.** Native debug wall times were 0.51–0.68 s versus CASA 0.22–0.52 s. One trace spent 0.434 s processing spectra and 0.017 s saving MAIN. Dataset-scale release profiling follows functionality under #979. Two-piece fit on 240 selected rows and 96 channels with the same MeasurementSet, table, text and CSV products.
+
+- [tools/casa-compat/sdbaseline_mask_spline_oracle.py](https://github.com/bglenden/casa-rs/blob/9988be830413ce58f7a05b46a413e8de21a0dc46/tools/casa-compat/sdbaseline_mask_spline_oracle.py)
+- Revision: `9988be830413ce58f7a05b46a413e8de21a0dc46`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_mask_spline_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1978`.
 
 ### sdcal
 

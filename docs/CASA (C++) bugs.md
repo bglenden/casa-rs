@@ -9686,3 +9686,19 @@ input real spectra in the output and can write coefficients and RMS values
 without performing a fit. Smaller values can wrap to very large fit counts.
 Casa-rs requires a nonnegative `clipniter` and a positive direct-tool
 `num_fitting_max`.
+
+## Dense single-dish cubic splines can lose numerical accuracy in CASA
+
+CASA 6.7.6.14 solves a normal system for the spline coefficients. On a
+96-channel input with seeded Gaussian samples, the fitted residuals differed
+from an independent B-spline least-squares calculation by RMS 0.0557 with
+47 pieces and 0.5401 with 93 pieces. Casa-rs solves the design matrix with
+an SVD. Its fitted residuals agreed with the independent calculation
+within RMS (2.2\times10^{-8}) on both inputs.
+
+## Single-dish automatic line masks can access invalid channels in CASA
+
+CASA's line finder can call its median helper with zero searchable bins.
+Its wing extension can also decrement an unsigned index at channel zero.
+Casa-rs stops an averaging level when it has fewer than two eligible bins
+and stops the wing at the start of the spectrum.

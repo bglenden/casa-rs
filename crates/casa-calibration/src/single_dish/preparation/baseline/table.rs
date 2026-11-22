@@ -11,7 +11,7 @@ use ndarray::{Array2, Axis};
 
 use crate::writer::{set_fixed_unit_keyword, set_measinfo_keyword};
 
-use super::polynomial::Polynomial;
+use super::{BaselineFamily, polynomial::Polynomial};
 
 pub(super) struct BaselineRow {
     pub(super) scan: u32,
@@ -24,8 +24,10 @@ pub(super) struct BaselineRow {
 }
 
 pub(super) struct SpectrumModel {
-    pub(super) family: Polynomial,
+    pub(super) family: BaselineFamily,
+    pub(super) parameter: usize,
     pub(super) coefficients: Vec<f64>,
+    pub(super) boundaries: Vec<usize>,
     pub(super) mask: Vec<u32>,
     pub(super) rms: f32,
     pub(super) clip_threshold: f32,
@@ -46,9 +48,10 @@ pub(super) struct BaselineTable {
     rows: BTreeMap<BaselineGroup, Vec<IndexedRow>>,
 }
 
-pub(super) struct AppliedPolynomial {
-    pub(super) family: Polynomial,
+pub(super) struct AppliedBaseline {
+    pub(super) family: BaselineFamily,
     pub(super) coefficients: Vec<f64>,
+    pub(super) boundaries: Vec<usize>,
     pub(super) included: Vec<bool>,
 }
 
@@ -115,7 +118,7 @@ impl BaselineTable {
         &self,
         row: usize,
         receptor: usize,
-    ) -> Result<Option<AppliedPolynomial>, String> {
+    ) -> Result<Option<AppliedBaseline>, String> {
         let cell = |column| {
             self.table
                 .cell_accessor(row, column)
@@ -132,21 +135,31 @@ impl BaselineTable {
             return Err("Expected an unsigned FUNC_TYPE cell.".into());
         };
         let family = match baseline_scalar(families, receptor) {
-            Some(0) => Polynomial::Monomial,
-            Some(1) => Polynomial::Chebyshev,
+            Some(0) => BaselineFamily::Polynomial(Polynomial::Monomial),
+            Some(1) => BaselineFamily::Polynomial(Polynomial::Chebyshev),
+            Some(2) => BaselineFamily::CubicSpline,
             _ => return Err("Unsupported baseline type.".into()),
         };
         let ArrayValue::Int32(degrees) = cell("FUNC_PARAM")? else {
             return Err("Expected an integer FUNC_PARAM cell.".into());
         };
-        let degree = baseline_scalar(degrees, receptor)
+        let parameter = baseline_scalar(degrees, receptor)
             .and_then(|&value| usize::try_from(value).ok())
-            .ok_or("Invalid baseline order.")?;
+            .ok_or("Invalid baseline order or piece count.")?;
+        let coefficients_count = match family {
+            BaselineFamily::Polynomial(_) => parameter + 1,
+            BaselineFamily::CubicSpline => parameter
+                .checked_mul(4)
+                .ok_or("Invalid number of cubic-spline coefficients.")?,
+        };
         let ArrayValue::Float32(result) = cell("RESULT")? else {
             return Err("Expected a floating-point RESULT cell.".into());
         };
-        let mut coefficients = Vec::with_capacity(degree + 1);
-        for term in 0..=degree {
+        if result.shape().get(1).copied().unwrap_or(0) < coefficients_count {
+            return Err("Baseline order or piece count exceeds the stored coefficients.".into());
+        }
+        let mut coefficients = Vec::with_capacity(coefficients_count);
+        for term in 0..coefficients_count {
             coefficients.push(f64::from(
                 *result
                     .get([receptor, term])
@@ -166,12 +179,44 @@ impl BaselineTable {
             .collect::<Vec<_>>();
         let channels = scalar_uint(&self.table, row, "NCHAN")? as usize;
         let included = decode_ranges(&ranges, channels)?;
-        Ok(Some(AppliedPolynomial {
+        let boundaries = if matches!(family, BaselineFamily::CubicSpline) {
+            let ArrayValue::Float32(params) = cell("FUNC_FPARAM")? else {
+                return Err("Expected floating-point spline boundaries.".into());
+            };
+            spline_boundaries(params, receptor, parameter, channels)?
+        } else {
+            Vec::new()
+        };
+        Ok(Some(AppliedBaseline {
             family,
             coefficients,
+            boundaries,
             included,
         }))
     }
+}
+
+fn spline_boundaries(
+    params: &ndarray::ArrayD<f32>,
+    receptor: usize,
+    pieces: usize,
+    channels: usize,
+) -> Result<Vec<usize>, String> {
+    if pieces == 0 || params.shape().get(1).copied().unwrap_or(0) <= pieces {
+        return Err("Missing cubic-spline boundaries in baseline table.".into());
+    }
+    (0..=pieces)
+        .map(|index| {
+            let value = *params
+                .get([receptor, index])
+                .ok_or("Invalid polarization axis in FUNC_FPARAM.")?;
+            if value.is_finite() && value >= 0. && value <= channels as f32 && value.fract() == 0. {
+                Ok(value as usize)
+            } else {
+                Err("Cubic-spline boundary is outside the selected spectrum.".into())
+            }
+        })
+        .collect()
 }
 
 fn matching_time(rows: &[IndexedRow], time: f64, interval: f64) -> Option<&IndexedRow> {
@@ -260,7 +305,7 @@ fn scalar_uint(table: &Table, row: usize, column: &str) -> Result<u32, String> {
 }
 
 impl BaselineRow {
-    pub(super) fn record(&self) -> RecordValue {
+    pub(super) fn record(&self, default_family: BaselineFamily) -> RecordValue {
         let receptors = self.models.len();
         let widest = |size: fn(&SpectrumModel) -> usize| {
             self.models
@@ -271,10 +316,17 @@ impl BaselineRow {
                 .unwrap_or_default()
         };
         let coefficients = widest(|model| model.coefficients.len());
+        let boundaries = widest(|model| model.boundaries.len());
         let ranges = widest(|model| model.mask.len());
         let mut apply = Array2::from_elem((receptors, 1), false);
-        let mut family = Array2::<u32>::zeros((receptors, 1));
+        let storage_family = |family| match family {
+            BaselineFamily::Polynomial(Polynomial::Monomial) => 0,
+            BaselineFamily::Polynomial(Polynomial::Chebyshev) => 1,
+            BaselineFamily::CubicSpline => 2,
+        };
+        let mut family = Array2::from_elem((receptors, 1), storage_family(default_family));
         let mut degree = Array2::<i32>::zeros((receptors, 1));
+        let mut boundaries = Array2::<f32>::zeros((receptors, boundaries));
         let mut result = Array2::<f32>::zeros((receptors, coefficients));
         let mut mask = Array2::<u32>::zeros((receptors, ranges));
         let mut rms = Array2::<f32>::zeros((receptors, 1));
@@ -283,11 +335,11 @@ impl BaselineRow {
         for (receptor, model) in self.models.iter().enumerate() {
             let Some(model) = model else { continue };
             apply[[receptor, 0]] = true;
-            family[[receptor, 0]] = match model.family {
-                Polynomial::Monomial => 0,
-                Polynomial::Chebyshev => 1,
-            };
-            degree[[receptor, 0]] = model.coefficients.len().saturating_sub(1) as i32;
+            family[[receptor, 0]] = storage_family(model.family);
+            degree[[receptor, 0]] = model.parameter as i32;
+            for (index, &value) in model.boundaries.iter().enumerate() {
+                boundaries[[receptor, index]] = value as f32;
+            }
             for (index, &value) in model.coefficients.iter().enumerate() {
                 result[[receptor, index]] = value as f32;
             }
@@ -318,10 +370,7 @@ impl BaselineRow {
             array("APPLY", ArrayValue::Bool(apply.into_dyn())),
             array("FUNC_TYPE", ArrayValue::UInt32(family.into_dyn())),
             array("FUNC_PARAM", ArrayValue::Int32(degree.into_dyn())),
-            array(
-                "FUNC_FPARAM",
-                ArrayValue::Float32(Array2::zeros((receptors, 0)).into_dyn()),
-            ),
+            array("FUNC_FPARAM", ArrayValue::Float32(boundaries.into_dyn())),
             array("MASKLIST", ArrayValue::UInt32(mask.into_dyn())),
             array("RESULT", ArrayValue::Float32(result.into_dyn())),
             array("RMS", ArrayValue::Float32(rms.into_dyn())),
