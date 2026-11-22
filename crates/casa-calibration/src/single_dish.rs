@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Single-dish calibration task entry points.
 
+mod application;
 mod position_switch;
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::{MeasurementSet, MsSelection};
+use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
@@ -14,6 +15,10 @@ use crate::CalibrationOutputMode;
 use crate::gencal::{GencalRequest, GencalType, gencal_with_output_mode};
 use crate::session::resolve_casa_calibration_selection;
 use crate::table_maintenance::overlaps_measurement_set;
+
+pub(crate) fn is_sky_subtype(subtype: &str) -> bool {
+    matches!(subtype, "SDSKY_PS" | "SDSKY_RASTER" | "SDSKY_OTF")
+}
 
 pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let mode = task.required_text("calmode")?;
@@ -43,6 +48,12 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
         ))
         .at("outfile"));
     }
+    if matches!(
+        mode.as_str(),
+        "apply" | "ps,apply" | "tsys,apply" | "ps,tsys,apply"
+    ) {
+        return application::run(task, &mode, ms, selection, selected);
+    }
     if outfile.is_empty() && generates_table {
         return Err(TaskFailure::execution("Output file name must be specified.").at("outfile"));
     }
@@ -64,16 +75,7 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
         None
     };
     let count = match mode.as_str() {
-        "ps" => {
-            check_fraction(task)?;
-            let rows = selected.row_indices().collect::<Vec<_>>();
-            position_switch::generate(&ms, &rows, Path::new(&outfile), overwrite).map_err(
-                |error| {
-                    tracing::error!(%error, "Single-dish sky solve failed");
-                    TaskFailure::execution("Error in Calibrater::solve.")
-                },
-            )?
-        }
+        "ps" => generate_position_switch(task, &ms, selected, Path::new(&outfile), overwrite)?,
         "tsys" => tsys(infile, PathBuf::from(&outfile), overwrite)?,
         _ => {
             return Err(TaskFailure::validation(format!(
@@ -89,6 +91,21 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
             "row_count": count,
         }),
     )
+}
+
+fn generate_position_switch(
+    task: &TaskInvocation<'_>,
+    ms: &MeasurementSet,
+    selected: ResolvedMsSelection,
+    output: &Path,
+    overwrite: bool,
+) -> Result<usize, TaskFailure> {
+    check_fraction(task)?;
+    let rows = selected.row_indices().collect::<Vec<_>>();
+    position_switch::generate(ms, &rows, output, overwrite).map_err(|error| {
+        tracing::error!(%error, "Single-dish sky solve failed");
+        TaskFailure::execution("Error in Calibrater::solve.")
+    })
 }
 
 fn selector(task: &TaskInvocation<'_>, key: &str) -> Result<Option<String>, TaskFailure> {

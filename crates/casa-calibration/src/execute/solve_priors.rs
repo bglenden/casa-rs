@@ -255,6 +255,7 @@ pub(crate) fn evaluate_solve_priors(
     for_each_apply_row(
         ms,
         &plan,
+        "DATA",
         true,
         share_input_flags,
         PreviewWeightSource::UnitFactors,

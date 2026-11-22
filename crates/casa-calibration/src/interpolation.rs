@@ -135,9 +135,9 @@ pub(crate) fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
     spline_derivatives_from(points, 1)
 }
 
-/// Tsys weight initialization uses casacore's InterpolateArray1D. It
-/// leaves the first interior derivative at its forward-elimination value.
-pub(crate) fn tsys_weight_spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
+/// Casacore's InterpolateArray1D leaves the first interior derivative
+/// at its forward-elimination value.
+pub(crate) fn array_spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
     spline_derivatives_from(points, 2)
 }
 

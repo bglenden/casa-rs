@@ -114,6 +114,7 @@ pub(crate) fn load(
                 engine: None,
                 antpos_tropo: None,
                 ionosphere: None,
+                sky_exposures: None,
                 solutions,
                 callibrary: None,
                 time_plans: HashMap::new(),
@@ -199,7 +200,10 @@ pub(super) fn lookup(
         time: row.time_seconds,
         frequency_hz,
     };
-    let allow_raw_real = matches!(table.time_parameter_family, Some(TimeParameterFamily::Tsys));
+    let allow_raw_real = matches!(
+        table.time_parameter_family,
+        Some(TimeParameterFamily::Tsys | TimeParameterFamily::Sky)
+    );
     if let Some(grid) = plan.registered_grid(&query, allow_raw_real) {
         return Ok(Some(pinned(grid)));
     }
@@ -243,7 +247,10 @@ fn physical_grid(
     };
     if matches!(
         family,
-        TimeParameterFamily::Tsys | TimeParameterFamily::PositionAngle | TimeParameterFamily::Tec
+        TimeParameterFamily::Tsys
+            | TimeParameterFamily::Sky
+            | TimeParameterFamily::PositionAngle
+            | TimeParameterFamily::Tec
     ) {
         // These coefficients require real interpolation in both dimensions.
         return Ok(raw);
@@ -270,6 +277,7 @@ fn physical_grid(
             CalibrationGrid::Opacity(OpacityGrid::from_arrays(path, &values, &flags)?)
         }
         TimeParameterFamily::Tsys
+        | TimeParameterFamily::Sky
         | TimeParameterFamily::PositionAngle
         | TimeParameterFamily::Tec
         | TimeParameterFamily::Fringe => {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's frequency resampling interpolates amplitude and unwrapped phase.
 use crate::interpolation::{
-    Curve, sample, spline_derivatives, tsys_weight_spline_derivatives, unwrap_phase,
+    Curve, array_spline_derivatives, sample, spline_derivatives, unwrap_phase,
 };
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
 use casa_types::Complex32;
@@ -23,6 +23,8 @@ pub(crate) fn relative_axis_at_center(axis: &[f64], center: f64) -> Vec<f64> {
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 pub enum FrequencyInterpolation {
+    /// Use the calibration term's frequency default.
+    Default,
     /// Nearest valid frequency sample, with nearest endpoint extrapolation.
     Nearest,
     /// Linear amplitude and unwrapped phase, skipping flagged inputs.
@@ -53,6 +55,7 @@ impl FrequencyInterpolation {
     }
     fn base(self) -> Self {
         match self {
+            Self::Default => Self::Linear,
             Self::NearestFlag => Self::Nearest,
             Self::LinearFlag => Self::Linear,
             Self::CubicFlag => Self::Cubic,
@@ -61,7 +64,10 @@ impl FrequencyInterpolation {
         }
     }
     fn retains_flags(self) -> bool {
-        self != self.base()
+        matches!(
+            self,
+            Self::NearestFlag | Self::LinearFlag | Self::CubicFlag | Self::SplineFlag
+        )
     }
 }
 
@@ -69,7 +75,7 @@ impl FrequencyInterpolation {
 enum Coefficients {
     Complex,
     Real,
-    TsysWeight,
+    RealArray,
 }
 
 impl ComplexSolution {
@@ -110,13 +116,15 @@ impl ComplexSolution {
         self.resample_parameters(input_hz, output_hz, mode, Coefficients::Real)
     }
 
-    pub(crate) fn resample_tsys_weight_frequency(
+    /// Use casacore's array spline coefficients for single-dish sky
+    /// application and Tsys weight initialization.
+    pub(crate) fn resample_real_array_frequency(
         &self,
         input_hz: &[f64],
         output_hz: &[f64],
         mode: FrequencyInterpolation,
     ) -> Result<Self, ApplyExecutionError> {
-        self.resample_parameters(input_hz, output_hz, mode, Coefficients::TsysWeight)
+        self.resample_parameters(input_hz, output_hz, mode, Coefficients::RealArray)
     }
 
     fn resample_parameters(
@@ -220,8 +228,8 @@ impl ComplexSolution {
                 ));
             }
             let derivatives = match (interpolation, coefficients) {
-                (FrequencyInterpolation::Spline, Coefficients::TsysWeight) => {
-                    tsys_weight_spline_derivatives(&points)
+                (FrequencyInterpolation::Spline, Coefficients::RealArray) => {
+                    array_spline_derivatives(&points)
                 }
                 (FrequencyInterpolation::Spline, _) => spline_derivatives(&points),
                 _ => Vec::new(),

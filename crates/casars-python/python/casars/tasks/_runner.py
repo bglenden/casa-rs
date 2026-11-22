@@ -286,7 +286,24 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_getantposalma(values)
     if name == "sdcal":
         _validate_required_path(values, "infile", arguments["infile"], search_data=True)
-        return run(name, **values).value
+        if isinstance(arguments["spwmap"], dict):
+            # CASA edits the current mapping in dictionary insertion order.
+            values["spwmap"] = {
+                "entries": [[str(source), targets]
+                            for source, targets in arguments["spwmap"].items()]
+            }
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            message = error.completion.message or ""
+            if message in (
+                "Applytable name must be specified.",
+                "Spwmap type must be list or dictionary.",
+            ) or message.startswith("Table doesn't exist: "):
+                raise Exception(message) from error
+            if message == "Error in Calibrater::setapply.":
+                raise RuntimeError(message) from error
+            raise
     if name == "initweights":
         return _call_initweights(values)
     if name == "plotbandpass":

@@ -21,6 +21,23 @@ impl ApplyChain {
         plan: &ApplyPlan,
         forward_model: bool,
     ) -> Result<Self, ApplyExecutionError> {
+        let mut has_sky = false;
+        for table in plan
+            .calibration_tables
+            .iter()
+            .filter(|table| crate::single_dish::is_sky_subtype(&table.summary.table_subtype))
+        {
+            has_sky = true;
+            if plan.selected_rows.iter().any(|row| {
+                table.applies_to(row) && (row.antenna1 != row.antenna2 || row.feed1 != row.feed2)
+            }) {
+                return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                    path: table.spec.path.display().to_string(),
+                    reason: "single-dish sky calibration requires same-feed autocorrelations"
+                        .into(),
+                });
+            }
+        }
         let engine = geometry_engine_for_plan(ms, plan)?;
         let tables = plan
             .calibration_tables
@@ -39,7 +56,7 @@ impl ApplyChain {
             .map(ApplyStep::Table)
             .chain(parang.as_ref().map(|_| ApplyStep::ParallacticAngle))
             .collect::<Vec<_>>();
-        if has_polarization_matrix(plan) || (forward_model && plan.parang) {
+        if has_sky || has_polarization_matrix(plan) || (forward_model && plan.parang) {
             steps.sort_by_key(|step| match step {
                 ApplyStep::Table(index) => {
                     viscal_order(&plan.calibration_tables[*index].summary.table_subtype)
@@ -69,7 +86,7 @@ pub(crate) fn has_polarization_matrix(plan: &ApplyPlan) -> bool {
 /// The supported CASA VisCal::Type order. Equal types keep supplied apply order.
 pub(super) fn viscal_order(subtype: &str) -> u8 {
     match subtype {
-        "M Mueller" | "Mf Mueller" => 2,
+        "M Mueller" | "Mf Mueller" | "SDSKY_PS" | "SDSKY_OTF" | "SDSKY_RASTER" => 2,
         "KAntPos Jones" => 3,
         "B Jones" | "B TSYS" | "BPOLY" => 4,
         "K Jones" | "Kcross Jones" | "K WVR" | "Fringe Jones" => 5,

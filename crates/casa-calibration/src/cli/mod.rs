@@ -26,7 +26,7 @@ mod casa_read;
 mod ft;
 mod getantposalma;
 mod getcalmodvla;
-mod history;
+pub(crate) mod history;
 mod initweights;
 mod jyperk;
 mod listcal;

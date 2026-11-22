@@ -9604,3 +9604,12 @@ after the fourth sample can use two earlier values even when the input
 covers the observed time. Casa-rs brackets the epoch by the available
 samples. The seven-epoch EOP oracle checks the resulting delay against an
 independent ERFA matrix calculation and measures the difference from CASA.
+
+## A zero single-dish sky reference can write an unflagged infinity
+
+CASA 6.7.6.14 divides the sky-subtracted visibility by a zero reference
+spectrum and can publish infinite corrected values with the original
+channel flag still clear. Casa-rs retains the value entering the sky step when the
+sky spectrum cannot provide a finite correction and flags the channel
+in modes that write flags. The paired sky-application oracle checks the
+zero reference alongside usable channels.

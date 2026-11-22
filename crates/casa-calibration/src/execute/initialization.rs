@@ -3,14 +3,18 @@
 
 use super::*;
 
-pub(super) fn corrected_data(ms: &mut MeasurementSet) -> Result<(), ApplyExecutionError> {
+pub(super) fn corrected_data(
+    ms: &mut MeasurementSet,
+    observed: &str,
+) -> Result<(), ApplyExecutionError> {
     let path = display_ms_path(ms);
-    if !ensure_corrected_data_column(ms, None)
+    if !ensure_corrected_data_column(ms, observed)
         .map_err(|source| ApplyExecutionError::CreateCorrectedData {
             path: path.clone(),
             source,
         })?
         .created
+        || observed == "FLOAT_DATA"
     {
         return Ok(());
     }

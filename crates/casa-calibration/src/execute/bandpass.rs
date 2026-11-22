@@ -23,6 +23,11 @@ fn resample(
         (input, output)
     };
     let solution = crate::ComplexSolution::of(grid);
+    if matches!(parameter_family, Some(TimeParameterFamily::Sky)) {
+        return solution
+            .resample_real_array_frequency(input, output, mode)
+            .map(crate::ComplexSolution::into_gain_grid);
+    }
     if !matches!(
         parameter_family,
         Some(TimeParameterFamily::Tsys | TimeParameterFamily::PositionAngle)
@@ -90,7 +95,11 @@ pub(super) fn prepare(
         gain,
         input,
         &output.channel_frequencies_hz,
-        interpolation.frequency_mode(),
+        if matches!(table.time_parameter_family, Some(TimeParameterFamily::Sky)) {
+            interpolation.sky_frequency_mode()
+        } else {
+            interpolation.frequency_mode()
+        },
         matches!(
             interpolation,
             ApplyInterpolationMode::Casa {
@@ -217,6 +226,7 @@ mod tests {
             engine: None,
             antpos_tropo: None,
             ionosphere: None,
+            sky_exposures: None,
             time_parameter_family: family,
             phase_delay: false,
             callibrary: None,

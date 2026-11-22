@@ -174,7 +174,7 @@ impl TsysPlan {
             (input.as_slice(), output.as_slice())
         };
         ComplexSolution::of(grid)
-            .resample_tsys_weight_frequency(input, output, self.table.interp.frequency_mode())
+            .resample_real_array_frequency(input, output, self.table.interp.frequency_mode())
             .map(Some)
     }
 }
