@@ -4,8 +4,10 @@
 
 import argparse
 from contextlib import chdir
+from itertools import product
 from pathlib import Path
 from shutil import copytree
+from tempfile import TemporaryDirectory
 from time import perf_counter
 
 import casatasks
@@ -21,11 +23,12 @@ SOLUTION_COLUMNS = ('ANTENNA1', 'FIELD_ID', 'TIME', 'INTERVAL', 'GAIN', 'FLAG',
                     'SOLUTION_OK', 'FIT', 'FIT_WEIGHT', 'SNR', 'CAL_DESC_ID')
 
 
-def solve(factory, capture, dataset, model, cache, product, interval):
+def solve(factory, capture, dataset, model, cache, product, interval, **controls):
     tool = factory()
     assert tool.setvi(old=True, quiet=True) and tool.open(str(dataset))
     try:
-        assert tool.setsolve('EP', interval, str(product), cfcache=str(cache), painc=360.)
+        assert tool.setsolve('EP', interval, str(product), cfcache=str(cache), painc=360.,
+                             **controls)
         state = capture(tool.state)
         assert tool.setmodel(str(model))
         start = perf_counter()
@@ -63,6 +66,26 @@ def compare_reader(path, cells):
             np.testing.assert_array_equal(reader.getcol(name), expected, err_msg=name)
     finally:
         assert reader.close()
+
+
+def compare_predictions(args, products):
+    from casatools import imager as casa_imager
+    from casars.tools import imager as native_imager
+    from gaincal_oracle import relative_rms
+    from imager_legacy_ep_multislot_oracle import predict
+
+    readers = {'casa': casa_imager, 'native': native_imager}
+    with TemporaryDirectory(dir=args.work) as path:
+        work = Path(path)
+        expected = None
+        for writer, reader in product(products, readers):
+            cells = predict(work, f'{writer}-{reader}', readers[reader], args.dataset,
+                            args.model, args.cache, products[writer], 'pbwproject')
+            if expected is None:
+                expected = cells
+            error = relative_rms(cells, expected)
+            assert error < 1.e-3, (writer, reader, error)
+            print(writer, reader, cells.size, 'MODEL_DATA cells', 'NRMS', error, flush=True)
 
 
 def setup_cases(args, factories):
@@ -109,7 +132,9 @@ def run(args):
         setup_cases(args, factories)
         if args.setup_only:
             return
-        for name, interval, epochs in (('one', '0s', 1), ('three', '1s', 3)):
+        for name, interval, epochs, controls in (
+            ('one', '0s', 1, {}), ('three', '1s', 3, {}), ('preaverage', '0s', 1, {'preavg': 10.}),
+        ):
             products = {engine: args.work/f'{name}-{engine}.EP' for engine in ('casa', 'native')}
             results, tables = {}, {}
             for engine, factory in factories.items():
@@ -120,7 +145,7 @@ def run(args):
                 capture = casa_log(dataset.with_suffix('.log')) if engine == 'casa' else native_log()
                 with capture as logger:
                     results[engine] = solve(factory, logger, dataset, args.model, cache,
-                                            products[engine], interval)
+                                            products[engine], interval, **controls)
                 tables[engine] = solution(products[engine], epochs)
             if not args.reference_only:
                 assert results['native'][:2] == results['casa'][:2]
@@ -135,6 +160,8 @@ def run(args):
                         np.testing.assert_array_equal(actual, expected, err_msg=column)
                 for engine, cells in tables.items():
                     compare_reader(products[engine], cells)
+                if name == 'three':
+                    compare_predictions(args, products)
             print(name, interval, epochs, 'reference' if args.reference_only else 'matched',
                   flush=True)
 

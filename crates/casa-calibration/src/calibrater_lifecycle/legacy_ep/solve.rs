@@ -102,11 +102,6 @@ impl LegacyEpSolver {
             .model
             .as_ref()
             .ok_or_else(|| invalid("EP solve needs an image model"))?;
-        if model.correlation_planes.as_slice() != [StokesType::RR, StokesType::LL] {
-            return Err(invalid(
-                "EP fit needs the two circular parallel hands RR and LL",
-            ));
-        }
         let engine = MsCalEngine::new(ms)?;
         let antenna_count = ms.antenna()?.row_count();
         let mut rows = Rows::new(ms, selected, self.interval_seconds)?;
@@ -127,7 +122,7 @@ impl LegacyEpSolver {
             // EPJones::solveRPar aliases pointPar_, which guessPar zeros
             // at the beginning of every independent solution interval.
             let mut offsets = vec![[0.; 4]; antenna_count];
-            if fit::solve(&baselines, &mut offsets) {
+            if fit::solve(&baselines, &mut offsets, model.correlation_planes.len()) {
                 results.push(Slot {
                     spw: first.spectral_window_id,
                     field: first.field_id,
@@ -169,6 +164,7 @@ fn load_chunk(
         return Err(invalid("EP model is missing its spectral coordinate"));
     };
     let matches = crate::ft::image::match_channels(axis, 1, &frequencies);
+    let hand_count = model.correlation_planes.len();
     let CoordinateModel::Direction(direction) = model.coordinates.coordinate(0) else {
         return Err(invalid("EP model is missing its direction coordinate"));
     };
@@ -205,16 +201,16 @@ fn load_chunk(
                 "EP requires defined DATA, FLAG, UVW and WEIGHT cells",
             ));
         };
-        if data.shape() != [2, frequencies.len()]
+        if data.shape() != [hand_count, frequencies.len()]
             || data.shape() != flags.shape()
             || uvw.len() != 3
-            || weights.len() != 2
+            || weights.len() != hand_count
         {
             return Err(invalid(
                 "EP visibility shape disagrees with its spectral window",
             ));
         }
-        let weight = (weights[0] + weights[1]) / 2.;
+        let weight = weights.iter().copied().sum::<f32>() / hand_count as f32;
         if weight <= 0. || !weight.is_finite() {
             continue;
         }
@@ -231,13 +227,18 @@ fn load_chunk(
         let ([u, v, _], phase_m) = projection.apply([uvw[0], uvw[1], uvw[2]]);
         let hands = std::array::from_fn(|hand| {
             let mut result = fit::ObservedHand::default();
+            if hand >= hand_count {
+                return result;
+            }
             for &channel in &channels {
                 if flags[[hand, channel]] {
                     continue;
                 }
                 result.data += data[[hand, channel]];
                 result.channels += 1;
-                if matches[channel] < 0 {
+                // dpbwgrad selects the conjugate convolution plane. A
+                // single circular hand has no conjugate kernel to sample.
+                if hand_count == 1 || matches[channel] < 0 {
                     continue;
                 }
                 let scale = frequencies[channel] / SPEED_OF_LIGHT;

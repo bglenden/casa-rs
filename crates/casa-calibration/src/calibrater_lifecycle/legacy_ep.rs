@@ -118,6 +118,12 @@ impl LegacyEpSolver {
             return Err(invalid("EP model contains non-finite IQUV values").into());
         }
         let buffer = attachment.with_write(|ms, selection, _| Ok(first_buffer(ms, selection)?))?;
+        match buffer.correlations.as_slice() {
+            [StokesType::RR | StokesType::LL]
+            | [StokesType::RR, StokesType::LL]
+            | [StokesType::LL, StokesType::RR] => {}
+            _ => return Err(invalid("legacy EP needs circular parallel-hand data").into()),
+        }
         let products = convolution(
             &self.cache,
             (self.angle_increment_deg, 1),

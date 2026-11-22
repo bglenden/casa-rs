@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use casa_ms::{MeasurementSet, MsResult};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::PrimitiveType::{Bool, Float32, Float64, Int32, String as Text};
+use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
@@ -36,6 +37,16 @@ pub(super) fn write(ms: &MeasurementSet, solver: &LegacyEpSolver, slots: &[Slot]
         RecordField::new("CAL_HISTORY", Value::table_ref("././CAL_HISTORY")),
         int("CAL_HISTORY_ID", 0),
     ]);
+    let table = writer.table_mut();
+    set_frequency_reference(table, "REF_FREQUENCY");
+    set_fixed_unit_keyword(table, "REF_DIRECTION", &["rad", "rad"]);
+    set_variable_reference(
+        table,
+        "REF_DIRECTION",
+        "direction",
+        "MEAS_DIR_REF",
+        direction_refs(),
+    );
     let mut by_window = BTreeMap::<_, Vec<_>>::new();
     for slot in slots {
         by_window.entry(slot.spw).or_default().push(slot);
@@ -183,7 +194,7 @@ fn description(windows: impl Iterator<Item = i32>) -> MsResult<Table> {
     ])
     .expect("legacy EP CAL_DESC schema");
     let mut table = Table::with_schema(schema);
-    set_fixed_unit_keyword(&mut table, "CHAN_FREQ", &["Hz"]);
+    set_frequency_reference(&mut table, "CHAN_FREQ");
     set_fixed_unit_keyword(&mut table, "CHAN_WIDTH", &["Hz"]);
     for spw in windows {
         table.add_row(RecordValue::new(vec![
@@ -208,6 +219,53 @@ fn description(windows: impl Iterator<Item = i32>) -> MsResult<Table> {
         ]))?;
     }
     Ok(table)
+}
+
+fn set_frequency_reference(table: &mut Table, name: &str) {
+    set_fixed_unit_keyword(table, name, &["Hz"]);
+    let refs = FrequencyRef::ALL
+        .into_iter()
+        .chain([FrequencyRef::Undefined])
+        .map(|reference| (reference.casacore_code() as u32, reference.as_str()));
+    set_variable_reference(table, name, "frequency", "MEAS_FREQ_REF", refs);
+}
+
+fn direction_refs() -> Vec<(u32, &'static str)> {
+    let mut references = Vec::new();
+    for code in (0..=21).chain(32..=42) {
+        let reference = DirectionRef::from_casacore_code(code).expect("CASA direction reference");
+        references.push((code as u32, reference.as_str()));
+        if code == 11 {
+            references.push((10, "AZELNE"));
+        } else if code == 13 {
+            references.push((12, "AZELNEGEO"));
+        }
+    }
+    references
+}
+
+fn set_variable_reference(
+    table: &mut Table,
+    name: &str,
+    kind: &str,
+    reference_column: &str,
+    references: impl IntoIterator<Item = (u32, &'static str)>,
+) {
+    let (codes, names) = references
+        .into_iter()
+        .map(|(code, name)| (code, name.to_owned()))
+        .unzip();
+    let mut keywords = table.column_keywords(name).cloned().unwrap_or_default();
+    keywords.upsert(
+        "MEASINFO",
+        Value::Record(RecordValue::new(vec![
+            array("TabRefCodes", ArrayValue::from_u32_vec(codes)),
+            array("TabRefTypes", ArrayValue::from_string_vec(names)),
+            number("VarRefCol", ScalarValue::String(reference_column.into())),
+            number("type", ScalarValue::String(kind.into())),
+        ])),
+    );
+    table.set_column_keywords(name, keywords);
 }
 
 fn shaped<T>(shape: &[usize], values: Vec<T>) -> ArrayD<T> {

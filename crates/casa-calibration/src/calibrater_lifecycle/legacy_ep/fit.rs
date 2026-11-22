@@ -58,9 +58,9 @@ impl Baseline {
     }
 }
 
-pub(super) fn solve(baselines: &[Baseline], offsets: &mut [[f32; 4]]) -> bool {
+pub(super) fn solve(baselines: &[Baseline], offsets: &mut [[f32; 4]], hands: usize) -> bool {
     let mut converged = false;
-    for hand in 0..2 {
+    for hand in 0..hands {
         // dpbwgrad uses the conjugate kernel plane. solve2 fits the
         // opposite receptor's two offsets for each measured correlation.
         let axes = [1 - hand, 3 - hand];
