@@ -1,29 +1,31 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Configure and run the retained polarization leakage solver.
+//! Configure and run the retained polarization solvers.
 
 use casa_ms::MeasurementSet;
+use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
 
 use super::{CalibraterLifecycle, CalibraterLifecycleError, CalibraterModel, ConfiguredSolve};
 use crate::solve::grouping::leakage::{
-    LeakageSolveKind, LeakageSolveRequest, solve_polarization_with_activity,
+    LeakageSolveKind, LeakageSolveRequest, fractional_stokes_record,
+    solve_polarization_with_activity,
 };
 use crate::solve_stats::ToolSolveActivity;
 use crate::{AttachmentError, BandpassFrequencyInterval, GainSolveModelSource, GainSolveRequest};
 
 impl CalibraterLifecycle {
-    /// Return whether the name configures a leakage solver.
+    /// Return whether the name configures a polarization solver.
     #[must_use]
-    pub fn recognizes_leakage_solve_type(name: &str) -> bool {
-        leakage_kind(name).is_some()
+    pub fn recognizes_polarization_solve_type(name: &str) -> bool {
+        polarization_kind(name).is_some()
     }
 
-    /// Configure a leakage solve for [`Self::solve_tool`]. The model, selection
+    /// Configure a polarization solve for [`Self::solve_tool`]. The model, selection
     /// and priors are read from the retained equation when the fit runs.
     ///
     /// # Errors
-    /// Returns an error without an open MS, for an unknown leakage type or
-    /// when a channelized solver's frequency interval is invalid.
-    pub fn set_tool_leakage(
+    /// Returns an error without an open MS, for an unsupported solver under the
+    /// current iterator, or when a channelized solver's frequency interval is invalid.
+    pub fn set_tool_polarization(
         &mut self,
         name: &str,
         standard: GainSolveRequest,
@@ -31,9 +33,19 @@ impl CalibraterLifecycle {
         append: bool,
         invalid_mode: bool,
     ) -> Result<(), CalibraterLifecycleError> {
-        let kind = leakage_kind(name).ok_or_else(|| {
+        let kind = polarization_kind(name).ok_or_else(|| {
             CalibraterLifecycleError::LeakageSolve(format!("unknown type {name}"))
         })?;
+        if self.legacy_iterator
+            && matches!(
+                kind,
+                LeakageSolveKind::PosAng | LeakageSolveKind::Xparang | LeakageSolveKind::Xfparang
+            )
+        {
+            return Err(CalibraterLifecycleError::LeakageSolve(format!(
+                "unknown legacy calibration type {name}"
+            )));
+        }
         let frequency_interval = if kind.channelized() {
             BandpassFrequencyInterval::from_casa(frequency.unwrap_or_default()).ok_or_else(
                 || {
@@ -68,7 +80,7 @@ impl CalibraterLifecycle {
             append,
         };
         let equation = self.equation_mut()?;
-        equation.solve = Some(ConfiguredSolve::Leakage {
+        equation.solve = Some(ConfiguredSolve::Polarization {
             request: Box::new(request),
             invalid_mode,
         });
@@ -76,9 +88,9 @@ impl CalibraterLifecycle {
         Ok(())
     }
 
-    pub(super) fn solve_leakage(&mut self) -> Result<(), CalibraterLifecycleError> {
+    pub(super) fn solve_polarization_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let Some(ConfiguredSolve::Leakage {
+        let Some(ConfiguredSolve::Polarization {
             request,
             invalid_mode,
         }) = &equation.solve
@@ -106,21 +118,38 @@ impl CalibraterLifecycle {
             .unwrap_or(request.correlation_dependent_flags);
         let ms = MeasurementSet::open(equation.attachment.path()).map_err(AttachmentError::from)?;
         let mut activity = ToolSolveActivity::default();
-        let outcome = solve_polarization_with_activity(&ms, &request, Some(&mut activity))
-            .map_err(CalibraterLifecycleError::LeakageSolve)?;
+        let outcome = solve_polarization_with_activity(
+            &ms,
+            &request,
+            Some(&mut activity),
+            self.legacy_iterator,
+        )
+        .map_err(CalibraterLifecycleError::LeakageSolve)?;
         if !self.legacy_iterator
             && let Some(stats) = &outcome.gain_stats
         {
             self.last_solve_stats = Some(crate::casa_return::solvestats(stats));
         }
-        if let Some(record) = activity.record() {
-            self.last_activity = Some(record);
+        if let Some(CasaValue::Dict { mut entries }) = activity.record() {
+            if matches!(
+                request.kind,
+                LeakageSolveKind::Xparang | LeakageSolveKind::Xfparang
+            ) {
+                entries.insert(
+                    0,
+                    CasaEntry {
+                        key: CasaKey::String("fStokes".into()),
+                        value: fractional_stokes_record(outcome.source),
+                    },
+                );
+            }
+            self.last_activity = Some(CasaValue::Dict { entries });
         }
         Ok(())
     }
 }
 
-fn leakage_kind(name: &str) -> Option<LeakageSolveKind> {
+fn polarization_kind(name: &str) -> Option<LeakageSolveKind> {
     use LeakageSolveKind::*;
 
     let upper = name.to_ascii_uppercase();
@@ -134,6 +163,11 @@ fn leakage_kind(name: &str) -> Option<LeakageSolveKind> {
         "Dfgen Jones" => [DfGen, DfGenQu, DfGenX],
         "DLLS Jones" => return Some(Dlls),
         "DfLLS Jones" => return Some(Dflls),
+        "X Jones" => return Some(Xj),
+        "Xf Jones" => return Some(Xf),
+        "Xparang Jones" => return Some(Xparang),
+        "Xfparang Jones" => return Some(Xfparang),
+        "PosAng Jones" => return Some(PosAng),
         _ => return None,
     };
     Some(if source_pol {

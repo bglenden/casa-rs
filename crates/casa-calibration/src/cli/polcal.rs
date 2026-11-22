@@ -6,7 +6,9 @@ use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::managed_output::{CalibrationTaskResult, CrossHandGainSolveReport, CrossHandGainType};
-use crate::solve::grouping::leakage::{LeakageSolveKind, solve_polarization};
+use crate::solve::grouping::leakage::{
+    LeakageSolveKind, fractional_stokes_record, solve_polarization,
+};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let vis = task.input_path("vis")?;
@@ -63,22 +65,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let result = if outcome.source.is_empty() {
         CasaValue::None
     } else {
-        CasaValue::dict(outcome.source.into_iter().map(|(field, windows)| {
-            let mut average = num_complex::Complex32::ZERO;
-            let vector = |qu: num_complex::Complex32| {
-                CasaValue::float64_vector([1.0, f64::from(qu.re), f64::from(qu.im), 0.0])
-            };
-            let mut entries = windows
-                .iter()
-                .map(|(id, &qu)| {
-                    average += qu;
-                    (format!("Spw{id}"), vector(qu))
-                })
-                .collect::<Vec<_>>();
-            average /= windows.len() as f32;
-            entries.push(("SpwAve".into(), vector(average)));
-            (field, CasaValue::dict(entries))
-        }))
+        fractional_stokes_record(outcome.source)
     };
     TaskSuccess::new(
         result,

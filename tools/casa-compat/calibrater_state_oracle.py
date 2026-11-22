@@ -83,6 +83,7 @@ def collect(factory, capture, vis, leakage, gain, output, legacy):
             ('bandpass', 'B', 'inf,2chan', {'apmode': 'p', 'solnorm': True, 'normtype': 'median'}),
             ('default-freq', 'B', 'inf', {}),
             ('leakage', 'Df', 'inf', {'append': True, 'apmode': 'unknown'}),
+            ('cross-hand', 'Xf', '10s,2MHz', {'refant': 'A3'}),
         )
         for label, kind, interval, kwargs in options:
             assert tool.setsolve(kind, interval, str(output), **kwargs)

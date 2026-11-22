@@ -222,7 +222,7 @@ impl<'a> SolveState<'a> {
                     },
                 }
             }
-            ConfiguredSolve::Leakage { request, .. } => Self {
+            ConfiguredSolve::Polarization { request, .. } => Self {
                 subtype: request.kind.subtype(),
                 table: &request.output,
                 interval: request.interval,

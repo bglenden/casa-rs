@@ -62,7 +62,7 @@ enum ConfiguredSolve {
         spline_mode: Option<String>,
     },
     LegacyEp(Box<LegacyEpSolver>),
-    Leakage {
+    Polarization {
         request: Box<crate::solve::grouping::leakage::LeakageSolveRequest>,
         invalid_mode: bool,
     },
@@ -758,7 +758,7 @@ impl CalibraterLifecycle {
             Some(ConfiguredSolve::LegacyEp(solver)) => {
                 solver.set_model(&equation.attachment, path)?
             }
-            Some(ConfiguredSolve::Task { .. } | ConfiguredSolve::Leakage { .. }) => {
+            Some(ConfiguredSolve::Task { .. } | ConfiguredSolve::Polarization { .. }) => {
                 return Err(CalibraterLifecycleError::ImageNeedsEp);
             }
             None => return Err(CalibraterLifecycleError::ImageNeedsSolver),
@@ -825,7 +825,7 @@ impl CalibraterLifecycle {
                 Some(ConfiguredSolve::LegacyEp(_)) => {
                     return Err(CalibraterLifecycleError::EpSolvePending);
                 }
-                Some(ConfiguredSolve::Leakage { .. }) => {
+                Some(ConfiguredSolve::Polarization { .. }) => {
                     return Err(CalibraterLifecycleError::LeakageSolve(
                         "execute a direct leakage configuration with solve_tool".into(),
                     ));
@@ -898,9 +898,9 @@ impl CalibraterLifecycle {
     /// Returns an error if the current equation cannot be solved.
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
-        if matches!(equation.solve, Some(ConfiguredSolve::Leakage { .. })) {
+        if matches!(equation.solve, Some(ConfiguredSolve::Polarization { .. })) {
             self.last_solve_stats = None;
-            return match self.solve_leakage() {
+            return match self.solve_polarization_tool() {
                 Ok(()) => Ok(()),
                 Err(error) => {
                     self.reset(true, true)?;

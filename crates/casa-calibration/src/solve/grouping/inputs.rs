@@ -1,11 +1,149 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Packed visibility and weight input batches shared by calibration solvers.
+//! Prior calibration and packed visibility inputs shared by calibration solvers.
 
-use casa_ms::MeasurementSet;
+use casa_ms::{MeasurementSet, MsSelection};
 use casa_types::ArrayValue;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::{GainSolveError, main_cell, ms_read_error};
+
+use crate::ApplyCalibrationTableSpec;
+use crate::execute::{
+    PreappliedRows, PriorSolveBoundary, evaluate_apply_rows, evaluate_solve_priors,
+    has_polarization_matrix,
+};
+use crate::plan::{ApplyPlanRequest, plan_apply};
+
+pub(crate) enum PriorCalibrationMode {
+    Data,
+    Baseline {
+        share_input_flags: bool,
+    },
+    Accor {
+        share_input_flags: bool,
+    },
+    Gain {
+        scalar: bool,
+        rotate_model: bool,
+        share_input_flags: bool,
+    },
+    GainSpline,
+    Bandpass {
+        share_input_flags: bool,
+        rotate_model: bool,
+    },
+    Delay {
+        share_input_flags: bool,
+        rotate_model: bool,
+    },
+    Leakage {
+        share_input_flags: bool,
+        parang_terms: usize,
+    },
+    CrossHand {
+        share_input_flags: bool,
+        parang_terms: usize,
+    },
+    PositionAngle {
+        share_input_flags: bool,
+        parang_terms: usize,
+    },
+}
+
+pub(crate) fn load_preapplied_rows(
+    ms: &MeasurementSet,
+    selection: &MsSelection,
+    prior_calibration_tables: &[ApplyCalibrationTableSpec],
+    parang: bool,
+    mode: PriorCalibrationMode,
+) -> Result<Option<PreappliedRows>, GainSolveError> {
+    let legacy_rotate = match mode {
+        PriorCalibrationMode::Gain { rotate_model, .. }
+        | PriorCalibrationMode::Bandpass { rotate_model, .. }
+        | PriorCalibrationMode::Delay { rotate_model, .. } => rotate_model,
+        _ => false,
+    };
+    if prior_calibration_tables.is_empty() && (!parang || legacy_rotate) {
+        return Ok(None);
+    }
+    let mut plan = plan_apply(
+        ms,
+        &ApplyPlanRequest {
+            selection: selection.clone(),
+            apply_mode: crate::ApplyMode::CalFlag,
+            parang,
+            calibration_tables: prior_calibration_tables.to_vec(),
+        },
+    )
+    .map_err(|source| GainSolveError::PriorCalibrationPlan {
+        source: Box::new(source),
+    })?;
+    if legacy_rotate && !has_polarization_matrix(&plan) {
+        plan.parang = false;
+    }
+    let preapplied = match mode {
+        PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false).map(Into::into),
+        PriorCalibrationMode::Baseline { share_input_flags } => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Baseline, share_input_flags)
+        }
+        PriorCalibrationMode::Accor { share_input_flags } => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Accor, share_input_flags)
+        }
+        PriorCalibrationMode::Gain {
+            scalar,
+            share_input_flags,
+            ..
+        } => {
+            let boundary = if scalar {
+                PriorSolveBoundary::ScalarGain
+            } else {
+                PriorSolveBoundary::Gain
+            };
+            evaluate_solve_priors(ms, plan, boundary, share_input_flags)
+        }
+        PriorCalibrationMode::Bandpass {
+            share_input_flags, ..
+        } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Bandpass, share_input_flags),
+        PriorCalibrationMode::GainSpline => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::GainSpline, true)
+        }
+        PriorCalibrationMode::Delay {
+            share_input_flags, ..
+        } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags),
+        PriorCalibrationMode::Leakage {
+            share_input_flags,
+            parang_terms,
+        } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::Leakage { parang_terms },
+            share_input_flags,
+        ),
+        PriorCalibrationMode::CrossHand {
+            share_input_flags,
+            parang_terms,
+        } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::CrossHand { parang_terms },
+            share_input_flags,
+        ),
+        PriorCalibrationMode::PositionAngle {
+            share_input_flags,
+            parang_terms,
+        } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::PositionAngle { parang_terms },
+            share_input_flags,
+        ),
+    };
+    preapplied
+        .map(Some)
+        .map_err(|source| GainSolveError::PriorCalibrationApply {
+            source: Box::new(source),
+        })
+}
 
 /// Array payloads live for one batch, without filling the table's row cache.
 pub(crate) struct SolveInputBatch {

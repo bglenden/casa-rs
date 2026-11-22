@@ -280,7 +280,8 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
-        let leakage = casa_calibration::CalibraterLifecycle::recognizes_leakage_solve_type(&family);
+        let polarization =
+            casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);
         let baseline = matches!(family.as_str(), "M" | "M MUELLER" | "MF" | "MF MUELLER");
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
         let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
@@ -327,7 +328,7 @@ impl super::PyCalibrater {
             )?;
         }
         self.with_lifecycle(py, move |state| {
-            if accor || fringe.is_some() || leakage {
+            if accor || fringe.is_some() || polarization {
                 state
                     .resolve_primary_tool_refant(reference.clone())
                     .map_err(super::runtime_error)?;
@@ -392,9 +393,9 @@ impl super::PyCalibrater {
                 robustness: GainSolveRobustness::from_casa(robust_mode(&solve_mode), thresholds)
                     .expect("recognized CASA robust mode"),
             };
-            if leakage {
+            if polarization {
                 state
-                    .set_tool_leakage(
+                    .set_tool_polarization(
                         &family,
                         standard.gain(GainType::G),
                         frequency,
