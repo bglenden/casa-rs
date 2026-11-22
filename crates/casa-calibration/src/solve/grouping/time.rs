@@ -41,6 +41,10 @@ pub(crate) enum SolveInputRows {
     Autocorrelations,
     /// Retain all antenna pairs for a baseline Mueller solve.
     Baselines,
+    /// Retain all antenna pairs and the direct tool's baseline gather counts.
+    BaselineTool,
+    /// Retain all baselines for CASA's old self-gathering Mueller solver.
+    LegacyBaseline,
 }
 
 impl SolveInputRows {
@@ -52,17 +56,38 @@ impl SolveInputRows {
         }
     }
 
+    pub(crate) fn baseline(direct: bool, legacy: bool) -> Self {
+        if direct && legacy {
+            Self::LegacyBaseline
+        } else if direct {
+            Self::BaselineTool
+        } else {
+            Self::Baselines
+        }
+    }
+
+    pub(super) fn is_baseline(self) -> bool {
+        matches!(
+            self,
+            Self::Baselines | Self::BaselineTool | Self::LegacyBaseline
+        )
+    }
+
+    pub(super) fn tracks_gather(self) -> bool {
+        matches!(self, Self::GainTool | Self::BaselineTool)
+    }
+
     pub(super) fn receptors(
         self,
         correlations: &[i32],
         index: usize,
         data_desc_id: i32,
     ) -> Result<(usize, usize), GainSolveError> {
-        if self == Self::Baselines && !(correlations.len() == 4 && matches!(index, 1 | 2)) {
+        if self.is_baseline() && !(correlations.len() == 4 && matches!(index, 1 | 2)) {
             let parameter = index % 2;
             return Ok((parameter, parameter));
         }
-        if !matches!(self, Self::Autocorrelations | Self::Baselines) {
+        if self != Self::Autocorrelations && !self.is_baseline() {
             return correlation_receptors(correlations[index]).ok_or_else(|| {
                 GainSolveError::UnsupportedCorrelationLayout {
                     data_desc_id,
@@ -127,6 +152,21 @@ impl WeightedTime {
 }
 
 impl SolveAccumulator {
+    pub(super) fn apply_bucket_identity(
+        &mut self,
+        row: &super::SelectedSolveRow,
+        options: &super::SolveGroupOptions,
+    ) {
+        if options.combine.fields {
+            // SDBList::aggregateFld uses the smallest field in a combined interval.
+            self.field_id = self.field_id.min(row.field_id);
+        }
+        if options.input_rows == SolveInputRows::LegacyBaseline {
+            // The old averaged VisBuffer reports the ending observation.
+            self.observation_id = row.observation_id;
+        }
+    }
+
     pub(super) fn cross_hand_centroid_weight(&mut self, weight: f64, input: SolveInputRows) -> f64 {
         if input == SolveInputRows::Autocorrelations {
             // CASA tests buffer viability before dropping cross-hand weights.
@@ -184,6 +224,12 @@ impl SolveAccumulator {
 
     pub(in crate::solve) fn integration_times(&self) -> impl Iterator<Item = f64> + '_ {
         self.unique_time_bits.iter().copied().map(f64::from_bits)
+    }
+}
+
+impl super::SolveGroupOptions {
+    pub(super) fn legacy_chan_selection(&self) -> bool {
+        self.polynomial_bandpass || self.input_rows == SolveInputRows::LegacyBaseline
     }
 }
 

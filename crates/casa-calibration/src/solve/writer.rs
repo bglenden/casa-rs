@@ -51,7 +51,7 @@ pub(crate) fn write_gain_caltable_named(
         solved,
         mode,
         request.gain_type.vis_cal(),
-        None,
+        GainTableSpectrum::Collapsed,
     )
 }
 
@@ -66,12 +66,26 @@ pub(super) fn write_new_style_gain_caltable(
         || "<in-memory>".to_owned(),
         |path| path.display().to_string(),
     );
-    write_gain_table(ms, name, request, solved, mode, subtype, None)
+    write_gain_table(
+        ms,
+        name,
+        request,
+        solved,
+        mode,
+        subtype,
+        GainTableSpectrum::Collapsed,
+    )
 }
 
 pub(super) struct GainChannelGrid<'a> {
     pub(super) bin_widths: &'a BTreeMap<i32, usize>,
     pub(super) selected_rows: &'a [SelectedSolveRow],
+}
+
+enum GainTableSpectrum<'a> {
+    Collapsed,
+    Channelized(GainChannelGrid<'a>),
+    LegacyMueller(Option<GainChannelGrid<'a>>),
 }
 
 pub(super) fn write_baseline_caltable(
@@ -80,6 +94,7 @@ pub(super) fn write_baseline_caltable(
     solved: &SolvedGains,
     mode: crate::CalibrationOutputMode,
     channels: Option<GainChannelGrid<'_>>,
+    legacy: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
     let name = ms.path().map_or_else(
         || "<in-memory>".to_owned(),
@@ -90,7 +105,12 @@ pub(super) fn write_baseline_caltable(
     } else {
         "M Mueller"
     };
-    write_gain_table(ms, name, request, solved, mode, subtype, channels)
+    let spectrum = if legacy {
+        GainTableSpectrum::LegacyMueller(channels)
+    } else {
+        channels.map_or(GainTableSpectrum::Collapsed, GainTableSpectrum::Channelized)
+    };
+    write_gain_table(ms, name, request, solved, mode, subtype, spectrum)
 }
 
 fn write_gain_table(
@@ -100,13 +120,18 @@ fn write_gain_table(
     solved: &SolvedGains,
     mode: crate::CalibrationOutputMode,
     subtype: &'static str,
-    channels: Option<GainChannelGrid<'_>>,
+    spectrum: GainTableSpectrum<'_>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let _write_phase = crate::timing::Phase::start("gain_write");
     let rows = &solved.rows;
     if rows.is_empty() {
         return Ok(gain_report(request, solved));
     }
+    let (channels, legacy_mueller) = match spectrum {
+        GainTableSpectrum::Collapsed => (None, false),
+        GainTableSpectrum::Channelized(grid) => (Some(grid), false),
+        GainTableSpectrum::LegacyMueller(grid) => (grid, true),
+    };
     let delay = request.gain_type.is_delay();
     let legacy_gain_metadata =
         !delay && !matches!(subtype, "Accor Jones" | "M Mueller" | "Mf Mueller");
@@ -255,20 +280,26 @@ fn write_gain_table(
     ])?;
     if let Some(channels) = channels {
         writer.copy_subtables(&[(SubtableId::SpectralWindow, "SPECTRAL_WINDOW")])?;
-        crate::bandpass::write_solution_spectral_windows(
-            &writer.output_path().join("SPECTRAL_WINDOW"),
-            &solved.attempted_spw_ids,
-            channels.bin_widths,
-            channels.selected_rows,
-            request.combine.spectral_windows,
-        )
-        .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+        let path = writer.output_path().join("SPECTRAL_WINDOW");
+        if legacy_mueller {
+            write_legacy_mueller_channels(&path, solved)?;
+        } else {
+            crate::bandpass::write_solution_spectral_windows(
+                &path,
+                &solved.attempted_spw_ids,
+                channels.bin_widths,
+                channels.selected_rows,
+                request.combine.spectral_windows,
+            )
+            .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+        }
     } else {
         write_gain_spectral_window_subtable(
             ms,
             writer.output_path(),
             solved,
             request.combine.spectral_windows,
+            legacy_mueller,
         )?;
     }
     writer.save_main()?;
@@ -292,6 +323,63 @@ fn gain_report(request: &GainSolveRequest, solved: &SolvedGains) -> GainSolveRep
     }
 }
 
+fn write_legacy_mueller_channels(path: &Path, solved: &SolvedGains) -> Result<(), GainSolveError> {
+    let failed = |source| GainSolveError::CopySubtable {
+        subtable: "SPECTRAL_WINDOW".to_string(),
+        path: path.display().to_string(),
+        source: Box::new(source),
+    };
+    let mut table = Table::open(TableOptions::new(path)).map_err(failed)?;
+    for row in 0..table.row_count() {
+        let window = row as i32;
+        let attempted = solved.attempted_spw_ids.contains(&window);
+        let mut cells = vec![("FLAG_ROW", Value::Scalar(ScalarValue::Bool(!attempted)))];
+        let widths = get_f64_array(&table, row, "CHAN_WIDTH")?;
+        if !widths.is_empty() {
+            let (selected, _) = crate::solve::grouping::polynomial::channel_selection(
+                solved.channel_selections.get(&window),
+                widths.len(),
+            )?;
+            let total_bandwidth = selected
+                .iter()
+                .map(|&channel| widths[channel])
+                .sum::<f64>()
+                .abs();
+            for column in ["CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
+                let values = get_f64_array(&table, row, column)?;
+                if values.len() != widths.len() {
+                    return Err(GainSolveError::UnsupportedParameterShape {
+                        path: format!("SPECTRAL_WINDOW row {row} {column}"),
+                        shape: vec![values.len(), widths.len()],
+                    });
+                }
+                let values = selected
+                    .iter()
+                    .map(|&channel| values[channel])
+                    .collect::<Vec<_>>();
+                cells.push((column, Value::Array(f64_array(&values))));
+            }
+            cells.extend([
+                (
+                    "NUM_CHAN",
+                    Value::Scalar(ScalarValue::Int32(selected.len() as i32)),
+                ),
+                (
+                    "TOTAL_BANDWIDTH",
+                    Value::Scalar(ScalarValue::Float64(total_bandwidth)),
+                ),
+            ]);
+        }
+        for (column, value) in cells {
+            table
+                .cell_accessor_mut(row, column)
+                .and_then(|mut cell| cell.set(value))
+                .map_err(failed)?;
+        }
+    }
+    table.save(TableOptions::new(path)).map_err(failed)
+}
+
 /// Write the table's `SPECTRAL_WINDOW` as CASA's `gaincal` writes a G or T
 /// table's: the MeasurementSet's rows, each collapsed to the one channel a
 /// solution holds ([`CollapsedWindow`]), the windows without solution rows
@@ -301,6 +389,7 @@ fn write_gain_spectral_window_subtable(
     output_root: &Path,
     solved: &SolvedGains,
     combine_spectral_windows: bool,
+    legacy_mueller: bool,
 ) -> Result<(), GainSolveError> {
     let destination = output_root.join("SPECTRAL_WINDOW");
     let failed = |source| GainSolveError::CopySubtable {
@@ -317,7 +406,11 @@ fn write_gain_spectral_window_subtable(
         if combine_spectral_windows && solved.selected_data.spectral_windows.len() > 1 {
             Some((
                 solved.selected_data.spectral_windows[0],
-                combined_window_metadata(&table, solved)?,
+                if legacy_mueller {
+                    legacy_combined_window_metadata(&table, &solved.selected_data.spectral_windows)?
+                } else {
+                    combined_window_metadata(&table, solved)?
+                },
             ))
         } else {
             None
@@ -354,7 +447,8 @@ fn write_gain_spectral_window_subtable(
         let collapsed =
             match combined_window {
                 Some((reference, window)) if spw_id == Some(reference) => Some(window),
-                None if attempted => {
+                _ if legacy_mueller => Some(legacy_collapsed_window(&table, row)?),
+                None if attempted && !legacy_mueller => {
                     let selection = solved.channel_selections.get(&(row as i32));
                     let channels = selected_channels(selection, frequencies.len())?;
                     let window = CollapsedWindow::solved(&frequencies, &widths, channels)
@@ -448,6 +542,37 @@ fn combined_window_metadata(
         resolution: frequency,
         total_bandwidth: Some(frequency),
     })
+}
+
+fn legacy_collapsed_window(table: &Table, row: usize) -> Result<CollapsedWindow, GainSolveError> {
+    let frequencies = get_f64_array(table, row, "CHAN_FREQ")?;
+    let mut window = CollapsedWindow::unsolved(
+        &frequencies,
+        &get_f64_array(table, row, "CHAN_WIDTH")?,
+        &get_f64_array(table, row, "EFFECTIVE_BW")?,
+        &get_f64_array(table, row, "RESOLUTION")?,
+    )
+    .ok_or_else(|| GainSolveError::UnsupportedParameterShape {
+        path: format!("SPECTRAL_WINDOW row {row} without channels"),
+        shape: vec![frequencies.len()],
+    })?;
+    window.total_bandwidth = Some(window.width.abs());
+    Ok(window)
+}
+
+fn legacy_combined_window_metadata(
+    table: &Table,
+    windows: &[i32],
+) -> Result<CollapsedWindow, GainSolveError> {
+    let mut reference = legacy_collapsed_window(table, windows[0] as usize)?;
+    let mut weighted_frequency = reference.frequency * reference.effective_bw;
+    for &window in &windows[1..] {
+        let next = legacy_collapsed_window(table, window as usize)?;
+        weighted_frequency += next.frequency * next.effective_bw;
+        reference.effective_bw += next.effective_bw;
+    }
+    reference.frequency = weighted_frequency / reference.effective_bw;
+    Ok(reference)
 }
 
 /// The one channel of a window's row in a G or T gain table: what CASA's
