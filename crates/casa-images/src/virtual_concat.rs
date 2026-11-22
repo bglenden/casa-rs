@@ -71,6 +71,7 @@ pub struct ConcatImage<T: ImagePixel> {
     info: ImageInfo,
     misc: RecordValue,
     units: String,
+    temp_close: bool,
 }
 
 impl<T: ImagePixel> ConcatImage<T> {
@@ -84,6 +85,7 @@ impl<T: ImagePixel> ConcatImage<T> {
         members: Vec<Arc<dyn ConcatMember<T>>>,
         misc: RecordValue,
         units: String,
+        temp_close: bool,
     ) -> Result<Self, ImageError> {
         let mut boundaries = vec![0usize];
         for member in &members {
@@ -135,6 +137,7 @@ impl<T: ImagePixel> ConcatImage<T> {
             info: plan.image_info,
             misc,
             units,
+            temp_close,
         })
     }
 
@@ -226,6 +229,11 @@ impl<T: ImagePixel> ConcatImage<T> {
         }
         #[cfg(not(unix))]
         let _ = &self.directory;
+        if self.temp_close && !self.lock(LockType::Read, 0)? {
+            return Err(ImageError::CasaSelection(
+                "Could not acquire the image Read lock".into(),
+            ));
+        }
         crate::concat_file::update_misc_info(&self.path, misc)
     }
     /// Lock the members in manifest order. Release newly acquired locks if

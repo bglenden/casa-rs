@@ -243,8 +243,8 @@ fn typed<T: MemberPixel>(
         by_path.insert(path, Arc::clone(&member));
         members.push(member);
     }
-    let joined =
-        ConcatImage::new(path.to_path_buf(), plan, members, misc, units).map_err(raised)?;
+    let joined = ConcatImage::new(path.to_path_buf(), plan, members, misc, units, tempclose)
+        .map_err(raised)?;
     let mut image = TempImage::from_read_only_image(
         joined,
         "ImageConcat",

@@ -97,9 +97,6 @@ impl PyImageTool {
                 directory.write_metadata(path, image.kind(), &record)?;
             } else if image.image_type_name() == "ImageConcat" {
                 attachment.check_bound_name(&image)?;
-                if !image.lock_storage(casa_tables::LockType::Read, 0)? {
-                    return Err(raised("Could not acquire the image Read lock"));
-                }
             } else {
                 attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             }

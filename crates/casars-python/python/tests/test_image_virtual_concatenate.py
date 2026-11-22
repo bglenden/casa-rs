@@ -67,7 +67,7 @@ def test_nomove_manifest_and_write_through(tmp_path, kind, dtype, precision, sto
             np.testing.assert_array_equal(reader_tool.haslock(), [False, False])
         assert reader_tool.setmiscinfo({"intent": "write-through"})
         if kind in {"float", "complex"}:
-            np.testing.assert_array_equal(reader_tool.haslock(), [True, False])
+            np.testing.assert_array_equal(reader_tool.haslock(), [tempclose, False])
         assert reader_tool.done()
         assert json.loads((output / "imageconcat.json").read_text())["MiscInfo"] == {
             "intent": "write-through",
