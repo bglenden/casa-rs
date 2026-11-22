@@ -4,9 +4,10 @@
 use std::collections::BTreeMap;
 
 use super::{
-    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveAccumulator,
-    SolveBaseKey, SolveBucketKey, SolveSampleRow,
+    BucketedRow, GainSolveCombine, GainSolveError, GainSolveInterval, SelectedSolveRow,
+    SolveAccumulator, SolveBaseKey, SolveBucketKey, SolveSampleRow,
 };
+use crate::solve::{correlation_receptors, stokes_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct AveragedBaseline {
@@ -41,16 +42,24 @@ pub(crate) enum SolveInputRows {
 impl SolveInputRows {
     pub(super) fn receptors(
         self,
-        correlation_type: i32,
+        correlations: &[i32],
         index: usize,
-        count: usize,
-    ) -> Option<(usize, usize)> {
+        data_desc_id: i32,
+    ) -> Result<(usize, usize), GainSolveError> {
         if self != Self::Autocorrelations {
-            return super::correlation_receptors(correlation_type);
+            return correlation_receptors(correlations[index]).ok_or_else(|| {
+                GainSolveError::UnsupportedCorrelationLayout {
+                    data_desc_id,
+                    correlation_types: correlations
+                        .iter()
+                        .map(|code| stokes_name(*code).to_string())
+                        .collect(),
+                }
+            });
         }
         // AccorJones reads the first and last elements of a four-correlation
         // row and both elements of a two-correlation row in storage order.
-        Some(match (count, index) {
+        Ok(match (correlations.len(), index) {
             (_, 0) => (0, 0),
             (2, 1) | (4, 3) => (1, 1),
             _ => (0, 1),

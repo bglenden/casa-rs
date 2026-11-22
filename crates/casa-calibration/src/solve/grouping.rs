@@ -21,7 +21,7 @@ use ndarray::{ArrayD, ArrayView2};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainType, RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
+    GainType, RefAntSelector, get_f64, get_i32,
 };
 use crate::ApplyCalibrationTableSpec;
 use crate::execute::{
@@ -1024,19 +1024,10 @@ impl SolveAccumulator {
         let delay = options.gain_type.is_delay();
         let mut row_weight = 0.0_f64;
         for (corr_index, &correlation_type) in correlation_types.iter().enumerate() {
-            let Some(receptors) =
+            let receptors =
                 options
                     .input_rows
-                    .receptors(correlation_type, corr_index, correlation_types.len())
-            else {
-                return Err(GainSolveError::UnsupportedCorrelationLayout {
-                    data_desc_id: row.data_desc_id,
-                    correlation_types: correlation_types
-                        .iter()
-                        .map(|code| stokes_name(*code).to_string())
-                        .collect(),
-                });
-            };
+                    .receptors(correlation_types, corr_index, row.data_desc_id)?;
             let parallel_hand = receptors.0 == receptors.1;
             if no_weighted_data {
                 continue;
