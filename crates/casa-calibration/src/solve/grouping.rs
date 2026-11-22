@@ -34,7 +34,7 @@ use crate::session::{resolve_calibration_selection, resolve_casa_calibration_sel
 use crate::solve::kernel::{RobustSample, SolveGraph};
 pub(crate) use inputs::SolveInputBatch;
 use inputs::{input_cell, read_input_batch};
-pub(super) use samples::median_with_even_mean;
+pub(crate) use samples::median_with_even_mean;
 use samples::{
     SolveAccumulationKey, SolveEdgeAccumulation, SolveRowInputs, SolveRowLayout, SolveRowLayouts,
     two_dimensional,
@@ -1132,8 +1132,8 @@ impl SolveAccumulator {
         self.finalize(solve_mode, preserve_samples, false);
     }
 
-    pub(crate) fn finalize_bandpass(&mut self) {
-        self.finalize(GainSolveMode::AmplitudePhase, false, true);
+    pub(crate) fn finalize_bandpass(&mut self, solve_mode: GainSolveMode) {
+        self.finalize(solve_mode, false, true);
     }
 
     fn finalize(

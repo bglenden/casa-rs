@@ -14,7 +14,8 @@ use thiserror::Error;
 
 use crate::ApplyCalibrationTableSpec;
 use crate::bandpass::{
-    BandpassSolveError, BandpassSolveReport, BandpassSolveRequest, solve_bandpass,
+    BandpassSolveControls, BandpassSolveError, BandpassSolveReport, BandpassSolveRequest,
+    solve_bandpass,
 };
 use crate::execute::PreappliedRows;
 use crate::selected_data::SelectedData;
@@ -138,7 +139,13 @@ pub fn solve_calibration_with_output_mode(
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
-    solve_calibration_with_activity(dataset, request, mode, None)
+    solve_calibration_with_activity(
+        dataset,
+        request,
+        mode,
+        None,
+        BandpassSolveControls::default(),
+    )
 }
 
 pub(crate) fn solve_calibration_with_activity(
@@ -146,6 +153,7 @@ pub(crate) fn solve_calibration_with_activity(
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
+    bandpass: BandpassSolveControls,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     if let CalibrationSolveRequest::Fringe { gain, .. } = &request
         && gain.gain_type != GainType::K
@@ -165,10 +173,10 @@ pub(crate) fn solve_calibration_with_activity(
                 }
             })?;
             drop(open_phase);
-            solve_open_dataset(&measurement_set, request, mode, activity)
+            solve_open_dataset(&measurement_set, request, mode, activity, bandpass)
         }
         CalibrationDataset::Open(measurement_set) => {
-            solve_open_dataset(measurement_set, request, mode, activity)
+            solve_open_dataset(measurement_set, request, mode, activity, bandpass)
         }
     }
 }
@@ -178,6 +186,7 @@ fn solve_open_dataset(
     request: CalibrationSolveRequest,
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
+    bandpass: BandpassSolveControls,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     match request {
         CalibrationSolveRequest::Gain(request) => {
@@ -212,7 +221,7 @@ fn solve_open_dataset(
         .map(CalibrationSolveResult::Gain)
         .map_err(|error| CalibrationError::Gain(Box::new(error))),
         CalibrationSolveRequest::Bandpass(request) => {
-            solve_bandpass(measurement_set, &request, mode, activity)
+            solve_bandpass(measurement_set, &request, mode, activity, bandpass)
                 .map(CalibrationSolveResult::Bandpass)
                 .map_err(CalibrationError::from)
         }

@@ -349,6 +349,9 @@ pub enum GainSolveError {
     /// Shared calibration-table persistence failed.
     #[error(transparent)]
     CalibrationTable(#[from] crate::CalibrationTableWriteError),
+    /// Direct G solving has not yet matched CASA's autocorrelation statistics.
+    #[error("direct calibrater G solving with selected autocorrelations is pending in #1528")]
+    DirectAutocorrelations,
     /// Opening the MeasurementSet failed.
     #[error("failed to open MeasurementSet {path}: {source}")]
     OpenMeasurementSet {
@@ -591,17 +594,12 @@ pub(crate) fn solve_gain_rows(
             share_input_flags: !request.correlation_dependent_flags,
         },
     )?;
-    let requested_preaverage = request.preaverage_seconds as f32;
-    let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
-        .then_some(requested_preaverage);
-    let averaging_interval = match request.solve_interval {
-        GainSolveInterval::Infinite => preaverage,
-        GainSolveInterval::Integration => None,
-        GainSolveInterval::Seconds(seconds) => {
-            let solint = seconds as f32;
-            Some(preaverage.map_or(solint, |preavg| preavg.min(solint)))
-        }
-    };
+    if activity.is_some()
+        && request.gain_type == GainType::G
+        && context.rows.iter().any(|row| row.antenna1 == row.antenna2)
+    {
+        return Err(GainSolveError::DirectAutocorrelations);
+    }
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -616,7 +614,10 @@ pub(crate) fn solve_gain_rows(
             solve_interval: request.solve_interval,
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.
-            preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * 0.999),
+            preaverage_max_span: preaverage_span(
+                request.solve_interval,
+                request.preaverage_seconds,
+            ),
             // Polarized preapply combines raw flags before applying priors.
             // A newly flagged cross-hand must not invalidate parallel hands.
             correlation_dependent_flags: request.correlation_dependent_flags
@@ -737,6 +738,21 @@ pub(crate) fn solve_gain_rows(
         selected_data: context.selected_data,
         solve_stats: solve_stats.finish(),
     })
+}
+
+/// Gather at the shorter positive user preaverage or solution interval.
+pub(crate) fn preaverage_span(interval: GainSolveInterval, requested: f64) -> Option<f64> {
+    let requested = requested as f32;
+    let preaverage = (requested > f32::EPSILON && requested.is_finite()).then_some(requested);
+    let seconds = match interval {
+        GainSolveInterval::Infinite => preaverage,
+        GainSolveInterval::Integration => None,
+        GainSolveInterval::Seconds(seconds) => {
+            let solint = seconds as f32;
+            Some(preaverage.map_or(solint, |preavg| preavg.min(solint)))
+        }
+    };
+    seconds.map(|seconds| f64::from(seconds) * 0.999)
 }
 
 /// Every spectral window of `ms`, by id.

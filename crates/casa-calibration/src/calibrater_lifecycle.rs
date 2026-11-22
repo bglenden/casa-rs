@@ -11,14 +11,16 @@ use casa_tables::RequiredScalarColumnValues;
 use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
+use crate::bandpass::BandpassSolveControls;
 use crate::execute::{ApplyTermCounts, LibraryApplyRegistration};
 use crate::listing::{CalibrationListingReport, list_calibration, publish_listing};
 
 use crate::{
     ApplyCalibrationTableSpec, AttachmentError, AttachmentMode, AttachmentOptions,
     CalibrationAttachment, CalibrationDataset, CalibrationError, CalibrationOutputMode,
-    CalibrationSolveRequest, CalibrationSolveResult, GainSolveModelSource, VisibilityFitRequest,
-    delete_calibration_model, fit_visibility_component, point_model_stokes, reset_calibration_set,
+    CalibrationSolveRequest, CalibrationSolveResult, GainNormalization, GainSolveMode,
+    GainSolveModelSource, VisibilityFitRequest, delete_calibration_model, fit_visibility_component,
+    point_model_stokes, reset_calibration_set,
 };
 
 mod apply;
@@ -53,6 +55,7 @@ enum ConfiguredSolve {
         request: Box<CalibrationSolveRequest>,
         mode: CalibrationOutputMode,
         invalid_mode: bool,
+        bandpass: BandpassSolveControls,
     },
     LegacyEp(Box<LegacyEpSolver>),
 }
@@ -86,6 +89,9 @@ pub enum CalibraterLifecycleError {
     /// The requested amplitude/phase solve mode is rejected during execution.
     #[error("unrecognized amplitude/phase solve mode")]
     InvalidSolveMode,
+    /// Delay solving requires an explicit reference antenna.
+    #[error("specify a reference antenna explicitly")]
+    DelayNeedsReference,
     /// The image setter requires a configured solver.
     #[error("Calibrater::setmodel() called before Calibrater::setsolve()")]
     ImageNeedsSolver,
@@ -523,7 +529,13 @@ impl CalibraterLifecycle {
         request: CalibrationSolveRequest,
         mode: CalibrationOutputMode,
     ) -> Result<(), CalibraterLifecycleError> {
-        self.set_tool_solve(request, mode, false)
+        self.configure_solve(
+            request,
+            mode,
+            Some(GainSolveMode::AmplitudePhase),
+            GainNormalization::Mean,
+            -1.,
+        )
     }
 
     /// Return whether CASA recognizes this calibration factory name.
@@ -536,17 +548,53 @@ impl CalibraterLifecycle {
     /// only when CASA actually attempts a fit.
     ///
     /// # Errors
-    /// Returns an error without an open dataset.
+    /// Returns an error without an open dataset or a required reference antenna.
     pub fn set_tool_solve(
         &mut self,
         request: CalibrationSolveRequest,
         mode: CalibrationOutputMode,
-        invalid_mode: bool,
+        visibility_mode: Option<GainSolveMode>,
+        normalization: GainNormalization,
+        preaverage_seconds: f64,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation()?;
+        if let CalibrationSolveRequest::Gain(gain) = &request
+            && matches!(gain.gain_type, crate::GainType::K | crate::GainType::KCross)
+        {
+            let ms =
+                MeasurementSet::open(equation.attachment.path()).map_err(AttachmentError::from)?;
+            let refants = crate::solve::grouping::resolve_refants(&ms, &gain.refant)
+                .map_err(CalibrationError::from)?;
+            if !refants.first().is_some_and(|&id| id >= 0) {
+                return Err(CalibraterLifecycleError::DelayNeedsReference);
+            }
+        }
+        self.configure_solve(
+            request,
+            mode,
+            visibility_mode,
+            normalization,
+            preaverage_seconds,
+        )
+    }
+
+    fn configure_solve(
+        &mut self,
+        request: CalibrationSolveRequest,
+        mode: CalibrationOutputMode,
+        visibility_mode: Option<GainSolveMode>,
+        normalization: GainNormalization,
+        preaverage_seconds: f64,
     ) -> Result<(), CalibraterLifecycleError> {
         self.equation_mut()?.solve = Some(ConfiguredSolve::Task {
             request: Box::new(request),
             mode,
-            invalid_mode,
+            invalid_mode: visibility_mode.is_none(),
+            bandpass: BandpassSolveControls {
+                solve_mode: visibility_mode.unwrap_or(GainSolveMode::AmplitudePhase),
+                normalization,
+                preaverage_seconds,
+            },
         });
         Ok(())
     }
@@ -623,16 +671,17 @@ impl CalibraterLifecycle {
         activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     ) -> Result<CalibrationSolveResult, CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let (mut request, mode) = match equation.solve.as_ref() {
+        let (mut request, mode, bandpass) = match equation.solve.as_ref() {
             Some(ConfiguredSolve::Task {
                 request,
                 mode,
                 invalid_mode,
+                bandpass,
             }) => {
                 if *invalid_mode {
                     return Err(CalibraterLifecycleError::InvalidSolveMode);
                 }
-                ((**request).clone(), *mode)
+                ((**request).clone(), *mode, *bandpass)
             }
             Some(ConfiguredSolve::LegacyEp(_)) => {
                 return Err(CalibraterLifecycleError::EpSolvePending);
@@ -678,6 +727,7 @@ impl CalibraterLifecycle {
             request,
             mode,
             activity,
+            bandpass,
         )?)
     }
 

@@ -22,8 +22,14 @@ CASES = {
     'interval': {'type': 'G', 't': 20., 'preavg': 8.},
     'scalar': {'type': 'T', 't': '1min', 'apmode': 'a', 'solnorm': True, 'normtype': 'median'},
     'robust': {'type': 'G', 'solmode': 'R'},
+    'robust-lowercase': {'type': 'T', 'solmode': 'r', 'rmsthresh': [7., 5.]},
     'corrdep': {'type': 'G'},
     'bandpass': {'type': 'B', 't': 'inf,2ch', 'fillgaps': 2},
+    'bandpass-phase': {'type': 'B', 'phaseonly': True, 'apmode': 'A'},
+    'bandpass-phase-norm': {'type': 'B', 'apmode': 'P', 'solnorm': True},
+    'bandpass-amplitude': {'type': 'B', 'apmode': 'A'},
+    'bandpass-median': {'type': 'B', 'solnorm': True, 'normtype': 'median'},
+    'bandpass-preaverage': {'type': 'B', 't': '20s', 'preavg': 8.},
     'delay': {'type': 'K'},
     'threshold': {'type': 'G', 'minblperant': 99},
 }
@@ -85,6 +91,11 @@ def solve_case(work, vis, label, legacy, engines, options, *, legacy_recovery=Fa
                 flags = table.getcol('FLAG')
                 flags[0, :, (a == 1) & (b == 3)] = True
                 assert table.putcol('FLAG', flags)
+        if label == 'bandpass-median':
+            with opened(path, True) as table:
+                data = table.getcol('DATA')
+                data[:, 4, :] *= 3.
+                assert table.putcol('DATA', data)
         old = legacy and (not legacy_recovery or name == 'native')
         assert tool.setvi(old, True) and tool.open(str(path))
         assert tool.selectvis(field='FLUX', spw=spw)
@@ -140,6 +151,11 @@ def solve_with_registered_prior(work, vis, engines):
             assert tool.selectvis(field=field, spw='0:2~9')
             assert tool.setptmodel([1, 0, 0, 0])
             assert tool.setapply(table=str(prior))
+            for family in ('K', 'KCROSS'):
+                assert result(tool.setsolve, type=family, table=str(product)) == (
+                    False, ('RuntimeError', 'Error in Calibrater::setsolve.')
+                )
+                assert tool.returndict()['apply_tables'].tolist() == [str(prior)]
             setup = {'type': 'G', 'table': str(product), 'append': append, 'refantmode': 'strict',
                      'minblperant': 3, 'refant': 'A0'}
             assert tool.setsolve(**setup)
@@ -160,6 +176,25 @@ def solve_with_registered_prior(work, vis, engines):
         compare_solutions(products)
         compare_readers(products)
     print('direct solve reused the selected model and prior, then appended the second field', flush=True)
+
+
+def selected_autocorrelations_are_refused(work, tool):
+    vis = work/'autocorrelations.ms'
+    make_cal_ms(str(vis), autocorrelation_weight=1.)
+    with opened(vis) as table:
+        assert np.any(table.getcol('ANTENNA1') == table.getcol('ANTENNA2'))
+    assert tool.open(str(vis))
+    assert tool.setptmodel([1, 0, 0, 0])
+    product = work/'autocorrelations.cal'
+    assert tool.setsolve(type='G', table=str(product), refant='A0', minsnr=20.)
+    assert result(tool.solve) == (False, ('NotImplementedError',
+        'direct calibrater G solving with selected autocorrelations is pending in #1528'))
+    assert not product.exists()
+    assert tool.selectvis(msselect='ANTENNA1!=ANTENNA2')
+    assert tool.setsolve(type='G', table=str(product), refant='A0') and tool.solve()
+    assert product.exists()
+    assert tool.close()
+    print('direct G refused selected autocorrelations and completed the explicit cross selection', flush=True)
 
 
 def main():
@@ -203,6 +238,8 @@ def main():
         delay_data(cross_vis, 'KCROSS')
         engines = {name: factory() for name, factory in factories.items()}
         solve_case(work, cross_vis, 'cross-delay', False, engines, {'type': 'KCROSS'}, spw='0')
+        if 'native' in factories:
+            selected_autocorrelations_are_refused(work, factories['native']())
 
 
 if __name__ == '__main__':

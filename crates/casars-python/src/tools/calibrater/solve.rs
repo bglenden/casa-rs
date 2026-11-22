@@ -9,7 +9,7 @@ use casa_calibration::{
     GainSolveMode, GainSolveModelSource, GainSolveRequest, GainSolveRobustness, GainType,
     RefAntSelector,
 };
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError};
 use pyo3::prelude::*;
 
 use super::arguments::{listing_selector, number, strict_bool, text};
@@ -50,6 +50,25 @@ impl StandardSolver {
             min_baselines_per_antenna: self.min_baselines_per_antenna,
             smodel: [1., 0., 0., 0.],
         }
+    }
+}
+
+fn solve_error(error: casa_calibration::CalibraterLifecycleError) -> PyErr {
+    use casa_calibration::{CalibraterLifecycleError, CalibrationError, GainSolveError};
+    if let CalibraterLifecycleError::Solve(CalibrationError::Gain(ref source)) = error
+        && matches!(**source, GainSolveError::DirectAutocorrelations)
+    {
+        return PyNotImplementedError::new_err(error.to_string());
+    }
+    PyRuntimeError::new_err("Error in Calibrater::solve.")
+}
+
+fn robust_mode(value: &str) -> &'static str {
+    match (value.contains("L1"), value.contains('R')) {
+        (true, true) => "L1R",
+        (true, false) => "L1",
+        (false, true) => "R",
+        (false, false) => "",
     }
 }
 
@@ -192,7 +211,7 @@ impl super::PyCalibrater {
         let min_snr = number(minsnr.cloned(), "setsolve", 14, 0.)? as f32;
         let combine = setsolve_text(combine, "combine", "")?;
         let fill_gaps = setsolve_integer(fillgaps, 16, 0)?;
-        let solve_mode = setsolve_text(solmode, "solmode", "")?;
+        let solve_mode = setsolve_text(solmode, "solmode", "")?.to_ascii_uppercase();
         if !self.with_lifecycle(py, |state| Ok(state.dataset_path().is_some()))? {
             emit(
                 py,
@@ -275,8 +294,8 @@ impl super::PyCalibrater {
                 normalization,
                 min_snr,
                 combine: GainSolveCombine::from_casa(&combine),
-                robustness: GainSolveRobustness::from_casa(&solve_mode, thresholds)
-                    .ok_or_else(setup_error)?,
+                robustness: GainSolveRobustness::from_casa(robust_mode(&solve_mode), thresholds)
+                    .expect("recognized CASA robust mode"),
             };
             let request = match family.as_str() {
                 "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
@@ -299,8 +318,14 @@ impl super::PyCalibrater {
                 _ => return Err(setup_error()),
             };
             state
-                .set_tool_solve(request, mode, invalid_mode)
-                .map_err(super::runtime_error)?;
+                .set_tool_solve(
+                    request,
+                    mode,
+                    (!invalid_mode).then_some(solve_mode_value),
+                    normalization,
+                    preavg,
+                )
+                .map_err(|_| setup_error())?;
             Ok(true)
         })
     }
@@ -331,9 +356,7 @@ impl super::PyCalibrater {
             if state.dataset_path().is_none() {
                 return Ok(None);
             }
-            state
-                .solve_tool()
-                .map_err(|_| PyRuntimeError::new_err("Error in Calibrater::solve."))?;
+            state.solve_tool().map_err(solve_error)?;
             Ok(Some(true))
         })?;
         if let Some(solved) = result {
