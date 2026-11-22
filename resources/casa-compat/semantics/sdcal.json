@@ -2,21 +2,23 @@
   "schema_version": 1,
   "task": "sdcal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "e7bfc66f1a4945cfdc96b3259b4107a4c76c17b5",
+  "audit_revision": "68f4b4867d385fd45a455f07e2ae075a008a5dc9",
   "parameters": {
     "infile": {
-      "scope": "Resolve required MeasurementSet paths and read complex or float autocorrelation input for generation.",
+      "scope": "Open the required MeasurementSet with complex DATA or float total-power input.",
       "status": "Partial",
       "behaviors": [
         "ps",
-        "tsys"
+        "tsys",
+        "application"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "application"
       ]
     },
     "calmode": {
-      "scope": "Position-switch and spectral Tsys generation, with CASA default ps.",
+      "scope": "Generate position-switch and spectral Tsys tables and support direct application and their composite application modes.",
       "status": "Partial",
       "behaviors": [
         "ps",
@@ -25,7 +27,8 @@
         "edges"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "application"
       ]
     },
     "fraction": {
@@ -71,44 +74,46 @@
       ]
     },
     "applytable": {
-      "scope": "Sky, Tsys and per-table prior inputs.",
-      "status": "Not implemented",
+      "scope": "Read a path or path list with sky, spectral Tsys and Jy/K calibration and apply the terms in CASA calibration order.",
+      "status": "Partial",
       "behaviors": [
         "application"
       ],
       "evidence": [
-        "remaining"
+        "application"
       ]
     },
     "interp": {
-      "scope": "Temporal and spectral interpolation for application.",
-      "status": "Not implemented",
+      "scope": "Interpolate reference spectra in time and frequency with distinct signal and exposure-weight laws.",
+      "status": "Partial",
       "behaviors": [
         "application"
       ],
       "evidence": [
-        "remaining"
+        "application"
       ]
     },
     "spwmap": {
-      "scope": "Science-to-Tsys spectral-window mapping.",
-      "status": "Not implemented",
+      "scope": "Map science windows to Tsys windows using a flat list or ordered source-to-target dictionary.",
+      "status": "Partial",
       "behaviors": [
         "application"
       ],
       "evidence": [
-        "remaining"
+        "application"
       ]
     },
     "outfile": {
-      "scope": "Write standard CASA-readable sky and Tsys calibration tables.",
+      "scope": "Publish standard CASA-readable generation products. Applications update CORRECTED_DATA in the input MeasurementSet.",
       "status": "Partial",
       "behaviors": [
         "ps",
-        "tsys"
+        "tsys",
+        "application"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "application"
       ]
     },
     "overwrite": {
@@ -116,10 +121,12 @@
       "status": "Partial",
       "behaviors": [
         "ps",
-        "tsys"
+        "tsys",
+        "application"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "application"
       ]
     },
     "field": {
@@ -127,10 +134,12 @@
       "status": "Partial",
       "behaviors": [
         "ps",
-        "tsys"
+        "tsys",
+        "application"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "application"
       ]
     },
     "spw": {
@@ -138,10 +147,12 @@
       "status": "Partial",
       "behaviors": [
         "ps",
-        "tsys"
+        "tsys",
+        "application"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "application"
       ]
     },
     "scan": {
@@ -149,10 +160,12 @@
       "status": "Partial",
       "behaviors": [
         "ps",
-        "tsys"
+        "tsys",
+        "application"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "application"
       ]
     }
   },
@@ -162,7 +175,7 @@
       "title": "Position-switch sky spectra",
       "status": "Implemented",
       "scope": "Group OFF integrations by observing metadata, average each unflagged cell by exposure, and publish CASA-compatible times, flags, weights and solution shape.",
-      "gap": "Sky spectrum application and dedicated performance validation are tracked in #1530 and #979.",
+      "gap": "Dataset-scale performance validation follows functionality under #979.",
       "evidence": [
         "generation"
       ]
@@ -172,7 +185,7 @@
       "title": "System-temperature calibration",
       "status": "Implemented",
       "scope": "Generate spectral Tsys tables through the shared calibration path, including observing scan assignment and canonical calibration subtables.",
-      "gap": "The combined sky, Tsys and Jy/K chain is tracked in #1530.",
+      "gap": "Dataset-scale performance validation follows functionality under #979.",
       "evidence": [
         "generation"
       ]
@@ -180,11 +193,11 @@
     {
       "id": "application",
       "title": "Sky calibration application",
-      "status": "Not implemented",
-      "scope": "Apply sky and Tsys tables, with composite modes, channel weights, interpolation, SPW maps and Jy/K chains.",
-      "gap": "Tracked in #1530.",
+      "status": "Partial",
+      "scope": "Apply sky, spectral Tsys and Jy/K tables from native and CASA writers to complex or float autocorrelation data, including PS/Tsys composites, exposure-based weights and ordered SPW maps.",
+      "gap": "OTF and raster composite generation and application are tracked in #1530.",
       "evidence": [
-        "remaining"
+        "application"
       ]
     },
     {
@@ -198,7 +211,20 @@
       ]
     }
   ],
-  "decisions": [],
+  "decisions": [
+    {
+      "id": "protect-zero-sky-signal",
+      "state": "Proposed",
+      "inputs": "A sky calibration table with a clear flag and a zero OFF reference spectrum.",
+      "casa": "Divides by the zero spectrum and leaves the channel unflagged.",
+      "ours": "Retains the value entering the sky correction and flags the invalid sample in flag-writing modes.",
+      "rationale": "The OFF spectrum is the denominator of the correction and cannot define a finite calibrated value at zero.",
+      "impact": "Adjacent channels with valid references still calibrate and downstream consumers can mask the invalid correction.",
+      "evidence": [
+        "application"
+      ]
+    }
+  ],
   "evidence": {
     "generation": {
       "kind": "Same-input CASA and native calibration tables",
@@ -216,9 +242,22 @@
     "remaining": {
       "kind": "Remaining single-dish calibration comparisons",
       "state": "planned",
-      "scope": "Sky and Tsys application, composite workflows, OTF and raster maps and matching Jy/K chains.",
+      "scope": "OTF and raster sky and composite calibration, observing geometry, and paired edge selection.",
       "links": [
         "https://github.com/bglenden/casa-rs/issues/1530"
+      ]
+    },
+    "application": {
+      "kind": "Paired public-Python CASA/native application plus 2x2 calibration-table interchange",
+      "state": "passed",
+      "scope": "Direct and PS/Tsys composite application, DATA and FLOAT_DATA, mapped Tsys and Jy/K, exposure weighting and nonlinear frequency resampling.",
+      "result": "Corrected visibilities, flags, scalar and spectral weights and float scratch units agree across both writers and readers. Irregular exposure and a distinct Tsys window give independent physical expectations. The zero-reference decision has its own executable comparison.",
+      "revision": "68f4b4867d385fd45a455f07e2ae075a008a5dc9",
+      "casa_version": "6.7.6.14",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_apply_oracle.py <new-dir>",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1973",
+      "links": [
+        "tools/casa-compat/sdcal_apply_oracle.py"
       ]
     }
   }
