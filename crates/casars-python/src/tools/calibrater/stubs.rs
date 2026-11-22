@@ -14,7 +14,6 @@ use pyo3::{
 use super::arguments::{append_double_vector, strict_bool, supplied, text};
 use super::{PyCalibrater, runtime_error};
 use crate::convert::DoubleList;
-use crate::tools::not_yet_implemented_in;
 
 #[pymethods]
 #[allow(
@@ -85,8 +84,17 @@ impl PyCalibrater {
     }
 
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn state(&self) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "state", 1528)
+    fn state(&self, py: Python<'_>) -> PyResult<bool> {
+        use crate::tools::{LogLine, emit};
+
+        let lines = self.with_lifecycle(py, |state| Ok(state.state_lines()))?;
+        let attached = lines.is_some();
+        let logs = match lines {
+            Some(lines) => lines.into_iter().map(LogLine::info).collect(),
+            None => vec![LogLine::error("Must first open a MeasurementSet.")],
+        };
+        emit(py, super::LOGGER, &logs)?;
+        Ok(attached)
     }
 }
 

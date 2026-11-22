@@ -27,6 +27,7 @@ mod apply;
 pub(crate) mod ep_cache;
 mod leakage;
 pub(crate) mod legacy_ep;
+mod state;
 mod table_tools;
 mod traditional_apply;
 mod weights;
@@ -49,6 +50,7 @@ struct VisibilityEquation {
     model: CalibraterModel,
     apply: ApplyTerms,
     solve: Option<ConfiguredSolve>,
+    solve_description: Option<String>,
 }
 
 enum ConfiguredSolve {
@@ -279,6 +281,7 @@ impl CalibraterLifecycle {
             model: CalibraterModel::FromMeasurementSet,
             apply: ApplyTerms::default(),
             solve: None,
+            solve_description: None,
         });
         Ok(())
     }
@@ -705,7 +708,8 @@ impl CalibraterLifecycle {
         preaverage_seconds: f64,
         spline_mode: Option<String>,
     ) -> Result<(), CalibraterLifecycleError> {
-        self.equation_mut()?.solve = Some(ConfiguredSolve::Task {
+        let equation = self.equation_mut()?;
+        equation.solve = Some(ConfiguredSolve::Task {
             request: Box::new(request),
             mode,
             invalid_mode: visibility_mode.is_none(),
@@ -717,6 +721,7 @@ impl CalibraterLifecycle {
             },
             spline_mode,
         });
+        equation.solve_description = None;
         Ok(())
     }
 
@@ -738,6 +743,7 @@ impl CalibraterLifecycle {
         }
         let solver = LegacyEpSolver::new(table, cache, angle_deg).map_err(AttachmentError::from)?;
         equation.solve = Some(ConfiguredSolve::LegacyEp(Box::new(solver)));
+        equation.solve_description = None;
         Ok(())
     }
 
@@ -772,6 +778,7 @@ impl CalibraterLifecycle {
         }
         if solve {
             equation.solve = None;
+            equation.solve_description = None;
         }
         Ok(())
     }

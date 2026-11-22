@@ -67,10 +67,12 @@ impl CalibraterLifecycle {
             refant: standard.refant,
             append,
         };
-        self.equation_mut()?.solve = Some(ConfiguredSolve::Leakage {
+        let equation = self.equation_mut()?;
+        equation.solve = Some(ConfiguredSolve::Leakage {
             request: Box::new(request),
             invalid_mode,
         });
+        equation.solve_description = None;
         Ok(())
     }
 

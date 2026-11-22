@@ -348,6 +348,7 @@ impl super::PyCalibrater {
                         painc.unwrap_or(360.),
                     )
                     .map_err(|_| setup_error())?;
+                state.record_solve_description(&elapsed, "AP", &refant_mode);
                 return Ok(true);
             }
             if table.as_os_str().is_empty() {
@@ -401,6 +402,7 @@ impl super::PyCalibrater {
                         invalid_mode,
                     )
                     .map_err(|_| setup_error())?;
+                state.record_solve_description(&elapsed, &apmode, &refant_mode);
                 return Ok(true);
             }
             let request = standard_request(&family, standard, frequency, fill_gaps, fringe)?;
@@ -413,6 +415,7 @@ impl super::PyCalibrater {
                     preavg,
                 )
                 .map_err(|_| setup_error())?;
+            state.record_solve_description(&elapsed, &apmode, &refant_mode);
             Ok(true)
         })
     }

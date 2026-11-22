@@ -150,7 +150,9 @@ impl PyCalibrater {
             });
             state
                 .set_solve(request, append)
-                .map_err(super::runtime_error)
+                .map_err(super::runtime_error)?;
+            state.record_solve_description(&elapsed, "", "flex");
+            Ok(())
         })
     }
 
@@ -206,9 +208,11 @@ impl PyCalibrater {
                     },
                     controls,
                     append,
-                    mode,
+                    mode.clone(),
                 )
-                .map_err(super::runtime_error)
+                .map_err(super::runtime_error)?;
+            state.record_solve_description("inf", &mode, "flex");
+            Ok(())
         })
     }
 }

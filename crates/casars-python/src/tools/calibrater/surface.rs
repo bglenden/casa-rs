@@ -402,7 +402,7 @@ const METHODS: &[Method] = &[
         R::Any,
         S::NotYetImplemented,
     ),
-    method("state", &[], R::Any, S::NotYetImplemented),
+    method("state", &[], R::Bool, S::Implemented),
     Method {
         mutating: true,
         ..method(

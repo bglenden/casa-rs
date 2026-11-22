@@ -1,0 +1,320 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! The direct tool's display of its retained visibility equation.
+
+use std::path::Path;
+
+use casa_ms::MeasurementSet;
+
+use super::{CalibraterLifecycle, ConfiguredSolve, VisibilityEquation};
+use crate::execute::viscal_order;
+use crate::solve::grouping::resolve_refants;
+use crate::{
+    BandpassType, CalibrationOutputMode, CalibrationSolveRequest, GainNormalization,
+    GainSolveInterval, GainSolveRequest, RefAntSelector,
+};
+
+impl CalibraterLifecycle {
+    /// Describe the currently configured apply and solve terms in CASA order.
+    /// A detached tool returns `None`.
+    #[must_use]
+    pub fn state_lines(&self) -> Option<Vec<String>> {
+        let equation = self.equation.as_ref()?;
+        let apply = describe_apply(equation);
+        let mut lines = vec!["The following calibration terms are arranged for apply:".into()];
+        if apply.is_empty() {
+            lines.push(".   (None)".into());
+        } else {
+            lines.extend(apply.into_iter().map(|term| format!(".   {term}")));
+        }
+        lines.push("The following calibration term is arranged for solve:".into());
+        let solve = equation.solve.as_ref().map(|solver| {
+            equation
+                .solve_description
+                .clone()
+                .unwrap_or_else(|| SolveState::of(solver).description(equation, "", "AP", "flex"))
+        });
+        lines.push(format!(".   {}", solve.as_deref().unwrap_or("(None)")));
+        Some(lines)
+    }
+
+    /// Retain the original interval and mode spellings for the configured
+    /// tool solve. The resolved numerical controls remain in the solver.
+    pub fn record_solve_description(&mut self, interval: &str, apmode: &str, refant_mode: &str) {
+        if let Some(equation) = &mut self.equation
+            && let Some(solver) = &equation.solve
+        {
+            equation.solve_description =
+                Some(SolveState::of(solver).description(equation, interval, apmode, refant_mode));
+        }
+    }
+}
+
+fn describe_apply(equation: &VisibilityEquation) -> Vec<String> {
+    let apply = &equation.apply;
+    let mut terms = Vec::new();
+    for (index, table) in apply.tables.iter().enumerate() {
+        if !apply
+            .library_tables
+            .iter()
+            .any(|library| library.tables.contains(&index))
+            && let Some(snapshot) = apply.table_snapshots.get(&table.path)
+        {
+            terms.push((
+                viscal_order(&snapshot.subtype),
+                snapshot.description.clone(),
+            ));
+        }
+    }
+    for library in &apply.library_tables {
+        let calwt = apply
+            .tables
+            .get(library.tables.start)
+            .is_some_and(|table| table.calwt);
+        terms.push((
+            viscal_order(&library.subtype),
+            format!(
+                "{}: table={} (by cal library) calWt={calwt}",
+                library.subtype, library.name
+            ),
+        ));
+    }
+    terms.extend(
+        (0..apply.parang_terms).map(|_| (viscal_order("P Jones"), "P Jones <pre-computed>".into())),
+    );
+    terms.sort_by_key(|(order, _)| *order);
+    terms
+        .into_iter()
+        .map(|(_, description)| description)
+        .collect()
+}
+
+pub(super) fn traditional_apply_description(
+    subtype: &str,
+    name: &str,
+    interpolation: &str,
+    spwmap: &[i32],
+    calwt: bool,
+) -> String {
+    let (time, frequency) = interpolation.split_once(',').unwrap_or((interpolation, ""));
+    let time = if time.is_empty() { "linear" } else { time };
+    let interpolation = if matches!(
+        subtype,
+        "B Jones"
+            | "B TSYS"
+            | "BPOLY"
+            | "Df Jones"
+            | "Dfgen Jones"
+            | "DfLLS Jones"
+            | "Xf Jones"
+            | "Xfparang Jones"
+            | "PosAng Jones"
+            | "GlinXphf Jones"
+            | "Mf Mueller"
+            | "Tf Jones"
+            | "TfOpac"
+            | "Jf Jones"
+    ) {
+        format!(
+            "{time},{}",
+            if frequency.is_empty() {
+                "linear"
+            } else {
+                frequency
+            }
+        )
+    } else {
+        time.into()
+    };
+    let calwt = calwt
+        && !matches!(
+            subtype,
+            "D Jones"
+                | "Df Jones"
+                | "Dgen Jones"
+                | "Dfgen Jones"
+                | "DLLS Jones"
+                | "DfLLS Jones"
+                | "X Jones"
+                | "Xf Jones"
+                | "Xparang Jones"
+                | "Xfparang Jones"
+                | "X Mueller"
+                | "GlinXph Jones"
+                | "GlinXphf Jones"
+                | "PosAng Jones"
+        );
+    let spwmap = if spwmap.is_empty() { &[-1] } else { spwmap };
+    format!(
+        "{subtype}: table={name} select= interp={interpolation} spwmap={spwmap:?} calWt={calwt}"
+    )
+}
+
+struct SolveState<'a> {
+    subtype: &'static str,
+    table: &'a Path,
+    interval: GainSolveInterval,
+    frequency_dependent: bool,
+    append: bool,
+    reference: Option<&'a RefAntSelector>,
+    min_snr: f32,
+    normalization: Option<GainNormalization>,
+}
+
+impl<'a> SolveState<'a> {
+    fn of(solver: &'a ConfiguredSolve) -> Self {
+        match solver {
+            ConfiguredSolve::Task {
+                request,
+                mode,
+                bandpass,
+                ..
+            } => {
+                let append = *mode == CalibrationOutputMode::Append;
+                match request.as_ref() {
+                    CalibrationSolveRequest::Gain(gain) => {
+                        Self::gain(gain, gain.gain_type.vis_cal(), append)
+                    }
+                    CalibrationSolveRequest::GainSpline { gain, .. } => {
+                        Self::gain(gain, "GSPLINE", append)
+                    }
+                    CalibrationSolveRequest::Fringe { gain, .. }
+                    | CalibrationSolveRequest::FringeTool { gain, .. } => {
+                        Self::gain(gain, "Fringe Jones", append)
+                    }
+                    CalibrationSolveRequest::Accor(gain) => Self::gain(gain, "Accor Jones", append),
+                    CalibrationSolveRequest::Baseline {
+                        gain,
+                        frequency_dependent,
+                        ..
+                    } => {
+                        let subtype = if *frequency_dependent {
+                            "Mf Mueller"
+                        } else {
+                            "M Mueller"
+                        };
+                        Self {
+                            frequency_dependent: *frequency_dependent,
+                            ..Self::gain(gain, subtype, append)
+                        }
+                    }
+                    CalibrationSolveRequest::Bandpass(request) => Self {
+                        subtype: if request.band_type == BandpassType::B {
+                            "B Jones"
+                        } else {
+                            "BPOLY"
+                        },
+                        table: &request.output_table,
+                        interval: request.solve_interval,
+                        frequency_dependent: true,
+                        append,
+                        reference: Some(&request.refant),
+                        min_snr: request.cuts.as_ref().map_or(0., |cuts| cuts.min_snr),
+                        normalization: request
+                            .normalize_average_amplitude
+                            .then_some(bandpass.normalization),
+                    },
+                }
+            }
+            ConfiguredSolve::Leakage { request, .. } => Self {
+                subtype: request.kind.subtype(),
+                table: &request.output,
+                interval: request.interval,
+                frequency_dependent: request.kind.channelized(),
+                append: request.append,
+                reference: (!request.kind.cross_hand()).then_some(&request.refant),
+                min_snr: request.min_snr,
+                normalization: request.normalization,
+            },
+            ConfiguredSolve::LegacyEp(solver) => Self {
+                subtype: "EP Jones",
+                table: solver.output_path(),
+                interval: GainSolveInterval::Infinite,
+                frequency_dependent: false,
+                append: false,
+                reference: None,
+                min_snr: 0.,
+                normalization: None,
+            },
+        }
+    }
+
+    fn gain(gain: &'a GainSolveRequest, subtype: &'static str, append: bool) -> Self {
+        Self {
+            subtype,
+            table: &gain.output_table,
+            interval: gain.solve_interval,
+            frequency_dependent: false,
+            append,
+            reference: Some(&gain.refant),
+            min_snr: gain.min_snr,
+            normalization: gain
+                .normalize_average_amplitude
+                .then_some(gain.normalization_type),
+        }
+    }
+
+    fn description(
+        &self,
+        equation: &VisibilityEquation,
+        interval: &str,
+        apmode: &str,
+        refant_mode: &str,
+    ) -> String {
+        let (time, frequency) = interval.split_once(',').unwrap_or((interval, ""));
+        let time = if time.is_empty() {
+            match self.interval {
+                GainSolveInterval::Infinite => "inf".into(),
+                GainSolveInterval::Integration => "int".into(),
+                GainSolveInterval::Seconds(seconds) => format!("{seconds}s"),
+            }
+        } else {
+            time.into()
+        };
+        let interval = if self.frequency_dependent {
+            format!(
+                "{time},{}",
+                if frequency.is_empty() {
+                    "none"
+                } else {
+                    frequency
+                }
+            )
+        } else {
+            time
+        };
+        let reference = self
+            .reference
+            .and_then(|selector| antenna_names(equation, selector))
+            .unwrap_or_else(|| "none".into());
+        let normalization = match self.normalization {
+            Some(GainNormalization::Mean) => "true normtype=MEAN",
+            Some(GainNormalization::Median) => "true normtype=MEDIAN",
+            None => "false",
+        };
+        format!(
+            "{}: table={} append={} solint={interval} refantmode='{refant_mode}' refant='{reference}' minsnr={} apmode={apmode} solnorm={normalization}",
+            self.subtype,
+            self.table.display(),
+            self.append,
+            self.min_snr,
+        )
+    }
+}
+
+fn antenna_names(equation: &VisibilityEquation, selector: &RefAntSelector) -> Option<String> {
+    if *selector == RefAntSelector::Unspecified {
+        return None;
+    }
+    let ms = MeasurementSet::open(equation.attachment.path()).ok()?;
+    let antenna = ms.antenna().ok()?;
+    let ids = resolve_refants(&ms, selector).ok()?;
+    let names = ids
+        .into_iter()
+        .filter_map(|id| {
+            usize::try_from(id)
+                .ok()
+                .and_then(|id| antenna.string(id, "NAME").ok())
+        })
+        .collect::<Vec<_>>();
+    (!names.is_empty()).then(|| names.join(","))
+}
