@@ -27,6 +27,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | flagdata | flagdata | yes | 76 | 76 | 0 | 0 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
+| fringefit | fringefit | yes | 33 | 33 | 0 | 0 | 4 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | gaincal | gaincal | yes | 38 | 38 | 0 | 0 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 0 | 4 | 0 |
@@ -731,6 +732,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `3968a2bcb6e86252da9ce8899cf59d8d7d466e03`; CASA: `6.7.6.14`.
 - Command: `python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>`.
 - Receipt: `resources/casa-compat/evidence/fluxscale-performance-20261117.json`.
+
+### fringefit
+
+- CASA source: `casatasks/fringefit.py`, 33 parameters
+- Implementation: `casatasks/private/task_fringefit.py`, `fringefit` (line 8): 0 return statements, 2 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
+- Shared parameters: 33, in CASA's order: yes
+- Defaults that differ: none
 
 ### ft
 

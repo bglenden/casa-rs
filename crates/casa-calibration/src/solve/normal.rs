@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Banded normal equations, with controls ordered by knot then antenna.
+//! Weighted normal equations with a known lower bandwidth.
 
 #[derive(Clone, Copy)]
 pub(super) struct Term {
@@ -7,8 +7,8 @@ pub(super) struct Term {
     pub(super) coefficient: f64,
 }
 
-/// Store the lower band only. Each baseline sample touches four consecutive
-/// controls for each antenna, regardless of the duration of the observation.
+/// Store only the nonzero lower band. The spline solver keeps the bandwidth
+/// bounded by ordering its controls by knot, then antenna.
 pub(super) struct NormalBand {
     lower: Vec<f64>,
     rhs: Vec<f64>,
@@ -16,8 +16,7 @@ pub(super) struct NormalBand {
 }
 
 impl NormalBand {
-    pub(super) fn new(size: usize, antennas: usize) -> Option<Self> {
-        let bandwidth = antennas.checked_mul(4)?;
+    pub(super) fn new(size: usize, bandwidth: usize) -> Option<Self> {
         let cells = size.checked_mul(bandwidth)?;
         let mut lower = Vec::new();
         lower.try_reserve_exact(cells).ok()?;
@@ -50,6 +49,31 @@ impl NormalBand {
             self.factor_row(row)?;
         }
         Some(())
+    }
+
+    pub(super) fn damped_step<'a>(
+        &self,
+        scratch: &'a mut Self,
+        damping: f64,
+    ) -> Option<(&'a [f64], f64)> {
+        scratch.lower.copy_from_slice(&self.lower);
+        scratch.rhs.copy_from_slice(&self.rhs);
+        for diagonal in scratch.lower.iter_mut().step_by(self.bandwidth) {
+            *diagonal += damping * if *diagonal > 0. { *diagonal } else { 1. };
+        }
+        scratch.factor()?;
+        let step = scratch.solve()?;
+        let reduction = step
+            .iter()
+            .zip(&self.rhs)
+            .zip(self.lower.iter().step_by(self.bandwidth))
+            .map(|((&delta, &rhs), &diagonal)| {
+                let scale = if diagonal > 0. { diagonal } else { 1. };
+                delta * (rhs + damping * scale * delta)
+            })
+            .sum::<f64>()
+            * 0.5;
+        Some((step, reduction))
     }
 
     pub(super) fn clear_rhs(&mut self) {

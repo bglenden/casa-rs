@@ -183,6 +183,7 @@ pub use simulated::{
     SimulatedSolution, SimulatedTableMetadata, SolutionValues, check_simulated_table_destination,
     simulated_table_bytes, write_simulated_jones_table, write_simulated_noise_table,
 };
+pub use solve::fringe::{FringeControls, FringeCorrelation};
 pub use solve::{
     GainNormalization, GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode,
     GainSolveModelSource, GainSolveReport, GainSolveRequest, GainSolveRobustness,

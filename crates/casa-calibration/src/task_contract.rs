@@ -30,10 +30,11 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 32] = [
+pub const CALIBRATION_SURFACES: [&str; 33] = [
     "calibrate",
     "applycal",
     "gaincal",
+    "fringefit",
     "bandpass",
     "fluxscale",
     "gencal",
@@ -354,6 +355,9 @@ pub struct SolveGainTaskRequest {
     /// Explicit controls for gaincal's legacy spline solve.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spline_controls: Option<GainSplineControls>,
+    /// Delay and rate search controls for the fringefit task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fringe_controls: Option<crate::FringeControls>,
     /// Solve mode.
     pub solve_mode: GainSolveMode,
     /// Solution interval.
@@ -560,9 +564,10 @@ impl CalibrationTaskRequest {
                     min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,
                 };
-                let solve = match request.spline_controls {
-                    Some(controls) => CalibrationSolveRequest::GainSpline { gain, controls },
-                    None => CalibrationSolveRequest::Gain(gain),
+                let solve = match (request.spline_controls, request.fringe_controls) {
+                    (_, Some(controls)) => CalibrationSolveRequest::Fringe { gain, controls },
+                    (Some(controls), _) => CalibrationSolveRequest::GainSpline { gain, controls },
+                    _ => CalibrationSolveRequest::Gain(gain),
                 };
                 crate::solve_calibration_with_output_mode(
                     CalibrationDataset::path(&request.measurement_set),

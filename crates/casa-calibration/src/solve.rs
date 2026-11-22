@@ -16,10 +16,12 @@
 #[cfg(test)]
 mod batch_trial;
 mod delay;
+pub(crate) mod fringe;
 pub(crate) mod grouping;
 pub(crate) mod gspline;
 pub(crate) mod kernel;
 mod model;
+mod normal;
 mod trace;
 pub(crate) mod writer;
 
@@ -531,6 +533,7 @@ pub(crate) fn solve_gain_rows(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
+            retain_fringe_buffers: false,
             gain_type: request.gain_type,
             model_source: request.model_source,
             point_stokes,

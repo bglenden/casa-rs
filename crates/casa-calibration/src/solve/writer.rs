@@ -44,6 +44,37 @@ pub(crate) fn write_gain_caltable_named(
     solved: &SolvedGains,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GainSolveReport, GainSolveError> {
+    write_gain_table(
+        ms,
+        measurement_set_name,
+        request,
+        solved,
+        mode,
+        request.gain_type.vis_cal(),
+    )
+}
+
+pub(super) fn write_fringe_caltable(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    solved: &SolvedGains,
+    mode: crate::CalibrationOutputMode,
+) -> Result<GainSolveReport, GainSolveError> {
+    let name = ms.path().map_or_else(
+        || "<in-memory>".to_owned(),
+        |path| path.display().to_string(),
+    );
+    write_gain_table(ms, name, request, solved, mode, "Fringe Jones")
+}
+
+fn write_gain_table(
+    ms: &MeasurementSet,
+    measurement_set_name: String,
+    request: &GainSolveRequest,
+    solved: &SolvedGains,
+    mode: crate::CalibrationOutputMode,
+    subtype: &'static str,
+) -> Result<GainSolveReport, GainSolveError> {
     let _write_phase = crate::timing::Phase::start("gain_write");
     let rows = &solved.rows;
     if rows.is_empty() {
@@ -84,7 +115,7 @@ pub(crate) fn write_gain_caltable_named(
         CalibrationTableDescriptor {
             output: &request.output_table,
             schema,
-            subtype: request.gain_type.vis_cal(),
+            subtype,
             parameter_type: Some(if delay { "Float" } else { "Complex" }),
             measurement_set_name,
             include_polarization_basis: true,
@@ -329,6 +360,16 @@ fn write_gain_spectral_window_subtable(
         .map_err(failed)?;
 
     Ok(())
+}
+
+pub(super) fn combined_window_frequency(
+    ms: &MeasurementSet,
+    solved: &SolvedGains,
+) -> Result<f64, GainSolveError> {
+    let spectral_windows = ms
+        .subtable(SubtableId::SpectralWindow)
+        .expect("required subtable available");
+    Ok(combined_window_metadata(spectral_windows, solved)?.frequency)
 }
 
 fn combined_window_metadata(

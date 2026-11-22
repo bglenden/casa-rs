@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveBaseKey,
-    SolveBucketKey,
+    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveAccumulator,
+    SolveBaseKey, SolveBucketKey,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,6 +66,17 @@ impl WeightedTime {
         }
         self.weighted_offset += weighted_offset + weight * (origin - self.origin);
         self.weight += weight;
+    }
+}
+
+impl SolveAccumulator {
+    pub(super) fn observe_fringe_buffer(&mut self, row: &super::SolveSampleRow) {
+        self.fringe_buffers
+            .insert((row.data_desc_id, row.field_id, row.time_seconds.to_bits()));
+    }
+
+    pub(in crate::solve) fn integration_times(&self) -> impl Iterator<Item = f64> + '_ {
+        self.unique_time_bits.iter().copied().map(f64::from_bits)
     }
 }
 

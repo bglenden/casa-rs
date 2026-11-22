@@ -580,7 +580,8 @@ impl CalibraterLifecycle {
         let apply = equation.apply.tables.clone();
         match &mut request {
             CalibrationSolveRequest::Gain(gain)
-            | CalibrationSolveRequest::GainSpline { gain, .. } => {
+            | CalibrationSolveRequest::GainSpline { gain, .. }
+            | CalibrationSolveRequest::Fringe { gain, .. } => {
                 gain.selection = selection;
                 gain.model_source = model_source;
                 gain.smodel = stokes;

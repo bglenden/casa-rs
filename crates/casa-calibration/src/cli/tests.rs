@@ -407,6 +407,7 @@ fn gain_solve() -> SolveGainTaskRequest {
         output_table: PathBuf::from("phase.gcal"),
         gain_type: GainType::T,
         spline_controls: None,
+        fringe_controls: None,
         solve_mode: GainSolveMode::AmplitudePhase,
         solve_interval: GainSolveInterval::Seconds(30.0),
         combine: GainSolveCombine {
@@ -427,6 +428,30 @@ fn gain_solve() -> SolveGainTaskRequest {
         min_baselines_per_antenna: 2,
         smodel: [2.5, 0.1, 0.0, -0.2],
     }
+}
+
+#[test]
+fn fringe_request_rejects_complex_schema_before_opening_input() {
+    let request = SolveGainTaskRequest {
+        fringe_controls: Some(crate::FringeControls {
+            delay_window: [-1e6, 1e6],
+            rate_window: [-1e6, 1e6],
+            global_solve: true,
+            iterations: 100,
+            active_parameters: [true, true, false],
+            zero_rates: false,
+            correlation_combination: crate::FringeCorrelation::Separate,
+            concatenate_windows: true,
+        }),
+        ..gain_solve()
+    };
+    let error = CalibrationTaskRequest::SolveGain(request)
+        .execute()
+        .unwrap_err();
+    assert!(
+        error.contains("fringe controls require the real delay parameter schema"),
+        "{error}"
+    );
 }
 
 const GAIN_ARGS: [&str; 26] = [

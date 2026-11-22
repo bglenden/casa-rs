@@ -3,7 +3,6 @@
 
 mod basis;
 mod diagnostics;
-mod normal;
 mod writer;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,11 +13,11 @@ use casa_types::ArrayValue;
 use num_complex::Complex64;
 
 use self::basis::SampleBasis;
-use self::normal::{NormalBand, Term};
 use super::grouping::{
     PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions,
     build_solve_groups, selected_channels,
 };
+use super::normal::{NormalBand, Term};
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
     GainSolveReport, GainSolveRequest, GainSplineControls, GainType,
@@ -49,6 +48,7 @@ pub(crate) fn solve(
         0.1
     };
     let selection = SolveGroupOptions {
+        retain_fringe_buffers: false,
         gain_type: GainType::GSpline,
         model_source: request.model_source,
         point_stokes: if request.model_source == GainSolveModelSource::PointSource {
@@ -413,7 +413,7 @@ fn fit_component(
         )?;
         let count = active.iter().flatten().count();
         let size = controls.checked_mul(count)?;
-        let mut normal = NormalBand::new(size, count)?;
+        let mut normal = NormalBand::new(size, count.checked_mul(4)?)?;
         let mut values = vec![0.; basis.len()];
         let mut phases = Vec::new();
         for (index, baseline) in baselines.iter().enumerate() {

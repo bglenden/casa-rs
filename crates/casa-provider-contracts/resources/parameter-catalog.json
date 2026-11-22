@@ -6334,6 +6334,189 @@
       "persistence_class": "profile"
     },
     {
+      "id": "calibration.fringe.zerorates",
+      "semantic_revision": 1,
+      "casa_name": "zerorates",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Store zero delay rates after the fit.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.fringe.globalsolve",
+      "semantic_revision": 1,
+      "casa_name": "globalsolve",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Refine FFT estimates using all connected baselines.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.fringe.niter",
+      "semantic_revision": 1,
+      "casa_name": "niter",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Maximum global fringe refinement iterations.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.fringe.delaywindow",
+      "semantic_revision": 1,
+      "casa_name": "delaywindow",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "FFT delay search bounds in nanoseconds.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.fringe.ratewindow",
+      "semantic_revision": 1,
+      "casa_name": "ratewindow",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "FFT delay-rate bounds in seconds per second.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.fringe.corrcomb",
+      "semantic_revision": 1,
+      "casa_name": "corrcomb",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "none",
+          "stokes",
+          "parallel"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Combine parallel-hand correlations before the solve.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.fringe.paramactive",
+      "semantic_revision": 1,
+      "casa_name": "paramactive",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "bool"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Enable delay, delay rate and dispersion parameters respectively.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.fringe.concatspws",
+      "semantic_revision": 1,
+      "casa_name": "concatspws",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Concatenate spectral windows before the fringe FFT.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.selectdata",
       "semantic_revision": 1,
       "casa_name": "selectdata",

@@ -477,6 +477,8 @@ pub(crate) fn correlation_types_for_ddid(
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SolveGroupOptions {
+    /// Preserve each input visibility buffer's axes for fringe FFT gridding.
+    pub(crate) retain_fringe_buffers: bool,
     pub(crate) gain_type: GainType,
     pub(crate) model_source: GainSolveModelSource,
     pub(crate) point_stokes: [f32; 4],
@@ -609,6 +611,7 @@ pub(crate) enum SolveBucketKey {
 /// correlation and solution channel, and the interval's metadata.
 #[derive(Debug, Clone)]
 pub(crate) struct SolveAccumulator {
+    pub(super) fringe_buffers: BTreeSet<(i32, i32, u64)>,
     pub(crate) field_id: i32,
     pub(crate) spw_id: i32,
     pub(crate) observation_id: i32,
@@ -720,6 +723,7 @@ impl SolveAccumulator {
 
     pub(crate) fn new(field_id: i32, spw_id: i32, observation_id: i32) -> Self {
         Self {
+            fringe_buffers: BTreeSet::new(),
             field_id,
             spw_id,
             observation_id,
@@ -923,7 +927,7 @@ impl SolveAccumulator {
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
         if options.polynomial_bandpass {
-            self.observe_metadata(row);
+            self.observe_metadata(row, false);
             self.polynomial
                 .get_or_insert_with(Default::default)
                 .observe(
@@ -970,7 +974,7 @@ impl SolveAccumulator {
             self.receptor_accumulations
                 .resize_with(graph_count, HashMap::new);
         }
-        self.observe_metadata(row);
+        self.observe_metadata(row, options.retain_fringe_buffers);
         let legacy_spline = options.gain_type == GainType::GSpline;
         let shared_flags = (legacy_spline || !options.correlation_dependent_flags)
             .then(|| samples::channel_flags(samples));
@@ -1127,7 +1131,10 @@ impl SolveAccumulator {
         Ok(())
     }
 
-    fn observe_metadata(&mut self, row: &SolveSampleRow) {
+    fn observe_metadata(&mut self, row: &SolveSampleRow, retain_fringe_buffers: bool) {
+        if retain_fringe_buffers {
+            self.observe_fringe_buffer(row);
+        }
         self.min_time = self.min_time.min(row.time_seconds);
         self.max_time = self.max_time.max(row.time_seconds);
         if self.unique_time_bits.insert(row.time_seconds.to_bits()) {
