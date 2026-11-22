@@ -64,13 +64,19 @@ impl PyCalibrater {
         }
         let (windows, pending_windows) = window_map_with_status(spwmap, &[-1])?;
         spec.spwmap = windows;
+        let mut opacity_values = Vec::new();
         let pending_opacity = opacity.is_some_and(|value| {
-            let mut values = Vec::new();
             value.is_instance_of::<PyTuple>()
-                || append_double_vector(&value, &mut values, 0).is_err()
+                || append_double_vector(&value, &mut opacity_values, 0).is_err()
         });
         let configured = self.attached(py, move |state| {
-            state.set_traditional_apply(spec, &kind, &field, &interpolation)
+            if spec.path.as_os_str().is_empty()
+                && (kind.eq_ignore_ascii_case("TOpac") || kind.eq_ignore_ascii_case("TfOpac"))
+            {
+                state.set_tableless_opacity(&kind, opacity_values)
+            } else {
+                state.set_traditional_apply(spec, &kind, &field, &interpolation)
+            }
         })?;
         // CASA's SWIG numerics can set an exception and still call C++ with a
         // fallback value. Registration is visible when Python reports it.

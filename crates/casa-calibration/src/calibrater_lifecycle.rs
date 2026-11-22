@@ -76,6 +76,7 @@ struct ApplyTerms {
     counts: ApplyTermCounts,
     parang_terms: usize,
     parang_calwt: bool,
+    tableless_opacity: Vec<traditional_apply::TablelessOpacity>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -898,6 +899,12 @@ impl CalibraterLifecycle {
     /// Returns an error if the current equation cannot be solved.
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
+        if !equation.apply.tableless_opacity.is_empty() {
+            self.reset(true, true)?;
+            return Err(CalibraterLifecycleError::ApplyConfiguration(
+                "Error in TOpac::calcPar()".into(),
+            ));
+        }
         if matches!(equation.solve, Some(ConfiguredSolve::Polarization { .. })) {
             self.last_solve_stats = None;
             return match self.solve_polarization_tool() {

@@ -19,7 +19,47 @@ pub(super) struct RegisteredApplySnapshot {
     _directory: tempfile::TempDir,
 }
 
+pub(super) struct TablelessOpacity {
+    pub(super) subtype: &'static str,
+    pub(super) index: usize,
+    pub(super) values: Vec<f64>,
+}
+
 impl CalibraterLifecycle {
+    /// Register the obsolete table-free opacity vector accepted by CASA's
+    /// TOpac and TfOpac calibrater factories. Its apply path requires a table.
+    ///
+    /// # Errors
+    /// The tool has no attached MS or the supplied values do not specify opacity.
+    pub fn set_tableless_opacity(
+        &mut self,
+        kind: &str,
+        mut opacity: Vec<f64>,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation_mut()?;
+        let invalid = || {
+            CalibraterLifecycleError::ApplyConfiguration("Error in Calibrater::setapply.".into())
+        };
+        let subtype = calibration_factory_type(kind)
+            .filter(|kind| matches!(*kind, "TOpac" | "TfOpac"))
+            .ok_or_else(invalid)?;
+        let last = opacity.last().copied().ok_or_else(invalid)?;
+        if opacity.iter().sum::<f64>().partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+            return Err(invalid());
+        }
+        let ms = MeasurementSet::open(equation.attachment.path()).map_err(|_| invalid())?;
+        let windows = ms.spectral_window().map_err(|_| invalid())?.row_count();
+        if opacity.len() < windows {
+            opacity.resize(windows, last);
+        }
+        equation.apply.tableless_opacity.push(TablelessOpacity {
+            subtype,
+            index: equation.apply.tables.len(),
+            values: opacity,
+        });
+        Ok(())
+    }
+
     /// Configure a traditional calibration table or the parallactic-angle
     /// term. Keep the current chain when a new term cannot initialize.
     /// # Errors

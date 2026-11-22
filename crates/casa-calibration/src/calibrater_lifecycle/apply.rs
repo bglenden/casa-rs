@@ -61,6 +61,18 @@ impl CalibraterLifecycle {
         let using_callibrary = self.using_callibrary;
         let legacy = self.legacy_iterator;
         let equation = self.equation_mut()?;
+        let origin = match operation {
+            ApplyOperation::Correct(_) => "Calibrater::correct",
+            ApplyOperation::Corrupt if legacy => "Calibrater::corrupt",
+            ApplyOperation::Corrupt => "Calibrater::corrupt2",
+        };
+        if !equation.apply.tableless_opacity.is_empty() {
+            equation.apply = super::ApplyTerms::default();
+            tracing::error!(origin, "Error in TOpac::calcPar()");
+            return Err(CalibraterLifecycleError::ApplyConfiguration(format!(
+                "Error in {origin}."
+            )));
+        }
         let mode = match operation {
             ApplyOperation::Correct("") => String::from("CALFLAG"),
             ApplyOperation::Correct(mode) => mode.to_ascii_uppercase(),
@@ -117,11 +129,6 @@ impl CalibraterLifecycle {
             };
             applied.map_err(|error| casa_ms::MsError::InvalidInput(error.to_string()).into())
         });
-        let origin = match operation {
-            ApplyOperation::Correct(_) => "Calibrater::correct",
-            ApplyOperation::Corrupt if legacy => "Calibrater::corrupt",
-            ApplyOperation::Corrupt => "Calibrater::corrupt2",
-        };
         let (all_calibrated, activity) = result.map_err(|error| {
             equation.apply = super::ApplyTerms::default();
             tracing::error!(%error, origin, "could not apply calibration to selected visibilities");
