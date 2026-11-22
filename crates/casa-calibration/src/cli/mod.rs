@@ -83,6 +83,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if task.surface() == "sdsmooth" {
         return crate::single_dish::preparation::run_sdsmooth(task);
     }
+    if task.surface() == "sdatmcor" {
+        return crate::single_dish::preparation::atmosphere::task::run(task);
+    }
     if task.surface() == "sdfit" {
         return crate::single_dish::preparation::line_fit::task::run(task);
     }

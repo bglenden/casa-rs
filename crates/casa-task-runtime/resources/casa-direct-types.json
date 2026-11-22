@@ -600,6 +600,27 @@
     "refantmode": "cStr",
     "refant": "cStr"
   },
+  "sdatmcor": {
+    "infile": "cStr",
+    "datacolumn": "cStr",
+    "outfile": "cStr",
+    "overwrite": "cBool",
+    "field": "cStr",
+    "spw": "cStr",
+    "scan": "cStr",
+    "antenna": "cStr",
+    "correlation": "cStr",
+    "timerange": "cStr",
+    "intent": "cStr",
+    "observation": "cStr",
+    "feed": "cStr",
+    "msselect": "cStr",
+    "outputspw": "cStr",
+    "atmtype": "cInt",
+    "atmdetail": "cBool",
+    "humidity": "cFloat",
+    "dpm": "cFloat"
+  },
   "sdbaseline": {
     "datacolumn": "cStr",
     "antenna": "cStr",

@@ -60,6 +60,7 @@ mod selected_data;
 mod session;
 mod simulated;
 mod single_dish;
+pub use single_dish::preparation::atmosphere::SingleDishAtmosphere;
 pub use single_dish::preparation::baseline::{
     SingleDishBaseline, SingleDishBaselineBasis, SingleDishBaselineDiagnostics,
     SingleDishBaselineMode, SingleDishLineFinder, SingleDishSinusoid,

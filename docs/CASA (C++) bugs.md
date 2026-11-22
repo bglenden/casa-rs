@@ -9792,3 +9792,22 @@ CASA 6.7.6.14 removes an existing `sdfit` report at the beginning of an
 overwrite. If a later selection or fit fails, the older report is
 lost. casa-rs stages the text report and replaces the existing file
 after successful processing.
+
+## An empty atmospheric correction window selection raises a record-type error
+
+CASA 6.7.6.14 resolves the windows to process separately from the windows
+to output. With `spw='19', outputspw='23'` on the upstream total-power
+fixture, the work list is empty. NumPy infers a floating-point array
+for the empty list, and the `atmcor` record conversion rejects
+`processspw` before it can write the requested data. casa-rs passes a
+typed empty list and writes window 23 with its spectra unchanged.
+
+## Atmospheric correction can index a cropped window from channel zero
+
+On `X320b_sel2.ms`, `sdatmcor(spw='19', outputspw='19:370~407^2',
+scan='7')` writes the requested channels. CASA 6.7.6.14 subtracts
+corrections for original channels 0 through 18 from their data. The
+paired oracle recovers that exact offset from the uncropped CASA
+product. casa-rs uses the correction at each selected original
+channel. Its cropped spectra equal the same channel slice of its
+full-window correction.

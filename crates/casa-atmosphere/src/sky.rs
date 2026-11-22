@@ -290,6 +290,14 @@ impl SkyColumn {
             + self.spill * (1.0 - self.sky_coupling)
     }
 
+    /// The sky's Rayleigh–Jeans temperature at `airmass`, kelvin.
+    ///
+    /// The caller supplies an airmass of at least one.
+    #[must_use]
+    pub fn trj(&self, airmass: f64) -> f64 {
+        H_OVER_K * self.frequency_ghz * self.radiance(airmass)
+    }
+
     /// The sky's equivalent blackbody temperature at `airmass`, kelvin, as
     /// [`AbsorptionProfile::tebb_sky`] gives it. The airmass is not checked
     /// (ATM refuses one below 1).

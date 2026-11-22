@@ -48042,6 +48042,1196 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "sdatmcor",
+      "contract_version": 1,
+      "display_name": "Single-Dish Atmospheric Correction",
+      "category": "Calibration",
+      "summary": "Correct calibrated single-dish spectra for differential atmospheric emission.",
+      "provider_family": "calibration",
+      "casa_task": "sdatmcor",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "sdatmcor"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "infile",
+          "concept": {
+            "id": "single_dish.sky.infile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infile"
+              ]
+            },
+            "provider": {
+              "field": "infile"
+            },
+            "python": {
+              "name": "infile"
+            },
+            "presentation": {
+              "label": "Input MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "datacolumn",
+          "concept": {
+            "id": "parameter.datacolumn",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "data"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--datacolumn"
+              ],
+              "metavar": "COLUMN"
+            },
+            "provider": {
+              "field": "datacolumn",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "datacolumn",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Data Column",
+              "group": "Data"
+            }
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "single_dish.smoothing.outfile",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile",
+              "type_hint": "StrPath"
+            },
+            "presentation": {
+              "label": "Output MeasurementSet",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite",
+              "type_hint": "bool"
+            },
+            "presentation": {
+              "label": "Overwrite output",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Spectral window",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Antenna IDs",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "correlation",
+          "concept": {
+            "id": "ms.selection.correlation",
+            "semantic_revision": 2
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--correlation"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "correlation"
+            },
+            "python": {
+              "name": "correlation",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Correlation",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 5
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "START~END"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "timerange",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "observation",
+          "concept": {
+            "id": "ms.selection.observation",
+            "semantic_revision": 4
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--observation"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "observation"
+            },
+            "python": {
+              "name": "observation",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Observation",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "feed",
+          "concept": {
+            "id": "ms.selection.feed",
+            "semantic_revision": 2
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--feed"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "feed"
+            },
+            "python": {
+              "name": "feed",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "Feed",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
+        },
+        {
+          "name": "msselect",
+          "concept": {
+            "id": "ms.selection.msselect",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "reviewed_homonym": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--msselect"
+              ],
+              "false_flags": [],
+              "metavar": "EXPR"
+            },
+            "provider": {
+              "field": "msselect",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "msselect",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "MSSelect",
+              "group": "Selection",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "outputspw",
+          "concept": {
+            "id": "single_dish.atmosphere.outputspw",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outputspw"
+              ]
+            },
+            "provider": {
+              "field": "outputspw"
+            },
+            "python": {
+              "name": "outputspw"
+            },
+            "presentation": {
+              "label": "Output Spectral Windows",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "gainfactor",
+          "concept": {
+            "id": "single_dish.atmosphere.gainfactor",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gainfactor"
+              ]
+            },
+            "provider": {
+              "field": "gainfactor"
+            },
+            "python": {
+              "name": "gainfactor",
+              "type_hint": "float | dict[str | int, float] | str"
+            },
+            "presentation": {
+              "label": "Gain Factor",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "dtem_dh",
+          "concept": {
+            "id": "single_dish.atmosphere.dtem_dh",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dtem_dh"
+              ]
+            },
+            "provider": {
+              "field": "dtem_dh"
+            },
+            "python": {
+              "name": "dtem_dh",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Temperature Lapse Rate",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "h0",
+          "concept": {
+            "id": "single_dish.atmosphere.h0",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--h0"
+              ]
+            },
+            "provider": {
+              "field": "h0"
+            },
+            "python": {
+              "name": "h0",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Water Scale Height",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "atmtype",
+          "concept": {
+            "id": "single_dish.atmosphere.atmtype",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--atmtype"
+              ]
+            },
+            "provider": {
+              "field": "atmtype"
+            },
+            "python": {
+              "name": "atmtype"
+            },
+            "presentation": {
+              "label": "Reference Atmosphere",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "atmdetail",
+          "concept": {
+            "id": "single_dish.atmosphere.atmdetail",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--atmdetail"
+              ]
+            },
+            "provider": {
+              "field": "atmdetail"
+            },
+            "python": {
+              "name": "atmdetail"
+            },
+            "presentation": {
+              "label": "Use User Atmosphere Inputs",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "altitude",
+          "concept": {
+            "id": "single_dish.atmosphere.altitude",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--altitude"
+              ]
+            },
+            "provider": {
+              "field": "altitude"
+            },
+            "python": {
+              "name": "altitude",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Site Altitude",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "temperature",
+          "concept": {
+            "id": "single_dish.atmosphere.temperature",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--temperature"
+              ]
+            },
+            "provider": {
+              "field": "temperature"
+            },
+            "python": {
+              "name": "temperature",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Ground Temperature",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "pressure",
+          "concept": {
+            "id": "single_dish.atmosphere.pressure",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pressure"
+              ]
+            },
+            "provider": {
+              "field": "pressure"
+            },
+            "python": {
+              "name": "pressure",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Ground Pressure",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "humidity",
+          "concept": {
+            "id": "single_dish.atmosphere.humidity",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": -1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--humidity"
+              ]
+            },
+            "provider": {
+              "field": "humidity"
+            },
+            "python": {
+              "name": "humidity"
+            },
+            "presentation": {
+              "label": "Relative Humidity",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "pwv",
+          "concept": {
+            "id": "single_dish.atmosphere.pwv",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pwv"
+              ]
+            },
+            "provider": {
+              "field": "pwv"
+            },
+            "python": {
+              "name": "pwv",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Precipitable Water Vapour",
+              "group": "Atmosphere"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1532",
+            "reason": "The observed atmospheric water column override also accepts a quantity string."
+          }
+        },
+        {
+          "name": "dp",
+          "concept": {
+            "id": "single_dish.atmosphere.dp",
+            "semantic_revision": 1
+          },
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dp"
+              ]
+            },
+            "provider": {
+              "field": "dp"
+            },
+            "python": {
+              "name": "dp",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "Pressure Step",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "dpm",
+          "concept": {
+            "id": "single_dish.atmosphere.dpm",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": -1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dpm"
+              ]
+            },
+            "provider": {
+              "field": "dpm"
+            },
+            "python": {
+              "name": "dpm"
+            },
+            "presentation": {
+              "label": "Pressure Step Factor",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "layerboundaries",
+          "concept": {
+            "id": "single_dish.atmosphere.layerboundaries",
+            "semantic_revision": 1
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--layerboundaries"
+              ]
+            },
+            "provider": {
+              "field": "layerboundaries"
+            },
+            "python": {
+              "name": "layerboundaries",
+              "type_hint": "str | list[str] | list[float]"
+            },
+            "presentation": {
+              "label": "Temperature Profile Altitudes",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "layertemperature",
+          "concept": {
+            "id": "single_dish.atmosphere.layertemperature",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--layertemperature"
+              ]
+            },
+            "provider": {
+              "field": "layertemperature"
+            },
+            "python": {
+              "name": "layertemperature",
+              "type_hint": "str | list[str] | list[float]"
+            },
+            "presentation": {
+              "label": "Temperature Profile Temperatures",
+              "group": "Atmosphere"
+            }
+          }
+        }
+      ]
     }
   ]
 }

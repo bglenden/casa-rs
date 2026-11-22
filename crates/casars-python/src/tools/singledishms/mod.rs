@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The CASA single-dish spectral preparation tool.
 
+mod atmosphere;
 mod baseline;
 mod line_fit;
 mod pending;

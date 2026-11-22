@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native single-dish spectral preparation shared by the task and tool.
 
+pub(crate) mod atmosphere;
 pub(crate) mod baseline;
 pub(crate) mod line_fit;
 mod smoothing;

@@ -40,6 +40,11 @@ pub struct SpectrumWeights<'a> {
 
 /// Fit or apply a baseline within the selected MeasurementSet stream.
 pub trait SpectrumBaseline {
+    /// Whether to visit selected rows by observation, array, feed, and description.
+    fn atmospheric_order(&self) -> bool {
+        false
+    }
+
     /// Whether to fill the output MeasurementSet with processed spectra.
     fn writes_rows(&self) -> bool;
 
