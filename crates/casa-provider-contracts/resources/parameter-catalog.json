@@ -18961,6 +18961,306 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.outputspw",
+      "semantic_revision": 1,
+      "casa_name": "outputspw",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "select spws to output, same syntax of spw.(\"\" = all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.gainfactor",
+      "semantic_revision": 1,
+      "casa_name": "gainfactor",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Gain factor to multiply correction term.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.dtem_dh",
+      "semantic_revision": 1,
+      "casa_name": "dtem_dh",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "temperature gradient [K/km], e.g. -5.6. (\"\" = Tool default)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.h0",
+      "semantic_revision": 1,
+      "casa_name": "h0",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "scale height for water [km], e.g. 2.0. (\"\" = Tool default)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.atmtype",
+      "semantic_revision": 1,
+      "casa_name": "atmtype",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Atmospheric type.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.atmdetail",
+      "semantic_revision": 1,
+      "casa_name": "atmdetail",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Expose parameters for detailed configuration of ATM model if True.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.altitude",
+      "semantic_revision": 1,
+      "casa_name": "altitude",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Site altitude [m].",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.temperature",
+      "semantic_revision": 1,
+      "casa_name": "temperature",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Ambient temperature [K].",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.pressure",
+      "semantic_revision": 1,
+      "casa_name": "pressure",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Ambient pressure [mbar].",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.humidity",
+      "semantic_revision": 1,
+      "casa_name": "humidity",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Relative humidity [percent].",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.pwv",
+      "semantic_revision": 1,
+      "casa_name": "pwv",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Zenith water vapor [mm].",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.dp",
+      "semantic_revision": 1,
+      "casa_name": "dp",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Initial pressure step.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.dpm",
+      "semantic_revision": 1,
+      "casa_name": "dpm",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Pressure multiplicative factor for steps.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.layerboundaries",
+      "semantic_revision": 1,
+      "casa_name": "layerboundaries",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Altitude of user-defined temperature profile.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.atmosphere.layertemperature",
+      "semantic_revision": 1,
+      "casa_name": "layertemperature",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "User-defined temperature profile [K].",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

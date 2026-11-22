@@ -344,6 +344,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if message.endswith(" exists."):
                 raise ValueError(message) from error
             raise RuntimeError(message) from error
+    if name == "sdatmcor":
+        return _call_sdatmcor(values)
     if name == "sdfit":
         return _call_sdfit(values, arguments)
     if name == "sdbaseline":
@@ -1261,6 +1263,36 @@ def _present_listcal(report: Mapping[str, Any]) -> None:
         if listing["error"] is not None:
             raise RuntimeError(listing["error"])
     print(f"\nListed {solutions} antenna solutions.\n")
+
+
+def _call_sdatmcor(values: dict[str, Any]) -> None:
+    if "datacolumn" in values:
+        column = values["datacolumn"]
+        if column is None:
+            messages = ["unallowed value None", "null value not allowed"]
+        elif not isinstance(column, str):
+            messages = ["must be of cStr type"]
+        elif column not in ("data", "float_data", "corrected"):
+            messages = [f"unallowed value {column}"]
+        else:
+            messages = []
+        if messages:
+            raise AssertionError(str({"datacolumn": messages}))
+    if isinstance(values.get("gainfactor"), dict):
+        values["gainfactor"] = {str(key): item for key, item in values["gainfactor"].items()}
+    try:
+        return run("sdatmcor", **values).value
+    except TaskExecutionError as error:
+        message = error.completion.message or ""
+        name = error.completion.parameter
+        if name == "gainfactor" and message.endswith(" should exist."):
+            raise FileNotFoundError(message) from error
+        if name in ("infile", "outfile", "atmtype", "humidity", "datacolumn"):
+            raise Exception(message) from error
+        if name in ("dtem_dh", "h0", "altitude", "temperature", "pressure", "pwv",
+                    "dp", "layerboundaries", "layertemperature"):
+            raise ValueError(message) from error
+        raise RuntimeError(message) from error
 
 
 def _call_sdfit(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:

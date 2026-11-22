@@ -1816,6 +1816,43 @@ def sdfit(
     """
     return _call_casa(sdfit, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit')
+def sdatmcor(
+    infile: StrPath = '',
+    datacolumn: str = 'data',
+    outfile: StrPath = '',
+    overwrite: bool = False,
+    field: str = '',
+    spw: str = '',
+    scan: str = '',
+    antenna: str = '',
+    correlation: str = '',
+    timerange: str = '',
+    intent: str = '',
+    observation: str = '',
+    feed: str = '',
+    msselect: str = '',
+    outputspw: str = '',
+    gainfactor: float | dict[str | int, float] | str = 1.0,
+    dtem_dh: str | float = '',
+    h0: str | float = '',
+    atmtype: int = 2,
+    atmdetail: bool = False,
+    altitude: str | float = '',
+    temperature: str | float = '',
+    pressure: str | float = '',
+    humidity: float = -1.0,
+    pwv: str | float = '',
+    dp: str | float = '',
+    dpm: float = -1.0,
+    layerboundaries: str | list[str] | list[float] = '',
+    layertemperature: str | list[str] | list[float] = '',
+) -> Any:
+    """Correct calibrated single-dish spectra for differential atmospheric emission.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit']
+    CASA's ``sdatmcor``: its parameters, defaults and return value.
+    """
+    return _call_casa(sdatmcor, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor']

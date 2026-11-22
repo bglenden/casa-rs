@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 937
-- Surfaces: 57 (57 task, 0 session)
-- Surface bindings: 1305
+- Concepts: 952
+- Surfaces: 58 (58 task, 0 session)
+- Surface bindings: 1334
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -73,6 +73,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Single-dish spectral smoothing](#surface-sdsmooth)<br><code>sdsmooth</code> | task | 1 | <code>calibration</code> | 14 | Convolve selected single-dish spectra and publish a MeasurementSet. |
 | [Single-dish spectral baselines](#surface-sdbaseline)<br><code>sdbaseline</code> | task | 1 | <code>calibration</code> | 38 | Fit, subtract and apply spectral baselines to selected single-dish observations. |
 | [Single-Dish Line Fitting](#surface-sdfit)<br><code>sdfit</code> | task | 1 | <code>calibration</code> | 21 | Fit Gaussian or Lorentzian lines to selected single-dish spectra. |
+| [Single-Dish Atmospheric Correction](#surface-sdatmcor)<br><code>sdatmcor</code> | task | 1 | <code>calibration</code> | 29 | Correct calibrated single-dish spectra for differential atmospheric emission. |
 
 <a id="surface-msexplore"></a>
 
@@ -2119,5 +2120,47 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>edge</code> | <code>single_dish.baseline.edge@r1</code> | <code>array&lt;integer&gt;</code> | <code>[0,0]</code>; optional | Baseline | channels to drop at beginning and end of spectrum |
 | <code>outfile</code> | <code>single_dish.line_fit.outfile@r1</code> | <code>string</code> | <code>""</code>; optional | Line Fitting | Optional tab-separated report of fitted line components. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+
+<a id="surface-sdatmcor"></a>
+
+## Single-Dish Atmospheric Correction (<code>sdatmcor</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Correct calibrated single-dish spectra for differential atmospheric emission.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>infile</code> | <code>single_dish.sky.infile@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; optional | Input | Input MeasurementSet. |
+| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"data"</code>; optional | Data | Visibility data column used by the surface. |
+| <code>outfile</code> | <code>single_dish.smoothing.outfile@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; optional | Output | Output smoothed MeasurementSet. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal scan selector text. |
+| <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal antenna selector text. |
+| <code>correlation</code> | <code>ms.selection.correlation@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA correlation product selection with optional spectral-window qualifiers. |
+| <code>timerange</code> | <code>ms.selection.timerange@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA timerange selection for MeasurementSet transforms. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
+| <code>feed</code> | <code>ms.selection.feed@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA feed IDs and feed pair selection. |
+| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>outputspw</code> | <code>single_dish.atmosphere.outputspw@r1</code> | <code>string</code> | <code>""</code>; optional | Atmosphere | select spws to output, same syntax of spw.("" = all) |
+| <code>gainfactor</code> | <code>single_dish.atmosphere.gainfactor@r1</code> | <code>variant</code> | <code>1.0</code>; optional | Atmosphere | Gain factor to multiply correction term. |
+| <code>dtem_dh</code> | <code>single_dish.atmosphere.dtem_dh@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | temperature gradient [K/km], e.g. -5.6. ("" = Tool default) |
+| <code>h0</code> | <code>single_dish.atmosphere.h0@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | scale height for water [km], e.g. 2.0. ("" = Tool default) |
+| <code>atmtype</code> | <code>single_dish.atmosphere.atmtype@r1</code> | <code>integer</code> | <code>2</code>; optional | Atmosphere | Atmospheric type. |
+| <code>atmdetail</code> | <code>single_dish.atmosphere.atmdetail@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Expose parameters for detailed configuration of ATM model if True. |
+| <code>altitude</code> | <code>single_dish.atmosphere.altitude@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | Site altitude [m]. |
+| <code>temperature</code> | <code>single_dish.atmosphere.temperature@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | Ambient temperature [K]. |
+| <code>pressure</code> | <code>single_dish.atmosphere.pressure@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | Ambient pressure [mbar]. |
+| <code>humidity</code> | <code>single_dish.atmosphere.humidity@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Atmosphere | Relative humidity [percent]. |
+| <code>pwv</code> | <code>single_dish.atmosphere.pwv@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | Zenith water vapor [mm]. |
+| <code>dp</code> | <code>single_dish.atmosphere.dp@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | Initial pressure step. |
+| <code>dpm</code> | <code>single_dish.atmosphere.dpm@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Atmosphere | Pressure multiplicative factor for steps. |
+| <code>layerboundaries</code> | <code>single_dish.atmosphere.layerboundaries@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | Altitude of user-defined temperature profile. |
+| <code>layertemperature</code> | <code>single_dish.atmosphere.layertemperature@r1</code> | <code>variant</code> | <code>""</code>; optional | Atmosphere | User-defined temperature profile [K]. |
 
 _End of generated reference._

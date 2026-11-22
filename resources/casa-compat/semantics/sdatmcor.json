@@ -1,0 +1,420 @@
+{
+  "schema_version": 1,
+  "task": "sdatmcor",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "c79ffdb24ad34d102117217f110217ae0f6581c3",
+  "parameters": {
+    "infile": {
+      "scope": "name of input MS.",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "datacolumn": {
+      "scope": "name of data column to be used [\"data\", \"float_data\", or \"corrected\"]",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "outfile": {
+      "scope": "name of output MS.",
+      "status": "Implemented",
+      "behaviors": [
+        "output"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "overwrite": {
+      "scope": "allow to overwrite the output file if already exists.",
+      "status": "Implemented",
+      "behaviors": [
+        "output"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "field": {
+      "scope": "Select fields. Use field id(s) or name(s).",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "spw": {
+      "scope": "Select spectral windows",
+      "status": "Implemented",
+      "behaviors": [
+        "windows"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "scan": {
+      "scope": "Scan number range",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "antenna": {
+      "scope": "Select data based on antenna/baseline",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "correlation": {
+      "scope": "Correlation (polarization) types or expression",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "timerange": {
+      "scope": "Range of time to select from data",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "intent": {
+      "scope": "Scan Intent(s)",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "observation": {
+      "scope": "Observation ID range",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "feed": {
+      "scope": "feed selection",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "msselect": {
+      "scope": "Complicated data selection using TaQL",
+      "status": "Implemented",
+      "behaviors": [
+        "inputs"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "outputspw": {
+      "scope": "select spws to output, same syntax of spw.(\"\" = all)",
+      "status": "Implemented",
+      "behaviors": [
+        "windows"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "gainfactor": {
+      "scope": "Gain factor to multiply correction term.",
+      "status": "Implemented",
+      "behaviors": [
+        "gain"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "dtem_dh": {
+      "scope": "temperature gradient [K/km], e.g. -5.6. (\"\" = Tool default)",
+      "status": "Implemented",
+      "behaviors": [
+        "layers"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "h0": {
+      "scope": "scale height for water [km], e.g. 2.0. (\"\" = Tool default)",
+      "status": "Implemented",
+      "behaviors": [
+        "layers"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "atmtype": {
+      "scope": "Atmospheric type.",
+      "status": "Implemented",
+      "behaviors": [
+        "atmosphere"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "atmdetail": {
+      "scope": "Expose parameters for detailed configuration of ATM model if True.",
+      "status": "Implemented",
+      "behaviors": [
+        "layers"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "altitude": {
+      "scope": "Site altitude [m].",
+      "status": "Implemented",
+      "behaviors": [
+        "atmosphere"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "temperature": {
+      "scope": "Ambient temperature [K].",
+      "status": "Implemented",
+      "behaviors": [
+        "atmosphere"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "pressure": {
+      "scope": "Ambient pressure [mbar].",
+      "status": "Implemented",
+      "behaviors": [
+        "atmosphere"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "humidity": {
+      "scope": "Relative humidity [percent].",
+      "status": "Implemented",
+      "behaviors": [
+        "atmosphere"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "pwv": {
+      "scope": "Zenith water vapor [mm].",
+      "status": "Implemented",
+      "behaviors": [
+        "atmosphere"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "dp": {
+      "scope": "Initial pressure step.",
+      "status": "Implemented",
+      "behaviors": [
+        "layers"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "dpm": {
+      "scope": "Pressure multiplicative factor for steps.",
+      "status": "Implemented",
+      "behaviors": [
+        "layers"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "layerboundaries": {
+      "scope": "Altitude of user-defined temperature profile.",
+      "status": "Implemented",
+      "behaviors": [
+        "layers"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "layertemperature": {
+      "scope": "User-defined temperature profile [K].",
+      "status": "Implemented",
+      "behaviors": [
+        "layers"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "inputs",
+      "title": "Open and select a total-power MeasurementSet",
+      "scope": "Resolve selected autocorrelation rows and polarization and read the requested data plane. Apply correction to eligible on-source integrations.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "windows",
+      "title": "Resolve independent processing and output windows",
+      "scope": "Correct the intersection of processing and output windows. Preserve other output windows and map each output spectrum to its original channels.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "gain",
+      "title": "Apply calibration-derived gain",
+      "scope": "Accept the scalar, per-window mapping, or a calibration table. Apply the window gain to the additive atmospheric correction.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "atmosphere",
+      "title": "Use measured weather, pointing, and the atmospheric profile",
+      "scope": "Use recorded ambient conditions by default and allow explicit site and atmospheric overrides. Interpolate pointing, link target and reference elevations, and use the native atmospheric model and measured band response.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "layers",
+      "title": "Configure detailed ATM layers",
+      "scope": "Accept profile and layer quantities, default values and unit strings. The pinned layer model accepts a pressure factor but computes with a fixed factor of 1.075.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "output",
+      "title": "Publish an interoperable corrected MeasurementSet",
+      "scope": "Write the selected MeasurementSet, including unchanged imaginary components, flags and weights. Stage the replacement until processing succeeds.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "empty-processing-intersection",
+      "state": "Previously agreed",
+      "record": "An empty atmospheric correction window selection raises a record-type error",
+      "inputs": "Use spw='19', outputspw='23' on X320b_sel2.ms.",
+      "casa": "The empty NumPy record list is inferred as floating point and rejected.",
+      "ours": "Use a typed empty window list and write the selected spectra unchanged.",
+      "rationale": "There are zero eligible windows for correction.",
+      "impact": "Disjoint processing and output selections produce the selected data.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "cropped-channel-coordinates",
+      "state": "Previously agreed",
+      "record": "Atmospheric correction can index a cropped window from channel zero",
+      "inputs": "Use outputspw='19:370~407^2' on X320b_sel2.ms.",
+      "casa": "Subtracts corrections computed for channels 0 through 18 from the selected output channels.",
+      "ours": "Subtract the correction at each original selected channel.",
+      "rationale": "Original frequency determines the atmospheric signature; the corrected output matches the same channels of a full-window correction.",
+      "impact": "Cropped spectra agree with the requested ordered projection of the full corrected product.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "nonfinite-correction",
+      "state": "Previously agreed",
+      "record": "Atmospheric correction can publish unflagged nonfinite spectra",
+      "inputs": "Use a calibration table with zero amplitude or a scalar factor of 1e40 for SPW 19.",
+      "casa": "The corrected MeasurementSet contains unflagged nonfinite samples.",
+      "ours": "Refuse nonfinite gains and corrections outside the Float32 range before publication.",
+      "rationale": "A gain factor cannot make a finite input spectrum invalid without an error.",
+      "impact": "A failed overwrite preserves an existing finite product.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "ALMA total-power atmospheric correction, spectrum invariants, and MeasurementSet interchange",
+      "state": "passed",
+      "casa_version": "6.7.6.14",
+      "revision": "c79ffdb24ad34d102117217f110217ae0f6581c3",
+      "source_revision": "c79ffdb24ad34d102117217f110217ae0f6581c3",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1988",
+      "scope": "All 29 task arguments and three direct atmcor arguments, including original, corrected and floating-point spectra, independent window queries, worked quantities and profile overrides, weather and pointing, combined selectors, gain factors, flags and weights, and reads in both table implementations.",
+      "result": "On the pinned X320b_sel2.ms fixture, measured correction normalized RMS across 1,648 spectra is 2.82e-4. Gain, channel and equal-elevation laws pass, alongside a dry atmosphere, antenna-pair selection and transactional publication.",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> OMP_NUM_THREADS=2 casa-python tools/casa-compat/sdatmcor_oracle.py <X320b_sel2.ms> <new-dir>",
+      "links": [
+        "tools/casa-compat/sdatmcor_oracle.py"
+      ]
+    }
+  }
+}

@@ -32,7 +32,7 @@ const METHODS: &[Method] = &[
                 param("outfile", K::Text, D::Text("")),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
     method("close", &[], R::Bool, S::Implemented),

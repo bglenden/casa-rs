@@ -437,6 +437,9 @@ fn mstransform_staged(
 ) -> Result<MsTransformReport, MsTransformError> {
     let order = match operation.as_ref().map(|op| &op.kernel) {
         Some(SpectrumOperator::Convolution(_)) => selection_metadata::MainRowOrder::SingleDish,
+        Some(SpectrumOperator::Baseline(kernel)) if kernel.atmospheric_order() => {
+            selection_metadata::MainRowOrder::Atmosphere
+        }
         Some(SpectrumOperator::Baseline(_)) => selection_metadata::MainRowOrder::Baseline,
         None => selection_metadata::MainRowOrder::Transform,
     };
@@ -673,18 +676,21 @@ fn mstransform_staged(
         }
         _ => BTreeMap::new(),
     };
-    let baseline_rows = baseline_order
-        .then(|| {
-            baseline::spectrum_rows(
-                input.main_table(),
-                request,
-                &selected_rows,
-                selected_ddids
-                    .iter()
-                    .map(|id| (ddid_to_spw[id], hands.get(id).copied())),
-            )
-        })
-        .transpose()?;
+    let spectral_rows = matches!(
+        order,
+        selection_metadata::MainRowOrder::Baseline | selection_metadata::MainRowOrder::Atmosphere
+    )
+    .then(|| {
+        baseline::spectrum_rows(
+            input.main_table(),
+            request,
+            &selected_rows,
+            selected_ddids
+                .iter()
+                .map(|id| (ddid_to_spw[id], hands.get(id).copied())),
+        )
+    })
+    .transpose()?;
     let averaging_time = time_groups.is_some();
     let selected_field_ids_for_metadata =
         selected_field_ids_for_rows(input.main_table(), &selected_rows, &request.output_ms)?;
@@ -1137,7 +1143,7 @@ fn mstransform_staged(
                                 .map_err(MsTransformError::Spectrum)?;
                         }
                         SpectrumOperator::Baseline(handler) => {
-                            let coordinates = baseline_rows
+                            let coordinates = spectral_rows
                                 .as_ref()
                                 .and_then(|rows| rows.get(row_index))
                                 .ok_or_else(|| {

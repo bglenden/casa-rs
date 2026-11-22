@@ -360,6 +360,7 @@ mod tests {
             ("sdsmooth", false),
             ("sdbaseline", false),
             ("sdfit", false),
+            ("sdatmcor", false),
             ("tsdimaging", false),
             ("simanalyze", true),
         ]);

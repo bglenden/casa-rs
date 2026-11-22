@@ -204,7 +204,13 @@ impl<C: AbsorptionChannel> AbsorptionProfile<C> {
         .validate(true)?;
         let column = &self.channels()[channel];
         let frequency_ghz = 1.0e-9 * column.frequency_hz();
-        let ratio = sky.water_column_m / self.ground_water_column_m();
+        // A dry line of sight has zero wet opacity even when the reference
+        // profile also has zero water.
+        let ratio = if sky.water_column_m == 0.0 {
+            0.0
+        } else {
+            sky.water_column_m / self.ground_water_column_m()
+        };
         let (opacity, occupations) = self
             .atmosphere()
             .layers()
@@ -288,6 +294,14 @@ impl SkyColumn {
         }
         self.sky_coupling * (radiance + self.background * transmission)
             + self.spill * (1.0 - self.sky_coupling)
+    }
+
+    /// The sky's Rayleigh–Jeans temperature at `airmass`, kelvin.
+    ///
+    /// The caller supplies an airmass of at least one.
+    #[must_use]
+    pub fn trj(&self, airmass: f64) -> f64 {
+        H_OVER_K * self.frequency_ghz * self.radiance(airmass)
     }
 
     /// The sky's equivalent blackbody temperature at `airmass`, kelvin, as

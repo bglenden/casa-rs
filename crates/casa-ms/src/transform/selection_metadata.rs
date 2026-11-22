@@ -28,6 +28,7 @@ pub(super) enum MainRowOrder {
     Transform,
     SingleDish,
     Baseline,
+    Atmosphere,
 }
 
 /// CASA's visibility iterator groups ordinary MS rows by the original IDs
@@ -61,6 +62,7 @@ pub(super) fn sort_selected_rows(
         MainRowOrder::Transform => &GROUPS,
         MainRowOrder::SingleDish => &SINGLE_DISH_GROUPS,
         MainRowOrder::Baseline => &[],
+        MainRowOrder::Atmosphere => &["OBSERVATION_ID", "ARRAY_ID", "FEED1"],
     };
     for (slot, &name) in columns.iter().enumerate() {
         for ((group, value), &row) in groups.iter_mut().zip(read(name)?).zip(&rows) {
@@ -82,7 +84,7 @@ pub(super) fn sort_selected_rows(
             .cmp(&right.0)
             .then_with(|| left.1.cmp(&right.1))
             .then_with(|| {
-                if matches!(order, MainRowOrder::Baseline) {
+                if matches!(order, MainRowOrder::Baseline | MainRowOrder::Atmosphere) {
                     std::cmp::Ordering::Equal
                 } else {
                     left.2.total_cmp(&right.2)

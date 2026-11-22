@@ -1565,6 +1565,39 @@ def sdfit(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit')
+def sdatmcor(
+    infile: StrPath = ...,
+    datacolumn: str = ...,
+    outfile: StrPath = ...,
+    overwrite: bool = ...,
+    field: str = ...,
+    spw: str = ...,
+    scan: str = ...,
+    antenna: str = ...,
+    correlation: str = ...,
+    timerange: str = ...,
+    intent: str = ...,
+    observation: str = ...,
+    feed: str = ...,
+    msselect: str = ...,
+    outputspw: str = ...,
+    gainfactor: float | dict[str | int, float] | str = ...,
+    dtem_dh: str | float = ...,
+    h0: str | float = ...,
+    atmtype: int = ...,
+    atmdetail: bool = ...,
+    altitude: str | float = ...,
+    temperature: str | float = ...,
+    pressure: str | float = ...,
+    humidity: float = ...,
+    pwv: str | float = ...,
+    dp: str | float = ...,
+    dpm: float = ...,
+    layerboundaries: str | list[str] | list[float] = ...,
+    layertemperature: str | list[str] | list[float] = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit']
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'setjy', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getjyperkalma', 'getcalmodvla', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass', 'predictcomp', 'wvrgcal', 'polcal', 'polfromgain', 'sdcal', 'sdgaincal', 'sdsmooth', 'sdbaseline', 'sdfit', 'sdatmcor']

@@ -53,6 +53,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | polfromgain | polfromgain | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
+| sdatmcor | sdatmcor | yes | 29 | 29 | 0 | 0 | 0 | 0 |
 | sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdfit | sdfit | yes | 21 | 21 | 0 | 0 | 0 | 0 |
@@ -2371,6 +2372,162 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
+### sdatmcor
+
+- CASA source: `casatasks/sdatmcor.py`, 29 parameters
+- Implementation: `casatasks/private/task_sdatmcor.py`, `sdatmcor` (line 607): 0 return statements, 9 raise statements
+- Called with its defaults in an empty directory, CASA raises `Exception`: infile MUST BE specified.
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 29, in CASA's order: yes
+- Defaults that differ: none
+
+#### sdatmcor parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `c79ffdb24ad34d102117217f110217ae0f6581c3`. Status counts: Default only: 0, Implemented: 29, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `infile` | `''` | `''`; `infile` → `infile` | Implemented | name of input MS. [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `path` (measurement_set) | [paired](#sdatmcor-evidence-paired) |
+| `datacolumn` | `'data'` | `'data'`; `datacolumn` → `datacolumn` | Implemented | name of data column to be used ["data", "float_data", or "corrected"] [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | name of output MS. [output](#sdatmcor-behavior-output)<br>Catalog domain: `path` (measurement_set) | [paired](#sdatmcor-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | allow to overwrite the output file if already exists. [output](#sdatmcor-behavior-output)<br>Catalog domain: `bool` | [paired](#sdatmcor-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Select fields. Use field id(s) or name(s). [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Select spectral windows [windows](#sdatmcor-behavior-windows)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Scan number range [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Select data based on antenna/baseline [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `correlation` | `''` | `''`; `correlation` → `correlation` | Implemented | Correlation (polarization) types or expression [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Range of time to select from data [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Scan Intent(s) [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `observation` | `''` | `''`; `observation` → `observation` | Implemented | Observation ID range [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `feed` | `''` | `''`; `feed` → `feed` | Implemented | feed selection [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `msselect` | `''` | `''`; `msselect` → `msselect` | Implemented | Complicated data selection using TaQL [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `outputspw` | `''` | `''`; `outputspw` → `outputspw` | Implemented | select spws to output, same syntax of spw.("" = all) [windows](#sdatmcor-behavior-windows)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `gainfactor` | `1.0` | `1.0`; `gainfactor` → `gainfactor` | Implemented | Gain factor to multiply correction term. [gain](#sdatmcor-behavior-gain)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `dtem_dh` | `''` | `''`; `dtem_dh` → `dtem_dh` | Implemented | temperature gradient [K/km], e.g. -5.6. ("" = Tool default) [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `h0` | `''` | `''`; `h0` → `h0` | Implemented | scale height for water [km], e.g. 2.0. ("" = Tool default) [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `atmtype` | `2` | `2`; `atmtype` → `atmtype` | Implemented | Atmospheric type. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `integer` | [paired](#sdatmcor-evidence-paired) |
+| `atmdetail` | `False` | `False`; `atmdetail` → `atmdetail` | Implemented | Expose parameters for detailed configuration of ATM model if True. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `bool` | [paired](#sdatmcor-evidence-paired) |
+| `altitude` | `''` | `''`; `altitude` → `altitude` | Implemented | Site altitude [m]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `temperature` | `''` | `''`; `temperature` → `temperature` | Implemented | Ambient temperature [K]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `pressure` | `''` | `''`; `pressure` → `pressure` | Implemented | Ambient pressure [mbar]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `humidity` | `-1.0` | `-1.0`; `humidity` → `humidity` | Implemented | Relative humidity [percent]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `float` | [paired](#sdatmcor-evidence-paired) |
+| `pwv` | `''` | `''`; `pwv` → `pwv` | Implemented | Zenith water vapor [mm]. [atmosphere](#sdatmcor-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `dp` | `''` | `''`; `dp` → `dp` | Implemented | Initial pressure step. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `dpm` | `-1.0` | `-1.0`; `dpm` → `dpm` | Implemented | Pressure multiplicative factor for steps. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `float` | [paired](#sdatmcor-evidence-paired) |
+| `layerboundaries` | `''` | `''`; `layerboundaries` → `layerboundaries` | Implemented | Altitude of user-defined temperature profile. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+| `layertemperature` | `''` | `''`; `layertemperature` → `layertemperature` | Implemented | User-defined temperature profile [K]. [layers](#sdatmcor-behavior-layers)<br>Catalog domain: `variant` | [paired](#sdatmcor-evidence-paired) |
+
+#### sdatmcor interacting modes and task behavior
+
+<a id="sdatmcor-behavior-inputs"></a>
+##### Open and select a total-power MeasurementSet
+
+**Implemented** — Resolve selected autocorrelation rows and polarization and read the requested data plane. Apply correction to eligible on-source integrations.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-windows"></a>
+##### Resolve independent processing and output windows
+
+**Implemented** — Correct the intersection of processing and output windows. Preserve other output windows and map each output spectrum to its original channels.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-gain"></a>
+##### Apply calibration-derived gain
+
+**Implemented** — Accept the scalar, per-window mapping, or a calibration table. Apply the window gain to the additive atmospheric correction.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-atmosphere"></a>
+##### Use measured weather, pointing, and the atmospheric profile
+
+**Implemented** — Use recorded ambient conditions by default and allow explicit site and atmospheric overrides. Interpolate pointing, link target and reference elevations, and use the native atmospheric model and measured band response.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-layers"></a>
+##### Configure detailed ATM layers
+
+**Implemented** — Accept profile and layer quantities, default values and unit strings. The pinned layer model accepts a pressure factor but computes with a fixed factor of 1.075.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+<a id="sdatmcor-behavior-output"></a>
+##### Publish an interoperable corrected MeasurementSet
+
+**Implemented** — Write the selected MeasurementSet, including unchanged imaginary components, flags and weights. Stage the replacement until processing succeeds.
+
+Dataset-scale release profiling follows functionality under #979.
+
+Evidence: [paired](#sdatmcor-evidence-paired).
+
+#### sdatmcor deviations and unfinished work
+
+##### empty-processing-intersection: Previously agreed
+
+- Record: [An empty atmospheric correction window selection raises a record-type error](https://github.com/bglenden/casa-rs/blob/c79ffdb24ad34d102117217f110217ae0f6581c3/docs/CASA%20%28C%2B%2B%29%20bugs.md#an-empty-atmospheric-correction-window-selection-raises-a-record-type-error)
+- Inputs: Use spw='19', outputspw='23' on X320b_sel2.ms.
+- CASA: The empty NumPy record list is inferred as floating point and rejected.
+- casa-rs: Use a typed empty window list and write the selected spectra unchanged.
+- Rationale: There are zero eligible windows for correction.
+- User impact: Disjoint processing and output selections produce the selected data.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdatmcor-evidence-paired).
+
+##### cropped-channel-coordinates: Previously agreed
+
+- Record: [Atmospheric correction can index a cropped window from channel zero](https://github.com/bglenden/casa-rs/blob/c79ffdb24ad34d102117217f110217ae0f6581c3/docs/CASA%20%28C%2B%2B%29%20bugs.md#atmospheric-correction-can-index-a-cropped-window-from-channel-zero)
+- Inputs: Use outputspw='19:370~407^2' on X320b_sel2.ms.
+- CASA: Subtracts corrections computed for channels 0 through 18 from the selected output channels.
+- casa-rs: Subtract the correction at each original selected channel.
+- Rationale: Original frequency determines the atmospheric signature; the corrected output matches the same channels of a full-window correction.
+- User impact: Cropped spectra agree with the requested ordered projection of the full corrected product.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdatmcor-evidence-paired).
+
+##### nonfinite-correction: Previously agreed
+
+- Record: [Atmospheric correction can publish unflagged nonfinite spectra](https://github.com/bglenden/casa-rs/blob/c79ffdb24ad34d102117217f110217ae0f6581c3/docs/CASA%20%28C%2B%2B%29%20bugs.md#atmospheric-correction-can-publish-unflagged-nonfinite-spectra)
+- Inputs: Use a calibration table with zero amplitude or a scalar factor of 1e40 for SPW 19.
+- CASA: The corrected MeasurementSet contains unflagged nonfinite samples.
+- casa-rs: Refuse nonfinite gains and corrections outside the Float32 range before publication.
+- Rationale: A gain factor cannot make a finite input spectrum invalid without an error.
+- User impact: A failed overwrite preserves an existing finite product.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [paired](#sdatmcor-evidence-paired).
+
+#### sdatmcor evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="sdatmcor-evidence-paired"></a>
+##### paired
+
+**ALMA total-power atmospheric correction, spectrum invariants, and MeasurementSet interchange — passed.** On the pinned X320b_sel2.ms fixture, measured correction normalized RMS across 1,648 spectra is 2.82e-4. Gain, channel and equal-elevation laws pass, alongside a dry atmosphere, antenna-pair selection and transactional publication. All 29 task arguments and three direct atmcor arguments, including original, corrected and floating-point spectra, independent window queries, worked quantities and profile overrides, weather and pointing, combined selectors, gain factors, flags and weights, and reads in both table implementations.
+
+- [tools/casa-compat/sdatmcor_oracle.py](https://github.com/bglenden/casa-rs/blob/c79ffdb24ad34d102117217f110217ae0f6581c3/tools/casa-compat/sdatmcor_oracle.py)
+- Revision: `c79ffdb24ad34d102117217f110217ae0f6581c3`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> OMP_NUM_THREADS=2 casa-python tools/casa-compat/sdatmcor_oracle.py <X320b_sel2.ms> <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1988`.
 
 ### sdbaseline
 

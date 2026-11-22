@@ -299,6 +299,20 @@ impl SpwSelection {
     /// A range of the window starting at `-1`, where CASA's channel slices
     /// are undefined.
     pub fn channels_of(&self, spw_id: usize) -> MsResult<Option<Vec<usize>>> {
+        let mut channels = self.ordered_channels_of(spw_id)?;
+        if let Some(channels) = &mut channels {
+            channels.sort_unstable();
+            channels.dedup();
+        }
+        Ok(channels)
+    }
+
+    /// The channel projection in expression order, retaining overlaps.
+    /// Returns `None` when no range names the window.
+    ///
+    /// # Errors
+    /// A range starting at `-1`, where CASA's channel slices are undefined.
+    pub fn ordered_channels_of(&self, spw_id: usize) -> MsResult<Option<Vec<usize>>> {
         let mut channels = Vec::new();
         let mut named = false;
         for range in self.channels.iter().filter(|range| range.spw_id == spw_id) {
@@ -311,8 +325,6 @@ impl SpwSelection {
                 ))
             })?);
         }
-        channels.sort_unstable();
-        channels.dedup();
         Ok(named.then_some(channels))
     }
 

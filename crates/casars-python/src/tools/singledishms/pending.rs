@@ -9,16 +9,6 @@ use crate::tools::not_yet_implemented_in;
 #[pymethods]
 #[allow(unused_variables, clippy::too_many_arguments, clippy::unused_self)]
 impl PySingleDishMs {
-    #[pyo3(signature = (config = None, datacolumn = None, outfile = None), text_signature = "($self, config={}, datacolumn='data', outfile='')")]
-    fn atmcor(
-        &self,
-        config: Option<&Bound<'_, PyAny>>,
-        datacolumn: Option<&Bound<'_, PyAny>>,
-        outfile: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        not_yet_implemented_in("singledishms", "atmcor", 1532)
-    }
-
     #[pyo3(signature = (infile = None, outfile = None, parallel = None), text_signature = "($self, infile='', outfile='', parallel=False)")]
     fn importasap(
         &self,
