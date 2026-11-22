@@ -26,12 +26,15 @@ const METHODS: &[Method] = &[
     },
     method("activityrec", &[], R::Any, S::NotYetImplemented),
     method("close", &[], R::Bool, S::Implemented),
-    method(
-        "correct",
-        &[param("applymode", K::Text, D::Text(""))],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "correct",
+            &[param("applymode", K::Text, D::Text(""))],
+            R::Bool,
+            S::Partial,
+        )
+    },
     method("corrupt", &[], R::Any, S::NotYetImplemented),
     Method {
         mutating: true,
@@ -252,8 +255,8 @@ const METHODS: &[Method] = &[
             param("spwmap", K::Ints, D::Ints(&[-1])),
             param("opacity", K::Floats, D::Floats(&[0.0])),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Partial,
     ),
     method(
         "setcallib",

@@ -4,26 +4,85 @@
 use std::io::ErrorKind;
 
 use casa_calibration::{
-    CalibraterLifecycleError, CallibError, load_callibrary_record, validate_callibrary_record,
+    ApplyCalibrationTableSpec, CalibraterLifecycleError, CallibError, load_callibrary_record,
+    validate_callibrary_record,
 };
 use casa_provider_contracts::{
     ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
 };
 use casa_types::{RecordValue, Value};
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
-use pyo3::{prelude::*, types::PyDict};
+use numpy::PyUntypedArray;
+use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
+use pyo3::{
+    prelude::*,
+    types::{PyComplex, PyDict, PyList, PyTuple},
+};
 
 use super::{
     LOGGER, PyCalibrater,
-    arguments::{supplied, text},
+    arguments::{listing_selector, number, strict_bool, supplied, text, window_map_with_status},
     runtime_error,
 };
+use crate::convert::double_vector_element;
 use crate::convert::reply_value::reply_value;
 use crate::parameters::parameter_value;
 use crate::tools::{LogLine, emit};
 
 #[pymethods]
 impl PyCalibrater {
+    #[pyo3(signature = (r#type = None, t = None, table = None, field = None, interp = None, select = None, calwt = None, spwmap = None, opacity = None), text_signature = "($self, type='', t=0.0, table='', field=[], interp='linear', select='', calwt=False, spwmap=[-1], opacity=[0.0])")]
+    #[allow(clippy::too_many_arguments)]
+    fn setapply(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] r#type: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] t: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] table: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] field: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] interp: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] select: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] calwt: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] spwmap: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] opacity: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let kind = text(r#type, "type", "")?;
+        let pending_time = number(t, "setapply", 3, 0.0).is_err();
+        let mut spec = ApplyCalibrationTableSpec::new(text(table, "table", "")?);
+        let field = listing_selector(field.as_ref())?;
+        let interpolation = text(interp, "interp", "linear")?;
+        // The tool wrapper forwards an empty SPW selector for traditional apply.
+        let _selection = text(select, "select", "")?;
+        if let Some(value) = calwt {
+            spec.calwt = strict_bool(&value, "setapply", 8)?;
+        }
+        let (windows, pending_windows) = window_map_with_status(spwmap, &[-1])?;
+        spec.spwmap = windows;
+        let pending_opacity = opacity.is_some_and(|value| {
+            let mut values = Vec::new();
+            value.is_instance_of::<PyTuple>()
+                || apply_opacity_values(&value, &mut values, 0).is_err()
+        });
+        let configured = self.attached(py, move |state| {
+            state.set_traditional_apply(spec, &kind, &field, &interpolation)
+        })?;
+        // CASA's SWIG numerics can set an exception and still call C++ with a
+        // fallback value. Registration is visible when Python reports it.
+        if pending_time || pending_windows || pending_opacity {
+            return Err(setapply_conversion_error());
+        }
+        Ok(configured)
+    }
+
+    #[pyo3(signature = (applymode = None), text_signature = "($self, applymode='')")]
+    fn correct(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] applymode: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let mode = text(applymode, "applymode", "")?;
+        self.attached_result(py, move |state| state.correct_visibilities(&mode))
+    }
+
     #[pyo3(signature = (filein), text_signature = "($self, filein)")]
     fn parsecallibfile(&self, py: Python<'_>, filein: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let mut filename = text(Some(filein.clone()), "filein", "")?;
@@ -100,6 +159,38 @@ impl PyCalibrater {
         emit(py, LOGGER, &lines)?;
         Ok(true)
     }
+}
+
+fn setapply_conversion_error() -> PyErr {
+    PySystemError::new_err(
+        "<built-in function calibrater_setapply> returned a result with an exception set",
+    )
+}
+
+fn apply_opacity_values(
+    value: &Bound<'_, PyAny>,
+    output: &mut Vec<f64>,
+    depth: usize,
+) -> PyResult<()> {
+    if depth > 32 {
+        return Err(setapply_conversion_error());
+    }
+    if value.is_instance_of::<PyUntypedArray>() {
+        let values = value
+            .call_method1("ravel", ("F",))?
+            .call_method0("tolist")?;
+        return apply_opacity_values(&values, output, depth + 1);
+    }
+    if value.is_instance_of::<PyList>() {
+        for item in value.try_iter()? {
+            apply_opacity_values(&item?, output, depth + 1)?;
+        }
+    } else if let Ok(complex) = value.cast::<PyComplex>() {
+        output.push(complex.real());
+    } else {
+        output.push(double_vector_element(value)?);
+    }
+    Ok(())
 }
 
 fn library_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<RecordValue> {

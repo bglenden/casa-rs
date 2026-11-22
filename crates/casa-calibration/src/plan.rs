@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::selection::MsSelection;
+use casa_ms::selection::{MsSelection, ResolvedMsSelection};
 use casa_ms::{MsError, MsSpectralWindow};
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, ScalarValue};
@@ -545,6 +545,21 @@ pub(crate) fn plan_with_visibility_metadata(
     request: &ApplyPlanRequest,
     preparation_error: Option<ApplyPreparationError<'_>>,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
+    plan_with_selection(ms, request, preparation_error, None)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RegisteredApplySelection<'a> {
+    pub(crate) selected: &'a ResolvedMsSelection,
+    pub(crate) has_library_registration: bool,
+}
+
+pub(crate) fn plan_with_selection(
+    ms: &MeasurementSet,
+    request: &ApplyPlanRequest,
+    preparation_error: Option<ApplyPreparationError<'_>>,
+    registered: Option<RegisteredApplySelection<'_>>,
+) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
     let requires_corrected_data_column = request.apply_mode.writes_corrected_data()
         && match ms.data_column(VisibilityDataColumn::CorrectedData) {
             Ok(_) => false,
@@ -553,8 +568,11 @@ pub(crate) fn plan_with_visibility_metadata(
         };
 
     let selection_started_at = Instant::now();
-    let resolved_selection =
-        resolve_casa_calibration_selection(ms, &request.selection).map_err(|error| {
+    let resolved;
+    let resolved_selection = if let Some(registration) = registered {
+        registration.selected
+    } else {
+        resolved = resolve_casa_calibration_selection(ms, &request.selection).map_err(|error| {
             ApplyPlanError::Selection {
                 source: match error {
                     casa_ms::MsSelectionError::Domain(source) => source,
@@ -562,6 +580,8 @@ pub(crate) fn plan_with_visibility_metadata(
                 },
             }
         })?;
+        &resolved
+    };
     let requested_channels = resolved_selection.channel_selections.clone();
     let selected_row_indices = resolved_selection.row_indices().collect::<Vec<_>>();
     if selected_row_indices.is_empty() {
@@ -628,10 +648,17 @@ pub(crate) fn plan_with_visibility_metadata(
     if let Some(ApplyPreparationError::Argument(error)) = preparation_error {
         return Err(ApplyPlanError::Argument(error.clone()));
     }
-    if calibration_tables.is_empty() && !request.parang {
+    if calibration_tables.is_empty()
+        && !request.parang
+        && !registered.is_some_and(|registration| registration.has_library_registration)
+    {
         return Err(ApplyPlanError::MissingCalibrationTables);
     }
-    library::validate_overlaps(&calibration_tables)?;
+    // The direct tool checks overlaps within each newly registered library.
+    // Separate registrations of the same table are separate chain terms.
+    if registered.is_none() {
+        library::validate_overlaps(&calibration_tables)?;
+    }
     let calibration_tables = calibration_tables
         .into_iter()
         .map(|(table, _)| table)

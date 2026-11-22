@@ -5,7 +5,10 @@
 import argparse
 from contextlib import chdir
 from pathlib import Path
+from select import select
 from shutil import copytree
+import subprocess
+import sys
 
 import casatasks
 from casatools import calibrater
@@ -198,6 +201,215 @@ def selected_antenna_record(work, tools):
         assert tool.close()
 
 
+def correct_selected_data(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    source = work/'baseline-2.ms'
+    prior = work/'correction.cal'
+    copytree(work/'prior-current.cal', prior)
+    with opened(prior, True) as table:
+        flags = table.getcol('FLAG')
+        flags[..., table.getcol('ANTENNA1') == 0] = True
+        table.putcol('FLAG', flags)
+
+    plan = {str(prior): {'calwt': True, '0': {'tinterp': 'linear'}}}
+    modes = ('', 'calflag', 'calonly', 'flagonly', 'trial', 'unknown',
+             'calflagtrial', 'calonlytrial', 'flagonlycal')
+    cases = [(mode or 'default', mode, plan, 1) for mode in modes]
+    cases.extend([('same-table-twice', '', plan, 2), ('empty-library', '', {str(prior): {}}, 1)])
+    for legacy in (False, True):
+        for label, mode, record, registrations in cases:
+            paths = {}
+            for engine, tool in tools.items():
+                name = f'correct-{engine}-{legacy}-{label}.ms'
+                paths[engine] = work/name
+                copy_ms(source, paths[engine])
+                with opened(paths[engine], True) as table:
+                    seed = np.zeros_like(table.getcol('CORRECTED_DATA'))
+                    table.putcol('CORRECTED_DATA', seed)
+                    table.putcol('WEIGHT', 12*np.ones_like(table.getcol('WEIGHT')))
+                assert tool.setvi(legacy, True)
+                assert tool.open(str(paths[engine]))
+                assert tool.selectvis(field='FLUX', spw='0:2~8')
+            assert compare_calls(tools, 'correct', None)[0] is False
+            assert compare_calls(tools, 'correct')[0] is False
+            for _ in range(registrations):
+                assert compare_calls(tools, 'setcallib', record) == (True, True)
+            assert compare_calls(tools, 'correct', mode) == (True, True)
+            assert compare_calls(tools, 'close') == (True, True)
+            compare_correction_products(paths, label)
+            if not legacy and label == 'calflag' and 'native' in paths:
+                compare_correction_readers(paths)
+            print('correction', 'VI1' if legacy else 'VI2', label, 'matched', flush=True)
+
+
+def compare_correction_products(paths, label):
+    from blcal_oracle import opened
+
+    if 'native' not in paths:
+        return
+    with opened(paths['casa']) as reference, opened(paths['native']) as actual:
+        for column in ('CORRECTED_DATA', 'WEIGHT', 'WEIGHT_SPECTRUM'):
+            assert (column in reference.colnames()) == (column in actual.colnames())
+            if column in reference.colnames() and reference.iscelldefined(column, 0):
+                np.testing.assert_allclose(actual.getcol(column), reference.getcol(column),
+                                           rtol=2e-6, atol=2e-7, err_msg=f'{label} {column}')
+        for column in ('DATA', 'FLAG', 'FLAG_ROW', 'SIGMA', 'MODEL_DATA'):
+            np.testing.assert_array_equal(actual.getcol(column), reference.getcol(column),
+                                          err_msg=f'{label} {column}')
+
+
+def compare_correction_readers(paths):
+    from blcal_oracle import opened
+    from casars.tools import table
+
+    for writer, path in paths.items():
+        reader = table()
+        assert reader.open(str(path))
+        try:
+            with opened(path) as reference:
+                for column in ('CORRECTED_DATA', 'FLAG', 'WEIGHT', 'SIGMA', 'MODEL_DATA'):
+                    np.testing.assert_array_equal(reader.getcol(column), reference.getcol(column),
+                                                  err_msg=f'{writer} {column}')
+        finally:
+            reader.close()
+
+
+def retained_main_lock(work):
+    from blcal_oracle import copy_ms, opened
+    from casatools import table
+
+    path = work/'concurrent-correction.ms'
+    copy_ms(work/'baseline-2.ms', path)
+    prior = work/'prior-current.cal'
+    script = """
+import sys
+import threading
+import time
+from casars.tools import calibrater
+tool = calibrater()
+assert tool.open(sys.argv[1], addcorr=False)
+assert tool.selectvis(field=sys.argv[3], spw='0:2~8')
+assert tool.setapply(table=sys.argv[2])
+print('ready', flush=True)
+assert sys.stdin.readline().strip() == 'go'
+def show_python_progress():
+    time.sleep(0.1)
+    print('GIL released', flush=True)
+observer = threading.Thread(target=show_python_progress)
+print('entering correction', flush=True)
+observer.start()
+assert tool.correct()
+observer.join()
+assert tool.close()
+"""
+    writers = []
+    locker = table()
+    try:
+        for field in ('FLUX', 'PHASE'):
+            writer = subprocess.Popen([sys.executable, '-c', script, str(path), str(prior), field],
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True)
+            writers.append(writer)
+            assert select([writer.stdout], [], [], 15)[0]
+            assert writer.stdout.readline().strip() == 'ready', writer.poll()
+        assert locker.open(str(path), lockoptions={'option': 'user'}, nomodify=False)
+        assert locker.lock(write=True)
+        original = locker.getcol('CORRECTED_DATA')
+        observed = 2*locker.getcol('DATA')
+        for writer in writers:
+            writer.stdin.write('go\n')
+            writer.stdin.flush()
+            assert select([writer.stdout], [], [], 15)[0]
+            assert writer.stdout.readline().strip() == 'entering correction'
+        for writer in writers:
+            assert select([writer.stdout], [], [], 15)[0]
+            assert writer.stdout.readline().strip() == 'GIL released'
+        # Neither tool can publish while the independent casacore writer holds MAIN.
+        assert not select([writer.stdout for writer in writers], [], [], 0.25)[0]
+        locker.putcol('DATA', observed)
+        assert locker.close()
+        for writer in writers:
+            _, stderr = writer.communicate(timeout=25)
+            assert writer.returncode == 0, stderr
+    finally:
+        locker.close()
+        for writer in writers:
+            if writer.poll() is None:
+                writer.kill()
+                writer.communicate(timeout=5)
+    with opened(path) as result:
+        expected = original.copy()
+        expected[:, 2:9, :] = observed[:, 2:9, :] / np.float32(1.2)**2
+        np.testing.assert_allclose(result.getcol('CORRECTED_DATA'), expected, rtol=2e-6)
+        np.testing.assert_array_equal(result.getcol('DATA'), observed)
+    print('Both tools reopened and published under the retained casacore MAIN lock', flush=True)
+
+
+def uncovered_spectral_window(work, tools):
+    from blcal_oracle import copy_ms, opened
+    from casatools import table as casa_table
+    from gaincal_delay_oracle import duplicate_rows
+
+    source = work/'two-windows.ms'
+    copy_ms(work/'baseline-2.ms', source)
+    for name in ('SPECTRAL_WINDOW', 'DATA_DESCRIPTION'):
+        assert duplicate_rows(casa_table(), source/name) == 1
+    with opened(source/'DATA_DESCRIPTION', True) as table:
+        table.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    with opened(source, True) as table:
+        table.putcol('DATA_DESC_ID', table.getcol('FIELD_ID'))
+        table.putcol('CORRECTED_DATA', np.zeros_like(table.getcol('DATA')))
+
+    for mode in ('calflag', 'calflagstrict', 'flagonlystrict', 'calonlystrict', 'trialstrict'):
+        paths = {}
+        for engine, tool in tools.items():
+            paths[engine] = work/f'uncovered-{engine}-{mode}.ms'
+            copy_ms(source, paths[engine])
+            assert tool.setvi(False, True)
+            assert tool.open(str(paths[engine]))
+            assert tool.selectvis(spw='0:2~8,1:2~8')
+        assert compare_calls(tools, 'setapply', table=str(work/'prior-current.cal')) == (True, True)
+        assert compare_calls(tools, 'correct', mode) == (True, False)
+        assert compare_calls(tools, 'close') == (True, True)
+        compare_correction_products(paths, mode)
+        print('uncovered spectral window', mode, 'matched', flush=True)
+
+
+def traditional_apply(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    prior = str(work/'prior-current.cal')
+    for legacy in (False, True):
+        paths = {}
+        for engine, tool in tools.items():
+            paths[engine] = work/f'traditional-{engine}-{legacy}.ms'
+            copy_ms(work/'baseline-2.ms', paths[engine])
+            assert tool.setvi(legacy, True)
+            assert tool.open(str(paths[engine]))
+            assert tool.selectvis(field='FLUX', spw='0:2~8')
+        for supplied in ({'type': None}, {'t': None}, {'interp': None}, {'select': None},
+                         {'table': Path(prior)}, {'calwt': np.bool_(True)}, {'spwmap': None},
+                         {'opacity': (0.1,)}, {'type': 'T'}, {'type': 'invalid'},
+                         {'table': str(work/'missing.cal')}, {'interp': 'aipslin'},
+                         {'field': ['FLUX']}, {'spwmap': [0, 1]}, {'spwmap': [99]}):
+            assert compare_calls(tools, 'setapply', **({'table': prior} | supplied))[0] is False
+        for supplied in ({'table': prior}, {'type': b'G', 'field': None, 'interp': ''},
+                         {'t': np.float32(25), 'select': '99', 'calwt': True,
+                          'spwmap': [0.3], 'opacity': np.array([0.2])}):
+            assert compare_calls(tools, 'setapply', **({'table': prior} | supplied)) == (True, True)
+        assert compare_calls(tools, 'correct', 'calflag') == (True, True)
+        assert compare_calls(tools, 'close') == (True, True)
+        if 'native' in paths:
+            with opened(paths['casa']) as reference, opened(paths['native']) as actual:
+                np.testing.assert_allclose(actual.getcol('CORRECTED_DATA'),
+                                           reference.getcol('CORRECTED_DATA'), rtol=2e-6)
+                np.testing.assert_allclose(actual.getcol('WEIGHT'), reference.getcol('WEIGHT'),
+                                           rtol=2e-6)
+                np.testing.assert_array_equal(actual.getcol('FLAG'), reference.getcol('FLAG'))
+        print('traditional setapply', 'VI1' if legacy else 'VI2', 'matched', flush=True)
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('work', type=Path)
@@ -216,6 +428,11 @@ def main():
         validate_libraries(tools)
         register_libraries(work, tools)
         selected_antenna_record(work, tools)
+        correct_selected_data(work, tools)
+        traditional_apply(work, tools)
+        uncovered_spectral_window(work, tools)
+        if 'native' in tools:
+            retained_main_lock(work)
 
 
 if __name__ == '__main__':

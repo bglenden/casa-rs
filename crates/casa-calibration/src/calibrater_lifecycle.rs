@@ -24,6 +24,7 @@ mod apply;
 pub(crate) mod ep_cache;
 pub(crate) mod legacy_ep;
 mod table_tools;
+mod traditional_apply;
 mod weights;
 
 use legacy_ep::LegacyEpSolver;

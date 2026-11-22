@@ -52,7 +52,7 @@ IMPLEMENTED["calibrater"] = {
     "linpolcor", "parsecallibfile", "validatecallib",
 }
 PARTIAL = {
-    "calibrater": {"setmodel", "setsolve", "posangcal", "setcallib", "returndict"},
+    "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict", "correct"},
     "image": {
         "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },

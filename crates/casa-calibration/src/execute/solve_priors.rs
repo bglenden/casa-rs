@@ -186,6 +186,7 @@ impl SolvePriorApply {
                 preserved_weight_spectrum: None,
                 channel_grid: None,
                 forward_model: self.forward,
+                trial: false,
             },
             &self.plan,
             &self.chain,

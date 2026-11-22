@@ -161,33 +161,41 @@ pub(super) fn window_map(
     method: &str,
     default: &[i32],
 ) -> PyResult<Vec<i32>> {
+    let (windows, pending) = window_map_with_status(value, default)?;
+    if pending {
+        return Err(PySystemError::new_err(format!(
+            "<built-in function calibrater_{method}> returned a result with an exception set"
+        )));
+    }
+    Ok(windows)
+}
+
+pub(super) fn window_map_with_status(
+    value: Option<Bound<'_, PyAny>>,
+    default: &[i32],
+) -> PyResult<(Vec<i32>, bool)> {
     let Some(value) = value else {
-        return Ok(default.to_vec());
+        return Ok((default.to_vec(), false));
     };
     if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytes>() {
         return Err(PyTypeError::new_err(
             "argument _spwmap must not be a string",
         ));
     }
-    let system_error = || {
-        PySystemError::new_err(format!(
-            "<built-in function calibrater_{method}> returned a result with an exception set"
-        ))
-    };
     if !value.is_instance_of::<PyList>()
         && !value.is_instance_of::<PyUntypedArray>()
         && !value.is_instance_of::<PyInt>()
         && !value.is_instance_of::<PyFloat>()
     {
-        return Err(system_error());
+        return Ok((Vec::new(), true));
     }
     let (windows, pending) = integer_vector::flatten(
         &value,
         "cyclic spectral-window mapping",
         "non-finite spectral-window mapping",
     )?;
-    if pending {
-        return Err(system_error());
-    }
-    Ok(windows.into_iter().map(|window| window as i32).collect())
+    Ok((
+        windows.into_iter().map(|window| window as i32).collect(),
+        pending,
+    ))
 }

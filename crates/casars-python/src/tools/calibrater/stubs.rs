@@ -25,11 +25,6 @@ impl PyCalibrater {
         not_yet_implemented_in("calibrater", "activityrec", 1528)
     }
 
-    #[pyo3(signature = (applymode = None), text_signature = "($self, applymode='')")]
-    fn correct(&self, applymode: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "correct", 1528)
-    }
-
     #[pyo3(signature = (), text_signature = "($self)")]
     fn corrupt(&self) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "corrupt", 1528)
@@ -54,22 +49,6 @@ impl PyCalibrater {
         display: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "fluxscale", 1528)
-    }
-
-    #[pyo3(signature = (r#type = None, t = None, table = None, field = None, interp = None, select = None, calwt = None, spwmap = None, opacity = None), text_signature = "($self, type='', t=0.0, table='', field=[], interp='linear', select='', calwt=False, spwmap=[-1], opacity=[0.0])")]
-    fn setapply(
-        &self,
-        r#type: Option<&Bound<'_, PyAny>>,
-        t: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-        interp: Option<&Bound<'_, PyAny>>,
-        select: Option<&Bound<'_, PyAny>>,
-        calwt: Option<&Bound<'_, PyAny>>,
-        spwmap: Option<&Bound<'_, PyAny>>,
-        opacity: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "setapply", 1528)
     }
 
     #[pyo3(signature = (corrdepflags), text_signature = "($self, corrdepflags)")]
