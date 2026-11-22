@@ -537,6 +537,35 @@ fn interval_window(rows: &[BucketedRow<'_>]) -> i32 {
 }
 
 impl LeakageInputs<'_> {
+    fn preaverage_span(&self) -> Option<f64> {
+        let requested = if self.request.preaverage_seconds < 0.0 {
+            match self.request.kind {
+                LeakageSolveKind::PosAng => 30.0,
+                LeakageSolveKind::Xj | LeakageSolveKind::Xf if self.legacy_cross_hand => 300.0,
+                LeakageSolveKind::Xj
+                | LeakageSolveKind::Xf
+                | LeakageSolveKind::XY
+                | LeakageSolveKind::XYf => 0.0,
+                _ => 300.0,
+            }
+        } else {
+            self.request.preaverage_seconds
+        };
+        if self.legacy_cross_hand {
+            // VisBuffAccumulator substitutes 0.1 seconds for a zero interval.
+            Some(
+                if requested < f64::EPSILON {
+                    0.1
+                } else {
+                    requested
+                } - f64::EPSILON,
+            )
+        } else {
+            // VI2 averages throughout the enclosing solint when preavg=0.
+            (requested > f64::from(f32::EPSILON)).then_some(0.999 * requested)
+        }
+    }
+
     fn solve_interval(
         &self,
         rows: &[BucketedRow<'_>],
@@ -552,32 +581,7 @@ impl LeakageInputs<'_> {
         let segment_centroid = !self.legacy_cross_hand
             && (kind.cross_hand()
                 || (self.tool && self.request.solve_mode == GainSolveMode::Phase));
-        let requested = if self.request.preaverage_seconds < 0.0 {
-            match kind {
-                LeakageSolveKind::PosAng => 30.0,
-                LeakageSolveKind::Xj | LeakageSolveKind::Xf if self.legacy_cross_hand => 300.0,
-                LeakageSolveKind::Xj
-                | LeakageSolveKind::Xf
-                | LeakageSolveKind::XY
-                | LeakageSolveKind::XYf => 0.0,
-                _ => 300.0,
-            }
-        } else {
-            self.request.preaverage_seconds
-        };
-        let span = if self.legacy_cross_hand {
-            // VisBuffAccumulator substitutes 0.1 seconds for a zero interval.
-            Some(
-                if requested < f64::EPSILON {
-                    0.1
-                } else {
-                    requested
-                } - f64::EPSILON,
-            )
-        } else {
-            // VI2 averages throughout the enclosing solint when preavg=0.
-            (requested > f64::from(f32::EPSILON)).then_some(0.999 * requested)
-        };
+        let span = self.preaverage_span();
         let circular = kind.intensity_normalized()
             && correlation_types_for_ddid(self.ms, first.data_desc_id)?.contains(&5);
         let mut fits = IntervalFits::new(count, antennas, kind, circular, self.request.solve_mode);

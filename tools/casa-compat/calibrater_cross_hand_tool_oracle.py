@@ -129,12 +129,16 @@ def legacy_weights(work, engines, vis, sky, phase):
     case(work, engines, vis, 'Xf-legacy-short-intervals', 'Xf', None, old=True,
          options={'t': '900s'})
     staggered = work/'staggered-baseline.ms'
-    copy_ms(vis, staggered)
-    with opened(staggered, True) as table:
+    with opened(vis) as table:
         first = (time == time[selected].min()) & selected
         first &= (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 1)
         assert first.sum() == 1
-        table.removerows(np.flatnonzero(first).tolist())
+        reference = table.selectrows(np.flatnonzero(~first))
+        try:
+            copied = reference.copy(str(staggered), deep=True, valuecopy=True)
+            assert copied.close()
+        finally:
+            assert reference.close()
     case(work, engines, staggered, 'Xf-legacy-staggered', 'Xf', None, old=True,
          options={'apmode': 'P', 'preavg': 1300.})
     with opened(vis, True) as table:
