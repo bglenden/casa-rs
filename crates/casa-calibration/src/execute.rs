@@ -2230,6 +2230,8 @@ fn apply_row_all_channels(
         }
 
         let subtype = table_plan.summary.table_subtype.as_str();
+        let is_spline = subtype == "GSPLINE";
+        let field_id = if is_spline { row.field_id } else { field_id };
         let is_tsys = subtype == "B TSYS";
         let is_sky = crate::single_dish::is_sky_subtype(subtype);
         let is_switched_power = subtype == "G EVLASWPOW";
@@ -2237,8 +2239,8 @@ fn apply_row_all_channels(
         let channelized_polarization = polarization::Leakage::is_channelized(subtype)
             || matches!(subtype, "Xf Jones" | "Xfparang Jones" | "GlinXphf Jones")
             || position_angle;
-        let bounded_frequency_cache = is_tsys || is_sky || channelized_polarization;
-        let evaluation_frequency_hz = if subtype == "GSPLINE" {
+        let bounded_frequency_cache = is_tsys || is_sky || channelized_polarization || is_spline;
+        let evaluation_frequency_hz = if is_spline {
             let frequencies = data_channels.frequencies_hz;
             frequencies.iter().sum::<f64>() / frequencies.len() as f64
         } else {

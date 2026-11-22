@@ -9914,3 +9914,11 @@ CASA 6.7.6.14 uses common channel flags for the time-spline solve. An
 XX/YY input with all YY channels flagged therefore has no usable shared
 samples. CASA can terminate while attempting this fit. Casa-rs returns
 the insufficient-sampling result without publishing a calibration table.
+
+## GSPLINE can publish nonfinite phases for a disconnected antenna
+
+When all baselines to one antenna are flagged, CASA 6.7.6.14 attempts to
+fit that antenna along with the connected array. The singular fit can
+publish nonfinite coefficients, including for antennas that have data.
+Casa-rs fits the connected array and omits antennas without accepted data.
+Both legacy readers then flag visibilities with a missing antenna gain.

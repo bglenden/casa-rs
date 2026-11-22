@@ -162,7 +162,7 @@ pub(super) fn lookup(
     if let Some(spline) = &table.spline {
         return Ok(gspline::grid(
             spline,
-            row.field_id,
+            field,
             antenna,
             row.time_seconds,
             evaluation_frequency_hz

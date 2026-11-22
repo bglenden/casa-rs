@@ -34,7 +34,6 @@ pub(crate) fn solve(
     mode: CalibrationOutputMode,
 ) -> Result<GainSolveReport, GainSolveError> {
     let input = crate::timing::Phase::start("gspline_select_average");
-    let rotate_model = request.parang && request.model_source.needs_model_rotation(request.smodel);
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
@@ -42,14 +41,13 @@ pub(crate) fn solve(
         &request.prior_calibration_tables,
         request.parang,
         true,
-        PriorCalibrationMode::Gain {
-            scalar: false,
-            rotate_model,
-            share_input_flags: true,
-        },
+        PriorCalibrationMode::GainSpline,
     )?;
-    let preaverage = (request.preaverage_seconds > 0. && request.preaverage_seconds.is_finite())
-        .then_some(request.preaverage_seconds);
+    let preaverage = if request.preaverage_seconds > 0. && request.preaverage_seconds.is_finite() {
+        request.preaverage_seconds
+    } else {
+        0.1
+    };
     let selection = SolveGroupOptions {
         gain_type: GainType::GSpline,
         model_source: request.model_source,
@@ -58,19 +56,15 @@ pub(crate) fn solve(
         } else {
             [1., 0., 0., 0.]
         },
-        rotate_model,
-        solve_interval: if preaverage.is_some() {
-            GainSolveInterval::Infinite
-        } else {
-            GainSolveInterval::Integration
-        },
+        rotate_model: false,
+        solve_interval: GainSolveInterval::Infinite,
         // GSPLINE's old iterator sorts by array, field and data description.
         combine: GainSolveCombine {
             scans: true,
             observations: true,
             ..GainSolveCombine::default()
         },
-        preaverage_max_span: preaverage,
+        preaverage_max_span: Some(preaverage),
         correlation_dependent_flags: false,
         robust_seed: false,
         channelized: false,
@@ -128,17 +122,18 @@ pub(crate) fn solve(
     let output = crate::timing::Phase::start("gspline_write");
     let solution_row_count = if let Some(coefficients) = &coefficients {
         let frequency = reference_frequency(ms, &context.rows, context.preapplied_rows.as_ref())?;
+        let solved_antennas = series
+            .iter()
+            .filter(|baseline| baseline.samples.iter().flatten().copied().any(usable))
+            .flat_map(|baseline| baseline.antennas)
+            .collect::<BTreeSet<_>>();
         let count = writer::write(
             ms,
             request,
             coefficients,
             mode,
             &fields,
-            (
-                context.refant_id,
-                context.available_antennas.len(),
-                frequency,
-            ),
+            (context.refant_id, &solved_antennas, frequency),
         )?;
         diagnostics::write_logs(&request.output_table, &times, &series, coefficients, hands);
         count
@@ -171,38 +166,38 @@ fn reference_frequency(
         source,
     };
     let spectral = ms.spectral_window().map_err(ms_error)?;
-    // The old accumulator copies coordinates from the first frequency-averaged
-    // buffer of each ARRAY_ID/FIELD_ID/DATA_DESC_ID chunk into its output.
+    // The old accumulator takes coordinates from the first usable averaged
+    // buffer within each array, field and data-description chunk.
     let mut chunks = BTreeMap::<_, Vec<&SelectedSolveRow>>::new();
     for row in rows {
-        let buffer = chunks
+        chunks
             .entry((row.array_id, row.field_id, row.data_desc_id))
-            .or_default();
-        if let Some(first) = buffer.first() {
-            match row.time_seconds.total_cmp(&first.time_seconds) {
-                std::cmp::Ordering::Less => buffer.clear(),
-                std::cmp::Ordering::Greater => continue,
-                std::cmp::Ordering::Equal => (),
-            }
-        }
-        buffer.push(row);
+            .or_default()
+            .push(row);
     }
     let mut sum = 0.;
-    for buffer in chunks.values() {
-        let first = buffer[0];
+    let mut usable_chunks = 0;
+    for chunk in chunks.values_mut() {
+        let first = chunk[0];
         let frequencies = spectral
             .chan_freq(first.data_spw_id as usize)
             .map_err(ms_error)?;
         let channels = selected_channels(first.channel_selection.as_ref(), frequencies.len())?;
         if channels.len() == 1 {
             sum += frequencies[channels[0]];
+            usable_chunks += 1;
             continue;
         }
-        let mut buffer_sum = 0.;
-        let mut count = 0;
-        for row in buffer.iter().filter(|row| !row.flag_row) {
-            let flags =
-                if let Some(applied) = preapplied.and_then(|rows| rows.data.get(&row.row_index)) {
+        if !chunk.is_sorted_by(|left, right| left.time_seconds <= right.time_seconds) {
+            chunk.sort_by(|left, right| left.time_seconds.total_cmp(&right.time_seconds));
+        }
+        for buffer in chunk.chunk_by(|left, right| left.time_seconds == right.time_seconds) {
+            let mut buffer_sum = 0.;
+            let mut count = 0;
+            for row in buffer.iter().filter(|row| !row.flag_row) {
+                let flags = if let Some(applied) =
+                    preapplied.and_then(|rows| rows.data.get(&row.row_index))
+                {
                     &applied.flags
                 } else {
                     ms.main_table()
@@ -210,25 +205,30 @@ fn reference_frequency(
                         .and_then(|cell| cell.array())
                         .map_err(|error| ms_error(MsError::from(error)))?
                 };
-            let ArrayValue::Bool(flags) = flags else {
-                return Err(ms_error(MsError::InvalidInput(
-                    "FLAG is not a boolean array".into(),
-                )));
-            };
-            for &channel in &channels {
-                if !flags
-                    .index_axis(ndarray::Axis(1), channel)
-                    .iter()
-                    .any(|flagged| *flagged)
-                {
-                    buffer_sum += frequencies[channel];
-                    count += 1;
+                let ArrayValue::Bool(flags) = flags else {
+                    return Err(ms_error(MsError::InvalidInput(
+                        "FLAG is not a boolean array".into(),
+                    )));
+                };
+                for &channel in &channels {
+                    if !flags
+                        .index_axis(ndarray::Axis(1), channel)
+                        .iter()
+                        .any(|flagged| *flagged)
+                    {
+                        buffer_sum += frequencies[channel];
+                        count += 1;
+                    }
                 }
             }
+            if count > 0 {
+                sum += buffer_sum / count as f64;
+                usable_chunks += 1;
+                break;
+            }
         }
-        sum += buffer_sum / count.max(1) as f64;
     }
-    Ok(sum / chunks.len() as f64)
+    Ok(sum / usable_chunks.max(1) as f64)
 }
 
 fn correlation_counts(
@@ -262,7 +262,7 @@ fn time_series<'a>(
 ) -> (Vec<f64>, Vec<BaselineSeries>) {
     let mut timestamps = BTreeMap::<i64, (usize, f64)>::new();
     let mut baselines = BTreeMap::<[usize; 2], BTreeMap<i64, [WeightedVisibility; 2]>>::new();
-    for group in groups {
+    for (chunk, group) in groups.enumerate() {
         for spectrum in group
             .delay_spectra()
             .filter(|spectrum| spectrum.parallel_hand && spectrum.antennas.0 != spectrum.antennas.1)
@@ -274,9 +274,15 @@ fn time_series<'a>(
                 continue;
             }
             let timestamp = (spectrum.time_seconds * 10.).round() as i64;
-            timestamps
+            let first = timestamps
                 .entry(timestamp)
-                .or_insert((0, spectrum.time_seconds));
+                .or_insert((chunk, spectrum.time_seconds));
+            // CASA retains the first chronological sample of the first chunk
+            // contributing to a tenth-second bin, even when later samples
+            // happen to round to the same bin.
+            if first.0 == chunk {
+                first.1 = first.1.min(spectrum.time_seconds);
+            }
             let [first, second] = [spectrum.antennas.0, spectrum.antennas.1].map(|id| id as usize);
             let baseline = baselines.entry([first, second]).or_default();
             let samples = baseline.entry(timestamp).or_default();
@@ -596,9 +602,29 @@ fn phase_step(values: &[f64], scratch: &mut [f64], index: usize) -> f64 {
     let mut median = |slice: &[f64]| {
         scratch.copy_from_slice(slice);
         scratch.sort_unstable_by(f64::total_cmp);
-        0.5 * (scratch[(width - 1) / 2] + scratch[width / 2])
+        let lower = scratch[(width - 1) / 2];
+        // casacore's default median averages the middle pair only up to 100.
+        if width > 100 {
+            lower
+        } else {
+            0.5 * (lower + scratch[width / 2])
+        }
     };
     median(&values[index..index + width]) - median(&values[index - width..index])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::phase_step;
+
+    #[test]
+    fn long_even_phase_window_uses_the_lower_median() {
+        for (width, expected) in [(100, 1.), (102, 0.)] {
+            let mut phases = vec![0.; width * 2];
+            phases[width + width / 2..].fill(2.);
+            assert_eq!(phase_step(&phases, &mut vec![0.; width], width), expected);
+        }
+    }
 }
 
 fn remove_wrap(samples: &mut [f64], difference: f64, threshold: f64) {

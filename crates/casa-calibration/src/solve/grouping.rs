@@ -50,6 +50,7 @@ pub(crate) enum PriorCalibrationMode {
         rotate_model: bool,
         share_input_flags: bool,
     },
+    GainSpline,
     Bandpass {
         share_input_flags: bool,
         rotate_model: bool,
@@ -113,6 +114,9 @@ pub(crate) fn load_preapplied_rows(
         PriorCalibrationMode::Bandpass {
             share_input_flags, ..
         } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Bandpass, share_input_flags),
+        PriorCalibrationMode::GainSpline => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::GainSpline, true)
+        }
         PriorCalibrationMode::Delay {
             share_input_flags, ..
         } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags),
@@ -696,7 +700,10 @@ impl SolveAccumulator {
                     time_seconds: self
                         .baseline_centroids
                         .get(&key.baseline)
-                        .or_else(|| self.baseline_centroids.get(&key.baseline.spline_interval()))
+                        .or_else(|| {
+                            self.baseline_centroids
+                                .get(&key.baseline.time_bucket_key(true))
+                        })
                         .and_then(|centroid| centroid.mean())
                         .unwrap_or(self.min_time),
                     values,
@@ -967,11 +974,12 @@ impl SolveAccumulator {
         let legacy_spline = options.gain_type == GainType::GSpline;
         let shared_flags = (legacy_spline || !options.correlation_dependent_flags)
             .then(|| samples::channel_flags(samples));
-        let no_weighted_data = shared_flags.as_ref().is_some_and(|flags| {
+        let flagged = shared_flags.as_ref().is_some_and(|flags| {
             flags.iter().all(|flag| *flag)
                 || legacy_spline && channels.indices.iter().all(|&channel| flags[channel])
-        }) || samples.weights.iter().all(|weight| *weight <= 0.0);
-        if legacy_spline && no_weighted_data {
+        });
+        let no_weighted_data = flagged || samples.weights.iter().all(|weight| *weight <= 0.0);
+        if legacy_spline && flagged {
             return Ok(());
         }
         // CASA gathers each field and data description in a separate buffer.
@@ -987,14 +995,9 @@ impl SolveAccumulator {
             start_bits: 0,
         };
         let start_bits = options.preaverage_max_span.map_or(0, |max_span| {
-            let interval = if legacy_spline {
-                baseline.spline_interval()
-            } else {
-                baseline
-            };
             let start = self
                 .preaverage_starts
-                .entry(interval)
+                .entry(baseline.time_bucket_key(legacy_spline))
                 .or_insert(row.time_seconds);
             if row.time_seconds - *start > max_span {
                 *start = row.time_seconds;
@@ -1111,13 +1114,13 @@ impl SolveAccumulator {
             }
         }
         if row_weight > 0.0 {
-            let (baseline, time) = if legacy_spline {
-                (baseline.spline_interval(), row.time_seconds)
+            let time = if legacy_spline {
+                row.time_seconds
             } else {
-                (baseline, row.time_centroid_seconds)
+                row.time_centroid_seconds
             };
             self.baseline_centroids
-                .entry(baseline)
+                .entry(baseline.time_bucket_key(legacy_spline))
                 .or_default()
                 .observe(time, row_weight);
         }

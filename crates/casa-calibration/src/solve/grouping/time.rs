@@ -18,9 +18,9 @@ pub(super) struct AveragedBaseline {
 
 impl AveragedBaseline {
     /// A common interval and centroid for all baselines in the old iterator.
-    pub(super) fn spline_interval(self) -> Self {
+    pub(super) fn time_bucket_key(self, shared: bool) -> Self {
         Self {
-            antennas: (-1, -1),
+            antennas: if shared { (-1, -1) } else { self.antennas },
             ..self
         }
     }

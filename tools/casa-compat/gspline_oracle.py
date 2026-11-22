@@ -439,6 +439,41 @@ def check_selection_model_and_prior(root, solvers, appliers):
         np.testing.assert_allclose(selected['native'][0], selected['casa'][0], atol=6e-7, rtol=6e-7)
 
 
+def check_simultaneous_fields(root, appliers):
+    work = root / 'simultaneous-fields'
+    work.mkdir()
+    vis, solution = work / 'source.ms', work / 'gain.cal'
+    shutil.copytree(root / 'combined/source.ms', vis)
+    shutil.copytree(root / 'combined/casa.cal', solution)
+    with opened(vis, True) as table:
+        field = table.getcol('FIELD_ID') == 1
+        for name in ('TIME', 'TIME_CENTROID'):
+            times = table.getcol(name)
+            times[field] -= times[field].min() - times[~field].min()
+            table.putcol(name, times)
+        scan = table.getcol('SCAN_NUMBER')
+        scan[:] = 1
+        table.putcol('SCAN_NUMBER', scan)
+        signal = table.getcol('DATA')
+        signal[:] = 1.
+        signal[..., field] = 4.
+        table.putcol('DATA', signal)
+        table.putcol('CORRECTED_DATA', signal)
+    with opened(solution, True) as table:
+        for name in ('POLY_COEFF_AMP', 'POLY_COEFF_PHASE'):
+            coefficients = table.getcol(name)
+            coefficients[:] = 0.
+            table.putcol(name, coefficients)
+        scale = table.getcol('SCALE_FACTOR')
+        scale[:] = 1.
+        scale[table.getcol('FIELD_ID') == 1] = 2.
+        table.putcol('SCALE_FACTOR', scale)
+    for name, task in appliers.items():
+        data, flags = apply(work, vis, task, solution, name)
+        assert not flags.any()
+        np.testing.assert_allclose(data, 1., atol=5e-7)
+
+
 def check_partial_channel_flags(root, solvers):
     work = root / 'partial-channel-flags'
     work.mkdir()
@@ -448,6 +483,9 @@ def check_partial_channel_flags(root, solvers):
             flags = table.getcol('FLAG')
             flags[1, :4, ::7] = True
             flags[0, 2:4, ::3] = True
+            times = table.getcol('TIME')
+            # A rejected first buffer cannot supply the table's reference frequency.
+            flags[..., times == times.min()] = True
             table.putcol('FLAG', flags)
             data = table.getcol('DATA')
             model = np.broadcast_to(np.linspace(1.4, 2.1, data.shape[1])[None, :, None], data.shape)
@@ -464,6 +502,89 @@ def check_partial_channel_flags(root, solvers):
                 if 'native' in tables:
                     compare_tables(tables['casa'], tables['native'])
             compare_tables(results[False], results[True])
+
+
+def check_weighted_prior(root, solvers):
+    work = root / 'weighted-prior'
+    work.mkdir()
+    source_ms = root / 'combined/source.ms'
+    prior = root / 'combined/casa.cal'
+    vis = work / 'source.ms'
+    shutil.copytree(source_ms, vis)
+    with opened(vis, True) as table:
+        data = table.getcol('DATA')
+        random = np.random.default_rng(1536)
+        # Inconsistent residuals make the prior's model-amplitude weights visible.
+        residual = random.normal(1., .06, size=(data.shape[0], 1, data.shape[2]))
+        residual = residual * np.exp(1j * random.normal(0., .03, size=residual.shape))
+        table.putcol('DATA', data * residual)
+        table.putcol('CORRECTED_DATA', data * residual)
+    with chdir(work):
+        for preavg in (0., 20.):
+            tables = {name: solve(work, vis, task, f'{name}-{preavg}', 'ap',
+                                  gaintable=[str(prior)], preavg=preavg,
+                                  splinetime=60.)[0] for name, task in solvers.items()}
+            if 'native' in tables:
+                compare_tables(tables['casa'], tables['native'])
+
+
+def check_subsecond_bins(root, solvers):
+    for case, offsets, relative_weights in (
+            ('weighted-pairs', [.02, .08], [1., 3.]),
+            ('zero-weight-bin-start', [0., .07, .14], [0., 1., 3.])):
+        work = root / case
+        work.mkdir()
+        with chdir(work):
+            vis, _ = source(work, 'ap')
+            with opened(vis, True) as table:
+                times = table.getcol('TIME')
+                integrations = np.searchsorted(np.unique(times), times)
+                within_bin = integrations % len(offsets)
+                new_times = np.floor(times.min()) + integrations // len(offsets) + np.take(offsets, within_bin)
+                for name in ('TIME', 'TIME_CENTROID'):
+                    table.putcol(name, new_times)
+                for name in ('INTERVAL', 'EXPOSURE'):
+                    table.putcol(name, np.full_like(times, .05))
+                data = table.getcol('DATA') * np.where(within_bin == 0, .9, 1.1)[None, None, :]
+                table.putcol('DATA', data)
+                table.putcol('CORRECTED_DATA', data)
+                weights = np.broadcast_to(np.take(relative_weights, within_bin), (2, len(times))).astype(np.float32)
+                table.putcol('WEIGHT', weights)
+                sigma = np.zeros_like(weights)
+                np.divide(1., np.sqrt(weights), out=sigma, where=weights > 0.)
+                table.putcol('SIGMA', sigma)
+            tables = {name: solve(work, vis, task, name, 'ap', splinetime=3.)[0]
+                      for name, task in solvers.items()}
+            if 'native' in tables:
+                compare_tables(tables['casa'], tables['native'])
+
+
+def check_unconstrained_antenna(root, solvers, appliers):
+    work = root / 'unconstrained-antenna'
+    work.mkdir()
+    with chdir(work):
+        vis, _ = source(work, 'p')
+        partial = work / 'partial.ms'
+        shutil.copytree(vis, partial)
+        with opened(partial, True) as table:
+            omitted = (table.getcol('ANTENNA1') == 4) | (table.getcol('ANTENNA2') == 4)
+            flags = table.getcol('FLAG')
+            flags[..., omitted] = True
+            table.putcol('FLAG', flags)
+            table.putcol('FLAG_ROW', omitted)
+        reference, _ = solve(work, partial, solvers['casa'], 'casa', 'p', splinetime=60.)
+        with opened(reference) as table:
+            assert not np.isfinite(table.getcol('POLY_COEFF_PHASE')).all()
+        if 'native' not in solvers:
+            return
+        solution, _ = solve(work, partial, solvers['native'], 'native', 'p', splinetime=60.)
+        with opened(solution) as table:
+            np.testing.assert_array_equal(table.getcol('ANTENNA1'), [0, 1, 2, 3] * 2)
+        for name, task in appliers.items():
+            data, flags = apply(work, vis, task, solution, name)
+            expected = np.broadcast_to(omitted, data.shape)
+            np.testing.assert_array_equal(flags, expected)
+            np.testing.assert_allclose(data[~flags], 1., atol=5e-7)
 
 
 def check_no_shared_samples(root, solvers):
@@ -518,9 +639,13 @@ def main():
         check_solve_edges(root, solvers, appliers)
         check_single_hand(root, solvers, appliers)
         check_apply_edges(root, appliers)
+        check_simultaneous_fields(root, appliers)
         check_selection_model_and_prior(root, solvers, appliers)
         check_partial_channel_flags(root, solvers)
         check_no_shared_samples(root, solvers)
+        check_weighted_prior(root, solvers)
+        check_subsecond_bins(root, solvers)
+        check_unconstrained_antenna(root, solvers, appliers)
     print('GSPLINE coefficient, science and interoperability checks passed.', flush=True)
 
 

@@ -25,7 +25,7 @@ pub(super) fn write(
     coefficients: &SplineCoefficients,
     mode: CalibrationOutputMode,
     fields: &BTreeSet<i32>,
-    (reference, antennas, frequency): (i32, usize, f64),
+    (reference, antennas, frequency): (i32, &BTreeSet<usize>, f64),
 ) -> Result<usize, GainSolveError> {
     let mut columns = legacy_polynomial_columns(true);
     columns.retain(|column| column.name() != "SIDEBAND_REF");
@@ -77,7 +77,7 @@ pub(super) fn write(
         },
     };
     for &field in fields {
-        for antenna in 0..antennas {
+        for &antenna in antennas {
             writer.append(row.values(field, antenna))?;
         }
     }
@@ -99,7 +99,7 @@ pub(super) fn write(
         source: Box::new(source),
     })?;
     writer.save_main()?;
-    Ok(fields.len() * antennas)
+    Ok(fields.len() * antennas.len())
 }
 
 struct SplineRow<'a> {
