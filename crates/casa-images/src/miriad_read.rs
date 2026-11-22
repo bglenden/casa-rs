@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, FitsHeader, FitsValue, StokesCoordinate, StokesType,
-    fits::from_fits_header,
+    CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, Projection,
+    ProjectionType, StokesCoordinate, StokesType, fits::from_fits_header,
 };
 use casa_lattices::{Lattice, LatticeError};
 use casa_types::{
@@ -96,6 +96,22 @@ impl MiriadImage {
 
         let (wcs, stokes) = header.wcs(&shape)?;
         let mut coordinates = from_fits_header(&wcs, &shape)?;
+        if let Some(index) = coordinates.find_coordinate(CoordinateType::Direction)
+            && let CoordinateModel::Direction(direction) = coordinates.coordinate(index)
+        {
+            // Casacore represents NCP as slant SIN and retains both SIN
+            // parameters even when the projection has no slant.
+            let slant = match direction.projection().projection_type() {
+                ProjectionType::SIN => Some(0.),
+                ProjectionType::NCP => Some(direction.projection_reference()[1].tan().recip()),
+                _ => None,
+            };
+            if let Some(slant) = slant {
+                let projection = Projection::with_parameters(ProjectionType::SIN, vec![0., slant]);
+                let rebuilt = direction.with_rebuilt_projection(projection)?;
+                coordinates.replace_coordinate(index, rebuilt);
+            }
+        }
         if let Some(stokes) = stokes {
             let index = coordinates
                 .find_coordinate(CoordinateType::Stokes)
@@ -103,6 +119,24 @@ impl MiriadImage {
                     malformed("MIRIAD Stokes axis missing from the coordinate system")
                 })?;
             coordinates.replace_coordinate(index, stokes);
+        }
+        if coordinates
+            .find_coordinate(CoordinateType::Linear)
+            .is_some()
+        {
+            // Casacore exposes only the axes it decoded from MIRIAD. The
+            // stored pixel shape is still available when a coordinate is absent.
+            let mut decoded = CoordinateSystem::new();
+            for kind in [
+                CoordinateType::Direction,
+                CoordinateType::Spectral,
+                CoordinateType::Stokes,
+            ] {
+                if let Some(index) = coordinates.find_coordinate(kind) {
+                    decoded.add_coordinate(coordinates.coordinate(index).clone());
+                }
+            }
+            coordinates = decoded;
         }
         let observation = coordinates.obs_info_mut();
         observation.telescope = header.text("telescop")?;
@@ -417,12 +451,21 @@ impl<'a> Items<'a> {
             header.set("RADESYS", FitsValue::String("FK4".into()));
         }
         header.set("BUNIT", FitsValue::String(self.text("bunit")?));
-        for axis in 1..=shape.len() {
+        let axes = (1..=shape.len())
+            .map(|axis| self.text(&format!("ctype{axis}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        let last_stokes = axes.iter().rposition(|kind| kind.contains("STOKES"));
+        let galactic = axes
+            .iter()
+            .rev()
+            .find(|kind| sky_axis(kind) == Some(SkyAxis::Longitude))
+            .is_some_and(|kind| kind.contains("GLON"));
+        for (index, mut kind) in axes.into_iter().enumerate() {
+            let axis = index + 1;
             header.set(
                 format!("NAXIS{axis}"),
                 FitsValue::Integer(shape[axis - 1] as i64),
             );
-            let mut kind = self.text(&format!("ctype{axis}"))?;
             if !kind.is_ascii() {
                 return Err(malformed(format!("CTYPE{axis} must be ASCII")));
             }
@@ -430,35 +473,57 @@ impl<'a> Items<'a> {
             let mut step = self.number(&format!("cdelt{axis}"), 0.)?;
             let mut value = self.number(&format!("crval{axis}"), 0.)?;
             let unit = if kind.contains("STOKES") {
-                if stokes.is_some() {
-                    return Err(malformed(
-                        "multiple MIRIAD Stokes axes are not implemented (#1955)",
-                    ));
+                kind.clear();
+                if Some(index) == last_stokes {
+                    stokes = miriad_stokes(shape[index], pix, step, value)?;
+                    if stokes.is_some() {
+                        // Let FITS assemble the axis mapping, then restore the
+                        // actual MIRIAD codes after coordinate parsing.
+                        kind = "STOKES".into();
+                        (pix, step, value) = (1., 1., 1.);
+                    }
                 }
-                stokes = Some(miriad_stokes(shape[axis - 1], pix, step, value)?);
-                // Let the shared FITS reader assemble the axis mapping, then
-                // replace these placeholder values with the MIRIAD codes.
-                kind = "STOKES".into();
-                (pix, step, value) = (1., 1., 1.);
                 ""
-            } else if kind.starts_with("RA---")
-                || kind.starts_with("DEC--")
-                || kind.starts_with("GLON-")
-                || kind.starts_with("GLAT-")
-            {
-                if step == 0. && (pix - 1.).abs() <= 1e-13 {
-                    step = 1.;
+            } else if let Some(axis) = sky_axis(&kind) {
+                let projection = kind
+                    .get(4..)
+                    .unwrap_or_default()
+                    .trim_start_matches('-')
+                    .replace(' ', "");
+                kind.clear();
+                if projection.is_empty() {
+                    ""
+                } else {
+                    let prefix = match (galactic, axis) {
+                        (true, SkyAxis::Longitude) => "GLON-",
+                        (true, SkyAxis::Latitude) => "GLAT-",
+                        (false, SkyAxis::Longitude) => "RA---",
+                        (false, SkyAxis::Latitude) => "DEC--",
+                    };
+                    kind.push_str(prefix);
+                    kind.push_str(if projection == "GLS" {
+                        "SFL"
+                    } else {
+                        &projection
+                    });
+                    if step == 0. && (pix - 1.).abs() <= 1e-13 {
+                        step = 1.;
+                    }
+                    if step == 0. {
+                        return Err(singular_wcs());
+                    }
+                    step = step.to_degrees();
+                    value = value.to_degrees();
+                    "deg"
                 }
-                if step == 0. {
-                    return Err(singular_wcs());
-                }
-                step = step.to_degrees();
-                value = value.to_degrees();
-                "deg"
             } else if kind.starts_with("FREQ") {
                 if step == 0. {
                     return Err(singular_wcs());
                 }
+                header.set(
+                    "SPECSYS",
+                    FitsValue::String(legacy_spectral_frame(&kind).into()),
+                );
                 let rest = self.number("restfreq", -1.)?;
                 if rest >= 0. {
                     header.set("RESTFRQ", FitsValue::Float(rest * 1e9));
@@ -481,10 +546,17 @@ impl<'a> Items<'a> {
                     value = rest / (1. + velocity / LIGHT_SPEED_M_S);
                     step = -velocity_step * value / (LIGHT_SPEED_M_S + velocity);
                 }
+                header.set(
+                    "SPECSYS",
+                    FitsValue::String(legacy_spectral_frame(&kind).into()),
+                );
                 header.set("RESTFRQ", FitsValue::Float(rest));
                 kind.replace_range(..4, "FREQ");
                 "Hz"
             } else {
+                // MIRIAD leaves other axes undecoded. The FITS bridge must
+                // not interpret their names as FITS-specific coordinate types.
+                kind.clear();
                 ""
             };
             header.set(format!("CTYPE{axis}"), FitsValue::String(kind));
@@ -497,12 +569,31 @@ impl<'a> Items<'a> {
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum SkyAxis {
+    Longitude,
+    Latitude,
+}
+
+fn sky_axis(kind: &str) -> Option<SkyAxis> {
+    if kind.starts_with("RA") || kind.starts_with("LL") || kind.contains("LON") {
+        Some(SkyAxis::Longitude)
+    } else if kind.starts_with("DEC")
+        || kind.contains("LAT")
+        || kind.get(..3).is_some_and(|head| head.contains("MM"))
+    {
+        Some(SkyAxis::Latitude)
+    } else {
+        None
+    }
+}
+
 fn miriad_stokes(
     planes: usize,
     reference_pixel: f64,
     increment: f64,
     reference_value: f64,
-) -> Result<StokesCoordinate, ImageError> {
+) -> Result<Option<StokesCoordinate>, ImageError> {
     if planes > 4 {
         return Err(ImageError::CasaSelection(
             "Stokes axis longer than 4 pixels.  This is not acceptable".into(),
@@ -533,17 +624,33 @@ fn miriad_stokes(
             _ => StokesType::Undefined,
         };
         if stokes.contains(&polarization) {
-            return Err(malformed(
-                "repeated MIRIAD Stokes values are not implemented (#1955)",
-            ));
+            return Ok(None);
         }
         stokes.push(polarization);
     }
-    Ok(StokesCoordinate::new(stokes))
+    Ok(Some(StokesCoordinate::new(stokes)))
 }
 
 fn singular_wcs() -> ImageError {
     ImageError::CasaSelection("wcs wcsset_error: Linear transformation matrix is singular".into())
+}
+
+fn legacy_spectral_frame(kind: &str) -> &'static str {
+    let qualifier: String = kind
+        .get(5..)
+        .unwrap_or_default()
+        .chars()
+        .filter(|character| !matches!(character, '-' | ' '))
+        .collect();
+    match qualifier.as_str() {
+        "" | "HEL" => "BARYCENT",
+        "LSR" | "LSRK" => "LSRK",
+        "LSD" => "LSRD",
+        "GEO" => "GEOCENTR",
+        "SOU" | "REST" => "SOURCE",
+        "GAL" => "GALACTOC",
+        _ => "TOPOCENT",
+    }
 }
 
 fn is_image_keyword(name: &str) -> bool {

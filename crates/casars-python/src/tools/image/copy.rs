@@ -216,6 +216,13 @@ impl CopyImage<'_> {
         add_history: bool,
         origin: Option<&TextOrigin>,
     ) -> PyResult<ImageHandle> {
+        if original.image_type_name() == "MIRIADImage"
+            && original.coordinates().n_pixel_axes() != original.shape().len()
+        {
+            return Err(raised(
+                "Failed AlwaysAssert setCoordinateInfo (coordinateInfo)",
+            ));
+        }
         let section = match &self.region {
             CopyRegion::Record(region) => {
                 let region = (!region.is_empty()).then_some(SubimageRegion::Record(region));

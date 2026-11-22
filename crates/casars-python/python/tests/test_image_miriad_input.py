@@ -156,6 +156,7 @@ def test_direct_miriad_file_factories(tmp_path, monkeypatch, backend, method, kw
         coordinates = image.coordsys()
         try:
             assert coordinates.setunits(["rad", "rad"])
+            np.testing.assert_array_equal(coordinates.projection()["parameters"], [0., 0.])
             np.testing.assert_allclose(coordinates.toworld([40, 8])["numeric"], _sin_pixel(40, 8), rtol=0, atol=1e-10)
         finally:
             coordinates.done()
@@ -799,3 +800,190 @@ def test_miriad_fits_export_round_trip(tmp_path, writer_backend, reader_backend,
     finally:
         reader.done()
         writer.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_north_celestial_pole_projection(tmp_path, backend):
+    path = tmp_path / "ncp.mir"
+    _sky(path)
+    header = path / "header"
+    data = header.read_bytes()
+    header.write_bytes(
+        data.replace(_text("RA---SIN"), _text("RA---NCP"))
+            .replace(_text("DEC--SIN"), _text("DEC--NCP"))
+    )
+    tool = _backend(backend).image()
+    try:
+        assert tool.open(str(path))
+        coords = tool.coordsys()
+        try:
+            assert coords.setunits(["rad", "rad"])
+            projection = coords.projection()
+            assert projection["type"] == "SIN"
+            np.testing.assert_allclose(
+                projection["parameters"], [0., 1. / math.tan(.25)], rtol=0, atol=1e-13
+            )
+            for x, y in ([1, 1], [40, 8], [126, 15]):
+                m, l = (y - 1) * .0001, -(x - 1) * .0001
+                denominator = math.cos(.25) - m * math.sin(.25)
+                right_ascension = 1. + math.atan2(l, denominator)
+                declination = math.acos(math.hypot(l, denominator))
+                np.testing.assert_allclose(
+                    coords.toworld([x, y])["numeric"], [right_ascension, declination],
+                    rtol=0, atol=1e-10,
+                )
+        finally:
+            coords.done()
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize(("qualifier", "frame"), [
+    ("", "BARY"), ("-HEL", "BARY"), ("-OBS", "TOPO"), ("-LSD", "LSRD"),
+    ("-GEO", "GEO"), ("-SOU", "REST"), ("-GAL", "GALACTO"), ("-LSRK", "LSRK"),
+    ("-MYS", "TOPO"),
+])
+def test_miriad_legacy_spectral_frame_qualifiers(tmp_path, backend, qualifier, frame):
+    path = tmp_path / "frequency.mir"
+    _sky(path, cube=f"FREQ{qualifier}")
+    tool = _backend(backend).image()
+    try:
+        assert tool.open(str(path))
+        coords = tool.coordsys()
+        try:
+            assert coords.referencecode("spectral")[0] == frame
+            np.testing.assert_allclose(coords.toworld([1, 1, 2, 0])["numeric"][2], 1.416e9)
+        finally:
+            coords.done()
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize(("longitude", "latitude", "frame"), [
+    ("GLON-SIN", "GLAT-SIN", "GALACTIC"),
+    ("ELON-SIN", "ELAT-SIN", "J2000"),
+    ("SLON-SIN", "SLAT-SIN", "J2000"),
+    ("LL---SIN", "MM---SIN", "J2000"),
+    ("RA---GLS", "DEC--GLS", "J2000"),
+])
+def test_miriad_direction_names_and_projection_alias(tmp_path, backend, longitude, latitude, frame):
+    path = tmp_path / "direction.mir"
+    _sky(path)
+    header = path / "header"
+    header.write_bytes(
+        header.read_bytes().replace(_text("RA---SIN"), _text(longitude))
+        .replace(_text("DEC--SIN"), _text(latitude))
+    )
+    projection = "SFL" if longitude.endswith("GLS") else "SIN"
+    if projection == "SFL":
+        _replace_cached_number(path, "crval2", .25, 0.)
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(path))
+        coordinates = image.coordsys()
+        try:
+            assert coordinates.referencecode("direction")[0] == frame
+            assert coordinates.projection()["type"] == projection
+            assert coordinates.setunits(["rad", "rad"])
+            pixel = [40, 1] if projection == "SFL" else [40, 8]
+            expected = [1. - 39 * .0001, 0.] if projection == "SFL" else _sin_pixel(*pixel)
+            np.testing.assert_allclose(coordinates.toworld(pixel)["numeric"], expected, rtol=0, atol=1e-10)
+        finally:
+            coordinates.done()
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize(("case", "expected_axes"), [
+    ("linear", []),
+    ("unprojected", []),
+    ("extra-linear", ["Direction", "Direction", "Spectral"]),
+    ("duplicate-stokes", ["Direction", "Direction", "Spectral"]),
+    ("multiple-stokes", ["Direction", "Direction", "Stokes"]),
+    ("fits-only-spectral", ["Direction", "Direction", "Stokes"]),
+    ("lowercase-stokes", ["Direction", "Direction", "Spectral"]),
+])
+def test_miriad_retains_shape_when_header_has_fewer_decoded_axes(tmp_path, backend, case, expected_axes):
+    source = tmp_path / "incomplete-axes.mir"
+    cube = "FREQ-LSR" if expected_axes else None
+    pixels = _sky(source, cube=cube)
+    header = source / "header"
+    replacements = {
+        "linear": [("RA---SIN", "LINEAR11"), ("DEC--SIN", "LINEAR22")],
+        "unprojected": [("RA---SIN", "RA---   "), ("DEC--SIN", "DEC--   ")],
+        "extra-linear": [("STOKES", "LINPAR")],
+        "multiple-stokes": [("FREQ-LSR", "STOKES  ")],
+        "fits-only-spectral": [("FREQ-LSR", "VRAD    ")],
+        "lowercase-stokes": [("STOKES", "stokes")],
+    }
+    if case == "duplicate-stokes":
+        _replace_cached_number(source, "crval4", 1., 5.)
+    else:
+        contents = header.read_bytes()
+        for matched, replacement in replacements[case]:
+            contents = contents.replace(_text(matched), _text(replacement))
+        header.write_bytes(contents)
+    image = _backend(backend).image()
+    output = tmp_path / "unpublished.im"
+    try:
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.shape(), pixels.shape)
+        coords = image.coordsys()
+        try:
+            assert coords.axiscoordinatetypes() == expected_axes
+            assert coords.naxes() == len(expected_axes)
+        finally:
+            coords.done()
+        with pytest.raises(RuntimeError, match="referencePixel and newLatticeShape"):
+            image.getchunk()
+        with pytest.raises(RuntimeError, match="Failed AlwaysAssert setCoordinateInfo"):
+            image.fromimage(outfile=str(output), infile=str(source))
+        assert output.exists() == (backend == "casa")
+        if case == "lowercase-stokes":
+            second_output = tmp_path / "unpublished-new.im"
+            for method, name in [
+                ("fromimage", ""), ("newimagefromimage", ""),
+                ("newimagefromimage", str(second_output)),
+            ]:
+                with pytest.raises(RuntimeError, match="Failed AlwaysAssert setCoordinateInfo"):
+                    getattr(image, method)(outfile=name, infile=str(source))
+            assert second_output.exists() == (backend == "casa")
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_omitted_axis_keeps_the_casacore_coordinate_order(tmp_path, backend):
+    path = tmp_path / "multiple-stokes.mir"
+    path.mkdir()
+    shape = (8, 6, 2, 2, 5)
+    items = {"naxis": _integer(len(shape)), **{
+        f"naxis{axis}": _integer(length) for axis, length in enumerate(shape, 1)
+    }}
+    axes = [
+        ("RA---SIN", 1., -.0001), ("DEC--SIN", .25, .0001),
+        ("STOKES", 1., 1.), ("STOKES", 1., 1.), ("FREQ-LSR", 1.412, .002),
+    ]
+    for axis, (kind, reference, increment) in enumerate(axes, 1):
+        items[f"ctype{axis}"] = _text(kind)
+        items[f"crval{axis}"] = _real(reference)
+        items[f"crpix{axis}"] = _real(1.)
+        items[f"cdelt{axis}"] = _real(increment)
+    _write_cache(path / "header", items)
+    (path / "image").write_bytes(struct.pack(">I", 4) + bytes(4 * math.prod(shape)))
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(path))
+        np.testing.assert_array_equal(image.shape(), shape)
+        coordinates = image.coordsys()
+        try:
+            assert coordinates.axiscoordinatetypes() == ["Direction", "Direction", "Spectral", "Stokes"]
+            np.testing.assert_allclose(coordinates.referencevalue()["numeric"], [1., .25, 1.412e9, 1.])
+            assert coordinates.stokes() == ["I", "Q"]
+        finally:
+            coordinates.done()
+    finally:
+        image.done()
