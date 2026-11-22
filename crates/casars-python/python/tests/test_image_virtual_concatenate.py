@@ -52,6 +52,9 @@ def test_nomove_manifest_and_write_through(tmp_path, kind, dtype, precision, sto
         if kind in {"float", "complex"}:
             assert reader_tool.ispersistent()
             np.testing.assert_array_equal(reader_tool.haslock(), [not tempclose, False])
+        else:
+            with pytest.raises(RuntimeError, match="ispersistent does not support"):
+                reader_tool.ispersistent()
         subsection = reader_tool.getchunk([1, 0], [5, 3], [2, 1])
         assert subsection.dtype == expected.dtype
         np.testing.assert_array_equal(subsection, expected[1:6:2, :])

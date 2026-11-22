@@ -446,7 +446,7 @@ impl AttachedImage {
 
     pub(super) fn is_persistent(&self) -> PyResult<bool> {
         let image = self.lock();
-        if image.is_saved_expression() {
+        if image.is_saved_expression() || image.image_type_name() == "ImageConcat" {
             image.check_single_precision("ispersistent")?;
         }
         Ok(self.key.is_some() || image.path().is_some())
