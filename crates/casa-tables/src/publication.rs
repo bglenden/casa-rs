@@ -10,6 +10,26 @@ use crate::{TableError, TableWriteLock};
 mod copy_tree;
 pub use copy_tree::copy_locked_table_tree;
 
+/// Keep a directory's filesystem identity alive without listing its entries.
+///
+/// # Errors
+/// Returns an I/O error when the path cannot be opened as a directory.
+#[cfg(unix)]
+pub fn open_directory_identity(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    #[cfg(target_os = "linux")]
+    let flags = libc::O_PATH | libc::O_DIRECTORY;
+    #[cfg(target_os = "macos")]
+    let flags = libc::O_SEARCH;
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let flags = libc::O_DIRECTORY;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(flags)
+        .open(path)
+}
+
 /// Lock an existing casacore table and its physical subtables for replacement.
 /// Keep the returned guards alive through publication.
 ///

@@ -21,11 +21,13 @@ use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
 use super::handle::{ImageHandle, raised};
+use super::miriad_rename::MiriadDirectory;
 use super::native_rename::{check_path_relationship, move_native_table, native_destination};
 
 pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
     use_lock: Option<Arc<TableUseLock>>,
+    miriad_directory: Option<MiriadDirectory>,
     shareable: bool,
     coordinates_replaced: AtomicBool,
 }
@@ -70,11 +72,16 @@ struct LiveCoordinates {
 
 impl AttachedImage {
     pub(super) fn temporary(image: ImageHandle) -> Self {
+        Self::without_table(image, None)
+    }
+
+    fn without_table(image: ImageHandle, miriad_directory: Option<MiriadDirectory>) -> Self {
         let beam_view = BeamView::from_image(&image);
         Self {
             image: Arc::new(SharedImage {
                 handle: Mutex::new(image),
                 use_lock: None,
+                miriad_directory,
                 shareable: false,
                 coordinates_replaced: AtomicBool::new(false),
             }),
@@ -90,6 +97,13 @@ impl AttachedImage {
 
     pub(super) fn open(path: &Path) -> PyResult<Self> {
         Self::open_resolved(path, path, path)
+    }
+
+    pub(super) fn open_miriad(path: &Path) -> PyResult<Self> {
+        let directory = MiriadDirectory::open(path)?;
+        let image = ImageHandle::open_miriad(path).map_err(raised)?;
+        directory.check(path)?;
+        Ok(Self::without_table(image, Some(directory)))
     }
 
     pub(super) fn open_resolved(path: &Path, probe: &Path, name: &Path) -> PyResult<Self> {
@@ -140,9 +154,7 @@ impl AttachedImage {
                 && (!has_table_control
                     || Table::open_metadata_only(TableOptions::new(&key)).is_err())
             {
-                return ImageHandle::open_miriad(path)
-                    .map(Self::temporary)
-                    .map_err(raised);
+                return Self::open_miriad(path);
             }
             return Err(unrecognized());
         }
@@ -265,6 +277,7 @@ impl AttachedImage {
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
             use_lock,
+            miriad_directory: None,
             shareable: lock_attempts.is_some(),
             coordinates_replaced: AtomicBool::new(false),
         });
@@ -416,11 +429,14 @@ impl AttachedImage {
             return Err(raised("Exception: new file name must be specified."));
         }
         let Some(source) = &self.key else {
+            if let Some(directory) = &self.image.miriad_directory {
+                let old_name = self.lock().path().map(Path::to_path_buf).ok_or_else(|| {
+                    raised("Exception: The image to be renamed no longer exists.")
+                })?;
+                return directory.rename(&old_name, name, expanded?.as_ref(), overwrite, history);
+            }
             let fits_path = {
                 let image = self.lock();
-                if image.image_type_name() == "MIRIADImage" {
-                    return Err(raised("MIRIAD image rename is not implemented yet (#1955)"));
-                }
                 image
                     .fits()
                     .and_then(|_| image.path())
@@ -588,6 +604,7 @@ impl AttachedImage {
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
             use_lock: copied_lock.or_else(|| self.image.use_lock.clone()),
+            miriad_directory: None,
             shareable: self.image.shareable,
             coordinates_replaced: AtomicBool::new(
                 self.image.coordinates_replaced.load(Ordering::Relaxed),
@@ -720,7 +737,7 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     Ok(())
 }
 
-fn containing_tables(path: &Path) -> impl Iterator<Item = &Path> {
+pub(super) fn containing_tables(path: &Path) -> impl Iterator<Item = &Path> {
     path.parent()
         .into_iter()
         .flat_map(Path::ancestors)
@@ -734,7 +751,7 @@ fn not_writable(name: &Path) -> PyErr {
     ))
 }
 
-fn lock_table_ancestors(
+pub(super) fn lock_table_ancestors(
     path: &Path,
     leases: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> PyResult<()> {
@@ -756,13 +773,29 @@ pub(super) fn lock_table_tree(
     path: &Path,
     leases: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> PyResult<()> {
+    lock_tables_in_tree(path, leases, true)
+}
+
+pub(super) fn lock_table_tree_for_read_only_move(
+    path: &Path,
+    leases: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> PyResult<()> {
+    lock_tables_in_tree(path, leases, false)
+}
+
+fn lock_tables_in_tree(
+    path: &Path,
+    leases: &mut BTreeMap<PathBuf, TableWriteLock>,
+    require_writable_directories: bool,
+) -> PyResult<()> {
     lock_table_ancestors(path, leases)?;
     let mut pending = vec![path.to_path_buf()];
     while let Some(directory) = pending.pop() {
-        if fs::metadata(&directory)
-            .map_err(raised)?
-            .permissions()
-            .readonly()
+        if require_writable_directories
+            && fs::metadata(&directory)
+                .map_err(raised)?
+                .permissions()
+                .readonly()
         {
             return Err(not_writable(&directory));
         }

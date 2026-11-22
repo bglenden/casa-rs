@@ -93,8 +93,12 @@ impl PyImageTool {
             };
             let mut image = attachment.lock();
             attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
-            with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_misc_info(record)))
-                .map_err(raised)?;
+            // CASA accepts this call on a MIRIAD attachment and records it
+            // in history. Subsequent reads and exports see the empty record.
+            if image.image_type_name() != "MIRIADImage" {
+                with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_misc_info(record)))
+                    .map_err(raised)?;
+            }
             if state.history {
                 image.record_history("setmiscinfo", "ia.setmiscinfo(info={...})".into())?;
             }

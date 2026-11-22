@@ -5,6 +5,8 @@ import os
 import struct
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -450,3 +452,350 @@ def test_malformed_miriad_payload_preserves_the_factory_receiver(tmp_path):
         np.testing.assert_array_equal(image.getchunk(), [31., 42.])
     finally:
         image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("existing", [None, "directory", "file"])
+def test_rename_miriad_reopens_pixels_and_header_metadata(tmp_path, backend, existing):
+    source = tmp_path / "source.mir"
+    destination = tmp_path / "destination.mir"
+    pixels = _sky(source)
+    if existing == "directory":
+        destination.mkdir()
+        (destination / "previous-output").write_bytes(b"previous contents")
+    elif existing == "file":
+        destination.write_bytes(b"a previous regular file")
+    overwrite = existing is not None
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(source))
+        assert image.setbrightnessunit("K")
+        assert image.rename(str(destination), overwrite=overwrite)
+        assert not source.exists()
+        assert not (destination / "previous-output").exists()
+        assert image.name() == str(destination)
+        assert image.brightnessunit() == "Jy/pixel"
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+        assert image.history() == [
+            "Ran ia.rename",
+            f'ia.rename(name="{destination}", overwrite={str(overwrite).lower()})',
+            f"original name was {source}",
+        ]
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_rename_miriad_between_filesystems(tmp_path, backend, overwrite):
+    target_root = Path(__file__).resolve().parents[4] / "target"
+    if not target_root.is_dir() or target_root.stat().st_dev == tmp_path.stat().st_dev:
+        pytest.skip("the build directory and temporary files share a filesystem")
+    source = tmp_path / "source.mir"
+    pixels = _sky(source)
+    original_items = {item.name: item.read_bytes() for item in source.iterdir()}
+    with tempfile.TemporaryDirectory(dir=target_root) as directory:
+        target = Path(directory) / "target.mir"
+        if overwrite:
+            target.mkdir()
+            (target / "old-item").touch()
+        image = _backend(backend).image()
+        try:
+            assert image.open(str(source))
+            assert image.rename(str(target), overwrite=overwrite)
+            assert not source.exists()
+            assert image.name() == str(target)
+            assert {item.name: item.read_bytes() for item in target.iterdir()} == original_items
+            np.testing.assert_array_equal(image.getchunk(), pixels)
+        finally:
+            image.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX directory permissions")
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_rename_miriad_can_move_a_read_only_directory(tmp_path, backend, overwrite):
+    source = tmp_path / "read-only.mir"
+    target = tmp_path / "renamed.mir"
+    pixels = _sky(source)
+    if overwrite:
+        target.mkdir()
+        (target / "previous-output").touch()
+    source.chmod(0o555)
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(source))
+        assert image.rename(str(target), overwrite=overwrite)
+        assert not source.exists()
+        assert not (target / "previous-output").exists()
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        image.done()
+        (target if target.exists() else source).chmod(0o755)
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="requires unprivileged POSIX directory permissions")
+def test_miriad_cross_device_refusal_restores_read_only_source_and_previous_output(tmp_path):
+    target_root = Path(__file__).resolve().parents[4] / "target"
+    if not target_root.is_dir() or target_root.stat().st_dev == tmp_path.stat().st_dev:
+        pytest.skip("the build directory and temporary files share a filesystem")
+    source = tmp_path / "source.mir"
+    pixels = _sky(source)
+    source.chmod(0o555)
+    with tempfile.TemporaryDirectory(dir=target_root) as directory:
+        target = Path(directory) / "destination.mir"
+        _sky(target)
+        marker = target / "old-output"
+        marker.write_bytes(b"keep the prior output")
+        image = tools.image()
+        try:
+            assert image.open(str(source))
+            with pytest.raises(RuntimeError, match="Cannot move MIRIAD image .* across filesystems"):
+                image.rename(str(target), overwrite=True)
+            assert not image.isopen()
+            assert source.stat().st_mode & 0o777 == 0o555
+            assert marker.read_bytes() == b"keep the prior output"
+            assert image.open(str(source))
+            np.testing.assert_array_equal(image.getchunk(), pixels)
+        finally:
+            image.done()
+            if source.exists():
+                source.chmod(0o755)
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="requires unprivileged POSIX directory permissions")
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_open_only_needs_search_permission_on_directory(tmp_path, backend):
+    source = tmp_path / "source.mir"
+    pixels = _sky(source)
+    source.chmod(0o111)
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        image.done()
+        source.chmod(0o755)
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_rename_refusal_and_removal_detach_without_deleting(tmp_path, backend):
+    source = tmp_path / "source.mir"
+    destination = tmp_path / "destination.mir"
+    _sky(source)
+    _sky(destination)
+    original = (source / "image").read_bytes()
+    replacement = (destination / "image").read_bytes()
+    image = _backend(backend).image()
+    try:
+        assert not image.removefile(str(source))
+        for target, overwrite, message in (
+            (source, True, "same as the current image name"),
+            (destination, False, "does not want to remove it"),
+        ):
+            assert image.open(str(source))
+            with pytest.raises(RuntimeError, match=message):
+                image.rename(str(target), overwrite=overwrite)
+            assert not image.isopen()
+            assert (source / "image").read_bytes() == original
+            assert (destination / "image").read_bytes() == replacement
+        assert image.open(str(source))
+        assert not image.removefile(str(source))
+        assert image.isopen()
+        with pytest.raises(RuntimeError, match="table is not writable"):
+            image.remove()
+        assert not image.isopen()
+        assert (source / "image").read_bytes() == original
+    finally:
+        image.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX symbolic links")
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_rename_moves_source_referent_and_replaces_destination_link(tmp_path, backend):
+    source = tmp_path / "source.mir"
+    source_alias = tmp_path / "source-alias.mir"
+    destination = tmp_path / "destination.mir"
+    previous = tmp_path / "previous.mir"
+    pixels = _sky(source)
+    _sky(previous)
+    marker = previous / "keep-me"
+    marker.write_bytes(b"the destination link's original referent")
+    source_alias.symlink_to(source.name, target_is_directory=True)
+    destination.symlink_to(previous.name, target_is_directory=True)
+    image = _backend(backend).image()
+    try:
+        assert image.open(str(source_alias))
+        assert image.rename(str(destination), overwrite=True)
+        assert source_alias.is_symlink() and not source_alias.exists()
+        assert not source.exists()
+        assert destination.is_dir() and not destination.is_symlink()
+        assert marker.read_bytes() == b"the destination link's original referent"
+        assert image.history()[-1] == f"original name was {source_alias}"
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        image.done()
+
+
+def test_miriad_rename_never_removes_an_ancestor_of_the_source(tmp_path):
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    source = parent / "source.mir"
+    pixels = _sky(source)
+    preserved = parent / "keep-me"
+    preserved.write_bytes(b"another file in the parent")
+    image = tools.image()
+    try:
+        assert image.open(str(source))
+        with pytest.raises(RuntimeError, match="destination contains the source image"):
+            image.rename(str(parent), overwrite=True)
+        assert not image.isopen()
+        assert preserved.read_bytes() == b"another file in the parent"
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_rename_keeps_only_the_peer_stream_that_was_already_read(tmp_path, backend):
+    source = tmp_path / "source.mir"
+    destination = tmp_path / "destination.mir"
+    pixels = _sky(source)
+    writer, cold_peer, warm_peer = [_backend(backend).image() for _ in range(3)]
+    try:
+        for image in (writer, cold_peer, warm_peer):
+            assert image.open(str(source))
+        assert warm_peer.getchunk(blc=[2, 1], trc=[2, 1]).item() == 12.
+        assert writer.rename(str(destination))
+        assert cold_peer.isopen() and cold_peer.name() == str(source)
+        with pytest.raises(RuntimeError, match="could not be opened"):
+            cold_peer.getchunk(blc=[2, 1], trc=[2, 1])
+        assert warm_peer.name() == str(source)
+        np.testing.assert_array_equal(warm_peer.getchunk(), pixels)
+        np.testing.assert_array_equal(writer.getchunk(), pixels)
+    finally:
+        for image in (writer, cold_peer, warm_peer):
+            image.done()
+
+
+def test_miriad_rename_and_read_do_not_follow_replaced_source(tmp_path):
+    source = tmp_path / "source.mir"
+    elsewhere = tmp_path / "elsewhere.mir"
+    destination = tmp_path / "destination.mir"
+    pixels = _sky(source)
+    reader, writer = tools.image(), tools.image()
+    try:
+        assert writer.open(str(source))
+        assert reader.open(str(source))
+        source.rename(elsewhere)
+        _sky(source)
+        marker = source / "replacement"
+        marker.write_text("new directory", encoding="ascii")
+        with (source / "image").open("r+b") as replacement:
+            replacement.seek(4 + 4 * (pixels.shape[0] + 2))
+            replacement.write(struct.pack(">f", 998.))
+        with pytest.raises(RuntimeError, match="MIRIAD pixel file .* has changed"):
+            reader.getchunk(blc=[2, 1], trc=[2, 1])
+        with pytest.raises(RuntimeError, match="image at that path has changed"):
+            writer.rename(str(destination))
+        assert not writer.isopen() and not destination.exists()
+        assert marker.read_text(encoding="ascii") == "new directory"
+        assert writer.open(str(elsewhere))
+        np.testing.assert_array_equal(writer.getchunk(), pixels)
+        assert writer.open(str(source))
+        assert writer.getchunk(blc=[2, 1], trc=[2, 1]).item() == 998.
+    finally:
+        reader.done()
+        writer.done()
+
+
+@pytest.mark.parametrize("inside_parent", ["source", "destination"])
+def test_miriad_rename_preserves_child_entries_of_an_open_table(tmp_path, inside_parent):
+    parent = tmp_path / "parent.im"
+    source = (parent if inside_parent == "source" else tmp_path) / "source.mir"
+    destination = (parent if inside_parent == "destination" else tmp_path) / "destination.mir"
+    referent = tmp_path / "referent.mir"
+    writer, mover, guard = tools.image(), tools.image(), tools.table()
+    try:
+        assert writer.fromshape(str(parent), [3, 4])
+        assert writer.done()
+        pixels = _sky(source)
+        _sky(referent)
+        destination.symlink_to(referent, target_is_directory=True)
+        assert guard.open(str(parent))
+        guard.unlock()
+        assert mover.open(str(source))
+        with pytest.raises(RuntimeError, match="table in either path is open"):
+            mover.rename(str(destination), overwrite=True)
+        assert destination.is_symlink() and destination.readlink() == referent
+        assert mover.open(str(source))
+        np.testing.assert_array_equal(mover.getchunk(), pixels)
+    finally:
+        guard.done()
+        mover.done()
+        writer.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_miscinfo_only_records_the_call_in_history(tmp_path, backend):
+    source = tmp_path / "source.mir"
+    fits = tmp_path / "export.fits"
+    _sky(source)
+    image = _backend(backend).image()
+    exported = _backend(backend).image()
+    try:
+        assert image.open(str(source))
+        assert image.setmiscinfo({"marker": "in memory only", "run": 17})
+        assert image.miscinfo() == {}
+        assert image.history() == ["Ran ia.setmiscinfo", "ia.setmiscinfo(info={...})"]
+        assert image.tofits(str(fits))
+        assert exported.open(str(fits))
+        assert not (exported.miscinfo().keys() & {"marker", "run"})
+    finally:
+        exported.done()
+        image.done()
+
+
+@pytest.mark.parametrize("writer_backend", ["casa", "casars"])
+@pytest.mark.parametrize("reader_backend", ["casa", "casars"])
+@pytest.mark.parametrize("cropped", [False, True])
+def test_miriad_fits_export_round_trip(tmp_path, writer_backend, reader_backend, cropped):
+    source = tmp_path / "source.mir"
+    destination = tmp_path / "export.fits"
+    pixels = _sky(source)
+    region = {}
+    origin = (0, 0)
+    if cropped:
+        region_tool = _backend("casa").regionmanager()
+        try:
+            region = {"region": region_tool.box(blc=[4, 1], trc=[11, 6])}
+        finally:
+            region_tool.done()
+        origin = (4, 1)
+        pixels = pixels[4:12, 1:7]
+
+    writer = _backend(writer_backend).image()
+    reader = _backend(reader_backend).image()
+    try:
+        assert writer.open(str(source))
+        assert writer.tofits(str(destination), **region)
+        assert reader.open(str(destination))
+        assert reader.brightnessunit() == "Jy/pixel"
+        np.testing.assert_array_equal(reader.getchunk(), pixels)
+        coordinate = reader.coordsys()
+        try:
+            assert coordinate.setunits(["rad", "rad"])
+            np.testing.assert_allclose(
+                coordinate.toworld([1, 1])["numeric"],
+                _sin_pixel(origin[0] + 1, origin[1] + 1),
+                rtol=0,
+                atol=1e-10,
+            )
+        finally:
+            coordinate.done()
+    finally:
+        reader.done()
+        writer.done()

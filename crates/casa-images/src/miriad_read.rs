@@ -3,7 +3,7 @@
 //! Read casacore-compatible MIRIAD image directories and bounded pixel sections.
 
 use std::collections::BTreeMap;
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io::{BufReader, ErrorKind, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -32,14 +32,19 @@ const FLOAT_BYTES: usize = size_of::<f32>();
 const REAL_TAG: [u8; 4] = [0, 0, 0, 4];
 const LIGHT_SPEED_M_S: f64 = 299_792_458.0;
 
-/// A read-only MIRIAD Float image with a retained pixel stream.
+/// A read-only MIRIAD Float image that retains its pixel stream after first use.
 pub struct MiriadImage {
     path: PathBuf,
     shape: Vec<usize>,
     coordinates: CoordinateSystem,
     units: String,
     info: ImageInfo,
-    pixels: Mutex<File>,
+    pixels: Mutex<PixelFile>,
+}
+
+struct PixelFile {
+    file: File,
+    active: bool,
 }
 
 impl MiriadImage {
@@ -48,7 +53,7 @@ impl MiriadImage {
         path.join("header").is_file() && path.join("image").is_file()
     }
 
-    /// Read the image metadata and retain the external pixel file.
+    /// Read the image metadata and verify the external pixel file.
     ///
     /// # Errors
     /// The dataset has invalid or unsupported metadata, a short payload, or
@@ -84,7 +89,8 @@ impl MiriadImage {
         let mut pixels = File::open(path.join("image")).map_err(io_error)?;
         let mut tag = [0; ITEM_TAG_BYTES as usize];
         pixels.read_exact(&mut tag).map_err(io_error)?;
-        if tag != REAL_TAG || pixels.metadata().map_err(io_error)?.len() < extent {
+        let pixel_identity = pixels.metadata().map_err(io_error)?;
+        if tag != REAL_TAG || pixel_identity.len() < extent {
             return Err(malformed("invalid MIRIAD Float pixel payload"));
         }
 
@@ -134,7 +140,10 @@ impl MiriadImage {
             coordinates,
             units,
             info,
-            pixels: Mutex::new(pixels),
+            pixels: Mutex::new(PixelFile {
+                file: pixels,
+                active: false,
+            }),
         })
     }
 
@@ -176,10 +185,32 @@ impl MiriadImage {
             return ArrayD::from_shape_vec(IxDyn(count).f(), values).map_err(|_| invalid());
         }
 
-        let mut reader = self
+        let mut stream = self
             .pixels
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !stream.active {
+            let path = self.path.join("image");
+            let open_error =
+                |error| ImageError::Io(format!("{} could not be opened: {error}", path.display()));
+            let changed = || {
+                malformed(format!(
+                    "the MIRIAD pixel file {} has changed",
+                    path.display()
+                ))
+            };
+            let identity = stream.file.metadata().map_err(io_error)?;
+            if !same_pixel_file(&identity, &path.metadata().map_err(open_error)?) {
+                return Err(changed());
+            }
+            let file = File::open(&path).map_err(open_error)?;
+            if !same_pixel_file(&identity, &file.metadata().map_err(io_error)?) {
+                return Err(changed());
+            }
+            stream.file = file;
+            stream.active = true;
+        }
+        let reader = &mut stream.file;
         let row_count = size / count[0];
         let mut packed = [0; 16 * 1024];
         for row in 0..row_count {
@@ -539,6 +570,21 @@ fn is_image_keyword(name: &str) -> bool {
 
 fn malformed(message: impl Into<String>) -> ImageError {
     ImageError::InvalidMetadata(message.into())
+}
+
+fn same_pixel_file(expected: &Metadata, actual: &Metadata) -> bool {
+    if !actual.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        expected.dev() == actual.dev() && expected.ino() == actual.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        expected.created().ok() == actual.created().ok()
+    }
 }
 
 fn io_error(error: std::io::Error) -> ImageError {
