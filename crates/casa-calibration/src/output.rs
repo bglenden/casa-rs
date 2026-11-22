@@ -26,7 +26,7 @@ pub(crate) struct CalibrationOutput {
     pub(crate) destination: PathBuf,
     pub(crate) staging: PathBuf,
     mode: CalibrationOutputMode,
-    table_type: &'static str,
+    table_type: Option<&'static str>,
     _reservation: Reservation,
     simulated_marker: bool,
 }
@@ -46,7 +46,7 @@ impl CalibrationOutput {
         path: &Path,
         mode: CalibrationOutputMode,
     ) -> Result<Self, CalibrationTableWriteError> {
-        Self::prepare_type(path, mode, crate::constants::TABLE_INFO_TYPE, false)
+        Self::prepare_type(path, mode, Some(crate::constants::TABLE_INFO_TYPE), false)
     }
 
     /// Simulation already validates the destination against its MS and has
@@ -55,7 +55,7 @@ impl CalibrationOutput {
         Self::prepare_type(
             path,
             CalibrationOutputMode::Replace,
-            crate::constants::TABLE_INFO_TYPE,
+            Some(crate::constants::TABLE_INFO_TYPE),
             true,
         )
     }
@@ -71,9 +71,14 @@ impl CalibrationOutput {
             } else {
                 CalibrationOutputMode::Create
             },
-            "Measurement Set",
+            Some("Measurement Set"),
             false,
         )
+    }
+
+    /// Detached imports replace any readable casacore destination table.
+    pub(crate) fn prepare_import(path: &Path) -> Result<Self, CalibrationTableWriteError> {
+        Self::prepare_type(path, CalibrationOutputMode::Replace, None, false)
     }
 
     pub(crate) fn prepare_baseline_table(
@@ -85,13 +90,13 @@ impl CalibrationOutput {
         } else {
             CalibrationOutputMode::Create
         };
-        Self::prepare_type(path, mode, "ApplyTable", false)
+        Self::prepare_type(path, mode, Some("ApplyTable"), false)
     }
 
     fn prepare_type(
         path: &Path,
         mode: CalibrationOutputMode,
-        table_type: &'static str,
+        table_type: Option<&'static str>,
         simulated_marker: bool,
     ) -> Result<Self, CalibrationTableWriteError> {
         let fail = |reason| CalibrationTableWriteError::Prepare {
@@ -203,18 +208,18 @@ pub(crate) fn validate_destination(
     path: &Path,
     table_type: &str,
 ) -> Result<(), CalibrationTableWriteError> {
-    validate_product(path, table_type, false)
+    validate_product(path, Some(table_type), false)
 }
 
 fn validate_product(
     path: &Path,
-    table_type: &str,
+    table_type: Option<&str>,
     simulated_marker: bool,
 ) -> Result<(), CalibrationTableWriteError> {
     let table = casa_tables::Table::open(casa_tables::TableOptions::new(path));
     if table
         .as_ref()
-        .is_ok_and(|t| t.info().table_type == table_type)
+        .is_ok_and(|t| table_type.is_none_or(|kind| t.info().table_type == kind))
     {
         return Ok(());
     }
@@ -226,6 +231,7 @@ fn validate_product(
         reason: if simulated_marker && !path.join("table.dat").is_file() {
             "exists and is not a table; prior product is unchanged".to_string()
         } else {
+            let table_type = table_type.unwrap_or("readable casacore");
             format!("exists and is not a {table_type} table; prior product is unchanged")
         },
     })

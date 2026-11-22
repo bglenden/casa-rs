@@ -68,6 +68,7 @@ pub mod scratch_columns;
 mod selected_pointing;
 pub mod selection;
 pub mod shadowing;
+pub mod single_dish_import;
 pub mod spectral_selection;
 mod subtable_overrides;
 mod subtable_rows;
