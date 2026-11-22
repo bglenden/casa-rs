@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::convert::IntList;
-use crate::tools::coordsys::PyCoordsys;
+use crate::tools::coordsys::{PyCoordsys, validate_restored_linear_coordinates};
 use crate::tools::table::casa_record;
 
 use super::PyImageTool;
@@ -115,6 +115,7 @@ impl PyImageTool {
                 return Err(raised("Exception: Record is empty."));
             }
             let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
+            validate_restored_linear_coordinates(&coordinates, &record)?;
             if coordinates.n_pixel_axes() != image.shape().len() {
                 return Err(raised(
                     "Exception: Supplied CoordinateSystem and image shape are inconsistent",
