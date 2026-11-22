@@ -18,6 +18,57 @@ def test_detached_replace_returns_false():
     assert tools.image().replacemaskedpixels() is False
 
 
+@pytest.mark.parametrize("form", ["inline", "file"])
+@pytest.mark.parametrize("case", ["qualified", "compound", "clipped"])
+def test_text_region_admission_preserves_mask_edit_state(casa, tmp_path, form, case):
+    shape = (15, 17, 1, 5)
+    box = "box[[2pix,3pix],[11pix,12pix]]"
+    text = {
+        "qualified": "circle[[8pix,8pix], 3pix], range=[1pix,2pix], corr=[I]",
+        "compound": box + "\nbox[[4pix,5pix],[7pix,8pix]]",
+        "clipped": box + "\nbox[[100pix,100pix],[110pix,111pix]]",
+    }[case]
+    if form == "file":
+        path = tmp_path / "region.crtf"
+        path.write_text(f"#CRTFv0\n{text}\n")
+        region = str(path)
+    else:
+        region = text
+    path = tmp_path / "mask.im"
+    mask = casa.image()
+    try:
+        assert mask.fromarray(str(path), np.ones(shape, dtype=np.float64), type="d")
+    finally:
+        mask.done()
+    expression = f'"{path}" > 0'
+    for api in (casa, tools):
+        name = str(tmp_path / f"{api.__name__}-input.im")
+        image = api.image()
+        valid = np.zeros(shape, dtype=bool)
+        try:
+            assert image.fromshape(name, list(shape))
+            assert image.calcmask("F", "initial")
+            assert image.done() and image.open(name)
+            before = list(image.history(False))
+            if case == "clipped":
+                assert image.replacemaskedpixels(8, region=region, mask=expression, update=True)
+                valid[2:12, 3:13] = True
+            else:
+                np.testing.assert_array_equal(image.haslock(), [True, False])
+                with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
+                    image.replacemaskedpixels(8, region=region, mask=expression, update=True)
+                np.testing.assert_array_equal(image.haslock(), [True, False])
+                assert list(image.history(False)) == before
+            assert image.isopen()
+            np.testing.assert_array_equal(image.getchunk(), np.where(valid, 8., 0.))
+            np.testing.assert_array_equal(image.getchunk(getmask=True), valid)
+            assert image.done() and image.open(name)
+            np.testing.assert_array_equal(image.getchunk(), np.where(valid, 8., 0.))
+            np.testing.assert_array_equal(image.getchunk(getmask=True), valid)
+        finally:
+            image.done()
+
+
 def test_replacement_updates_pixels_and_mask_inside_region(casa, tmp_path):
     old = np.arange(20, dtype=np.float32).reshape(4, 5)
     source_path = str(tmp_path / "operands.im")

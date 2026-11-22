@@ -59,7 +59,7 @@ mod two_point;
 
 pub use replace_masked::{
     MaskReplacementOptions, MaskReplacementOutcome, replace_masked_complex_pixels,
-    replace_masked_real_pixels,
+    replace_masked_real_pixels, validate_mask_replacement_region,
 };
 
 pub use bounding_box::ImageRegionBounds;

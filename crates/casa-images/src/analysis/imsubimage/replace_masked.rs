@@ -5,7 +5,7 @@ use ndarray::{IxDyn, Zip};
 
 use crate::analysis::lel_mask::{evaluate_mask, evaluate_replacement_pixels};
 use crate::expr_parser::ReplacementPixels;
-use crate::{ImageError, ImagePixel, MutableImageInterface};
+use crate::{ImageError, ImageInterface, ImagePixel, MutableImageInterface};
 
 use super::{SubimageRegion, and_opt_mask, region::SubimageSelection};
 
@@ -25,6 +25,30 @@ pub enum MaskReplacementOutcome {
     /// image has no native pixel mask for the requested update. CASA reports
     /// this after writing the replacement values.
     MissingNativeMask,
+}
+
+/// Check an edit's region before acquiring the image write lock.
+///
+/// # Errors
+/// Returns an error if the region cannot be resolved or is compound.
+pub fn validate_mask_replacement_region<T: ImagePixel>(
+    image: &dyn ImageInterface<T>,
+    region: SubimageRegion<'_>,
+) -> Result<(), ImageError> {
+    replacement_selection(image, Some(region)).map(|_| ())
+}
+
+fn replacement_selection<T: ImagePixel>(
+    image: &dyn ImageInterface<T>,
+    region: Option<SubimageRegion<'_>>,
+) -> Result<SubimageSelection, ImageError> {
+    let selection = SubimageSelection::resolve(image, None, region, None, None)?;
+    if selection.has_multiple_regions {
+        return Err(ImageError::CasaSelection(
+            "Exception: Only a single n-dimensional rectangular region is supported.".into(),
+        ));
+    }
+    Ok(selection)
 }
 
 /// Replace invalid single-precision real pixels with a numerical expression.
@@ -71,7 +95,7 @@ fn replace_masked<T: ImagePixel>(
             "You must specify an expression".into(),
         ));
     }
-    let selection = SubimageSelection::resolve(image, None, options.region, None, None)?;
+    let selection = replacement_selection(image, options.region)?;
     let stride = vec![1; image.ndim()];
     let mut valid = image.get_mask_slice(&selection.start, &selection.shape, &stride)?;
     selection.apply_selection_masks(&mut valid);

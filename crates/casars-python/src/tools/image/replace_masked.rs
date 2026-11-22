@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_images::analysis::{
-    MaskReplacementOptions, MaskReplacementOutcome, replace_masked_complex_pixels,
-    replace_masked_real_pixels,
+    MaskReplacementOptions, MaskReplacementOutcome, SubimageRegion, replace_masked_complex_pixels,
+    replace_masked_real_pixels, validate_mask_replacement_region,
 };
 use pyo3::prelude::*;
 
@@ -10,7 +10,7 @@ use crate::convert::Variant;
 use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{Region, mask_argument};
 
 fn pixel_argument(pixels: Option<&Bound<'_, PyAny>>) -> PyResult<(Variant, String)> {
@@ -67,6 +67,12 @@ impl PyImageTool {
                 return Err(raised("This image is not writable.  It is probably a reference or expression virtual image"));
             }
             Region::reject_compound_record(region.as_ref())?;
+            if let Some(Region::Text(text)) = &region {
+                // Reject compound text before upgrading the attachment's lock.
+                with_pixels!(&*image, storage => with_storage!(storage, pixels =>
+                    validate_mask_replacement_region(pixels.as_ref(), SubimageRegion::Text(text))
+                )).map_err(raised)?;
+            }
             attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             let selection = MaskReplacementOptions {
                 expression,
