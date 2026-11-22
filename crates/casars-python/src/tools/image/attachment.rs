@@ -176,7 +176,15 @@ impl AttachedImage {
 
     pub(super) fn open_created(registry: &mut OpenImages, path: &Path) -> PyResult<Self> {
         let key = key(path)?;
-        let mut opened = Self::open_native(path, &key, Some(1), TableUseLock::acquire)?;
+        Self::open_created_as(registry, path, &key)
+    }
+
+    pub(super) fn open_created_as(
+        registry: &mut OpenImages,
+        name: &Path,
+        key: &Path,
+    ) -> PyResult<Self> {
+        let mut opened = Self::open_native(name, key, Some(1), TableUseLock::acquire)?;
         if !opened
             .lock()
             .lock_storage(casa_tables::LockType::Write, 1)?
