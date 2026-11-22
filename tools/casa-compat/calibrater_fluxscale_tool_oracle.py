@@ -221,6 +221,9 @@ def main():
             ('calibration-times', {'timerange': '~'.join(bounds)}),
         ]:
             transfer(work, engines, vis, gain, name, options=options)
+        scalar_gain = work/'prior-t.cal'
+        casatasks.gaincal(str(vis), str(scalar_gain), gaintype='T', refant='A0', solint='int')
+        transfer(work, engines, vis, scalar_gain, 'scalar-t')
         transfer(work, engines, vis, gain, 'retains-selection', legacy=True, selection={'field': 'PHASE'})
         transfer(work, engines, vis, gain, 'positional', positional=True, listing=True)
         transfer(work, engines, vis, gain, 'legacy', legacy=True)
