@@ -421,6 +421,9 @@ pub enum GainSolveError {
     InsufficientParallacticCoverage { required: usize },
     #[error("GlinXphJones needs multiple SDBs")]
     InsufficientGainPhaseSegments,
+    /// Old GlinXph only accepts one accumulated field/window buffer.
+    #[error("GlinXphJones can't process multi-vb vbga.")]
+    LegacyGainPhaseMultipleBuffers,
 
     /// Baseline calibration could not be prepared or persisted.
     #[error("{0}")]
