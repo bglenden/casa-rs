@@ -23,8 +23,8 @@ pub fn load_callibrary_record(path: impl AsRef<Path>) -> Result<RecordValue, Cal
     let path = path.as_ref();
     let contents = read_contents(path)?;
     let path = path.display().to_string();
-    let entries = parse_entries(&path, &contents)?;
-    if entries.is_empty() {
+    let (entries, has_statement) = parse_entries(&path, &contents)?;
+    if !has_statement {
         return Err(line_error(
             &path,
             &contents,
@@ -120,13 +120,7 @@ fn ordered_record(mut fields: Vec<RecordField>) -> RecordValue {
 pub fn validate_callibrary_record(record: &RecordValue) -> Result<Vec<String>, String> {
     let mut diagnostics = Vec::new();
     for table in record.fields() {
-        let Value::Record(contents) = &table.value else {
-            let name = cpp_record_type(&table.value);
-            return Err(format!(
-                "RecordRep::get_pointer - incorrect data type Record   used for field {} with type {name:<8}",
-                table.name
-            ));
-        };
+        let contents = tool_table_record(table)?;
         for field in contents.fields() {
             let Value::Record(slice) = &field.value else {
                 continue;
@@ -149,6 +143,17 @@ pub fn validate_callibrary_record(record: &RecordValue) -> Result<Vec<String>, S
         }
     }
     Ok(diagnostics)
+}
+
+pub(crate) fn tool_table_record(table: &RecordField) -> Result<&RecordValue, String> {
+    let Value::Record(contents) = &table.value else {
+        let name = cpp_record_type(&table.value);
+        return Err(format!(
+            "RecordRep::get_pointer - incorrect data type Record   used for field {} with type {name:<8}",
+            table.name
+        ));
+    };
+    Ok(contents)
 }
 
 fn cpp_record_type(value: &Value) -> &'static str {
@@ -180,6 +185,8 @@ pub(crate) fn tool_library_specs(
 
     let calwt = match table.get("calwt") {
         Some(Value::Scalar(ScalarValue::Bool(value))) => *value,
+        Some(Value::Scalar(ScalarValue::Int32(value))) => *value != 0,
+        Some(Value::Scalar(ScalarValue::Int64(value))) => *value != 0,
         None => false,
         Some(_) => return Err("calwt must be a boolean".into()),
     };
@@ -191,9 +198,6 @@ pub(crate) fn tool_library_specs(
             _ => None,
         })
         .map(|slice| {
-            if !matches!(slice.get("tinterp"), Some(Value::Scalar(ScalarValue::String(text))) if !text.is_empty()) {
-                return Err("time interpolation must be specified".into());
-            }
             let mut fields = BTreeMap::from([
                 ("caltable".to_owned(), format!("\"{table_name}\"")),
                 ("calwt".to_owned(), calwt.to_string()),
@@ -216,14 +220,14 @@ pub(crate) fn tool_library_specs(
                     (
                         "antmap" | "fldmap" | "obsmap" | "scanmap" | "spwmap",
                         Value::Array(ArrayValue::Int32(values)),
-                    ) if values.ndim() == 1 => {
+                    ) if values.shape().iter().filter(|size| **size > 1).count() <= 1 => {
                         let ids = values.iter().map(i32::to_string).collect::<Vec<_>>();
                         format!("[{}]", ids.join(","))
                     }
                     (
                         "antmap" | "fldmap" | "obsmap" | "scanmap" | "spwmap",
                         Value::Array(ArrayValue::Int64(values)),
-                    ) if values.ndim() == 1 => {
+                    ) if values.shape().iter().filter(|size| **size > 1).count() <= 1 => {
                         let ids = values
                             .iter()
                             .copied()
@@ -232,17 +236,27 @@ pub(crate) fn tool_library_specs(
                             .collect::<Vec<_>>();
                         format!("[{}]", ids.join(","))
                     }
-                    (key, _) if [
-                        "field", "finterp", "intent", "obs", "reach", "scan", "spw", "tinterp",
-                        "antmap", "fldmap", "obsmap", "scanmap", "spwmap",
-                    ].contains(&key) => return Err(format!("invalid calibration library field {key}")),
+                    (
+                        key @ ("antmap" | "fldmap" | "obsmap" | "scanmap" | "spwmap"),
+                        Value::Array(ArrayValue::Int32(_) | ArrayValue::Int64(_)),
+                    ) => {
+                        return Err(format!("invalid calibration library map shape {key}"));
+                    }
+                    (
+                        key @ ("field" | "finterp" | "intent" | "obs" | "scan" | "spw" | "tinterp"),
+                        _,
+                    ) => {
+                        return Err(format!("invalid calibration library field {key}"));
+                    }
                     _ => continue,
                 };
                 fields.insert(field.name.clone(), entry);
             }
-            let spec = parse_callib_entry(fields, base_dir)?;
-            if spec.interp == ApplyInterpolationMode::Invalid {
-                return Err("invalid calibration library interpolation".into());
+            let mut spec = parse_callib_entry(fields, base_dir)?;
+            if slice.get("tinterp").is_none() {
+                // A present empty time curve defaults to linear. An omitted
+                // value only fails if CASA constructs an applicable context.
+                spec.interp = ApplyInterpolationMode::Invalid;
             }
             Ok(spec)
         })

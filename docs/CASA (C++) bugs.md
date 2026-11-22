@@ -9999,3 +9999,13 @@ CASA can attempt the interval and publish unflagged NaNs from a zero-weight
 division. Casa-rs retains the interval and flags the unavailable
 parallel-hand responses, with the same zero coefficients as other absent
 solutions. The oracle compares the attempt and checks the output flags.
+
+## Calibrater reports antenna IDs from the last visibility buffer
+
+CASA 6.7.6.14 collects field, observation and scan IDs throughout the
+`calibrater.returndict()` visibility iteration. It fetches the antennas
+after iteration, from the last buffer. With antennas 0 and 1 in the first
+selected scan and 2 and 3 in the second, the record lists both scans and
+only antennas 2 and 3. Casa-rs reports the four antennas in the selected
+rows. The [paired calibrater oracle](../tools/casa-compat/calibrater_apply_tool_oracle.py)
+checks both records on the disjoint baselines.

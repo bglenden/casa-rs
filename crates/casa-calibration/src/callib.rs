@@ -6,8 +6,8 @@
 mod parser;
 #[path = "callib_record.rs"]
 mod record;
-pub(crate) use record::tool_library_specs;
 pub use record::{load_callibrary_record, validate_callibrary_record};
+pub(crate) use record::{tool_library_specs, tool_table_record};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -133,7 +133,10 @@ fn read_contents(path: &Path) -> Result<String, CallibError> {
     })
 }
 
-fn parse_entries(source_name: &str, contents: &str) -> Result<Vec<parser::Entry>, CallibError> {
+fn parse_entries(
+    source_name: &str,
+    contents: &str,
+) -> Result<(Vec<parser::Entry>, bool), CallibError> {
     parser::parse(contents)
         .map_err(|(line_number, reason)| line_error(source_name, contents, line_number, reason))
 }
@@ -169,7 +172,8 @@ pub(crate) fn parse_apply_specs(
     let mut specs = Vec::new();
     let mut calwt_by_table = BTreeMap::<String, bool>::new();
 
-    for entry in parse_entries(source_name, contents)? {
+    let (entries, _) = parse_entries(source_name, contents)?;
+    for entry in entries {
         let mut spec = parse_callib_entry(entry.values, &base_dir)
             .map_err(|reason| line_error(source_name, contents, entry.line, reason))?;
         let literal = spec

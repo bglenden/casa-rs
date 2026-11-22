@@ -5,6 +5,7 @@
 import argparse
 from contextlib import chdir
 from pathlib import Path
+from shutil import copytree
 
 import casatasks
 from casatools import calibrater
@@ -52,6 +53,8 @@ def parse_libraries(work, tools):
         'empty': '',
         'comments': '# comment only\n',
         'default': "caltable='A.cal'\n",
+        'assignment-without-table': "field='0'\n",
+        'empty-table-name': "caltable=''\n",
         'mixed-maps': ("caltable='B.cal' field='0' spw='0:3~7' intent='*TARGET*' "
                        "obs='0' scan='2' tinterp='nearest' finterp='cubic' reach='30s' "
                        "fldmap='closest' obsmap=[1,0] scanmap='self' spwmap=[0,2] "
@@ -129,6 +132,7 @@ def register_libraries(work, tools):
     np.testing.assert_array_equal(current['apply_tables'], sorted([str(prior_current), str(prior_new)]))
     assert compare_calls(tools, 'setcallib', library) == (True, True)
     same_record(compare_calls(tools, 'returndict')[1], current)
+    check_registration_errors(work, vis, prior_current, tools)
     assert compare_calls(tools, 'reset', True, False) == (True, True)
     assert compare_calls(tools, 'returndict')[1]['apply_tables'].size == 0
     if 'native' in tools:
@@ -136,7 +140,7 @@ def register_libraries(work, tools):
 
         native_prior = work/'native-prior.cal'
         gencal(vis=str(vis), caltable=str(native_prior), caltype='amp', parameter=[1.2])
-        path.write_text(f"caltable='{native_prior}' tinterp='linear' calwt=F\n")
+        path.write_text(f"caltable='{native_prior}'\n")
         ok, native_library = compare_calls(tools, 'parsecallibfile', str(path))
         assert ok
         assert compare_calls(tools, 'setcallib', native_library) == (True, True)
@@ -146,6 +150,52 @@ def register_libraries(work, tools):
     assert compare_calls(tools, 'close') == (True, True)
     assert compare_calls(tools, 'returndict') == (True, {})
     print('Library registration retained exactly the terms listed by CASA', flush=True)
+
+
+def check_registration_errors(work, vis, prior, tools):
+    from blcal_oracle import opened
+
+    before = compare_calls(tools, 'returndict')[1]
+    for subtype in ('BPOLY', 'GSPLINE', 'unknown calibration'):
+        invalid = work/f'{subtype}.cal'
+        copytree(prior, invalid)
+        with opened(invalid, True) as table:
+            info = table.info()
+            info['subType'] = subtype
+            table.putinfo(info)
+        assert not compare_calls(tools, 'setcallib', {str(invalid): {}})[0]
+    for record in ({str(vis): {}}, {str(prior): 4},
+                   {str(prior): {'0': {'tinterp': 'linear'}, '1': {'tinterp': 'linear'}}},
+                   {str(prior): {'0': {'tinterp': 'linear', 'fldmap': 'unknown-field'}}},
+                   {str(prior): {'0': {'tinterp': 'linear', 'field': 'unknown-field'}}}):
+        assert not compare_calls(tools, 'setcallib', record)[0]
+        same_record(compare_calls(tools, 'returndict')[1], before)
+    for slice_ in ({'tinterp': 'linear', 'fldmap': 'FLUX'},
+                   {'field': 'PHASE'}, {'tinterp': 'bad', 'field': 'PHASE'},
+                   {'tinterp': 'linear', 'spwmap': [0.5]},
+                   {'tinterp': 'linear', 'spwmap': np.zeros((2, 1), dtype=int)}):
+        assert compare_calls(tools, 'setcallib', {str(prior): {'calwt': 1, '0': slice_}}) == (
+            True, True
+        )
+
+
+def selected_antenna_record(work, tools):
+    from blcal_oracle import copy_ms, opened
+
+    vis = work/'disjoint-antennas.ms'
+    copy_ms(work/'baseline-2.ms', vis)
+    with opened(vis, True) as table:
+        scans = table.getcol('SCAN_NUMBER')
+        first = scans == scans.min()
+        table.putcol('ANTENNA1', np.where(first, 0, 2).astype(np.int32))
+        table.putcol('ANTENNA2', np.where(first, 1, 3).astype(np.int32))
+    for engine, tool in tools.items():
+        assert tool.open(str(vis))
+        selected = tool.returndict()['selectvis']
+        np.testing.assert_array_equal(selected['scan'], [1, 2])
+        expected = [2, 3] if engine == 'casa' else [0, 1, 2, 3]
+        np.testing.assert_array_equal(selected['antennas'], expected)
+        assert tool.close()
 
 
 def main():
@@ -165,6 +215,7 @@ def main():
         parse_libraries(work, tools)
         validate_libraries(tools)
         register_libraries(work, tools)
+        selected_antenna_record(work, tools)
 
 
 if __name__ == '__main__':

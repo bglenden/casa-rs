@@ -3,14 +3,18 @@
 
 use std::path::Path;
 
-use casa_ms::MeasurementSet;
+use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::CasaValue;
 use casa_tables::{Table, TableOptions};
-use casa_types::{RecordValue, Value};
+use casa_types::RecordValue;
 
 use super::{CalibraterLifecycle, CalibraterLifecycleError, ConfiguredSolve};
-use crate::callib::tool_library_specs;
+use crate::callib::{tool_library_specs, tool_table_record};
 use crate::casa_return::selectvis_record;
+use crate::constants::TABLE_INFO_TYPE;
+use crate::plan::{
+    ApplyInterpolationMode, ApplyMode, ApplyPlanRequest, plan_with_visibility_metadata,
+};
 use crate::solve::grouping::collect_selected_rows;
 use crate::{
     AttachmentError, CalibrationError, CalibrationSolveRequest, GainSolveError, SelectedData,
@@ -34,25 +38,68 @@ impl CalibraterLifecycle {
         let failure = CalibraterLifecycleError::ApplyConfiguration;
         let cwd = std::env::current_dir().map_err(|error| failure(error.to_string()))?;
         // CASA preflights the whole set of keys before reading any slices.
-        for table in library.fields() {
-            if Table::open(TableOptions::new(Path::new(&table.name))).is_err() {
-                return Err(failure(format!("Caltable {} does not exist.", table.name)));
+        let tables = library
+            .fields()
+            .iter()
+            .map(|field| {
+                Table::open(TableOptions::new(Path::new(&field.name)))
+                    .map_err(|_| failure(format!("Caltable {} does not exist.", field.name)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut ms = None;
+        for (field, table) in library.fields().iter().zip(tables) {
+            let info = table.info();
+            if info.table_type != TABLE_INFO_TYPE {
+                return Err(failure(format!(
+                    "Table {} is not a valid Calibration table. (expected type = \"Calibration\"; type found = \"{}\")",
+                    field.name, info.table_type,
+                )));
             }
-        }
-        for table in library.fields() {
-            let Value::Record(slices) = &table.value else {
-                return Err(failure("Error in Calibrater::callib2.".into()));
-            };
-            let specs = tool_library_specs(&table.name, slices, &cwd).map_err(|reason| {
+            let slices = tool_table_record(field).map_err(failure)?;
+            let invalid_library = |reason: String| {
                 tracing::error!(
-                    table = table.name,
+                    table = field.name,
                     reason,
                     "could not register calibration library table"
                 );
                 failure("Error in Calibrater::callib2.".into())
-            })?;
+            };
+            if !callibrary_type_supported(&info.sub_type) {
+                return Err(invalid_library(format!(
+                    "unsupported library type {}",
+                    info.sub_type
+                )));
+            }
+            let specs = tool_library_specs(&field.name, slices, &cwd).map_err(invalid_library)?;
+            if specs.len() > 1
+                || specs.iter().any(|spec| {
+                    spec.interp == ApplyInterpolationMode::Invalid
+                        || spec.gainfield.is_some()
+                        || spec
+                            .callibrary
+                            .as_ref()
+                            .is_some_and(|options| options.selection != MsSelection::new())
+                })
+            {
+                let ms = if let Some(ms) = &ms {
+                    ms
+                } else {
+                    ms.insert(
+                        MeasurementSet::open(equation.attachment.path())
+                            .map_err(|error| invalid_library(error.to_string()))?,
+                    )
+                };
+                let request = ApplyPlanRequest {
+                    selection: equation.attachment.selection().clone(),
+                    apply_mode: ApplyMode::Trial,
+                    parang: false,
+                    calibration_tables: specs.clone(),
+                };
+                plan_with_visibility_metadata(ms, &request, None)
+                    .map_err(|error| invalid_library(error.to_string()))?;
+            }
             equation.apply.tables.extend(specs);
-            equation.apply.library_tables.push(table.name.clone());
+            equation.apply.library_tables.push(field.name.clone());
         }
         Ok(())
     }
@@ -120,4 +167,99 @@ impl CalibraterLifecycle {
             ("solve_tables", CasaValue::str_vector(output)),
         ]))
     }
+}
+
+fn callibrary_type_supported(subtype: &str) -> bool {
+    // CASA's metadata-aware VisCal factory. BPOLY and GSPLINE have factory
+    // entries but their setCallib implementation rejects library application.
+    let name = subtype.to_ascii_uppercase();
+    let prefix = name
+        .split_once('+')
+        .map_or(name.as_str(), |(prefix, _)| prefix);
+    matches!(
+        name.as_str(),
+        "B" | "B JONES"
+            | "G"
+            | "G JONES"
+            | "TF"
+            | "TF JONES"
+            | "TF NOISE"
+            | "T"
+            | "T JONES"
+            | "T NOISE"
+            | "D JONES"
+            | "DF JONES"
+            | "DLLS JONES"
+            | "DFLLS JONES"
+            | "DGEN JONES"
+            | "DFGEN JONES"
+            | "J"
+            | "J JONES"
+            | "JF"
+            | "JF JONES"
+            | "M"
+            | "M MUELLER"
+            | "A"
+            | "A MUELLER"
+            | "N"
+            | "A NOISE"
+            | "MF"
+            | "MF MUELLER"
+            | "X"
+            | "X MUELLER"
+            | "XJ"
+            | "X JONES"
+            | "XF"
+            | "XF JONES"
+            | "K"
+            | "K JONES"
+            | "KCROSS"
+            | "KCROSS JONES"
+            | "GLINXPH"
+            | "GLINXPH JONES"
+            | "XY+QU"
+            | "GLINXPHF"
+            | "GLINXPHF JONES"
+            | "XYF+QU"
+            | "XPARANG"
+            | "XPARANG JONES"
+            | "XPARANG+QU"
+            | "XFPARANG"
+            | "XFPARANG JONES"
+            | "XFPARANG+QU"
+            | "POSANG"
+            | "POSANG JONES"
+            | "KMBD"
+            | "KMBD JONES"
+            | "TFOPAC"
+            | "TOPAC"
+            | "P"
+            | "P JONES"
+    ) || matches!(
+        prefix,
+        "D" | "DLIN"
+            | "DF"
+            | "DFLIN"
+            | "DLLS"
+            | "DFLLS"
+            | "DGEN"
+            | "DGENERAL"
+            | "DFGEN"
+            | "DFGENERAL"
+    ) || [
+        "KANTPOS",
+        "TSYS",
+        "EVLASWP",
+        "GAINCURVE",
+        "POWERCURVE",
+        "TEC",
+        "F JONES",
+        "FRINGE",
+        "ACCOR",
+        "SDSKY_PS",
+        "SDSKY_RASTER",
+        "SDGAIN_OTFD",
+    ]
+    .iter()
+    .any(|family| name.contains(family))
 }

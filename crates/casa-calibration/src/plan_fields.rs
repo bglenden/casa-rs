@@ -75,7 +75,9 @@ fn resolve_gainfield_expression(
     let ids = casa_ms::resolve_field_selector_rows(&borrowed, expression).map_err(failure)?;
     let resolved = ids
         .into_iter()
-        .filter(|id| summary.field_ids.contains(id))
+        // Library field expressions resolve against FIELD metadata. A
+        // mapped field with no solutions is handled by SPW availability.
+        .filter(|id| spec.callibrary.is_some() || summary.field_ids.contains(id))
         .map(|field_id| ResolvedGainField {
             selector: GainFieldSelector::Expression(expression.to_string()),
             field_id,
