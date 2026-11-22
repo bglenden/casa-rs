@@ -19,6 +19,7 @@ use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
 use pyo3::prelude::*;
 
+use super::owned_members::OwnedOperands;
 use super::{Input, Request, beam_records, coordinate_record, merge_misc, plane_axes};
 use crate::tools::LogLine;
 use crate::tools::image::attachment::{AttachedImage, registry};
@@ -31,6 +32,10 @@ pub(in crate::tools::image) fn open(path: &Path) -> PyResult<AttachedImage> {
 
 pub(in crate::tools::image) fn open_handle(path: &Path) -> Result<ImageHandle, ImageError> {
     load(path, &mut HashSet::new()).map_err(|error| ImageError::CasaSelection(error.to_string()))
+}
+
+pub(in crate::tools::image) fn check_relocation(source: &Path, target: &Path) -> PyResult<()> {
+    super::relocation::check_rename(source, target)
 }
 
 fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
@@ -87,17 +92,7 @@ pub(super) fn stage_nomove(
         }
     }
     let inputs = open_members(paths, request.tempclose, &mut HashSet::new())?;
-    let kind = inputs[0].kind;
-    validate_types(&inputs, kind)?;
-    let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
-    let plan = ConcatenationPlan::new(&geometry, request.axis, request.relax, request.reorder)
-        .map_err(geometry_error)?;
-    logs.extend(plan.warnings.iter().cloned().map(LogLine::warning));
-
-    let mut misc = RecordValue::default();
-    for &index in &plan.order {
-        merge_misc(&mut misc, &inputs[index].misc);
-    }
+    let (kind, plan, misc) = creation_plan(request, &inputs, logs)?;
     let manifest = ConcatManifest::new(
         final_path,
         kind,
@@ -119,6 +114,53 @@ pub(super) fn stage_nomove(
         request.tempclose,
         kind,
     )
+}
+
+pub(super) fn stage_owned(
+    request: &Request<'_>,
+    paths: &[PathBuf],
+    final_path: &Path,
+    stage: &Path,
+    moving: bool,
+    logs: &mut Vec<LogLine>,
+) -> PyResult<OwnedOperands> {
+    let mut members = OwnedOperands::inspect(paths, final_path, moving)?;
+    let validation_paths = members.validation_paths();
+    let inputs = open_members(&validation_paths, true, &mut HashSet::new())?;
+    let (kind, plan, misc) = creation_plan(request, &inputs, logs)?;
+    members.capture_validated_inputs(inputs)?;
+    let manifest = ConcatManifest::new(
+        final_path,
+        kind,
+        plan.axis,
+        request.tempclose,
+        plan.order
+            .iter()
+            .map(|&index| members.destination(final_path, index)),
+        &misc,
+    )
+    .map_err(raised)?;
+    fs::create_dir(stage).map_err(raised)?;
+    manifest.write(stage).map_err(raised)?;
+    Ok(members)
+}
+
+fn creation_plan(
+    request: &Request<'_>,
+    inputs: &[Input<'_>],
+    logs: &mut Vec<LogLine>,
+) -> PyResult<(ImagePixelType, ConcatenationPlan, RecordValue)> {
+    let kind = inputs[0].kind;
+    validate_types(inputs, kind)?;
+    let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
+    let plan = ConcatenationPlan::new(&geometry, request.axis, request.relax, request.reorder)
+        .map_err(geometry_error)?;
+    logs.extend(plan.warnings.iter().cloned().map(LogLine::warning));
+    let mut misc = RecordValue::default();
+    for &index in &plan.order {
+        merge_misc(&mut misc, &inputs[index].misc);
+    }
+    Ok((kind, plan, misc))
 }
 
 fn open_members<'a>(

@@ -15,15 +15,17 @@ use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
 
 use crate::convert::Variant;
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::attachment;
 use super::beams::{image_info, image_info_record, plane_axes, stored_beam_record};
-use super::create::{publish_image, publish_virtual_concat};
+use super::create::{publish_image, publish_owned_virtual_concat, publish_virtual_concat};
 use super::handle::{ImageHandle, Storage, raised, same_file_snapshot, with_pixels, with_storage};
 use super::lifecycle::resolve_image_path;
 
+pub(super) mod owned_members;
+mod relocation;
 pub(super) mod virtual_image;
 
 fn filename_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Variant> {
@@ -513,13 +515,10 @@ impl PyImageTool {
                     "Exception: An empty outname can be used only if mode == PAGED.",
                 ));
             }
-            Some(b'n') => {}
-            Some(b'c' | b'm') => {
-                return not_yet_implemented_in("image", "imageconcat virtual mode", 1749);
-            }
+            Some(b'n' | b'c' | b'm') => {}
             _ => return Err(raised(format!("Unsupported mode {mode}"))),
         }
-        let expanded = if mode_letter == Some(b'n') {
+        let expanded = if mode_letter != Some(b'p') {
             resolve_image_path(py, outfile)?
         } else {
             std::borrow::Cow::Borrowed(outfile)
@@ -555,15 +554,37 @@ impl PyImageTool {
                 mode,
                 history: self.state().history,
             };
-            if mode_letter == Some(b'n') {
-                let attached = publish_virtual_concat(
-                    outfile,
-                    expanded.as_ref(),
-                    overwrite,
-                    |final_path, stage| {
-                        virtual_image::stage_nomove(&request, &paths, final_path, stage, &mut logs)
-                    },
-                )?;
+            if mode_letter != Some(b'p') {
+                let attached = if mode_letter == Some(b'n') {
+                    publish_virtual_concat(
+                        outfile,
+                        expanded.as_ref(),
+                        overwrite,
+                        |final_path, stage| {
+                            virtual_image::stage_nomove(
+                                &request, &paths, final_path, stage, &mut logs,
+                            )
+                        },
+                    )
+                } else {
+                    let (attached, cleanup_warnings) = publish_owned_virtual_concat(
+                        outfile,
+                        expanded.as_ref(),
+                        overwrite,
+                        |final_path, stage| {
+                            virtual_image::stage_owned(
+                                &request,
+                                &paths,
+                                final_path,
+                                stage,
+                                mode_letter == Some(b'm'),
+                                &mut logs,
+                            )
+                        },
+                    )?;
+                    logs.extend(cleanup_warnings.into_iter().map(LogLine::warning));
+                    Ok(attached)
+                }?;
                 if request.history {
                     request.history_for(&mut attached.lock())?;
                 }

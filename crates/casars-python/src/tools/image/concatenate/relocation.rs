@@ -1,0 +1,180 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
+use std::fs;
+use std::io::{self, ErrorKind};
+use std::path::{Component, Path, PathBuf};
+
+use casa_images::concat_file::{ConcatManifest, is_image_concat};
+use pyo3::prelude::*;
+
+use crate::tools::image::handle::{raised, same_file_identity};
+
+/// A virtual directory tree in its proposed location. Backing paths still
+/// name the original entries, so this check reads metadata without moving
+/// or copying the inputs. Resolve links relative to the proposed location.
+struct Relocation<'a> {
+    destination: &'a Path,
+    entries: Entries<'a>,
+    removed: HashSet<&'a Path>,
+}
+
+enum Entries<'a> {
+    WholeTree(&'a Path),
+    OwnedMembers(HashMap<&'a OsStr, &'a Path>),
+}
+
+pub(super) fn check_rename(source: &Path, destination: &Path) -> PyResult<()> {
+    Relocation {
+        destination,
+        entries: Entries::WholeTree(source),
+        removed: HashSet::from([source]),
+    }
+    .check([(source, destination.to_path_buf())])
+}
+
+pub(super) fn check_owned<'a>(
+    destination: &'a Path,
+    members: impl Iterator<Item = (&'a OsStr, &'a Path)>,
+    moving: bool,
+) -> PyResult<()> {
+    let members: HashMap<_, _> = members.collect();
+    let roots = members
+        .iter()
+        .map(|(name, source)| (*source, destination.join(name)))
+        .collect::<Vec<_>>();
+    let removed = if moving {
+        members.values().copied().collect()
+    } else {
+        HashSet::new()
+    };
+    Relocation {
+        destination,
+        entries: Entries::OwnedMembers(members),
+        removed,
+    }
+    .check(roots)
+}
+
+impl Relocation<'_> {
+    fn check<'a>(&self, roots: impl IntoIterator<Item = (&'a Path, PathBuf)>) -> PyResult<()> {
+        let mut images = roots
+            .into_iter()
+            .map(|(source, target)| (source.to_path_buf(), target))
+            .collect::<Vec<_>>();
+        let mut checked = HashSet::new();
+        while let Some((source, target)) = images.pop() {
+            let source = source.canonicalize().map_err(raised)?;
+            let binding_error = |reason: &dyn std::fmt::Display| {
+                raised(format!(
+                    "Cannot relocate virtual concatenation: operand {} would resolve to {} ({reason})",
+                    source.display(),
+                    target.display()
+                ))
+            };
+            let (resolved, backing) = self
+                .resolve(&target)
+                .map_err(|error| binding_error(&error))?;
+            if source != backing {
+                let same = fs::metadata(&source)
+                    .and_then(|source| {
+                        fs::metadata(&backing).map(|backing| same_file_identity(&source, &backing))
+                    })
+                    .map_err(|error| binding_error(&error))?;
+                if !same {
+                    return Err(binding_error(&"a different image"));
+                }
+            }
+            if resolved.starts_with(self.destination)
+                && is_image_concat(&source)
+                && checked.insert((source.clone(), resolved.clone()))
+            {
+                let manifest = ConcatManifest::open(&source).map_err(raised)?;
+                images.extend(
+                    manifest
+                        .paths(&source)
+                        .into_iter()
+                        .zip(manifest.paths(&resolved)),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn backing(&self, path: &Path) -> io::Result<Option<PathBuf>> {
+        if let Ok(relative) = path.strip_prefix(self.destination) {
+            return match &self.entries {
+                Entries::WholeTree(source) => Ok(Some(join_suffix(source, relative))),
+                Entries::OwnedMembers(members) => {
+                    let mut parts = relative.components();
+                    let Some(first) = parts.next() else {
+                        // The new manifest directory exists in the planned
+                        // layout even though it has no original directory.
+                        return Ok(None);
+                    };
+                    members
+                        .get(first.as_os_str())
+                        .map(|member| Some(join_suffix(member, parts.as_path())))
+                        .ok_or_else(|| ErrorKind::NotFound.into())
+                }
+            };
+        }
+        if path
+            .ancestors()
+            .any(|ancestor| self.removed.contains(ancestor))
+        {
+            return Err(ErrorKind::NotFound.into());
+        }
+        Ok(Some(path.to_path_buf()))
+    }
+
+    fn resolve(&self, path: &Path) -> io::Result<(PathBuf, PathBuf)> {
+        let mut requested = std::path::absolute(path)?;
+        for _ in 0..=40 {
+            let mut parts = requested.components();
+            let mut resolved = PathBuf::new();
+            let mut redirect = None;
+            while let Some(part) = parts.next() {
+                match part {
+                    Component::ParentDir => {
+                        resolved.pop();
+                    }
+                    Component::CurDir => {}
+                    _ => resolved.push(part.as_os_str()),
+                }
+                if !matches!(part, Component::Normal(_)) {
+                    continue;
+                }
+                let Some(backing) = self.backing(&resolved)? else {
+                    continue;
+                };
+                if backing.symlink_metadata()?.is_symlink() {
+                    let target = backing.read_link()?;
+                    resolved.pop();
+                    redirect = Some(resolved.join(target).join(parts.as_path()));
+                    break;
+                }
+            }
+            if let Some(redirected) = redirect {
+                requested = redirected;
+            } else {
+                let backing = self
+                    .backing(&resolved)?
+                    .ok_or_else(|| io::Error::other("the operand is the virtual output itself"))?;
+                return Ok((resolved, backing));
+            }
+        }
+        Err(io::Error::other(
+            "too many symbolic links resolving a concatenation member",
+        ))
+    }
+}
+
+fn join_suffix(root: &Path, suffix: &Path) -> PathBuf {
+    if suffix.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(suffix)
+    }
+}
