@@ -53,6 +53,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | polfromgain | polfromgain | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
+| sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
@@ -2369,6 +2370,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
+### sdbaseline
+
+- CASA source: `casatasks/sdbaseline.py`, 38 parameters
+- Implementation: `casatasks/private/task_sdbaseline.py`, `sdbaseline` (line 17): 0 return statements, 3 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 38, in CASA's order: yes
+- Defaults that differ: none
 
 ### sdcal
 

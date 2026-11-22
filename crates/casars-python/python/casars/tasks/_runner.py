@@ -344,6 +344,31 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if message.endswith(" exists."):
                 raise ValueError(message) from error
             raise RuntimeError(message) from error
+    if name == "sdbaseline":
+        _validate_required_path(values, "infile", arguments["infile"], search_data=True)
+        choices = {
+            "datacolumn": ("data", "DATA", "float_data", "FLOAT_DATA", "corrected", "CORRECTED"),
+            "maskmode": ("list", "LIST", "auto", "AUTO"),
+            "blfunc": ("poly", "chebyshev", "cspline", "sinusoid", "variable",
+                       "POLY", "CHEBYSHEV", "CSPLINE", "SINUSOID", "VARIABLE"),
+            "fftmethod": ("fft", "FFT"),
+            "sigmavalue": ("stddev", "rms"),
+        }
+        for parameter, allowed in choices.items():
+            value = arguments[parameter]
+            if value not in allowed:
+                message = "null value not allowed" if value is None else f"unallowed value {value}"
+                raise AssertionError(str({parameter: [message]}))
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            message = error.completion.message or ""
+            if message.endswith("is not yet implemented (#1532)"):
+                raise NotImplementedError(message) from error
+            if (error.completion.parameter in ("outfile", "bltable", "blformat", "bloutput", "blparam")
+                    and message):
+                raise ValueError(message) from error
+            raise RuntimeError(message) from error
     if name == "initweights":
         return _call_initweights(values)
     if name == "plotbandpass":

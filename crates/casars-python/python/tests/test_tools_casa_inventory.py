@@ -47,6 +47,7 @@ IMPLEMENTED["calibrater"] = {
 }
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve"},
+    "singledishms": {"subtract_baseline", "apply_baseline_table"},
     "image": {
         "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },

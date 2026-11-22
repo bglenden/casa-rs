@@ -13,6 +13,7 @@ use crate::MeasurementSet;
 use crate::observation_io::creation::{Replacement, Stage};
 use crate::selection::RowGrammar;
 
+use super::baseline::SpectrumBaseline;
 use super::channel_average::{AveragedStatistics, sigma_from_weight, weight_from_sigma};
 use super::{MsTransformError, MsTransformReport, MsTransformRequest, MsTransformTaskOptions};
 
@@ -28,8 +29,13 @@ pub trait SpectrumConvolution {
     fn weight_kernel(&self) -> &[f32];
 }
 
-pub(super) struct Convolution<'a> {
-    pub(super) kernel: &'a mut dyn SpectrumConvolution,
+pub(super) enum SpectrumOperator<'a> {
+    Convolution(&'a mut dyn SpectrumConvolution),
+    Baseline(&'a mut dyn SpectrumBaseline),
+}
+
+pub(super) struct SpectralOperation<'a> {
+    pub(super) kernel: SpectrumOperator<'a>,
     pub(super) reindex: bool,
 }
 
@@ -159,6 +165,45 @@ pub fn convolve_spectra(
     overwrite: bool,
     kernel: &mut dyn SpectrumConvolution,
 ) -> Result<MsTransformReport, MsTransformError> {
+    stage_spectra(
+        request,
+        options,
+        SpectralOperation {
+            kernel: SpectrumOperator::Convolution(kernel),
+            reindex,
+        },
+        overwrite,
+    )
+}
+
+/// Fit or apply selected single-dish baselines using the staged MS writer.
+///
+/// The caller owns the private output path and publishes it with any
+/// companion baseline table only after both products have been written.
+pub fn transform_baseline_spectra(
+    request: &MsTransformRequest,
+    options: &MsTransformTaskOptions,
+    reindex: bool,
+    baseline: &mut dyn SpectrumBaseline,
+) -> Result<MsTransformReport, MsTransformError> {
+    super::transform_product(
+        request,
+        RowGrammar::Transform,
+        options,
+        None,
+        Some(SpectralOperation {
+            kernel: SpectrumOperator::Baseline(baseline),
+            reindex,
+        }),
+    )
+}
+
+fn stage_spectra(
+    request: &MsTransformRequest,
+    options: &MsTransformTaskOptions,
+    operation: SpectralOperation<'_>,
+    overwrite: bool,
+) -> Result<MsTransformReport, MsTransformError> {
     let destination = &request.output_ms;
     let path_error = |reason: String| MsTransformError::PrepareOutput {
         path: destination.display().to_string(),
@@ -200,7 +245,7 @@ pub fn convolve_spectra(
         RowGrammar::Transform,
         options,
         None,
-        Some(Convolution { kernel, reindex }),
+        Some(operation),
     );
     let commit = product.and_then(|mut report| {
         if let Some(replacement) = replacement {

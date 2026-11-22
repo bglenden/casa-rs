@@ -76,6 +76,18 @@ impl CalibrationOutput {
         )
     }
 
+    pub(crate) fn prepare_baseline_table(
+        path: &Path,
+        overwrite: bool,
+    ) -> Result<Self, CalibrationTableWriteError> {
+        let mode = if overwrite {
+            CalibrationOutputMode::Replace
+        } else {
+            CalibrationOutputMode::Create
+        };
+        Self::prepare_type(path, mode, "ApplyTable", false)
+    }
+
     fn prepare_type(
         path: &Path,
         mode: CalibrationOutputMode,

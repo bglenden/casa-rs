@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native single-dish spectral preparation shared by the task and tool.
 
+pub(crate) mod baseline;
 mod smoothing;
 
 use std::path::{Path, PathBuf};
@@ -81,12 +82,7 @@ impl SingleDishSession {
     /// Apply a convolution to the current selection and publish its MeasurementSet.
     pub fn smooth(&self, operation: SingleDishSmoothing<'_>) -> Result<MsTransformReport, String> {
         let input = self.name()?;
-        let data_column = match operation.datacolumn.to_ascii_lowercase().as_str() {
-            "data" => TransformDataColumn::Data,
-            "float_data" => TransformDataColumn::FloatData,
-            "corrected" => TransformDataColumn::CorrectedData,
-            _ => return Err("Invalid data column name".into()),
-        };
+        let data_column = data_column(operation.datacolumn)?;
         let mut smoothing = Smoothing::new(operation.kernel, operation.width)?;
         convolve_spectra(
             &MsTransformRequest {
@@ -107,6 +103,15 @@ impl SingleDishSession {
             &mut smoothing,
         )
         .map_err(|error| error.to_string())
+    }
+}
+
+fn data_column(name: &str) -> Result<TransformDataColumn, String> {
+    match name.to_ascii_lowercase().as_str() {
+        "data" => Ok(TransformDataColumn::Data),
+        "float_data" => Ok(TransformDataColumn::FloatData),
+        "corrected" => Ok(TransformDataColumn::CorrectedData),
+        _ => Err("Invalid data column name".into()),
     }
 }
 

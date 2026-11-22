@@ -23,6 +23,13 @@ pub(super) struct OrderedMainRows {
     pub(super) starts_visibility_buffer: Vec<bool>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum MainRowOrder {
+    Transform,
+    SingleDish,
+    Baseline,
+}
+
 /// CASA's visibility iterator groups ordinary MS rows by the original IDs
 /// before ordering each group by TIME (MSTransformManager::setIterationApproach).
 pub(super) fn sort_selected_rows(
@@ -30,7 +37,7 @@ pub(super) fn sort_selected_rows(
     request: &MsTransformRequest,
     rows: Vec<usize>,
     descriptions: Vec<i32>,
-    single_dish: bool,
+    order: MainRowOrder,
 ) -> Result<OrderedMainRows, MsTransformError> {
     const GROUPS: [&str; 5] = [
         "OBSERVATION_ID",
@@ -50,10 +57,10 @@ pub(super) fn sort_selected_rows(
             })
     };
     let mut groups = vec![[0; GROUPS.len()]; rows.len()];
-    let columns: &[&str] = if single_dish {
-        &SINGLE_DISH_GROUPS
-    } else {
-        &GROUPS
+    let columns: &[&str] = match order {
+        MainRowOrder::Transform => &GROUPS,
+        MainRowOrder::SingleDish => &SINGLE_DISH_GROUPS,
+        MainRowOrder::Baseline => &[],
     };
     for (slot, &name) in columns.iter().enumerate() {
         for ((group, value), &row) in groups.iter_mut().zip(read(name)?).zip(&rows) {
@@ -74,7 +81,13 @@ pub(super) fn sort_selected_rows(
         left.0
             .cmp(&right.0)
             .then_with(|| left.1.cmp(&right.1))
-            .then_with(|| left.2.total_cmp(&right.2))
+            .then_with(|| {
+                if matches!(order, MainRowOrder::Baseline) {
+                    std::cmp::Ordering::Equal
+                } else {
+                    left.2.total_cmp(&right.2)
+                }
+            })
             .then_with(|| left.3.cmp(&right.3))
     });
     let mut starts_visibility_buffer = Vec::with_capacity(ordering.len());
