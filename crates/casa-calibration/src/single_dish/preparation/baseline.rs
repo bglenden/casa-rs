@@ -9,6 +9,7 @@ mod sinusoid;
 mod spline;
 mod table;
 pub(crate) mod task;
+mod variable;
 
 use std::collections::{BTreeMap, btree_map::Entry};
 use std::path::Path;
@@ -27,6 +28,7 @@ use linear_fit::Fit;
 use polynomial::{Polynomial, PolynomialFit};
 pub use sinusoid::SingleDishSinusoid;
 use table::{AppliedBaseline, BaselineRow, BaselineTable, SpectrumModel, mask_ranges};
+use variable::{StoredLineFinder, VariableParameters};
 
 use super::{SingleDishSession, data_column};
 use crate::output::CalibrationOutput;
@@ -76,6 +78,17 @@ pub enum SingleDishBaselineMode<'a> {
         max_fits: usize,
         /// Detect and exclude line channels before fitting.
         line_finder: Option<SingleDishLineFinder>,
+        /// Optional CASA baseline-table destination.
+        table: Option<&'a Path>,
+        /// Optional coefficient and residual reports.
+        diagnostics: SingleDishBaselineDiagnostics<'a>,
+    },
+    /// Use a baseline-parameter file keyed by selected row and polarization.
+    Variable {
+        /// File containing per-spectrum fit parameters.
+        parameters: &'a Path,
+        /// Log the parameters used for each eligible spectrum.
+        verbose: bool,
         /// Optional CASA baseline-table destination.
         table: Option<&'a Path>,
         /// Optional coefficient and residual reports.
@@ -138,6 +151,9 @@ impl SingleDishSession {
         let destinations = match &request.mode {
             SingleDishBaselineMode::Fit {
                 table, diagnostics, ..
+            }
+            | SingleDishBaselineMode::Variable {
+                table, diagnostics, ..
             } => [request.output, *table, diagnostics.csv, diagnostics.text],
             SingleDishBaselineMode::Apply { .. } => [request.output, None, None, None],
         };
@@ -151,28 +167,48 @@ impl SingleDishSession {
                 table,
                 diagnostics,
             } => {
-                if max_fits == 0 {
-                    return Err("Number of fits must be positive.".into());
-                }
-                if matches!(basis, SingleDishBaselineBasis::CubicSpline { pieces: 0 }) {
-                    return Err("npiece must be positive.".into());
-                }
-                if clip_sigma.is_nan() || clip_sigma <= 0. {
-                    return Err(basis.family().invalid_fit_argument().into());
-                }
+                let settings = FitSettings {
+                    basis,
+                    clip_sigma,
+                    max_fits,
+                };
+                settings.validate()?;
                 (
-                    Operation::Fit(Box::new(FitOperation {
-                        request: FitRequest {
-                            basis,
-                            clip_sigma,
-                            max_fits,
+                    Operation::Fit(Box::new(FitOperation::new(
+                        FitRequest::Fixed {
+                            settings,
                             line_finder,
-                            record_models: table.is_some(),
                         },
-                        bases: BTreeMap::new(),
-                        records: Vec::new(),
-                        diagnostics: Diagnostics::prepare(diagnostics, request.overwrite)?,
-                    })),
+                        table.is_some(),
+                        Diagnostics::prepare(diagnostics, request.overwrite)?,
+                    ))),
+                    table,
+                )
+            }
+            SingleDishBaselineMode::Variable {
+                parameters,
+                verbose,
+                table,
+                diagnostics,
+            } => {
+                for destination in destinations.into_iter().flatten() {
+                    if crate::paths::overlap(parameters, destination).map_err(error_text)? {
+                        return Err(
+                            "An output product overlaps the baseline parameter file.".into()
+                        );
+                    }
+                }
+                let parameters = VariableParameters::open(parameters)?;
+                (
+                    Operation::Fit(Box::new(FitOperation::new(
+                        FitRequest::Variable {
+                            input: &input,
+                            parameters,
+                            verbose,
+                        },
+                        table.is_some(),
+                        Diagnostics::prepare(diagnostics, request.overwrite)?,
+                    ))),
                     table,
                 )
             }
@@ -334,54 +370,163 @@ impl ModelBasis {
     }
 }
 
-struct FitRequest {
+struct FitSettings {
     basis: SingleDishBaselineBasis,
     clip_sigma: f64,
     max_fits: usize,
-    line_finder: Option<SingleDishLineFinder>,
-    record_models: bool,
 }
 
-struct FitOperation {
-    request: FitRequest,
-    bases: BTreeMap<usize, PolynomialFit>,
+impl FitSettings {
+    fn validate(&self) -> Result<(), String> {
+        if self.max_fits == 0 {
+            return Err("Number of fits must be positive.".into());
+        }
+        if matches!(
+            self.basis,
+            SingleDishBaselineBasis::CubicSpline { pieces: 0 }
+        ) {
+            return Err("npiece must be positive.".into());
+        }
+        if self.clip_sigma.is_nan() || self.clip_sigma <= 0. {
+            return Err(self.basis.family().invalid_fit_argument().into());
+        }
+        Ok(())
+    }
+}
+
+enum FitRequest<'a> {
+    Fixed {
+        settings: FitSettings,
+        line_finder: Option<SingleDishLineFinder>,
+    },
+    Variable {
+        input: &'a MeasurementSet,
+        parameters: VariableParameters,
+        verbose: bool,
+    },
+}
+
+impl FitRequest<'_> {
+    fn fixed_family(&self) -> Option<BaselineFamily> {
+        match self {
+            Self::Fixed { settings, .. } => Some(settings.basis.family()),
+            Self::Variable { .. } => None,
+        }
+    }
+}
+
+struct FitOperation<'a> {
+    request: FitRequest<'a>,
+    bases: BTreeMap<(usize, bool, usize), PolynomialFit>,
     records: Vec<RecordValue>,
+    record_models: bool,
     diagnostics: Diagnostics,
 }
 
-enum Operation {
-    Fit(Box<FitOperation>),
+enum Operation<'a> {
+    Fit(Box<FitOperation<'a>>),
     Apply(Box<BaselineTable>),
 }
 
-struct BaselineWorker {
-    operation: Operation,
+struct BaselineWorker<'a> {
+    operation: Operation<'a>,
     masks: WindowMasks,
     noise: Option<Noise>,
     omit_spectral_weights: bool,
     subtract: bool,
 }
 
-impl FitOperation {
+struct SpectrumFit {
+    result: Fit,
+    basis: ModelBasis,
+    clip_threshold: f32,
+    clip_iterations: u32,
+    line_finder: StoredLineFinder,
+}
+
+impl<'a> FitOperation<'a> {
+    fn new(request: FitRequest<'a>, record_models: bool, diagnostics: Diagnostics) -> Self {
+        Self {
+            request,
+            bases: BTreeMap::new(),
+            records: Vec::new(),
+            record_models,
+            diagnostics,
+        }
+    }
+
     fn fit(
         &mut self,
+        row: &SpectrumRow,
+        receptor: usize,
         values: &[f32],
-        mask: &[bool],
+        mask: &mut [bool],
         has_unflagged_data: bool,
-    ) -> Result<Option<(Fit, ModelBasis)>, String> {
-        let FitRequest {
+    ) -> Result<Option<SpectrumFit>, String> {
+        let (settings, stored_line_finder) = match &self.request {
+            FitRequest::Fixed {
+                settings,
+                line_finder,
+            } => {
+                if let Some(finder) = line_finder
+                    && has_unflagged_data
+                {
+                    finder.exclude_lines(values, mask)?;
+                }
+                (settings, StoredLineFinder::default())
+            }
+            FitRequest::Variable {
+                input,
+                parameters,
+                verbose,
+            } => {
+                let Some(entry) = parameters
+                    .get(row.selection_row, receptor)
+                    .filter(|_| has_unflagged_data)
+                else {
+                    return Ok(None);
+                };
+                if *verbose {
+                    tracing::info!(target: "sdbaseline", row = row.selection_row, pol = receptor,
+                        nchan = values.len(), mask = %entry.mask,
+                        clip_iterations = entry.settings.max_fits,
+                        clip_threshold = entry.settings.clip_sigma,
+                        line_finder = ?entry.line_finder,
+                        "Fitting Parameter");
+                }
+                parameters.validate_contexts(values.len())?;
+                if !entry.mask.is_empty() {
+                    let selector = format!("{}:{}", row.window, entry.mask);
+                    let masks = masks(input, &selector)?;
+                    let (local, _) = masks.for_window(row.window);
+                    if let Some(local) = local {
+                        for (channel, include) in mask.iter_mut().enumerate() {
+                            *include &= local.get(channel).copied().unwrap_or(false);
+                        }
+                    }
+                }
+                if !mask.iter().any(|&included| included) {
+                    return Ok(None);
+                }
+                entry.settings.validate()?;
+                // The variable file's LF columns are recorded by CASA.
+                (&entry.settings, entry.line_finder)
+            }
+        };
+        let FitSettings {
             basis,
             clip_sigma,
             max_fits,
-            ..
-        } = &self.request;
+        } = settings;
         let (clip_sigma, max_fits) = (*clip_sigma, *max_fits);
-        match basis {
-            SingleDishBaselineBasis::Polynomial { order, .. } => {
-                let BaselineFamily::Polynomial(family) = basis.family() else {
-                    unreachable!("polynomial basis");
+        let fitted = match basis {
+            SingleDishBaselineBasis::Polynomial { order, chebyshev } => {
+                let family = if *chebyshev {
+                    Polynomial::Chebyshev
+                } else {
+                    Polynomial::Monomial
                 };
-                let basis = match self.bases.entry(values.len()) {
+                let basis = match self.bases.entry((values.len(), *chebyshev, *order)) {
                     Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
                         let fit = PolynomialFit::new(family, *order, values.len())
@@ -389,31 +534,37 @@ impl FitOperation {
                         entry.insert(fit)
                     }
                 };
-                Ok(basis
+                basis
                     .fit(values, mask, clip_sigma, max_fits)?
-                    .map(|fit| (fit, ModelBasis::Polynomial(family, *order))))
+                    .map(|fit| (fit, ModelBasis::Polynomial(family, *order)))
             }
-            SingleDishBaselineBasis::CubicSpline { pieces } => Ok(spline::fit(
-                values, mask, *pieces, clip_sigma, max_fits,
-            )?
-            .map(|mut fit| {
-                let boundaries = std::mem::take(&mut fit.boundaries);
-                (
-                    fit,
-                    ModelBasis::Spline {
-                        pieces: *pieces,
-                        boundaries,
-                    },
-                )
-            })),
-            SingleDishBaselineBasis::Sinusoid(sinusoid) => Ok(sinusoid
+            SingleDishBaselineBasis::CubicSpline { pieces } => {
+                spline::fit(values, mask, *pieces, clip_sigma, max_fits)?.map(|mut fit| {
+                    let boundaries = std::mem::take(&mut fit.boundaries);
+                    (
+                        fit,
+                        ModelBasis::Spline {
+                            pieces: *pieces,
+                            boundaries,
+                        },
+                    )
+                })
+            }
+            SingleDishBaselineBasis::Sinusoid(sinusoid) => sinusoid
                 .fit(values, mask, clip_sigma, max_fits, has_unflagged_data)?
-                .map(|(fit, waves)| (fit, ModelBasis::Sinusoid(waves)))),
-        }
+                .map(|(fit, waves)| (fit, ModelBasis::Sinusoid(waves))),
+        };
+        Ok(fitted.map(|(result, basis)| SpectrumFit {
+            result,
+            basis,
+            clip_threshold: clip_sigma as f32,
+            clip_iterations: max_fits.saturating_sub(1) as u32,
+            line_finder: stored_line_finder,
+        }))
     }
 }
 
-impl SpectrumBaseline for BaselineWorker {
+impl SpectrumBaseline for BaselineWorker<'_> {
     fn writes_rows(&self) -> bool {
         self.subtract
     }
@@ -451,7 +602,11 @@ impl SpectrumBaseline for BaselineWorker {
         let (fit_mask, fallback) = self.masks.for_window(row.window);
         if fallback && fit_mask.is_some_and(|mask| mask.len() != channels) {
             if let Operation::Fit(fitting) = &self.operation {
-                return Err(fitting.request.basis.family().invalid_fit_argument().into());
+                let error = fitting.request.fixed_family().map_or(
+                    "The input mask does not match the spectrum channel count.",
+                    BaselineFamily::invalid_fit_argument,
+                );
+                return Err(error.into());
             }
             if self.noise.is_some() {
                 return Err("The input mask does not match the spectrum channel count.".into());
@@ -482,25 +637,24 @@ impl SpectrumBaseline for BaselineWorker {
             match &mut self.operation {
                 Operation::Fit(fitting) => {
                     let has_unflagged_data = flags.iter().any(|&flag| !flag);
-                    if let Some(finder) = fitting.request.line_finder
-                        && has_unflagged_data
-                    {
-                        finder.exclude_lines(&values, &mut mask)?;
-                    }
-                    let fit = fitting.fit(&values, &mask, has_unflagged_data)?;
-                    if let Some((
-                        Fit {
-                            coefficients,
-                            residuals,
-                            included,
-                            rms,
-                            ..
-                        },
+                    let fit = fitting.fit(row, receptor, &values, &mut mask, has_unflagged_data)?;
+                    if let Some(SpectrumFit {
+                        result:
+                            Fit {
+                                coefficients,
+                                residuals,
+                                included,
+                                rms,
+                                ..
+                            },
                         basis,
-                    )) = fit
+                        clip_threshold,
+                        clip_iterations,
+                        line_finder,
+                    }) = fit
                     {
                         values = residuals;
-                        if fitting.request.record_models || fitting.diagnostics.enabled() {
+                        if fitting.record_models || fitting.diagnostics.enabled() {
                             let clipped = mask
                                 .iter()
                                 .zip(&included)
@@ -512,13 +666,14 @@ impl SpectrumBaseline for BaselineWorker {
                                 mask: mask_ranges(&included),
                                 rms,
                                 clipped,
-                                clip_threshold: fitting.request.clip_sigma as f32,
-                                clip_iterations: fitting.request.max_fits.saturating_sub(1) as u32,
+                                clip_threshold,
+                                clip_iterations,
+                                line_finder,
                             }));
                         }
                         noise_mask = Some(included);
                     } else {
-                        if fitting.request.record_models || fitting.diagnostics.enabled() {
+                        if fitting.record_models || fitting.diagnostics.enabled() {
                             models.push(None);
                         }
                         flags.fill(true);
@@ -571,13 +726,12 @@ impl SpectrumBaseline for BaselineWorker {
                 models,
                 ..ids
             };
+            let fixed_family = fitting.request.fixed_family();
             if fitting.diagnostics.enabled() {
-                fitting.diagnostics.report(&row)?;
+                fitting.diagnostics.report(&row, fixed_family.is_none())?;
             }
-            if fitting.request.record_models {
-                fitting
-                    .records
-                    .push(row.record(fitting.request.basis.family()));
+            if fitting.record_models {
+                fitting.records.push(row.record(fixed_family));
             }
         }
         Ok(weights.map(|weights| ArrayValue::Float32(Array1::from_vec(weights).into_dyn())))

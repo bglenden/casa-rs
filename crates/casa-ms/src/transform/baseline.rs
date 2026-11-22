@@ -11,6 +11,8 @@ use super::{MsTransformError, MsTransformRequest, scalar_f64, scalar_i32};
 pub struct SpectrumRow {
     /// Physical row index in MAIN.
     pub row: usize,
+    /// Row index within the selected MAIN view, before visibility iteration.
+    pub selection_row: usize,
     /// Original spectral-window identifier.
     pub window: i32,
     /// Scan number.
@@ -66,12 +68,17 @@ pub(super) fn spectrum_rows(
     let feed = read("FEED1")?;
     let times = read("TIME")?;
     let intervals = read("INTERVAL")?;
+    let mut selection_rows = rows.to_vec();
+    selection_rows.sort_unstable();
     rows.iter()
         .zip(windows)
         .enumerate()
         .map(|(index, (&row, window))| {
             Ok(SpectrumRow {
                 row,
+                selection_row: selection_rows
+                    .binary_search(&row)
+                    .expect("selected MAIN row"),
                 window,
                 scan: scalar_i32(scan[index].as_ref(), "SCAN_NUMBER", row)?,
                 antenna: scalar_i32(antenna[index].as_ref(), "ANTENNA1", row)?,

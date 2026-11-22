@@ -16,6 +16,7 @@ pub(super) const INVALID_FIT: &str = "sakura_LSQFitSinusoidFloat() failed -- Inv
 #[derive(Clone)]
 pub(super) enum WaveSelection {
     Explicit(Vec<usize>),
+    Exact(Vec<usize>),
     Interval { first: usize, last: usize },
     ThroughNyquist(usize),
 }
@@ -107,7 +108,7 @@ impl WaveSelection {
 
     fn includes(&self, wave: usize) -> bool {
         match self {
-            Self::Explicit(values) => values.contains(&wave),
+            Self::Explicit(values) | Self::Exact(values) => values.contains(&wave),
             Self::Interval { first, last } => (*first..=*last).contains(&wave),
             Self::ThroughNyquist(first) => wave >= *first,
         }
@@ -227,6 +228,14 @@ impl SingleDishSinusoid {
         ))
     }
 
+    pub(super) fn from_variable_waves(waves: Vec<usize>) -> Self {
+        Self {
+            include: WaveSelection::Exact(waves),
+            exclude: WaveSelection::Explicit(Vec::new()),
+            fft: None,
+        }
+    }
+
     pub(super) fn new(
         include: WaveSelection,
         exclude: WaveSelection,
@@ -262,6 +271,7 @@ impl SingleDishSinusoid {
             _ => None,
         };
         let mut waves = match (&self.include, first_rejected) {
+            (WaveSelection::Exact(waves), _) => waves.clone(),
             (WaveSelection::Explicit(values), _) => values
                 .iter()
                 .copied()
