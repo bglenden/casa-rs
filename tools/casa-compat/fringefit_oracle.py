@@ -168,6 +168,10 @@ def check_controls(root, vis, solvers):
         ('single-channel', dict(spw='0:4')),
         ('finite-intervals', dict(solint='47s')),
         ('parallactic-angle', dict(parang=True)),
+        ('stepped-channels', dict(spw='0:0~31^2', globalsolve=False)),
+        ('noncontiguous-channels', dict(spw='0:0~9;15~24', globalsolve=False)),
+        ('signed-delay-window', dict(delaywindow=[1., 110.], globalsolve=False)),
+        ('signed-rate-window', dict(ratewindow=[2e-13, 1.2e-12], globalsolve=False)),
     )
     for case, options in cases:
         files = {name: solve(root, vis, task, f'{case}-{name}', **options)
@@ -194,6 +198,21 @@ def check_controls(root, vis, solvers):
                 assert not path.exists()
             else:
                 raise AssertionError(f'{backend} accepted {case}')
+
+
+def check_descending_axis(root, vis, solvers):
+    selected = root / 'descending.ms'
+    shutil.copytree(vis, selected)
+    with opened(selected / 'SPECTRAL_WINDOW', True) as table:
+        table.putcell('CHAN_FREQ', 0, table.getcell('CHAN_FREQ', 0)[::-1])
+        table.putcell('CHAN_WIDTH', 0, -table.getcell('CHAN_WIDTH', 0)[::-1])
+    with opened(selected, True) as table:
+        for column in ('DATA', 'MODEL_DATA', 'CORRECTED_DATA', 'FLAG'):
+            table.putcol(column, table.getcol(column)[:, ::-1])
+    results = {key: solve(root, selected, run, f'descending-{key}', globalsolve=False)
+               for key, run in solvers.items()}
+    if 'native' in results:
+        compare_tables(results['casa'], results['native'])
 
 
 def change_reference_fixture(root, vis):
@@ -360,6 +379,7 @@ def main():
             check_pair(root, vis, law, solvers, appliers)
         if args.controls or args.controls_only:
             check_controls(root, vis, solvers)
+            check_descending_axis(root, vis, solvers)
             check_reference_switch(root, vis, solvers)
             check_two_windows(root, vis, law, solvers)
             check_append(root, vis, solvers)
