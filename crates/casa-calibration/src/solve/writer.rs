@@ -54,17 +54,18 @@ pub(crate) fn write_gain_caltable_named(
     )
 }
 
-pub(super) fn write_fringe_caltable(
+pub(super) fn write_new_style_gain_caltable(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     solved: &SolvedGains,
     mode: crate::CalibrationOutputMode,
+    subtype: &'static str,
 ) -> Result<GainSolveReport, GainSolveError> {
     let name = ms.path().map_or_else(
         || "<in-memory>".to_owned(),
         |path| path.display().to_string(),
     );
-    write_gain_table(ms, name, request, solved, mode, "Fringe Jones")
+    write_gain_table(ms, name, request, solved, mode, subtype)
 }
 
 fn write_gain_table(
@@ -81,6 +82,7 @@ fn write_gain_table(
         return Ok(gain_report(request, solved));
     }
     let delay = request.gain_type.is_delay();
+    let legacy_gain_metadata = !delay && subtype != "Accor Jones";
     let (parameter_column, parameter_type) = if delay {
         (COL_FPARAM, casa_types::PrimitiveType::Float32)
     } else {
@@ -96,7 +98,7 @@ fn write_gain_table(
         ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
         ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
     ];
-    if !delay {
+    if legacy_gain_metadata {
         columns.extend([
             ColumnSchema::scalar(COL_ARRAY_ID, casa_types::PrimitiveType::Int32),
             ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
@@ -119,7 +121,7 @@ fn write_gain_table(
             parameter_type: Some(if delay { "Float" } else { "Complex" }),
             measurement_set_name,
             include_polarization_basis: true,
-            time_extra_precision_column: (!delay).then_some(COL_TIME_EXTRA_PREC),
+            time_extra_precision_column: legacy_gain_metadata.then_some(COL_TIME_EXTRA_PREC),
         },
         mode,
     )?;
@@ -194,7 +196,7 @@ fn write_gain_table(
                 )),
             ),
         ];
-        if !delay {
+        if legacy_gain_metadata {
             fields.push(RecordField::new(
                 COL_ARRAY_ID,
                 Value::Scalar(ScalarValue::Int32(0)),

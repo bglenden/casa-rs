@@ -43,6 +43,7 @@ pub(super) fn task_request(
         "applycal" => CalibrationTaskRequest::ExecuteApply(applycal(task)?),
         "gaincal" => CalibrationTaskRequest::SolveGain(gaincal(task)?),
         "fringefit" => CalibrationTaskRequest::SolveGain(fringefit(task)?),
+        "accor" => CalibrationTaskRequest::SolveAccor(accor(task)?),
         "bandpass" => CalibrationTaskRequest::SolveBandpass(bandpass(task)?),
         "fluxscale" => CalibrationTaskRequest::FluxScale(fluxscale(task)?),
         "gencal" => CalibrationTaskRequest::Gencal(gencal(task)?),
@@ -211,6 +212,33 @@ fn fringefit(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFail
         normalization_type: GainNormalization::Mean,
         robustness: Default::default(),
         min_snr: task.number("minsnr")? as f32,
+        min_baselines_per_antenna: 0,
+        smodel: [1., 0., 0., 0.],
+    })
+}
+
+fn accor(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
+    Ok(SolveGainTaskRequest {
+        measurement_set: task.path("vis")?,
+        selection: selection(task)?,
+        output_table: PathBuf::from(task.required_text("caltable")?),
+        append: task.flag("append")?,
+        gain_type: GainType::G,
+        spline_controls: None,
+        fringe_controls: None,
+        solve_mode: GainSolveMode::Amplitude,
+        solve_interval: solint(task)?,
+        preaverage_seconds: 0.,
+        correlation_dependent_flags: task.flag("corrdepflags")?,
+        combine: combine(task)?,
+        refant: RefAntSelector::Unspecified,
+        prior_calibration_tables: chain(task, Chain::Solve)?,
+        parang: false,
+        model_source: GainSolveModelSource::FromMeasurementSet,
+        normalize_average_amplitude: false,
+        normalization_type: GainNormalization::Mean,
+        robustness: Default::default(),
+        min_snr: 0.,
         min_baselines_per_antenna: 0,
         smodel: [1., 0., 0., 0.],
     })

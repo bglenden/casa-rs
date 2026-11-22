@@ -54,7 +54,7 @@ pub(super) fn solve(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            retain_fringe_buffers: false,
+            input_rows: Default::default(),
             gain_type: request.gain_type,
             model_source: request.model_source,
             point_stokes: if request.model_source == GainSolveModelSource::PointSource {

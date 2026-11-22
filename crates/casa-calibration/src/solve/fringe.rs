@@ -23,7 +23,7 @@ use super::grouping::{
     build_solve_groups, correlation_types_for_ddid, selected_channels,
 };
 use super::kernel::SolutionRow;
-use super::writer::{combined_window_frequency, write_fringe_caltable};
+use super::writer::{combined_window_frequency, write_new_style_gain_caltable};
 use super::{
     GainSolveError, GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType, SolvedGains,
 };
@@ -88,7 +88,7 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            retain_fringe_buffers: true,
+            input_rows: super::grouping::SolveInputRows::Fringe,
             gain_type: GainType::K,
             model_source: request.model_source,
             point_stokes: if request.model_source == GainSolveModelSource::PointSource {
@@ -158,7 +158,7 @@ pub(crate) fn solve(
         references,
     )?;
     drop(fitting);
-    write_fringe_caltable(ms, request, &solved, mode)
+    write_new_style_gain_caltable(ms, request, &solved, mode, "Fringe Jones")
 }
 
 struct Window {

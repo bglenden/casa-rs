@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Normalize sampler amplitudes from antenna autocorrelation spectra.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use casa_ms::MeasurementSet;
+use casa_types::Complex32;
+
+use super::grouping::{
+    PriorCalibrationMode, SolveAccumulator, SolveGroupOptions, SolveInputRows, build_solve_groups,
+    correlation_types_for_ddid,
+};
+use super::kernel::SolutionRow;
+use super::writer::write_new_style_gain_caltable;
+use super::{
+    GainSolveError, GainSolveReport, GainSolveRequest, GainType, RefAntSelector, SolvedGains,
+};
+use crate::{CalibrationOutputMode, SelectedData, session::prepare_calibration_solve};
+
+pub(crate) fn solve(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    mode: CalibrationOutputMode,
+) -> Result<GainSolveReport, GainSolveError> {
+    super::validate_solve_interval(request.solve_interval)?;
+    let mut selection = request.selection.clone();
+    selection.msselect = Some(match selection.msselect {
+        Some(expression) => format!("({expression}) && ANTENNA1==ANTENNA2"),
+        None => "ANTENNA1==ANTENNA2".into(),
+    });
+    let input = crate::timing::Phase::start("accor_select_read");
+    let context = prepare_calibration_solve(
+        ms,
+        &selection,
+        &RefAntSelector::Unspecified,
+        &request.prior_calibration_tables,
+        request.parang,
+        true,
+        PriorCalibrationMode::Data,
+    )?;
+    let groups = build_solve_groups(
+        ms,
+        &context.rows,
+        context.preapplied_rows.as_ref(),
+        &BTreeMap::new(),
+        SolveGroupOptions {
+            input_rows: SolveInputRows::Autocorrelations,
+            gain_type: GainType::G,
+            model_source: request.model_source,
+            point_stokes: request.smodel,
+            rotate_model: false,
+            solve_interval: request.solve_interval,
+            combine: request.combine,
+            preaverage_max_span: None,
+            correlation_dependent_flags: request.correlation_dependent_flags,
+            robust_seed: false,
+            channelized: false,
+            polynomial_bandpass: false,
+        },
+    )?;
+    drop(input);
+    let fitting = crate::timing::Phase::start("accor_fit");
+    let mut solved = SolvedGains {
+        rows: Vec::new(),
+        refant_id: -1,
+        attempted_spw_ids: BTreeSet::new(),
+        channel_selections: context
+            .rows
+            .iter()
+            .filter_map(|row| {
+                row.channel_selection
+                    .as_ref()
+                    .map(|channels| (row.data_spw_id, channels.clone()))
+            })
+            .collect(),
+        selected_data: SelectedData::of_autocorrelations(ms, &context.rows)?,
+        solve_stats: Default::default(),
+    };
+    for group in groups.into_values() {
+        let rows = solve_group(ms, &group, &context.available_antennas)?;
+        if !rows.is_empty() {
+            solved.attempted_spw_ids.insert(group.spw_id);
+            solved.rows.extend(rows);
+        }
+    }
+    drop(fitting);
+    let request = GainSolveRequest {
+        gain_type: GainType::G,
+        ..request.clone()
+    };
+    write_new_style_gain_caltable(ms, &request, &solved, mode, "Accor Jones")
+}
+
+fn solve_group(
+    ms: &MeasurementSet,
+    group: &SolveAccumulator,
+    antennas: &BTreeSet<i32>,
+) -> Result<Vec<SolutionRow>, GainSolveError> {
+    // CASA channel- and time-averages the samples, then uses the first
+    // buffer when more than one field or spectral window is combined.
+    let Some(first) = group
+        .delay_spectra()
+        .filter(|spectrum| spectrum.parallel_hand)
+        .map(|spectrum| (spectrum.buffer.1, spectrum.buffer.0, spectrum.buffer.2))
+        .min()
+    else {
+        return Ok(Vec::new());
+    };
+    let single_hand = correlation_types_for_ddid(ms, first.1)?.len() == 1;
+    let origin = group.min_time;
+    let (offset, total) = group
+        .delay_spectra()
+        .fold((0., 0.), |(offset, total), spectrum| {
+            let weight = spectrum
+                .channels()
+                .map(|(_, weight)| f64::from(weight))
+                .sum::<f64>();
+            (
+                offset + weight * (spectrum.time_seconds - origin),
+                total + weight,
+            )
+        });
+    if total <= 0. {
+        return Ok(Vec::new());
+    }
+    let time = origin + offset / total;
+    let mut gains = BTreeMap::<i32, [Option<f32>; 2]>::new();
+    for spectrum in group.delay_spectra().filter(|spectrum| {
+        spectrum.parallel_hand && (spectrum.buffer.1, spectrum.buffer.0, spectrum.buffer.2) == first
+    }) {
+        let Some((sum, weight)) = spectrum.channels().next() else {
+            continue;
+        };
+        if weight > 0. {
+            let amplitude = (sum / weight).norm();
+            if amplitude.is_finite() && amplitude > 0. {
+                let hand = if single_hand { 0 } else { spectrum.receptor };
+                gains.entry(spectrum.antennas.0).or_default()[hand] = Some(amplitude.sqrt());
+            }
+        }
+    }
+    Ok(antennas
+        .iter()
+        .map(|&antenna| {
+            let [first, second] = gains.get(&antenna).copied().unwrap_or_default();
+            let values = [
+                first.unwrap_or(1.),
+                if single_hand {
+                    0.
+                } else {
+                    second.unwrap_or(1.)
+                },
+            ];
+            SolutionRow {
+                time_seconds: time,
+                field_id: group.field_id,
+                spw_id: group.spw_id,
+                antenna_id: antenna,
+                scan_number: group.scan_number(),
+                observation_id: group.observation_id,
+                refant_id: -1,
+                gains: values.map(|value| Complex32::new(value, 0.)).to_vec(),
+                flags: vec![
+                    first.is_none(),
+                    if single_hand {
+                        first.is_none()
+                    } else {
+                        second.is_none()
+                    },
+                ],
+                param_errors: vec![0.; 2],
+                snrs: vec![0.; 2],
+                weights: Vec::new(),
+            }
+        })
+        .collect())
+}

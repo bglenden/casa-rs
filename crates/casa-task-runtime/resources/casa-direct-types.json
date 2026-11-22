@@ -1,4 +1,23 @@
 {
+  "accor": {
+    "caltable": "cStr",
+    "field": "cStr",
+    "spw": "cStr",
+    "intent": "cStr",
+    "selectdata": "cBool",
+    "timerange": "cStr",
+    "antenna": "cStr",
+    "scan": "cStr",
+    "msselect": "cStr",
+    "combine": "cStr",
+    "corrdepflags": "cBool",
+    "append": "cBool",
+    "docallib": "cBool",
+    "callib": "cStr",
+    "gaintable": "cStrVec",
+    "gainfield": "cStrVec",
+    "interp": "cStrVec"
+  },
   "applycal": {
     "field": "cStr",
     "spw": "cStr",

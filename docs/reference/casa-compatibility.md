@@ -16,6 +16,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 
 | Surface | CASA task | CASA's signature | CASA parameters | Shared | CASA's casa-rs lacks | Default only | casa-rs's CASA lacks | Defaults differ |
 |---|---|---|---:|---:|---:|---:|---:|---:|
+| accor | accor | yes | 21 | 21 | 0 | 0 | 3 | 0 |
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
 | calstat | calstat | yes | 3 | 3 | 0 | 0 | 0 | 0 |
@@ -74,6 +75,17 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | wvrgcal | wvrgcal | yes | 24 | 24 | 0 | 0 | 0 | 0 |
 
 ## Tasks
+
+### accor
+
+- CASA source: `casatasks/accor.py`, 21 parameters
+- Implementation: `casatasks/private/task_accor.py`, `accor` (line 8): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
+- Shared parameters: 21, in CASA's order: yes
+- Defaults that differ: none
 
 ### applycal
 

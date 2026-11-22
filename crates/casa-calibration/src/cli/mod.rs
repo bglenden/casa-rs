@@ -166,7 +166,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         return Err(TaskFailure::validation(format!("fluxtable {} exists. Please specify a different name. Or set append=True, to append the results to the table.",scale.output_table.display())).at("fluxtable"));
     }
     let applied = match &request {
-        CalibrationTaskRequest::SolveGain(solve) => solve.prior_calibration_tables.clone(),
+        CalibrationTaskRequest::SolveGain(solve) | CalibrationTaskRequest::SolveAccor(solve) => {
+            solve.prior_calibration_tables.clone()
+        }
         CalibrationTaskRequest::SolveBandpass(solve) => solve.prior_calibration_tables.clone(),
         _ => Vec::new(),
     };
@@ -352,7 +354,7 @@ fn scientific_paths(
     request: &CalibrationTaskRequest,
 ) -> Result<Vec<std::path::PathBuf>, TaskFailure> {
     let (mut paths, chain) = match request {
-        CalibrationTaskRequest::SolveGain(r) => (
+        CalibrationTaskRequest::SolveGain(r) | CalibrationTaskRequest::SolveAccor(r) => (
             vec![r.measurement_set.clone(), r.output_table.clone()],
             r.prior_calibration_tables.as_slice(),
         ),

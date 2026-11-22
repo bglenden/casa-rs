@@ -38,6 +38,7 @@ use samples::{
     SolveAccumulationKey, SolveEdgeAccumulation, SolveRowInputs, SolveRowLayout, SolveRowLayouts,
     two_dimensional,
 };
+pub(crate) use time::SolveInputRows;
 use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
 pub(crate) use visibility_models::VisibilityModels;
 pub(super) use weights::VisibilityBuffer;
@@ -146,13 +147,16 @@ pub(crate) fn build_solve_groups(
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
-    let seed_combined_g = options.gain_type == GainType::G
+    let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
+    let seed_combined_g = !only_autocorrelations
+        && options.gain_type == GainType::G
         && !options.channelized
         && !options.robust_seed
         && (options.combine.spectral_windows
             || options.combine.fields
             || options.combine.observations);
-    let needs_first_buffer = matches!(options.gain_type, GainType::T | GainType::KCross)
+    let needs_first_buffer = only_autocorrelations
+        || matches!(options.gain_type, GainType::T | GainType::KCross)
         || options.robust_seed
         || seed_combined_g;
     let legacy_spline = options.gain_type == GainType::GSpline;
@@ -176,7 +180,9 @@ pub(crate) fn build_solve_groups(
         BTreeMap::new()
     };
     models.bind_buffers(ms, &ordered, options.combine)?;
-    if include_autocorrelations && !legacy_spline {
+    if only_autocorrelations {
+        ordered.retain(|(row, _, _)| row.antenna1 == row.antenna2);
+    } else if include_autocorrelations && !legacy_spline {
         ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
     }
     models.phase_times =
@@ -477,8 +483,7 @@ pub(crate) fn correlation_types_for_ddid(
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SolveGroupOptions {
-    /// Preserve each input visibility buffer's axes for fringe FFT gridding.
-    pub(crate) retain_fringe_buffers: bool,
+    pub(crate) input_rows: SolveInputRows,
     pub(crate) gain_type: GainType,
     pub(crate) model_source: GainSolveModelSource,
     pub(crate) point_stokes: [f32; 4],
@@ -974,7 +979,7 @@ impl SolveAccumulator {
             self.receptor_accumulations
                 .resize_with(graph_count, HashMap::new);
         }
-        self.observe_metadata(row, options.retain_fringe_buffers);
+        self.observe_metadata(row, options.input_rows == SolveInputRows::Fringe);
         let legacy_spline = options.gain_type == GainType::GSpline;
         let shared_flags = (legacy_spline || !options.correlation_dependent_flags)
             .then(|| samples::channel_flags(samples));
@@ -1129,24 +1134,6 @@ impl SolveAccumulator {
                 .observe(time, row_weight);
         }
         Ok(())
-    }
-
-    fn observe_metadata(&mut self, row: &SolveSampleRow, retain_fringe_buffers: bool) {
-        if retain_fringe_buffers {
-            self.observe_fringe_buffer(row);
-        }
-        self.min_time = self.min_time.min(row.time_seconds);
-        self.max_time = self.max_time.max(row.time_seconds);
-        if self.unique_time_bits.insert(row.time_seconds.to_bits()) {
-            self.unique_time_sum += row.time_seconds;
-            self.unique_time_count += 1;
-        }
-        self.total_interval += row.interval_seconds;
-        self.sample_rows += 1;
-        self.field_ids.insert(row.field_id);
-        self.scan_numbers.insert(row.scan_number);
-        self.antenna_ids.insert(row.antenna1);
-        self.antenna_ids.insert(row.antenna2);
     }
 
     /// Collapse each baseline's samples per correlation and solution channel

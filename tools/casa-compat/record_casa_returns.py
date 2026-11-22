@@ -121,7 +121,18 @@ def ms_cases(root: Path) -> dict[str, Callable[[], Any]]:
     }
 
 
-def make_cal_ms(path: str, *, channels: int = 8, scan_seconds: int = 60, integration_seconds: int = 10, stokes: str = 'XX YY', telescope: str = 'ALMA', frequency: str = '100GHz', antenna_names: list[str] | None = None) -> None:
+def make_cal_ms(
+    path: str,
+    *,
+    channels: int = 8,
+    scan_seconds: int = 60,
+    integration_seconds: int = 10,
+    stokes: str = 'XX YY',
+    telescope: str = 'ALMA',
+    frequency: str = '100GHz',
+    antenna_names: list[str] | None = None,
+    autocorrelation_weight: float = 0.,
+) -> None:
     """A MeasurementSet of five antennas, two fields (FLUX, then PHASE) and
     one 8-channel window in XX and YY: a 60 s scan of each, 10 s
     integrations, predicted from point sources of 2 and 1 Jy with no
@@ -156,7 +167,7 @@ def make_cal_ms(path: str, *, channels: int = 8, scan_seconds: int = 60, integra
     sm.setfield(sourcename="FLUX", sourcedirection=me.direction("J2000", "0h0m0s", "-30d0m0s"))
     sm.setfield(sourcename="PHASE", sourcedirection=me.direction("J2000", "1h0m0s", "-30d0m0s"))
     sm.setlimits(shadowlimit=0.001, elevationlimit="8.0deg")
-    sm.setauto(autocorrwt=0.0)
+    sm.setauto(autocorrwt=autocorrelation_weight)
     sm.settimes(integrationtime=f"{integration_seconds}s", usehourangle=True, referencetime=me.epoch("UTC", "2020/01/01/00:00:00"))
     sm.observe("FLUX", "SPW0", starttime="0s", stoptime=f"{scan_seconds}s")
     sm.observe("PHASE", "SPW0", starttime=f"{scan_seconds}s", stoptime=f"{2 * scan_seconds}s")
