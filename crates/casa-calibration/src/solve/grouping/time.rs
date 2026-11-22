@@ -33,6 +33,8 @@ pub(crate) enum SolveInputRows {
     /// Use cross-correlations after reading solver metadata.
     #[default]
     Interferometry,
+    /// Retain autocorrelations as fixed residual terms in direct G solves.
+    GainTool,
     /// Also retain the input buffer axes for a fringe FFT.
     Fringe,
     /// Keep the individual antennas' autocorrelations for normalization.
@@ -145,8 +147,10 @@ impl SolveAccumulator {
         self.sample_rows += 1;
         self.field_ids.insert(row.field_id);
         self.scan_numbers.insert(row.scan_number);
-        self.antenna_ids.insert(row.antenna1);
-        self.antenna_ids.insert(row.antenna2);
+        if !self.fixed_autocorrelations || row.antenna1 != row.antenna2 {
+            self.antenna_ids.insert(row.antenna1);
+            self.antenna_ids.insert(row.antenna2);
+        }
     }
 
     pub(super) fn observe_fringe_buffer(&mut self, row: &super::SolveSampleRow) {

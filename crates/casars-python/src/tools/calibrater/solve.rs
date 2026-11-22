@@ -9,7 +9,7 @@ use casa_calibration::{
     GainSolveMode, GainSolveModelSource, GainSolveRequest, GainSolveRobustness, GainType,
     RefAntSelector,
 };
-use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use super::arguments::{listing_selector, number, strict_bool, text};
@@ -51,16 +51,6 @@ impl StandardSolver {
             smodel: [1., 0., 0., 0.],
         }
     }
-}
-
-fn solve_error(error: casa_calibration::CalibraterLifecycleError) -> PyErr {
-    use casa_calibration::{CalibraterLifecycleError, CalibrationError, GainSolveError};
-    if let CalibraterLifecycleError::Solve(CalibrationError::Gain(ref source)) = error
-        && matches!(**source, GainSolveError::DirectAutocorrelations)
-    {
-        return PyNotImplementedError::new_err(error.to_string());
-    }
-    PyRuntimeError::new_err("Error in Calibrater::solve.")
 }
 
 fn robust_mode(value: &str) -> &'static str {
@@ -356,7 +346,9 @@ impl super::PyCalibrater {
             if state.dataset_path().is_none() {
                 return Ok(None);
             }
-            state.solve_tool().map_err(solve_error)?;
+            state
+                .solve_tool()
+                .map_err(|_| PyRuntimeError::new_err("Error in Calibrater::solve."))?;
             Ok(Some(true))
         })?;
         if let Some(solved) = result {

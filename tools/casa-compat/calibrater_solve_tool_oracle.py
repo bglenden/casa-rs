@@ -35,7 +35,7 @@ CASES = {
 }
 
 
-def compare_solutions(paths):
+def compare_solutions(paths, *, formal_tolerance=1e-3):
     reference, actual = paths['casa'], paths['native']
     with opened(reference) as left, opened(actual) as right:
         assert left.info() == right.info()
@@ -57,7 +57,8 @@ def compare_solutions(paths):
             candidate = right.getcol(key)[..., actual_order]
             if np.count_nonzero(expected[~flag]):
                 error = nrms(candidate[~flag], expected[~flag])
-                assert error < 1e-3, (actual.name, key, error)
+                tolerance = 1e-3 if key == column else formal_tolerance
+                assert error < tolerance, (actual.name, key, error)
             else:
                 np.testing.assert_allclose(candidate[~flag], expected[~flag], atol=2e-6, rtol=0.)
 
@@ -178,23 +179,65 @@ def solve_with_registered_prior(work, vis, engines):
     print('direct solve reused the selected model and prior, then appended the second field', flush=True)
 
 
-def selected_autocorrelations_are_refused(work, tool):
-    vis = work/'autocorrelations.ms'
+def solve_with_autocorrelations(work, engines):
+    fixture = work/'autocorrelation-input'
+    fixture.mkdir()
+    vis = fixture/'source.ms'
     make_cal_ms(str(vis), autocorrelation_weight=1.)
+    vis = amplitude_data(fixture, vis)
     with opened(vis) as table:
-        assert np.any(table.getcol('ANTENNA1') == table.getcol('ANTENNA2'))
-    assert tool.open(str(vis))
-    assert tool.setptmodel([1, 0, 0, 0])
-    product = work/'autocorrelations.cal'
-    assert tool.setsolve(type='G', table=str(product), refant='A0', minsnr=20.)
-    assert result(tool.solve) == (False, ('NotImplementedError',
-        'direct calibrater G solving with selected autocorrelations is pending in #1528'))
-    assert not product.exists()
-    assert tool.selectvis(msselect='ANTENNA1!=ANTENNA2')
-    assert tool.setsolve(type='G', table=str(product), refant='A0') and tool.solve()
-    assert product.exists()
-    assert tool.close()
-    print('direct G refused selected autocorrelations and completed the explicit cross selection', flush=True)
+        auto = table.getcol('ANTENNA1') == table.getcol('ANTENNA2')
+        assert auto.any() and not auto.all()
+    thresholds = [('', 0.), ('R', 0.), ('L1', 0.), ('L1R', 0.)]
+    for mode, minimum in thresholds:
+        products, counts, stats = {}, {}, {}
+        for engine, tool in engines.items():
+            product = work/f'autocorr-{mode}-{minimum:g}-{engine}.cal'
+            products[engine] = product
+            assert tool.open(str(vis), addcorr=False, addmodel=False)
+            assert tool.selectvis(field='FLUX', spw='0:1~6')
+            assert tool.setptmodel([1, 0, 0, 0])
+            assert tool.setsolve(type='G', table=str(product), refant='A0',
+                                 minblperant=3, minsnr=minimum, solmode=mode)
+            assert tool.solve()
+            counts[engine] = tool.activityrec()
+            stats[engine] = tool.returndict()['solvestats']
+            assert tool.close()
+        if not mode and minimum == 0.:
+            with opened(products['casa']) as table:
+                assert not table.getcol('FLAG').any()
+                cutoff = float(table.getcol('SNR').max()) * 1.25
+            thresholds.append(('', cutoff))
+        if 'native' in engines:
+            same_record(counts['native'], counts['casa'])
+            same_record(stats['native'], stats['casa'])
+            tolerance = 5e-3 if mode else 1e-3
+            compare_solutions(products, formal_tolerance=tolerance)
+            with opened(products['casa']) as reference, opened(products['native']) as actual:
+                if minimum > 0.:
+                    assert reference.getcol('FLAG').all()
+                for column in ('PARAMERR', 'SNR'):
+                    error = nrms(actual.getcol(column), reference.getcol(column))
+                    assert error < tolerance, (mode, minimum, column, error)
+            compare_readers(products)
+        print('direct G matched selected autocorrelation residuals', mode, minimum, flush=True)
+
+    products, counts, stats = {}, {}, {}
+    for engine, tool in engines.items():
+        product = work/f'autocorr-only-{engine}.cal'
+        products[engine] = product
+        assert tool.open(str(vis), addcorr=False, addmodel=False)
+        assert tool.selectvis(field='FLUX', msselect='ANTENNA1==ANTENNA2')
+        assert tool.setptmodel([1, 0, 0, 0])
+        assert tool.setsolve(type='G', table=str(product), refant='A0', minblperant=3)
+        assert tool.solve()
+        counts[engine] = tool.activityrec()
+        stats[engine] = tool.returndict()['solvestats']
+        assert tool.close() and not product.exists()
+    if 'native' in engines:
+        same_record(counts['native'], counts['casa'])
+        same_record(stats['native'], stats['casa'])
+    print('direct G reports an attempt without a caltable for autos alone', flush=True)
 
 
 def main():
@@ -238,8 +281,8 @@ def main():
         delay_data(cross_vis, 'KCROSS')
         engines = {name: factory() for name, factory in factories.items()}
         solve_case(work, cross_vis, 'cross-delay', False, engines, {'type': 'KCROSS'}, spw='0')
-        if 'native' in factories:
-            selected_autocorrelations_are_refused(work, factories['native']())
+        engines = {name: factory() for name, factory in factories.items()}
+        solve_with_autocorrelations(work, engines)
 
 
 if __name__ == '__main__':

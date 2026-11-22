@@ -155,6 +155,8 @@ pub(crate) struct IntervalStages<'a> {
     pub(crate) spw_id: i32,
     /// The antennas its selected cross-correlation rows reach.
     pub(crate) antennas: &'a BTreeSet<i32>,
+    /// The interval contains selected cross-correlations.
+    pub(crate) expected_window: bool,
     /// For each polarization, the antennas with unflagged data.
     pub(crate) with_data: Vec<BTreeSet<i32>>,
     /// The antennas that keep `minblperant` baselines.
@@ -172,9 +174,14 @@ impl<'a> IntervalStages<'a> {
                 group
                     .channel_graphs
                     .iter()
-                    .flat_map(|graphs| graphs[polarization].stats.keys())
-                    .filter(|(first, second)| first != second)
-                    .map(|&(first, _)| first)
+                    .flat_map(|graphs| {
+                        let graph = &graphs[polarization];
+                        graph
+                            .stats
+                            .keys()
+                            .filter_map(|&(first, second)| (first != second).then_some(first))
+                            .chain(graph.fixed_residual_antennas())
+                    })
                     .collect()
             })
             .collect();
@@ -186,6 +193,7 @@ impl<'a> IntervalStages<'a> {
         Self {
             spw_id: group.spw_id,
             antennas: &group.antenna_ids,
+            expected_window: group.expects_cross_correlation(),
             with_data,
             constrained,
         }
@@ -259,7 +267,7 @@ impl SolveStatsBuilder {
         let passed = !stages.constrained.is_empty();
         for polarization in 0..polarizations {
             let with_data = stages.with_data.get(polarization);
-            window.expected[polarization] += 1;
+            window.expected[polarization] += u64::from(stages.expected_window);
             window.data_unflagged[polarization] +=
                 u64::from(with_data.is_some_and(|antennas| !antennas.is_empty()));
             window.above_minblperant[polarization] += u64::from(passed);
@@ -271,6 +279,12 @@ impl SolveStatsBuilder {
                     u64::from(with_data.is_some_and(|antennas| antennas.contains(&antenna_id)));
                 counts.above_minblperant[polarization] +=
                     u64::from(stages.constrained.contains(&antenna_id));
+            }
+            if let Some(with_data) = with_data {
+                for &antenna_id in with_data.difference(stages.antennas) {
+                    let (counts, _) = antennas.entry(antenna_id).or_insert_with(blank);
+                    counts.data_unflagged[polarization] += 1;
+                }
             }
         }
     }
@@ -364,6 +378,7 @@ mod tests {
         // polarization and too few baselines; antenna 1 fails minsnr.
         stats.interval(&IntervalStages {
             spw_id: 0,
+            expected_window: true,
             antennas: &reached,
             with_data: vec![ids(&[0, 1, 2]), ids(&[0, 1])],
             constrained: ids(&[0, 1]),
@@ -385,6 +400,7 @@ mod tests {
         // An interval with no unflagged data.
         stats.interval(&IntervalStages {
             spw_id: 0,
+            expected_window: true,
             antennas: &reached,
             with_data: vec![BTreeSet::new(), BTreeSet::new()],
             constrained: BTreeSet::new(),

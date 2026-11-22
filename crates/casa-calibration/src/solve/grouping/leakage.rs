@@ -549,6 +549,7 @@ impl LeakageInputs<'_> {
             stats.interval(&IntervalStages {
                 spw_id: spectral_window,
                 antennas: &expected,
+                expected_window: true,
                 with_data: vec![data.antennas.clone(), data.antennas],
                 constrained: BTreeSet::new(),
             });
