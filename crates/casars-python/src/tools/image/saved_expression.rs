@@ -1,22 +1,29 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use casa_images::analysis::{ImageToolExpressionInputs, ImageToolPixelExpression};
-use casa_images::expr_file::{ToolExpressionManifest, is_image_expr, read_tool_manifest};
-use casa_images::{ImageExpression, TempImage, image_expr::ImageExprValue};
-use casa_types::{Complex32, RecordValue};
+use casa_images::expr_file::{
+    ToolExpressionManifest, encode_tool_manifest, is_image_expr, read_tool_manifest,
+};
+use casa_images::{ImageExpression, ImagePixelType, TempImage, image_expr::ImageExprValue};
+use casa_types::{Complex32, PrimitiveType, RecordValue};
 use pyo3::prelude::*;
 
 use super::attachment::AttachedImage;
-use super::handle::{ImageHandle, Storage, raised};
+use super::handle::{ImageHandle, Storage, raised, same_file_identity, same_file_snapshot};
 
 pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
+    let initial = PendingExpression::read(root, &directory)?;
+    let captured = SavedExpressionDirectory::open(path, &initial)?;
     let mut graph = CapturedGraph::default();
-    let (pixels, single_precision) = graph.compile(root, &directory)?;
+    let (pixels, single_precision) = graph.compile(initial, &directory)?;
+    captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
             ImageHandle::Float(expression_storage(
@@ -42,9 +49,112 @@ pub(super) fn open(path: &Path) -> PyResult<AttachedImage> {
         }
         ImageToolPixelExpression::Boolean(_) => unreachable!("saved image geometry is numeric"),
     };
-    let mut attachment = AttachedImage::temporary(image);
+    let mut attachment = AttachedImage::with_saved_expression(image, captured);
     attachment.retain_expression_inputs(graph.retained, graph.paths);
     Ok(attachment)
+}
+
+pub(super) struct SavedExpressionDirectory {
+    path: PathBuf,
+    identity: fs::Metadata,
+    expression: String,
+    #[cfg(unix)]
+    handle: fs::File,
+}
+
+impl SavedExpressionDirectory {
+    fn open(name: &Path, initial: &PendingExpression) -> PyResult<Self> {
+        let path = initial.path.clone();
+        #[cfg(unix)]
+        let handle = casa_tables::publication::open_directory_identity(&path).map_err(raised)?;
+        #[cfg(unix)]
+        let identity = handle.metadata().map_err(raised)?;
+        #[cfg(not(unix))]
+        let identity = path.metadata().map_err(raised)?;
+        let directory = Self {
+            path,
+            identity,
+            expression: initial.manifest.expression.clone(),
+            #[cfg(unix)]
+            handle,
+        };
+        directory.check_name(name)?;
+        Ok(directory)
+    }
+
+    fn check_name(&self, name: &Path) -> PyResult<()> {
+        if name.canonicalize().is_ok_and(|path| path == self.path)
+            && self
+                .path
+                .symlink_metadata()
+                .is_ok_and(|current| same_file_identity(&self.identity, &current))
+        {
+            return Ok(());
+        }
+        Err(raised(format!(
+            "Saved image expression at {} has changed",
+            name.display()
+        )))
+    }
+
+    pub(super) fn write_metadata(
+        &self,
+        name: &Path,
+        pixel_type: ImagePixelType,
+        record: &RecordValue,
+    ) -> PyResult<()> {
+        let pixel_type = match pixel_type {
+            ImagePixelType::Float32 => PrimitiveType::Float32,
+            ImagePixelType::Float64 => PrimitiveType::Float64,
+            ImagePixelType::Complex32 => PrimitiveType::Complex32,
+            ImagePixelType::Complex64 => PrimitiveType::Complex64,
+        };
+        let content = encode_tool_manifest(&self.expression, pixel_type, record).map_err(raised)?;
+        self.check_name(name)?;
+        let target = self.path.join("imageexpr.json");
+        let before = target.symlink_metadata().map_err(raised)?;
+        if !before.is_file() {
+            return Err(raised(
+                "Saved image expression manifest must be a regular file",
+            ));
+        }
+        casa_tables::publication::check_write_access(&target).map_err(raised)?;
+        if read_tool_manifest(&self.path).map_err(raised)?.expression != self.expression {
+            return Err(raised("Saved image expression manifest has changed"));
+        }
+
+        let mut staged = tempfile::Builder::new()
+            .prefix(".imageexpr-")
+            .tempfile_in(&self.path)
+            .map_err(raised)?;
+        staged.write_all(&content).map_err(raised)?;
+        staged
+            .as_file()
+            .set_permissions(before.permissions())
+            .map_err(raised)?;
+        staged.as_file().sync_all().map_err(raised)?;
+        self.check_name(name)?;
+        if !target
+            .symlink_metadata()
+            .is_ok_and(|current| same_file_snapshot(&before, &current))
+        {
+            return Err(raised("Saved image expression manifest has changed"));
+        }
+
+        #[cfg(unix)]
+        casa_tables::publication::replace_file_in_directory(
+            &self.handle,
+            staged
+                .path()
+                .file_name()
+                .expect("temporary file has a name"),
+            std::ffi::OsStr::new("imageexpr.json"),
+        )
+        .map_err(raised)?;
+        #[cfg(not(unix))]
+        staged.persist(&target).map_err(raised)?;
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -57,11 +167,11 @@ struct CapturedGraph {
 impl CapturedGraph {
     fn compile(
         &mut self,
-        root: PathBuf,
+        root: PendingExpression,
         directory: &Path,
     ) -> PyResult<(ImageToolPixelExpression, bool)> {
-        let mut pending = vec![PendingExpression::read(root.clone(), directory)?];
-        let mut active = HashSet::from([root]);
+        let mut active = HashSet::from([root.path.clone()]);
+        let mut pending = vec![root];
         let mut compiled = HashMap::new();
         while let Some(frame) = pending.last_mut() {
             if let Some(path) = frame.next_path() {

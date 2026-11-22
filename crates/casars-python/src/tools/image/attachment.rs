@@ -23,11 +23,13 @@ use super::beam_view::BeamView;
 use super::handle::{ImageHandle, raised};
 use super::miriad_rename::MiriadDirectory;
 use super::native_rename::{check_path_relationship, move_native_table, native_destination};
+use super::saved_expression::SavedExpressionDirectory;
 
 pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
     use_lock: Option<Arc<TableUseLock>>,
     miriad_directory: Option<MiriadDirectory>,
+    saved_expression_directory: Option<SavedExpressionDirectory>,
     shareable: bool,
     coordinates_replaced: AtomicBool,
 }
@@ -72,16 +74,28 @@ struct LiveCoordinates {
 
 impl AttachedImage {
     pub(super) fn temporary(image: ImageHandle) -> Self {
-        Self::without_table(image, None)
+        Self::without_table(image, None, None)
     }
 
-    fn without_table(image: ImageHandle, miriad_directory: Option<MiriadDirectory>) -> Self {
+    pub(super) fn with_saved_expression(
+        image: ImageHandle,
+        directory: SavedExpressionDirectory,
+    ) -> Self {
+        Self::without_table(image, None, Some(directory))
+    }
+
+    fn without_table(
+        image: ImageHandle,
+        miriad_directory: Option<MiriadDirectory>,
+        saved_expression_directory: Option<SavedExpressionDirectory>,
+    ) -> Self {
         let beam_view = BeamView::from_image(&image);
         Self {
             image: Arc::new(SharedImage {
                 handle: Mutex::new(image),
                 use_lock: None,
                 miriad_directory,
+                saved_expression_directory,
                 shareable: false,
                 coordinates_replaced: AtomicBool::new(false),
             }),
@@ -103,7 +117,7 @@ impl AttachedImage {
         let directory = MiriadDirectory::open(path)?;
         let image = ImageHandle::open_miriad(path).map_err(raised)?;
         directory.check(path)?;
-        Ok(Self::without_table(image, Some(directory)))
+        Ok(Self::without_table(image, Some(directory), None))
     }
 
     pub(super) fn open_resolved(path: &Path, probe: &Path, name: &Path) -> PyResult<Self> {
@@ -120,6 +134,10 @@ impl AttachedImage {
 
     pub(super) fn native_path(&self) -> Option<&Path> {
         self.key.as_deref()
+    }
+
+    pub(super) fn saved_expression_directory(&self) -> Option<&SavedExpressionDirectory> {
+        self.image.saved_expression_directory.as_ref()
     }
 
     fn open_with_read_lock(
@@ -286,6 +304,7 @@ impl AttachedImage {
             handle: Mutex::new(handle),
             use_lock,
             miriad_directory: None,
+            saved_expression_directory: None,
             shareable: lock_attempts.is_some(),
             coordinates_replaced: AtomicBool::new(false),
         });
@@ -622,6 +641,7 @@ impl AttachedImage {
             handle: Mutex::new(handle),
             use_lock: copied_lock.or_else(|| self.image.use_lock.clone()),
             miriad_directory: None,
+            saved_expression_directory: None,
             shareable: self.image.shareable,
             coordinates_replaced: AtomicBool::new(
                 self.image.coordinates_replaced.load(Ordering::Relaxed),

@@ -30,6 +30,38 @@ pub fn open_directory_identity(path: &Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
+/// Replace a file with a staged file in the same already opened directory.
+///
+/// The file names are single entries within the directory. Publication stays
+/// bound to that directory even if its pathname is concurrently replaced.
+///
+/// # Errors
+/// Returns an I/O error for an invalid entry name or failed rename.
+#[cfg(unix)]
+pub fn replace_file_in_directory(
+    directory: &std::fs::File,
+    staged: &std::ffi::OsStr,
+    target: &std::ffi::OsStr,
+) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    let entry_name = |entry: &std::ffi::OsStr| {
+        if Path::new(entry).file_name() != Some(entry) {
+            return Err(std::io::Error::other("expected a directory entry name"));
+        }
+        CString::new(entry.as_bytes()).map_err(|_| std::io::Error::other("entry name contains NUL"))
+    };
+    let staged = entry_name(staged)?;
+    let target = entry_name(target)?;
+    let directory = directory.as_raw_fd();
+    // SAFETY: the descriptor stays open and both C strings are valid here.
+    let status = unsafe { libc::renameat(directory, staged.as_ptr(), directory, target.as_ptr()) };
+    (status == 0)
+        .then_some(())
+        .ok_or_else(std::io::Error::last_os_error)
+}
+
 /// Lock an existing casacore table and its physical subtables for replacement.
 /// Keep the returned guards alive through publication.
 ///

@@ -8287,6 +8287,27 @@ until the Python process segfaults. Casa-rs resolves aliases to the same
 directory and raises an error on the cycle before publishing an output.
 See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
+### Updating saved-expression metadata can overwrite another manifest
+
+Open `expression.im` by relative name, then change into a directory that
+also contains `expression.im`. CASA 6.7.6.14 writes `setmiscinfo` to the
+second directory while the tool still reads from the first expression. An
+external replacement at the original pathname can also receive the write.
+Casa-rs updates the original directory after a working-directory change
+and refuses the write if the directory or its expression has changed.
+See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
+
+### Writing some saved-expression metadata can break reopen or lose values
+
+CASA 6.7.6.14 accepts NaN, infinity, empty arrays, and multidimensional
+arrays in `setmiscinfo` on an open saved image expression. Reopening can
+segfault for the non-finite values or reject the arrays. Casa-rs refuses
+these writes before changing the manifest or the live record. CASA can also
+omit a NumPy `int64` scalar or truncate the elements of an `int64` vector.
+Casa-rs stores wider integers without truncation in the same JSON fields,
+which both implementations can read. See
+[#1959](https://github.com/bglenden/casa-rs/issues/1959).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values

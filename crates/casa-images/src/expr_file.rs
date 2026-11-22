@@ -49,7 +49,7 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_lattices::{Lattice, LatticeError};
-use casa_types::{ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayD, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use serde_json::Value as Json;
 
 use crate::error::ImageError;
@@ -57,6 +57,8 @@ use crate::expr_parser::{self, ExprValueConvert, HashMapResolver};
 use crate::image::{ImageInterface, ImagePixelType, PagedImage, image_pixel_type};
 use crate::image_expr::{ImageExprValue, ImageExpression};
 use crate::image_info::ImageInfo;
+
+mod tool_metadata;
 
 // ---------------------------------------------------------------------------
 // Type string mapping
@@ -456,7 +458,7 @@ impl ToolExpressionManifest {
     pub fn misc_info(&self) -> Result<Option<RecordValue>, ImageError> {
         self.misc_info
             .as_ref()
-            .map(tool_metadata_record)
+            .map(tool_metadata::decode)
             .transpose()
     }
 }
@@ -477,68 +479,26 @@ pub fn read_tool_manifest(path: &Path) -> Result<ToolExpressionManifest, ImageEr
     })
 }
 
-fn tool_metadata_record(value: &Json) -> Result<RecordValue, ImageError> {
-    let object = value.as_object().ok_or_else(|| {
-        ImageError::CasaSelection("Json error: JsonValue::getValueMap - invalid data type".into())
-    })?;
-    let fields = object
-        .iter()
-        .map(|(name, value)| Ok(RecordField::new(name, tool_metadata_value(value)?)))
-        .collect::<Result<Vec<_>, ImageError>>()?;
-    Ok(RecordValue::new(fields))
-}
-
-fn tool_metadata_value(value: &Json) -> Result<Value, ImageError> {
-    let scalar = match value {
-        Json::Bool(value) => ScalarValue::Bool(*value),
-        Json::Number(value) => match value.as_i64() {
-            Some(integer) => ScalarValue::Int64(integer),
-            None => ScalarValue::Float64(value.as_f64().expect("JSON number")),
-        },
-        Json::String(value) => ScalarValue::String(value.clone()),
-        Json::Object(_) => return tool_metadata_record(value).map(Value::Record),
-        Json::Array(values) => return tool_metadata_vector(values).map(Value::Array),
-        Json::Null => {
-            return Err(ImageError::CasaSelection(
-                "Json error: JsonValue::getValueHolder - invalid data type".into(),
-            ));
-        }
-    };
-    Ok(Value::Scalar(scalar))
-}
-
-fn tool_metadata_vector(values: &[Json]) -> Result<ArrayValue, ImageError> {
-    use ndarray::Array1;
-
-    if values.is_empty() {
-        return Err(ImageError::CasaSelection(
-            "Json error: empty vector in MiscInfo".into(),
-        ));
-    }
-    if values.iter().any(Json::is_array) {
-        return Err(ImageError::CasaSelection(
-            "Json error: JsonValue::getDouble - invalid data type".into(),
-        ));
-    }
-    if let Some(items) = values.iter().map(Json::as_bool).collect::<Option<Vec<_>>>() {
-        return Ok(ArrayValue::Bool(Array1::from_vec(items).into_dyn()));
-    }
-    if let Some(items) = values.iter().map(Json::as_i64).collect::<Option<Vec<_>>>() {
-        return Ok(ArrayValue::Int64(Array1::from_vec(items).into_dyn()));
-    }
-    if let Some(items) = values.iter().map(Json::as_f64).collect::<Option<Vec<_>>>() {
-        return Ok(ArrayValue::Float64(Array1::from_vec(items).into_dyn()));
-    }
-    if let Some(items) = values
-        .iter()
-        .map(|item| item.as_str().map(str::to_owned))
-        .collect::<Option<Vec<_>>>()
-    {
-        return Ok(ArrayValue::String(Array1::from_vec(items).into_dyn()));
-    }
-    Err(ImageError::CasaSelection(
-        "Json error: JsonValue::getValueHolder - vector of mixed data types".into(),
-    ))
+/// Encode a complete saved-expression metadata update using casacore's
+/// manifest fields and inferred pixel type.
+///
+/// # Errors
+/// Returns an error if any field cannot round-trip through saved-expression
+/// metadata, or if serialization fails.
+pub fn encode_tool_manifest(
+    expression: &str,
+    pixel_type: PrimitiveType,
+    misc: &RecordValue,
+) -> Result<Vec<u8>, ImageError> {
+    let json = serde_json::json!({
+        "Version": 1,
+        "DataType": data_type_str(pixel_type),
+        "ImageExpr": expression,
+        "MiscInfo": tool_metadata::encode(misc)?,
+    });
+    serde_json::to_vec_pretty(&json).map_err(|error| {
+        ImageError::InvalidMetadata(format!("cannot encode imageexpr.json: {error}"))
+    })
 }
 
 fn read_manifest(path: &Path) -> Result<serde_json::Value, ImageError> {
