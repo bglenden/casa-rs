@@ -58,7 +58,11 @@ pub(crate) fn solve(
     };
     let preaverage = if direct && legacy_iterator {
         let requested = request.preaverage_seconds;
-        (requested.is_finite() && requested > 0.).then_some(requested)
+        (requested.is_finite() && requested >= 0.).then_some(if requested < f64::EPSILON {
+            0.1
+        } else {
+            requested
+        })
     } else if direct {
         super::preaverage_span(request.solve_interval, request.preaverage_seconds)
     } else {

@@ -54,7 +54,9 @@ def solve_case(work, tools, vis, name, options, *, legacy=False, selection=None,
     else:
         same_record(records['native']['solvestats'], records['casa']['solvestats'])
     if outcome == 'product':
-        error = compare_tables(paths['casa'], paths['native'])
+        # Legacy normalization also scales its flagged unity placeholders.
+        flagged_rtol = 2e-6 if legacy and options.get('solnorm') else 0.
+        error = compare_tables(paths['casa'], paths['native'], flagged_rtol=flagged_rtol)
         compare_readers(paths)
         print(name, 'solution NRMS', error, flush=True)
     print(name, 'activity', activity['casa'], flush=True)
@@ -95,8 +97,9 @@ def main():
         values[..., rows] *= 7
         assert table.putcol('DATA', values)
     for family in ('M', 'MF'):
-        solve_case(work, tools, outliers, f'{family.lower()}-median',
-                   {'type': family, 'solnorm': True, 'normtype': 'median'})
+        options = {'type': family, 'solnorm': True, 'normtype': 'median'}
+        solve_case(work, tools, outliers, f'{family.lower()}-median', options)
+        solve_case(work, tools, outliers, f'{family.lower()}-legacy-median', options, legacy=True)
     solve_case(work, tools, vis, 'mf-append', {'type': 'MF'}, append=True)
     solve_case(work, tools, flagged, 'mf-flagged', {}, outcome='empty')
     solve_case(work, tools, vis, 'm-legacy', {'type': 'M'}, legacy=True)
@@ -128,6 +131,8 @@ def main():
     for family in ('M', 'MF'):
         solve_case(work, tools, vis, f'{family.lower()}-legacy-preavg',
                    {'type': family, 'preavg': 8.}, legacy=True, outcome='error')
+        solve_case(work, tools, vis, f'{family.lower()}-legacy-preavg-zero',
+                   {'type': family, 'preavg': 0.}, legacy=True, outcome='error')
     solve_case(work, tools, flagged, 'mf-legacy-flagged', {}, legacy=True, outcome='empty')
     solve_case(work, tools, vis, 'mf-legacy-binned', {'t': 'inf,2ch'}, legacy=True,
                selection={'spw': '0:1~12'}, outcome='error')
