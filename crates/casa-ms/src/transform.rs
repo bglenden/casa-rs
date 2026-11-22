@@ -697,6 +697,7 @@ fn mstransform_staged(
                 &input,
                 options,
                 combined_grid.as_mut(),
+                &channel_selection,
                 &mut channel_bins,
                 first_selected_row,
                 budget.available_bytes / budget.maximum_live_blocks,

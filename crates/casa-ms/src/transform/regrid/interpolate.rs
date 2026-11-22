@@ -66,7 +66,10 @@ impl Interpolation {
         let samples = output
             .iter()
             .map(|&frequency| {
-                let at = centres.partition_point(|value| *value < frequency);
+                let include_equal = descending && matches!(method, Method::Cubic | Method::Spline);
+                let at = centres.partition_point(|value| {
+                    *value < frequency || (include_equal && *value == frequency)
+                });
                 if n == 1 {
                     return Sample {
                         bracket: [0, 0],
@@ -144,7 +147,13 @@ impl Interpolation {
         for (corr, mut row) in output.rows_mut().into_iter().enumerate() {
             let get = |channel| input[[corr, self.physical(channel)]];
             if self.method == Method::Spline {
-                second_derivatives(&self.centres, get, &mut coefficients, &mut curvature);
+                second_derivatives(
+                    self.centres.len(),
+                    |channel| self.centres[self.physical(channel)],
+                    |channel| input[[corr, channel]],
+                    &mut coefficients,
+                    &mut curvature,
+                );
             }
             for (output, sample) in row.iter_mut().zip(&self.samples) {
                 let [left, right] = sample.bracket;
@@ -162,7 +171,8 @@ impl Interpolation {
                     let a = 1. - b;
                     get(left) * a
                         + get(right) * b
-                        + (curvature[left] * (a * a * a - a) + curvature[right] * (b * b * b - b))
+                        + (curvature[self.physical(left)] * (a * a * a - a)
+                            + curvature[self.physical(right)] * (b * b * b - b))
                             * (distance * distance / 6.)
                 } else {
                     let a = get(left);
@@ -238,20 +248,20 @@ impl SampleValue for f32 {}
 impl SampleValue for num_complex::Complex32 {}
 
 fn second_derivatives<T: SampleValue>(
-    centres: &[f64],
+    n: usize,
+    coordinate: impl Fn(usize) -> f64,
     get: impl Fn(usize) -> T,
     diagonal: &mut Vec<f32>,
     curvature: &mut Vec<T>,
 ) {
-    let n = centres.len();
     diagonal.resize(n, 0.);
     curvature.resize(n, T::default());
     diagonal[0] = 0.;
     curvature[0] = T::default();
     curvature[n - 1] = T::default();
     for i in 1..n - 1 {
-        let a = (centres[i] - centres[i - 1]) as f32;
-        let c = (centres[i + 1] - centres[i]) as f32;
+        let a = (coordinate(i) - coordinate(i - 1)) as f32;
+        let c = (coordinate(i + 1) - coordinate(i)) as f32;
         let b = 2. * (a + c) - a * diagonal[i - 1];
         let gradient_diff = (get(i + 1) - get(i)) / c - (get(i) - get(i - 1)) / a;
         diagonal[i] = c / b;

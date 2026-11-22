@@ -8186,6 +8186,18 @@ nine even though the last channel is index eight. The native task clips
 the bounds to the available channels. The oracle checks the native
 result against a CASA request for the two valid channels (#1618).
 
+## Frame conversion after time averaging can use an unrelated input epoch
+
+CASA 6.7.6.14 `MSTransformManager::initFrequencyTransGrid` reads the
+selected input's TIME column using the current visibility buffer's row
+ID. After time averaging, `AveragingTvi2` generates output row IDs
+sequentially, so those IDs no longer identify contributing input rows.
+In the paired 20-second averaging case, the next group begins at input
+time +20 seconds but CASA reads the integration at +10 seconds. The
+native task uses the first contributing input row's epoch. The paired
+case compares flags exactly and checks values at the project's 0.001
+normalized RMS tolerance (#1618).
+
 ## Splitting a regridded spectrum can write oversized noise spectra
 
 With nine channels and `mstransform(regridms=True, nspw=2)`, CASA

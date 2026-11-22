@@ -27,7 +27,8 @@ use crate::spectral_selection::CasaChannelFrequencies;
 
 use super::channel_average::{AveragedStatistics, sigma_from_weight, weight_from_sigma};
 use super::{
-    CompactSpectralMetadata, MsRegridOptions, MsTransformError, MsTransformRequest, combine,
+    CompactSpectralMetadata, MsRegridOptions, MsTransformError, MsTransformRequest,
+    TransformChannelSelection, combine, spectral_metadata,
 };
 use interpolate::{Interpolation, Method};
 use shift::Shift;
@@ -49,6 +50,7 @@ struct Window {
     method: Method,
     recent: Option<Recent>,
     reference_centre_hz: f64,
+    noise_scale: f32,
 }
 
 struct Recent {
@@ -71,6 +73,7 @@ impl Plan {
         input: &MeasurementSet,
         options: &MsRegridOptions,
         combined: Option<&mut combine::Grid>,
+        channel_selection: &BTreeMap<i32, TransformChannelSelection>,
         channel_bins: &mut BTreeMap<i32, Vec<Vec<usize>>>,
         first_selected_row: usize,
         budget_bytes: usize,
@@ -82,6 +85,7 @@ impl Plan {
             ))
         })?;
         let frame = Frame::new(input, options, first_selected_row)?;
+        let mut budget = GridBudget::new(budget_bytes, frame.is_some());
         let table = input.spectral_window().map_err(ms_error)?;
         let is_combined = combined.is_some();
         let mut windows = BTreeMap::new();
@@ -106,22 +110,40 @@ impl Plan {
                 (&centres, &widths, source),
                 &mut grid.bins,
                 frame.as_ref(),
-                budget_bytes,
+                &mut budget,
             )?;
             windows.insert(id, window);
         } else {
             for (&id, bins) in channel_bins {
                 let row = id as usize;
                 let source = table.reference_frequency_reference(row).map_err(ms_error)?;
-                let centres = table.chan_freq(row).map_err(ms_error)?;
-                let widths = table.chan_width(row).map_err(ms_error)?;
+                let mut centres = table.chan_freq(row).map_err(ms_error)?;
+                let mut widths = table.chan_width(row).map_err(ms_error)?;
+                let selection = &channel_selection[&id];
+                if selection.channels != selection.metadata_ends {
+                    let footprints =
+                        spectral_metadata::selected_footprints(selection, &centres, &widths)
+                            .ok_or_else(|| {
+                                invalid(format!(
+                                    "SPW {id} metadata does not cover the selected channels."
+                                ))
+                            })?;
+                    for (&channel, (centre, width)) in selection
+                        .channels
+                        .iter()
+                        .zip(footprints.0.into_iter().zip(footprints.1))
+                    {
+                        centres[channel] = centre;
+                        widths[channel] = width;
+                    }
+                }
                 let window = Window::new(
                     options,
                     method,
                     (&centres, &widths, source),
                     bins,
                     frame.as_ref(),
-                    budget_bytes,
+                    &mut budget,
                 )?;
                 windows.insert(id, window);
             }
@@ -217,6 +239,7 @@ impl Plan {
             shift,
             channel_map: window.channel_map.as_deref(),
             output_len: window.axis.centres_hz.len(),
+            noise_scale: window.noise_scale,
         })
     }
 
@@ -275,7 +298,10 @@ impl Plan {
                     ("REF_FREQUENCY", ScalarValue::Float64(centres[0])),
                     (
                         "TOTAL_BANDWIDTH",
-                        ScalarValue::Float64(widths.iter().sum::<f64>()),
+                        ScalarValue::Float64(
+                            (centres[centres.len() - 1] - centres[0]).abs()
+                                + (widths[0] + widths[widths.len() - 1]) / 2.,
+                        ),
                     ),
                     (
                         "MEAS_FREQ_REF",
@@ -296,6 +322,62 @@ impl Plan {
     }
 }
 
+struct GridBudget {
+    remaining: usize,
+    bytes_per_channel: usize,
+}
+
+impl GridBudget {
+    fn new(bytes: usize, dynamic: bool) -> Self {
+        // Allow for retained centre/width arrays, interpolation records and
+        // temporary grid construction. A dynamic frame also retains a
+        // second interpolation plan for the most recent visibility buffer.
+        Self {
+            remaining: bytes,
+            bytes_per_channel: if dynamic { 256 } else { 128 },
+        }
+    }
+
+    fn maximum_output_channels(&self, input: usize) -> Result<usize, MsTransformError> {
+        let count = (self.remaining / self.bytes_per_channel)
+            .saturating_sub(input)
+            .min(i32::MAX as usize);
+        if count == 0 {
+            Err(invalid(
+                "Input regridding channels exceed the remaining grid budget.".into(),
+            ))
+        } else {
+            Ok(count)
+        }
+    }
+
+    fn charge(&mut self, input: usize, output: usize) -> Result<(), MsTransformError> {
+        let bytes = input
+            .saturating_add(output)
+            .saturating_mul(self.bytes_per_channel);
+        self.remaining = self.remaining.checked_sub(bytes).ok_or_else(|| {
+            invalid(format!(
+                "Regridding {output} channels exceeds the {} byte grid budget.",
+                self.remaining
+            ))
+        })?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GridBudget;
+
+    #[test]
+    fn independent_windows_share_the_grid_allowance() {
+        let mut budget = GridBudget::new(256_000, true);
+        assert_eq!(budget.maximum_output_channels(500).unwrap(), 500);
+        budget.charge(500, 500).unwrap();
+        assert!(budget.maximum_output_channels(500).is_err());
+    }
+}
+
 impl Window {
     fn new(
         options: &MsRegridOptions,
@@ -303,13 +385,15 @@ impl Window {
         (source_frequencies, source_widths, frame): (&[f64], &[f64], FrequencyRef),
         bins: &mut Vec<Vec<usize>>,
         conversion: Option<&Frame>,
-        budget_bytes: usize,
+        budget: &mut GridBudget,
     ) -> Result<Self, MsTransformError> {
-        let conversion = conversion
-            .map(|frame_conversion| frame_conversion.reference_conversion(frame))
+        let needs_weight_scaling =
+            conversion.is_some_and(|target| frame != target.target_reference);
+        let converted_frame = conversion
+            .map(|target| target.reference_conversion(frame, true))
             .transpose()?;
         let convert = |frequency| {
-            conversion
+            converted_frame
                 .as_ref()
                 .map_or(frequency, |convert| convert(frequency))
         };
@@ -319,28 +403,22 @@ impl Window {
             .iter()
             .zip(widths.iter())
             .map(|(&f, &width)| {
-                if conversion.is_some() {
+                if converted_frame.is_some() {
                     convert(f + width / 2.) - convert(f - width / 2.)
                 } else {
                     width
                 }
             })
             .collect::<Vec<_>>();
-        let maximum_channels = (budget_bytes / 128)
-            .saturating_sub(frequencies.len())
-            .min(i32::MAX as usize);
-        if maximum_channels == 0 {
-            return Err(invalid(
-                "Input regridding channels exceed the grid budget.".into(),
-            ));
-        }
+        let maximum_channels = budget.maximum_output_channels(frequencies.len())?;
         let axis = axis::output_axis(options, &converted, &converted_widths, maximum_channels)?;
         let count = axis.centres_hz.len();
-        if count.saturating_add(frequencies.len()).saturating_mul(128) > budget_bytes {
-            return Err(invalid(format!(
-                "Regridding {count} channels exceeds the {budget_bytes} byte grid budget."
-            )));
-        }
+        budget.charge(frequencies.len(), count)?;
+        let mut noise_scale = if needs_weight_scaling {
+            (axis.steps_hz[0] / converted_widths[0]) * bins[0].len() as f64
+        } else {
+            1.
+        };
         let partitions = Partitions::new(count, options.nspw)?;
         let mean =
             |values: &[f64]| values.iter().map(|v| v.abs()).sum::<f64>() / values.len() as f64;
@@ -354,11 +432,25 @@ impl Window {
                 let selected = bins.iter().flatten().copied().collect::<Vec<_>>();
                 *bins = selected.chunks(pre_bin).map(<[usize]>::to_vec).collect();
                 (frequencies, _) = averaged_axis(source_frequencies, source_widths, bins);
+                if needs_weight_scaling {
+                    noise_scale /= pre_bin as f64;
+                }
             } else {
                 (sample_grid, channel_map) = fine_grid(&axis, frequencies.len());
             }
         }
-        let reference_frequencies = frequencies.iter().copied().map(convert).collect::<Vec<_>>();
+        let reference_frequencies = if method == Method::FftShift
+            && let Some(frame_conversion) = conversion
+        {
+            let unshifted = frame_conversion.reference_conversion(frame, false)?;
+            frequencies
+                .iter()
+                .copied()
+                .map(unshifted)
+                .collect::<Vec<_>>()
+        } else {
+            frequencies.iter().copied().map(convert).collect::<Vec<_>>()
+        };
         let reference_centre_hz = reference_frequencies[reference_frequencies.len() / 2];
         let interpolation =
             Interpolation::plan(&reference_frequencies, &sample_grid, method).map_err(ms_error)?;
@@ -373,6 +465,7 @@ impl Window {
             method,
             recent: None,
             reference_centre_hz,
+            noise_scale: noise_scale as f32,
         })
     }
 }
@@ -535,9 +628,14 @@ impl Frame {
     fn reference_conversion(
         &self,
         source: FrequencyRef,
+        apply_radial_correction: bool,
     ) -> Result<impl Fn(f64) -> f64 + use<>, MsTransformError> {
         let conversion = self.prepare(source, &self.target)?;
-        let shift = radial_shift(-self.source_velocity.unwrap_or_default());
+        let shift = radial_shift(if apply_radial_correction {
+            -self.source_velocity.unwrap_or_default()
+        } else {
+            0.
+        });
         Ok(move |frequency| shift.shift_frequency_hz(conversion.convert_hz(frequency)))
     }
 
@@ -608,6 +706,7 @@ pub(super) struct Projection<'a> {
     shift: Option<Shift>,
     channel_map: Option<&'a [Option<usize>]>,
     output_len: usize,
+    noise_scale: f32,
 }
 
 impl Projection<'_> {
@@ -707,7 +806,11 @@ impl Projection<'_> {
         let ArrayValue::Float32(sigma) = sigma else {
             return Err(TableError::Schema("SIGMA_SPECTRUM must be Float32.".into()));
         };
-        let weight_spectrum = self.apply(weight, fft_flags)?;
+        let ArrayValue::Float32(weight_spectrum) = self.apply(weight, fft_flags)? else {
+            unreachable!()
+        };
+        let weight_spectrum =
+            ArrayValue::Float32(weight_spectrum.mapv(|weight| weight * self.noise_scale));
         let ArrayValue::Float32(inverse_variance) = self.apply(
             ArrayValue::Float32(sigma.mapv(weight_from_sigma)),
             fft_flags,
@@ -715,7 +818,9 @@ impl Projection<'_> {
         else {
             unreachable!()
         };
-        let sigma_spectrum = ArrayValue::Float32(inverse_variance.mapv(sigma_from_weight));
+        let sigma_spectrum = ArrayValue::Float32(
+            inverse_variance.mapv(|weight| sigma_from_weight(weight * self.noise_scale)),
+        );
         let ArrayValue::Bool(flags) = output_flags else {
             return Err(TableError::Schema("FLAG must be Bool.".into()));
         };

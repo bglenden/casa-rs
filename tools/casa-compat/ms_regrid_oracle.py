@@ -60,6 +60,13 @@ def paired(root, source, case, *, datacolumn="data", usewtspectrum=True, deviati
     return reference, native
 
 
+def scientific_tolerance(name):
+    def compare(row, got, ref):
+        expected = ref.getcell(name, row)
+        error = np.linalg.norm(got - expected)
+        assert error <= 0.001 * np.linalg.norm(expected) + 1e-7, (name, row, error)
+    return compare
+
 def unpadded_split(root, source):
     def spectrum(name, pad):
         def compare(row, got, ref):
@@ -230,6 +237,7 @@ def main(cases):
             ("channel-width", dict(start=1, width=2, nchan=3)),
             ("channel-negative", dict(start=7, width=-2, nchan=3)),
             ("channel-bounds", dict(mode="channel_b", start=1, width=2, nchan=3)),
+            ("selection-step", dict(spw="0:0~6^2", start=1, nchan=2, datacolumn="corrected")),
             ("frequency", dict(mode="frequency", start="100.0005GHz", width="1MHz", nchan=5)),
             ("wide-frequency", dict(mode="frequency", start="100.0005GHz", width="3MHz", nchan=3)),
             ("preaverage", dict(mode="frequency", start="100.0005GHz", width="3MHz", nchan=3,
@@ -247,6 +255,12 @@ def main(cases):
             ("field", dict(outframe="LSRK", phasecenter=1)),
             ("direction", dict(outframe="LSRK", phasecenter="J2000 1h0m0s -30d0m0s")),
             ("barycentric", dict(outframe="BARY")),
+            ("cross-frame-wide", dict(outframe="BARY", mode="frequency", start="100.010GHz",
+                                      width="1.5MHz", nchan=4)),
+            ("frame-channel-average", dict(outframe="LSRK", chanaverage=True, chanbin=3, start=1, nchan=2)),
+            ("frame-preaverage", dict(outframe="LSRK", preaverage=True, mode="frequency",
+                                      start="100.012GHz", width="3MHz", nchan=2)),
+            ("gapped-channel-bounds", dict(spw="0:0~1;7~8", mode="channel_b", start=0, width=1)),
             ("geo", dict(outframe="GEO")),
             ("source-direction", dict(outframe="SOURCE", phasecenter="J2000 1h0m0s -30d0m0s")),
             ("fft-frame", dict(outframe="LSRK", interpolation="fftshift")),
@@ -267,6 +281,12 @@ def main(cases):
             fixture(even, 10, spectra=True)
             paired(root, even, "hanning-average", mode="frequency", start="100.001GHz",
                    width="2MHz", nchan=3, hanning=True, chanaverage=True, chanbin=2)
+        if not cases or "time-frame" in cases:
+            # Stay off exact channel centres so the documented input-epoch
+            # difference does not move a sample across a flag boundary.
+            paired(root, source, "time-frame", timeaverage=True, timebin="20s", outframe="LSRK",
+                   field="0", mode="frequency", start="100.012GHz", width="1.01MHz", nchan=4,
+                   deviations={name: scientific_tolerance(name) for name in NOISE | {"DATA"}})
         if not cases or "hanning-average-odd" in cases:
             partial_hanning_bin(root, source)
         if not cases or "terminal-channel-bounds" in cases:
@@ -278,11 +298,15 @@ def main(cases):
             fixture(floating, 9, spectra=True)
             add_float_and_lag(floating)
             float_visibilities(root, floating)
-        if not cases or "source-ephemeris" in cases:
+        if not cases or cases & {"source-ephemeris", "source-fft"}:
             moving = root / "moving.ms"
             fixture(moving, 9, spectra=True)
             attached_ephemeris(moving)
-            paired(root, moving, "source-ephemeris", outframe="SOURCE", field="0")
+            if not cases or "source-ephemeris" in cases:
+                paired(root, moving, "source-ephemeris", outframe="SOURCE", field="0")
+            if not cases or "source-fft" in cases:
+                paired(root, moving, "source-fft", outframe="SOURCE", field="0", interpolation="fftshift",
+                       deviations={name: scientific_tolerance(name) for name in NOISE | {"DATA"}})
         if not cases or "failures" in cases:
             refusal(root, source, "bad-quantity", dict(mode="frequency", width="3km/s"), error_type=TypeError)
             refusal(root, source, "no-rest-frequency", dict(mode="velocity", width="3km/s"), error_type=ValueError)
@@ -290,18 +314,24 @@ def main(cases):
             refusal(root, source, "bad-frame", dict(outframe="INVALID"), error_type=AssertionError)
             refusal(root, source, "missing-source-ephemeris", dict(outframe="SOURCE"))
             refusal(root, source, "empty-split", dict(nspw=4), compare_casa=False)
-        if not cases or cases & {"independent", "combine-regrid", "combine-split"}:
+        if not cases or cases & {"independent", "combine-regrid", "combine-split", "combine-hanning"}:
             pair = make_pair(root, "paired-windows", 6, spectra=True)
             for case, options in [
                 ("independent", dict(start=1, nchan=4)),
                 ("combine-regrid", dict(start=1, nchan=6, combinespws=True)),
+                ("combine-hanning", dict(start=1, nchan=8, combinespws=True, hanning=True)),
                 ("combine-split", dict(start=1, nchan=8, nspw=2)),
             ]:
                 if not cases or case in cases:
                     paired(root, pair, case, **options)
-        if not cases or "mixed-size" in cases:
+        if not cases or cases & {"mixed-size", "descending-cubic", "descending-spline"}:
             mixed = make_pair(root, "mixed-input", 4, counts=(7, 9), descending=True, spectra=True)
-            paired(root, mixed, "mixed-size", start=1, nchan=4)
+            if not cases or "mixed-size" in cases:
+                paired(root, mixed, "mixed-size", start=1, nchan=4)
+            for method in ("cubic", "spline"):
+                case = f"descending-{method}"
+                if not cases or case in cases:
+                    paired(root, mixed, case, spw="1", interpolation=method, start=1, nchan=5)
         if not cases or "reopen" in cases:
             for product in unpadded_split(root, source) if cases else (
                 root / f"split-odd-{side}.ms" for side in ("casa", "native")
