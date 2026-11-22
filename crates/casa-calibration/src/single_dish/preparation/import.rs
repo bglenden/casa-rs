@@ -24,6 +24,23 @@ pub fn import_asap(input: &Path, output: &Path, parallel: bool) -> Result<(), St
     .inspect_err(|error| tracing::error!(%error, "ASAP scan-table import failed"))
 }
 
+/// Import a packed Nobeyama NOSTAR scan file into a CASA MeasurementSet.
+///
+/// The staged product includes the instrument's NRO_ARRAY mapping.
+///
+/// # Errors
+/// Returns an error for an unreadable NOSTAR scan or if the destination
+/// cannot be prepared, written or published safely.
+pub fn import_nro(input: &Path, output: &Path, parallel: bool) -> Result<(), String> {
+    publish_import(
+        input,
+        output,
+        parallel,
+        casa_ms::single_dish_import::read_nro,
+    )
+    .inspect_err(|error| tracing::error!(%error, "NRO scan import failed"))
+}
+
 fn publish_import(
     input: &Path,
     output: &Path,
@@ -56,8 +73,7 @@ fn publish_import(
         }
     }
     result
-        .measurement_set
-        .save_as_standard(&target.staging)
+        .write_stage(&target.staging)
         .map_err(|error| error.to_string())?;
     target.commit().map_err(|error| error.to_string())
 }

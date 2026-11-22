@@ -104,6 +104,7 @@ pub fn read_asap(path: &Path, parallel: bool) -> MsResult<ImportedScanTable> {
     Ok(ImportedScanTable {
         measurement_set: writer.finish()?,
         input_tables,
+        auxiliary_tables: Vec::new(),
     })
 }
 
@@ -166,6 +167,7 @@ impl Decoder<'_> {
                 time: number(row, "TIME")? * DAY,
                 interval: number(row, "INTERVAL")?,
                 scan: integer(row, "SCANNO")?,
+                antenna: 0,
                 field: self.field_ids[string(row, "FIELDNAME")?],
                 feed: integer(row, "BEAMNO")?,
                 window: integer(row, "IFNO")?,
@@ -177,7 +179,7 @@ impl Decoder<'_> {
             plane: Plane {
                 index,
                 data: floats(row, "SPECTRA")?,
-                flag: flags(row, "FLAGTRA")?,
+                flag: Some(flags(row, "FLAGTRA")?),
                 flag_row: integer(row, "FLAGROW")? != 0,
                 system_temperature: floats(row, "TSYS").unwrap_or_default(),
                 calibration_temperature: tcal,

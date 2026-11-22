@@ -3,11 +3,12 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use ndarray::{Array2, ArrayD, ShapeBuilder};
 use num_complex::Complex32;
 
 use super::metadata::{direction_cell, insert, state_row, without};
-use super::{Basis, Integration, Plane, Weather};
+use super::{Basis, Direction, Integration, Plane, Weather};
 use crate::schema::{self, SubtableId};
 use crate::subtable_rows::{
     b, bool_array, complex_array, f, f32_array, i, i32_array, row_from_defs, string_array,
@@ -21,10 +22,10 @@ pub(super) struct Writer {
     descriptions: HashMap<(i32, i32), i32>,
     polarizations: HashMap<Vec<i32>, i32>,
     states: HashMap<(&'static str, i32), i32>,
-    feeds: HashMap<(i32, i32, Basis), i32>,
+    feeds: HashMap<(i32, i32, i32, Basis), i32>,
     reference_feed: Option<i32>,
-    pointing_time: Option<f64>,
-    weather: Vec<(Weather, TimeSpan)>,
+    pointing: BTreeMap<(i32, u64), (Direction, f64)>,
+    weather: Vec<((i32, Weather), TimeSpan)>,
     calibration: Vec<(Calibration, TimeSpan)>,
 }
 
@@ -44,6 +45,7 @@ struct Temperatures {
 
 #[derive(PartialEq)]
 struct Calibration {
+    antenna: i32,
     feed: i32,
     window: i32,
     system: Temperatures,
@@ -60,7 +62,7 @@ impl Writer {
             states: HashMap::new(),
             feeds: HashMap::new(),
             reference_feed: None,
-            pointing_time: None,
+            pointing: BTreeMap::new(),
             weather: Vec::new(),
             calibration: Vec::new(),
         }
@@ -74,10 +76,13 @@ impl Writer {
     ) -> MsResult<()> {
         let indices = planes.keys().copied().collect::<Vec<_>>();
         let correlations = row.basis.correlations(&indices)?;
-        if planes
-            .values()
-            .any(|plane| plane.data.len() != channels || plane.flag.len() != channels)
-        {
+        if planes.values().any(|plane| {
+            plane.data.len() != channels
+                || plane
+                    .flag
+                    .as_ref()
+                    .is_some_and(|flags| flags.len() != channels)
+        }) {
             return Err(MsError::InvalidInput(format!(
                 "Imported spectral window {} expects {channels} channels",
                 row.window
@@ -90,7 +95,7 @@ impl Writer {
         let polarization = self.polarization_id(&codes)?;
         let description = self.description_id(row.window, polarization)?;
         self.record_feed(row)?;
-        self.record_pointing(row)?;
+        self.record_pointing(row);
         self.record_conditions(row, &correlations, &planes, channels);
         let state = match self.states.get(&row.state) {
             Some(&state) => state,
@@ -165,12 +170,13 @@ impl Writer {
         } else {
             Basis::Linear
         };
-        let key = (row.feed, row.window, basis);
+        let key = (row.antenna, row.feed, row.window, basis);
         if let std::collections::hash_map::Entry::Vacant(entry) = self.feeds.entry(key) {
             let id = insert(
                 &mut self.ms,
                 SubtableId::Feed,
                 &[
+                    ("ANTENNA_ID", i(row.antenna)),
                     ("FEED_ID", i(row.feed)),
                     ("NUM_RECEPTORS", i(2)),
                     ("SPECTRAL_WINDOW_ID", i(row.window)),
@@ -195,23 +201,12 @@ impl Writer {
         Ok(())
     }
 
-    fn record_pointing(&mut self, row: &Integration) -> MsResult<()> {
-        if self.reference_feed != Some(row.feed) || self.pointing_time == Some(row.time) {
-            return Ok(());
+    fn record_pointing(&mut self, row: &Integration) {
+        if self.reference_feed == Some(row.feed) {
+            self.pointing
+                .entry((row.antenna, row.time.to_bits()))
+                .or_insert((row.direction, row.interval));
         }
-        self.pointing_time = Some(row.time);
-        let (degree, direction) = direction_cell(row.direction);
-        let record = row_from_defs(
-            schema::pointing::REQUIRED_COLUMNS,
-            &[
-                ("TIME", f(row.time)),
-                ("INTERVAL", f(row.interval)),
-                ("NUM_POLY", i(degree)),
-                ("DIRECTION", direction),
-            ],
-        );
-        subtable_mut(&mut self.ms, SubtableId::Pointing)?.add_row(without(record, &["TARGET"]))?;
-        Ok(())
     }
 
     fn record_conditions(
@@ -226,7 +221,7 @@ impl Writer {
             interval: row.interval,
         };
         if let Some(weather) = row.weather {
-            update_unique(&mut self.weather, weather, time);
+            update_unique(&mut self.weather, (row.antenna, weather), time);
         }
         if !row.basis.has_parallel_hands() {
             return;
@@ -241,6 +236,7 @@ impl Writer {
         let system = temperatures(&hands, channels, |plane| &plane.system_temperature);
         if let Some(system) = system {
             let mut calibration = Calibration {
+                antenna: row.antenna,
                 feed: row.feed,
                 window: row.window,
                 system,
@@ -257,11 +253,30 @@ impl Writer {
     }
 
     pub(super) fn finish(mut self) -> MsResult<MeasurementSet> {
+        let pointing = subtable_mut(&mut self.ms, SubtableId::Pointing)?;
+        for ((antenna, time), (direction, interval)) in self.pointing {
+            let (degree, direction) = direction_cell(direction);
+            let record = row_from_defs(
+                schema::pointing::REQUIRED_COLUMNS,
+                &[
+                    ("ANTENNA_ID", i(antenna)),
+                    ("TIME", f(f64::from_bits(time))),
+                    ("INTERVAL", f(interval)),
+                    ("NUM_POLY", i(degree)),
+                    ("DIRECTION", direction),
+                ],
+            );
+            pointing.add_row(without(record, &["TARGET"]))?;
+        }
         let weather = subtable_mut(&mut self.ms, SubtableId::Weather)?;
-        for (sample, span) in self.weather {
+        for ((antenna, sample), span) in self.weather {
             let mut row = row_from_defs(
                 schema::weather::REQUIRED_COLUMNS,
-                &[("TIME", f(span.time)), ("INTERVAL", f(span.interval))],
+                &[
+                    ("ANTENNA_ID", i(antenna)),
+                    ("TIME", f(span.time)),
+                    ("INTERVAL", f(span.interval)),
+                ],
             );
             for (name, value) in [
                 "TEMPERATURE",
@@ -282,6 +297,7 @@ impl Writer {
             let mut row = row_from_defs(
                 schema::syscal::REQUIRED_COLUMNS,
                 &[
+                    ("ANTENNA_ID", i(sample.antenna)),
                     ("TIME", f(span.time)),
                     ("INTERVAL", f(span.interval)),
                     ("FEED_ID", i(sample.feed)),
@@ -307,62 +323,26 @@ fn main_row(
     channels: usize,
     column: OptionalMainColumn,
 ) -> RecordValue {
-    let count = correlations.len();
-    let shape = vec![count, channels];
+    let ordered = correlations
+        .iter()
+        .map(|&(_, plane)| &planes[&plane])
+        .collect::<Vec<_>>();
+    let count = ordered.len();
     let full = count == 4 && row.basis.has_parallel_hands();
-    let data = if full {
-        let mut data = Vec::with_capacity(4 * channels);
-        for &(_, plane) in correlations {
-            if plane < 2 {
-                data.extend(
-                    planes[&plane]
-                        .data
-                        .iter()
-                        .map(|&real| Complex32::new(real, 0.)),
-                );
-            } else {
-                let sign = if plane == 2 { 1.0 } else { -1.0 };
-                data.extend(
-                    planes[&2]
-                        .data
-                        .iter()
-                        .zip(&planes[&3].data)
-                        .map(|(&real, &imag)| Complex32::new(real, sign * imag)),
-                );
-            }
-        }
-        complex_array(&data, shape.clone())
+    let data = visibility_data(&ordered, channels, full, column);
+    let flags = if ordered.iter().all(|plane| plane.flag.is_none()) {
+        Array2::<bool>::default((count, channels).f()).into_dyn()
     } else {
-        let data = correlations
-            .iter()
-            .flat_map(|&(_, plane)| planes[&plane].data.iter().copied())
-            .collect::<Vec<_>>();
-        if column == OptionalMainColumn::FloatData {
-            f32_array(&data, shape.clone())
-        } else {
-            complex_array(
-                &data
-                    .into_iter()
-                    .map(|real| Complex32::new(real, 0.))
-                    .collect::<Vec<_>>(),
-                shape.clone(),
-            )
-        }
+        let flagged =
+            |plane: &Plane, channel| plane.flag.as_ref().is_some_and(|flags| flags[channel]);
+        channel_major(&ordered, channels, |plane, channel| {
+            if full && plane.index >= 2 {
+                flagged(ordered[1], channel) || flagged(ordered[2], channel)
+            } else {
+                flagged(plane, channel)
+            }
+        })
     };
-    let mut flags = Vec::with_capacity(count * channels);
-    for &(_, plane) in correlations {
-        if full && plane > 1 {
-            flags.extend(
-                planes[&2]
-                    .flag
-                    .iter()
-                    .zip(&planes[&3].flag)
-                    .map(|(&left, &right)| left || right),
-            );
-        } else {
-            flags.extend_from_slice(&planes[&plane].flag);
-        }
-    }
     let noise = f32_array(&vec![1.; count], vec![count]);
     let mut record = row_from_defs(
         schema::main_table::REQUIRED_COLUMNS,
@@ -372,20 +352,63 @@ fn main_row(
             ("INTERVAL", f(row.interval)),
             ("EXPOSURE", f(row.interval)),
             ("SCAN_NUMBER", i(row.scan)),
+            ("ANTENNA1", i(row.antenna)),
+            ("ANTENNA2", i(row.antenna)),
             ("FIELD_ID", i(row.field)),
             ("FEED1", i(row.feed)),
             ("FEED2", i(row.feed)),
             ("DATA_DESC_ID", i(description)),
             ("STATE_ID", i(state)),
-            ("FLAG", bool_array(&flags, shape)),
             ("FLAG_ROW", b(planes.values().any(|plane| plane.flag_row))),
             ("FLAG_CATEGORY", bool_array(&[], vec![0, 0, 0])),
             ("WEIGHT", noise.clone()),
             ("SIGMA", noise),
         ],
     );
+    record.upsert("FLAG", Value::Array(ArrayValue::Bool(flags)));
     record.upsert(column.name(), data);
     record
+}
+
+fn visibility_data(
+    planes: &[&Plane],
+    channels: usize,
+    full: bool,
+    column: OptionalMainColumn,
+) -> Value {
+    if column == OptionalMainColumn::FloatData {
+        let data = channel_major(planes, channels, |plane, channel| {
+            if full && plane.index == 3 {
+                planes[1].data[channel]
+            } else {
+                plane.data[channel]
+            }
+        });
+        return Value::Array(ArrayValue::Float32(data));
+    }
+    let data = channel_major(planes, channels, |plane, channel| {
+        match (full, plane.index) {
+            (true, 2) => Complex32::new(planes[1].data[channel], planes[2].data[channel]),
+            (true, 3) => Complex32::new(planes[1].data[channel], -planes[2].data[channel]),
+            _ => Complex32::new(plane.data[channel], 0.),
+        }
+    });
+    Value::Array(ArrayValue::Complex32(data))
+}
+
+/// Construct contiguous casacore-order cells directly from the input planes.
+fn channel_major<T>(
+    planes: &[&Plane],
+    channels: usize,
+    sample: impl Fn(&Plane, usize) -> T,
+) -> ArrayD<T> {
+    let mut values = Vec::with_capacity(planes.len() * channels);
+    for channel in 0..channels {
+        values.extend(planes.iter().map(|plane| sample(plane, channel)));
+    }
+    Array2::from_shape_vec((planes.len(), channels).f(), values)
+        .expect("one value per correlation and channel")
+        .into_dyn()
 }
 
 fn update_unique<T: PartialEq>(records: &mut Vec<(T, TimeSpan)>, value: T, span: TimeSpan) {

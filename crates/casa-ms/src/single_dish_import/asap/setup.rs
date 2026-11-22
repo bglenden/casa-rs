@@ -7,7 +7,7 @@ use std::path::Path;
 use casa_tables::Table;
 use casa_types::measures::frequency::CasaFrequencyFrame;
 
-use super::super::{Antenna, ImportHeader, Window};
+use super::super::{Antenna, ImportHeader, Window, antenna_diameter};
 use super::asap_row::{doubles, flags, integer, invalid, number, string, subtable};
 use crate::MsResult;
 
@@ -31,12 +31,13 @@ pub(super) fn header(path: &Path, table: &Table) -> MsResult<ImportHeader> {
             [min.min(time), max.max(time)]
         });
     Ok(ImportHeader {
-        antenna: Antenna {
+        antenna: vec![Antenna {
             name: name.into(),
             station: station.into(),
             position,
             diameter: antenna_diameter(name),
-        },
+        }],
+        direction_frame: "J2000",
         telescope: observatory.into(),
         observer: string(keywords, "Observer")?.into(),
         project: string(keywords, "Project")?.into(),
@@ -44,37 +45,6 @@ pub(super) fn header(path: &Path, table: &Table) -> MsResult<ImportHeader> {
         data_unit: string(keywords, "FluxUnit")?.into(),
         windows: windows(path, table)?,
     })
-}
-
-fn antenna_diameter(name: &str) -> f64 {
-    let name = name.to_ascii_uppercase();
-    let bare = name.trim_end_matches(|c: char| c.is_ascii_digit());
-    if bare.len() != name.len() {
-        if ["DV", "DA", "PM"]
-            .iter()
-            .any(|suffix| bare.ends_with(suffix))
-        {
-            return 12.0;
-        }
-        if bare.ends_with("CM") {
-            return 7.0;
-        }
-    }
-    [
-        ("GBT", 104.9),
-        ("MOPRA", 22.0),
-        ("PKS", 64.0),
-        ("PARKS", 64.0),
-        ("TIDBINBILLA", 70.0),
-        ("CEDUNA", 30.0),
-        ("HOBART", 26.0),
-        ("APEX", 12.0),
-        ("ASTE", 10.0),
-        ("NRO", 45.0),
-    ]
-    .into_iter()
-    .find_map(|(marker, size)| name.contains(marker).then_some(size))
-    .unwrap_or_default()
 }
 
 fn windows(path: &Path, table: &Table) -> MsResult<BTreeMap<i32, Window>> {

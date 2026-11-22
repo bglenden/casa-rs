@@ -33,7 +33,7 @@ ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "m
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["wvr"] = {"gcal"}
 IMPLEMENTED["singledishms"] = {
-    "importasap", "atmcor", "fit_line",
+    "importasap", "importnro", "atmcor", "fit_line",
     "open", "close", "done", "name", "set_selection", "smooth",
     "subtract_baseline", "subtract_baseline_cspline", "subtract_baseline_sinusoid",
     "subtract_baseline_variable", "apply_baseline_table",

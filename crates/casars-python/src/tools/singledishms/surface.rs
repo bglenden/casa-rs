@@ -85,7 +85,7 @@ const METHODS: &[Method] = &[
                 param("parallel", K::Bool, D::Bool(false)),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
     method("name", &[], R::Text, S::Implemented),
