@@ -56,7 +56,7 @@ PARTIAL = {
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
     "image": {
-        "fromcomplist", "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
+        "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     },
 }
 
@@ -92,7 +92,7 @@ IMPLEMENTED["image"] = {
     "coordmeasures", "topixel", "toworld",
     "adddegaxes",
     "statistics",
-    "beamarea", "beamforconvolvedsize", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "deconvolvefrombeam", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
+    "beamarea", "beamforconvolvedsize", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "deconvolvefrombeam", "dohistory", "done", "fitsheader", "fromarray", "fromcomplist", "fromfits", "fromshape",
     "getchunk", "getregion", "haslock", "history", "imagecalc", "isconform", "isopen", "ispersistent", "lock", "name", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
     "newimagefromarray", "newimagefromfits", "newimagefromshape",
     "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",

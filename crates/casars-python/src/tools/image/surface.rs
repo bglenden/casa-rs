@@ -462,7 +462,7 @@ const METHODS: &[Method] = &[
             param("cache", K::Bool, Bool(true)),
         ],
         R::Any,
-        Status::Partial,
+        Yes,
     ),
     method(
         "fromfits",

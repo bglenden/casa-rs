@@ -3,7 +3,7 @@
 use casa_lattices::{TraversalCacheHint, TraversalCacheMode};
 use ndarray::{ArrayD, Axis, Dimension, IxDyn, Slice, Zip, indices};
 
-use crate::{ImageError, ImageInterface, ImagePixel, MutableImageInterface};
+use crate::{ImageError, ImageInterface, ImagePixel, MutableImageInterface, TempImage};
 
 use super::{SubimageRegion, region::SubimageSelection};
 
@@ -28,7 +28,22 @@ pub fn put_image_region<T: ImagePixel>(
         pixels.as_ref().map(ArrayD::shape),
         mask.as_ref().map(ArrayD::shape),
     )?;
+    let component = image
+        .as_any()
+        .and_then(|image| image.downcast_ref::<TempImage<T>>())
+        .is_some_and(|image| image.image_type_name() == "ComponentListImage");
+    if !image.is_writable() && !component {
+        return Err(ImageError::CasaSelection(
+            "This image is not writable".into(),
+        ));
+    }
     let selection = ImageRegionWrite::new(image, region, array_shape, replicate)?;
+    // CASA's mask attacher leaves a temporary component image unmasked.
+    let mask = if component && image.name().is_none() {
+        None
+    } else {
+        mask
+    };
     let tile = image.nice_cursor_shape();
     let small_edit =
         tile != image.shape() && selection.count.iter().product::<usize>() <= tile.iter().product();
@@ -88,11 +103,6 @@ impl ImageRegionWrite {
         array_shape: &[usize],
         replicate: bool,
     ) -> Result<Self, ImageError> {
-        if !image.is_writable() {
-            return Err(ImageError::CasaSelection(
-                "This image is not writable".into(),
-            ));
-        }
         if array_shape.len() > image.ndim() {
             return Err(ImageError::CasaSelection(
                 "Data array has more axes than the image".into(),

@@ -2,29 +2,33 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
-use casa_lattices::{Lattice, PagedArray};
-use casa_tables::{Table, TableInfo, TableOptions, TableWriteLock, add_directory};
+use casa_lattices::Lattice;
+use casa_tables::{Table, TableInfo, TableOptions, TableWriteLock};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::ArrayD;
 
 use crate::mask_reference::subtable_reference;
 use crate::{ImageError, ImageInfo, PagedImage};
 
+use super::masks::{ComponentMasks, validate_coverage};
 use super::{ComponentListImage, invalid};
 
 #[derive(Clone)]
-pub(super) struct ComponentTable {
+pub(crate) struct ComponentTable {
     pub(super) path: PathBuf,
     pub(super) info: ImageInfo,
     pub(super) misc: RecordValue,
-    pub(super) masks: RecordValue,
-    pub(super) default_mask: Option<String>,
+    pub(super) masks: Arc<RwLock<ComponentMasks>>,
 }
 
 impl ComponentListImage {
+    pub(crate) fn native_table(&self) -> Option<&ComponentTable> {
+        self.native.as_ref()
+    }
+
     /// Recognize the native Component List table of a component-list image.
     /// A bare component list lacks the image's coordinate keyword.
     pub fn recognizes_native(path: &Path) -> bool {
@@ -69,33 +73,16 @@ impl ComponentListImage {
         if !info.beam_set.is_empty() {
             return Err(invalid("A ComponentListImage may not have a beam(s)"));
         }
-        let masks = keyword_record(keywords, "masks");
-        let default_mask = match keywords.get("Image_defaultmask") {
-            Some(Value::Scalar(ScalarValue::String(name))) if masks.get(name).is_some() => {
-                Some(name.clone())
-            }
-            _ => None,
-        };
         let native = ComponentTable {
             path: path.to_path_buf(),
             info,
             misc: keyword_record(keywords, "miscinfo"),
-            masks,
-            default_mask,
+            masks: Arc::new(RwLock::new(ComponentMasks::from_keywords(keywords))),
         };
-        if let Some(name) = &native.default_mask {
+        let active = native.mask_state().active().map(str::to_owned);
+        if let Some(name) = active.as_deref() {
             let mask = native.open_mask(name)?;
-            if mask.ndim() != shape.len()
-                || mask
-                    .shape()
-                    .iter()
-                    .zip(&shape)
-                    .any(|(mask, image)| mask < image)
-            {
-                return Err(invalid(&format!(
-                    "region {name} does not cover the full image",
-                )));
-            }
+            validate_coverage(name, mask.shape(), &shape)?;
         }
         let components = ComponentList::read_table(path)
             .map_err(|error| ImageError::CasaSelection(error.to_string()))?;
@@ -139,37 +126,14 @@ impl ComponentListImage {
 }
 
 impl ComponentTable {
-    pub(super) fn read_mask(
-        &self,
-        name: &str,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<ArrayD<bool>, ImageError> {
-        self.open_mask(name)?
-            .get_slice(start, shape, stride)
-            .map_err(Into::into)
-    }
-
-    fn open_mask(&self, name: &str) -> Result<PagedArray<bool>, ImageError> {
-        let Some(Value::Record(region)) = self.masks.get(name) else {
-            return Err(ImageError::MaskNotFound(name.into()));
-        };
-        let reference = match region.get("mask") {
-            Some(Value::TableRef(reference) | Value::Scalar(ScalarValue::String(reference))) => {
-                reference
-            }
-            _ => {
-                return Err(ImageError::InvalidMetadata(
-                    "mask record is missing table reference".into(),
-                ));
-            }
-        };
-        PagedArray::<bool>::open(add_directory(reference, &self.path)).map_err(Into::into)
+    pub(super) fn mask_state(&self) -> RwLockReadGuard<'_, ComponentMasks> {
+        self.masks
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
-fn keyword_record(keywords: &RecordValue, name: &str) -> RecordValue {
+pub(super) fn keyword_record(keywords: &RecordValue, name: &str) -> RecordValue {
     match keywords.get(name) {
         Some(Value::Record(record)) => record.clone(),
         _ => RecordValue::default(),
@@ -190,7 +154,7 @@ fn update_keywords(path: &Path, update: impl FnOnce(&mut RecordValue)) -> Result
     let mut lock = TableWriteLock::acquire_to_reread(path, 1)?;
     let mut table = Table::open_metadata_only(TableOptions::new(path))?;
     update(table.keywords_mut());
-    table.save_metadata_only(TableOptions::new(path))?;
+    table.save_keywords_atomically(path)?;
     lock.record_write();
     lock.release()?;
     Ok(())

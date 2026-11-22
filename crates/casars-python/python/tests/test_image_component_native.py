@@ -323,6 +323,7 @@ def test_component_image_checks_the_default_mask_on_open(tmp_path, reader, wrong
             assert not reopened.isopen()
         else:
             assert reopened.open(str(path))
+            assert list(reopened.maskhandler("default")) == ["missing"]
             assert np.all(reopened.getchunk(getmask=True))
     finally:
         table.done()
@@ -330,7 +331,7 @@ def test_component_image_checks_the_default_mask_on_open(tmp_path, reader, wrong
         source.done()
 
 
-def test_unimplemented_default_mask_clear_does_not_report_success(tmp_path):
+def test_clear_default_mask_written_by_casa(tmp_path):
     casa, api = _backend("casa"), _backend("casars")
     source, reopened = casa.image(), api.image()
     path = tmp_path / "source.im"
@@ -339,10 +340,44 @@ def test_unimplemented_default_mask_clear_does_not_report_success(tmp_path):
         assert source.calcmask("F", "none")
         assert source.done()
         assert reopened.open(str(path))
-        with pytest.raises(RuntimeError, match="#1691"):
-            reopened.maskhandler("set", [])
-        assert list(reopened.maskhandler("default")) == ["none"]
-        assert not np.any(reopened.getchunk(getmask=True))
+        assert list(reopened.maskhandler("set", [])) == ["T"]
+        assert list(reopened.maskhandler("default")) == [""]
+        assert np.all(reopened.getchunk(getmask=True))
+        assert reopened.done()
+        assert source.open(str(path))
+        assert list(source.maskhandler("default")) == [""]
+        assert list(source.maskhandler("get")) == ["none"]
     finally:
         reopened.done()
         source.done()
+
+
+@pytest.mark.parametrize("cache", [True, False])
+def test_reopened_native_component_evaluates_a_small_section(tmp_path, cache):
+    api = _backend("casars")
+    path = tmp_path / "large.im"
+    small = tmp_path / "small.im"
+    image = api.image()
+    expected = np.zeros((3, 3))
+    expected[1, 1] = 2.
+
+    def stored_sizes(directory):
+        return {
+            entry.relative_to(directory): entry.stat().st_size
+            for entry in directory.rglob("*")
+            if entry.is_file() and entry.name != "table.lock"
+        }
+
+    try:
+        record = _component_record(api)
+        assert image.fromcomplist(str(small), [6, 8], record, cache=cache)
+        assert image.done()
+        assert image.fromcomplist(str(path), [50_000, 50_000], record, cache=cache)
+        assert image.done()
+        assert image.open(str(path), cache=cache)
+        for _ in range(2):
+            actual = image.getchunk([24_998, 24_998], [25_002, 25_002], [2, 2])
+            np.testing.assert_array_equal(actual, expected)
+        assert stored_sizes(path) == stored_sizes(small)
+    finally:
+        image.done()

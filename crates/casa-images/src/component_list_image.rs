@@ -22,8 +22,9 @@ use ndarray::{Array3, ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use crate::{ImageError, ImageInfo, ImageInterface};
 
+mod masks;
 mod native;
-pub(crate) use native::write_component_keyword;
+pub(crate) use native::{ComponentTable, write_component_keyword};
 
 /// A read-only layer of image pixels evaluated from sky components on demand.
 pub struct ComponentListImage {
@@ -516,32 +517,27 @@ impl ImageInterface<f32> for ComponentListImage {
     }
 
     fn mask_names(&self) -> Vec<String> {
-        self.native.as_ref().map_or_else(Vec::new, |table| {
-            table
-                .masks
-                .fields()
-                .iter()
-                .map(|field| field.name.clone())
-                .collect()
-        })
+        self.native
+            .as_ref()
+            .map_or_else(Vec::new, |table| table.mask_state().names())
     }
 
     fn default_mask_name(&self) -> Option<String> {
         self.native
             .as_ref()
-            .and_then(|table| table.default_mask.clone())
+            .and_then(|table| table.mask_state().default_name())
     }
 
     fn has_pixel_mask(&self) -> bool {
         self.native
             .as_ref()
-            .is_some_and(|table| table.default_mask.is_some())
+            .is_some_and(|table| table.mask_state().active().is_some())
     }
 
     fn default_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
-        self.default_mask_name()
-            .map(|name| self.get_named_mask(&name))
-            .transpose()
+        let origin = vec![0; self.shape.len()];
+        let stride = vec![1; self.shape.len()];
+        self.get_mask_slice(&origin, &self.shape, &stride)
     }
 
     fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
@@ -569,8 +565,9 @@ impl ImageInterface<f32> for ComponentListImage {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<Option<ArrayD<bool>>, ImageError> {
-        self.default_mask_name()
-            .map(|name| self.get_named_mask_slice(&name, start, shape, stride))
-            .transpose()
+        match &self.native {
+            Some(table) => table.read_live_default_mask(start, shape, stride),
+            None => Ok(None),
+        }
     }
 }
