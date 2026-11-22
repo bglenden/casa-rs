@@ -1,0 +1,344 @@
+{
+  "schema_version": 1,
+  "task": "sdfit",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "f8253b17601ac8d8bf538c516ea05b19a6129891",
+  "parameters": {
+    "infile": {
+      "scope": "name of input SD dataset",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "datacolumn": {
+      "scope": "Read FLOAT_DATA or the real part of DATA or CORRECTED_DATA through the data, float_data and corrected selectors.",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "antenna": {
+      "scope": "select data by antenna name or ID, e.g. \"PM03\"",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "field": {
+      "scope": "select data by field IDs and names, e.g. \"3C2*\" (\"\"=all)",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "spw": {
+      "scope": "select data by IF IDs (spectral windows), e.g. \"3,5,7\" (\"\"=all)",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "timerange": {
+      "scope": "select data by time range, e.g. \"09:14:0~09:54:0\" (\"\"=all) (see examples in help)",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "scan": {
+      "scope": "select data by scan numbers, e.g. \"21~23\" (\"\"=all)",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "pol": {
+      "scope": "select data by polarization IDs, e.g. \"XX,YY\" (\"\"=all)",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "intent": {
+      "scope": "select data by observational intent, e.g. \"*ON_SOURCE*\" (\"\"=all)",
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "timebin": {
+      "scope": "bin width for time averaging",
+      "status": "Implemented",
+      "behaviors": [
+        "averaging"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "timespan": {
+      "scope": "span the timebin across \"scan\", \"state\", \"field\", or a combination of them (e.g., \"scan,state\")",
+      "status": "Implemented",
+      "behaviors": [
+        "averaging"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "polaverage": {
+      "scope": "polarization averaging mode (\"\", \"stokes\" or \"geometric\").",
+      "status": "Implemented",
+      "behaviors": [
+        "averaging"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "fitfunc": {
+      "scope": "function for fitting",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "fitmode": {
+      "scope": "Use explicit component counts and channel ranges or detect lines automatically.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "nfit": {
+      "scope": "list of number of lines to fit in maskline region.",
+      "status": "Implemented",
+      "behaviors": [
+        "fitting"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "thresh": {
+      "scope": "S/N threshold for linefinder",
+      "status": "Implemented",
+      "behaviors": [
+        "detection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "avg_limit": {
+      "scope": "channel averaging for broad lines",
+      "status": "Implemented",
+      "behaviors": [
+        "detection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "minwidth": {
+      "scope": "the minimum channel width to detect as a line",
+      "status": "Implemented",
+      "behaviors": [
+        "detection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "edge": {
+      "scope": "channels to drop at beginning and end of spectrum",
+      "status": "Implemented",
+      "behaviors": [
+        "detection"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "outfile": {
+      "scope": "name of output file",
+      "status": "Implemented",
+      "behaviors": [
+        "products"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    },
+    "overwrite": {
+      "scope": "overwrite the output file if already exists",
+      "status": "Implemented",
+      "behaviors": [
+        "products"
+      ],
+      "evidence": [
+        "paired"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "selection",
+      "title": "Select single-dish spectra",
+      "scope": "Apply CASA autocorrelation, field, time, scan, correlation, intent and spectral-window selection. Use channel ranges as masks on the original spectra.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "fitting",
+      "title": "Fit and report spectral lines",
+      "scope": "Fit Gaussian and Lorentzian emission and absorption components. Return channel centers, peaks, widths and residual covariance errors as nested Python lists.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "averaging",
+      "title": "Average selected integrations and hands",
+      "scope": "Combine selected integrations and time-span axes or average parallel hands, using channel weights when present. An attached fit_line retains its averaging settings until reopened or closed.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "detection",
+      "title": "Detect line ranges",
+      "scope": "Use the CASA clipped-MAD line finder to choose fit ranges. Omit spectra with no detected line in automatic mode.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "products",
+      "title": "Publish interoperable fit products",
+      "scope": "Write the optional tab-separated fit report and the direct tool text and empty selected MeasurementSet. Switch to Stokes I metadata when requested by the attached tool.",
+      "status": "Implemented",
+      "gap": "Dataset-scale release profiling follows functionality under #979.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "chronological-time-bins",
+      "state": "Previously agreed",
+      "record": "Single-dish line fitting can exceed its time bin on descending rows",
+      "inputs": "A one-second fit bin on four integrations provided in descending physical order.",
+      "casa": "The iterator fits one combined spectrum per hand.",
+      "ours": "Chronological ordering yields four fitted spectra per hand in either physical row order.",
+      "rationale": "The bin duration applies to integration times. Fit products agree with CASA on the chronological input.",
+      "impact": "A reordered MeasurementSet gives the same fitted time bins.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "single-hand-average",
+      "state": "Previously agreed",
+      "record": "Single-dish polarization averaging can abort for one selected hand",
+      "inputs": "Select YY on an XX/YY setup and request geometric averaging.",
+      "casa": "The iterator can abort while indexing the original pair.",
+      "ours": "With no selected pair, fit the selected hand unchanged.",
+      "rationale": "The selected correlation is the only available eligible spectrum.",
+      "impact": "The call returns the equivalent fit of the selected hand.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "negative-fit-count",
+      "state": "Previously agreed",
+      "record": "Single-dish line fitting aborts for negative component counts",
+      "inputs": "Use nfit=[-1] in list mode.",
+      "casa": "An unsigned component allocation can abort the process.",
+      "ours": "Raise a runtime error before allocating a fit.",
+      "rationale": "A component count cannot be negative.",
+      "impact": "The caller can correct the list without losing the session.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "fit-report-overwrite",
+      "state": "Previously agreed",
+      "record": "A failed line fit can delete the previous report",
+      "inputs": "Enable overwrite for an existing fit report and supply a mismatched component count.",
+      "casa": "The earlier report is removed before the error.",
+      "ours": "Keep the report until the replacement has been fitted and written.",
+      "rationale": "An incomplete fit cannot replace an existing product.",
+      "impact": "The caller keeps the earlier report after a failed fit.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Public task and tool spectral fits, uncertainties and MeasurementSet interchange",
+      "state": "passed",
+      "casa_version": "6.7.6.14",
+      "revision": "f8253b17601ac8d8bf538c516ea05b19a6129891",
+      "source_revision": "f8253b17601ac8d8bf538c516ea05b19a6129891",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1987",
+      "scope": "All 21 task arguments, all 15 fit_line arguments, independent profile and covariance fits, averaging, CSV and tabular results, and the empty direct-tool MS opened in both readers.",
+      "result": "The paired and analytic comparisons pass for selected noisy single and joint components, including the reviewed direct-channel weights, count separators, symlink report and contended publication retry.",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdfit_oracle.py <new-dir>",
+      "links": [
+        "tools/casa-compat/sdfit_oracle.py"
+      ]
+    }
+  }
+}
