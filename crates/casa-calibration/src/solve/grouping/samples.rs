@@ -14,7 +14,7 @@ use crate::solve::model::ModelInputs;
 
 use super::{
     AveragedBaseline, GainSolveError, GainSolveMode, SelectedChannels, SelectedSolveRow,
-    SolveAccumulator, SolveSamples, get_i32, median_with_even_mean,
+    SolveAccumulator, SolveSamples, get_i32,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -274,6 +274,36 @@ pub(super) fn rotate_model(
     });
     rotate(&mut point)?;
     Ok(Some(point.into_raw_vec_and_offset().0))
+}
+
+/// The median, the mean of the middle two for an even count, as casacore's
+/// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
+/// channel-independent weight.
+pub(in crate::solve) fn median_with_even_mean(values: &mut [f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let middle = values.len() / 2;
+    let even = values.len().is_multiple_of(2);
+    let first = values[0];
+    if values
+        .iter()
+        .all(|value| value.to_bits() == first.to_bits())
+    {
+        return if even { (first + first) / 2.0 } else { first };
+    }
+    let (lower, upper, _) = values.select_nth_unstable_by(middle, f32::total_cmp);
+    let upper = *upper;
+    if even {
+        let lower = lower
+            .iter()
+            .copied()
+            .max_by(f32::total_cmp)
+            .expect("nonempty even lower half");
+        (lower + upper) / 2.0
+    } else {
+        upper
+    }
 }
 
 /// The time averager sees all correlations before G restricts the fit.

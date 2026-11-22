@@ -191,18 +191,18 @@ fn pad_spline_columns(table: &mut Table, path: &Path) -> Result<(), CalibrationT
         "POLY_COEFF_AMP",
         "POLY_COEFF_PHASE",
     ] {
-        let rows: Vec<_> = (0..table.row_count()).collect();
-        let shapes = table
-            .column_accessor(name)
-            .and_then(|column| column.array_shapes_uncached(&rows))
-            .map_err(|error| invalid(path, error.to_string()))?;
-        let len = |shape: Option<&[usize]>| match shape {
-            Some([1, 1, 1, len]) => Ok(*len),
-            _ => Err(invalid(path, format!("invalid GSPLINE {name} cell shape"))),
+        let len = |row| {
+            let cell = table
+                .cell_accessor(row, name)
+                .and_then(|cell| cell.array())
+                .map_err(|error| invalid(path, error.to_string()))?;
+            match cell.shape() {
+                [1, 1, 1, len] => Ok(*len),
+                _ => Err(invalid(path, format!("invalid GSPLINE {name} cell shape"))),
+            }
         };
-        let lengths = shapes
-            .iter()
-            .map(|shape| len(shape.as_deref()))
+        let lengths = (0..table.row_count())
+            .map(len)
             .collect::<Result<Vec<_>, _>>()?;
         let largest = lengths.iter().copied().max().unwrap_or(0);
         for (row, size) in lengths.into_iter().enumerate() {

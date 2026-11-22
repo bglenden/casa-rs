@@ -33,6 +33,7 @@ use crate::session::{resolve_calibration_selection, resolve_casa_calibration_sel
 use crate::solve::kernel::{RobustSample, SolveGraph};
 pub(crate) use inputs::SolveInputBatch;
 use inputs::{input_cell, read_input_batch};
+pub(super) use samples::median_with_even_mean;
 use samples::{
     SolveAccumulationKey, SolveEdgeAccumulation, SolveRowInputs, SolveRowLayout, SolveRowLayouts,
     two_dimensional,
@@ -1445,36 +1446,6 @@ fn unsupported_shape(column: &str, value: &ArrayValue) -> GainSolveError {
     GainSolveError::UnsupportedParameterShape {
         path: format!("<measurement-set {column}>"),
         shape: value.shape().to_vec(),
-    }
-}
-
-/// The median, the mean of the middle two for an even count, as casacore's
-/// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
-/// channel-independent weight.
-pub(super) fn median_with_even_mean(values: &mut [f32]) -> f32 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let middle = values.len() / 2;
-    let even = values.len().is_multiple_of(2);
-    let first = values[0];
-    if values
-        .iter()
-        .all(|value| value.to_bits() == first.to_bits())
-    {
-        return if even { (first + first) / 2.0 } else { first };
-    }
-    let (lower, upper, _) = values.select_nth_unstable_by(middle, f32::total_cmp);
-    let upper = *upper;
-    if even {
-        let lower = lower
-            .iter()
-            .copied()
-            .max_by(f32::total_cmp)
-            .expect("nonempty even lower half");
-        (lower + upper) / 2.0
-    } else {
-        upper
     }
 }
 
