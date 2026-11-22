@@ -3,9 +3,12 @@
 
 use std::path::Path;
 
+use casa_calibration::CalibrationSpecification;
 use pyo3::prelude::*;
 
+use super::arguments::{strict_bool, text};
 use super::{PyCalibrater, runtime_error};
+use crate::convert::DoubleList;
 use crate::tools::not_yet_implemented_in;
 
 #[pymethods]
@@ -50,6 +53,7 @@ impl PyCalibrater {
     #[pyo3(signature = (caltable = None, time = None, spw = None, antenna = None, pol = None, caltype = None, parameter = None, infile = None, uniform = None), text_signature = "($self, caltable='', time='', spw='', antenna='', pol='', caltype='', parameter=[1.0], infile='', uniform=True)")]
     fn specifycal(
         &self,
+        py: Python<'_>,
         caltable: Option<&Bound<'_, PyAny>>,
         time: Option<&Bound<'_, PyAny>>,
         spw: Option<&Bound<'_, PyAny>>,
@@ -59,8 +63,35 @@ impl PyCalibrater {
         parameter: Option<&Bound<'_, PyAny>>,
         infile: Option<&Bound<'_, PyAny>>,
         uniform: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "specifycal", 1528)
+    ) -> PyResult<bool> {
+        let table = text(caltable.cloned(), "caltable", "")?;
+        // CASA accepts the time label without assigning it to table rows.
+        text(time.cloned(), "time", "")?;
+        let spw = text(spw.cloned(), "spw", "")?;
+        let antenna = text(antenna.cloned(), "antenna", "")?;
+        let polarization = text(pol.cloned(), "pol", "")?;
+        let caltype = text(caltype.cloned(), "caltype", "")?;
+        let parameters = parameter
+            .map(|value| value.extract::<DoubleList>())
+            .transpose()?
+            .map_or_else(|| vec![1.], |values| values.0);
+        let infile = text(infile.cloned(), "infile", "")?;
+        let uniform = uniform
+            .map(|value| strict_bool(value, "specifycal", 10))
+            .transpose()?
+            .unwrap_or(true);
+        self.attached(py, move |state| {
+            state.specify_calibration(CalibrationSpecification {
+                table: Path::new(&table),
+                spw: &spw,
+                antenna: &antenna,
+                polarization: &polarization,
+                caltype: &caltype,
+                parameters,
+                infile: (!infile.is_empty()).then_some(Path::new(&infile)),
+                uniform,
+            })
+        })
     }
 
     #[pyo3(signature = (), text_signature = "($self)")]
