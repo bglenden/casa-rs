@@ -161,6 +161,7 @@ pub(crate) fn build_solve_groups(
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
     let baseline_solve = options.input_rows == SolveInputRows::Baselines;
+    let fixed_autocorrelations = options.input_rows == SolveInputRows::GainTool;
     let seed_combined_g = !baseline_solve
         && !only_autocorrelations
         && options.gain_type == GainType::G
@@ -175,6 +176,7 @@ pub(crate) fn build_solve_groups(
         || seed_combined_g;
     let legacy_spline = options.gain_type == GainType::GSpline;
     let include_autocorrelations = baseline_solve
+        || fixed_autocorrelations
         || legacy_spline
         || needs_first_buffer
         || models.needs_buffers()
@@ -200,7 +202,11 @@ pub(crate) fn build_solve_groups(
     models.bind_buffers(ms, &ordered, options.combine)?;
     if only_autocorrelations {
         ordered.retain(|(row, _, _)| row.antenna1 == row.antenna2);
-    } else if include_autocorrelations && !legacy_spline && !baseline_solve {
+    } else if include_autocorrelations
+        && !legacy_spline
+        && !baseline_solve
+        && !fixed_autocorrelations
+    {
         ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
     }
     models.phase_times =
@@ -261,6 +267,7 @@ pub(crate) fn build_solve_groups(
                 );
                 group.first_t_buffer = buffer.copied();
                 group.first_g_graphs = seed_combined_g.then(Box::default);
+                group.direct_gain = fixed_autocorrelations.then(Default::default);
                 group
             });
             if options.combine.fields {
@@ -670,6 +677,7 @@ pub(crate) struct SolveAccumulator {
     pub(crate) attempted: bool,
     first_t_buffer: Option<FirstTBuffer>,
     pub(crate) first_g_graphs: Option<Box<[SolveGraph; 2]>>,
+    direct_gain: Option<samples::DirectGainGather>,
     parallel_hands: usize,
     baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
     preaverage_starts: HashMap<AveragedBaseline, f64>,
@@ -726,6 +734,7 @@ impl SolveAccumulator {
             attempted: false,
             first_t_buffer: None,
             first_g_graphs: None,
+            direct_gain: None,
             parallel_hands: 1,
             baseline_centroids: HashMap::new(),
             preaverage_starts: HashMap::new(),
@@ -912,16 +921,13 @@ impl SolveAccumulator {
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
         if options.polynomial_bandpass {
-            self.observe_metadata(row, false);
-            self.polynomial
-                .get_or_insert_with(Default::default)
-                .observe(
-                    row,
-                    samples,
-                    correlation_types,
-                    channels,
-                    options.point_stokes,
-                );
+            self.observe_polynomial(
+                row,
+                samples,
+                correlation_types,
+                channels,
+                options.point_stokes,
+            );
             return Ok(());
         }
         if options.channelized {
@@ -971,6 +977,9 @@ impl SolveAccumulator {
                 || legacy_spline && channels.indices.iter().all(|&channel| flags[channel])
         });
         let no_weighted_data = flagged || samples.weights.iter().all(|weight| *weight <= 0.0);
+        if let Some(gather) = &mut self.direct_gain {
+            gather.observe(row, samples, channels.indices, shared_flags.as_deref());
+        }
         if legacy_spline && flagged {
             return Ok(());
         }
@@ -1086,7 +1095,8 @@ impl SolveAccumulator {
                     attempted: &mut self.attempted,
                     channelized: options.channelized,
                     keep_zero_data: baseline_solve
-                        || options.input_rows == SolveInputRows::Autocorrelations,
+                        || options.input_rows == SolveInputRows::Autocorrelations
+                        || self.direct_gain.is_some() && row.antenna1 == row.antenna2,
                     retain_zero_model: options.gain_type.is_delay()
                         || options.gain_type == GainType::T
                         || samples.model.is_some()
@@ -1155,24 +1165,44 @@ impl SolveAccumulator {
                     }
                     let averaged =
                         accumulation.weighted_sum / Complex32::new(accumulation.weight, 0.0);
-                    let (sample, weight) = match solve_mode {
-                        GainSolveMode::Phase => {
-                            let amplitude = averaged.norm();
-                            if amplitude <= f32::EPSILON {
-                                continue;
-                            }
-                            (
-                                averaged / Complex32::new(amplitude, 0.0),
-                                accumulation.weight * amplitude * amplitude,
-                            )
-                        }
-                        GainSolveMode::Amplitude => {
-                            (Complex32::new(averaged.norm(), 0.0), accumulation.weight)
-                        }
-                        GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
+                    let fixed_auto = self.direct_gain.is_some()
+                        && key.baseline.antennas.0 == key.baseline.antennas.1;
+                    let Some((sample, weight)) = samples::transform_solve_sample(
+                        averaged,
+                        accumulation.weight,
+                        solve_mode,
+                        fixed_auto,
+                    ) else {
+                        continue;
                     };
                     let model = accumulation.model_weight / accumulation.weight;
                     let model_weight = weight * model;
+                    let in_first_buffer = self
+                        .first_t_buffer
+                        .is_some_and(|buffer| buffer.contains(key.baseline));
+                    let robust_sample = RobustSample {
+                        baseline: key.baseline.antennas,
+                        correlation: key.correlation_index,
+                        visibility: sample,
+                        weight,
+                        model,
+                        in_first_buffer,
+                    };
+                    if fixed_auto {
+                        // The CASA differentiator skips Jones terms and derivatives for
+                        // autocorrelations. The residual and its weight still enter chi-square.
+                        let graph = &mut self.channel_graphs[channel_index][receptor];
+                        let residual = robust_sample.fixed_residual_power();
+                        graph.add_fixed_residual(
+                            key.baseline.antennas.0,
+                            f64::from(residual) * f64::from(weight),
+                        );
+                        if preserve_samples {
+                            graph.robust_samples.push(robust_sample);
+                        }
+                        *baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
+                        continue;
+                    }
                     let edge_stats = SolveEdgeStats {
                         weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
                         raw_weighted_sample_power: accumulation.weighted_sample_power,
@@ -1185,9 +1215,6 @@ impl SolveAccumulator {
                         sample * model_weight,
                         edge_stats,
                     );
-                    let in_first_buffer = self
-                        .first_t_buffer
-                        .is_some_and(|buffer| buffer.contains(key.baseline));
                     if in_first_buffer && let Some(graphs) = self.first_g_graphs.as_mut() {
                         graphs[receptor].accumulate(
                             key.baseline.antennas,
@@ -1199,14 +1226,7 @@ impl SolveAccumulator {
                     if preserve_samples {
                         self.channel_graphs[channel_index][receptor]
                             .robust_samples
-                            .push(RobustSample {
-                                baseline: key.baseline.antennas,
-                                correlation: key.correlation_index,
-                                visibility: sample,
-                                weight,
-                                model,
-                                in_first_buffer,
-                            });
+                            .push(robust_sample);
                     }
                     *baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
                 }

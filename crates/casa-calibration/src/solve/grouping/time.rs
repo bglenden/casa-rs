@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Row order and time bins for gain solutions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     BucketedRow, GainSolveCombine, GainSolveError, GainSolveInterval, SelectedSolveRow,
@@ -33,6 +33,8 @@ pub(crate) enum SolveInputRows {
     /// Use cross-correlations after reading solver metadata.
     #[default]
     Interferometry,
+    /// Retain autocorrelations as fixed residual terms in direct G solves.
+    GainTool,
     /// Also retain the input buffer axes for a fringe FFT.
     Fringe,
     /// Keep the individual antennas' autocorrelations for normalization.
@@ -131,6 +133,16 @@ impl SolveAccumulator {
             .map(|buffer| (buffer.field, buffer.data_desc_id))
     }
 
+    pub(crate) fn direct_gain_data(&self) -> Option<([BTreeSet<i32>; 2], bool)> {
+        self.direct_gain
+            .as_ref()
+            .map(|gather| (gather.with_data.clone(), gather.attempted))
+    }
+
+    pub(crate) fn expects_cross_correlation(&self) -> bool {
+        self.direct_gain.is_none() || !self.antenna_ids.is_empty()
+    }
+
     pub(super) fn observe_metadata(&mut self, row: &SolveSampleRow, retain_fringe_buffers: bool) {
         if retain_fringe_buffers {
             self.observe_fringe_buffer(row);
@@ -145,8 +157,10 @@ impl SolveAccumulator {
         self.sample_rows += 1;
         self.field_ids.insert(row.field_id);
         self.scan_numbers.insert(row.scan_number);
-        self.antenna_ids.insert(row.antenna1);
-        self.antenna_ids.insert(row.antenna2);
+        if self.direct_gain.is_none() || row.antenna1 != row.antenna2 {
+            self.antenna_ids.insert(row.antenna1);
+            self.antenna_ids.insert(row.antenna2);
+        }
     }
 
     pub(super) fn observe_fringe_buffer(&mut self, row: &super::SolveSampleRow) {

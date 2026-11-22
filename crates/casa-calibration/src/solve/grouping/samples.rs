@@ -24,6 +24,33 @@ pub(super) struct SolveAccumulationKey {
     pub(super) parallel_hand: bool,
 }
 
+/// Apply the requested amplitude/phase mode to one collapsed visibility.
+pub(super) fn transform_solve_sample(
+    visibility: Complex32,
+    weight: f32,
+    mode: GainSolveMode,
+    fixed_auto: bool,
+) -> Option<(Complex32, f32)> {
+    Some(match mode {
+        GainSolveMode::Phase => {
+            let amplitude = visibility.norm();
+            if fixed_auto && amplitude == 0.0 {
+                // CASA leaves the nominal weight and zero DATA in the residual.
+                return Some((visibility, weight));
+            }
+            if !fixed_auto && amplitude <= f32::EPSILON {
+                return None;
+            }
+            (
+                visibility / Complex32::new(amplitude, 0.0),
+                weight * amplitude * amplitude,
+            )
+        }
+        GainSolveMode::Amplitude => (Complex32::new(visibility.norm(), 0.0), weight),
+        GainSolveMode::AmplitudePhase => (visibility, weight),
+    })
+}
+
 /// One MAIN row's checked two-dimensional solve arrays. Scalar SIGMA weights
 /// have one channel, broadcast to the data's channel count without copying.
 pub(super) struct SolveRowInputs<'a> {
@@ -348,6 +375,44 @@ pub(super) fn centroid_weight(
 }
 
 /// CASA's correlation-independent flags are shared by every receptor.
+/// Direct G's gather counts include correlations that are later excluded
+/// from the fit. The first and last input positions define the two counters.
+#[derive(Debug, Clone, Default)]
+pub(super) struct DirectGainGather {
+    pub(super) with_data: [BTreeSet<i32>; 2],
+    pub(super) attempted: bool,
+}
+
+impl DirectGainGather {
+    pub(super) fn observe(
+        &mut self,
+        row: &super::SolveSampleRow,
+        samples: &SolveSamples<'_>,
+        channels: &[usize],
+        shared_flags: Option<&[bool]>,
+    ) {
+        let positive = |correlation| {
+            channels.iter().any(|&channel| {
+                !shared_flags.is_some_and(|flags| flags[channel])
+                    && !samples.flags[[correlation, channel]]
+                    && samples.weights[[correlation, channel]] > 0.0
+            })
+        };
+        let Some(last) = samples.data.nrows().checked_sub(1) else {
+            return;
+        };
+        for (hand, correlation) in [0, last].into_iter().enumerate() {
+            if positive(correlation) {
+                self.with_data[hand].extend([row.antenna1, row.antenna2]);
+                self.attempted = true;
+            }
+        }
+        if !self.attempted {
+            self.attempted = (1..last).any(positive);
+        }
+    }
+}
+
 pub(super) fn channel_flags(samples: &SolveSamples<'_>) -> Vec<bool> {
     let correlations = samples.flags.shape()[0];
     if correlations > 0
