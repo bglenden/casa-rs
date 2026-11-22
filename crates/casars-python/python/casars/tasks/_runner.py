@@ -284,6 +284,9 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_jyperk(name, values)
     if name == "getantposalma":
         return _call_getantposalma(values)
+    if name == "sdcal":
+        _validate_required_path(values, "infile", arguments["infile"], search_data=True)
+        return run(name, **values).value
     if name == "initweights":
         return _call_initweights(values)
     if name == "plotbandpass":

@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 888
-- Surfaces: 52 (52 task, 0 session)
-- Surface bindings: 1204
+- Concepts: 898
+- Surfaces: 53 (53 task, 0 session)
+- Surface bindings: 1218
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -68,6 +68,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Water-vapour Radiometer Calibration](#surface-wvrgcal)<br><code>wvrgcal</code> | task | 1 | <code>calibration</code> | 24 | Use ALMA radiometer measurements to calibrate atmospheric phase. |
 | [Polarization Calibration](#surface-polcal)<br><code>polcal</code> | task | 1 | <code>calibration</code> | 27 | Solve polarization leakage and cross-hand calibration. |
 | [Polarization from Gains](#surface-polfromgain)<br><code>polfromgain</code> | task | 1 | <code>calibration</code> | 5 | Estimate fractional linear polarization from receptor gain amplitude ratios. |
+| [Single-Dish Sky Calibration](#surface-sdcal)<br><code>sdcal</code> | task | 1 | <code>calibration</code> | 14 | Generate and apply single-dish sky and system-temperature calibration. |
 
 <a id="surface-msexplore"></a>
 
@@ -1948,5 +1949,32 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>caltable</code> | <code>calibration.caltable@r2</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Polarization | Calibration table the task writes. |
 | <code>paoffset</code> | <code>polfromgain.paoffset@r1</code> | <code>float</code> | <code>0.0</code>; optional | Polarization | Manual feed position-angle offset (degrees) |
 | <code>minpacov</code> | <code>polfromgain.minpacov@r1</code> | <code>float</code> | <code>30.0</code>; optional | Polarization | Minimum parallactic-angle coverage (degrees) |
+
+<a id="surface-sdcal"></a>
+
+## Single-Dish Sky Calibration (<code>sdcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Generate and apply single-dish sky and system-temperature calibration.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>infile</code> | <code>single_dish.sky.infile@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | Input MeasurementSet. |
+| <code>calmode</code> | <code>single_dish.sky.calmode@r1</code> | <code>choice (12 values)</code> | <code>"ps"</code>; optional | Sky | Single-dish sky calibration mode. |
+| <code>fraction</code> | <code>single_dish.sky.fraction@r1</code> | <code>variant</code> | <code>"10%"</code>; optional | Sky | Fraction of reference integrations selected for an edge. |
+| <code>noff</code> | <code>single_dish.sky.noff@r1</code> | <code>integer</code> | <code>-1</code>; optional | Sky | Number of edge integrations in each raster row. |
+| <code>width</code> | <code>single_dish.sky.width@r1</code> | <code>float</code> | <code>0.5</code>; optional | Sky | OTF edge detector pixel width. |
+| <code>elongated</code> | <code>single_dish.sky.elongated@r1</code> | <code>bool</code> | <code>false</code>; optional | Sky | Whether the OTF map is elongated. |
+| <code>applytable</code> | <code>single_dish.sky.applytable@r1</code> | <code>variant</code> | <code>""</code>; optional | Apply | One calibration table or an ordered list of tables. |
+| <code>interp</code> | <code>single_dish.sky.interp@r1</code> | <code>string</code> | <code>""</code>; optional | Apply | Time and frequency interpolation. |
+| <code>spwmap</code> | <code>single_dish.sky.spwmap@r1</code> | <code>variant</code> | <code>{}</code>; optional | Apply | Tsys source window per science window. |
+| <code>outfile</code> | <code>single_dish.sky.outfile@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Output calibration table. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal scan selector text. |
 
 _End of generated reference._

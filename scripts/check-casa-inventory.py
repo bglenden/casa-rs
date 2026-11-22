@@ -79,6 +79,14 @@ def load_inventory() -> dict[str, dict[str, Any]]:
                 problems.append(f"{path}: {parameter.get('name')} lacks its default or schema")
         if problems:
             raise InventoryError("\n".join(problems))
+        # Generated wrappers can expose Python's **kwargs plumbing as well as
+        # the named task parameters. Only named parameters have task bindings.
+        named_parameters = [
+            parameter for parameter in record["parameters"]
+            if parameter["kind"] not in ("VAR_POSITIONAL", "VAR_KEYWORD")
+        ]
+        record["variadic_wrapper"] = len(named_parameters) != len(record["parameters"])
+        record["parameters"] = named_parameters
         tasks[name] = record
     return tasks
 
@@ -193,7 +201,8 @@ def task_section(surface_id: str, record: dict[str, Any], result: dict[str, Any]
     if result is None:
         lines.append(f"- casa-rs: {PENDING.get(surface_id, 'no surface')}")
         return [*lines, ""]
-    lines.append(f"- CASA's signature: {'yes' if result['exact'] else 'not yet'}")
+    signature = "CASA's named parameters" if record["variadic_wrapper"] else "CASA's signature"
+    lines.append(f"- {signature}: {'yes' if result['exact'] else 'not yet'}")
     lines.append(f"- CASA parameters casa-rs lacks: {names(result['missing'])}")
     by_issue: dict[int, list[str]] = {}
     for name, issue in result["default_only"]:
@@ -364,7 +373,8 @@ def main() -> int:
         direct_types = {
             name: {parameter["name"]: parameter["schema"]["type"]
                    for parameter in task["parameters"]
-                   if parameter["schema"].get("type") in supported
+                   if isinstance(parameter["schema"], dict)
+                   and parameter["schema"].get("type") in supported
                    and parameter["schema"].get("coerce") == supported[parameter["schema"]["type"]]}
             for name, task in sorted(tasks.items())
         }

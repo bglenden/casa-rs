@@ -53,6 +53,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | polfromgain | polfromgain | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | predictcomp | predictcomp | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
+| sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
@@ -2366,6 +2367,104 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
+### sdcal
+
+- CASA source: `casatasks/sdcal.py`, 14 parameters
+- Implementation: `casatasks/private/task_sdcal.py`, `sdcal` (line 23): 1 return statements, 13 raise statements
+  - returns at line 30: `None`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's named parameters: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 14, in CASA's order: yes
+- Defaults that differ: none
+
+#### sdcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `e7bfc66f1a4945cfdc96b3259b4107a4c76c17b5`. Status counts: Default only: 0, Implemented: 0, Not implemented: 5, Partial: 9, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `infile` | `''` | `''`; `infile` → `infile` | Partial | Resolve required MeasurementSet paths and read complex or float autocorrelation input for generation. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys)<br>Catalog domain: `path` (measurement_set) | [generation](#sdcal-evidence-generation) |
+| `calmode` | `'ps'` | `'ps'`; `calmode` → `calmode` | Partial | Position-switch and spectral Tsys generation, with CASA default ps. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `ps`, `otfraster`, `otf`, `tsys`, `apply`, `ps,apply`, `tsys,apply`, `ps,tsys,apply`, `otfraster,apply`, `otfraster,tsys,apply`, `otf,apply`, `otf,tsys,apply` | [generation](#sdcal-evidence-generation) |
+| `fraction` | `'10%'` | `'10%'`; `fraction` → `fraction` | Partial | Match numeric and percent forms and validation in position-switch mode. [ps](#sdcal-behavior-ps) [edges](#sdcal-behavior-edges)<br>Catalog domain: `variant` | [generation](#sdcal-evidence-generation) |
+| `noff` | `-1` | `-1`; `noff` → `noff` | Partial | Use the explicit edge count when checking the fraction bound in position-switch mode. [ps](#sdcal-behavior-ps) [edges](#sdcal-behavior-edges)<br>Catalog domain: `integer` | [generation](#sdcal-evidence-generation) |
+| `width` | `0.5` | `0.5`; `width` → `width` | Not implemented | OTF edge-mode pixel width. [edges](#sdcal-behavior-edges)<br>Catalog domain: `float` | [remaining](#sdcal-evidence-remaining) |
+| `elongated` | `False` | `False`; `elongated` → `elongated` | Not implemented | OTF elongated-map option. [edges](#sdcal-behavior-edges)<br>Catalog domain: `bool` | [remaining](#sdcal-evidence-remaining) |
+| `applytable` | `''` | `''`; `applytable` → `applytable` | Not implemented | Sky, Tsys and per-table prior inputs. [application](#sdcal-behavior-application)<br>Catalog domain: `variant` | [remaining](#sdcal-evidence-remaining) |
+| `interp` | `''` | `''`; `interp` → `interp` | Not implemented | Temporal and spectral interpolation for application. [application](#sdcal-behavior-application)<br>Catalog domain: `string` | [remaining](#sdcal-evidence-remaining) |
+| `spwmap` | `{}` | `{}`; `spwmap` → `spwmap` | Not implemented | Science-to-Tsys spectral-window mapping. [application](#sdcal-behavior-application)<br>Catalog domain: `variant` | [remaining](#sdcal-evidence-remaining) |
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Partial | Write standard CASA-readable sky and Tsys calibration tables. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys)<br>Catalog domain: `path` (calibration_table) | [generation](#sdcal-evidence-generation) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Partial | Replace a generated table with explicit consent while protecting locked outputs and MeasurementSet subtables. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys)<br>Catalog domain: `bool` | [generation](#sdcal-evidence-generation) |
+| `field` | `''` | `''`; `field` → `field` | Partial | Apply field selection to position-switch reference rows and validate it for Tsys. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation) |
+| `spw` | `''` | `''`; `spw` → `spw` | Partial | Select position-switch windows and require the all-window form for Tsys. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation) |
+| `scan` | `''` | `''`; `scan` → `scan` | Partial | Select position-switch scans and require the all-scan form for Tsys. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation) |
+
+#### sdcal interacting modes and task behavior
+
+<a id="sdcal-behavior-ps"></a>
+##### Position-switch sky spectra
+
+**Implemented** — Group OFF integrations by observing metadata, average each unflagged cell by exposure, and publish CASA-compatible times, flags, weights and solution shape.
+
+Sky spectrum application and dedicated performance validation are tracked in #1530 and #979.
+
+Evidence: [generation](#sdcal-evidence-generation).
+
+<a id="sdcal-behavior-tsys"></a>
+##### System-temperature calibration
+
+**Implemented** — Generate spectral Tsys tables through the shared calibration path, including observing scan assignment and canonical calibration subtables.
+
+The combined sky, Tsys and Jy/K chain is tracked in #1530.
+
+Evidence: [generation](#sdcal-evidence-generation).
+
+<a id="sdcal-behavior-application"></a>
+##### Sky calibration application
+
+**Not implemented** — Apply sky and Tsys tables, with composite modes, channel weights, interpolation, SPW maps and Jy/K chains.
+
+Tracked in #1530.
+
+Evidence: [remaining](#sdcal-evidence-remaining).
+
+<a id="sdcal-behavior-edges"></a>
+##### OTF and raster sky calibration
+
+**Not implemented** — Select off-source scan edges for OTF and gapped raster observations.
+
+Tracked in #1530.
+
+Evidence: [remaining](#sdcal-evidence-remaining).
+
+#### sdcal deviations and unfinished work
+
+#### sdcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="sdcal-evidence-generation"></a>
+##### generation
+
+**Same-input CASA and native calibration tables — passed.** Native and CASA tables agreed in the paired cases, including unused SPW flags and moving-field Tsys metadata. Public position-switch and Tsys generation with float and complex data, unequal exposures, channel and scan selection, single-polarization padding and publication protections.
+
+- [tools/casa-compat/sdcal_position_switch_oracle.py](https://github.com/bglenden/casa-rs/blob/e7bfc66f1a4945cfdc96b3259b4107a4c76c17b5/tools/casa-compat/sdcal_position_switch_oracle.py)
+- Revision: `e7bfc66f1a4945cfdc96b3259b4107a4c76c17b5`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_position_switch_oracle.py <new-dir>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/1972`.
+
+<a id="sdcal-evidence-remaining"></a>
+##### remaining
+
+**Remaining single-dish calibration comparisons — planned.** Sky and Tsys application, composite workflows, OTF and raster maps and matching Jy/K chains.
+
+- [https://github.com/bglenden/casa-rs/issues/1530](https://github.com/bglenden/casa-rs/issues/1530)
 
 ### setjy
 

@@ -25,6 +25,7 @@
   "plotbandpass": "caltable",
   "plotweather": "vis",
   "polcal": "vis",
+  "sdcal": "infile",
   "split": "vis",
   "statwt": "vis",
   "uvmodelfit": "vis",

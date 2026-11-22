@@ -19307,6 +19307,7 @@
         },
         {
           "name": "infile",
+          "reviewed_homonym": {"review_id": "#1530", "reason": "gencal reads an auxiliary calibration file. sdcal opens an input MeasurementSet."},
           "concept": {"id": "specifycal.infile", "semantic_revision": 1},
           "order": 3,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
@@ -43794,6 +43795,594 @@
             "presentation": {
               "label": "Minimum parallactic-angle coverage (degrees)",
               "group": "Polarization"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "sdcal",
+      "contract_version": 1,
+      "display_name": "Single-Dish Sky Calibration",
+      "category": "Calibration",
+      "summary": "Generate and apply single-dish sky and system-temperature calibration.",
+      "provider_family": "calibration",
+      "casa_task": "sdcal",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "sdcal"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "infile",
+          "concept": {
+            "id": "single_dish.sky.infile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infile"
+              ]
+            },
+            "provider": {
+              "field": "infile"
+            },
+            "python": {
+              "name": "infile"
+            },
+            "presentation": {
+              "label": "Input MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "calmode",
+          "concept": {
+            "id": "single_dish.sky.calmode",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "ps"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--calmode"
+              ]
+            },
+            "provider": {
+              "field": "calmode"
+            },
+            "python": {
+              "name": "calmode"
+            },
+            "presentation": {
+              "label": "Single-dish sky calibration mode",
+              "group": "Sky"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "sdcal selects how to derive or apply sky and system-temperature calibration."
+          }
+        },
+        {
+          "name": "fraction",
+          "concept": {
+            "id": "single_dish.sky.fraction",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "10%"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fraction"
+              ]
+            },
+            "provider": {
+              "field": "fraction"
+            },
+            "python": {
+              "name": "fraction"
+            },
+            "presentation": {
+              "label": "Fraction of reference integrations selected for an edge",
+              "group": "Sky"
+            }
+          }
+        },
+        {
+          "name": "noff",
+          "concept": {
+            "id": "single_dish.sky.noff",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--noff"
+              ]
+            },
+            "provider": {
+              "field": "noff"
+            },
+            "python": {
+              "name": "noff"
+            },
+            "presentation": {
+              "label": "Number of edge integrations in each raster row",
+              "group": "Sky"
+            }
+          }
+        },
+        {
+          "name": "width",
+          "concept": {
+            "id": "single_dish.sky.width",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.5
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--width"
+              ]
+            },
+            "provider": {
+              "field": "width"
+            },
+            "python": {
+              "name": "width"
+            },
+            "presentation": {
+              "label": "OTF edge detector pixel width",
+              "group": "Sky"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "sdcal describes the OTF edge detector in pixels."
+          }
+        },
+        {
+          "name": "elongated",
+          "concept": {
+            "id": "single_dish.sky.elongated",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--elongated"
+              ]
+            },
+            "provider": {
+              "field": "elongated"
+            },
+            "python": {
+              "name": "elongated"
+            },
+            "presentation": {
+              "label": "Whether the OTF map is elongated",
+              "group": "Sky"
+            }
+          }
+        },
+        {
+          "name": "applytable",
+          "concept": {
+            "id": "single_dish.sky.applytable",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--applytable"
+              ]
+            },
+            "provider": {
+              "field": "applytable"
+            },
+            "python": {
+              "name": "applytable"
+            },
+            "presentation": {
+              "label": "One calibration table or an ordered list of tables",
+              "group": "Apply"
+            }
+          }
+        },
+        {
+          "name": "interp",
+          "concept": {
+            "id": "single_dish.sky.interp",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interp"
+              ]
+            },
+            "provider": {
+              "field": "interp"
+            },
+            "python": {
+              "name": "interp"
+            },
+            "presentation": {
+              "label": "Time and frequency interpolation",
+              "group": "Apply"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "sdcal sets one CASA time and frequency interpolation for the calibration chain."
+          }
+        },
+        {
+          "name": "spwmap",
+          "concept": {
+            "id": "single_dish.sky.spwmap",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "table",
+              "value": {}
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spwmap"
+              ]
+            },
+            "provider": {
+              "field": "spwmap"
+            },
+            "python": {
+              "name": "spwmap"
+            },
+            "presentation": {
+              "label": "Tsys source window per science window",
+              "group": "Apply"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "sdcal maps Tsys source windows to science-window lists or uses a flat map."
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "single_dish.sky.outfile",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "Output calibration table",
+              "group": "Output"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1530",
+            "reason": "sdcal writes a single-dish calibration table in solve modes."
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "Overwrite output",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "Spectral window",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection"
             }
           }
         }

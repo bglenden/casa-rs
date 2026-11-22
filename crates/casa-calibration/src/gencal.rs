@@ -1074,11 +1074,13 @@ fn write_prior_caltable(
         writer.append(record)?;
     }
 
-    if request.caltype == GencalType::Eop {
+    let present_windows = rows.iter().map(|row| row.spw_id).collect::<BTreeSet<_>>();
+    let eop = request.caltype == GencalType::Eop;
+    if eop || request.caltype == GencalType::Tsys {
         crate::table_maintenance::write_standard_calibration_subtables(
             ms,
             writer.output_path(),
-            Some(crate::writer::SingleChannelFrequency::MiddleChannel),
+            eop.then_some(crate::writer::SingleChannelFrequency::MiddleChannel),
         )
         .map_err(GencalError::InvalidRequest)?;
     } else {
@@ -1089,20 +1091,17 @@ fn write_prior_caltable(
             (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
             (SubtableId::History, "HISTORY"),
         ])?;
+    }
+    if !eop {
         write_spectral_axis(
             &writer.output_path().join("SPECTRAL_WINDOW"),
-            rows,
+            &present_windows,
             collapse_spw,
         )?;
     }
     writer.save_main()?;
 
-    let spectral_window_ids = rows
-        .iter()
-        .map(|row| row.spw_id)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let spectral_window_ids = present_windows.into_iter().collect();
     let antenna_ids = rows
         .iter()
         .map(|row| row.antenna_id)
@@ -1171,17 +1170,15 @@ fn gaincurves_for_window(
 /// SolvableVisCal::initSVC collapses all spectral vectors for uniform
 /// parameters: mean channel frequency and summed widths/resolutions.
 /// Keep this inside the writer's staging directory, before publication.
-fn write_spectral_axis(
+pub(crate) fn write_spectral_axis(
     path: &Path,
-    solutions: &[PriorCalRow],
+    present_windows: &BTreeSet<i32>,
     collapse: bool,
 ) -> Result<(), GencalError> {
     let mut table = Table::open(TableOptions::new(path))
         .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
     for row in 0..table.row_count() {
-        let absent = !solutions
-            .iter()
-            .any(|solution| solution.spw_id == row as i32);
+        let absent = !present_windows.contains(&(row as i32));
         table
             .cell_accessor_mut(row, "FLAG_ROW")
             .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Bool(absent))))

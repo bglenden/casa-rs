@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "task": "sdcal",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "e7bfc66f1a4945cfdc96b3259b4107a4c76c17b5",
+  "parameters": {
+    "infile": {
+      "scope": "Resolve required MeasurementSet paths and read complex or float autocorrelation input for generation.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "tsys"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    },
+    "calmode": {
+      "scope": "Position-switch and spectral Tsys generation, with CASA default ps.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "tsys",
+        "application",
+        "edges"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    },
+    "fraction": {
+      "scope": "Match numeric and percent forms and validation in position-switch mode.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "edges"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    },
+    "noff": {
+      "scope": "Use the explicit edge count when checking the fraction bound in position-switch mode.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "edges"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    },
+    "width": {
+      "scope": "OTF edge-mode pixel width.",
+      "status": "Not implemented",
+      "behaviors": [
+        "edges"
+      ],
+      "evidence": [
+        "remaining"
+      ]
+    },
+    "elongated": {
+      "scope": "OTF elongated-map option.",
+      "status": "Not implemented",
+      "behaviors": [
+        "edges"
+      ],
+      "evidence": [
+        "remaining"
+      ]
+    },
+    "applytable": {
+      "scope": "Sky, Tsys and per-table prior inputs.",
+      "status": "Not implemented",
+      "behaviors": [
+        "application"
+      ],
+      "evidence": [
+        "remaining"
+      ]
+    },
+    "interp": {
+      "scope": "Temporal and spectral interpolation for application.",
+      "status": "Not implemented",
+      "behaviors": [
+        "application"
+      ],
+      "evidence": [
+        "remaining"
+      ]
+    },
+    "spwmap": {
+      "scope": "Science-to-Tsys spectral-window mapping.",
+      "status": "Not implemented",
+      "behaviors": [
+        "application"
+      ],
+      "evidence": [
+        "remaining"
+      ]
+    },
+    "outfile": {
+      "scope": "Write standard CASA-readable sky and Tsys calibration tables.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "tsys"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    },
+    "overwrite": {
+      "scope": "Replace a generated table with explicit consent while protecting locked outputs and MeasurementSet subtables.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "tsys"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    },
+    "field": {
+      "scope": "Apply field selection to position-switch reference rows and validate it for Tsys.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "tsys"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    },
+    "spw": {
+      "scope": "Select position-switch windows and require the all-window form for Tsys.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "tsys"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    },
+    "scan": {
+      "scope": "Select position-switch scans and require the all-scan form for Tsys.",
+      "status": "Partial",
+      "behaviors": [
+        "ps",
+        "tsys"
+      ],
+      "evidence": [
+        "generation"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "ps",
+      "title": "Position-switch sky spectra",
+      "status": "Implemented",
+      "scope": "Group OFF integrations by observing metadata, average each unflagged cell by exposure, and publish CASA-compatible times, flags, weights and solution shape.",
+      "gap": "Sky spectrum application and dedicated performance validation are tracked in #1530 and #979.",
+      "evidence": [
+        "generation"
+      ]
+    },
+    {
+      "id": "tsys",
+      "title": "System-temperature calibration",
+      "status": "Implemented",
+      "scope": "Generate spectral Tsys tables through the shared calibration path, including observing scan assignment and canonical calibration subtables.",
+      "gap": "The combined sky, Tsys and Jy/K chain is tracked in #1530.",
+      "evidence": [
+        "generation"
+      ]
+    },
+    {
+      "id": "application",
+      "title": "Sky calibration application",
+      "status": "Not implemented",
+      "scope": "Apply sky and Tsys tables, with composite modes, channel weights, interpolation, SPW maps and Jy/K chains.",
+      "gap": "Tracked in #1530.",
+      "evidence": [
+        "remaining"
+      ]
+    },
+    {
+      "id": "edges",
+      "title": "OTF and raster sky calibration",
+      "status": "Not implemented",
+      "scope": "Select off-source scan edges for OTF and gapped raster observations.",
+      "gap": "Tracked in #1530.",
+      "evidence": [
+        "remaining"
+      ]
+    }
+  ],
+  "decisions": [],
+  "evidence": {
+    "generation": {
+      "kind": "Same-input CASA and native calibration tables",
+      "state": "passed",
+      "scope": "Public position-switch and Tsys generation with float and complex data, unequal exposures, channel and scan selection, single-polarization padding and publication protections.",
+      "result": "Native and CASA tables agreed in the paired cases, including unused SPW flags and moving-field Tsys metadata.",
+      "revision": "e7bfc66f1a4945cfdc96b3259b4107a4c76c17b5",
+      "casa_version": "6.7.6.14",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_position_switch_oracle.py <new-dir>",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1972",
+      "links": [
+        "tools/casa-compat/sdcal_position_switch_oracle.py"
+      ]
+    },
+    "remaining": {
+      "kind": "Remaining single-dish calibration comparisons",
+      "state": "planned",
+      "scope": "Sky and Tsys application, composite workflows, OTF and raster maps and matching Jy/K chains.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/1530"
+      ]
+    }
+  }
+}

@@ -46,7 +46,11 @@ def casa_tasks() -> list[str]:
 def casa_parameters(task: str) -> list[dict]:
     record = json.loads((INVENTORY / f"{task}.json").read_text(encoding="utf-8"))
     assert record["casa_version"] == "6.7.6.14"
-    return record["parameters"]
+    return [
+        parameter
+        for parameter in record["parameters"]
+        if parameter["kind"] not in ("VAR_POSITIONAL", "VAR_KEYWORD")
+    ]
 
 
 def test_every_casa_named_task_is_casa_exact_or_pending() -> None:

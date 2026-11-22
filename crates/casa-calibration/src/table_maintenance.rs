@@ -118,7 +118,10 @@ pub(crate) fn write_standard_calibration_subtables(
     Ok(())
 }
 
-fn overlaps_measurement_set(ms: &MeasurementSet, destination: &Path) -> Result<bool, String> {
+pub(crate) fn overlaps_measurement_set(
+    ms: &MeasurementSet,
+    destination: &Path,
+) -> Result<bool, String> {
     let Some(source) = ms.path() else {
         return Ok(false);
     };
@@ -212,6 +215,11 @@ fn copy_moving_field_directions(ms: &MeasurementSet, target: &mut Table) -> Resu
             .map_err(error_text)?
             .ok_or("moving field reference direction is missing")?;
         let (longitude, latitude) = direction.as_angles();
+        let longitude = if longitude > std::f64::consts::PI {
+            longitude - std::f64::consts::TAU
+        } else {
+            longitude
+        };
         let cell = Value::Array(ArrayValue::Float64(
             ArrayD::from_shape_vec(IxDyn(&[2, 1]), vec![longitude, latitude])
                 .expect("a direction has two coordinates"),
