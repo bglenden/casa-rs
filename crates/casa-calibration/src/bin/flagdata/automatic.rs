@@ -2,10 +2,8 @@
 //! Table-specific averaging and iterator controls for automatic flagging.
 
 use casa_ms::FlagDataMode;
-use casa_provider_contracts::{
-    DefaultSpec, EmptyArrayType, NumpyScalarType, ParameterValue, python_repr,
-};
-use casa_task_runtime::{TaskFailure, TaskInvocation, semantic_eq};
+use casa_provider_contracts::{EmptyArrayType, NumpyScalarType, ParameterValue};
+use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::quanta::Quantity;
 
 use super::is_calibration_table;
@@ -82,49 +80,6 @@ pub(super) fn table_kind(
         for name in ["channelavg", "timeavg"] {
             average_switch(task, name)?;
         }
-    } else {
-        validate_ms_automatic_controls(task, mode == "rflag")?;
     }
     Ok(Some(calibration))
-}
-
-fn validate_ms_automatic_controls(
-    task: &TaskInvocation<'_>,
-    rflag: bool,
-) -> Result<(), TaskFailure> {
-    if !rflag {
-        return Ok(());
-    }
-    let bundle = task.session().bundle();
-    for (name, issue) in [
-        ("channelavg", 978),
-        ("chanbin", 978),
-        ("timeavg", 978),
-        ("timebin", 978),
-        ("ntime", 1616),
-        ("combinescans", 1616),
-    ] {
-        let binding = bundle
-            .surface
-            .bindings()
-            .iter()
-            .find(|binding| binding.name == name)
-            .expect("automatic controls are in the flagdata surface");
-        let DefaultSpec::Literal { value: default } = &binding.default else {
-            unreachable!("automatic controls have literal defaults");
-        };
-        let concept = bundle
-            .catalog
-            .concept(&binding.concept)
-            .expect("validated contract");
-        if let Some(value) = task.value(name)
-            && !matches!(semantic_eq(value, default, concept), Ok(true))
-        {
-            return Err(TaskFailure::validation(format!(
-                "parameter {name:?} is not implemented by casa-rs yet (#{issue}); only CASA's default {} is accepted",
-                python_repr(default),
-            )).at(name));
-        }
-    }
-    Ok(())
 }

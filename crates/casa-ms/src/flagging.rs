@@ -9,7 +9,7 @@
 //! families rather than a binding to CASA C++.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -491,6 +491,9 @@ pub enum FlaggingError {
     /// A requested TFCrop visibility column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode tfcrop")]
     MissingTfcropColumn,
+    /// A requested RFlag visibility column is missing from the MeasurementSet.
+    #[error("Failed to parse parameters for mode rflag")]
+    MissingRflagColumn,
     /// An active explicit RFlag cutoff has a zero or negative scale.
     #[error("{0} must be positive when its threshold is positive")]
     InvalidRFlagScale(&'static str),
@@ -587,6 +590,7 @@ fn flagdata_with_persistence(
                 | FlagDataMode::Shadow
                 | FlagDataMode::Antint
                 | FlagDataMode::Tfcrop
+                | FlagDataMode::Rflag
         );
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
@@ -602,8 +606,9 @@ fn flagdata_with_persistence(
         .as_deref()
         .filter(|expression| !expression.is_empty() && !expression.starts_with('\0'))
         .or_else(|| (request.mode == FlagDataMode::Clip).then_some(""));
-    let tfcrop_correlations = request.mode == FlagDataMode::Tfcrop && request.casa_row_selection;
-    let correlations = match correlation.filter(|_| !tfcrop_correlations) {
+    let auto_correlations = matches!(request.mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag)
+        && request.casa_row_selection;
+    let correlations = match correlation.filter(|_| !auto_correlations) {
         Some(expression) => {
             CorrelationSelection::read(ms, request.mode, request.data_column, expression)?
         }
@@ -697,7 +702,8 @@ fn flagdata_with_persistence(
             &selected_rows,
             channel_selections.as_ref(),
             request,
-            false,
+            !persist,
+            model_factory,
         )?,
         FlagDataMode::Extend => extend::apply(
             ms,
@@ -1822,6 +1828,7 @@ fn tfcrop_series(
     });
     for original in first {
         let mut sample = *original;
+        sample.flag = sample_is_modified(original, modified);
         let mut value = Complex64::new(sample.real, sample.imag);
         let mut uncertainty = model_roundoff.get(sample.index).copied().unwrap_or(0.0);
         if let Some((lookup, combine)) = &second {
@@ -1829,6 +1836,8 @@ fn tfcrop_series(
                 continue;
             };
             value = combine.apply64(value, Complex64::new(other.real, other.imag));
+            sample.real = value.re;
+            sample.imag = value.im;
             sample.flag |= sample_is_modified(other, modified);
             uncertainty =
                 (uncertainty + model_roundoff.get(other.index).copied().unwrap_or(0.0)) * 0.5;
@@ -1839,6 +1848,8 @@ fn tfcrop_series(
             if let Some(bound) = roundoff.get_mut(sample.index) {
                 *bound = tfcrop_metric_roundoff(metric, value, uncertainty);
             }
+        } else if let Some(bound) = roundoff.get_mut(sample.index) {
+            *bound = uncertainty;
         }
         series.samples.push(sample);
     }
@@ -1871,6 +1882,33 @@ fn tfcrop_columns(
     active: bool,
     average: bool,
 ) -> Result<(Option<ClipColumns>, bool), FlaggingError> {
+    autoflag_columns(
+        ms,
+        column,
+        selected_rows,
+        model_factory,
+        active,
+        average,
+        FlagDataMode::Tfcrop,
+    )
+}
+
+fn autoflag_columns(
+    ms: &MeasurementSet,
+    column: FlagDataColumn,
+    selected_rows: &[usize],
+    model_factory: Option<FlagDataModelFactory>,
+    active: bool,
+    average: bool,
+    mode: FlagDataMode,
+) -> Result<(Option<ClipColumns>, bool), FlaggingError> {
+    let missing = || {
+        if mode == FlagDataMode::Rflag {
+            FlaggingError::MissingRflagColumn
+        } else {
+            FlaggingError::MissingTfcropColumn
+        }
+    };
     let table = ms.main_table();
     let exists = |name| {
         table
@@ -1887,11 +1925,16 @@ fn tfcrop_columns(
         exists(column.name())
     };
     if !required_sources_exist {
-        return Err(FlaggingError::MissingTfcropColumn);
+        return Err(missing());
     }
     if column == FlagDataColumn::Residual && !exists("CORRECTED_DATA") {
+        let agent = if mode == FlagDataMode::Rflag {
+            "Rflag"
+        } else {
+            "Tfcrop"
+        };
         tracing::warn!(
-            "Cannot create agent Tfcrop: necessary CORRECTED_DATA column is not available"
+            "Cannot create agent {agent}: necessary CORRECTED_DATA column is not available"
         );
         return Ok((None, false));
     }
@@ -1905,7 +1948,7 @@ fn tfcrop_columns(
     let models =
         clip_models::ClipModels::for_selection(ms, column, selected_rows, model_factory, &path)?;
     match ClipColumns::bind(table, column, average, models) {
-        Err(FlaggingError::MissingClipColumn) => Err(FlaggingError::MissingTfcropColumn),
+        Err(FlaggingError::MissingClipColumn) => Err(missing()),
         result => result.map(|columns| (columns, true)),
     }
 }
@@ -1993,53 +2036,87 @@ fn apply_rflag_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
     calculate: bool,
+    model_factory: Option<FlagDataModelFactory>,
 ) -> Result<ChangeSet, FlaggingError> {
     let started = Instant::now();
-    let loaded = load_samples(
-        ms,
-        selected_rows,
-        channel_selections,
-        Some(SampleData::Stored(request.data_column)),
-        None,
-        false,
-        None,
-    )?;
+    let column = request.data_column;
+    let calibration = is_calibration_table(ms);
+    let public_ms = request.casa_row_selection && !calibration;
+    let casa_rflag = request.casa_row_selection || calibration;
+    let time_average = request
+        .clip_time_bin
+        .as_deref()
+        .filter(|_| public_ms)
+        .map(time_bin_seconds);
+    let widths = request.clip_channel_bins.as_deref().filter(|_| public_ms);
+    let average = time_average.flatten().is_some()
+        || widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
+    let correlations = public_ms
+        .then(|| correlation::RflagCorrelations::read(ms, request.correlation.as_deref(), column))
+        .transpose()?;
+    let corr_admitted = correlations.as_ref().is_none_or(|c| c.admitted);
+    let active = request.rflag_window.is_some() && time_average != Some(None) && corr_admitted;
+    let (mut columns, configures_averaging) = if public_ms {
+        autoflag_columns(
+            ms,
+            column,
+            selected_rows,
+            model_factory,
+            active,
+            average,
+            FlagDataMode::Rflag,
+        )?
+    } else {
+        (None, false)
+    };
+    let active = active && (!public_ms || columns.is_some());
+    if !active && !request.extendflags {
+        return Ok(ChangeSet::default());
+    }
+    let configures_averaging = configures_averaging && corr_admitted && time_average != Some(None);
+    let widths = widths.filter(|_| configures_averaging);
+    if let Some(widths) = widths {
+        check_channel_bins(ms, widths, &display_ms_path(ms))?;
+    }
+    let loaded = if let Some(seconds) = time_average.flatten().filter(|_| configures_averaging) {
+        load_time_averaged_tfcrop(
+            ms,
+            selected_rows,
+            channel_selections,
+            columns.as_mut(),
+            request,
+            seconds,
+            widths,
+        )?
+    } else {
+        load_samples(
+            ms,
+            selected_rows,
+            channel_selections,
+            active.then(|| {
+                columns
+                    .as_mut()
+                    .map_or(SampleData::Stored(column), |operands| {
+                        SampleData::Visibility(column, operands)
+                    })
+            }),
+            None,
+            false,
+            widths,
+        )?
+    };
     let samples = loaded.samples;
-    let projection = is_calibration_table(ms)
+    let projection = calibration
         .then(|| calibration::automatic_projection(request, &samples))
         .transpose()?;
-    if !calculate
-        && request.rflag_window.is_some()
-        && let Some(projection) = &projection
-    {
-        for (scale_name, scale, thresholds) in [
-            (
-                "timedevscale",
-                request.timedevscale,
-                &request.timedev_by_field_spw,
-            ),
-            (
-                "freqdevscale",
-                request.freqdevscale,
-                &request.freqdev_by_field_spw,
-            ),
-        ] {
-            if scale <= 0.0
-                && !thresholds.is_empty()
-                && samples.iter().any(|sample| {
-                    projection.includes(sample.corr)
-                        && thresholds
-                            .get(&(sample.field, sample.spw))
-                            .is_some_and(|&value| value > 0.0)
-                })
-            {
-                return Err(FlaggingError::InvalidRFlagScale(scale_name));
-            }
-        }
-    }
-    // RFlag reads the selected stored complex products directly.
+    let context = RflagContext {
+        casa_arithmetic: casa_rflag,
+        correlations: correlations.as_ref(),
+        calibration: projection.as_ref(),
+        model_roundoff: &loaded.model_roundoff,
+    };
     let loaded_ms = started.elapsed().as_millis();
-    let groups = if projection.is_some() {
+    let groups = if casa_rflag {
         ordered_autoflag_groups(ms, selected_rows, &samples, request)?
     } else {
         group_samples(&samples)
@@ -2047,71 +2124,52 @@ fn apply_rflag_flags(
             .map(|samples| (AutoflagChunk::default(), samples))
             .collect()
     };
+    if !calculate && active && casa_rflag {
+        validate_rflag_matrix_scales(&groups, request, context)?;
+    }
     if calculate {
-        let thresholds = rflag_threshold_maps_for_groups(
-            groups.iter().map(|(_, samples)| samples.as_slice()),
-            request,
-            projection.as_ref(),
-        );
+        let thresholds = if active {
+            rflag_threshold_maps_for_groups(&groups, request, context)?
+        } else {
+            RFlagThresholds::default()
+        };
         return Ok(ChangeSet {
-            rflag_report: Some(thresholds.public_report(request)),
+            rflag_report: (active || request.extendflags)
+                .then(|| thresholds.public_report(request, active)),
             ..ChangeSet::default()
         });
     }
 
-    let mut thresholds = RFlagThresholds::default();
-    let mut calibration_cutoffs = Vec::new();
-    let mut threshold_ms = 0;
+    let mut modified = vec![false; samples.len()];
     let mut time_flags = vec![false; samples.len()];
     let mut freq_flags = vec![false; samples.len()];
-    // RFlag applies each calibration buffer's own fitted thresholds. The
-    // calculate report instead accumulates all buffers for each field/SPW.
-    for chunk in groups.chunk_by(|(left, _), (right, _)| left == right) {
-        let threshold_started = Instant::now();
-        let chunk_thresholds = rflag_threshold_maps_for_groups(
-            chunk.iter().map(|(_, samples)| samples.as_slice()),
+    let RflagFitOutcome {
+        thresholds,
+        buffer_cutoffs,
+        threshold_ms,
+    } = if active {
+        fit_rflag_chunks(
+            &groups,
             request,
-            projection.as_ref(),
-        )
-        .scaled(request, projection.is_some());
-        threshold_ms += threshold_started.elapsed().as_millis();
-        for (_, group) in chunk {
-            rflag_group_flags(
-                group,
-                &chunk_thresholds,
-                request,
-                projection.as_ref(),
-                &mut time_flags,
-                &mut freq_flags,
-            );
-        }
-        if projection.is_some() {
-            let ([observation, array, scan, field, window], _) = chunk[0].0;
-            let cutoff = chunk_thresholds.representative_pair();
-            calibration_cutoffs.push(cutoff);
-            trace_flagdata(|| {
-                json!({
-                    "mode": "rflag",
-                    "calibration_buffer": {
-                        "observation": observation,
-                        "array": array,
-                        "scan": scan,
-                        "field": field,
-                        "spw": window,
-                    },
-                    "timedev": cutoff.0,
-                    "freqdev": cutoff.1,
-                })
-            });
-        } else {
-            thresholds = chunk_thresholds;
-        }
-    }
-    let mut modified = union_masks(&time_flags, &freq_flags);
+            context,
+            &mut TfcropFitMasks {
+                modified: &mut modified,
+                freq_flags: &mut freq_flags,
+                time_flags: &mut time_flags,
+            },
+        )?
+    } else {
+        RflagFitOutcome::default()
+    };
     if request.extendflags {
-        if projection.is_some() && channel_selections.is_some() {
+        let fit_flags = loaded
+            .axes
+            .flags_by_bin
+            .as_ref()
+            .unwrap_or(&loaded.flags_by_row);
+        if casa_rflag && channel_selections.is_some() && loaded.axes.channels_by_row.is_empty() {
             for (_, group) in &groups {
-                extend_tfcrop_selected_channels(group, &loaded.flags_by_row, &mut modified);
+                extend_tfcrop_selected_channels(group, fit_flags, &mut modified);
             }
         } else {
             extend_autoflag_grouped(
@@ -2143,26 +2201,21 @@ fn apply_rflag_flags(
             },
         })
     });
-    let mut changes = apply_flag_mask_with_preloaded(
+    let mut changes = apply_tfcrop_mask(
         &samples,
         &modified,
         loaded.flags_by_row,
+        &loaded.axes,
         ms,
-        true,
+        !request.casa_row_selection,
         request.action.value(),
     )?;
     let applied_ms = started.elapsed().as_millis();
-    changes.summary = Some(summary_after_flag_mask(
-        &samples,
-        changes.changed_samples,
-        request.action.value(),
-    ));
-    changes.thresholds = if projection.is_some() {
-        calibration_cutoffs.first().copied().filter(|cutoff| {
-            calibration_cutoffs
-                .iter()
-                .all(|candidate| candidate == cutoff)
-        })
+    changes.thresholds = if casa_rflag {
+        buffer_cutoffs
+            .first()
+            .copied()
+            .filter(|cutoff| buffer_cutoffs.iter().all(|candidate| candidate == cutoff))
     } else {
         Some(thresholds.representative_pair())
     };
@@ -2177,6 +2230,144 @@ fn apply_rflag_flags(
         })
     });
     Ok(changes)
+}
+
+#[derive(Clone, Copy, Default)]
+struct RflagContext<'a> {
+    casa_arithmetic: bool,
+    correlations: Option<&'a correlation::RflagCorrelations>,
+    calibration: Option<&'a calibration::CalibrationProjection>,
+    model_roundoff: &'a [f32],
+}
+
+fn rflag_group_projections(
+    group: &[Sample],
+    description: Option<i32>,
+    context: RflagContext<'_>,
+) -> Result<Vec<ClipProjection>, FlaggingError> {
+    if let Some((selection, ddid)) = context.correlations.zip(description) {
+        return selection
+            .for_description(ddid)
+            .map(<[ClipProjection]>::to_vec);
+    }
+    Ok(samples_by_corr(group)
+        .into_iter()
+        .filter(|plane| {
+            context
+                .calibration
+                .is_none_or(|projection| projection.includes(plane[0].corr))
+        })
+        .map(|plane| ClipProjection::Stored(plane[0].corr))
+        .collect())
+}
+
+fn validate_rflag_matrix_scales(
+    groups: &[(AutoflagChunk, Vec<Sample>)],
+    request: &FlagDataRequest,
+    context: RflagContext<'_>,
+) -> Result<(), FlaggingError> {
+    for (scale_name, scale, thresholds) in [
+        (
+            "timedevscale",
+            request.timedevscale,
+            &request.timedev_by_field_spw,
+        ),
+        (
+            "freqdevscale",
+            request.freqdevscale,
+            &request.freqdev_by_field_spw,
+        ),
+    ] {
+        if scale > 0.0 || thresholds.is_empty() {
+            continue;
+        }
+        for (chunk, group) in groups {
+            let Some(first) = group.first() else {
+                continue;
+            };
+            if !thresholds
+                .get(&(first.field, first.spw))
+                .is_some_and(|&value| value > 0.0)
+            {
+                continue;
+            }
+            let ddid = context.correlations.map(|_| chunk.0[4]);
+            if !rflag_group_projections(group, ddid, context)?.is_empty() {
+                return Err(FlaggingError::InvalidRFlagScale(scale_name));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct RflagFitOutcome {
+    thresholds: RFlagThresholds,
+    buffer_cutoffs: Vec<(f64, f64)>,
+    threshold_ms: u128,
+}
+
+fn fit_rflag_chunks(
+    groups: &[(AutoflagChunk, Vec<Sample>)],
+    request: &FlagDataRequest,
+    context: RflagContext<'_>,
+    masks: &mut TfcropFitMasks<'_>,
+) -> Result<RflagFitOutcome, FlaggingError> {
+    let mut thresholds = RFlagThresholds::default();
+    let mut buffer_cutoffs = Vec::new();
+    let mut threshold_ms = 0;
+    let mut roundoff_buf = if context.model_roundoff.is_empty() {
+        Vec::new()
+    } else {
+        vec![0.0; masks.modified.len()]
+    };
+    // RFlag applies each buffer's own fitted thresholds. The calculate report
+    // instead accumulates all buffers for each field/SPW.
+    for chunk in groups.chunk_by(|(left, _), (right, _)| left == right) {
+        let threshold_started = Instant::now();
+        let chunk_thresholds =
+            rflag_threshold_maps_with_roundoff(chunk, request, context, &mut roundoff_buf)?
+                .scaled(request, context.casa_arithmetic);
+        threshold_ms += threshold_started.elapsed().as_millis();
+        for (chunk_key, group) in chunk {
+            let ddid = context.correlations.map(|_| chunk_key.0[4]);
+            rflag_group_flags(
+                ddid,
+                group,
+                &chunk_thresholds,
+                request,
+                context,
+                &mut roundoff_buf,
+                masks,
+            )?;
+        }
+        if context.casa_arithmetic {
+            let ([observation, array, scan, field, window], _) = chunk[0].0;
+            let cutoff = chunk_thresholds.representative_pair();
+            buffer_cutoffs.push(cutoff);
+            trace_flagdata(|| {
+                json!({
+                    "mode": "rflag",
+                    "calibration_buffer": {
+                        "observation": observation,
+                        "array": array,
+                        "scan": scan,
+                        "field": field,
+                        "spw": window,
+                    },
+                    "timedev": cutoff.0,
+                    "freqdev": cutoff.1,
+                })
+            });
+        } else {
+            thresholds = chunk_thresholds;
+        }
+    }
+    Ok(RflagFitOutcome {
+        thresholds,
+        buffer_cutoffs,
+        threshold_ms,
+    })
 }
 
 fn extend_autoflag_grouped<'a>(
@@ -2789,7 +2980,7 @@ fn load_time_averaged_tfcrop(
         } else {
             push_flag_samples(fit_flags, fit_channels, None, metadata, &mut samples);
         }
-        if selections.is_some() && widths.is_none() {
+        if selections.is_some() && bins.is_none() {
             flags_by_bin.insert(row, flags.clone());
         }
         if let Some(width) = bins.map(ChannelBins::width) {
@@ -3305,19 +3496,44 @@ fn summarize_flags(
     })
 }
 
-fn rflag_threshold_maps_for_groups<'a>(
-    groups: impl IntoIterator<Item = &'a [Sample]>,
+fn rflag_threshold_maps_for_groups(
+    groups: &[(AutoflagChunk, Vec<Sample>)],
     request: &FlagDataRequest,
-    projection: Option<&calibration::CalibrationProjection>,
-) -> RFlagThresholds {
+    context: RflagContext<'_>,
+) -> Result<RFlagThresholds, FlaggingError> {
+    if request.rflag_window.is_none() {
+        return Ok(RFlagThresholds::default());
+    }
+    let mut roundoff_buf = if context.model_roundoff.is_empty() {
+        Vec::new()
+    } else {
+        vec![0.0; context.model_roundoff.len()]
+    };
+    rflag_threshold_maps_with_roundoff(groups, request, context, &mut roundoff_buf)
+}
+
+fn rflag_threshold_maps_with_roundoff(
+    groups: &[(AutoflagChunk, Vec<Sample>)],
+    request: &FlagDataRequest,
+    context: RflagContext<'_>,
+    roundoff_buf: &mut [f32],
+) -> Result<RFlagThresholds, FlaggingError> {
     let Some(window_size) = request.rflag_window else {
-        return RFlagThresholds::default();
+        return Ok(RFlagThresholds::default());
     };
     let mut histograms = RFlagHistograms::default();
-    for group in groups {
-        rflag_accumulate_group_histograms(group, &mut histograms, window_size, projection);
+    for (chunk_key, group) in groups {
+        let ddid = context.correlations.map(|_| chunk_key.0[4]);
+        rflag_accumulate_group_histograms(
+            ddid,
+            group,
+            &mut histograms,
+            window_size,
+            context,
+            roundoff_buf,
+        )?;
     }
-    histograms.into_thresholds(request, projection.is_some())
+    Ok(histograms.into_thresholds(request, context.casa_arithmetic))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3623,7 +3839,7 @@ fn tfcrop_value(sample: &Sample) -> f32 {
 }
 
 fn sample_is_modified(sample: &Sample, modified: &[bool]) -> bool {
-    sample.flag || modified[sample.index]
+    sample.flag || modified.get(sample.index).copied().unwrap_or(false)
 }
 
 fn tfcrop_fit_piecewise_poly(
@@ -3897,7 +4113,7 @@ struct RFlagHistograms {
 impl RFlagHistograms {
     /// Unscaled thresholds for the public calculate report and flagging.
     /// CASA applies the scale factors only when testing for flags.
-    fn into_thresholds(self, request: &FlagDataRequest, calibration: bool) -> RFlagThresholds {
+    fn into_thresholds(self, request: &FlagDataRequest, casa_arithmetic: bool) -> RFlagThresholds {
         let cutoffs = |histograms: BTreeMap<FieldSpwKey, ChannelHistogram>,
                        scalar: Option<f64>,
                        supplied: &BTreeMap<FieldSpwKey, f64>| {
@@ -3908,7 +4124,7 @@ impl RFlagHistograms {
                         .get(&key)
                         .copied()
                         .filter(|&value| value > 0.0)
-                        .or(scalar.filter(|&value| !calibration || value > 0.0))
+                        .or(scalar.filter(|&value| !casa_arithmetic || value > 0.0))
                         .unwrap_or_else(|| histogram.threshold());
                     (key, threshold)
                 })
@@ -3928,7 +4144,7 @@ struct RFlagThresholds {
 }
 
 impl RFlagThresholds {
-    fn scaled(mut self, request: &FlagDataRequest, calibration: bool) -> Self {
+    fn scaled(mut self, request: &FlagDataRequest, casa_arithmetic: bool) -> Self {
         // CASA uses -1 for an unavailable applied cutoff. A negative scalar
         // skips the fitted cutoff, and a negative scale skips the prepass
         // histogram. CASA scales its sentinel together with defined cutoffs.
@@ -3936,7 +4152,7 @@ impl RFlagThresholds {
             if let Some(value) = supplied {
                 return if value > 0.0 { value * scale } else { -scale };
             }
-            if calibration
+            if casa_arithmetic
                 && !scalar.is_some_and(|value| value > 0.0)
                 && (threshold == 0.0 || scale < 0.0 || scalar.is_some_and(|value| value < 0.0))
             {
@@ -3964,11 +4180,11 @@ impl RFlagThresholds {
         self
     }
 
-    fn public_report(&self, request: &FlagDataRequest) -> RFlagThresholdReport {
+    fn public_report(&self, request: &FlagDataRequest, active: bool) -> RFlagThresholdReport {
         let rows = |values: &BTreeMap<FieldSpwKey, f64>,
                     scalar: Option<f64>,
                     supplied: &BTreeMap<FieldSpwKey, f64>| {
-            if request.rflag_window.is_none() {
+            if !active || request.rflag_window.is_none() {
                 return Vec::new();
             }
             let mut report = supplied.clone();
@@ -4044,25 +4260,24 @@ fn representative_threshold(thresholds: &BTreeMap<FieldSpwKey, f64>) -> f64 {
 }
 
 fn rflag_accumulate_group_histograms(
+    description: Option<i32>,
     group: &[Sample],
     histograms: &mut RFlagHistograms,
     window_size: usize,
-    projection: Option<&calibration::CalibrationProjection>,
-) {
+    context: RflagContext<'_>,
+    roundoff_buf: &mut [f32],
+) -> Result<(), FlaggingError> {
     let Some(first) = group.first() else {
-        return;
+        return Ok(());
     };
-    let rows_by_corr = samples_by_corr(group);
-    let mut active_planes = rows_by_corr
-        .iter()
-        .filter(|plane| projection.is_none_or(|projection| projection.includes(plane[0].corr)))
-        .peekable();
-    if active_planes.peek().is_none() {
-        return;
+    let planes = samples_by_corr(group);
+    let projections = rflag_group_projections(group, description, context)?;
+    if projections.is_empty() {
+        return Ok(());
     }
     let key = (first.field, first.spw);
     // CASA histograms have one bin per selected channel.
-    let channels = projection.map(|_| {
+    let channels = context.casa_arithmetic.then(|| {
         let mut channels = unique_sample_chans(group);
         channels.sort_unstable();
         channels
@@ -4076,55 +4291,176 @@ fn rflag_accumulate_group_histograms(
             channels.binary_search(&channel).expect("loaded channel")
         })
     };
-    let time_hist = histograms
+    histograms
         .time
         .entry(key)
         .or_insert_with(|| ChannelHistogram::new(nchan));
-    for by_corr in active_planes.clone() {
-        for by_chan in samples_by_chan_dense(by_corr) {
+    histograms
+        .freq
+        .entry(key)
+        .or_insert_with(|| ChannelHistogram::new(nchan));
+    for projection in projections {
+        let Some(series) = tfcrop_series(
+            &planes,
+            projection,
+            None,
+            &[],
+            context.model_roundoff,
+            roundoff_buf,
+        ) else {
+            continue;
+        };
+        let time_hist = histograms
+            .time
+            .get_mut(&key)
+            .expect("initialized time histogram");
+        for by_chan in samples_by_chan_dense(&series.samples) {
             for (start, stop) in rflag_time_windows(by_chan.len(), window_size) {
                 let window = &by_chan[start..=stop];
-                if let Some(value) = rflag_time_std_total(window, projection.is_some()) {
+                if let Some(value) = rflag_time_std_total(
+                    window,
+                    context.casa_arithmetic,
+                    RflagRoundoff::Slice(roundoff_buf),
+                ) {
                     time_hist.add(index(by_chan[0].chan), value);
                 }
             }
         }
-    }
-    let freq_hist = histograms
-        .freq
-        .entry(key)
-        .or_insert_with(|| ChannelHistogram::new(nchan));
-    for by_corr in active_planes {
-        for by_row in sample_row_runs(by_corr) {
-            let stats = rflag_spectral_stats(by_row, projection.is_some());
+        let freq_hist = histograms
+            .freq
+            .get_mut(&key)
+            .expect("initialized frequency histogram");
+        for by_row in sample_row_runs(&series.samples) {
+            let stats = rflag_spectral_stats(
+                by_row,
+                context.casa_arithmetic,
+                RflagRoundoff::Slice(roundoff_buf),
+            );
+            let row_roundoff = rflag_row_roundoff(by_row, RflagRoundoff::Slice(roundoff_buf));
             for sample in by_row {
                 if sample.flag {
                     continue;
                 }
+                let bound = f64::from(
+                    roundoff_buf.get(sample.index).copied().unwrap_or(0.0) + row_roundoff,
+                );
                 if stats.sum_weight_real > 0.0 {
-                    freq_hist.add(index(sample.chan), (sample.real - stats.average_real).abs());
+                    freq_hist.add(
+                        index(sample.chan),
+                        rflag_clamped_deviation((sample.real - stats.average_real).abs(), bound),
+                    );
                 }
                 if stats.sum_weight_imag > 0.0 {
-                    freq_hist.add(index(sample.chan), (sample.imag - stats.average_imag).abs());
+                    freq_hist.add(
+                        index(sample.chan),
+                        rflag_clamped_deviation((sample.imag - stats.average_imag).abs(), bound),
+                    );
                 }
             }
         }
     }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum RflagRoundoff<'a> {
+    Slice(&'a [f32]),
+    Sparse(&'a HashMap<usize, f32>),
+}
+
+impl RflagRoundoff<'_> {
+    fn is_empty(self) -> bool {
+        match self {
+            Self::Slice(slice) => slice.is_empty(),
+            Self::Sparse(map) => map.is_empty(),
+        }
+    }
+
+    fn get(self, index: usize) -> f32 {
+        match self {
+            Self::Slice(slice) => slice.get(index).copied().unwrap_or(0.0),
+            Self::Sparse(map) => map.get(&index).copied().unwrap_or(0.0),
+        }
+    }
+}
+
+struct RflagProjectionSeries {
+    rows: Vec<Vec<Sample>>,
+    chans: Vec<Vec<Sample>>,
+    partners: HashMap<usize, usize>,
+    roundoff: HashMap<usize, f32>,
+}
+
+fn rflag_projection_series(
+    planes: &[Vec<Sample>],
+    projection: ClipProjection,
+    model_roundoff: &[f32],
+    roundoff_buf: &mut [f32],
+) -> Option<RflagProjectionSeries> {
+    let series = tfcrop_series(planes, projection, None, &[], model_roundoff, roundoff_buf)?;
+    let rows = sample_row_runs(&series.samples)
+        .into_iter()
+        .map(<[Sample]>::to_vec)
+        .collect::<Vec<_>>();
+    let chans = samples_by_chan_dense(&series.samples);
+    let roundoff = if roundoff_buf.is_empty() {
+        HashMap::new()
+    } else {
+        series
+            .samples
+            .iter()
+            .map(|sample| {
+                (
+                    sample.index,
+                    roundoff_buf.get(sample.index).copied().unwrap_or(0.0),
+                )
+            })
+            .collect()
+    };
+    Some(RflagProjectionSeries {
+        rows,
+        chans,
+        partners: series.pairs.into_iter().collect(),
+        roundoff,
+    })
+}
+
+fn is_rflag_flagged(sample: &Sample, partners: &HashMap<usize, usize>, modified: &[bool]) -> bool {
+    sample.flag
+        || modified[sample.index]
+        || partners
+            .get(&sample.index)
+            .is_some_and(|&partner| modified[partner])
+}
+
+fn mark_rflag_flagged(
+    partners: &HashMap<usize, usize>,
+    index: usize,
+    axis_flags: &mut [bool],
+    modified: &mut [bool],
+) {
+    axis_flags[index] = true;
+    modified[index] = true;
+    if let Some(&partner) = partners.get(&index) {
+        axis_flags[partner] = true;
+        modified[partner] = true;
+    }
 }
 
 fn rflag_group_flags(
+    description: Option<i32>,
     group: &[Sample],
     thresholds: &RFlagThresholds,
     request: &FlagDataRequest,
-    projection: Option<&calibration::CalibrationProjection>,
-    time_flags: &mut [bool],
-    freq_flags: &mut [bool],
-) {
+    context: RflagContext<'_>,
+    roundoff_buf: &mut [f32],
+    masks: &mut TfcropFitMasks<'_>,
+) -> Result<(), FlaggingError> {
     let Some(window_size) = request.rflag_window else {
-        return;
+        return Ok(());
     };
     let Some(first) = group.first() else {
-        return;
+        return Ok(());
     };
     let key = (first.field, first.spw);
     let timedev = thresholds
@@ -4137,70 +4473,109 @@ fn rflag_group_flags(
         .get(&key)
         .copied()
         .unwrap_or(f64::INFINITY);
-    for by_corr in samples_by_corr(group) {
-        if !projection.is_none_or(|projection| projection.includes(by_corr[0].corr)) {
-            continue;
+    let planes = samples_by_corr(group);
+    let mut projections = Vec::new();
+    for projection in rflag_group_projections(group, description, context)? {
+        if let Some(series) =
+            rflag_projection_series(&planes, projection, context.model_roundoff, roundoff_buf)
+        {
+            projections.push(series);
         }
-        if timedev >= 0.0 || projection.is_none() {
-            for by_chan in samples_by_chan_dense(&by_corr) {
-                for (start, stop) in rflag_time_windows(by_chan.len(), window_size) {
-                    if rflag_time_std_total(&by_chan[start..=stop], projection.is_some())
+    }
+    let row_count = projections.first().map_or(0, |series| series.rows.len());
+    let do_time = timedev >= 0.0 || !context.casa_arithmetic;
+    let do_freq = freqdev >= 0.0 || !context.casa_arithmetic;
+    for timestep in 0..row_count {
+        if do_time
+            && let Some((start, stop)) = rflag_time_window_at(row_count, window_size, timestep)
+        {
+            for series in &projections {
+                let roundoff = RflagRoundoff::Sparse(&series.roundoff);
+                for by_chan in &series.chans {
+                    let Some(window) = by_chan.get(start..=stop) else {
+                        continue;
+                    };
+                    if rflag_time_std_total(window, context.casa_arithmetic, roundoff)
                         .is_some_and(|deviation| deviation > timedev)
                     {
-                        for sample in &by_chan[start..=stop] {
-                            if !sample.flag {
-                                time_flags[sample.index] = true;
+                        for sample in window {
+                            if !is_rflag_flagged(sample, &series.partners, masks.modified) {
+                                mark_rflag_flagged(
+                                    &series.partners,
+                                    sample.index,
+                                    masks.time_flags,
+                                    masks.modified,
+                                );
                             }
                         }
                     }
                 }
             }
         }
-        if freqdev < 0.0 && projection.is_some() {
-            continue;
-        }
-        for by_row in sample_row_runs(&by_corr) {
-            let stats = rflag_spectral_stats(by_row, projection.is_some());
-            let flag_all = stats.std_real > request.spectralmax
-                || stats.std_imag > request.spectralmax
-                || stats.std_real < request.spectralmin
-                || stats.std_imag < request.spectralmin;
-            for sample in by_row {
-                if sample.flag {
+        if do_freq {
+            for series in &projections {
+                let Some(by_row) = series.rows.get(timestep) else {
                     continue;
-                }
-                if flag_all
-                    || (sample.real - stats.average_real).abs() > freqdev
-                    || (sample.imag - stats.average_imag).abs() > freqdev
-                {
-                    freq_flags[sample.index] = true;
+                };
+                let roundoff = RflagRoundoff::Sparse(&series.roundoff);
+                let stats = rflag_spectral_stats(by_row, context.casa_arithmetic, roundoff);
+                let row_roundoff = rflag_row_roundoff(by_row, roundoff);
+                let flag_all = stats.std_real > request.spectralmax
+                    || stats.std_imag > request.spectralmax
+                    || stats.std_real < request.spectralmin
+                    || stats.std_imag < request.spectralmin;
+                for sample in by_row {
+                    if is_rflag_flagged(sample, &series.partners, masks.modified) {
+                        continue;
+                    }
+                    let bound = f64::from(roundoff.get(sample.index) + row_roundoff);
+                    let dev_real =
+                        rflag_clamped_deviation((sample.real - stats.average_real).abs(), bound);
+                    let dev_imag =
+                        rflag_clamped_deviation((sample.imag - stats.average_imag).abs(), bound);
+                    if flag_all || dev_real > freqdev || dev_imag > freqdev {
+                        mark_rflag_flagged(
+                            &series.partners,
+                            sample.index,
+                            masks.freq_flags,
+                            masks.modified,
+                        );
+                    }
                 }
             }
         }
     }
+    Ok(())
+}
+
+fn rflag_time_window_at(len: usize, window_size: usize, center: usize) -> Option<(usize, usize)> {
+    let effective = len.min(window_size);
+    let delta = effective.saturating_sub(1) / 2;
+    if delta == 0 {
+        (center < len).then_some((center, center))
+    } else if center >= delta && center < len - delta {
+        Some((center - delta, center + delta))
+    } else {
+        None
+    }
 }
 
 fn rflag_time_windows(len: usize, window_size: usize) -> impl Iterator<Item = (usize, usize)> {
-    let effective = len.min(window_size);
-    let delta = effective.saturating_sub(1) / 2;
-    (0..len).filter_map(move |center| {
-        if delta == 0 {
-            Some((center, center))
-        } else if center >= delta && center < len - delta {
-            Some((center - delta, center + delta))
-        } else {
-            None
-        }
-    })
+    (0..len).filter_map(move |center| rflag_time_window_at(len, window_size, center))
 }
 
-fn rflag_time_std_total(samples: &[Sample], calibration: bool) -> Option<f64> {
-    // CASA multiplies the Float mapper values before summing in Double.
-    let square = |value: f64| {
-        if calibration {
-            f64::from(value as f32 * value as f32)
+fn rflag_time_std_total(
+    samples: &[Sample],
+    casa_arithmetic: bool,
+    roundoff: RflagRoundoff<'_>,
+) -> Option<f64> {
+    // CASA's visibility mapper supplies Float values and sums v and v * v in Double.
+    let term = |value: f64| {
+        if casa_arithmetic {
+            let value = value as f32;
+            (f64::from(value), f64::from(value * value))
         } else {
-            value * value
+            (value, value * value)
         }
     };
     let mut count = 0usize;
@@ -4213,20 +4588,50 @@ fn rflag_time_std_total(samples: &[Sample], calibration: bool) -> Option<f64> {
             continue;
         }
         count += 1;
-        sum_real += sample.real;
-        sum_imag += sample.imag;
-        sumsq_real += square(sample.real);
-        sumsq_imag += square(sample.imag);
+        let (real, real_sq) = term(sample.real);
+        let (imag, imag_sq) = term(sample.imag);
+        sum_real += real;
+        sum_imag += imag;
+        sumsq_real += real_sq;
+        sumsq_imag += imag_sq;
     }
     if count == 0 {
-        return (!calibration).then_some(0.0);
+        return (!casa_arithmetic).then_some(0.0);
     }
     let sum_weight = count as f64;
     let avg_real = sum_real / sum_weight;
     let avg_imag = sum_imag / sum_weight;
+    if !roundoff.is_empty()
+        && samples.iter().filter(|sample| !sample.flag).all(|sample| {
+            let bound = f64::from(roundoff.get(sample.index)) * 2.0;
+            (sample.real - avg_real).abs() <= bound && (sample.imag - avg_imag).abs() <= bound
+        })
+    {
+        return Some(0.0);
+    }
     let var_real = sumsq_real / sum_weight - avg_real * avg_real;
     let var_imag = sumsq_imag / sum_weight - avg_imag * avg_imag;
     Some((var_real.max(0.0) + var_imag.max(0.0)).sqrt())
+}
+
+fn rflag_row_roundoff(samples: &[Sample], roundoff: RflagRoundoff<'_>) -> f32 {
+    if roundoff.is_empty() {
+        return 0.0;
+    }
+    samples
+        .iter()
+        .filter(|sample| !sample.flag)
+        .map(|sample| roundoff.get(sample.index))
+        .filter(|bound| bound.is_finite())
+        .fold(0.0, f32::max)
+}
+
+fn rflag_clamped_deviation(deviation: f64, roundoff_bound: f64) -> f64 {
+    if roundoff_bound > 0.0 && deviation <= roundoff_bound {
+        0.0
+    } else {
+        deviation
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -4239,7 +4644,11 @@ struct RFlagSpectralStats {
     sum_weight_imag: f64,
 }
 
-fn rflag_spectral_stats(samples: &[Sample], calibration: bool) -> RFlagSpectralStats {
+fn rflag_spectral_stats(
+    samples: &[Sample],
+    casa_arithmetic: bool,
+    roundoff: RflagRoundoff<'_>,
+) -> RFlagSpectralStats {
     let mut real_values = Vec::with_capacity(samples.len());
     let mut imag_values = Vec::with_capacity(samples.len());
     for sample in samples {
@@ -4254,9 +4663,16 @@ fn rflag_spectral_stats(samples: &[Sample], calibration: bool) -> RFlagSpectralS
     }
     let average_real = median_in_place(&mut real_values);
     let average_imag = median_in_place(&mut imag_values);
+    let row_bound = f64::from(rflag_row_roundoff(samples, roundoff)) * 2.0;
     let residual = |value: f64, reference: f64| {
         let delta = value - reference;
-        if calibration { delta } else { delta.abs() }
+        if row_bound > 0.0 && delta.abs() <= row_bound {
+            0.0
+        } else if casa_arithmetic {
+            delta
+        } else {
+            delta.abs()
+        }
     };
     for value in &mut real_values {
         *value = residual(*value, average_real);
@@ -4314,13 +4730,6 @@ fn percent_modified(samples: &[Sample], modified: &[bool]) -> f64 {
 
 fn count_mask(mask: &[bool]) -> usize {
     mask.iter().filter(|value| **value).count()
-}
-
-fn union_masks(left: &[bool], right: &[bool]) -> Vec<bool> {
-    left.iter()
-        .zip(right.iter())
-        .map(|(left, right)| *left || *right)
-        .collect()
 }
 
 /// The `tracing` target of the flagging trace (`debug`): one JSON record per
@@ -4419,12 +4828,12 @@ fn unique_sample_rows(samples: &[Sample]) -> Vec<usize> {
 }
 
 fn unique_sample_chans(samples: &[Sample]) -> Vec<usize> {
+    let mut seen = HashSet::new();
     let mut chans = Vec::new();
     for sample in samples {
-        if chans.last().copied() == Some(sample.chan) || chans.contains(&sample.chan) {
-            continue;
+        if seen.insert(sample.chan) {
+            chans.push(sample.chan);
         }
-        chans.push(sample.chan);
     }
     chans
 }
@@ -5234,7 +5643,10 @@ mod tests {
             sample(6, 0, 1, 0, 2.0, true),
             sample(7, 0, 1, 1, 2.0, true),
         ];
-        let groups = group_samples(&samples);
+        let groups = group_samples(&samples)
+            .into_values()
+            .map(|group| (AutoflagChunk::default(), group))
+            .collect::<Vec<_>>();
         let request = FlagDataRequest {
             timedev: Some(1.0),
             freqdev: Some(2.0),
@@ -5245,7 +5657,8 @@ mod tests {
             ..FlagDataRequest::default()
         };
         let thresholds =
-            rflag_threshold_maps_for_groups(groups.values().map(Vec::as_slice), &request, None)
+            rflag_threshold_maps_for_groups(&groups, &request, RflagContext::default())
+                .expect("rflag thresholds")
                 .scaled(&request, false);
         assert_eq!(thresholds.representative_pair(), (1.0, 2.0));
         // CASA scales a given threshold as it scales a computed one.
@@ -5254,29 +5667,35 @@ mod tests {
             freqdevscale: 3.0,
             ..request.clone()
         };
-        let scaled = rflag_threshold_maps_for_groups(
-            groups.values().map(Vec::as_slice),
-            &scaled_request,
-            None,
-        )
-        .scaled(&scaled_request, false);
+        let scaled =
+            rflag_threshold_maps_for_groups(&groups, &scaled_request, RflagContext::default())
+                .expect("scaled rflag thresholds")
+                .scaled(&scaled_request, false);
         assert_eq!(scaled.representative_pair(), (5.0, 6.0));
         assert_eq!(
             format_threshold_map(&thresholds.timedev).get("field0_spw0"),
             Some(&1.0)
         );
 
+        let mut modified = vec![false; samples.len()];
         let mut time_flags = vec![false; samples.len()];
         let mut freq_flags = vec![false; samples.len()];
-        for group in groups.values() {
+        for (_, group) in &groups {
+            let mut masks = TfcropFitMasks {
+                modified: &mut modified,
+                freq_flags: &mut freq_flags,
+                time_flags: &mut time_flags,
+            };
             rflag_group_flags(
+                None,
                 group,
                 &thresholds,
                 &request,
-                None,
-                &mut time_flags,
-                &mut freq_flags,
-            );
+                RflagContext::default(),
+                &mut Vec::new(),
+                &mut masks,
+            )
+            .expect("rflag group flags");
         }
         assert!(time_flags[0] || time_flags[2] || time_flags[4]);
         assert!(freq_flags[4] || freq_flags[5]);
@@ -5291,9 +5710,12 @@ mod tests {
             rflag_time_windows(4, 3).collect::<Vec<_>>(),
             vec![(0, 2), (1, 3)]
         );
-        assert_eq!(rflag_time_std_total(&samples[6..8], false), Some(0.0));
         assert_eq!(
-            rflag_spectral_stats(&samples[6..8], false).sum_weight_real,
+            rflag_time_std_total(&samples[6..8], false, RflagRoundoff::Slice(&[])),
+            Some(0.0)
+        );
+        assert_eq!(
+            rflag_spectral_stats(&samples[6..8], false, RflagRoundoff::Slice(&[])).sum_weight_real,
             0.0
         );
 
@@ -5342,10 +5764,6 @@ mod tests {
         assert_eq!(samples_by_row_chan(&samples).len(), 6);
         assert_eq!(percent_modified(&samples, &modified), 100.0);
         assert_eq!(count_mask(&modified), 12);
-        assert_eq!(
-            union_masks(&[true, false], &[false, true]),
-            vec![true, true]
-        );
         assert_eq!(
             summary_after_flag_mask(&samples, 2, true).flagged_samples,
             3
@@ -5445,16 +5863,16 @@ mod tests {
         .expect("ignore non-numeric arrays");
         assert!(samples.is_empty());
 
-        let groups = BTreeMap::from([(
-            (0, 0, 0, 1, 2),
+        let groups = vec![(
+            AutoflagChunk::default(),
             vec![
                 sample(0, 0, 0, 0, 1.0, false),
                 sample(1, 1, 0, 0, 3.0, false),
                 sample(2, 2, 0, 0, 5.0, false),
             ],
-        )]);
+        )];
         let thresholds = rflag_threshold_maps_for_groups(
-            groups.values().map(Vec::as_slice),
+            &groups,
             &FlagDataRequest {
                 timedev: None,
                 freqdev: None,
@@ -5462,8 +5880,9 @@ mod tests {
                 freqdevscale: 3.0,
                 ..FlagDataRequest::default()
             },
-            None,
-        );
+            RflagContext::default(),
+        )
+        .expect("rflag thresholds");
         assert!(thresholds.representative_pair().0.is_finite());
         assert!(thresholds.representative_pair().1.is_finite());
         assert_eq!(
@@ -5516,5 +5935,114 @@ mod tests {
         let all_zero_fit = tfcrop_fit_piecewise_poly(&[0.0, 0.0], &mut all_zero_flags, 1, 1, false);
         assert_eq!(all_zero_fit, vec![0.0, 0.0]);
         assert_eq!(all_zero_flags, vec![true, true]);
+    }
+
+    #[test]
+    fn rflag_roundoff_storage_is_scoped_per_series_and_clamps_jitter() {
+        let mut samples = Vec::new();
+        for baseline in 0..2 {
+            for t in 0..3 {
+                let row = baseline * 3 + t;
+                for chan in 0..3 {
+                    for corr in 0..2 {
+                        let mut real = 1.0;
+                        if baseline == 0 && t == 1 && corr == 0 && chan == 1 {
+                            real += 5.0e-4;
+                        } else if baseline == 1
+                            && ((t == 0 && corr == 0 && chan == 1)
+                                || (t == 1 && corr == 1 && chan == 1))
+                        {
+                            real = 10.0;
+                        }
+                        let mut entry = sample(samples.len(), row, corr, chan, real, false);
+                        entry.ant1 = 0;
+                        entry.ant2 = (baseline + 1) as i32;
+                        samples.push(entry);
+                    }
+                }
+            }
+        }
+        let model_roundoff = vec![2.0e-3_f32; samples.len()];
+        let groups = group_samples(&samples)
+            .into_values()
+            .map(|group| (AutoflagChunk::default(), group))
+            .collect::<Vec<_>>();
+        assert_eq!(groups.len(), 2);
+
+        let planes = samples_by_corr(&groups[0].1);
+        let mut roundoff_buf = vec![0.0; samples.len()];
+        let stored_series = rflag_projection_series(
+            &planes,
+            ClipProjection::Stored(0),
+            &model_roundoff,
+            &mut roundoff_buf,
+        )
+        .expect("stored projection");
+        assert!(stored_series.roundoff.len() <= groups[0].1.len());
+        assert_eq!(stored_series.roundoff.len(), 9);
+        assert!(stored_series.roundoff.len() < samples.len());
+
+        let stokes_series = rflag_projection_series(
+            &planes,
+            ClipProjection::Stokes(0, 1, correlation::StokesCombination::Sum),
+            &model_roundoff,
+            &mut roundoff_buf,
+        )
+        .expect("stokes I projection");
+        assert!(stokes_series.roundoff.len() <= groups[0].1.len());
+        assert_eq!(stokes_series.roundoff.len(), 9);
+        let max_stored_roundoff = stokes_series
+            .roundoff
+            .values()
+            .copied()
+            .fold(0.0_f32, f32::max);
+        assert!((max_stored_roundoff - 2.0e-3).abs() <= 1.0e-5);
+
+        let request = FlagDataRequest {
+            timedev: Some(1.0e-5),
+            freqdev: Some(1.0e-5),
+            timedevscale: 1.0,
+            freqdevscale: 1.0,
+            rflag_window: Some(3),
+            ..FlagDataRequest::default()
+        };
+        let mut modified = vec![false; samples.len()];
+        let mut time_flags = vec![false; samples.len()];
+        let mut freq_flags = vec![false; samples.len()];
+        fit_rflag_chunks(
+            &groups,
+            &request,
+            RflagContext {
+                casa_arithmetic: false,
+                correlations: None,
+                calibration: None,
+                model_roundoff: &model_roundoff,
+            },
+            &mut TfcropFitMasks {
+                modified: &mut modified,
+                freq_flags: &mut freq_flags,
+                time_flags: &mut time_flags,
+            },
+        )
+        .expect("fit rflag chunks with roundoff");
+
+        assert!(
+            !modified[..18].iter().any(|&flag| flag),
+            "roundoff-bounded jitter should not be flagged"
+        );
+        let freq_spike_index = samples
+            .iter()
+            .position(|entry| {
+                entry.ant2 == 2 && entry.row == 3 && entry.corr == 0 && entry.chan == 1
+            })
+            .expect("freq spike sample");
+        let time_spike_index = samples
+            .iter()
+            .position(|entry| {
+                entry.ant2 == 2 && entry.row == 4 && entry.corr == 1 && entry.chan == 1
+            })
+            .expect("time spike sample");
+        assert!(modified[freq_spike_index] && freq_flags[freq_spike_index]);
+        assert!(modified[time_spike_index] && time_flags[time_spike_index]);
     }
 }

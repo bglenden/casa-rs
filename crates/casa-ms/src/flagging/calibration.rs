@@ -195,6 +195,7 @@ fn grouped_flags(
                 channels,
                 request,
                 request.rflag_calculate.unwrap_or(calculate),
+                None,
             )?,
             (FlagDataMode::Tfcrop, false) => return Err(FlaggingError::MissingTfcropColumn),
             _ => return Err(FlaggingError::UnsupportedCalibrationAgent("rflag")),

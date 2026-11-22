@@ -457,6 +457,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if (completion.parameter == "datacolumn" and completion.message in (
                     "Failed to parse parameters for mode clip",
                     "Failed to parse parameters for mode tfcrop",
+                    "Failed to parse parameters for mode rflag",
             )):
                 raise ValueError(completion.message) from error
             if completion.parameter in ("vis", "outfile"):
@@ -495,7 +496,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), completion.message) from error
             if completion.parameter == "datacolumn" and column_vector:
                 raise AttributeError(f"'{column_vector}' object has no attribute 'upper'") from error
-            if (completion.parameter in ("maxnpieces", "halfwin")
+            if (completion.parameter in ("maxnpieces", "halfwin", "winsize")
                     and completion.message == ("<built-in function agentflagger_parseagentparameters>"
                                                " returned a result with an exception set")):
                 raise SystemError(completion.message) from error
