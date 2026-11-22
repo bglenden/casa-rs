@@ -2757,7 +2757,7 @@ impl<T: ImagePixel> PagedImage<T> {
         path.join(LOGTABLE_NAME)
     }
 
-    fn reset_logtable(path: &Path) -> Result<(), ImageError> {
+    pub(crate) fn reset_logtable(path: &Path) -> Result<(), ImageError> {
         if path.exists() {
             std::fs::remove_dir_all(path).map_err(|e| ImageError::Io(e.to_string()))?;
         }
@@ -2784,7 +2784,7 @@ impl<T: ImagePixel> PagedImage<T> {
 
     /// Appends `messages` in one save, each at `location`, with `TIME` in
     /// MJD seconds, as casacore's `TableLogSink` writes it.
-    fn append_logtable_rows(
+    pub(crate) fn append_logtable_rows(
         path: &Path,
         location: &str,
         messages: &[String],
@@ -2798,7 +2798,7 @@ impl<T: ImagePixel> PagedImage<T> {
         )
     }
 
-    fn append_logtable_entries<'a>(
+    pub(crate) fn append_logtable_entries<'a>(
         path: &Path,
         entries: impl IntoIterator<Item = (f64, &'a str, &'a str, &'a str, &'a str)>,
     ) -> Result<(), ImageError> {

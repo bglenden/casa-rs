@@ -57,6 +57,14 @@ pub(super) fn rename_destination(expanded: &str, name: &str) -> PyResult<PathBuf
 }
 
 pub(super) fn open_image(infile: &str, expanded: &str) -> PyResult<AttachedImage> {
+    open_image_with_cache(infile, expanded, true)
+}
+
+fn open_image_with_cache(
+    infile: &str,
+    expanded: &str,
+    component_cache: bool,
+) -> PyResult<AttachedImage> {
     if infile.is_empty() {
         return Err(raised("Exception: File name is empty."));
     }
@@ -66,7 +74,7 @@ pub(super) fn open_image(infile: &str, expanded: &str) -> PyResult<AttachedImage
     }
     let path = std::path::absolute(path).map_err(raised)?;
     let absolute = lexical_absolute(&path);
-    AttachedImage::open_resolved(&absolute, &path, Path::new(infile))
+    AttachedImage::open_resolved_with_cache(&absolute, &path, Path::new(infile), component_cache)
 }
 
 #[pymethods]
@@ -77,9 +85,7 @@ impl PyImageTool {
         py.detach(|| {
             let mut state = self.state();
             state.image = None;
-            // ImageFactory's cache flag applies to component-list images.
-            let _ = cache;
-            state.image = Some(open_image(&infile, expanded?.as_ref())?);
+            state.image = Some(open_image_with_cache(&infile, expanded?.as_ref(), cache)?);
             Ok(true)
         })
     }
