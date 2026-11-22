@@ -7558,6 +7558,14 @@ zero-based column index. casa-rs preserves both the unscaled integer
 cell and the matching null marker so readers can interpret it. See #1028.
 
 
+## The Python callibrary reader executes calibration-library file contents
+
+CASA 6.7.6.14 builds and executes a Python statement from each record line in
+`casatasks.private.callibrary.callibrary.read`. A file can run arbitrary
+Python in the calling process. The casa-rs helper accepts the historical
+record literals and rejects executable expressions. It clears any partial
+records and reports the line using the malformed-library error path.
+
 ## Callibrary joint scan maps mark other observations unavailable
 
 - Date noted: 2026-11-17
