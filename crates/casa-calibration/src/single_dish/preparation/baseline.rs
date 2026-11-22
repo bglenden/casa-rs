@@ -17,7 +17,7 @@ use std::path::Path;
 use casa_ms::MeasurementSet;
 use casa_ms::transform::{
     MsTransformReport, MsTransformRequest, MsTransformTaskOptions, SpectrumBaseline, SpectrumRow,
-    TransformTaskHistory, transform_baseline_spectra,
+    SpectrumWeights, TransformTaskHistory, transform_baseline_spectra,
 };
 use casa_types::{ArrayValue, Complex32, RecordValue};
 use ndarray::{Array1, ArrayD, Axis};
@@ -583,7 +583,7 @@ impl SpectrumBaseline for BaselineWorker<'_> {
         row: &SpectrumRow,
         data: &mut ArrayValue,
         flags: &mut ArrayD<bool>,
-        weights: Option<&ArrayValue>,
+        weights: SpectrumWeights<'_>,
     ) -> Result<Option<ArrayValue>, String> {
         let &[receptors, channels] = flags.shape() else {
             return Err("Expected a two-dimensional single-dish FLAG cell.".into());
@@ -592,7 +592,7 @@ impl SpectrumBaseline for BaselineWorker<'_> {
             return Err("Single-dish data and FLAG shapes disagree.".into());
         }
         let mut weights = self.noise.map(|_| {
-            if let Some(ArrayValue::Float32(weights)) = weights {
+            if let Some(ArrayValue::Float32(weights)) = weights.scalar {
                 weights.iter().copied().collect::<Vec<_>>()
             } else {
                 vec![1.; receptors]

@@ -18823,6 +18823,144 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.line_fit.timespan",
+      "semantic_revision": 1,
+      "casa_name": "timespan",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Scan, state and field boundaries allowed within an averaging interval.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.line_fit.polaverage",
+      "semantic_revision": 1,
+      "casa_name": "polaverage",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "stokes",
+          "geometric"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Polarization averaging mode.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.line_fit.fitfunc",
+      "semantic_revision": 1,
+      "casa_name": "fitfunc",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "gaussian",
+          "lorentzian"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Spectral line profile family.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.line_fit.fitmode",
+      "semantic_revision": 1,
+      "casa_name": "fitmode",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "list",
+          "auto"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use explicit ranges or automatic line detection.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.line_fit.nfit",
+      "semantic_revision": 1,
+      "casa_name": "nfit",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of line components for each specified channel range.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.line_fit.outfile",
+      "semantic_revision": 1,
+      "casa_name": "outfile",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Optional tab-separated report of fitted line components.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

@@ -41,6 +41,17 @@ impl SingleDishLineFinder {
         spectrum: &[f32],
         included: &mut [bool],
     ) -> Result<(), String> {
+        for range in self.find_lines(spectrum, included)? {
+            included[range].fill(false);
+        }
+        Ok(())
+    }
+
+    pub(in crate::single_dish::preparation) fn find_lines(
+        self,
+        spectrum: &[f32],
+        included: &mut [bool],
+    ) -> Result<Vec<RangeInclusive<usize>>, String> {
         let channels = spectrum.len();
         let min_width = usize::try_from(self.min_width)
             .ok()
@@ -92,10 +103,7 @@ impl SingleDishLineFinder {
             }
             factor = next;
         }
-        for range in lines {
-            included[range].fill(false);
-        }
-        Ok(())
+        Ok(merge_overlapping(lines))
     }
 
     fn detect_level(
@@ -247,7 +255,7 @@ fn extend_wings(ranges: &mut [Channels], deviation: &[f32], valid: &[bool], mad:
     }
 }
 
-fn merge_ranges(mut ranges: Vec<Channels>, max_width: usize) -> Vec<Channels> {
+fn merge_overlapping(mut ranges: Vec<Channels>) -> Vec<Channels> {
     ranges.sort_by_key(|range| *range.start());
     let mut overlapping: Vec<Channels> = Vec::new();
     for range in ranges {
@@ -259,8 +267,12 @@ fn merge_ranges(mut ranges: Vec<Channels>, max_width: usize) -> Vec<Channels> {
             overlapping.push(range);
         }
     }
+    overlapping
+}
+
+fn merge_ranges(ranges: Vec<Channels>, max_width: usize) -> Vec<Channels> {
     let mut result: Vec<Channels> = Vec::new();
-    for range in overlapping
+    for range in merge_overlapping(ranges)
         .into_iter()
         .filter(|range| range.end() - range.start() < max_width)
     {

@@ -59,7 +59,7 @@ const METHODS: &[Method] = &[
                 param("tempoutfile", K::Text, D::Text("")),
             ],
             R::Bool,
-            S::NotYetImplemented,
+            S::Implemented,
         )
     },
     Method {

@@ -99,13 +99,26 @@ fn moment_correction(
 }
 
 pub(super) fn solve(curve: &Curve, samples: &[Sample]) -> Option<Solution> {
+    solve_profile(curve, samples, false)
+}
+
+pub(super) fn solve_channel_profiles(curve: &Curve, samples: &[Sample]) -> Option<Solution> {
+    solve_profile(curve, samples, true)
+}
+
+fn solve_profile(
+    curve: &Curve,
+    samples: &[Sample],
+    allow_underdetermined: bool,
+) -> Option<Solution> {
     let free: Vec<_> = curve
         .fixed
         .iter()
         .enumerate()
         .filter_map(|(index, &fixed)| (!fixed).then_some(index))
         .collect();
-    if samples.len() <= free.len() || samples.is_empty() {
+    let determined = samples.len() > free.len();
+    if !determined && !allow_underdetermined {
         return None;
     }
     let mut values = curve.parameters.clone();
@@ -170,7 +183,8 @@ pub(super) fn solve(curve: &Curve, samples: &[Sample]) -> Option<Solution> {
         }
         damping *= 10.;
     }
-    let errors = if converged && !free.is_empty() {
+    // No residual degrees of freedom are available for a covariance estimate.
+    let errors = if converged && determined && !free.is_empty() {
         uncertainty(curve, &values, &free, samples, score)
     } else {
         vec![0.; values.len()]

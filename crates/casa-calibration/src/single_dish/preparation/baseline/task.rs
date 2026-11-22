@@ -240,7 +240,10 @@ fn wave_list(values: &[ParameterValue]) -> Result<WaveSelection, String> {
     WaveSelection::explicit(numbers.into_iter().map(|(_, index)| index))
 }
 
-fn selected_windows(input: &Path, mask: &str) -> Result<String, TaskFailure> {
+pub(in crate::single_dish::preparation) fn selected_windows(
+    input: &Path,
+    mask: &str,
+) -> Result<String, TaskFailure> {
     let ms =
         MeasurementSet::open(input).map_err(|error| TaskFailure::execution(error.to_string()))?;
     let selection = ms

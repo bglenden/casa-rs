@@ -646,6 +646,28 @@
     "spw": "cStr",
     "scan": "cStr"
   },
+  "sdfit": {
+    "datacolumn": "cStr",
+    "antenna": "cStr",
+    "field": "cStr",
+    "spw": "cStr",
+    "timerange": "cStr",
+    "scan": "cStr",
+    "pol": "cStr",
+    "intent": "cStr",
+    "timebin": "cStr",
+    "timespan": "cStr",
+    "polaverage": "cStr",
+    "fitfunc": "cStr",
+    "fitmode": "cStr",
+    "nfit": "cIntVec",
+    "thresh": "cFloat",
+    "avg_limit": "cInt",
+    "minwidth": "cInt",
+    "edge": "cIntVec",
+    "outfile": "cStr",
+    "overwrite": "cBool"
+  },
   "sdgaincal": {
     "calmode": "cStr",
     "smooth": "cBool",

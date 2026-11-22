@@ -52,7 +52,7 @@ mod time_average;
 mod time_projection;
 mod visibility_columns;
 
-pub use baseline::{SpectrumBaseline, SpectrumRow};
+pub use baseline::{SpectrumBaseline, SpectrumRow, SpectrumWeights};
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use convolution::{SpectralOperation, SpectrumOperator};
 pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_spectra};
@@ -613,9 +613,10 @@ fn mstransform_staged(
         .min()
         .expect("nonempty row selection");
     let stage_started_at = Instant::now();
+    let baseline_order = matches!(order, selection_metadata::MainRowOrder::Baseline);
     let time_groups = options
         .time_averaging
-        .map(|options| time_average::plan(&input, &time_rows, options))
+        .map(|options| time_average::plan(&input, &time_rows, options, baseline_order))
         .transpose()?;
     let selection_metadata::OrderedMainRows {
         rows: selected_rows,
@@ -662,13 +663,25 @@ fn mstransform_staged(
             .prepare(&counts)
             .map_err(MsTransformError::Spectrum)?;
     }
-    let baseline_rows = matches!(order, selection_metadata::MainRowOrder::Baseline)
+    let hands = match &operation {
+        Some(SpectralOperation {
+            kernel: SpectrumOperator::Baseline(kernel),
+            ..
+        }) if kernel.reads_parallel_hands() => {
+            correlation_metadata::parallel_hands(&input, correlations.as_ref(), &selected_ddids)
+                .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
+        }
+        _ => BTreeMap::new(),
+    };
+    let baseline_rows = baseline_order
         .then(|| {
             baseline::spectrum_rows(
                 input.main_table(),
                 request,
                 &selected_rows,
-                selected_ddids.iter().map(|id| ddid_to_spw[id]),
+                selected_ddids
+                    .iter()
+                    .map(|id| (ddid_to_spw[id], hands.get(id).copied())),
             )
         })
         .transpose()?;
@@ -682,6 +695,11 @@ fn mstransform_staged(
     );
     let stage_started_at = Instant::now();
     let float_convolution = convolving && request.data_column == TransformDataColumn::FloatData;
+    let read_spectral_weights = matches!(
+        &operation,
+        Some(SpectralOperation { kernel: SpectrumOperator::Baseline(kernel), .. })
+            if kernel.reads_spectral_weights()
+    );
     let mut spectra = SpectrumProjection::resolve(
         input.main_table(),
         first_selected_row,
@@ -697,6 +715,16 @@ fn mstransform_staged(
     if float_convolution {
         spectra.source.clear();
     }
+    if read_spectral_weights
+        && !spectra.source.contains(&"WEIGHT_SPECTRUM")
+        && input
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
+    {
+        spectra.source.push("WEIGHT_SPECTRUM");
+    }
+
     let mut writes_rows = true;
     if let Some(SpectralOperation {
         kernel: SpectrumOperator::Baseline(kernel),
@@ -705,7 +733,9 @@ fn mstransform_staged(
     {
         writes_rows = kernel.writes_rows();
         if kernel.updates_weight() || !writes_rows {
-            spectra.source.clear();
+            if !averaging_time && !read_spectral_weights {
+                spectra.source.clear();
+            }
             spectra.fill_standard = false;
             spectra.propagate_weights = false;
             if kernel.omit_spectral_weights() {
@@ -936,7 +966,7 @@ fn mstransform_staged(
                     .as_ref()
                     .and_then(|selection| selection.axes(ddid))
             };
-            if let Some(coordinates) = group_times.get(batch_offset) {
+            if writes_rows && let Some(coordinates) = group_times.get(batch_offset) {
                 for (name, value) in TIME_OUTPUT_SCALARS
                     .into_iter()
                     .zip(coordinates.scalar_cells())
@@ -995,7 +1025,7 @@ fn mstransform_staged(
                 .zip(&mut spectrum_available)
             {
                 let cell = values.next().flatten();
-                if grammar == RowGrammar::Transform && !averaging_time {
+                if grammar == RowGrammar::Transform && !averaging_time && !read_spectral_weights {
                     if starts_visibility_buffer[row_index] {
                         // CASA checks the first cell of this visibility
                         // buffer before reading that buffer's spectra.
@@ -1099,12 +1129,20 @@ fn mstransform_staged(
                                         "Missing original spectrum coordinates.".into(),
                                     )
                                 })?;
+                            let mut coordinates = *coordinates;
+                            if let Some(averaged) = group_times.get(batch_offset) {
+                                coordinates.time = averaged.time;
+                                coordinates.interval = averaged.interval;
+                            }
                             baseline_weights = handler
                                 .process(
-                                    coordinates,
+                                    &coordinates,
                                     &mut transformed,
                                     output_flags,
-                                    noise.as_ref().map(|(weight, _)| weight),
+                                    SpectrumWeights {
+                                        scalar: noise.as_ref().map(|(weight, _)| weight),
+                                        spectrum: spectra_cells.weight,
+                                    },
                                 )
                                 .map_err(MsTransformError::Spectrum)?;
                         }

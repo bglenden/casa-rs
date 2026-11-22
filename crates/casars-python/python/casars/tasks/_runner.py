@@ -344,6 +344,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if message.endswith(" exists."):
                 raise ValueError(message) from error
             raise RuntimeError(message) from error
+    if name == "sdfit":
+        return _call_sdfit(values, arguments)
     if name == "sdbaseline":
         _validate_required_path(values, "infile", arguments["infile"], search_data=True)
         choices = {
@@ -1259,6 +1261,55 @@ def _present_listcal(report: Mapping[str, Any]) -> None:
         if listing["error"] is not None:
             raise RuntimeError(listing["error"])
     print(f"\nListed {solutions} antenna solutions.\n")
+
+
+def _call_sdfit(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    import numpy as np
+
+    _validate_required_path(values, "infile", arguments["infile"], search_data=True)
+    for name, allowed in (
+        ("fitfunc", ("gaussian", "lorentzian")),
+        ("fitmode", ("list", "auto")),
+        ("polaverage", ("", "stokes", "geometric")),
+    ):
+        value = arguments[name]
+        if isinstance(value, str) and value not in allowed:
+            raise AssertionError(str({name: [f"unallowed value {value}"]}))
+    for name in ("edge", "nfit"):
+        if name not in values:
+            continue
+        value = values[name]
+        if isinstance(value, (int, np.integer)):
+            value = [value]
+        if value is None:
+            raise AssertionError(str({name: ["null value not allowed"]}))
+        try:
+            items = list(value)
+        except TypeError:
+            items = None
+        if (isinstance(value, (str, bytes)) or items is None
+                or not all(isinstance(item, (int, np.integer)) for item in items)):
+            raise AssertionError(str({name: ["must be of cIntVec type"]}))
+        values[name] = [int(item) for item in items]
+    for name in ("thresh", "minwidth", "avg_limit"):
+        if type(values.get(name)) is bool:
+            values[name] = int(values[name])
+    try:
+        result = run("sdfit", **values).value
+        nfit = arguments["nfit"]
+        if arguments["fitmode"] == "list" and isinstance(nfit, np.ndarray) and len(nfit):
+            count = sum(nfit)
+            result["nfit"] = [count] * len(result["nfit"])
+        return result
+    except TaskExecutionError as error:
+        message = error.completion.message or ""
+        if message == "Invalid line component result.":
+            raise AssertionError() from error
+        if message.endswith(" exists.") or message.startswith("fitmode="):
+            raise ValueError(message) from error
+        raise RuntimeError(message) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
 
 
 def _call_initweights(values: dict[str, Any]) -> Any:

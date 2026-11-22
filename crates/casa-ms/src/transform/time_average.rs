@@ -71,6 +71,7 @@ pub(super) fn plan(
     input: &MeasurementSet,
     selected: &[ResolvedMsSelectionRow],
     options: TimeAverageOptions,
+    single_dish: bool,
 ) -> Result<Vec<TimeGroup>, MsTransformError> {
     let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
     let table_error = |source| MsTransformError::MutateMeasurementSet {
@@ -105,8 +106,8 @@ pub(super) fn plan(
         .collect::<Vec<_>>();
     let table = input.main_table();
     let keys = [
-        ("OBSERVATION_ID", true),
-        ("ARRAY_ID", true),
+        ("OBSERVATION_ID", !single_dish),
+        ("ARRAY_ID", !single_dish),
         ("SCAN_NUMBER", !options.span_scans),
         ("STATE_ID", !span_states),
     ];
@@ -120,6 +121,12 @@ pub(super) fn plan(
             .map_err(table_error)?;
         for (sample, cell) in samples.iter_mut().zip(cells) {
             sample.chunk.0[slot] = scalar_i32(cell.as_ref(), name, sample.row)?;
+        }
+    }
+    if single_dish {
+        // Single-dish line fitting puts DATA_DESC_ID before scan, state and field.
+        for sample in &mut samples {
+            sample.chunk.0.rotate_right(1);
         }
     }
     if options.max_uvw_distance > 0.0 {

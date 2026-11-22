@@ -55,6 +55,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdfit | sdfit | yes | 21 | 21 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
@@ -2796,6 +2797,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1974`.
+
+### sdfit
+
+- CASA source: `casatasks/sdfit.py`, 21 parameters
+- Implementation: `casatasks/private/task_sdfit.py`, `sdfit` (line 17): 1 return statements, 5 raise statements
+  - returns at line 73: `_get_results(tempfile, fitfunc, nfit, outfile)`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 21, in CASA's order: yes
+- Defaults that differ: none
 
 ### sdgaincal
 

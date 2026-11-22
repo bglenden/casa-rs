@@ -9751,3 +9751,44 @@ CASA's line finder can call its median helper with zero searchable bins.
 Its wing extension can also decrement an unsigned index at channel zero.
 Casa-rs stops an averaging level when it has fewer than two eligible bins
 and stops the wing at the start of the spectrum.
+
+## Single-dish line fitting can exceed its time bin on descending rows
+
+CASA 6.7.6.14 iterates `fit_line` by data description and the uncombined
+scan, state, and field keys. `SDMSManager::setIterationApproach` omits
+`TIME` from this sort. The averaging iterator compares later time
+stamps with its first buffer's time. With physical rows at 6, 4, 2, and
+0 seconds and `timebin='1s', timespan='scan'`, CASA combines the four
+spectra per hand into one. The same input in chronological order
+produces four spectra per hand. casa-rs sorts the integrations by time
+inside each grouping key so the requested interval holds for either row
+order. The paired oracle verifies both CASA results and the native
+chronological grouping.
+
+## Single-dish polarization averaging can abort for one selected hand
+
+In CASA 6.7.6.14, `PolAverageTVI::configurePolAverage` obtains its two
+hand indices from the full POLARIZATION table setup. With an XX/YY MS
+and `sdfit(pol='YY', polaverage='geometric', nfit=[1])`, CASA uses the
+original pair to slice an array with just one selected hand and aborts
+with `ArrayBase::operator()(b,e,i) - incorrectly specified`. casa-rs
+resolves the two hands after correlation selection. When there is no
+complete pair it uses the selected spectrum unchanged, as the
+iterator's own skip message describes. The value agrees with fitting
+the same selected hand without averaging.
+
+## Single-dish line fitting aborts for negative component counts
+
+CASA 6.7.6.14 uses `std::stoi` on the comma-separated list counts and
+stores them in an unsigned vector. In list mode, `nfit=[-1]` reaches a
+negative array shape and aborts outside the task exception handler.
+casa-rs reports the invalid component count before allocating a fit and
+keeps the auto-mode interpretation, where the line finder determines
+component counts.
+
+## A failed line fit can delete the previous report
+
+CASA 6.7.6.14 removes an existing `sdfit` report at the beginning of an
+overwrite. If a later selection or fit fails, the older report is
+lost. casa-rs stages the text report and replaces the existing file
+after successful processing.

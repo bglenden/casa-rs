@@ -27,6 +27,7 @@
   "polcal": "vis",
   "sdbaseline": "infile",
   "sdcal": "infile",
+  "sdfit": "infile",
   "sdgaincal": "infile",
   "sdsmooth": "infile",
   "split": "vis",
