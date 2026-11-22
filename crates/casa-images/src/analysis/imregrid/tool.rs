@@ -136,13 +136,8 @@ pub fn regrid_image<T: RegridPixel>(
             )
         })
         .transpose()?;
-    if selection
-        .as_ref()
-        .is_some_and(SubimagePlan::has_multiple_regions)
-    {
-        return Err(invalid(
-            "This application does not support multiple region selection",
-        ));
+    if let Some(selection) = &selection {
+        selection.require_single_region()?;
     }
     let (selected_coords, selected_shape) = selection
         .as_ref()

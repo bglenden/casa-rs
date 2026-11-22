@@ -105,7 +105,12 @@ def test_saved_region_products_preserve_masks_and_coordinates(casa, tmp_path, sa
                 reopened.done()
 
 
-def test_fft_rejects_saved_compound_regions_with_mixed_precision_mask(casa, tmp_path, saved_region):
+@pytest.mark.parametrize(
+    "method", ["fft", "decompose", "deviation", "rebin", "regrid", "rotate", "twopointcorrelation"],
+)
+def test_analysis_rejects_saved_compound_regions_with_mixed_precision_mask(
+    casa, tmp_path, saved_region, method,
+):
     data, region, _, _, _, _ = saved_region
     primary, secondary = (tmp_path / name for name in ("single.im", "double.im"))
     writer = casa.image()
@@ -120,11 +125,29 @@ def test_fft_rejects_saved_compound_regions_with_mixed_precision_mask(casa, tmp_
     expression = f'("{primary}" + "{secondary}") > 650'
     for backend in (casa, tools):
         image = backend.image()
-        output = tmp_path / f"{backend.__name__}-fourier.im"
+        output = tmp_path / f"{backend.__name__}-output.im"
         try:
             assert image.open(str(primary))
+            if method == "regrid":
+                coordinates = image.coordsys()
+                try:
+                    csys = coordinates.torecord()
+                finally:
+                    coordinates.done()
+                options = {"outfile": str(output), "shape": list(data.shape), "csys": csys,
+                           "axes": [0, 1], "decimate": 1}
+            else:
+                options = {
+                    "fft": {"complex": str(output), "axes": [0, 1]},
+                    "decompose": {"simple": True, "fit": False, "threshold": 650.},
+                    "deviation": {"outfile": str(output), "grid": [2, 2], "xlength": "3pix",
+                                  "ylength": "3pix", "interp": "nearest", "stattype": "mean"},
+                    "rebin": {"outfile": str(output), "bin": [2, 2, 1, 1]},
+                    "rotate": {"outfile": str(output), "pa": "0deg", "method": "nearest"},
+                    "twopointcorrelation": {"outfile": str(output), "axes": [0, 1]},
+                }[method]
             with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
-                image.fft(axes=[0, 1], region=region, mask=expression, complex=str(output))
+                getattr(image, method)(region=region, mask=expression, **options)
             assert image.isopen()
             assert not output.exists()
             np.testing.assert_array_equal(image.getchunk(), data)

@@ -121,11 +121,7 @@ impl<'a> ImageFourier<'a> {
             },
             Some(beam_record),
         )?;
-        if section.has_multiple_regions() {
-            return Err(invalid(
-                "Only a single n-dimensional rectangular region is supported",
-            ));
-        }
+        section.require_single_region()?;
         let mut axes = if options.axes.is_empty() || matches!(options.axes, [axis] if *axis < 0) {
             section
                 .coordinates
