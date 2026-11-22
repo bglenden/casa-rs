@@ -172,10 +172,12 @@ impl CalibraterLifecycle {
         specification: crate::CalibrationSpecification<'_>,
     ) -> Result<(), CalibraterLifecycleError> {
         let dataset = self.equation()?.attachment.path();
-        specification.write(dataset).map_err(|error| {
-            tracing::error!(%error, "Calibration specification failed");
-            CalibraterLifecycleError::Specify(Box::new(error))
-        })
+        specification
+            .write(dataset, self.legacy_iterator)
+            .map_err(|error| {
+                tracing::error!(%error, "Calibration specification failed");
+                CalibraterLifecycleError::Specify(Box::new(error))
+            })
     }
 
     /// Choose the visibility iterator before opening a MeasurementSet.

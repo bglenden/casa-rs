@@ -4,9 +4,9 @@
 use std::path::Path;
 
 use casa_calibration::CalibrationSpecification;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PySystemError, prelude::*, types::PyTuple};
 
-use super::arguments::{strict_bool, text};
+use super::arguments::{strict_bool, supplied, text};
 use super::{PyCalibrater, runtime_error};
 use crate::convert::DoubleList;
 use crate::tools::not_yet_implemented_in;
@@ -54,33 +54,38 @@ impl PyCalibrater {
     fn specifycal(
         &self,
         py: Python<'_>,
-        caltable: Option<&Bound<'_, PyAny>>,
-        time: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        antenna: Option<&Bound<'_, PyAny>>,
-        pol: Option<&Bound<'_, PyAny>>,
-        caltype: Option<&Bound<'_, PyAny>>,
-        parameter: Option<&Bound<'_, PyAny>>,
-        infile: Option<&Bound<'_, PyAny>>,
-        uniform: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] caltable: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] time: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] spw: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] antenna: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] pol: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] caltype: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] parameter: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] infile: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] uniform: Option<Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let table = text(caltable.cloned(), "caltable", "")?;
+        let table = text(caltable, "caltable", "")?;
         // CASA accepts the time label without assigning it to table rows.
-        text(time.cloned(), "time", "")?;
-        let spw = text(spw.cloned(), "spw", "")?;
-        let antenna = text(antenna.cloned(), "antenna", "")?;
-        let polarization = text(pol.cloned(), "pol", "")?;
-        let caltype = text(caltype.cloned(), "caltype", "")?;
-        let parameters = parameter
-            .map(|value| value.extract::<DoubleList>())
-            .transpose()?
-            .map_or_else(|| vec![1.], |values| values.0);
-        let infile = text(infile.cloned(), "infile", "")?;
+        text(time, "time", "")?;
+        let spw = text(spw, "spw", "")?;
+        let antenna = text(antenna, "antenna", "")?;
+        let polarization = text(pol, "pol", "")?;
+        let caltype = text(caltype, "caltype", "")?;
+        let tuple = parameter
+            .as_ref()
+            .is_some_and(|value| value.is_instance_of::<PyTuple>());
+        let parameters = match parameter {
+            None => vec![1.],
+            Some(value) if value.is_none() => Vec::new(),
+            Some(value) => value.extract::<DoubleList>()?.0,
+        };
+        let infile = text(infile, "infile", "")?;
         let uniform = uniform
+            .as_ref()
             .map(|value| strict_bool(value, "specifycal", 10))
             .transpose()?
             .unwrap_or(true);
-        self.attached(py, move |state| {
+        let wrote = self.attached(py, move |state| {
             state.specify_calibration(CalibrationSpecification {
                 table: Path::new(&table),
                 spw: &spw,
@@ -91,7 +96,15 @@ impl PyCalibrater {
                 infile: (!infile.is_empty()).then_some(Path::new(&infile)),
                 uniform,
             })
-        })
+        })?;
+        if tuple {
+            // SWIG converts the tuple and runs the writer, then reports the
+            // outstanding Python conversion exception on its return.
+            return Err(PySystemError::new_err(
+                "<built-in function calibrater_specifycal> returned a result with an exception set",
+            ));
+        }
+        Ok(wrote)
     }
 
     #[pyo3(signature = (), text_signature = "($self)")]

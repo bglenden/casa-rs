@@ -6,11 +6,13 @@ mod antpos_file;
 mod eop;
 pub(crate) mod jyperk;
 mod power_curve;
+mod specify_tool;
 mod switched_power;
 pub(crate) mod tecim;
 mod tsys;
 
 pub use antpos_file::AntposInputError;
+pub use specify_tool::CalibrationSpecification;
 pub(crate) use switched_power::CORRELATOR_EFFICIENCY as EVLA_CORRELATOR_EFFICIENCY;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -181,80 +183,6 @@ pub struct GencalRequest {
     /// Optional explicit VLA GainCurves table path for `gceff`.
     #[serde(default)]
     pub gaincurve_table: Option<PathBuf>,
-}
-
-/// A parameter prescription passed to the attached calibrater tool.
-pub struct CalibrationSpecification<'a> {
-    /// Calibration table to create or update.
-    pub table: &'a Path,
-    /// Spectral-window selection.
-    pub spw: &'a str,
-    /// Antenna selection.
-    pub antenna: &'a str,
-    /// Receptor selection and order.
-    pub polarization: &'a str,
-    /// CASA tool factory name or parameter type.
-    pub caltype: &'a str,
-    /// Numeric prescription in selection order.
-    pub parameters: Vec<f64>,
-    /// Optional calibration input used by the selected family.
-    pub infile: Option<&'a Path>,
-    /// Use uniform rather than exposure weights where the family supports it.
-    pub uniform: bool,
-}
-
-impl CalibrationSpecification<'_> {
-    pub(crate) fn write(self, dataset: &Path) -> Result<(), GencalError> {
-        let kind = self.caltype.to_ascii_uppercase();
-        let caltype = match kind.as_str() {
-            kind if kind.contains("PH") => GencalType::Ph,
-            kind if kind == "G" || kind.contains("AMP") => GencalType::Amp,
-            kind if kind == "K"
-                || ["SBD", "DELAY", "MBD"]
-                    .iter()
-                    .any(|name| kind.contains(name)) =>
-            {
-                GencalType::Sbd
-            }
-            kind if kind.contains("ANTPOSVLA") => GencalType::AntposVla,
-            kind if kind.contains("ANTPOS") => GencalType::Antpos,
-            kind if kind.contains("TSYS") => GencalType::Tsys,
-            "EVLAGAIN" => GencalType::Evlagain,
-            "SWP/RQ" => GencalType::SwpOverRq,
-            "RQ" => GencalType::Rq,
-            kind if kind.contains("WTS") => GencalType::Swpwts,
-            kind if kind.contains("SWP") => GencalType::Swpow,
-            kind if kind.contains("OPAC") => GencalType::Opac,
-            kind if kind.contains("GC") && kind.contains("EFF") => GencalType::Gceff,
-            kind if kind.contains("GC") => GencalType::Gc,
-            kind if kind.contains("EFF") => GencalType::Eff,
-            kind if kind.contains("TEC") => GencalType::Tecim,
-            _ => {
-                return Err(GencalError::InvalidRequest(format!(
-                    "Unrecognized caltype {:?}.",
-                    self.caltype
-                )));
-            }
-        };
-        let request = GencalRequest {
-            measurement_set: dataset.to_owned(),
-            output_table: self.table.to_owned(),
-            caltype,
-            antenna: self.antenna.to_owned(),
-            spw: self.spw.to_owned(),
-            parameter: self.parameters,
-            gaincurve_table: None,
-        };
-        gencal_with_output_mode(
-            &request,
-            self.polarization,
-            self.infile,
-            None,
-            self.uniform,
-            crate::CalibrationOutputMode::Update,
-        )?;
-        Ok(())
-    }
 }
 
 /// Report returned after writing one prior-cal table.
